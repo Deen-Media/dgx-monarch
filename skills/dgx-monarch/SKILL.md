@@ -128,6 +128,11 @@ The required safeguards are:
    import path and the exact Monarch/xFuser pins. Stop on incompatible binary
    imports. Do not copy a donor environment's packages to hide missing wheels.
 
+Run the dependency check described in INSTALL. If the only failure is the
+[known cuSPARSELt platform-tag error](../../docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform),
+verify the official artifact as instructed and record the failure separately.
+Do not report a clean dependency check or ignore another error.
+
 `dgxm` is installed beside `COMFY_PYTHON`; use that executable explicitly when
 multiple environments exist. Establish `DGXM` as described in INSTALL before
 using the guided setup examples. On a cluster, the configured Python path must

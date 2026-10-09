@@ -1,10 +1,5 @@
 # Changelog
 
-## [Unreleased]
-
-- Update repository links and the setup prompt for Deen-Media ownership.
-- Make two CPU capacity tests use their simulated memory instead of the host's available RAM.
-
 ## 1.0.0
 
 Initial release of DGX Monarch: distributed image and video generation in
@@ -51,6 +46,9 @@ ComfyUI, built for a pair of NVIDIA DGX Sparks.
 
 ### Limits
 
+- The official NVIDIA cuSPARSELt 0.8.1 ARM64 wheel has a platform-tag error
+  reported by `pip check`. Follow the [artifact verification steps](docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
+  and record this upstream packaging failure separately from render results.
 - Support and measured speedups apply to the configurations listed in
   [Model support](docs/MODELS.md), [Benchmarks](docs/BENCHMARKS.md) and
   [Validation](docs/VALIDATION.md). A workflow template does not establish

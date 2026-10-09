@@ -129,6 +129,11 @@ with the private test record; remove only the temporary directory created
 above when it is no longer needed. This procedure pins Monarch and xFuser;
 it does not lock every transitive dependency.
 
+On Linux ARM64, the pinned NVIDIA cuSPARSELt wheel can produce one known
+platform-tag error in `pip check`. Follow the
+[artifact verification and reporting steps](TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
+before continuing. Keep that result separate from successful imports or renders.
+
 The installer places `dgxm` beside `$COMFY_PYTHON`. Invoke that executable so a
 shell's unrelated `dgxm` cannot select another environment:
 
