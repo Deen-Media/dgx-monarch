@@ -4747,3 +4747,69 @@ loosen the comparison tolerance, or treat a passing CPU stub test as native
 cuDNN validation. Switching to another supported attention kernel is a
 separate configuration and needs its own reference comparison. Ring with FSDP
 still refuses.
+
+
+## 109. pip check reports cuSPARSELt is not supported on this platform
+
+**Symptom:** on Linux ARM64 with Torch 2.12.0+cu132, `pip check` reports:
+
+```text
+nvidia-cusparselt-cu13 0.8.1 is not supported on this platform
+```
+
+**Cause:** the official wheel's filename says `manylinux2014_aarch64`, but
+its internal platform tag says `manylinux2014_sbsa`. Torch pins this exact
+package version. A distributed render has passed with this wheel on a Spark
+pair; its `pip check` result still fails. The upstream packaging fix is
+tracked in [issue #5](https://github.com/Deen-Media/dgx-monarch/issues/5).
+
+**Action:** preserve the complete output. Apply this note only when that is
+the sole dependency-check error. Resolve any other error before continuing.
+Keep the working Torch build and NVIDIA package unchanged.
+
+Use `COMFY_PYTHON` from the installation guide. The following downloads the
+[official wheel](https://pypi.nvidia.com/nvidia-cusparselt-cu13/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_aarch64.whl),
+checks its published hash, and compares every original installed file except
+`RECORD`, which pip rewrites during installation. It does not install or edit
+packages. Keep the downloaded file with the installation record.
+
+```bash
+NVIDIA_WHEEL=$(mktemp --suffix=.whl)
+curl --fail --location --output "$NVIDIA_WHEEL" \
+  https://pypi.nvidia.com/nvidia-cusparselt-cu13/nvidia_cusparselt_cu13-0.8.1-py3-none-manylinux2014_aarch64.whl
+printf 'Downloaded wheel: %s\n' "$NVIDIA_WHEEL"
+"$COMFY_PYTHON" - "$NVIDIA_WHEEL" <<'PY'
+import hashlib
+import platform
+import sys
+import zipfile
+from importlib.metadata import distribution, version
+from pathlib import Path
+
+if sys.platform != "linux" or platform.machine() != "aarch64":
+    raise SystemExit("This check covers Linux ARM64 only.")
+dist = distribution("nvidia-cusparselt-cu13")
+if dist.version != "0.8.1" or version("torch") != "2.12.0+cu132":
+    raise SystemExit("Package versions differ from the affected configuration.")
+wheel = Path(sys.argv[1])
+with wheel.open("rb") as stream:
+    digest = hashlib.file_digest(stream, "sha256").hexdigest()
+if digest != "4dca476c50bf4780d46cd0bfbd82e2bc10a08e4fef7950917ce8d7578d22a23f":
+    raise SystemExit("Official wheel hash mismatch; stop and investigate.")
+with zipfile.ZipFile(wheel) as archive:
+    for member in archive.infolist():
+        if member.is_dir() or member.filename.endswith(".dist-info/RECORD"):
+            continue
+        with archive.open(member) as original, dist.locate_file(member.filename).open("rb") as installed:
+            if hashlib.file_digest(original, "sha256").digest() != hashlib.file_digest(installed, "sha256").digest():
+                raise SystemExit(f"Installed file differs: {member.filename}")
+print("Installed files match the official wheel. The pip check error remains.")
+PY
+```
+
+After a match, continue with the required import checks, Doctor and saved
+distributed render. Record the dependency check as **one known upstream
+platform-tag failure**, and record those other results separately. A mismatch
+or another dependency error needs investigation. Automated ARM64 CI remains
+disabled while its mandatory `pip check` fails; this note does not waive that
+gate.
