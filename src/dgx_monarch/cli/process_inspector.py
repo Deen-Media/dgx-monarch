@@ -411,6 +411,7 @@ def serve(uid: int, lifetime: int) -> None:
     path = directory / f"{uid}.sock"
     old_term = signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
     old_int = signal.signal(signal.SIGINT, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
+    old_hup = signal.signal(signal.SIGHUP, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
     try:
         _serve_socket(
             uid,
@@ -422,6 +423,7 @@ def serve(uid: int, lifetime: int) -> None:
     finally:
         signal.signal(signal.SIGTERM, old_term)
         signal.signal(signal.SIGINT, old_int)
+        signal.signal(signal.SIGHUP, old_hup)
 
 
 def main() -> None:

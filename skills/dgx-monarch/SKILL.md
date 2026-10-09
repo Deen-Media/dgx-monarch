@@ -20,7 +20,12 @@ Use [CLUSTER](../../docs/CLUSTER.md) for configuration keys and
 
 ## 1. Discover before changing anything
 
-Start with read-only inspection. Record the following for each selected host:
+Start with read-only inspection. Identify which checkout, ComfyUI, environment
+and model directories need read access, and which destinations need writes.
+For new paths, request the narrowest existing parent, such as `custom_nodes`
+for a node-pack checkout rather than the whole ComfyUI tree. Request the known
+folder permissions together. Do not request blanket filesystem access or
+disable the sandbox. Record the following for each selected host:
 
 - OS and CPU architecture; Python interpreter used by ComfyUI; Python version,
   virtual-environment path and whether it imports system packages.
@@ -33,42 +38,82 @@ Start with read-only inspection. Record the following for each selected host:
   sessions, attached actors and GPU jobs. Keep full diagnostics private.
 - Free disk and memory; model files available in the selected ComfyUI model
   directories or a model cache the user permits you to inspect.
-- The user-approved SSH hosts, fabric interfaces and addresses, and how network
-  isolation is enforced. Do not scan the LAN or assume private IPs imply trust.
+- The user-approved SSH hosts, fabric interfaces and addresses, and the basis
+  for trusted isolation: existing verification or informed operator
+  confirmation under INSTALL. Do not scan the LAN or assume private IPs imply trust.
 
 Use launcher/service metadata or the user's supplied paths to identify the
 ComfyUI interpreter. A shell's default `python` is not sufficient evidence.
 Ask only for facts that safe inspection cannot establish: the intended hosts,
 ambiguous ComfyUI environments, missing access, network approval or storage
 choices. Never read private-key or token contents into tool output or chat.
-Use existing approved credential helpers; let the user complete authentication,
+Collect missing prerequisites and decisions into one short request after
+discovery, rather than asking one question per command. Reuse the existing
+ComfyUI and environment where suitable. Propose durable locations for anything
+new and include the user's choice in the plan. Source, environments, models
+and permanent launchers do not belong in temporary or chat-output directories
+unless the user explicitly requested a temporary test. Ask whether the user
+wants the optional dgxm TUI and an easy launch script, and where to save the
+script, alongside the initial questions. If the TUI is accepted, include the
+`[tui]` extra in the initial constrained dependency plan using INSTALL's
+[optional dashboard procedure](../../docs/INSTALL.md#optional-dashboard-and-worker-services).
+If declined, skip it; do not install extras without approval. Follow INSTALL's [launch handoff](../../docs/INSTALL.md#launch-and-handoff)
+for its contents and verification. Use existing approved
+credential helpers; let the user complete authentication,
 license acceptance, sudo prompts and SSH host-key verification themselves.
+
+Before apply, check the [user service session](../../docs/INSTALL.md#check-the-agents-user-service-session)
+and [process inspection capability](../../docs/INSTALL.md#protected-process-inspection)
+on each host. Include a required privileged inspector in the installation plan
+rather than discovering it after an apply fails. This ownership requirement
+is separate from the optional network audit. Reuse a helper only after checking
+its authenticated reply; protected metadata may still require a foreground
+sudo session on each host.
+
+Use the default [receipt directory](../../docs/INSTALL.md#operator-receipts),
+not a custom `--receipt` in the chat workspace. Check a customized
+`XDG_STATE_HOME`, or an explicitly requested receipt path, during discovery.
+Do not change permissions on unrelated directories to make it pass.
 
 Select one source checkout for each ComfyUI installation, directly at
 `"$COMFY_DIR/custom_nodes/dgx-monarch"` or a symlink to the working checkout.
 Do not install from a second source tree. Verify the requested repository or
 an explicitly approved mirror, the selected commit, a clean working tree,
 and the symlink target before using an existing path. Preserve local changes
-and unrelated custom nodes. A mismatch needs a decision, not a reset or overwrite.
+and unrelated custom nodes. ComfyUI's two missing example files may be
+preserved under the narrow [INSTALL exception](../../docs/INSTALL.md#inspect-before-installing);
+keep its modified status and warning in the record. Other mismatches need a
+decision, not a reset or overwrite.
 
 ## 2. Agree on the installation plan
 
 Describe what will be reused and what will be created or changed. Include
 Python/ComfyUI paths, dependency changes, model storage, config destination,
-services, caches, network access and recovery. Ask for approval before stopping
-work, replacing an environment, deleting anything, changing security/access,
+services, caches, network access and recovery. List package installation,
+Worker installation or restart, automatic service recovery, lingering and any
+security change explicitly when needed. These can be approved together in one
+plan; an explicit security approval does not require a separate conversation.
+Include the required permissions for new private config and state directories,
+and create them with those permissions from the start.
+Ask for approval before stopping work, replacing an environment, deleting
+anything, changing security/access,
 or installing or restarting persistent Worker services. Use authorization
 already given for the same concrete plan; do not ask again at each command.
+Ask again only for a new action or risk outside that plan. A sudo password or
+provider login may still need the user in their own terminal.
 
 Separate these cases:
 
 - **New Monarch installation on existing ComfyUI:** preserve its working CUDA
-  Torch build and other custom nodes. Install only after checking the dependency
+  Torch build and other custom nodes. Choose a recovery method for the actual
+  changes; this does not require archiving every environment or restoring the
+  whole pair afterward. Install only after checking the dependency
   plan and confirming the affected environment is idle.
-- **ComfyUI missing:** this is a prerequisite task. Propose it separately using
+- **ComfyUI missing:** include this prerequisite phase using
   the [official manual-install guide](https://docs.comfy.org/installation/manual_install),
-  with an isolated environment and a compatible version. Monarch's setup does
-  not install ComfyUI, the GPU driver or the OS.
+  with an isolated environment and a compatible version. Include this phase
+  in the initial approval if discovery already showed it was needed. Monarch's
+  setup does not install ComfyUI, the GPU driver or the OS.
 - **Already installed:** inspect first. If source, dependencies, configuration,
   model files and service ownership match, reuse them and validate. Do not
   reinstall packages or rerun service installation just to repeat setup.
@@ -84,7 +129,9 @@ Separate these cases:
   Do not move existing state, remove units or start a second fleet without
   the specific approved plan.
 
-Keep model files, credentials, unrelated work and the existing working setup.
+Normal onboarding does not require the fresh-install acceptance procedure.
+Use that procedure only when the user asks for an isolated test on an occupied
+pair. Keep model files, credentials, unrelated work and the existing working setup.
 A copied environment or `--system-site-packages` environment must be reported
 as reused dependencies, not a fresh dependency installation. Global package,
 model-download, compiler and GPU caches may be reused when the approved plan
@@ -157,8 +204,14 @@ Read the [fabric requirements](../../SECURITY.md#fabric-trust-boundary).
 The Worker API has no peer authentication. The dedicated interface must be
 source-restricted to trusted peers, including dynamic actor ports; opening only
 port 26600 is insufficient. `--acknowledge-trusted-fabric` records the user's
-confirmed isolation, not a network repair. Do not edit firewall rules, create
-keys, disable host-key checks or enable lingering without separate approval.
+confirmed isolation, not a network repair. Follow INSTALL's
+[standard setup and optional network audit](../../docs/INSTALL.md#inspect-the-cluster-network).
+The detailed audit is optional; record operator-confirmed and agent-verified
+boundaries accurately. Do not require sudo collection for every setup or ask
+the user to interpret firewall rules. Known exposure still needs correction.
+Do not edit firewall rules, create keys, disable host-key checks or enable
+lingering without explicit approval for that action. An approved item in the
+installation plan is sufficient; do not request it again.
 Keep native latent RDMA off.
 
 All setup profiles write `auto_heal=true`. It can restart Worker services,
@@ -168,8 +221,8 @@ starting the driver. The in-process attach retry is separate from `auto_heal`.
 
 An existing unit, managed source or unknown ownership is a reason to inspect
 and reuse or stop for a decision. Setup intentionally refuses to take over it.
-Do not delete it to make an apply pass. Save the requested setup receipt and
-follow its failed/partial status before retrying.
+Do not delete it to make an apply pass. Retain the applied setup's default
+receipt and follow its failed/partial status before retrying.
 
 Use the explicit config path for every `dgxm` command and the ComfyUI process.
 Pass it to the graph's Init node too. Do not let discovery pick another user's
@@ -237,7 +290,17 @@ approved choice and verify it, including source, configuration, dependencies,
 service health and absence of test actors. A rollback plan must name saved
 paths and how to restore them; do not invent one after a partial failure.
 
-Finish with the tested commit, Python/ComfyUI/Torch/CUDA and dependency
+Normal setup retains the working installation. Hand over a usable foreground
+session in the user's terminal when possible. If an agent-owned test driver
+was stopped for cleanup, say it is stopped and supply the verified start
+command; do not imply its browser URL is currently available.
+
+Start the final response with the [launch handoff](../../docs/INSTALL.md#launch-and-handoff):
+start command or shortcut, browser access, actual running state and permanent
+installation/workflow/output locations. Keep evidence-directory paths separate.
+For an accepted TUI, prefer `dgxm top` once its environment and discovery are
+verified; explain activation once and add explicit paths or options only when needed.
+Then report the tested commit, Python/ComfyUI/Torch/CUDA and dependency
 versions, reused components, saved output and two-host proof, rerun result,
 manual steps, failures/fixes, final retained/restored state and limitations.
 Label unperformed checks **NOT RUN**. Keep credentials and machine-specific

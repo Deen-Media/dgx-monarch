@@ -74,6 +74,7 @@ class HostProbe:
     service_active: bool | None
     artifacts: tuple[ArtifactProbe, ...]
     comfy_runtime_marker: bool | None = None
+    comfy_only_missing_examples: bool | None = None
 
     def hardware_observation(self) -> HardwareObservation:
         """Return the GPU-model fingerprint and UMA flag; operator_profiles owns the policy that reads them."""
@@ -97,6 +98,7 @@ class HostProbe:
             "comfy_runtime_marker": self.comfy_runtime_marker,
             "comfy_git": self.comfy_git,
             "comfy_dirty": self.comfy_dirty,
+            "comfy_only_missing_examples": self.comfy_only_missing_examples,
             "comfy_commit": self.comfy_commit,
             "fabric_interface_count": self.fabric_interface_count,
             "link_layers": list(self.link_layers),
@@ -282,6 +284,7 @@ def _parse_payload(raw: object, ordinal: int, artifact_count: int) -> HostProbe:
         comfy_runtime_marker=_bool(raw, "comfy_runtime_marker"),
         comfy_git=_bool(raw, "comfy_git"),
         comfy_dirty=_bool(raw, "comfy_dirty"),
+        comfy_only_missing_examples=_bool(raw, "comfy_only_missing_examples"),
         comfy_commit=commit,
         fabric_interface_count=_integer(raw.get("fabric_interface_count"), 0, 4096),
         link_layers=tuple(sorted(set(cast(list[str], layers)))),

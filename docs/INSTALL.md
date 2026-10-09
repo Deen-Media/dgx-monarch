@@ -12,7 +12,8 @@ already used by ComfyUI. The Python minimum alone does not guarantee compatible
 wheels for every architecture. Check the selected interpreter, CUDA support and
 available dependency wheels before changing an environment. Both Sparks need
 matching Python, torch, torchmonarch and ComfyUI versions; guided setup also
-requires clean Git ComfyUI checkouts. Use the current requirements in
+requires clean Git ComfyUI checkouts except for the missing example files
+described below. Use the current requirements in
 `pyproject.toml` and `requirements.txt`, not a version copied from another rig.
 
 First discover the ComfyUI checkout and the interpreter that actually starts
@@ -30,8 +31,16 @@ If the checkout is unexpected, modified, broken or points elsewhere, explain
 the difference and agree on a repair before writing to it. Never overwrite an
 existing path or create a second copy to hide an import conflict.
 
+Guided setup permits only unstaged deletions of ComfyUI's tracked regular
+files `input/example.png` and `output/_output_images_will_be_put_here`.
+It preserves those deletions, records the checkout as modified and emits a
+warning. This exception does not cover staged changes, other missing files,
+new files, renames, symlinks or Git flags that hide changes. Do not reset a
+checkout just to remove this warning.
+
 If ComfyUI is missing, treat its installation as a separate prerequisite phase
-with the user's approval. Follow the official guide linked above and verify
+with the user's approval, included in the initial plan when known. Follow the
+official guide linked above and verify
 that it runs on CUDA before returning here. Do not replace system Python,
 global torch, or another application's environment. Do not copy packages from
 a donor environment. `scripts/setup_env.sh` is a developer-lab helper with
@@ -44,6 +53,10 @@ selected official installation instructions rather than requiring every wheel
 to share the index's hostname. Keep credentials out of saved URLs.
 
 ### Caches and scratch during an isolated test
+
+This section applies to an explicitly requested isolated acceptance test on
+a working pair. Normal installation reuses existing caches and does not
+require a full environment archive or restoration afterward.
 
 Agree on cache reuse before the first CUDA prerequisite check, since even that
 check can create cache files. Set supported cache locations before importing
@@ -64,9 +77,12 @@ unrelated caches to claim a cleaner installation.
 
 ## Install the node pack
 
-Before changing an existing environment, agree on a backup or isolated test
-copy and a recovery plan. Stop ComfyUI and any services using that environment
-only within the approved maintenance window. Keep model files, credentials,
+Before changing an existing environment, choose a recovery plan matched to
+the proposed changes, such as a backup of the affected environment or an
+isolated copy. Include the known prerequisite, package, service and access
+changes in one plan for approval. Reuse that approval for the same listed
+work. Stop ComfyUI and any services using that environment only within the
+approved maintenance window. Keep model files, credentials,
 other custom nodes and unrelated work intact.
 
 Set these paths explicitly. `COMFY_PYTHON` must be the interpreter that starts
@@ -158,7 +174,56 @@ On a two-host rig, install on both hosts and run guided setup before you start
 ComfyUI: setup refuses to install or start a Worker service while a driver
 runs ("Multi-node source installation" below).
 
-For a desktop entry with the project icon, install the launcher after the
+### Launch and handoff
+
+Keep permanent files in the user's chosen locations. Reuse suitable existing
+ComfyUI and Python installations; agree on durable paths for new ones during
+planning. Temporary and chat-output folders are for evidence or explicitly
+requested temporary tests, not the normal installation.
+
+Offer an optional easy launch script and ask whether the user wants it and
+where to save it. Their home directory, `~/.local/bin` or another folder they
+choose can work; do not silently choose the Desktop or a chat folder. Check
+for an existing file and ask before replacing it. The script should only set
+`DGXM_CLUSTER_TOML` to the resolved config and `exec bash` the maintained
+`scripts/comfy-driver.sh` with the resolved repository, ComfyUI and Python
+paths and the selected launch options. Forward arguments with `"$@"` so
+`--check` works. Preserve foreground execution and signals; do not add Worker
+restarts or a second installer.
+
+Validate the exact launch command, or the chosen script, with `--check` before
+using the same paths, config and options for the first render. This checks
+launcher arguments and paths; it does not prove a running browser service.
+Keep any required user terminal open for normal use. If cleanup stops the
+agent's test driver, tell the user that ComfyUI is stopped and provide the
+working command to start it.
+
+Lead the handoff with these details, before the test report:
+
+- The exact start command or shortcut path, and which Spark runs it.
+- Whether ComfyUI is currently running, plus the actual browser URL verified
+  while it ran. A localhost URL is for a browser on that Spark. For another
+  machine, use an approved SSH tunnel if needed and verify its endpoint; never
+  widen listening addresses or firewall access silently. If stopped, label
+  the URL as available after launch.
+- If the user chose the TUI, lead with `dgxm top` after verifying that `dgxm`
+  resolves to the selected environment and default discovery finds the intended
+  config and driver. Give the exact environment-activation command once if
+  needed. Use the full executable path or explicit `--config` and `--host`
+  options only when that setup needs them, with actual values rather than
+  placeholders. Live render data needs ComfyUI serving the Monarch telemetry
+  endpoint; running Workers alone do not supply it. See [TUI](TUI.md).
+- The saved selected workflow and configured render-output folder.
+- The actual Monarch checkout, ComfyUI, Python environment and cluster config
+  paths, separately from the private evidence directory.
+- How to stop or restart ComfyUI from its foreground terminal. Worker services
+  persist when ComfyUI closes; use `dgxm down` only for an intentional Worker
+  stop, and report their observed state.
+
+A normal installation remains installed and ready for use. Restoration belongs
+to an explicitly requested temporary acceptance test or an approved rollback.
+
+If the user wants a desktop entry with the project icon, install it after the
 source install:
 
 ```bash
@@ -167,7 +232,9 @@ bash "$COMFY_DIR/custom_nodes/dgx-monarch/scripts/dgxm-desktop.sh" install \
 ```
 
 The shortcut opens a terminal, starts only ComfyUI, and opens the browser once
-the server is ready. See [scripts/README.md](../scripts/README.md) for options.
+the server is ready. It does not save a custom `DGXM_CLUSTER_TOML` value passed
+to the installer; use the chosen launch script when a custom config path is
+needed. See [scripts/README.md](../scripts/README.md) for options.
 
 For the first distributed render, [choose a supported model and workflow](QUICKSTART.md#first-distributed-render)
 you already have or want to use. Chroma is optional; its
@@ -264,6 +331,52 @@ On every host (driver and workers):
    [SECURITY.md](../SECURITY.md#fabric-trust-boundary) gives the isolation
    rules, including why a rule for port 26600 alone is not enough.
 
+### Inspect the cluster network
+
+**Standard setup:** identify the selected fabric interfaces and addresses,
+then reuse existing verified controls or obtain the operator's informed
+confirmation that the [documented boundary](../SECURITY.md#fabric-trust-boundary)
+is in place: the complete Monarch transport surface uses the dedicated fabric,
+all traffic on that interface is source-restricted to the trusted driver and
+peers, and it is not exposed to a shared LAN, Wi-Fi or the Internet. A direct
+cable or private IP address alone is not that confirmation.
+
+Record whether the basis is operator-confirmed or agent-verified. Operator
+confirmation does not mean the agent audited the firewall. Standard setup does
+not require a firewall dump, sudo collection or a new audit each time. The
+trusted-fabric acknowledgement remains required and never configures isolation.
+
+**Optional network audit:** use this when the user requests it, is unsure about
+the boundary, or a specific observation raises a concern. Begin with the local
+read-only collector from each host's repository checkout:
+
+```bash
+python3 tools/collect_network_state.py
+```
+
+It writes a private report and prints its path. The default uses no sudo and
+may report incomplete firewall access. If the specific check needs
+administrator access, give the user one command per host with that host's
+actual checkout path:
+
+```bash
+python3 /absolute/path/to/dgx-monarch/tools/collect_network_state.py --sudo
+```
+
+The user runs it in their terminal and supplies the saved path or confirms
+completion. The agent reads and interprets the report locally. Do not ask the
+user to paste raw firewall rules into chat or decide whether the rules are
+safe. Keep reports private. The collector makes no network or firewall changes.
+
+A complete report is not a safety verdict. Interpret the configured rules,
+routes, selected fabric interfaces and physical topology together against
+SECURITY. Forwarding being enabled or UFW being off alone does not establish
+exposure and does not require sudo collection. If a check is inconclusive,
+name the specific missing fact. Known exposure or evidence contradicting the
+required boundary cannot be overridden by an acknowledgement; explain it and
+request approval for a narrow fix with rollback. Never apply firewall changes
+as a side effect of collection.
+
 Use guided setup below for the usual installation. As a manual alternative,
 `cluster.example.toml` is a complete config for a back-to-back DGX Spark pair.
 After checking that the destination is absent or approved for replacement, copy it to `~/.config/dgx-monarch/cluster.toml`, replace every `192.0.2.x`
@@ -288,6 +401,13 @@ Stop ComfyUI on the driver before an apply that installs or starts a Worker
 service. Setup refuses that transaction while a local driver, a Render session
 or a lease is active, and also whenever it cannot prove all three inactive.
 Start ComfyUI again once `dgxm doctor` is green.
+
+During discovery, check the [user service session](#check-the-agents-user-service-session)
+and [process inspection capability](#protected-process-inspection) on each host.
+Include any required helper in the installation plan before apply. For normal
+setup, omit `--receipt` to use the maintained private receipt directory; do not
+choose a path under the chat workspace. Check customized state paths using
+[Operator receipts](#operator-receipts).
 
 Review the setup plan on the driver before applying it:
 
@@ -333,8 +453,9 @@ DGXM_CLUSTER_TOML="$CLUSTER_CONFIG" \
 Keep ComfyUI in this foreground terminal. Use existing approved SSH access and
 verify the destination host identities. Ask before creating keys, changing
 SSH access, enabling lingering, installing privileged helpers or changing
-firewall rules. The trusted-fabric acknowledgement does not configure or
-verify a firewall; follow [SECURITY.md](../SECURITY.md#fabric-trust-boundary)
+firewall rules. Explicitly listed actions may share the installation-plan
+approval; already approved actions do not need another prompt. The trusted-fabric
+acknowledgement does not configure or verify a firewall; follow [SECURITY.md](../SECURITY.md#fabric-trust-boundary)
 before granting it. Never print credentials or copy them into a receipt.
 
 The `192.0.2.x` values are documentation addresses; replace them with the
@@ -368,8 +489,8 @@ checkout paths, so keep it private. `--json` prints a reduced plan and result
 without the config diff, but it still holds versions, commits, model
 fingerprints, counts and artifact, config and source hashes: review it before
 you share it. A JSON apply requires `--yes` so that stdout stays one JSON
-object; read the terminal plan first. A custom `--receipt` must be an absolute
-path.
+object; read the terminal plan first. Use the default receipt destination
+unless a custom path is needed; see [Operator receipts](#operator-receipts).
 
 #### Check the agent's user service session
 
@@ -405,33 +526,45 @@ processes. Setup then reports `service_ownership_unknown`, because a process
 name alone cannot prove a process is unrelated to Monarch. Keep the receipt
 and leave the ownership guard in place.
 
-For this case an administrator can run the optional, read-only process
-inspector on each selected host. Review its source file first. The command
-below copies that file to a root-owned temporary directory, checks the copy's
-hash, and runs it under isolated system Python; it changes no sudo policy or
-kernel setting. Run it in a foreground terminal on each host:
+Check the capability early on each host, from the selected repository:
 
 ```bash
-INSPECTOR_SOURCE="$COMFY_DIR/custom_nodes/dgx-monarch/src/dgx_monarch/cli/process_inspector.py"
-INSPECTOR_SHA="$("$COMFY_PYTHON" -c \
-  'import hashlib,sys; print(hashlib.sha256(open(sys.argv[1], "rb").read()).hexdigest())' \
-  "$INSPECTOR_SOURCE")"
-sudo /bin/bash -s -- "$INSPECTOR_SOURCE" "$INSPECTOR_SHA" <<'DGXM_INSPECTOR_ROOT'
-set -euo pipefail
-[[ "${SUDO_UID:-}" =~ ^[1-9][0-9]*$ ]]
-[[ "$2" =~ ^[0-9a-f]{64}$ ]]
-inspector_dir=$(mktemp -d /run/dgxm-inspector.XXXXXX)
-trap 'rm -f -- "$inspector_dir/inspector.py"; rmdir -- "$inspector_dir"' EXIT
-install -o root -g root -m 0600 -- "$1" "$inspector_dir/inspector.py"
-printf '%s  %s\n' "$2" "$inspector_dir/inspector.py" | sha256sum --check --status
-env -i PATH=/usr/bin:/bin SUDO_UID="$SUDO_UID" \
-  /usr/bin/python3 -I -S "$inspector_dir/inspector.py" --lifetime 1800
-DGXM_INSPECTOR_ROOT
+python3 tools/process_inspection.py --check
 ```
 
-Wait for its ready message. Then, in another terminal, add
+Run the check as the installation user in the same approved host or SSH login
+session used by setup. If an agent sandbox blocks `/proc`, retry through an
+existing approved, unprivileged host session before concluding root access is
+needed. Sandbox denial alone is not a host permission failure; do not disable
+the sandbox or bypass access restrictions.
+
+This checks whether the current session can read process metadata. It does not
+prove process ownership or that no work is running. A denied or incomplete
+check means the required ownership check may need privileged inspection; it
+does not justify killing a process or weakening the guard.
+
+When needed, include the read-only inspector in the approved installation
+plan. Review `tools/process_inspection.py` and
+`src/dgx_monarch/cli/process_inspector.py` first. Reuse an existing helper only
+when its authenticated reply passes setup's identity and freshness checks;
+a socket path or old ready message is not sufficient.
+
+Otherwise, give the user this command with each host's actual repository path.
+Run it as the normal user in a foreground terminal on each host that needs it:
+
+```bash
+python3 /absolute/path/to/dgx-monarch/tools/process_inspection.py --serve
+```
+
+The launcher prompts for sudo, copies the inspector to a private root-owned
+directory, checks its hash and runs it with isolated system Python. It changes
+no sudo policy or kernel setting. Protected process metadata can still require
+one open foreground terminal per host; do not background the helper.
+
+The agent should verify the authenticated reply through setup rather than
+asking the user to confirm it when that reply is available. Add
 `--privileged-process-inspection` to both the reviewed setup command and its
-apply. The plan and receipt record this choice; cluster.toml never does. The
+apply in the setup terminal. The plan and receipt record this choice; cluster.toml never does. The
 helper reads only the invoking user's process markers and returns bounded
 Worker and actor identities and endpoint fingerprints. It cannot start or stop
 processes or expose command lines or environment values. Before setup uses a
@@ -439,7 +572,7 @@ reply, it checks that the peer is root, that the helper source hash, UID and
 boot id match, and that the reply is fresh. Missing, expired, incompatible or
 incomplete inspection stays unknown; nothing skips the protected processes.
 
-`--lifetime 1800`, the most the helper allows, makes it exit after 30 minutes;
+The launcher uses `--lifetime 1800`, the helper's 30-minute maximum;
 Ctrl-C stops it sooner. Keep it running until setup and any recovery have
 settled. If it expires during an uncertain transaction, keep that
 transaction's receipt and recovery state: a new helper alone does not
@@ -457,8 +590,9 @@ fresh service-identity check.
 Guided setup does not install or repair Python, CUDA, torch, torchmonarch,
 ComfyUI, rsync, systemd or lingering. Every candidate must already have
 Python 3.11 or newer, the declared GPU count, CUDA-capable torch, the exact
-torchmonarch pin and a clean Git ComfyUI checkout, and the Python, torch and
-torchmonarch versions and the ComfyUI commit must match across hosts. A unit
+torchmonarch pin and a clean Git ComfyUI checkout, apart from the
+[narrow missing-example exception](#inspect-before-installing). The Python,
+torch and torchmonarch versions and the ComfyUI commit must match across hosts. A unit
 installation, started or not, also needs rsync, systemd user services and
 lingering on each host. The dry run reports each missing prerequisite as a
 blocker against its host; fix it there and rerun the dry run.
@@ -618,11 +752,16 @@ Install the final safetensors release (>= 0.8.0), not a pre-release. ComfyUI
 brings safetensors in, and `0.8.0rc0` satisfies `>= 0.8.0` but lacks the pread
 backend; the `safetensors pread` doctor row checks this and names the fix.
 
-`dgxm top` needs the optional `tui` extra. Follow the same dry-run and
-constrained installation procedure above, changing `-e "$REPO_DIR"` to
+Offer the optional dgxm TUI during the initial setup questions, alongside the
+launch-script choice. If accepted, prefer one combined install with the `tui`
+extra. Follow the same dry-run and constrained installation procedure above,
+using the verified xFuser wheel and preserved Torch constraint, changing
+`-e "$REPO_DIR"` to
 `-e "$REPO_DIR[tui]"` in both commands. If the temporary wheel directory has
 already been removed, prepare it again first. Review the dependency plan and
-verify torch afterward; do not run an unconstrained extras install.
+verify torch afterward; do not run an unconstrained extras install. If the
+user declines, leave the extra out. Use the chosen ComfyUI environment rather
+than creating or overwriting another one.
 
 `dgxm update` installs with `--no-deps`, so it never adds the extra.
 
@@ -875,6 +1014,11 @@ destination is `$XDG_STATE_HOME/dgx-monarch/receipts/`, falling back to
 the current user; publication is atomic, no-follow, non-overwriting, and the
 file mode is `0600`.
 
+Use this default for normal setup. During discovery, inspect any customized
+`XDG_STATE_HOME` and the existing directory ancestry before applying changes.
+Do not redirect receipts into a chat workspace just to keep reports together.
+The default destination uses the same safe-parent checks as a custom path.
+
 For a normally returned applied setup, safe repair, or verified update, receipt
 publication is required before the command reports success. If the operation settles but its
 required receipt cannot be published, the command exits nonzero and reports a
@@ -904,10 +1048,13 @@ them. `dgxm doctor --json` is different: it is a full diagnostic
 snapshot rather than a receipt. It can include host names, addresses, paths,
 versions and raw check details; keep it private or redact it by hand before sharing.
 
-A custom `--receipt` path must be absolute. The command creates missing
-parents and requires the final parent to be a real, non-symlink directory
-owned by the current user. Publication sets that directory to `0700`; use a
-dedicated private directory, not a shared or general-purpose one.
+If the user needs a custom `--receipt`, check its absolute path and existing
+ancestors before apply. No parent may be a symlink. Group- or world-writable
+ancestors are rejected unless sticky; the final directory must belong to the
+current user. The command creates missing parents and sets the final directory
+to `0700`, so choose a dedicated private directory. Never change permissions
+on a shared or unrelated directory to make receipt publication pass. An
+optional dry-run receipt has the same path requirements.
 
 ## Uninstalling
 

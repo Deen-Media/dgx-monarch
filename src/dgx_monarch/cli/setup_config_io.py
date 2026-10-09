@@ -69,6 +69,7 @@ def setup_readiness(
     transport_security: str,
 ) -> tuple[list[str], list[str]]:
     blockers: list[str] = []
+    warnings: list[str] = []
     if verify and not start_workers:
         blockers.append("verify_requires_worker_start")
     for expected, probe in zip(expected_gpus, probes, strict=True):
@@ -91,12 +92,14 @@ def setup_readiness(
             blockers.append(f"{prefix}_comfy_missing")
         elif probe.comfy_runtime_marker is not True:
             blockers.append(f"{prefix}_comfy_runtime_marker_missing")
-        elif probe.comfy_dirty is True:
+        elif probe.comfy_dirty is True and probe.comfy_only_missing_examples is not True:
             blockers.append(f"{prefix}_comfy_dirty")
         elif probe.comfy_git is not True:
             blockers.append(f"{prefix}_comfy_not_git")
-        elif probe.comfy_dirty is not False or probe.comfy_commit is None:
+        elif probe.comfy_dirty is None or probe.comfy_commit is None:
             blockers.append(f"{prefix}_comfy_git_state_unknown")
+        elif probe.comfy_dirty is True:
+            warnings.append(f"{prefix}_comfy_missing_examples_preserved")
         if (install_service or start_workers) and probe.rsync_available is not True:
             blockers.append(f"{prefix}_rsync_unavailable")
         if install_service:
@@ -120,7 +123,7 @@ def setup_readiness(
         blockers.append("trusted_fabric_not_acknowledged")
     if len(probes) > 1 and fabric_profile == "single-node":
         blockers.append("multi_host_single_node_fabric")
-    return sorted(set(blockers)), []
+    return sorted(set(blockers)), sorted(set(warnings))
 
 
 def _supported_python(version: str | None) -> bool:
