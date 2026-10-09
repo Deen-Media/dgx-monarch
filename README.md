@@ -99,7 +99,7 @@ Help me install DGX Monarch from https://github.com/Deen-Media/dgx-monarch on my
 
 Discover what you can safely and ask only for missing inputs or approvals. Show the installation and rollback plan before making changes. Preserve existing environments, models, credentials and unrelated work. Ask before disruptive, destructive, or security changes, and never print credentials.
 
-Complete the documented first distributed render, save its output, and show that both Sparks participated. Check that rerunning setup preserves the installation. Report the commit, versions, reused components, manual steps, results and limitations. Do not claim success from imports or Doctor alone.
+Use a supported model and workflow I already have or choose. Chroma is optional; recommend it only if I have no preference. Follow the selected model's documented files and distributed settings. Complete a real distributed render, save its output, and show that both Sparks participated. Check that rerunning setup preserves the installation. Report the commit, versions, reused components, manual steps, results and limitations. Do not claim success from imports or Doctor alone.
 ```
 
 The maintained setup procedure is [skills/dgx-monarch/SKILL.md](skills/dgx-monarch/SKILL.md).
@@ -113,7 +113,7 @@ You need an existing ComfyUI installation. For the tested two-Spark setup, both 
 
 1. Follow [INSTALL](docs/INSTALL.md) using the Python that starts ComfyUI. Keep its CUDA torch build and install this checkout under `custom_nodes`.
 2. Configure the pair with [guided setup](docs/INSTALL.md#guided-multi-node-setup), then check `dgxm doctor` and `dgxm status`.
-3. Keep ComfyUI in a foreground terminal. Open **Workflow → Browse Templates → dgx-monarch**, open the [recommended Chroma workflow](docs/QUICKSTART.md#first-distributed-render), and select its verified model files.
+3. Keep ComfyUI in a foreground terminal. Open **Workflow → Browse Templates → dgx-monarch** and choose a supported workflow for your model. [QUICKSTART](docs/QUICKSTART.md#first-distributed-render) explains the choice and includes an optional Chroma recipe.
 4. Queue the graph. See [QUICKSTART](docs/QUICKSTART.md) for the node layout and first-run checks.
 
 Worker services stay running when ComfyUI closes. Use `dgxm down` when you intend to stop them.

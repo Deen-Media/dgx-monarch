@@ -1,5 +1,11 @@
 # Changelog
 
+## [Unreleased]
+
+- Let users choose a supported model for their first distributed render.
+  Chroma remains an optional recommendation; setup still requires a saved
+  output, proof that both Sparks participated and a safe rerun.
+
 ## 1.0.0
 
 Initial release of DGX Monarch: distributed image and video generation in

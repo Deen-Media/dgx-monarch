@@ -12,8 +12,10 @@ services on the cluster hosts. `dgxm up`, guided setup with
 `--start-worker-service`, auto-heal, or an installed user service can leave
 them running. Check `dgxm status`; use `dgxm down` only for an intentional stop.
 
-For your first distributed render, use the [Chroma recipe below](#first-distributed-render).
-It names every file and setting, then checks that both Sparks took part.
+For your first distributed render, [choose a supported model](#first-distributed-render)
+you already have or want to use. The optional Chroma recipe below provides
+exact files and settings if you have no preference. Either way, verify that
+both Sparks took part.
 For agent-led installation, follow [the setup skill](../skills/dgx-monarch/SKILL.md).
 
 ## 1. Add the Init node
@@ -25,8 +27,8 @@ nodes renders on the driver as usual, and queue advice lists what to add and
 swap; a graph that uses DGX Monarch nodes without Init cannot run, and the
 advice says so.
 
-For the first two-Spark check, use explicit `mode=cluster` and the settings in
-the [recommended recipe](#first-distributed-render). For ordinary use, `auto`
+For the first two-Spark check, use explicit `mode=cluster` and a documented
+two-rank configuration for your [selected model](#first-distributed-render). For ordinary use, `auto`
 selects a topology for the requested resolution and logs its choice. Without
 `cluster.toml`, `auto` runs locally, so it is not proof of a distributed render.
 [MODELS.md](MODELS.md) lists family support, and
@@ -54,8 +56,9 @@ the supported image and video workflows, plus five general examples:
 quickstart, a LoRA stack in low-RSS mode, Fleet, the Identity Gate, and a
 dual-Spark split render. The [MODELS.md](MODELS.md) support matrix states each
 variant's tested settings and identifies variants with no template yet.
-For the recommended first distributed render, open `dgx-monarch-chroma-t2i`. ComfyUI registers the route that serves a
-pack's template folder only when the server starts, so after an install while
+Choose the template for your selected model; `dgx-monarch-chroma-t2i` is an
+optional starting point. ComfyUI registers the route that serves a pack's
+template folder only when the server starts, so after an install while
 ComfyUI runs, this menu lists the new graphs but none of them open until you
 restart ComfyUI. `dgxm update` refuses while ComfyUI runs, so an update ends
 with a ComfyUI start too.
@@ -77,7 +80,22 @@ SCAIL Preview graph includes this warning.
 
 <a id="first-distributed-render"></a>
 
-## 4. First distributed render: Chroma 1 HD
+## 4. First distributed render
+
+Use a supported model you already have or choose. Check the exact checkpoint,
+precision, inputs and two-Spark configuration in [Model support](MODELS.md),
+then follow its workflow notes and file list. Verify matching model files on
+both hosts and any published hashes, and follow the model's access and license
+requirements. Use `mode=cluster` and `auto_gate=first_use`; leave native latent
+RDMA off. Follow the selected model's topology, attention, sampler and memory settings.
+
+Chroma is optional. If you have no preference, the recipe below gives a tested
+starting point. Its filenames and render settings apply only to Chroma. For
+any selected model, require a saved output, [evidence from both Sparks](#collect-evidence-from-the-same-render),
+and a successful setup rerun. The recorded fresh-agent trial used Chroma;
+choosing another model does not extend that trial's results.
+
+### Optional recipe: Chroma 1 HD
 
 Use the existing [Chroma workflow](../example_workflows/dgx-monarch-chroma-t2i.json).
 This is a small three-file starting point among the supported workflows. The
@@ -208,18 +226,23 @@ From the selected repository checkout, run the existing converter:
 
 It reads widget definitions from that driver's `/object_info` and writes
 `<out_dir>/graphs/<saved-workflow-name>.json`. Inspect that graph against the
-settings above, including 26 steps, seed and explicit cluster config. Notes and
+selected workflow's settings, including the step count (26 for the Chroma
+recipe), seed and explicit cluster config. Notes and
 the frontend seed-control widget are omitted; the numerical seed remains.
 Use only the converter here, not the sweep runner, which can shorten schedules
 for probes.
 
 Submit the converted graph as `prompt` in `POST /prompt`, with a unique
 `client_id`. Include the saved UI JSON as `extra_data.extra_pnginfo.workflow`
-to retain it in the output PNG. Save the exact request and returned `prompt_id`,
+to retain it in a PNG output. For other output formats, save the workflow
+separately and retain any metadata the save node supports. Save the exact request and returned `prompt_id`,
 then collect the evidence below. Preserve validation errors instead of silently
 altering the graph or retrying it.
 
 ### Collect evidence from the same render
+
+These checks apply to the selected workflow. The values in parentheses are
+for the optional Chroma recipe.
 
 Use one queued job at a time during acceptance, with no other driver using the
 pair. Keep the foreground ComfyUI log. Before queuing, record the time and its
@@ -230,11 +253,13 @@ the ComfyUI prompt ID.
 1. Save the submitted graph and returned `prompt_id`. Read ComfyUI's
    `GET /history/<prompt_id>` on the same approved driver address. Save the
    entry showing `status.completed=true`, `status.status_str=success`, its
-   execution messages, and the output image entry. Check that execution did
+   execution messages, and the saved output entry. Check that execution did
    not merely reuse a cached sampler or output. Use the output entry's filename,
-   subfolder and type to identify the PNG; open it, confirm 1024 by 1024 pixels,
+   subfolder and type to identify the file. Open or play it, check the expected
+   dimensions and duration where applicable (a 1024 by 1024 PNG for Chroma),
    and record its SHA256. Retain the original workflow and history separately.
-2. In the captured log interval, find `render topology: cfg2` and both
+2. In the captured log interval, find the selected render topology
+   (`render topology: cfg2` for Chroma) and both
    `rank 0/<host>: sample ...` and `rank 1/<host>: sample ...` messages.
    They must name the two intended, distinct Spark hosts. Save the full interval,
    not just selected lines, so startup or another job cannot be mistaken for
@@ -244,7 +269,8 @@ the ComfyUI prompt ID.
    Its `workers` rows should identify `host`, `rank`, `world`, `topology`, and
    `source_manifest_sha256`. Require ranks 0 and 1 on the intended hosts,
    `world=2` and matching source manifests. In each `topology` object, require
-   `cfg=2`, `ulysses=1`, `ring=1`, `dp=1`, and `fsdp=false`. Before the first
+   the selected model's documented layout (for Chroma: `cfg=2`, `ulysses=1`,
+   `ring=1`, `dp=1`, and `fsdp=false`). Before the first
    Init, `workers` can be empty. During sampling, status queries may time out
    or return cached data; obtain a successful post-render snapshot and retain
    any error or stale-data markers rather than treating them as current proof.
@@ -259,7 +285,7 @@ and successful saved output establish that they performed this render.
 Idle Worker readiness, two live services, or a telemetry snapshot alone cannot
 replace that evidence. Keep addresses, host identities and raw logs private.
 For the second render, change the seed and collect a new prompt ID, log
-interval, history and output; do not count the first image twice.
+interval, history and output; do not count the first output twice.
 
 ### Acceptance record
 
@@ -267,7 +293,8 @@ A new installation has passed only when its own record contains:
 
 - The DGX Monarch commit, ComfyUI commit, Python/Torch/CUDA/Monarch/xFuser versions,
   and matching model hashes from both hosts.
-- A completed render and readable saved PNG, with its exact workflow and settings.
+- A completed render and a saved output that opens or plays correctly, with its
+  exact workflow and settings.
 - Render-time evidence naming both Spark hosts and their participating ranks.
   Idle Worker services, imports, and a green Doctor report alone do not show
   distributed rendering.
@@ -276,7 +303,7 @@ A new installation has passed only when its own record contains:
 - The reused components, approvals or manual steps, failures and fixes, and
   confirmation that the agreed retained or restored setup is healthy.
 
-This recipe passed installation, two distributed renders and a read-only setup
+The Chroma recipe passed installation, two distributed renders and a read-only setup
 rerun with newly installed Python environments, ComfyUI and Monarch on existing
 Sparks. The [fresh-agent installation record](VALIDATION.md#fresh-agent-installation)
 gives the tested versions, reused components and final restoration status.

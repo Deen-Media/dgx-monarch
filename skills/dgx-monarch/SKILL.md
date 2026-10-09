@@ -177,23 +177,35 @@ config or silently turn the intended distributed render into a local one.
 
 ## 5. Verify a real first render
 
-Follow the single recommended [Chroma workflow](../../docs/QUICKSTART.md#first-distributed-render).
-Its [file table](../../docs/QUICKSTART.md#first-render-files) gives all filenames,
-destinations, pinned publisher downloads, sizes, hashes and license links.
-Verify actual bytes on both hosts. Reuse a matching file; stop on a mismatch
-instead of overwriting it. Do not bypass a download gate or licensing condition.
+Use a supported model the user already has or chooses. Check its exact
+checkpoint, precision and two-Spark configuration in [MODELS](../../docs/MODELS.md),
+then use the corresponding repository workflow and its documented settings.
+If the user has no preference, recommend the optional
+[Chroma recipe](../../docs/QUICKSTART.md#first-distributed-render). Its
+[file table](../../docs/QUICKSTART.md#first-render-files) provides a complete
+starting point; Chroma is not required for installation acceptance.
+
+For the selected workflow, identify every model file, destination, official
+source and license requirement. Check published hashes where available and
+verify matching actual bytes on both hosts. Record when no publisher hash is
+available; do not invent one. Reuse matching files and investigate mismatches
+without overwriting them. Do not bypass download gates or licensing conditions.
 
 After setup, run Doctor and status using the explicit config. Resolve failures
 without weakening checks. Doctor and setup's short cluster smoke are useful
-prerequisites, but neither is a saved-image acceptance test.
+prerequisites, but neither proves a completed distributed render.
 
 Start ComfyUI in a tracked foreground terminal/session with the selected
-interpreter and config. Follow [the first-render settings](../../docs/QUICKSTART.md#first-distributed-render),
-including explicit `mode=cluster`, the two-rank topology, Torch Flash and
-`auto_gate=first_use`. Keep the prescribed stock residency and turn no untested
-optimization on. Use the actual workflow, not a hand-built substitute.
+interpreter and config. Use explicit `mode=cluster`, a documented two-rank
+configuration for the selected model, and `auto_gate=first_use`. Keep native
+latent RDMA off. Prefer stock residency and modest inputs where supported;
+follow the model's documented attention and memory requirements. Chroma's cfg2
+layout, sampler and step count apply only to its recipe. Use the repository
+workflow and retain its required inputs. Do not enable untested optimizations
+or bypass a failed gate to make setup pass.
 
-Require a completed queue and a saved, readable image. Save its path and hash,
+Require a completed queue and a saved image, video or audio output that can be
+opened in an appropriate viewer or player. Save its path and hash,
 the submitted workflow/settings, and per-rank source and render evidence that
 identifies two ranks on two distinct Sparks. Correlate it with the same queue.
 A local render, imports, two reachable services or green Doctor checks alone
@@ -252,5 +264,5 @@ Use `scripts/comfy-driver.sh` for the optional foreground launcher and
 and monitoring. The optional `comfy_managed` Init widget changes how workers
 place weights; leave it disabled for the first render. Read
 [docs/TROUBLESHOOTING.md #62](../../docs/TROUBLESHOOTING.md#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)
-before enabling it or changing residency. Do not generalize the first image
+before enabling it or changing residency. Do not generalize the first render
 test to other models, precisions, memory modes or native RDMA.
