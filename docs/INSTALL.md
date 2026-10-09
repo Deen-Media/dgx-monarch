@@ -60,6 +60,8 @@ write logs or caches at other default paths. Record the observed locations and
 reuse; do not weaken the environment filter, edit a managed unit, or clear
 unrelated caches to claim a cleaner installation.
 
+<a id="install-from-source"></a>
+
 ## Install the node pack
 
 Before changing an existing environment, agree on a backup or isolated test
@@ -167,9 +169,11 @@ bash "$COMFY_DIR/custom_nodes/dgx-monarch/scripts/dgxm-desktop.sh" install \
 The shortcut opens a terminal, starts only ComfyUI, and opens the browser once
 the server is ready. See [scripts/README.md](../scripts/README.md) for options.
 
-For the recommended first distributed render, follow
-[the first-render file list](QUICKSTART.md#first-render-files), including the
-exact filenames, download sources and access requirements. Start ComfyUI with
+For the first distributed render, [choose a supported model and workflow](QUICKSTART.md#first-distributed-render)
+you already have or want to use. Chroma is optional; its
+[file list](QUICKSTART.md#first-render-files) is a starting point if you have no
+preference. Use the selected workflow's files, download sources and access
+requirements. Start ComfyUI with
 the explicit cluster config selected below. `mode=auto` without a config can
 run locally, so a saved image alone is not proof that both Sparks rendered it.
 Keep the workflow, saved output and evidence of both ranks' participation.
@@ -247,8 +251,9 @@ On every host (driver and workers):
    its server.
 3. The model files under the same relative names (`models/diffusion_models/…`,
    `models/loras/…`). Workers resolve model names against their local
-   directories. Check the [first-render files](QUICKSTART.md#first-render-files)
-   on both hosts. Compare existing bytes before transferring anything, copy
+   directories. Check all files required by the selected workflow on both
+   hosts; the [Chroma file list](QUICKSTART.md#first-render-files) applies only
+   to that optional recipe. Compare existing bytes before transferring anything, copy
    only missing approved files, and never replace a different file silently.
    Pass each required file to setup with `--artifact`, relative to ComfyUI.
 4. Passwordless ssh from the driver to each worker host.
