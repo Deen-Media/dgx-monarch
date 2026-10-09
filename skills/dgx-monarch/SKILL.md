@@ -128,10 +128,11 @@ The required safeguards are:
    import path and the exact Monarch/xFuser pins. Stop on incompatible binary
    imports. Do not copy a donor environment's packages to hide missing wheels.
 
-Run the dependency check described in INSTALL. If the only failure is the
-[known cuSPARSELt platform-tag error](../../docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform),
-verify the official artifact as instructed and record the failure separately.
-Do not report a clean dependency check or ignore another error.
+Run `tools/check_dependencies.py` with the chosen ComfyUI interpreter as
+described in INSTALL. It verifies the [known cuSPARSELt platform-tag failure](../../docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
+before accepting it. Retain any printed exception with the installation
+record; do not describe that result as an error-free raw pip check. Stop if
+the tool fails.
 
 `dgxm` is installed beside `COMFY_PYTHON`; use that executable explicitly when
 multiple environments exist. Establish `DGXM` as described in INSTALL before

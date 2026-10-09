@@ -122,17 +122,22 @@ installation needs network access; it must not replace ComfyUI's CUDA torch.
 Use the same constraint and dry-run review for later optional extras too.
 
 After installation, compare torch version, CUDA version and import location
-with the recorded values, confirm CUDA availability, run `pip check` with this
-interpreter, and check imports for Monarch, xFuser and ComfyUI. Record the
+with the recorded values, confirm CUDA availability, and run the dependency
+checker with this interpreter:
+
+```bash
+"$COMFY_PYTHON" "$REPO_DIR/tools/check_dependencies.py"
+```
+
+Then check imports for Monarch, xFuser and ComfyUI. Record the
 resolved package versions and node-pack commit. Preserve the install report
 with the private test record; remove only the temporary directory created
 above when it is no longer needed. This procedure pins Monarch and xFuser;
 it does not lock every transitive dependency.
 
-On Linux ARM64, the pinned NVIDIA cuSPARSELt wheel can produce one known
-platform-tag error in `pip check`. Follow the
-[artifact verification and reporting steps](TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
-before continuing. Keep that result separate from successful imports or renders.
+The checker verifies the [known cuSPARSELt platform-tag failure](TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
+before accepting it on Linux ARM64. Save any printed exception with the
+installation record. A failed check must be resolved before continuing.
 
 The installer places `dgxm` beside `$COMFY_PYTHON`. Invoke that executable so a
 shell's unrelated `dgxm` cannot select another environment:

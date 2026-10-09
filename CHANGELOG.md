@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+
+- Add `tools/check_dependencies.py` for installation and CI. It accepts only
+  the known cuSPARSELt 0.8.1 ARM64 platform-tag failure after checking the
+  installed files against the official wheel. Other dependency errors fail.
+- Add a GitHub-hosted ARM64 CPU job on Ubuntu 24.04 with Python 3.12.
+  Keep the existing x64 test coverage and ComfyUI canaries.
+
 ## 1.0.0
 
 Initial release of DGX Monarch: distributed image and video generation in
@@ -47,8 +55,9 @@ ComfyUI, built for a pair of NVIDIA DGX Sparks.
 ### Limits
 
 - The official NVIDIA cuSPARSELt 0.8.1 ARM64 wheel has a platform-tag error
-  reported by `pip check`. Follow the [artifact verification steps](docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
-  and record this upstream packaging failure separately from render results.
+  reported by pip 24.2 and later. The 1.0.0 installation procedure used manual
+  artifact verification and recorded this failure separately from render
+  results. See the [current dependency check](docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform).
 - Support and measured speedups apply to the configurations listed in
   [Model support](docs/MODELS.md), [Benchmarks](docs/BENCHMARKS.md) and
   [Validation](docs/VALIDATION.md). A workflow template does not establish
