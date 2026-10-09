@@ -5,8 +5,8 @@
 
 # Use both Sparks in ComfyUI
 
-[![ci](https://github.com/Balaxxe/dgx-monarch/actions/workflows/ci.yml/badge.svg)](https://github.com/Balaxxe/dgx-monarch/actions/workflows/ci.yml)
-[![comfy-canary](https://github.com/Balaxxe/dgx-monarch/actions/workflows/comfy-canary.yml/badge.svg)](https://github.com/Balaxxe/dgx-monarch/actions/workflows/comfy-canary.yml)
+[![ci](https://github.com/Deen-Media/dgx-monarch/actions/workflows/ci.yml/badge.svg)](https://github.com/Deen-Media/dgx-monarch/actions/workflows/ci.yml)
+[![comfy-canary](https://github.com/Deen-Media/dgx-monarch/actions/workflows/comfy-canary.yml/badge.svg)](https://github.com/Deen-Media/dgx-monarch/actions/workflows/comfy-canary.yml)
 [![license: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 
 Generate images and video across two DGX Sparks from one ComfyUI window. Split a render between the GPUs, run separate prompts at once, or shard supported model weights to fit larger checkpoints.
@@ -95,7 +95,7 @@ model-license steps yourself. Never paste private keys or tokens into chat.
 Copy this prompt into your agent:
 
 ```text
-Help me install DGX Monarch from https://github.com/Balaxxe/dgx-monarch on my two DGX Sparks. Use the checkout I provide, or clone the repository if needed. Explicitly read skills/dgx-monarch/SKILL.md and follow it and its linked docs; do not assume skills are discovered automatically.
+Help me install DGX Monarch from https://github.com/Deen-Media/dgx-monarch on my two DGX Sparks. Use the checkout I provide, or clone the repository if needed. Explicitly read skills/dgx-monarch/SKILL.md and follow it and its linked docs; do not assume skills are discovered automatically.
 
 Discover what you can safely and ask only for missing inputs or approvals. Show the installation and rollback plan before making changes. Preserve existing environments, models, credentials and unrelated work. Ask before disruptive, destructive, or security changes, and never print credentials.
 

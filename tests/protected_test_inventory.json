@@ -305,7 +305,7 @@
       "test_every_rung_produces_a_priced_verdict_or_sits_in_the_unpriced_set": "3c8352ccefa233bf",
       "test_known_compile_noop_family_keeps_its_vouched_auto_slab": "0b3c97453fce6d3e",
       "test_no_rung_is_unpriced_on_day_one": "1fbda872b8c840bc",
-      "test_price_matches_resolve_on_every_row_of_the_ladder": "77a2fba28b370858",
+      "test_price_matches_resolve_on_every_row_of_the_ladder": "94084a0031b37592",
       "test_price_takes_the_ladder_arguments_plus_exactly_five": "eaed94ad647f6d42",
       "test_rank_price_carries_every_field_the_design_names": "6786a7f819353108",
       "test_rank_price_is_frozen_and_slotted": "4c0317a7610620ab",

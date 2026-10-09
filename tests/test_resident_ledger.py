@@ -157,6 +157,9 @@ def _standin_active(monkeypatch):
 
 
 def test_a_slab_load_declares_its_residency(rig, monkeypatch):
+    from dgx_monarch import mesh_safety
+
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 100 << 30)
     store, _calls = rig
     store.slab_weights = True
     active = _standin_active(monkeypatch)
