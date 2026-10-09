@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Accept the verified color-matcher 0.6.0 test-data layout during pinned
+  TorchMonarch checks. Preserve checks for changed files, duplicate ownership
+  and executable import shadows. Add a recovery command for installations
+  whose older updater cannot pass this check.
+
 - Report live Worker service readiness from fresh passive process and listening
   socket checks, separately from actor telemetry. Refresh in the background;
   missing, expired or failed observations remain unknown.

@@ -112,3 +112,71 @@ def test_pinned_module_filename_is_normalized_before_shadow_check(installed_work
     result = run(pin_digest=digest)
     assert result.returncode == 3
     assert "RELEASE_MATCH" not in result.stdout
+
+
+def _color_matcher_layout(packages, tools, monkeypatch, *, initializer=b"", false_claim=False):
+    import base64
+    import csv
+    import hashlib
+    import io
+
+    from dgx_monarch.cli import update_payload_ownership as ownership
+
+    def record(data):
+        return "sha256=" + base64.urlsafe_b64encode(hashlib.sha256(data).digest()).decode().rstrip("="), str(len(data))
+
+    pinned = packages / "tests/test_cuda.py"
+    pinned.parent.mkdir(exist_ok=True)
+    pinned.write_bytes(b"PINNED = True\n")
+    own_record = packages / "torchmonarch-0.6.0.dist-info/RECORD"
+    with own_record.open("a") as stream:
+        csv.writer(stream).writerow(("tests/test_cuda.py", *record(pinned.read_bytes())))
+    expected_digest = site_payload_digest(packages, "0.6.0")
+    filenames = ("scotland_house.png", "scotland_pitie.png", "scotland_plain.png")
+    payloads = {name: b"synthetic png " + name.encode() for name in filenames}
+    known_data = {name: record(data) for name, data in payloads.items()}
+    monkeypatch.setattr(ownership, "_COLOR_MATCHER_DATA", known_data, raising=False)
+    verifier = tools / "dgx_monarch/cli/update_payload_ownership.py"
+    with verifier.open("a") as stream:
+        stream.write("\n_COLOR_MATCHER_DATA = " + repr(known_data) + "\n")
+    metadata = b"Metadata-Version: 2.1\nName: color-matcher\nVersion: 0.6.0\n"
+    files = {"tests/__init__.py": initializer, "tests/unit_test.py": b"FOREIGN = True\n",
+             "color_matcher-0.6.0.dist-info/METADATA": metadata}
+    for name, data in payloads.items():
+        files["tests/data/" + name] = data
+    records = []
+    for name, data in files.items():
+        path = packages / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+        records.append((name, *record(data)))
+    for name, data in payloads.items():
+        external = packages / "../../../tests/data" / name
+        external.parent.mkdir(parents=True, exist_ok=True)
+        external.write_bytes(data)
+        records.append(("../../../tests/data/" + name, *record(data)))
+    if false_claim:
+        records.append(("tests/test_cuda.py", *record(pinned.read_bytes())))
+    records.append(("color_matcher-0.6.0.dist-info/RECORD", "", ""))
+    output = io.StringIO()
+    csv.writer(output).writerows(records)
+    (packages / "color_matcher-0.6.0.dist-info/RECORD").write_text(output.getvalue())
+    return expected_digest
+
+
+def test_worker_attestation_accepts_verified_color_matcher_without_changing_pin_digest(installed_worker, monkeypatch):
+    _, tools, packages, run = installed_worker
+    expected = _color_matcher_layout(packages, tools, monkeypatch)
+    assert site_payload_digest(packages, "0.6.0") == expected
+    result = run(pin_digest=expected)
+    assert result.returncode == 0, (result.returncode, result.stdout, result.stderr)
+    assert result.stdout.strip() == "RELEASE_MATCH"
+
+
+@pytest.mark.parametrize("options", [{"initializer": b"EXECUTABLE = True\n"}, {"false_claim": True}])
+def test_worker_attestation_still_rejects_color_matcher_shadow_or_false_claim(installed_worker, monkeypatch, options):
+    _, tools, packages, run = installed_worker
+    expected = _color_matcher_layout(packages, tools, monkeypatch, **options)
+    result = run(pin_digest=expected)
+    assert result.returncode != 0
+    assert "RELEASE_MATCH" not in result.stdout

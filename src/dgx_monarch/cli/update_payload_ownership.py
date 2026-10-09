@@ -8,10 +8,19 @@ import io
 import os
 import re
 import stat
+import sys
 from collections.abc import Mapping
 from email.parser import BytesParser
 from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path, PurePosixPath
+
+# Official color-matcher 0.6.0 wheel: data installed both inside site-packages
+# and through the wheel data scheme. External copies are never opened here.
+_COLOR_MATCHER_DATA: dict[str, tuple[str, str]] = {
+    "scotland_house.png": ("sha256=7nKDHIIwtWkoW1JU2yNz6I4L7650rLYCLUKgyOka19E", "298652"),
+    "scotland_pitie.png": ("sha256=5aor6EphGdWqn9_rS76CTXuP6juqccIXcyXcg0O8YZM", "304007"),
+    "scotland_plain.png": ("sha256=RZuXuvsUifnqLxw3aYilcbN8tW1G6gilrZGpjLAswXc", "280371"),
+}
 
 
 class PayloadOwnershipError(ValueError):
@@ -47,15 +56,33 @@ def _safe_path(value: str) -> bool:
     )
 
 
-def _records(payload: bytes) -> tuple[dict[str, tuple[str, str]], bool]:
+def _records(
+    payload: bytes, *, color_matcher: bool = False,
+) -> tuple[dict[str, tuple[str, str]], bool]:
+    """Parse owned site files; recognize ancillary external spellings lexically.
+
+    External entries are never resolved, read, or returned as owned payload.
+    The color-matcher data exception also requires verified in-site copies.
+    """
     records: dict[str, tuple[str, str]] = {}
     invalid = False
+    seen: set[str] = set()
+    external = {
+        "../../../tests/data/" + name: record for name, record in _COLOR_MATCHER_DATA.items()
+    } if color_matcher else {}
+    if color_matcher and sys.implementation.cache_tag:
+        external["../../../bin/__pycache__/cli." + sys.implementation.cache_tag + ".pyc"] = ("", "")
     for row in csv.reader(io.StringIO(payload.decode("utf-8"))):
         if len(row) != 3:
             invalid = True
             continue
         path, digest, size = row
+        if path in seen:
+            invalid = True
+        seen.add(path)
         if not _safe_path(path):
+            if path in external and (digest, size) == external[path]:
+                continue
             # Installer-created console scripts live outside site-packages.
             if not re.fullmatch(r"(?:\.\./)+bin/[^/\\:]+", path):
                 invalid = True
@@ -98,6 +125,33 @@ def _namespace_path(path: str, expected: Mapping[str, str]) -> bool:
     return len(parts) > 1
 
 
+def _color_matcher_assets(site: Path, records: Mapping[str, tuple[str, str]]) -> None:
+    """Bind ignored external data records to verified copies inside site-packages."""
+    for name, expected_record in _COLOR_MATCHER_DATA.items():
+        path = "tests/data/" + name
+        if records.get(path) != expected_record or not _verified_record(_read(site / path), expected_record):
+            raise PayloadOwnershipError("color-matcher test data differs from its wheel")
+
+
+def _empty_color_test_initializer(
+    path: str, data: bytes, expected: Mapping[str, str],
+) -> bool:
+    """Allow an empty initializer only in the pinned wheel's bundled test tree.
+
+    This converts that shared namespace into a regular package. It grants no
+    exception for production packages or a pinned test initializer/module.
+    """
+    return (
+        path == "tests/__init__.py" and data == b""
+        and any(name.startswith("tests/") for name in expected)
+        and not any(
+            name in {"tests.pyc", "tests/__init__.pyc"}
+            or ((module := _module_path(name)) is not None and module[0] == "tests")
+            for name in expected
+        )
+    )
+
+
 def foreign_namespace_files(
     site: Path, expected: Mapping[str, str], found: Mapping[str, str],
 ) -> set[str]:
@@ -108,7 +162,7 @@ def foreign_namespace_files(
     """
     owners: dict[str, list[str]] = {}
     identities: dict[str, int] = {}
-    candidates: list[tuple[Path, str, bytes, dict[str, tuple[str, str]], bool]] = []
+    candidates: list[tuple[Path, str, bytes, dict[str, tuple[str, str]], bool, bool]] = []
     for info in site.iterdir():
         if not info.name.lower().endswith(".dist-info"):
             continue
@@ -126,14 +180,15 @@ def foreign_namespace_files(
         record_path = info / "RECORD"
         if not record_path.exists():
             continue
-        records, invalid = _records(_read(record_path))
+        color_matcher = name == "color-matcher" and versions[0] == "0.6.0"
+        records, invalid = _records(_read(record_path), color_matcher=color_matcher)
         relevant = records.keys() & (expected.keys() | found.keys())
         if relevant:
-            candidates.append((info, name, metadata, records, invalid))
+            candidates.append((info, name, metadata, records, invalid, color_matcher))
     if identities.get("torchmonarch", 0) > 1:
         raise PayloadOwnershipError("pinned distribution identity is ambiguous")
     excluded: set[str] = set()
-    for info, name, metadata, records, invalid in candidates:
+    for info, name, metadata, records, invalid, color_matcher in candidates:
         if invalid or identities[name] != 1:
             raise PayloadOwnershipError("foreign distribution inventory is ambiguous")
         metadata_record = records.get(f"{info.name}/METADATA")
@@ -141,11 +196,16 @@ def foreign_namespace_files(
             raise PayloadOwnershipError("foreign distribution metadata does not match its record")
         if records.keys() & expected.keys():
             raise PayloadOwnershipError("foreign distribution claims pinned payload")
+        if color_matcher:
+            _color_matcher_assets(site, records)
         for path in records.keys() & found.keys():
             owners.setdefault(path, []).append(name)
-            if len(owners[path]) != 1 or not _namespace_path(path, expected):
-                raise PayloadOwnershipError("foreign payload overlaps a protected package")
             data = _read(site / path)
+            if len(owners[path]) != 1 or not (
+                _namespace_path(path, expected)
+                or (color_matcher and _empty_color_test_initializer(path, data, expected))
+            ):
+                raise PayloadOwnershipError("foreign payload overlaps a protected package")
             if not _verified_record(data, records[path]) or hashlib.sha256(data).hexdigest() != found[path]:
                 raise PayloadOwnershipError("foreign payload does not match its record")
             excluded.add(path)
