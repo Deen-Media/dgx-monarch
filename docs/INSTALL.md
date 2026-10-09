@@ -579,10 +579,11 @@ transaction's receipt and recovery state: a new helper alone does not
 authorize repeating an ambiguous change. Setup never runs sudo or starts the
 helper itself.
 
-The sidebar and `dgxm top` use ordinary read-only service inspection, so on a
-system that protects process metadata their Worker service row can stay
-UNKNOWN after a successful setup and doctor run. Attached-mesh and render
-state are separate observations, and a past setup result never replaces a
+The sidebar and `dgxm top` receive fresh passive service observations from
+the driver. An initial, stale or failed observation can show UNKNOWN even
+after a successful setup. Follow the [readiness explanation](CONCEPTS.md#operator-words)
+and inspect the reported cause; UNKNOWN alone does not mean a privileged
+helper or service restart is needed. A past setup result never replaces a
 fresh service-identity check.
 
 #### Prerequisites checked by setup

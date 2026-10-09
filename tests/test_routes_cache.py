@@ -3,6 +3,7 @@ and the recycle route's write gate and origin checks."""
 import asyncio
 import sys
 import threading
+import time
 import types
 
 
@@ -35,6 +36,12 @@ def test_telemetry_derives_readiness_from_each_existing_snapshot_once(monkeypatc
     monkeypatch.setattr(telemetry, "events_tail", lambda _limit: [])
     monkeypatch.setattr(gate_ledger, "comfy_commit", lambda: "test-commit")
 
+    from dgx_monarch.service_observations import services
+
+    monkeypatch.setattr(services, "snapshot", lambda: {
+        "state": "fresh", "expected": 1, "expires_at": time.time() + 10,
+        "observations": [{"ordinal": 0, "healthy": True}],
+    })
     payload = routes._telemetry_uncached()
 
     assert calls == {"workers": 1, "mesh": 1, "render": 1}
@@ -560,3 +567,32 @@ def test_recycle_request_honors_x_forwarded_proto_behind_ssl_proxy():
     # a forged/garbage forwarded proto fails closed
     garbage = {**headers, "X-Forwarded-Proto": "gopher"}
     assert not _recycle_request_allowed(garbage, "http")[0]
+
+
+def test_cached_telemetry_rechecks_service_expiry_without_renewing_observation(monkeypatch):
+    from dgx_monarch.nodes import routes
+
+    now = [100.0]
+    monkeypatch.setattr(routes.time, "time", lambda: now[0])
+    snapshot = routes._with_readiness({
+        "t": 100.0, "workers": [{"rank": 0, "world": 1}],
+        "worker_services": {"state": "fresh", "expected": 1, "expires_at": 100.2,
+                            "observations": [{"ordinal": 0, "healthy": True}]},
+        "mesh": {"state": "idle", "verdict": "none", "active_leases": 0,
+                 "abandoned_samples": 0}, "render": {"active": False},
+    })
+    assert snapshot["readiness"]["overall"] == "ready"
+    monkeypatch.setattr(routes, "_TELEMETRY_CACHE", {
+        "t": 100.0, "data": snapshot, "inflight": False, "generation": 0,
+    })
+    def unexpected_refresh():
+        raise AssertionError("young route cache must not refresh telemetry")
+    monkeypatch.setattr(routes, "_telemetry_uncached", unexpected_refresh)
+    now[0] = 100.3
+    result = routes._telemetry()
+    assert result["readiness"]["lifecycle"]["worker_service"]["state"] == "unknown"
+    assert result["readiness"]["overall"] == "unknown"
+    assert result["t"] == 100.0
+    assert result["worker_services"]["expires_at"] == 100.2
+    assert snapshot["readiness"]["overall"] == "ready"
+    assert routes._TELEMETRY_CACHE["t"] == 100.0

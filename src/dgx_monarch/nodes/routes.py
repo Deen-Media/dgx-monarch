@@ -78,6 +78,9 @@ def _finish_recycle_request(now: float | None = None) -> None:
 
 def invalidate_telemetry_caches() -> None:
     """Drop pre-reset observations and fence refreshes already in flight."""
+    from ..service_observations import services
+
+    services.invalidate()
     with _CACHE_LOCK:
         _CACHE.update(
             t=0.0, workers=[], busy_note=None,
@@ -232,6 +235,7 @@ def _telemetry_uncached() -> dict:
     from .. import telemetry, telemetry_fleet
     from ..gate_ledger import comfy_commit
     from ..mesh_health import mesh_health_snapshot
+    from ..service_observations import services
 
     workers = _workers()
     for worker in workers if isinstance(workers, list) else ():
@@ -251,6 +255,7 @@ def _telemetry_uncached() -> dict:
         # and hands this route a plain dict.
         "mesh": mesh_health_snapshot(),
         "workers": workers,
+        "worker_services": services.snapshot(),
     }
     return _with_readiness(snapshot)
 
@@ -266,6 +271,8 @@ def _telemetry() -> dict:
     with _TELEMETRY_CACHE_LOCK:
         cached = _TELEMETRY_CACHE["data"]
         if now - _TELEMETRY_CACHE["t"] < _CACHE_TTL_S:
+            if isinstance(cached, dict) and "worker_services" in cached:
+                return _with_readiness(dict(cached))
             return cached if isinstance(cached, dict) else {}
         if _TELEMETRY_CACHE["inflight"]:
             return _stale_snapshot(cached, "RefreshInFlight")

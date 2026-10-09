@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Report live Worker service readiness from fresh passive process and listening
+  socket checks, separately from actor telemetry. Refresh in the background;
+  missing, expired or failed observations remain unknown.
+
 - Put start commands, browser access and installation paths first in the setup
   handoff. Offer the optional dgxm TUI and a simple launch script in the user's
   chosen location. Keep permanent installations outside temporary or chat-output
