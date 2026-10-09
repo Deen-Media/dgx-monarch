@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+- Put start commands, browser access and installation paths first in the setup
+  handoff. Offer the optional dgxm TUI and a simple launch script in the user's
+  chosen location. Keep permanent installations outside temporary or chat-output
+  folders.
+
+- Use the default private setup receipt directory and check custom paths early.
+  Add a process-inspection capability check and a maintained foreground helper
+  command so required administrator steps can be planned before apply.
+
+- Gather setup prerequisites before asking for one installation plan approval,
+  and reuse approval for its listed actions. Make detailed network auditing
+  optional while retaining the required trusted isolation and operator
+  acknowledgement. Add private, read-only reports for requested audits. Keep isolated acceptance tests separate from normal
+  installation.
+- Permit unstaged deletions of ComfyUI's tracked `input/example.png` and
+  `output/_output_images_will_be_put_here` during setup. Preserve the missing
+  files, modified checkout status and warning; other changes still block setup.
+
 - Let users choose a supported model for their first distributed render.
   Chroma remains an optional recommendation; setup still requires a saved
   output, proof that both Sparks participated and a safe rerun.

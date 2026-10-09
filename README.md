@@ -90,16 +90,18 @@ Spark, and access to the selected ComfyUI and model directories. It needs
 network access for source and dependency downloads. A browser-only agent cannot
 complete the hardware steps without a connection to those machines. You may
 need to approve maintenance or complete sudo, SSH trust, repository access, or
-model-license steps yourself. Never paste private keys or tokens into chat.
+model-license steps yourself. Grant read or write access only where needed,
+using the narrowest existing parent directories for files it will create.
+Keep its sandbox enabled. Never paste private keys or tokens into chat.
 
 Copy this prompt into your agent:
 
 ```text
 Help me install DGX Monarch from https://github.com/Deen-Media/dgx-monarch on my two DGX Sparks. Use the checkout I provide, or clone the repository if needed. Explicitly read skills/dgx-monarch/SKILL.md and follow it and its linked docs; do not assume skills are discovered automatically.
 
-Discover what you can safely and ask only for missing inputs or approvals. Show the installation and rollback plan before making changes. Preserve existing environments, models, credentials and unrelated work. Ask before disruptive, destructive, or security changes, and never print credentials.
+Discover the existing setup and prerequisites first. Ask together for missing inputs and the specific read or write directory access you need. Then present one concise installation and recovery plan, explicitly listing package, service and any security changes for approval. Reuse that approval for the listed work; ask again only if the scope changes. Preserve existing environments, models, credentials and unrelated work. Never print credentials. Reuse my existing installation where suitable; ask where new permanent files should live. Ask whether I want the dgxm TUI and an easy launch script, and where to save the script. Do not install into temporary or chat-output folders. This is a normal installation, not a clean-machine acceptance test.
 
-Use a supported model and workflow I already have or choose. Chroma is optional; recommend it only if I have no preference. Follow the selected model's documented files and distributed settings. Complete a real distributed render, save its output, and show that both Sparks participated. Check that rerunning setup preserves the installation. Report the commit, versions, reused components, manual steps, results and limitations. Do not claim success from imports or Doctor alone.
+Use a supported model and workflow I already have or choose. Chroma is optional; recommend it only if I have no preference. Follow the selected model's documented files and distributed settings. Complete a real distributed render, save its output, and show that both Sparks participated. Check that rerunning setup preserves the installation. Finish with how to start it, which machine and browser URL to use, whether ComfyUI is running, and where the installation, workflow and outputs live. Then report the commit, versions, reused components, manual steps, results and limitations. Do not claim success from imports or Doctor alone.
 ```
 
 The maintained setup procedure is [skills/dgx-monarch/SKILL.md](skills/dgx-monarch/SKILL.md).

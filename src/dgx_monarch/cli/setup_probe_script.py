@@ -145,14 +145,30 @@ if payload["comfy_exists"]:
     top = run([*git, "rev-parse", "--show-toplevel"], cwd=root, env=git_env) if git[0] else None
     payload["comfy_git"] = bool(top and top.returncode == 0 and pathlib.Path(top.stdout.strip()).resolve() == root.resolve())
     if payload["comfy_git"]:
-        status = run([*git, "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], cwd=root, env=git_env)
-        assume = run([*git, "ls-files", "-v"], cwd=root, env=git_env)
-        typed = run([*git, "ls-files", "-t"], cwd=root, env=git_env)
+        status = run([*git, "status", "--porcelain=v1", "-z", "--untracked-files=all", "--ignore-submodules=none"], cwd=root, env=git_env)
+        assume = run([*git, "ls-files", "-v", "-z"], cwd=root, env=git_env)
+        typed = run([*git, "ls-files", "-t", "-z"], cwd=root, env=git_env)
         head = run([*git, "rev-parse", "HEAD"], cwd=root, env=git_env)
         git_rows = (status, assume, typed)
         if all(row is not None and row.returncode == 0 for row in git_rows):
-            hidden = any(line[:1].islower() for line in assume.stdout.splitlines()) or any(line.startswith("S ") for line in typed.stdout.splitlines())
+            hidden = any(line[:1].islower() for line in assume.stdout.split("\\0")) or any(line.startswith("S ") for line in typed.stdout.split("\\0"))
             payload["comfy_dirty"] = bool(status.stdout.strip()) or hidden
+            payload["comfy_only_missing_examples"] = False
+            records = status.stdout.split("\\0")
+            missing = [record[3:] for record in records[:-1]]
+            examples = {{"input/example.png", "output/_output_images_will_be_put_here"}}
+            if not hidden and records[-1] == "" and missing and len(set(missing)) == len(missing) and all(record.startswith(" D ") for record in records[:-1]) and set(missing) <= examples:
+                staged = run([*git, "diff", "--cached", "--name-only", "-z", "HEAD", "--"], cwd=root, env=git_env)
+                tracked = run([*git, "ls-tree", "-z", "HEAD", "--", *sorted(missing)], cwd=root, env=git_env)
+                expected = {{}}
+                if tracked is not None and tracked.returncode == 0:
+                    for entry in tracked.stdout.split("\\0")[:-1]:
+                        meta, name = entry.split("\t", 1)
+                        mode, kind, oid = meta.split()
+                        if mode in {{"100644", "100755"}} and kind == "blob":
+                            expected[name] = oid
+                absent = all(not os.path.lexists(root / name) and (root / name).parent.is_dir() and not (root / name).parent.is_symlink() for name in missing)
+                payload["comfy_only_missing_examples"] = bool(staged is not None and staged.returncode == 0 and not staged.stdout and set(expected) == set(missing) and absent)
         value = head.stdout.strip().lower() if head and head.returncode == 0 else ""
         payload["comfy_commit"] = value if len(value) == 40 and all(c in "0123456789abcdef" for c in value) else None
 
@@ -253,6 +269,7 @@ def _unavailable_payload(artifact_count: int) -> dict[str, object]:
         "comfy_runtime_marker": None,
         "comfy_git": None,
         "comfy_dirty": None,
+        "comfy_only_missing_examples": None,
         "comfy_commit": None,
         "fabric_interface_count": None,
         "link_layers": [],

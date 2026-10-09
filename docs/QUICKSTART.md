@@ -17,6 +17,8 @@ you already have or want to use. The optional Chroma recipe below provides
 exact files and settings if you have no preference. Either way, verify that
 both Sparks took part.
 For agent-led installation, follow [the setup skill](../skills/dgx-monarch/SKILL.md).
+For start commands, an optional launch script and browser access, see
+[Launch and handoff](INSTALL.md#launch-and-handoff).
 
 ## 1. Add the Init node
 

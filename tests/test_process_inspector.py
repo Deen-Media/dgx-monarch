@@ -6,7 +6,12 @@ import hashlib
 import importlib.util
 import json
 import os
+import select
+import signal
 import socket
+import subprocess
+import sys
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -356,3 +361,54 @@ def test_slow_connection_does_not_block_another_authenticated_request(tmp_path):
     thread.join(1)
     assert not thread.is_alive()
     assert not path.exists()
+
+
+@pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
+def test_foreground_signal_removes_only_its_socket_and_restores_handlers(stop_signal):
+    child_code = """
+import importlib.util, os, pathlib, signal, sys
+spec = importlib.util.spec_from_file_location("inspector", sys.argv[1])
+module = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(module)
+module._root_directory = lambda: pathlib.Path(sys.argv[2])
+module._source_hash = lambda: "a" * 64
+def no_scan(*args, **kwargs):
+    raise AssertionError("No process inventory is permitted in this test")
+module.scan = no_scan
+signals = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
+previous = {value: signal.getsignal(value) for value in signals}
+try:
+    module.serve(os.getuid(), 20)
+except SystemExit as error:
+    assert error.code == 0
+else:
+    raise AssertionError("Server expired instead of receiving the signal")
+assert all(signal.getsignal(value) == previous[value] for value in signals)
+print("handlers restored", flush=True)
+"""
+    # Keep the Unix socket path below its length limit, independent of pytest IDs.
+    with tempfile.TemporaryDirectory(prefix="dgxm-signal-") as directory:
+        sentinel = Path(directory) / "keep"
+        sentinel.write_text("unrelated")
+        process = subprocess.Popen(
+            [sys.executable, "-I", "-B", "-c", child_code, str(SCRIPT), directory],
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        try:
+            assert process.stdout is not None
+            ready, _, _ = select.select([process.stdout], [], [], 10)
+            assert ready, "Inspector did not become ready"
+            line = process.stdout.readline()
+            assert line.startswith("dgxm process inspector ready:"), line
+            path = Path(directory) / f"{os.getuid()}.sock"
+            assert path.exists()
+            process.send_signal(stop_signal)
+            output, errors = process.communicate(timeout=10)
+            assert process.returncode == 0, errors
+            assert output == "handlers restored\n"
+            assert not os.path.lexists(path)
+            assert sentinel.read_text() == "unrelated"
+        finally:
+            if process.poll() is None:
+                process.kill()
+            process.communicate(timeout=10)
