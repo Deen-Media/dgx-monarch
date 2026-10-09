@@ -1090,3 +1090,16 @@ class-K kind to the frozen waiver vocabulary, `waive-known-wrong:shard-quant`,
 for the sharded-quant scale bar; invariant 1 cites its burn test,
 `test_v12_pass_reads_stale_under_v13`. Rows written under a burned number stay
 on disk and stay stale.
+
+
+## Installation dependency checks
+
+The installation procedure and CI use [the dependency checker](../tools/check_dependencies.py).
+Its exception rules have one home in [troubleshooting entry 109](TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform).
+Passing this check grants no model-gate verdict or hardware acceptance.
+
+| Guard | Regression coverage |
+|---|---|
+| Unexpected pip output or exit status must fail. | [`test_check_dependencies.py:77-93`](../tests/test_check_dependencies.py#L77-L93 "anchor:test_other_results_fail_without_download") |
+| Platform, package, download and installed-file mismatches must fail. | [`test_check_dependencies.py:96-118`](../tests/test_check_dependencies.py#L96-L118 "anchor:test_exception_requires_original_wheel") |
+| CPU jobs must use the reviewed GitHub-hosted images. | [`test_release_surfaces.py:422-442`](../tests/test_release_surfaces.py#L422-L442 "anchor:test_public_source_has_no_hardware_route") |

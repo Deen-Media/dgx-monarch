@@ -53,7 +53,7 @@ jobs:
           pip install --find-links xfuser-compat-wheels \
             --constraint xfuser-compat-wheels/torch-constraint.txt \
             -e .[dev] --no-build-isolation
-          python -m pip check
+          python tools/check_dependencies.py
           python -c 'import torch; actual = (torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert actual == ("2.12.0+cu132", "13.2", False), actual'
       - name: ruff
         run: ruff check __init__.py src tests benchmark tools
@@ -288,3 +288,51 @@ jobs:
           test "$rc" -eq 1
           grep -q 'FAIL.*torch CUDA' doctor-smoke.log
           ! grep -q Traceback doctor-smoke.log
+
+  lint-and-unit-arm64:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    env:
+      HYPOTHESIS_PROFILE: ci
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Leak assertion (tracked working tree)
+        run: python tools/leak_check.py
+      - name: Install shellcheck
+        run: |
+          # Use the bundled shellcheck when available. Tolerate apt refresh failures
+          # from unrelated image sources, but require installation and version checks
+          # to succeed.
+          if ! command -v shellcheck >/dev/null; then
+            sudo apt-get update || true
+            sudo apt-get install -y shellcheck
+          fi
+          shellcheck --version
+      - name: Install graphic export dependencies
+        run: sudo apt-get install -y libcairo2 fonts-dejavu-core
+      - name: Install (pinned CUDA-linked torch + pinned monarch)
+        run: |
+          # PEP 639 requires setuptools>=77; torch requires <82. Upgrade the ambient
+          # build environment because --no-build-isolation uses it directly.
+          python -m pip install --upgrade pip "setuptools>=77,<82" wheel build
+          # CPU-only torch lacks CUDA device guards needed by FakeTensorMode tests.
+          # Use the validated production build; hosted runners still do no GPU work.
+          pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
+          mkdir -p xfuser-compat-wheels
+          python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
+          torch_build="$(python -c 'import torch; print(torch.__version__)')"
+          printf 'torch==%s\n' "$torch_build" > xfuser-compat-wheels/torch-constraint.txt
+          pip install --find-links xfuser-compat-wheels \
+            --constraint xfuser-compat-wheels/torch-constraint.txt \
+            -e .[dev] --no-build-isolation
+          python tools/check_dependencies.py
+          python -c 'import torch; actual = (torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert actual == ("2.12.0+cu132", "13.2", False), actual'
+      - name: pytest (no-GPU unit suite)
+        run: bash scripts/test_cpu.sh

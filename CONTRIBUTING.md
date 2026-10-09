@@ -64,8 +64,12 @@ for asset in web/js/*.js; do node --check "$asset"; done
 node tools/check_dgx_monarch_segments.mjs
 ```
 
-CI also runs `pip check`, checks the refusal ledger, and builds and inspects
-both package artifacts. To check the ledger locally, regenerate it with
+Run `python tools/check_dependencies.py` in the test environment. CI runs
+the same tool; see the [verified upstream exception](docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
+if it prints a known platform-tag failure. CI also checks the refusal ledger
+and builds and inspects both package artifacts on x64. The hosted ARM64 job
+`lint-and-unit-arm64` uses Ubuntu 24.04 and Python 3.12 for dependency,
+Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, regenerate it with
 `PYTHONPATH=src python tests/test_refusal_classes.py --write` and review any
 diff in `tests/refusal_class_ledger.json`. An unexpected diff must be resolved,
 not committed just to make the check pass.

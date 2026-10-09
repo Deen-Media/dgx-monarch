@@ -1753,6 +1753,7 @@ Sparks, and passing CPU checks does not establish hardware acceptance.
 |---|---|
 | Monarch 0.x API churn | hard pin; deliberate bumps by the developer skill's introspection-first procedure (surface canary snapshot, dispatch probe, hardware gate); a weekly canary against the latest stable torchmonarch |
 | Third-party implementation copied into project code | §3 contributor rules, source/provenance prompts in the PR template, and dependency-boundary review |
+| A dependency exception hides an unrelated failure | [Dependency-check guards and tests](TRUST.md#installation-dependency-checks); [the maintained exception procedure](TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform) |
 | Per-family attention complexity | each adapter lands behind its own cross-rank identity and fidelity gates |
 | Wan 2.2 MoE and capacity constraints | FSDP capacity mode and an independent family acceptance gate |
 | ComfyUI nightly breakage | daily canary against Comfy master; bind to model classes; wrap stock nodes instead of copying them (§5.7) |

@@ -351,10 +351,30 @@ def test_ci_uses_production_torch_build_for_fake_cuda_contracts():
     assert f"pip install --no-cache-dir {requirement}" in workflow
     assert requirement in setup
     assert '("2.12.0+cu132", "13.2", False)' in workflow
-    assert "python -m pip check" in workflow
+    assert "python tools/check_dependencies.py" in workflow
+    assert "python -m pip check" not in workflow
     assert "Install (pinned CUDA-linked torch + pinned monarch)" in workflow
     assert "pytest (no-GPU unit suite)" in workflow
     assert "/whl/cpu" not in workflow
+
+
+
+def test_arm64_ci_preserves_installs_and_runs_one_cpu_cell():
+    workflow = yaml.safe_load((REPO / ".github" / "workflows" / "ci.yml").read_text())
+    hosted = workflow["jobs"]["lint-and-unit"]
+    arm = workflow["jobs"]["lint-and-unit-arm64"]
+    assert hosted["runs-on"] == "ubuntu-24.04"
+    assert hosted["strategy"]["matrix"]["python"] == ["3.11", "3.12"]
+    assert arm["runs-on"] == "ubuntu-24.04-arm"
+    assert arm["strategy"]["matrix"] == {"python": ["3.12"]}
+    assert "if" not in arm and "permissions" not in arm
+    assert arm["timeout-minutes"] == hosted["timeout-minutes"]
+    assert arm["env"] == hosted["env"]
+    install_end = next(i for i, step in enumerate(hosted["steps"]) if step.get("name") == "ruff")
+    assert arm["steps"][:-1] == hosted["steps"][:install_end]
+    assert arm["steps"][-1] == {"name": "pytest (no-GPU unit suite)", "run": "bash scripts/test_cpu.sh"}
+    assert all("--no-deps" not in step.get("run", "") for step in arm["steps"])
+    assert all("python -m build" not in step.get("run", "") for step in arm["steps"])
 
 
 def test_comfy_canary_covers_entrypoint_package_and_browser_paths():
@@ -410,8 +430,9 @@ def test_public_source_has_no_hardware_route():
         assert isinstance(workflow, dict)
         jobs = workflow.get("jobs")
         assert isinstance(jobs, dict) and jobs, workflow_path
-        for job in jobs.values():
-            assert job.get("runs-on") == "ubuntu-24.04"
+        for name, job in jobs.items():
+            expected = "ubuntu-24.04-arm" if workflow_path.name == "ci.yml" and name == "lint-and-unit-arm64" else "ubuntu-24.04"
+            assert job.get("runs-on") == expected
             assert "uses" not in job
         workflow_text = workflow_path.read_text()
         assert "self-hosted" not in workflow_text
