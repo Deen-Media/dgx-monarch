@@ -1149,6 +1149,9 @@ clean-machine test.
 
 Tested versions were Python 3.12.3, ComfyUI 0.37.0, PyTorch 2.12.0+cu132,
 TorchMonarch 0.6.0 and xFuser 0.7.0+dgxm.npuimport1.
+The fresh environments used pip 24.0, and their saved dependency checks passed.
+Newer pip versions can report the [cuSPARSELt platform-tag issue](TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform);
+record that result separately when following the installation guide.
 
 | Check | Recorded result |
 |---|---|
