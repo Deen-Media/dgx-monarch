@@ -116,11 +116,12 @@ redrawing.
 ## Data sources and isolation
 
 The dashboard reads two sources without changing either: the driver's
-`/dgxm/telemetry` HTTP route, which ComfyUI serves from the live mesh, and the
+`/dgxm/telemetry` HTTP route, which ComfyUI serves with live state, and the
 local host (sysfs, bounded `/proc` reads, and pynvml or nvidia-smi).
 `dgxm top` never attaches a second Monarch client, opens a Monarch worker
-socket, or runs SSH. Worker, mesh and readiness indicators use only what the
-driver reports; without an exact report, including while the driver is down,
+socket, or runs SSH. The driver collects passive Worker service checks
+separately from actor telemetry; see [Readiness](CONCEPTS.md#operator-words).
+Worker, mesh and readiness indicators use only what the driver reports; without an exact report, including while the driver is down,
 they show `?` (unknown), and local data keeps the rest of the dashboard
 live. `dgxm status` gives the passive Worker service and Attached mesh facts,
 and `dgxm status --json` adds readiness. `dgxm doctor` runs the full cluster

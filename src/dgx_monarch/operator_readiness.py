@@ -344,12 +344,15 @@ def readiness_from_telemetry_payload(
     if not isinstance(payload, Mapping):
         return readiness_from_telemetry(
             None, None, None, "malformed", sanitized_details=sanitized_details)
+    workers = payload.get("workers")
+    if "worker_services" in payload:
+        from .service_observations import actor_problems, service_rows
+
+        workers = service_rows(payload.get("worker_services"))
+        workers = [*(workers or []), *actor_problems(payload.get("workers"))]
     return readiness_from_telemetry(
-        payload.get("workers"),
-        payload.get("mesh"),
-        payload.get("render"),
-        payload.get("telemetry_error"),
-        sanitized_details=sanitized_details,
+        workers, payload.get("mesh"), payload.get("render"),
+        payload.get("telemetry_error"), sanitized_details=sanitized_details,
     )
 
 

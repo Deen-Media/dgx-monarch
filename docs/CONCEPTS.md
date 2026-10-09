@@ -50,6 +50,20 @@ class and the operator command, if one exists. An Attached mesh being created
 reads as active, not idle; a private fleet left unpublished by an interrupted
 creation reads as blocked for manual recovery, never as a safe empty cache.
 
+The live Worker service row uses separate, fresh observations of each
+configured Worker's process and listening socket. The driver refreshes these
+passively in the background and limits repeat checks; dashboard requests do
+not wait for them. A first observation still pending, an expired result, or a
+failed or incomplete read shows `unknown`. A still-fresh result may remain
+visible while the next check runs. Changed configuration or mesh identity
+requires new observations.
+
+A ready Worker service row does not prove an attached actor is healthy or a
+render succeeded. Actor and render reports do not substitute for the service
+check. Investigate an unknown row with the service diagnostics before changing
+anything; the label alone is not a reason to restart a Worker or run a
+privileged helper.
+
 **Setup profile.** A choice made only during `dgxm setup`: `safe`, `balanced`,
 or `advanced`. It compiles into existing strict `cluster.toml` keys plus
 separate graph recommendations, then disappears: there is no runtime `profile`

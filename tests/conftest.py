@@ -207,6 +207,18 @@ def sp(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_service_telemetry(monkeypatch):
+    """Consumer tests must not probe the developer's configured Workers.
+
+    Producer tests use their own collector with a mocked probe. Integration
+    tests can override this snapshot with explicit fixture observations.
+    """
+    from dgx_monarch.service_observations import services
+
+    monkeypatch.setattr(services, "snapshot", lambda: {"state": "unavailable"})
+
+
+@pytest.fixture(autouse=True)
 def _the_battery_never_shells_out_to_ssh(monkeypatch):
     """Fail a test that spawned ssh instead of standing in for the runner.
 
