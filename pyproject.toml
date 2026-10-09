@@ -1,0 +1,104 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "dgx-monarch"
+dynamic = ["version"]
+description = "Run ComfyUI image and video workflows across two NVIDIA DGX Sparks."
+readme = "README.md"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE", "THIRD-PARTY-NOTICES.txt"]
+authors = [{ name = "Deen Media, LLC" }]
+requires-python = ">=3.11"
+keywords = ["comfyui", "distributed", "diffusion", "monarch", "xdit", "nccl"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Topic :: Multimedia :: Graphics",
+]
+# requirements.txt repeats these strings exactly and in order: `dgxm update`
+# refuses a target whose two lists differ.
+dependencies = [
+    # Pinned exactly: the 0.x torchmonarch API changes between releases. Follow
+    # the bump procedure in skills/dgx-monarch-dev/SKILL.md to move it.
+    "torchmonarch==0.6.0",
+    # Temporary local compatibility build of the external xfuser 0.7 wheel.
+    # tools/build_xfuser_compat_wheel.py verifies the official wheel and applies
+    # only the lazy optional-NPU import patch; NVIDIA attention math is unchanged.
+    "xfuser==0.7.0+dgxm.npuimport1",
+    "yunchang>=0.6.4",
+]
+
+[project.optional-dependencies]
+# aiohttp and rich provide HTTP/CSRF/route and TUI color test coverage;
+# without these dev dependencies, those suites skip silently.
+# pillow and soundfile support sweep frame/audio comparison
+# (benchmark/sweep/compare.py). Without soundfile, audio comparison scores
+# CHECK at best.
+dev = ["ruff>=0.8", "pytest>=8", "mypy>=1.8", "hypothesis>=6.100", "pyyaml>=6",
+       "aiohttp>=3.9", "rich>=13", "pillow>=10", "soundfile>=0.12",
+       "CairoSVG>=2.7", "fonttools>=4", "textual>=0.80"]
+tui = ["textual>=0.80", "nvidia-ml-py"]
+
+[project.scripts]
+dgxm = "dgx_monarch.cli.main:main"
+
+[project.urls]
+Repository = "https://github.com/balaxxe/dgx-monarch"
+Documentation = "https://github.com/balaxxe/dgx-monarch/tree/HEAD/docs"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = {attr = "dgx_monarch.__version__"}
+
+[tool.ruff]
+line-length = 119
+target-version = "py311"
+src = ["src", "tests"]
+exclude = []
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "RUF", "S"]
+ignore = [
+    "E501",   # long lines in tables/log strings; line-length is advisory
+    "B008",   # comfy node signatures use call defaults
+    "RUF012", # comfy node class attrs are mutable by convention
+    # Other Bandit (S) rules remain enabled except for per-file ignores.
+    # These exceptions cover intentional repository idioms:
+    "S110",   # best-effort try/except-pass in doctor/telemetry/teardown paths
+    "S112",   # same, loop form
+    "S603",   # subprocess with internal, non-user-controlled argv only
+    "S607",   # rig tools resolved from PATH on purpose (nvidia-smi, ssh, ...)
+    "S310",   # urllib to the local driver/loopback telemetry routes only
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Replaced forwards and guider methods mirror comfy's signatures exactly,
+# mutable defaults included (`transformer_options={}`, `model_options={}`).
+"src/dgx_monarch/adapters/*" = ["B006", "S101"]  # asserts mirror comfy idiom
+"src/dgx_monarch/actor/*" = ["B006"]
+# pytest's assert idiom
+"tests/*" = ["S101"]
+"tools/gen_templates.py" = ["S108"]  # inert Comfy stubs only
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Never add addopts = "-q": every documented invocation passes -q already,
+# pytest reads the two as -qq, and at -qq it prints no "N passed" summary line.
+filterwarnings = [
+    # sentencepiece imports register SWIG types deprecated by CPython 3.12.
+    # Ignore only these three messages; retain all other warnings.
+    "ignore:builtin type SwigPyObject has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type SwigPyPacked has no __module__ attribute:DeprecationWarning",
+    "ignore:builtin type swigvarlink has no __module__ attribute:DeprecationWarning",
+]
+
+[tool.mypy]
+# CI runs `mypy -p dgx_monarch`, adapters included. Third-party runtimes ship
+# incomplete type information, so missing imports are ignored.
+mypy_path = "src"
+explicit_package_bases = true
+namespace_packages = true
+ignore_missing_imports = true

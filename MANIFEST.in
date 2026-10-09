@@ -1,0 +1,61 @@
+include __init__.py
+include .gitignore
+include .pre-commit-config.yaml
+include CHANGELOG.md
+include CONTRIBUTING.md
+include LICENSE
+include LICENSE-NOTES.md
+include NOTICE
+include THIRD-PARTY-NOTICES.txt
+include SECURITY.md
+include requirements.txt
+include cluster.example.toml
+
+# The wheel contains the package and CLI. The source archive includes the
+# complete repository for review and testing: custom-node
+# entrypoint, browser assets, workflows, tests, and docs.
+include skills/dgx-monarch/SKILL.md
+include skills/dgx-monarch-dev/SKILL.md
+prune .claude/worktrees
+recursive-include .github *.md *.yml
+include .github/renovate.json
+include benchmark/chroma_numerics_probe.py
+include benchmark/flux2_cross_topology_matrix.toml
+include benchmark/gates.py
+include benchmark/matrix.example.toml
+include benchmark/rdma_return_bench.py
+include benchmark/reports/chroma_cfg_amplification_matrix.toml
+include benchmark/reports/chroma_pad_fidelity_matrix.toml
+include benchmark/reports/flux_family_pad_fidelity_matrix.toml
+include benchmark/reports/followon_2026-09_cells.csv.gz
+include benchmark/reports/pad_fidelity_matrix.toml
+include benchmark/reports/stable_source_2026-09_cells.csv.gz
+include benchmark/reports/sweep349_2026-09_cells.csv.gz
+include benchmark/reports/wan_i2v_fidelity_matrix.toml
+include benchmark/run_matrix.py
+include benchmark/sweep/__init__.py
+include benchmark/sweep/compare.py
+include benchmark/sweep/convert.py
+include benchmark/sweep/driver.py
+include benchmark/sweep/matrix.py
+include benchmark/sweep/media.py
+include benchmark/sweep/memhog.py
+include benchmark/sweep/memsample.py
+include benchmark/sweep/report.py
+include benchmark/sweep/run.py
+include benchmark/sweep/sweep.example.toml
+recursive-include docs *
+recursive-include example_workflows *.jpg *.json
+include example_workflows/artifacts.toml
+recursive-include scripts *.md *.sh
+recursive-include tests *.json *.py
+recursive-include tests/fixtures *.jsonl *.txt
+include tests/fixtures/workflows/README.md
+recursive-include tools *.py
+recursive-include tools *.mjs
+include tools/leak_allowlist.toml
+recursive-include web *.js *.svg
+
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.log

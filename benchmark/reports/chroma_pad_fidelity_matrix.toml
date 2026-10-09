@@ -1,0 +1,172 @@
+# Chroma pad-row exclusion fidelity (2026-09-03). This is the probe that
+# ChromaAdapter.usp_pad_exclusion_probe names. Run it with:
+#   <comfy python> benchmark/run_matrix.py --matrix benchmark/reports/chroma_pad_fidelity_matrix.toml
+#
+# References are dp2 batch = 2 slice 0, which carries exact single-GPU math on
+# the two-worker mesh; candidates are uly2 at one step under gate_step_fidelity
+# (DEFAULT_STEP_NRMS 0.10). Every prompt below is pinned here rather than read
+# out of the shipped template, which moved to even token counts on 2026-09-02
+# and would exercise nothing.
+#
+# Token counts as benchmark/sweep/matrix.py's own reader counts them against
+# the T5 tokenizer ComfyUI ships (chroma floor 1):
+#   long positive    101   pads at SP degree 2
+#   short positive    97   pads at SP degree 2
+#   negative          28   divides
+#   blank negative     1   the PixArt one-token blank, pads at every degree
+# Corrected 2026-09-06: the second positive was written here as an even 100
+# and named the divisible control. Both readers count it 97, so it pads like
+# the other one and this file has no divisible leg at all. The case keeps its
+# name and its record; the divisible pairs sit in
+# benchmark/reports/chroma_cfg_amplification_matrix.toml, whose 44-token
+# prompts both readers count even.
+# Read these as the reader's expectation, not as a claim about what the runtime
+# counted: the 2026-08-21 cfg2 run recorded 33 and 106 for a pair this reader
+# counts 28 and 101 (docs/VALIDATION.md, Chroma evidence), so the leg is
+# evidence about the pad path rather than a token count.
+#
+# Do not use 0.03 as an absolute threshold: the 2026-09 Chroma cfg2 diagnosis
+# measured roughly that bf16 sensitivity without adapter code
+# (CHANGELOG, 2026-09-03). Rank-major Ulysses token order
+# alone moved a divisible leg (docs/VALIDATION.md, 2026-09-12 chroma token
+# order record). Compare each padded case with a divisible control measured
+# the same day against the same reference kind. Require its NRMS to remain
+# within the control's band.
+# Record both numbers in the report. This file has no such companion (see the
+# 2026-09-06 correction above). The 1536x1536 even numbers of 2026-08-21 are
+# not the comparison either: these legs run at 1024x1024.
+
+[defaults]
+steps = 1
+cfg = 1.0
+sampler = "euler_cfg_pp"
+scheduler = "simple"
+seed = 42
+repeats = 1
+width = 1024
+height = 1024
+negative = "low quality, blurry, watermark, text artifacts, oversaturated colors, deformed anatomy, noisy background"
+te = { name = "t5xxl_fp8_e4m3fn_scaled.safetensors", type = "chroma" }
+
+[[case]]
+name = "ref-bf16-odd"
+unet = "Chroma1-HD.safetensors"
+topology = "dp2"
+batch = 2
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on it's highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in a large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. "
+
+[[case]]
+name = "ref-bf16-even"
+unet = "Chroma1-HD.safetensors"
+topology = "dp2"
+batch = 2
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows."
+
+[[case]]
+name = "ref-bf16-blank-negative"
+unet = "Chroma1-HD.safetensors"
+topology = "dp2"
+batch = 2
+negative = ""
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows."
+
+[[case]]
+name = "ref-fp8mixed-odd"
+unet = "Chroma1-HD-fp8mixed.safetensors"
+topology = "dp2"
+batch = 2
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on it's highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in a large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. "
+
+[[case]]
+name = "ref-fp8mixed-even"
+unet = "Chroma1-HD-fp8mixed.safetensors"
+topology = "dp2"
+batch = 2
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows."
+
+[[case]]
+name = "ref-radiance-odd"
+unet = "chroma-radiance-x0.safetensors"
+topology = "dp2"
+batch = 2
+latent_channels = 3
+latent_downscale = 1
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on it's highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in a large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. "
+
+# Case 1: the odd positive pads the text stream; the image stream does not pad
+# at 1024x1024. Before the 2026-09-03 exclusion the divisibility contract
+# refused this cell.
+[[case]]
+name = "gate-bf16-odd"
+unet = "Chroma1-HD.safetensors"
+topology = "uly2"
+reference = "ref-bf16-odd"
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on it's highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in a large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. "
+
+# Case 2: the same pair at fp8mixed. On the shipped 100/28 pair at cfg2,
+# fp8mixed read 0.167 on 2026-09-02 against 0.100 at bf16. The 2026-09-03
+# diagnosis traced most of that to a pad+mask kernel term, not a quantized one,
+# and the 2026-10-01 fix read 0.0 at both quants (docs/VALIDATION.md, 2026-10-01
+# chroma cfg2 pad+mask record).
+[[case]]
+name = "gate-fp8mixed-odd"
+unet = "Chroma1-HD-fp8mixed.safetensors"
+topology = "uly2"
+reference = "ref-fp8mixed-odd"
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on it's highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in a large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. "
+
+# Case 3: the canonical blank negative. A cfg_pp sampler evaluates the uncond
+# leg even at cfg 1.0, so this render's text stream is 1 row and pads at every
+# SP degree. Before the 2026-09-03 exclusion this case refused.
+[[case]]
+name = "gate-bf16-blank-negative"
+unet = "Chroma1-HD.safetensors"
+topology = "uly2"
+reference = "ref-bf16-blank-negative"
+negative = ""
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows."
+
+# Case 6: pixel-space Radiance on the same odd positive. ChromaRadiance
+# overrides img_in, _forward and the nerf head only, never forward_orig, so it
+# takes this exclusion. Its row's other readings are all on divisible streams
+# (docs/VALIDATION.md, Radiance evidence).
+[[case]]
+name = "gate-radiance-odd"
+unet = "chroma-radiance-x0.safetensors"
+topology = "uly2"
+reference = "ref-radiance-odd"
+latent_channels = 3
+latent_downscale = 1
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on it's highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in a large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. "
+
+# Case 4, bf16 and fp8mixed: written as the divisible control and measured on
+# 2026-09-05 as one, but its positive counts 97 and pads like case 1. Read it
+# as a second padded pair on a different odd length, and read the band it was
+# supposed to supply off gate-bf16-cfg35-equal in
+# benchmark/reports/chroma_cfg_amplification_matrix.toml.
+[[case]]
+name = "gate-bf16-even"
+unet = "Chroma1-HD.safetensors"
+topology = "uly2"
+reference = "ref-bf16-even"
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows."
+
+[[case]]
+name = "gate-fp8mixed-even"
+unet = "Chroma1-HD-fp8mixed.safetensors"
+topology = "uly2"
+reference = "ref-fp8mixed-even"
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows."
+
+# Case 5: inspect a full render of the odd pair at the template settings.
+# No reference or floor applies: multi-step trajectories diverge across
+# kernel orders.
+[[case]]
+name = "render-bf16-odd-26step"
+unet = "Chroma1-HD.safetensors"
+topology = "uly2"
+steps = 26
+cfg = 3.5
+sampler = "euler"
+scheduler = "beta"
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on it's highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in a large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. "

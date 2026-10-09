@@ -1,0 +1,290 @@
+name: ci
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+jobs:
+  lint-and-unit:
+    # Pin the runner image; review Ubuntu upgrades explicitly.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      HYPOTHESIS_PROFILE: ci
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Leak assertion (tracked working tree)
+        run: python tools/leak_check.py
+      - name: Install shellcheck
+        run: |
+          # Use the bundled shellcheck when available. Tolerate apt refresh failures
+          # from unrelated image sources, but require installation and version checks
+          # to succeed.
+          if ! command -v shellcheck >/dev/null; then
+            sudo apt-get update || true
+            sudo apt-get install -y shellcheck
+          fi
+          shellcheck --version
+      - name: Install graphic export dependencies
+        run: sudo apt-get install -y libcairo2 fonts-dejavu-core
+      - name: Install (pinned CUDA-linked torch + pinned monarch)
+        run: |
+          # PEP 639 requires setuptools>=77; torch requires <82. Upgrade the ambient
+          # build environment because --no-build-isolation uses it directly.
+          python -m pip install --upgrade pip "setuptools>=77,<82" wheel build
+          # CPU-only torch lacks CUDA device guards needed by FakeTensorMode tests.
+          # Use the validated production build; hosted runners still do no GPU work.
+          pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
+          mkdir -p xfuser-compat-wheels
+          python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
+          torch_build="$(python -c 'import torch; print(torch.__version__)')"
+          printf 'torch==%s\n' "$torch_build" > xfuser-compat-wheels/torch-constraint.txt
+          pip install --find-links xfuser-compat-wheels \
+            --constraint xfuser-compat-wheels/torch-constraint.txt \
+            -e .[dev] --no-build-isolation
+          python -m pip check
+          python -c 'import torch; actual = (torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert actual == ("2.12.0+cu132", "13.2", False), actual'
+      - name: ruff
+        run: ruff check __init__.py src tests benchmark tools
+      - name: Trust citations
+        run: python tools/repin_trust_citations.py --check
+      - name: Protected test inventory
+        run: python tools/check_protected_tests.py --check
+      - name: Refusal ledger is current
+        run: |
+          ledger=tests/refusal_class_ledger.json
+          saved="$RUNNER_TEMP/refusal_class_ledger.json"
+          cp "$ledger" "$saved"
+          trap 'cp "$saved" "$ledger"' EXIT
+          PYTHONPATH=src python tests/test_refusal_classes.py --write
+          if ! cmp --silent "$saved" "$ledger"; then
+            diff -u "$saved" "$ledger"
+            exit 1
+          fi
+      - name: mypy (full package)
+        run: mypy -p dgx_monarch
+      - name: pytest (no-GPU unit suite)
+        run: bash scripts/test_cpu.sh
+      - name: Surface artifact checks
+        run: |
+          python -m compileall -q __init__.py src benchmark tests tools
+          python tools/gen_templates.py --check
+          python tools/gen_brand_assets.py --check
+          python tools/gen_template_cards.py --check
+          # Offline check: read templates and their manifest, without network or model
+          # access. Unfilled operator rows remain pending and do not fail CI.
+          python tools/check_artifacts.py
+          for script in scripts/*.sh; do bash -n "$script"; done
+          shellcheck scripts/*.sh
+          # Check all browser assets: a syntax error in any imported sibling can
+          # break the sidebar, including Recycle. The glob includes new files.
+          for asset in web/js/*.js; do node --check "$asset"; done
+          node tools/check_dgx_monarch_segments.mjs
+      - name: Validate wheel installability and source completeness
+        if: matrix.python == '3.12'
+        run: |
+          mkdir -p .claude/worktrees
+          printf 'archive exclusion sentinel\n' > .claude/worktrees/sdist-ignore-sentinel.md
+          python -m build
+          python - <<'PY'
+          import glob, os, subprocess, sys, tarfile, tempfile, zipfile
+          from pathlib import Path, PurePosixPath
+
+          wheel = glob.glob("dist/*.whl")[-1]
+          source_modules = {
+              path.relative_to("src").as_posix()
+              for path in Path("src/dgx_monarch").rglob("*.py")
+          }
+          with zipfile.ZipFile(wheel) as archive:
+              names = set(archive.namelist())
+              wheel_modules = {
+                  name for name in names
+                  if name.startswith("dgx_monarch/") and name.endswith(".py")
+              }
+              assert "dgx_monarch/__main__.py" in names
+              assert "dgx_monarch/comfy_surface.py" in names
+              assert any(name.endswith(".dist-info/entry_points.txt") for name in names)
+              # The wheel holds only the package and the CLI; node-pack assets
+              # come from the source checkout described in docs/INSTALL.md.
+              assert not any(name.startswith("web/") for name in names)
+
+          sdist = glob.glob("dist/*.tar.gz")[-1]
+          with tarfile.open(sdist, "r:gz") as archive:
+              members = set()
+              sdist_modules = set()
+              for member in archive.getmembers():
+                  path = PurePosixPath(member.name)
+                  if not member.isfile() or len(path.parts) <= 1:
+                      continue
+                  relative = PurePosixPath(*path.parts[1:]).as_posix()
+                  members.add(relative)
+                  if relative.startswith("src/dgx_monarch/") and relative.endswith(".py"):
+                      sdist_modules.add(relative.removeprefix("src/"))
+          tracked = {
+              os.fsdecode(name)
+              for name in subprocess.check_output(["git", "ls-files", "-z"]).split(b"\0")
+              if name
+          }
+          generated = {
+              "PKG-INFO",
+              "setup.cfg",
+              "src/dgx_monarch.egg-info/PKG-INFO",
+              "src/dgx_monarch.egg-info/SOURCES.txt",
+              "src/dgx_monarch.egg-info/dependency_links.txt",
+              "src/dgx_monarch.egg-info/entry_points.txt",
+              "src/dgx_monarch.egg-info/requires.txt",
+              "src/dgx_monarch.egg-info/top_level.txt",
+          }
+          expected_members = tracked | generated
+          assert members == expected_members, {
+              "sdist_missing": sorted(expected_members - members),
+              "sdist_extra": sorted(members - expected_members),
+          }
+          required_ai_instructions = {
+              "skills/dgx-monarch/SKILL.md",
+              "skills/dgx-monarch-dev/SKILL.md",
+          }
+          assert required_ai_instructions <= members, {
+              "sdist_missing_ai_instructions": sorted(required_ai_instructions - members),
+          }
+          assert ".claude/worktrees/sdist-ignore-sentinel.md" not in members, (
+              "ignored Claude worktree content leaked into sdist"
+          )
+          assert source_modules == sdist_modules == wheel_modules, {
+              "source_only": sorted(source_modules - sdist_modules),
+              "sdist_only": sorted(sdist_modules - source_modules),
+              "wheel_missing": sorted(source_modules - wheel_modules),
+              "wheel_extra": sorted(wheel_modules - source_modules),
+          }
+          required = {
+              "__init__.py",
+              "LICENSE",
+              "MANIFEST.in",
+              "NOTICE",
+              "SECURITY.md",
+              "benchmark/run_matrix.py",
+              "docs/INSTALL.md",
+              "docs/THREAT_MODEL.md",
+              "example_workflows/dgx-monarch-quickstart.json",
+              "scripts/setup_env.sh",
+              "src/dgx_monarch/comfy_surface.py",
+              "src/dgx_monarch/monarch_semantics.py",
+              "src/dgx_monarch/monarch_surface.py",
+              "src/dgx_monarch/monarch_surface_report.py",
+              "tests/test_comfy_surface.py",
+              "tests/test_monarch_surface.py",
+              "tests/conftest.py",
+              "tests/test_property_hardening.py",
+              "tests/test_leak_check.py",
+              "tests/test_node_contract.py",
+              "tools/gen_templates.py",
+              "tools/build_xfuser_compat_wheel.py",
+              "tools/check_dgx_monarch_segments.mjs",
+              "tools/leak_allowlist.toml",
+              "tools/leak_check.py",
+              "tests/canary/bake_equivalence_canary.py",
+              "tests/canary/comfy_entrypoint_canary.py",
+              "tests/canary/comfy_seam_contracts.py",
+              "tests/canary/import_canary.py",
+              "tests/canary/monarch_surface_canary.py",
+              "tests/canary/slab_hook_canary.py",
+              "tests/canary/template_widget_canary.py",
+              "tests/canary/xfuser_import_surface.py",
+              "tests/fixtures/torchmonarch_pin_0_6_0.json",
+              "tests/fixtures/workflows/krea2_uly2_api.json",
+              "tests/fixtures/workflows/minimax_h3_t2va_uly2_api.json",
+              "tests/fixtures/workflows/wandancer_global_local_uly2_api.json",
+              "web/js/dgx_monarch.js",
+              "web/js/dgx_monarch_readiness_model.js",
+              "web/js/dgx_monarch_segments.js",
+          }
+          assert required <= members, f"sdist missing repository surfaces: {sorted(required - members)}"
+
+          # The retired validation/ tree must never ship in the archive.
+          retired_tree = sorted(
+              name for name in members
+              if name == "validation" or name.startswith("validation/")
+          )
+          assert not retired_tree, f"retired validation/ tree reappeared in sdist: {retired_tree}"
+
+          canary_members = {name for name in members if name.startswith("tests/canary/")}
+          expected_canaries = {
+              "tests/canary/bake_equivalence_canary.py",
+              "tests/canary/comfy_entrypoint_canary.py",
+              "tests/canary/comfy_seam_contracts.py",
+              "tests/canary/import_canary.py",
+              "tests/canary/monarch_surface_canary.py",
+              "tests/canary/slab_hook_canary.py",
+              "tests/canary/template_widget_canary.py",
+              "tests/canary/xfuser_import_surface.py",
+          }
+          assert canary_members == expected_canaries, {
+              "canary_extra": sorted(canary_members - expected_canaries),
+              "canary_missing": sorted(expected_canaries - canary_members),
+          }
+
+          private_workbench_only = {
+              "flux2_cross_topology_compare.py",
+              "minimax_h3_cross_topology_compare.py",
+              "forward_equivalence_check.py",
+              "pipeline_parity.py",
+              "TIER2_DUAL_GPU_CHECKLIST.md",
+              "tier2_dual_gpu_checklist.md",
+              "MINIMAX_H3_PROMOTION_RUNBOOK.md",
+              "WAN_I2V_PROMOTION_RUNBOOK.md",
+          }
+          leaked = sorted(
+              name for name in members
+              if PurePosixPath(name).name in private_workbench_only
+          )
+          assert not leaked, f"private-workbench harness present in sdist: {leaked}"
+
+          # Run repository-surface tests from the extracted archive to verify that
+          # it contains everything those tests need.
+          with tempfile.TemporaryDirectory() as temp_dir:
+              with tarfile.open(sdist, "r:gz") as archive:
+                  archive.extractall(temp_dir, filter="data")
+              roots = [path for path in os.scandir(temp_dir) if path.is_dir()]
+              assert len(roots) == 1
+              env = {**os.environ, "PYTHONPATH": os.path.join(roots[0].path, "src")}
+              subprocess.run(
+                  [sys.executable, "-m", "pytest", "-q",
+                   "tests/test_comfy_surface.py",
+                   "tests/test_monarch_surface.py",
+                   "tests/test_leak_check.py",
+                   "tests/test_node_contract.py",
+                   "tests/test_benchmark_provenance.py",
+                   "tests/test_release_surfaces.py"],
+                  cwd=roots[0].path, env=env, check=True,
+              )
+          PY
+          python -m venv wheel-smoke
+          wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
+          wheel-smoke/bin/dgxm version
+          python -m venv sdist-smoke
+          sdist-smoke/bin/python -m pip install --no-deps dist/*.tar.gz
+          sdist-smoke/bin/dgxm version
+      - name: dgxm smoke
+        run: |
+          dgxm version
+          set +e
+          dgxm doctor > doctor-smoke.log 2>&1
+          rc=$?
+          set -e
+          cat doctor-smoke.log
+          # The runner has no CUDA device, so doctor must exit 1 with a torch CUDA
+          # FAIL row. Exit 0 would incorrectly report a render-capable environment.
+          test "$rc" -eq 1
+          grep -q 'FAIL.*torch CUDA' doctor-smoke.log
+          ! grep -q Traceback doctor-smoke.log

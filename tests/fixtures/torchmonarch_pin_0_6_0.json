@@ -1,0 +1,351 @@
+{
+  "distribution": "torchmonarch",
+  "environment": {
+    "implementation": "cpython",
+    "machine": "aarch64",
+    "python": "3.12.3",
+    "system": "Linux"
+  },
+  "manifest_digest": "01102ec58aded737ac1631e37783d00fbe18247bdf4b727ec28bf0106450c1ef",
+  "schema": 1,
+  "semantics": {
+    "actor_queue_dispatch_default": {
+      "actor_queue_dispatch": true,
+      "outcome": "observed"
+    },
+    "mesh_factory_private_ownership": {
+      "host_inner_identity": true,
+      "host_proc_meshes_empty": true,
+      "host_proc_meshes_type": "builtins.list",
+      "outcome": "observed",
+      "proc_host_identity": true
+    },
+    "public_future_get_in_asyncio": {
+      "outcome": "returned",
+      "result_type": "builtins.tuple",
+      "warnings": [
+        {
+          "category": "builtins.UserWarning",
+          "message": "Blocking get() was called from a running asyncio event loop. It is a synchronous, blocking call that can freeze the loop and deadlock; use as_asyncio() (or await) instead."
+        }
+      ]
+    },
+    "raw_python_task_await_in_asyncio": {
+      "exception_type": "builtins.RuntimeError",
+      "message": "Attempting to __await__ a PythonTask when the asyncio event loop is active. PythonTask objects should only be awaited in coroutines passed to PythonTask.from_coroutine",
+      "outcome": "raised"
+    },
+    "unhandled_fault_hook_assignment": {
+      "outcome": "writable"
+    }
+  },
+  "touchpoints": {
+    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.__await__": {
+      "detail": null,
+      "kind": "builtins.wrapper_descriptor",
+      "signature": "(self, /)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.block_on": {
+      "detail": null,
+      "kind": "builtins.method_descriptor",
+      "signature": "(self, /)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.sleep": {
+      "detail": null,
+      "kind": "builtins.builtin_function_or_method",
+      "signature": "(seconds)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask.with_timeout": {
+      "detail": null,
+      "kind": "builtins.method_descriptor",
+      "signature": "(self, /, seconds)",
+      "status": "ok"
+    },
+    "monarch._src.actor.actor_mesh.ActorMesh.extent": {
+      "detail": null,
+      "kind": "builtins.property",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.actor_mesh.ActorMesh.slice": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, **kwargs: Any) -> Self",
+      "status": "ok"
+    },
+    "monarch._src.actor.host_mesh.HostMesh": {
+      "detail": null,
+      "kind": "abc.ABCMeta",
+      "signature": "(hy_host_mesh: monarch._rust_bindings.monarch_hyperactor.pytokio.Shared, region: monarch._rust_bindings.monarch_hyperactor.shape.Region, stream_logs: bool, is_fake_in_process: bool, code_sync_proc_mesh: Optional[ForwardRef('_Lazy[ProcMesh]')]) -> None",
+      "status": "ok"
+    },
+    "monarch._src.actor.host_mesh.HostMesh.is_fake_in_process": {
+      "detail": null,
+      "kind": "builtins.property",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.host_mesh.HostMesh.region": {
+      "detail": null,
+      "kind": "builtins.property",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.host_mesh.HostMesh.stream_logs": {
+      "detail": null,
+      "kind": "builtins.property",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.proc_mesh.ProcMesh": {
+      "detail": null,
+      "kind": "abc.ABCMeta",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._src.actor.proc_mesh.get_active_proc_meshes": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "() -> List[ForwardRef('ProcMesh')]",
+      "status": "ok"
+    },
+    "monarch._src.actor.proc_mesh.register_proc_mesh_spawn_callback": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(callback: Callable[[ForwardRef('ProcMesh')], NoneType]) -> None",
+      "status": "ok"
+    },
+    "monarch._src.actor.proc_mesh.unregister_proc_mesh_spawn_callback": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(callback: Callable[[ForwardRef('ProcMesh')], NoneType]) -> None",
+      "status": "ok"
+    },
+    "monarch.actor.Actor": {
+      "detail": null,
+      "kind": "abc.ABCMeta",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.ActorError": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.Channel": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.Channel.open": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(once: bool = False) -> Tuple[ForwardRef('Port[R]'), ForwardRef('PortReceiver[R]')]",
+      "status": "ok"
+    },
+    "monarch.actor.Endpoint": {
+      "detail": null,
+      "kind": "typing._ProtocolMeta",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.Endpoint.broadcast": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, *args: P.args, **kwargs: P.kwargs) -> None",
+      "status": "ok"
+    },
+    "monarch.actor.Endpoint.call": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, *args: P.args, **kwargs: P.kwargs) -> 'Future[ValueMesh[R]]'",
+      "status": "ok"
+    },
+    "monarch.actor.Endpoint.call_one": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, *args: P.args, **kwargs: P.kwargs) -> monarch._src.actor.future.Future[~R]",
+      "status": "ok"
+    },
+    "monarch.actor.Extent.labels": {
+      "detail": null,
+      "kind": "builtins.getset_descriptor",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.Future": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.Future.__await__": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self) -> Generator[Any, Any, ~R]",
+      "status": "ok"
+    },
+    "monarch.actor.Future.get": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, timeout: Optional[float] = None) -> ~R",
+      "status": "ok"
+    },
+    "monarch.actor.HostMesh": {
+      "detail": null,
+      "kind": "abc.ABCMeta",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.HostMesh.initialized": {
+      "detail": null,
+      "kind": "builtins.property",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.HostMesh.spawn_procs": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, per_host: Optional[Dict[str, int]] = None, bootstrap: Union[Callable[[], NoneType], Callable[[], Awaitable[NoneType]], NoneType] = None, name: str | None = None, proc_bind: list[dict[str, str]] | None = None, bootstrap_command: Union[monarch._rust_bindings.monarch_hyperactor.host_mesh.BootstrapCommand, Callable[[monarch._rust_bindings.monarch_hyperactor.shape.Point], monarch._rust_bindings.monarch_hyperactor.host_mesh.BootstrapCommand], NoneType] = None) -> 'ProcMesh'",
+      "status": "ok"
+    },
+    "monarch.actor.Port": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.Port.send": {
+      "detail": null,
+      "kind": "builtins.method_descriptor",
+      "signature": "(self, /, obj)",
+      "status": "ok"
+    },
+    "monarch.actor.PortReceiver": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.PortReceiver.recv": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self) -> 'Future[R]'",
+      "status": "ok"
+    },
+    "monarch.actor.ProcMesh": {
+      "detail": null,
+      "kind": "abc.ABCMeta",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.ProcMesh.initialized": {
+      "detail": null,
+      "kind": "builtins.property",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.ProcMesh.spawn": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, name: str, Class: Type[~TActor], *args: Any, **kwargs: Any) -> ~TActor",
+      "status": "ok"
+    },
+    "monarch.actor.ProcMesh.stop": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, reason: str = 'stopped by client') -> monarch._src.actor.future.Future[NoneType]",
+      "status": "ok"
+    },
+    "monarch.actor.ValueMesh": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.actor.ValueMesh.items": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self) -> Iterable[Tuple[monarch._src.actor.actor_mesh.Point, ~R]]",
+      "status": "ok"
+    },
+    "monarch.actor.attach_to_workers": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(*, private_key: Union[bytes, pathlib.Path, NoneType] = None, ca: Union[bytes, pathlib.Path, Literal['trust_all_connections']], workers: List[Union[str, monarch._src.actor.future.Future[str]]], name: Optional[str] = None) -> monarch._src.actor.host_mesh.HostMesh",
+      "status": "ok"
+    },
+    "monarch.actor.concurrent_endpoint": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(method: Any = None, *, propagate: Union[NoneType, Literal['cached', 'inspect', 'mocked'], Callable[..., Any]] = None, explicit_response_port: bool = False, instrument: bool = True) -> Any",
+      "status": "ok"
+    },
+    "monarch.actor.enable_transport": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(transport: 'ChannelTransport | str') -> None",
+      "status": "ok"
+    },
+    "monarch.actor.endpoint": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(method: Any = None, *, propagate: Any = None, explicit_response_port: bool = False, instrument: bool = True) -> Any",
+      "status": "ok"
+    },
+    "monarch.actor.run_worker_loop_forever": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(*, private_key: Union[bytes, pathlib.Path, NoneType] = None, ca: Union[bytes, pathlib.Path, Literal['trust_all_connections']], address: str) -> None",
+      "status": "ok"
+    },
+    "monarch.actor.this_host": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "() -> 'HostMesh'",
+      "status": "ok"
+    },
+    "monarch.actor.unhandled_fault_hook": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch.rdma.RDMABuffer": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "(data: 'torch.Tensor | memoryview') -> None",
+      "status": "ok"
+    },
+    "monarch.rdma.RDMABuffer.drop": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self) -> monarch._src.actor.future.Future[NoneType]",
+      "status": "ok"
+    },
+    "monarch.rdma.RDMABuffer.read_into": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(self, dst: 'torch.Tensor | memoryview', *, timeout: int = 60) -> monarch._src.actor.future.Future[NoneType]",
+      "status": "ok"
+    },
+    "monarch.rdma.is_ibverbs_available": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "() -> bool",
+      "status": "ok"
+    }
+  },
+  "version": "0.6.0"
+}

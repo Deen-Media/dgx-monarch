@@ -1,0 +1,720 @@
+{
+ "id": "minimax-h3-text-to-video-with-sound",
+ "revision": 0,
+ "last_node_id": 14,
+ "last_link_id": 14,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DGXMonarchInit",
+   "pos": [
+    80,
+    80
+   ],
+   "size": [
+    315,
+    448
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "slot_index": 0,
+     "links": [
+      1
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchInit"
+   },
+   "widgets_values": [
+    "auto",
+    "auto",
+    "TORCH_FLASH",
+    "",
+    0,
+    0.0,
+    true,
+    false,
+    1,
+    false,
+    "auto",
+    "auto",
+    "first_use",
+    false,
+    2,
+    0.0,
+    "off",
+    "auto"
+   ],
+   "dgxm_widgets": {
+    "topology": "auto",
+    "mode": "auto",
+    "attention": "TORCH_FLASH",
+    "config_path": "",
+    "gpus_per_host": 0,
+    "reserve_vram_gb": 0.0,
+    "sync_ulysses": true,
+    "compile_dit": false,
+    "pipeline_depth": 1,
+    "mmap_fallback": false,
+    "lora_low_rss": "auto",
+    "slab_weights": "auto",
+    "auto_gate": "first_use",
+    "load_profile": false,
+    "swap_verify": 2,
+    "uma_reserve_gb": 0.0,
+    "comfy_managed": "off",
+    "family_adapter": "auto"
+   }
+  },
+  {
+   "id": 2,
+   "type": "Note",
+   "pos": [
+    80,
+    270
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "MiniMax H3 text to video with sound: one packed video and audio sequence is denoised once, then decoded twice, the frames through the video VAE and the soundtrack through the audio VAE. 1344x768, 124 frames (about 5 s at 24 fps), 20 steps at cfg 1.0, because the released checkpoints are CFG distilled. Comfy caps this DiT at batch 1, so cfg-parallel and data-parallel refuse; topology=auto asks for sequence-parallel on a configured pair and single on one box. Connect an image to first_frame (and last_frame) to make this a keyframe render. The first render of a new model runs the identity gate: before any pixels, a few minutes of proof renders check that the mesh matches a stock single-GPU load. Expects minimax_h3_fl2va_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in models/text_encoders, and minimax_h3_video_vae_fp16.safetensors plus minimax_h3_audio_vae_fp32.safetensors in models/vae."
+   ],
+   "title": "DGX Monarch | MiniMax H3 text to video with sound"
+  },
+  {
+   "id": 3,
+   "type": "DGXMonarchUNETLoader",
+   "pos": [
+    420,
+    80
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      5
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUNETLoader"
+   },
+   "widgets_values": [
+    "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 4,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      2,
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "minimax",
+    "default"
+   ]
+  },
+  {
+   "id": 5,
+   "type": "VAELoader",
+   "pos": [
+    80,
+    650
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      3,
+      10
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "minimax_h3_video_vae_fp16.safetensors"
+   ]
+  },
+  {
+   "id": 6,
+   "type": "VAELoader",
+   "pos": [
+    80,
+    840
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      12
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "minimax_h3_audio_vae_fp32.safetensors"
+   ]
+  },
+  {
+   "id": 7,
+   "type": "MiniMaxH3ImageToVideo",
+   "pos": [
+    420,
+    460
+   ],
+   "size": [
+    315,
+    250
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 2
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 3
+    },
+    {
+     "name": "first_frame",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "last_frame",
+     "type": "IMAGE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      6
+     ]
+    },
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 1,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "MiniMaxH3ImageToVideo"
+   },
+   "widgets_values": [
+    "Realistic live-action cinematic look, craft documentary: practical film photography, a glassblower's studio at night, anamorphic lens, shallow depth of field, warm furnace light against cold blue windows, fine film grain, dust drifting in the air, restrained grading.\n\nScene overview: a glassblower turns a glowing gather of molten glass on a blowpipe at the furnace mouth, shapes it with wet folded paper, and lifts the finished bowl into the light. One continuous craft moment, calm and precise.\n\nStoryboard (each shot its own scene, clean cuts):\n[0s-1.5s] Shot 1: close on the furnace mouth, orange light spilling out, the blowpipe entering frame and turning steadily.\n[1.5s-3s] Shot 2: medium side angle at the bench, forearms rolling the pipe on the rails, the gather glowing white at its core. The glassblower, a calm low voice (S1), says without looking up: <d>[English] Keep it turning, or it falls.</d>\n[3s-4s] Shot 3: close on wet folded paper pressed to the glass, steam bursting off the surface, the shape tightening under the hand.\n[4s-5s] Shot 4: the finished bowl lifted toward the window, cold daylight passing through the amber wall of the glass, holding.\n\nCamera: shot 1 pushes in with small amplitude at slow speed, shot 2 holds a static shot, shot 3 tracks with the hands, shot 4 tilts up with small amplitude.\n\nAudio: the low roar of the furnace under everything, the steady scrape of the pipe on the bench rails, a sharp hiss of steam at 3s, one soft chime as the bowl settles at 4.5s, a sparse low string bed throughout.\n\nNo text, subtitles, logos or watermarks, no cartoon or CG rendering, keep the live-action texture.",
+    1344,
+    768,
+    124
+   ]
+  },
+  {
+   "id": 8,
+   "type": "CLIPTextEncode",
+   "pos": [
+    760,
+    460
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 4
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      7
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    ""
+   ]
+  },
+  {
+   "id": 9,
+   "type": "EmptyMiniMaxH3LatentAV",
+   "pos": [
+    760,
+    650
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      8
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "EmptyMiniMaxH3LatentAV"
+   },
+   "widgets_values": [
+    1344,
+    768,
+    124
+   ]
+  },
+  {
+   "id": 10,
+   "type": "DGXMonarchKSampler",
+   "pos": [
+    1100,
+    270
+   ],
+   "size": [
+    315,
+    294
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 5
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 6
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 7
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 8
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      9,
+      11
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchKSampler"
+   },
+   "widgets_values": [
+    0,
+    "randomize",
+    20,
+    1.0,
+    "res_multistep",
+    "simple",
+    1.0
+   ],
+   "dgxm_widgets": {
+    "seed": 0,
+    "control_after_generate": "randomize",
+    "steps": 20,
+    "cfg": 1.0,
+    "sampler_name": "res_multistep",
+    "scheduler": "simple",
+    "denoise": 1.0
+   }
+  },
+  {
+   "id": 11,
+   "type": "VAEDecode",
+   "pos": [
+    1440,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 9
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 10
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      13
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 12,
+   "type": "VAEDecodeAudio",
+   "pos": [
+    1440,
+    460
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 11
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 12
+    }
+   ],
+   "outputs": [
+    {
+     "name": "AUDIO",
+     "type": "AUDIO",
+     "slot_index": 0,
+     "links": [
+      14
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecodeAudio"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 13,
+   "type": "SaveImage",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 13
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "dgx_monarch_minimax_h3"
+   ]
+  },
+  {
+   "id": 14,
+   "type": "SaveAudioAdvanced",
+   "pos": [
+    1780,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": 14
+    }
+   ],
+   "outputs": [
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveAudioAdvanced"
+   },
+   "widgets_values": [
+    "audio/dgx_monarch_minimax_h3",
+    "flac"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   3,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   2,
+   4,
+   0,
+   7,
+   0,
+   "CLIP"
+  ],
+  [
+   3,
+   5,
+   0,
+   7,
+   1,
+   "VAE"
+  ],
+  [
+   4,
+   4,
+   0,
+   8,
+   0,
+   "CLIP"
+  ],
+  [
+   5,
+   3,
+   0,
+   10,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   6,
+   7,
+   0,
+   10,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   7,
+   8,
+   0,
+   10,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   8,
+   9,
+   0,
+   10,
+   3,
+   "LATENT"
+  ],
+  [
+   9,
+   10,
+   0,
+   11,
+   0,
+   "LATENT"
+  ],
+  [
+   10,
+   5,
+   0,
+   11,
+   1,
+   "VAE"
+  ],
+  [
+   11,
+   10,
+   0,
+   12,
+   0,
+   "LATENT"
+  ],
+  [
+   12,
+   6,
+   0,
+   12,
+   1,
+   "VAE"
+  ],
+  [
+   13,
+   11,
+   0,
+   13,
+   0,
+   "IMAGE"
+  ],
+  [
+   14,
+   12,
+   0,
+   14,
+   0,
+   "AUDIO"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

@@ -1,0 +1,240 @@
+name: comfy-canary
+
+permissions:
+  contents: read
+
+# Track ComfyUI nightly (DESIGN.md §6.3): import the node pack and build
+# node schemas against master on CPU each day. Behavioral seam checks
+# (DESIGN.md §5.10) catch changes that leave names and signatures intact.
+
+on:
+  schedule:
+    - cron: "17 6 * * *"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - "__init__.py"
+      - "pyproject.toml"
+      - "requirements.txt"
+      - "tools/build_xfuser_compat_wheel.py"
+      - "src/**"
+      - "tests/canary/**"
+      - "tests/fixtures/workflows/**"
+      # The comfy module guard in conftest.py runs under every pytest step.
+      - "tests/conftest.py"
+      - "tests/test_bake_equivalence.py"
+      - "tests/test_comfy_seam_contracts.py"
+      - "tests/test_int8_linear_layout.py"
+      - "tests/test_slab_hook_canary.py"
+      - "tests/test_lens_comfy_exactness.py"
+      - "tests/test_lens_text_projections.py"
+      - "tests/test_auto_latent_downscale.py"
+      - "tests/test_chroma_cfg_pad_forward.py"
+      - "tests/test_chroma_text_projections.py"
+      - "tests/test_ideogram4_stock_equivalence.py"
+
+      - "tests/test_hunyuan_stock_equivalence.py"
+
+      # Check Ernie imports before running its forward-path harness.
+      - "tests/test_ernie_stock_equivalence.py"
+      - "tests/test_flux_pad_exclusion.py"
+      - "tests/test_mage_flow_comfy_differential.py"
+      - "tests/test_qwen_image21_adapter.py"
+      - "tests/test_qwen_text_projections.py"
+      - "tests/test_render_memory_price.py"
+      - "tests/test_wan_variants.py"
+      - "tests/test_worker_latent_size_tags.py"
+      - "web/**"
+      - "example_workflows/**"
+      - "tools/gen_templates.py"
+      - "benchmark/sweep/convert.py"
+      # The media-load seam prunes inputs using this matrix's media map.
+      - "benchmark/sweep/matrix.py"
+      - ".github/workflows/comfy-canary.yml"
+
+jobs:
+  import-against-comfy-master:
+    # Pin the runner image; review Ubuntu upgrades explicitly.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Clone ComfyUI master
+        run: |
+          git clone --depth 1 https://github.com/comfyanonymous/ComfyUI ../ComfyUI
+          git -C ../ComfyUI rev-parse HEAD
+      - name: Install
+        run: |
+          # PEP 639 requires setuptools>=77 with --no-build-isolation; torch
+          # requires <82. Install within both constraints.
+          python -m pip install --upgrade pip "setuptools>=77,<82" wheel
+          pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+          pip install -r ../ComfyUI/requirements.txt
+          # Share ci.yml's dev dependencies. tests/conftest.py imports hypothesis
+          # at module scope, so installing pytest alone would fail collection.
+          mkdir -p xfuser-compat-wheels
+          python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
+          torch_build="$(python -c 'import torch; print(torch.__version__)')"
+          printf 'torch==%s\n' "$torch_build" > xfuser-compat-wheels/torch-constraint.txt
+          pip install --find-links xfuser-compat-wheels \
+            --constraint xfuser-compat-wheels/torch-constraint.txt \
+            -e .[dev] --no-build-isolation
+      - name: Import entrypoint and assert Comfy touchpoint manifest (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: python tests/canary/comfy_entrypoint_canary.py
+      - name: Seam behavioral contracts vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: python tests/canary/comfy_seam_contracts.py
+      - name: Bake equivalence vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: python tests/canary/bake_equivalence_canary.py
+      - name: Slab hook surfaces vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: python tests/canary/slab_hook_canary.py
+      # Check every committed template against master's node schemas to catch
+      # added, removed or retyped widgets; import checks do not cover templates.
+      - name: Template widgets vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: python tests/canary/template_widget_canary.py
+      - name: CPU-safe worker import smoke and API workflow schema
+        env:
+          COMFYUI_DIR: ../ComfyUI
+          # Start ComfyUI with --cpu. This checks package discovery; xFuser's
+          # import-time accelerator probe requires GPU runs for full import coverage.
+          DGXM_IMPORT_CPU: "1"
+        run: |
+          python tests/canary/import_canary.py
+          python - <<'PY'
+          import json
+          payload = json.load(open("tests/fixtures/workflows/krea2_uly2_api.json"))
+          assert set(payload) == {"_meta", "prompt"}
+          assert payload["prompt"]
+          assert all("class_type" in node for node in payload["prompt"].values())
+          PY
+      # These tests drive a tiny real comfy Chroma through the cfg2 pad trim.
+      # The regular CI job has no ComfyUI, so they skip there.
+      - name: Chroma cfg2 pad trim vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_chroma_cfg_pad_forward.py
+      # Verify the spatial latent ratio from ComfyUI's checkpoint detection.
+      # The real-ComfyUI cases skip in ordinary CI, which has no ComfyUI checkout.
+      - name: Auto-topology latent ratio vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_auto_latent_downscale.py
+      # Check which ComfyUI Linear families Chroma's torch.nn.Linear selection
+      # admits. Optional cublas_ops is not installed and remains unchecked.
+      - name: Chroma text projection selection vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_chroma_text_projections.py
+      # Compare Ideogram4's sharded forward with ComfyUI operand by operand.
+      # Ordinary CI lacks ComfyUI and skips this file. Equality also requires
+      # row-count-independent CPU GEMM results; otherwise that check skips
+      # with a reason while the negative control still runs.
+      - name: Ideogram4 sharded forward vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_ideogram4_stock_equivalence.py
+
+      # Pin the six Qwen-Image text-projection paths and their accepted Linear
+      # families. A renamed path would leave a projection sharded with only a log.
+      - name: Qwen-Image text projection selection vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_qwen_text_projections.py
+      # Workers hand the empty latent's size tags to comfy's own fix, as stock
+      # samplers do. The regular CI job has no ComfyUI, so the real-comfy half
+      # of this file skips there.
+      - name: Worker latent size tags vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_worker_latent_size_tags.py
+      - name: Mage forward vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: pytest -q tests/test_mage_flow_comfy_differential.py
+      # Check exact two-rank Ulysses HunyuanVideo output against stock ComfyUI.
+      # Skip without ComfyUI or when CPU GEMM results vary with shard row count.
+      - name: Hunyuan two-rank forward vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_hunyuan_stock_equivalence.py
+
+      # Compare copied q/k preparation against ComfyUI's ErnieImageModel
+      # to catch upstream behavior changes.
+      - name: Ernie-Image pure-Ulysses forward vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_ernie_stock_equivalence.py
+      # These two steps bind comfy's native Qwen Image 2.1 and Wan Animate 2
+      # model classes from master and compare the injected sequence-parallel
+      # forwards with stock on CPU. The ordinary CI job has no ComfyUI.
+      - name: Qwen Image 2.1 native forward vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: pytest -q tests/test_qwen_image21_adapter.py
+      - name: Wan Animate 2 native forward vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: >-
+          pytest -q
+          tests/test_wan_variants.py::test_wan_animate2_real_comfy_two_rank_gloo_matches_stock
+      # Compare Lens's sharded forward operand by operand and check stock
+      # joint-key bias and text-Linear selection. These files skip without ComfyUI.
+      # If CPU GEMM results vary with row count, skip the sharded equality check
+      # with a reason; still run the seam and selection tests.
+      - name: Lens sharded forward and stock seams vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_lens_comfy_exactness.py tests/test_lens_text_projections.py
+      # Keep the formula check last so its failure cannot prevent earlier
+      # canaries from running; no step uses continue-on-error.
+      - name: Render-memory formula vs comfy master (CPU)
+        env:
+          # Use COMFY_DIR, not PYTHONPATH: the test selects ComfyUI's CPU path
+          # before adding the checkout. PYTHONPATH lets pytest import
+          # comfy.model_management too early, selecting the GPU path.
+          COMFY_DIR: ../ComfyUI
+        run: >-
+          pytest -q
+          tests/test_render_memory_price.py::test_the_bound_mirrors_comfys_own_formula
+      # Run the real-ComfyUI files and canary wrappers in one process to expose
+      # sys.modules leaks that isolated runs miss. conftest.py identifies the
+      # leaking file. Set both environment names because tests use both.
+      # After green per-file and ci.yml runs, failures here can reflect cross-file
+      # leaks, CPU-wheel or ComfyUI dependency differences, or the current-ComfyUI
+      # case in test_int8_linear_layout.py, which runs only in this step.
+      - name: Real-comfy test files in one process (cross-file leaks, CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+          COMFYUI_DIR: ../ComfyUI
+        run: >-
+          pytest -q
+          tests/test_comfy_seam_contracts.py
+          tests/test_bake_equivalence.py
+          tests/test_slab_hook_canary.py
+          tests/test_lens_comfy_exactness.py
+          tests/test_lens_text_projections.py
+          tests/test_chroma_cfg_pad_forward.py
+          tests/test_auto_latent_downscale.py
+          tests/test_chroma_text_projections.py
+          tests/test_ideogram4_stock_equivalence.py
+          tests/test_qwen_text_projections.py
+          tests/test_worker_latent_size_tags.py
+          tests/test_mage_flow_comfy_differential.py
+          tests/test_hunyuan_stock_equivalence.py
+          tests/test_ernie_stock_equivalence.py
+          tests/test_qwen_image21_adapter.py
+          tests/test_wan_variants.py
+          tests/test_int8_linear_layout.py
+          tests/test_render_memory_price.py

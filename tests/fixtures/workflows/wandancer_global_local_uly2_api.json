@@ -1,0 +1,189 @@
+{
+  "_meta": {
+    "title": "dgx-monarch WanDancer global-to-local bridge, uly2 (ComfyUI API format)",
+    "usage": "POST this whole document to /prompt on a ComfyUI whose custom_nodes has dgx-monarch. Shape-only fixture: checkpoint/VAE/CLIP/audio filenames are placeholders that do not need to resolve to real files (see docs/MODELS.md, issue #137). Node '12' (WanDancerPadKeyframesList) is a stock list-output node. ComfyUI auto-iterates nodes '13' through '16' once per emitted segment; num_segments below (2) is a placeholder the operator must recompute from their staged audio's duration before an acceptance run. This fixture ends at per-segment SaveImage (frames only); combining the per-segment frame batches into one video file is a stock ComfyUI concern (e.g. a video-combine node) and is intentionally left out so the graph stays built only from nodes already covered by this repo's node contract. Wire a combine step downstream of node '16' yourself if you need one file. Two-checkpoint contract (hardware-corrected 2026-07-28): the release ships SEPARATE global and local checkpoints; the global stage samples node '2' (*_global_*) and the local stage samples its own loader node '18' (*_local_*). One shared checkpoint for both stages was the original placeholder shape and is wrong. Filenames follow the public release layout. IMAGE CONDITIONING IS REQUIRED (hardware-measured 2026-07-28): running WanDancer without start_image + clip_vision_output produces non-finite latents on EVERY topology. Stock ComfyUI silently saves the NaN result as all-black frames, while dgx-monarch's output validator refuses it loudly. Node '21' is the reference dancer image: start_image for the global stage, CLIP-vision for both stages (the local stage's start_image/mask come from the bridge node '12')."
+  },
+  "prompt": {
+  "1": {
+    "class_type": "DGXMonarchInit",
+    "inputs": {
+      "topology": "uly2",
+      "mode": "cluster"
+    }
+  },
+  "2": {
+    "class_type": "DGXMonarchUNETLoader",
+    "inputs": {
+      "mesh": ["1", 0],
+      "unet_name": "wan2.2_dancer_14b_global_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "18": {
+    "class_type": "DGXMonarchUNETLoader",
+    "inputs": {
+      "mesh": ["1", 0],
+      "unet_name": "wan2.2_dancer_14b_local_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "3": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+      "type": "wan"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["3", 0],
+      "text": "a dancer performing to the beat, medium shot, studio lighting"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["3", 0],
+      "text": ""
+    }
+  },
+  "6": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    }
+  },
+  "7": {
+    "class_type": "LoadAudio",
+    "inputs": {
+      "audio": "wandancer_driving_audio_placeholder.wav"
+    }
+  },
+  "8": {
+    "class_type": "WanDancerEncodeAudio",
+    "inputs": {
+      "audio": ["7", 0],
+      "video_frames": 149,
+      "audio_inject_scale": 1.0
+    }
+  },
+  "9": {
+    "class_type": "WanDancerVideo",
+    "inputs": {
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "vae": ["6", 0],
+      "width": 480,
+      "height": 832,
+      "length": 149,
+      "audio_encoder_output": ["8", 0],
+      "clip_vision_output": ["22", 0],
+      "start_image": ["21", 0]
+    }
+  },
+  "20": {
+    "class_type": "CLIPVisionLoader",
+    "inputs": {
+      "clip_name": "clip_vision_h.safetensors"
+    }
+  },
+  "21": {
+    "class_type": "LoadImage",
+    "inputs": {
+      "image": "wandancer_reference_dancer_placeholder.png"
+    }
+  },
+  "22": {
+    "class_type": "CLIPVisionEncode",
+    "inputs": {
+      "clip_vision": ["20", 0],
+      "image": ["21", 0],
+      "crop": "center"
+    }
+  },
+  "10": {
+    "class_type": "DGXMonarchKSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "seed": 42,
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": ["9", 0],
+      "negative": ["9", 1],
+      "latent_image": ["9", 2],
+      "denoise": 1.0
+    }
+  },
+  "11": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["10", 0],
+      "vae": ["6", 0]
+    }
+  },
+  "12": {
+    "class_type": "WanDancerPadKeyframesList",
+    "inputs": {
+      "images": ["11", 0],
+      "segment_length": 149,
+      "num_segments": 2,
+      "audio": ["7", 0]
+    }
+  },
+  "13": {
+    "class_type": "WanDancerEncodeAudio",
+    "inputs": {
+      "audio": ["12", 2],
+      "video_frames": 149,
+      "audio_inject_scale": 1.0
+    }
+  },
+  "14": {
+    "class_type": "WanDancerVideo",
+    "inputs": {
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "vae": ["6", 0],
+      "width": 480,
+      "height": 832,
+      "length": 149,
+      "start_image": ["12", 0],
+      "mask": ["12", 1],
+      "audio_encoder_output": ["13", 0],
+      "clip_vision_output": ["22", 0]
+    }
+  },
+  "15": {
+    "class_type": "DGXMonarchKSampler",
+    "inputs": {
+      "model": ["18", 0],
+      "seed": 42,
+      "steps": 30,
+      "cfg": 5.0,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "positive": ["14", 0],
+      "negative": ["14", 1],
+      "latent_image": ["14", 2],
+      "denoise": 1.0
+    }
+  },
+  "16": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["15", 0],
+      "vae": ["6", 0]
+    }
+  },
+  "17": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["16", 0],
+      "filename_prefix": "dgxm_wandancer_local_segment"
+    }
+  }
+  }
+}

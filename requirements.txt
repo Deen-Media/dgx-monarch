@@ -1,0 +1,15 @@
+# Runtime dependencies mirrored from pyproject.toml.
+#
+# Keep strings identical and in the same order: dgxm update refuses mismatches.
+# The editable install reads pyproject.toml.
+#
+# ComfyUI owns the CUDA torch build, so torch is not a direct dependency.
+# xfuser and yunchang have torch lower bounds that could replace an older build.
+# Verify the environment first and use the torch constraint in docs/INSTALL.md.
+
+# Pinned: torchmonarch's 0.x API changes between releases (docs/DESIGN.md §6.3,
+# §10). Follow the bump procedure in skills/dgx-monarch-dev/SKILL.md.
+torchmonarch==0.6.0
+# Temporary verified compatibility build; docs/INSTALL.md builds it.
+xfuser==0.7.0+dgxm.npuimport1
+yunchang>=0.6.4

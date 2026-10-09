@@ -1,0 +1,87 @@
+{
+  "_meta": {
+    "title": "dgx-monarch M1 gate: Krea2 uly2 across the cluster (ComfyUI API format)",
+    "usage": "POST this whole document to /prompt on a ComfyUI whose custom_nodes has dgx-monarch"
+  },
+  "prompt": {
+  "1": {
+    "class_type": "DGXMonarchInit",
+    "inputs": {
+      "topology": "uly2",
+      "mode": "cluster"
+    }
+  },
+  "2": {
+    "class_type": "DGXMonarchUNETLoader",
+    "inputs": {
+      "mesh": ["1", 0],
+      "unet_name": "krea2_turbo_fp8_scaled.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "3": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_4b_bf16.safetensors",
+      "type": "krea2"
+    }
+  },
+  "4": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["3", 0],
+      "text": "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+    }
+  },
+  "5": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["3", 0],
+      "text": ""
+    }
+  },
+  "6": {
+    "class_type": "EmptyLatentImage",
+    "inputs": {
+      "width": 1536,
+      "height": 1536,
+      "batch_size": 1
+    }
+  },
+  "7": {
+    "class_type": "DGXMonarchKSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "seed": 42,
+      "steps": 8,
+      "cfg": 1.0,
+      "sampler_name": "euler_cfg_pp",
+      "scheduler": "simple",
+      "positive": ["4", 0],
+      "negative": ["5", 0],
+      "latent_image": ["6", 0],
+      "denoise": 1.0
+    }
+  },
+  "8": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    }
+  },
+  "9": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["7", 0],
+      "vae": ["8", 0]
+    }
+  },
+  "10": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["9", 0],
+      "filename_prefix": "dgxm_krea2_uly2"
+    }
+  }
+  }
+}

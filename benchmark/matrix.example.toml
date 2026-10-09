@@ -1,0 +1,95 @@
+# dgx-monarch benchmark matrix. Copy to matrix.toml and edit.
+# Run: <comfy python> benchmark/run_matrix.py --matrix benchmark/matrix.toml
+#
+# Each cell renders `repeats` outputs and reports median wall time and quality
+# gates. Unavailable cells are recorded as N/A with a reason.
+
+[defaults]
+steps = 8
+cfg = 1.0
+sampler = "euler_cfg_pp"
+scheduler = "simple"
+seed = 42
+repeats = 3
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+negative = ""
+
+# Sampling defaults to the DGXMonarchKSampler route. A Flux2-dev case needs its
+# official custom-sampler route, guidance, sampler, and latent:
+# sampling_path = "flux2"
+# guidance = 4.0
+# sampler = "euler"
+# latent_channels = 128
+# latent_downscale = 16
+
+# DGXMonarchInit safety controls may also live here or on an individual case.
+# These commented values are the Init node's defaults; set all three to "off"
+# in a campaign cell that isolates stock FSDP behavior.
+# auto_gate = "first_use"
+# lora_low_rss = "auto"
+# slab_weights = "auto"
+
+# Optional render-time SD3 model sampling can live here or on an individual
+# case. This mirrors DGXMonarchModelSamplingSD3 and is bound before topology
+# resolution and sampling. For example, Kandinsky5 uses shift 3 for Image and
+# shift 5 for Video Lite/Pro. Omit the field to preserve checkpoint defaults.
+# model_sampling_sd3_shift = 3.0
+
+# Optional empty-latent shape settings may live here or on an individual case.
+# Defaults are 4 channels at 1/8 spatial scale; omit latent_t (or set it to 0)
+# for an image [B,C,H/D,W/D], or set it positive for video [B,C,T,H/D,W/D].
+# latent_channels = 4
+# latent_downscale = 8
+# latent_t = 0
+
+[[case]]
+name = "krea2-turbo-fp8-1536-uly2"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "uly2"
+width = 1536
+height = 1536
+
+# Per-step fidelity pair: cross-topology gates compare one denoise step
+# (multi-step trajectories diverge chaotically across kernel orders).
+# dp2 batch=2 slice 0 carries exact single-GPU math on a 2-worker mesh.
+[[case]]
+name = "krea2-fp8-1536-dp2-step-ref"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "dp2"
+batch = 2
+steps = 1
+width = 1536
+height = 1536
+
+[[case]]
+name = "krea2-fp8-1536-uly2-step-gate"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "uly2"
+steps = 1
+reference = "krea2-fp8-1536-dp2-step-ref"
+width = 1536
+height = 1536
+
+[[case]]
+name = "krea2-turbo-fp8-1024-cfg2"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "cfg2"
+cfg = 4.5
+width = 1024
+height = 1024
+
+[[case]]
+name = "chroma-fp8-1536-uly2"
+unet = "Chroma1-HD-fp8_scaled_defaultloader_hybrid_large_rev2.safetensors"
+te = { name = "t5xxl_fp8_e4m3fn_scaled.safetensors", type = "chroma" }
+topology = "uly2"
+cfg = 4.0
+steps = 26
+sampler = "euler"
+scheduler = "beta"
+width = 1536
+height = 1536

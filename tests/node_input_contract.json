@@ -1,0 +1,114 @@
+{
+  "DGXMonarchInit": {
+    "required": [["topology", "COMBO", "auto"], ["mode", "COMBO", "auto"]],
+    "optional": [
+      ["attention", "COMBO", "TORCH_FLASH"],
+      ["config_path", "STRING", ""],
+      ["gpus_per_host", "INT", 0],
+      ["reserve_vram_gb", "FLOAT", 0.0],
+      ["sync_ulysses", "BOOLEAN", true],
+      ["compile_dit", "BOOLEAN", false],
+      ["pipeline_depth", "INT", 1],
+      ["mmap_fallback", "BOOLEAN", false],
+      ["lora_low_rss", "COMBO", "auto"],
+      ["slab_weights", "COMBO", "auto"],
+      ["auto_gate", "COMBO", "first_use"],
+      ["load_profile", "BOOLEAN", false],
+      ["swap_verify", "INT", 2],
+      ["uma_reserve_gb", "FLOAT", 0.0],
+      ["comfy_managed", "COMBO", "off"],
+      ["family_adapter", "COMBO", "auto"]
+    ],
+    "hidden": [["unique_id", "UNIQUE_ID", null]]
+  },
+  "DGXMonarchUNETLoader": {
+    "required": [["mesh", "DGXM_MESH", null], ["unet_name", "COMBO", "<first-option>"], ["weight_dtype", "COMBO", "default"]],
+    "hidden": [["unique_id", "UNIQUE_ID", null], ["prompt", "PROMPT", null]]
+  },
+  "DGXMonarchUncondUNETLoader": {
+    "required": [["mesh", "DGXM_MESH", null], ["unet_name", "COMBO", "<first-option>"], ["weight_dtype", "COMBO", "default"]],
+    "hidden": [["unique_id", "UNIQUE_ID", null], ["prompt", "PROMPT", null]]
+  },
+  "DGXMonarchLoraLoader": {
+    "required": [["model", "DGXM_MODEL", null], ["lora_name", "COMBO", "<first-option>"], ["strength_model", "FLOAT", 1.0]],
+    "hidden": [["unique_id", "UNIQUE_ID", null]]
+  },
+  "DGXMonarchModelSamplingSD3": {
+    "required": [["model", "DGXM_MODEL", null], ["shift", "FLOAT", 3.0]]
+  },
+  "DGXMonarchQwenImage21Cache": {
+    "required": [["model", "DGXM_MODEL", null], ["device", "COMBO", "off"], ["dtype", "COMBO", "default"]]
+  },
+  "DGXMonarchKSampler": {
+    "required": [
+      ["model", "DGXM_MODEL", null], ["seed", "INT", 0], ["steps", "INT", 20], ["cfg", "FLOAT", 8.0],
+      ["sampler_name", "COMBO", "<first-option>"], ["scheduler", "COMBO", "<first-option>"],
+      ["positive", "CONDITIONING", null], ["negative", "CONDITIONING", null],
+      ["latent_image", "LATENT", null], ["denoise", "FLOAT", 1.0]
+    ],
+    "hidden": [["unique_id", "UNIQUE_ID", null]]
+  },
+  "DGXMonarchKSamplerAdvanced": {
+    "required": [
+      ["model", "DGXM_MODEL", null], ["add_noise", "COMBO", "enable"], ["noise_seed", "INT", 0],
+      ["steps", "INT", 20], ["cfg", "FLOAT", 8.0], ["sampler_name", "COMBO", "<first-option>"],
+      ["scheduler", "COMBO", "<first-option>"], ["positive", "CONDITIONING", null],
+      ["negative", "CONDITIONING", null], ["latent_image", "LATENT", null],
+      ["start_at_step", "INT", 0], ["end_at_step", "INT", 10000],
+      ["return_with_leftover_noise", "COMBO", "disable"]
+    ],
+    "hidden": [["unique_id", "UNIQUE_ID", null]]
+  },
+  "DGXMonarchKSamplerPipeline": {
+    "required": [
+      ["model", "DGXM_MODEL", null], ["seeds", "STRING", "0, 1, 2, 3"], ["steps", "INT", 20],
+      ["cfg", "FLOAT", 8.0], ["sampler_name", "COMBO", "<first-option>"], ["scheduler", "COMBO", "<first-option>"],
+      ["positive", "CONDITIONING", null], ["negative", "CONDITIONING", null],
+      ["latent_image", "LATENT", null], ["denoise", "FLOAT", 1.0]
+    ],
+    "hidden": [["unique_id", "UNIQUE_ID", null]]
+  },
+  "DGXMonarchSamplerCustom": {
+    "required": [["noise", "NOISE", null], ["guider", "DGXM_GUIDER", null], ["sampler", "SAMPLER", null], ["sigmas", "SIGMAS", null], ["latent_image", "LATENT", null]],
+    "hidden": [["unique_id", "UNIQUE_ID", null]]
+  },
+  "DGXMonarchBasicScheduler": {
+    "required": [["model", "DGXM_MODEL", null], ["scheduler", "COMBO", "<first-option>"], ["steps", "INT", 20], ["denoise", "FLOAT", 1.0]]
+  },
+  "DGXMonarchBasicGuider": {
+    "required": [["model", "DGXM_MODEL", null], ["conditioning", "CONDITIONING", null]]
+  },
+  "DGXMonarchCFGGuider": {
+    "required": [["model", "DGXM_MODEL", null], ["positive", "CONDITIONING", null], ["negative", "CONDITIONING", null], ["cfg", "FLOAT", 8.0]]
+  },
+  "DGXMonarchDualModelGuider": {
+    "required": [["model", "DGXM_MODEL", null], ["positive", "CONDITIONING", null], ["cfg", "FLOAT", 4.0]],
+    "optional": [["model_negative", "DGXM_MODEL", null], ["negative", "CONDITIONING", null]]
+  },
+  "DGXMonarchIdentityGate": {
+    "required": [
+      ["model", "DGXM_MODEL", null], ["positive", "CONDITIONING", null], ["negative", "CONDITIONING", null],
+      ["latent_image", "LATENT", null], ["noise_seed", "INT", 42], ["steps", "INT", 2],
+      ["cfg", "FLOAT", 1.0], ["sampler_name", "COMBO", "<first-option>"], ["scheduler", "COMBO", "<first-option>"]
+    ],
+    "optional": [["strict", "BOOLEAN", false], ["run_id", "STRING", ""]],
+    "hidden": [["unique_id", "UNIQUE_ID", null]]
+  },
+  "DGXMonarchFleetKSampler": {
+    "required": [
+      ["model", "DGXM_MODEL", null], ["clip", "CLIP", null], ["negative", "CONDITIONING", null],
+      ["latent_image", "LATENT", null], ["prompts", "STRING", ""], ["noise_seed", "INT", 42],
+      ["steps", "INT", 20], ["cfg", "FLOAT", 1.0], ["sampler_name", "COMBO", "<first-option>"],
+      ["scheduler", "COMBO", "<first-option>"]
+    ],
+    "optional": [["positive", "CONDITIONING", null]],
+    "hidden": [["unique_id", "UNIQUE_ID", null]]
+  },
+  "DGXMonarchStatus": {
+    "required": [["mesh", "DGXM_MESH", null]]
+  },
+  "DGXMonarchClearVRAM": {
+    "required": [["mesh", "DGXM_MESH", null], ["level", "COMBO", "soft"]],
+    "optional": [["include_driver", "BOOLEAN", true], ["samples", "LATENT", null]]
+  }
+}

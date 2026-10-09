@@ -1,0 +1,17 @@
+version = 1
+
+[[allow]]
+id = "fictional-gpu-fixture"
+rule = "gpu-identifier"
+path_glob = "tests/test_run_matrix_sanitize.py"
+value_glob = "GPU-deadbeef*"
+expected_matches = 1
+reason = "The sanitizer test needs a UUID-shaped value with the reserved fictional prefix."
+
+[[allow]]
+id = "fictional-host-fixtures"
+rule = "machine-hostname"
+path_glob = "tests/test_run_matrix_sanitize.py"
+value_glob = "examplebox-*"
+expected_matches = 5
+reason = "The sanitizer tests use an explicitly fictional machine-label namespace."

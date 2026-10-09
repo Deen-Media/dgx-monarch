@@ -1,0 +1,1199 @@
+# Model files required by the public workflows and generated test fixtures.
+#
+# Model files only. A template also names a demo image, video or audio clip
+# for its input nodes; those are not model files and take no row here.
+#
+# One [[artifact]] row per distinct file. `dest` is the models subfolder the
+# loader resolves the name against, `url` the vendor or repack address the
+# bytes come from, `size` the file size in bytes and `sha256` the file hash.
+# A row with a blank url, a zero size or a blank sha256 is pending. Write its
+# url here by hand; `--capture` with `--models-dir` sets size and sha256 from
+# the staged file and replaces any value already there. `placeholder = true`
+# marks an example file name: the reader supplies their own file, so the row
+# stays blank and is never pending.
+#
+# [templates] lists, per template, the rows that template names, as
+# "<dest>/<file>". `python tools/check_artifacts.py --sync` rebuilds the rows
+# and these lists from the graphs and keeps every value already filled in.
+# To change which files a template needs, edit the template and sync; never
+# edit a row's file or dest, or a list, by hand. Run the tool with no
+# arguments to check this file; it never downloads anything.
+
+[[artifact]]
+file = "clip_vision_h.safetensors"
+dest = "clip_vision"
+url = "https://huggingface.co/Comfy-Org/Wan-Animate-2/resolve/e7181fe1896b7f2ce34120d1a3663413548240d7/clip_vision/clip_vision_h.safetensors"
+size = 1264219396
+sha256 = "64a7ef761bfccbadbaa3da77366aac4185a6c58fa5de5f589b42a65bcc21f161"
+
+[[artifact]]
+file = "Chroma1-HD-fp8mixed.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Chroma1-HD_repackaged/resolve/409cfff960d66598d4d0ff46cb932f53492cc6d9/split_files/diffusion_models/Chroma1-HD-fp8mixed.safetensors"
+size = 9193379316
+sha256 = "a2928ca6075f308f4d5e2182e2b96120fa8ad270ec6ea9b1b5c724c85c49a575"
+
+[[artifact]]
+file = "CogVideoX_1_5_5b_I2V_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "CogVideoX_1_5_5b_T2V_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "Wan21-14B-SCAIL-preview_comfy_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "anima-base-v1.0.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "boogu_image_base_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "chroma-radiance-x0.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ernie-image.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "flux1-dev.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "flux2_dev_fp8mixed.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "hunyuanimage2.1_fp8_e4m3fn.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "hunyuanimage2.1_refiner_fp8_e4m3fn.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "hunyuanvideo1.5_720p_t2v_fp16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ideogram4_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ideogram4_unconditional_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "kandinsky5lite_t2i.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "kandinsky5lite_t2v_sft_5s.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "kandinsky5pro_t2v_sft_5s.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "krea2_turbo_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "lens_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "longcat_image_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "mage_flow_bf16.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Mage-Flow/resolve/6ff68fbf3c667325e961d551691b246791d5eec0/diffusion_models/mage_flow_bf16.safetensors"
+size = 8231536784
+sha256 = "04431abbc3acd1a5b86a7f77269f8e77e05a6cac3b21f35e1aef7493f6ab4934"
+
+[[artifact]]
+file = "mage_flow_edit_bf16.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Mage-Flow/resolve/6ff68fbf3c667325e961d551691b246791d5eec0/diffusion_models/mage_flow_edit_bf16.safetensors"
+size = 8231536784
+sha256 = "09cee4afa95239d850af02c9b1c006bffc71dca4a984a2a1f56edff9282d53d3"
+
+[[artifact]]
+file = "mage_flow_edit_turbo_int8_convrot.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Mage-Flow/resolve/6ff68fbf3c667325e961d551691b246791d5eec0/diffusion_models/mage_flow_edit_turbo_int8_convrot.safetensors"
+size = 4159146840
+sha256 = "345dd8a3376306624912dc46e1db18a6457d692053afe21c9822ed6719f79937"
+
+[[artifact]]
+file = "mage_flow_turbo_int8_convrot.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Mage-Flow/resolve/6ff68fbf3c667325e961d551691b246791d5eec0/diffusion_models/mage_flow_turbo_int8_convrot.safetensors"
+size = 4159146840
+sha256 = "327c3967a5190ea52e453ec3dd81ba168e37a2a0ff2c763aa3e9260bbbe1913c"
+
+[[artifact]]
+file = "minimax_h3_fl2va_pruned_int8_convrot.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "omnigen2_fp16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "pid_flux1_1024_to_4096_4step_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "pixeldit_1300m_1024px_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen_image_2.1_bf16.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/cb504a4090723e43f17ad01cec0359490e2de613/diffusion_models/qwen_image_2.1_bf16.safetensors"
+size = 14230280616
+sha256 = "89f4158d066cc33906a199fca85634f766892dd78f49b6698dabf187ac86c4bc"
+
+[[artifact]]
+file = "qwen_image_2512_fp8_e4m3fn.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.1_14B_SCAIL_2_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.1_i2v_480p_14B_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.1_t2v_14B_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.2_bernini_r_high_noise_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.2_bernini_r_low_noise_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.2_dancer_14b_global_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.2_dancer_14b_local_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.2_t2v_high_noise_14B_fp16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.2_t2v_low_noise_14B_fp16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan21_1.3b_flow_rvs_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan_animate_2_bf16.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Wan-Animate-2/resolve/e7181fe1896b7f2ce34120d1a3663413548240d7/diffusion_models/wan_animate_2_bf16.safetensors"
+size = 32789894104
+sha256 = "642e906c7deaa27072a90ea433319b18f274da438ba75e350373467a0421f177"
+
+[[artifact]]
+file = "wan_animate_2_distill_bf16.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Wan-Animate-2/resolve/e7181fe1896b7f2ce34120d1a3663413548240d7/diffusion_models/wan_animate_2_distill_bf16.safetensors"
+size = 32789894104
+sha256 = "eb05383cb4b71228bbeb959f4468431a93ab25d0399054b317f399be114d08f9"
+
+[[artifact]]
+file = "wan_animate_2_distill_int8_convrot.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Wan-Animate-2/resolve/e7181fe1896b7f2ce34120d1a3663413548240d7/diffusion_models/wan_animate_2_distill_int8_convrot.safetensors"
+size = 16653175528
+sha256 = "d2e566ecac3f164cb1a6b63dc7d868d6678c9affa49fbceb3abe4f9458f89c8a"
+
+[[artifact]]
+file = "wan_animate_2_int8_convrot.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Wan-Animate-2/resolve/e7181fe1896b7f2ce34120d1a3663413548240d7/diffusion_models/wan_animate_2_int8_convrot.safetensors"
+size = 16653175528
+sha256 = "0580ecdd65e47e97c30df9670d13a6c4a131d26de5a1faf2ccc78392d5167584"
+
+[[artifact]]
+file = "z_image_turbo_bf16.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "zeta-chroma-base-x0-pixel-no-dino.safetensors"
+dest = "diffusion_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors"
+dest = "latent_upscale_models"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
+dest = "loras"
+url = "https://huggingface.co/Comfy-Org/Wan-Animate-2/resolve/e7181fe1896b7f2ce34120d1a3663413548240d7/loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
+size = 738005744
+sha256 = "85c4a61c30e0497aa44b91d93a893b624708461a56fe5485183b28fa07e2dfb3"
+
+[[artifact]]
+file = "test_lora_placeholder.safetensors"
+dest = "loras"
+placeholder = true
+note = "the sweep substitutes a real name per template from its [loras] table"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors"
+dest = "loras"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "your_first_lora.safetensors"
+dest = "loras"
+placeholder = true
+note = "the LoRA stack template names an example; point it at your own file"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "your_second_lora.safetensors"
+dest = "loras"
+placeholder = true
+note = "the second slot of the same example stack"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "byt5_small_glyphxl_fp16.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "clip_l.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "gemma_2_2b_it_elm_bf16.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "gemma_3_12B_it.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "gpt_oss_20b_nvfp4.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ltx-2.3_text_projection_bf16.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "mage_qwen3vl_4b_bf16.safetensors"
+dest = "text_encoders"
+note = "Official Mage encoder under a distinct local filename; preserves other models encoder files."
+url = "https://huggingface.co/Comfy-Org/Mage-Flow/resolve/6ff68fbf3c667325e961d551691b246791d5eec0/text_encoders/qwen3vl_4b_bf16.safetensors"
+size = 8875719384
+sha256 = "36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34"
+
+[[artifact]]
+file = "ministral-3-3b.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "mistral_3_small_flux2_bf16.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen3vl_4b_bf16.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen3vl_8b_bf16.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/cb504a4090723e43f17ad01cec0359490e2de613/text_encoders/qwen3vl_8b_bf16.safetensors"
+size = 17534334616
+sha256 = "68bdc82bc1b66851162ae656225e7e2068166b603db19bd5d5a3b90eb12669a9"
+
+[[artifact]]
+file = "qwen3vl_8b_fp8_scaled.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen_2.5_vl_7b_fp8_scaled.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen_2.5_vl_fp16.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen_3_06b_base.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen_3_4b.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "t5xxl_fp16.safetensors"
+dest = "text_encoders"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "t5xxl_fp8_e4m3fn_scaled.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/comfyanonymous/flux_text_encoders/resolve/6af2a98e3f615bdfa612fbd85da93d1ed5f69ef5/t5xxl_fp8_e4m3fn_scaled.safetensors"
+size = 5157348688
+sha256 = "a498f0485dc9536735258018417c3fd7758dc3bccc0a645feaa472b34955557a"
+
+[[artifact]]
+file = "umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/Comfy-Org/Wan-Animate-2/resolve/e7181fe1896b7f2ce34120d1a3663413548240d7/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors"
+size = 6735906897
+sha256 = "c3355d30191f1f066b26d93fba017ae9809dce6c627dda5f6a66eaa651204f68"
+
+[[artifact]]
+file = "LTX23_audio_vae_bf16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "LTX23_video_vae_bf16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "Wan2_1_VAE_bf16.safetensors"
+dest = "vae"
+url = "https://huggingface.co/Comfy-Org/Wan-Animate-2/resolve/e7181fe1896b7f2ce34120d1a3663413548240d7/vae/Wan2_1_VAE_bf16.safetensors"
+size = 253806278
+sha256 = "1ab9a32cc2c740f6e39d80d367ce5dcc28db8c71b79b28670546b8973e9d75f9"
+
+[[artifact]]
+file = "ae.safetensors"
+dest = "vae"
+url = "https://huggingface.co/lodestones/Chroma/resolve/2f3b2730d7b5edbd02cdff12f72610af5787300b/ae.safetensors"
+size = 335304388
+sha256 = "afc8e28272cd15db3919bacdb6918ce9c1ed22e96cb12c4d5ed0fba823529e38"
+
+[[artifact]]
+file = "cogvideox_vae_bf16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "flux2-vae.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "hunyuan_image_2.1_vae_fp16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "hunyuan_image_refiner_vae_fp16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "hunyuan_video_vae_bf16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "hunyuanvideo15_vae_fp16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ltx-2.5-audio-vae-bf16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "ltx-2.5-video-vae-bf16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "mage_flow_vae_bf16.safetensors"
+dest = "vae"
+url = "https://huggingface.co/Comfy-Org/Mage-Flow/resolve/6ff68fbf3c667325e961d551691b246791d5eec0/vae/mage_flow_vae_bf16.safetensors"
+size = 345053056
+sha256 = "34e076dc1e8a15321e1e07be5111d59cf16dd10b804b7c7e20b4de29013427e0"
+
+[[artifact]]
+file = "minimax_h3_audio_vae_fp32.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "minimax_h3_video_vae_fp16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "qwen_image_2.1_vae_bf16.safetensors"
+dest = "vae"
+url = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/cb504a4090723e43f17ad01cec0359490e2de613/vae/qwen_image_2.1_vae_bf16.safetensors"
+size = 675509688
+sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"
+
+[[artifact]]
+file = "qwen_image_vae.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan21_flow_rvs_mask_vae_bf16.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[[artifact]]
+file = "wan_2.1_vae.safetensors"
+dest = "vae"
+url = ""
+size = 0
+sha256 = ""
+
+[templates]
+"dgx-monarch-anima-t2i" = [
+    "diffusion_models/anima-base-v1.0.safetensors",
+    "text_encoders/qwen_3_06b_base.safetensors",
+    "vae/qwen_image_vae.safetensors",
+]
+"dgx-monarch-boogu-t2i" = [
+    "diffusion_models/boogu_image_base_fp8_scaled.safetensors",
+    "text_encoders/qwen3vl_8b_fp8_scaled.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-chroma-t2i" = [
+    "diffusion_models/Chroma1-HD-fp8mixed.safetensors",
+    "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-cogvideox-i2v" = [
+    "diffusion_models/CogVideoX_1_5_5b_I2V_bf16.safetensors",
+    "text_encoders/t5xxl_fp16.safetensors",
+    "vae/cogvideox_vae_bf16.safetensors",
+]
+"dgx-monarch-cogvideox-t2v" = [
+    "diffusion_models/CogVideoX_1_5_5b_T2V_bf16.safetensors",
+    "text_encoders/t5xxl_fp16.safetensors",
+    "vae/cogvideox_vae_bf16.safetensors",
+]
+"dgx-monarch-dual-spark-split" = [
+    "diffusion_models/flux1-dev.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/t5xxl_fp16.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-ernie-t2i" = [
+    "diffusion_models/ernie-image.safetensors",
+    "text_encoders/ministral-3-3b.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"dgx-monarch-fleet" = [
+    "diffusion_models/flux1-dev.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/t5xxl_fp16.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-flux1-t2i" = [
+    "diffusion_models/flux1-dev.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/t5xxl_fp16.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-flux2-t2i" = [
+    "diffusion_models/flux2_dev_fp8mixed.safetensors",
+    "text_encoders/mistral_3_small_flux2_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"dgx-monarch-hunyuan-image" = [
+    "diffusion_models/hunyuanimage2.1_fp8_e4m3fn.safetensors",
+    "text_encoders/byt5_small_glyphxl_fp16.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/hunyuan_image_2.1_vae_fp16.safetensors",
+]
+"dgx-monarch-hunyuan-video" = [
+    "diffusion_models/hunyuanvideo1.5_720p_t2v_fp16.safetensors",
+    "text_encoders/byt5_small_glyphxl_fp16.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/hunyuanvideo15_vae_fp16.safetensors",
+]
+"dgx-monarch-identity-gate" = [
+    "diffusion_models/flux1-dev.safetensors",
+    "loras/your_first_lora.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/t5xxl_fp16.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-ideogram4-t2i" = [
+    "diffusion_models/ideogram4_fp8_scaled.safetensors",
+    "diffusion_models/ideogram4_unconditional_fp8_scaled.safetensors",
+    "text_encoders/qwen3vl_8b_fp8_scaled.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"dgx-monarch-kandinsky5-image" = [
+    "diffusion_models/kandinsky5lite_t2i.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-kandinsky5-video-lite" = [
+    "diffusion_models/kandinsky5lite_t2v_sft_5s.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/hunyuan_video_vae_bf16.safetensors",
+]
+"dgx-monarch-kandinsky5-video-pro" = [
+    "diffusion_models/kandinsky5pro_t2v_sft_5s.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/hunyuan_video_vae_bf16.safetensors",
+]
+"dgx-monarch-krea2-t2i" = [
+    "diffusion_models/krea2_turbo_fp8_scaled.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/qwen_image_vae.safetensors",
+]
+"dgx-monarch-lens-t2i" = [
+    "diffusion_models/lens_bf16.safetensors",
+    "text_encoders/gpt_oss_20b_nvfp4.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"dgx-monarch-longcat-t2i" = [
+    "diffusion_models/longcat_image_bf16.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-lora-low-rss" = [
+    "diffusion_models/flux1-dev.safetensors",
+    "loras/your_first_lora.safetensors",
+    "loras/your_second_lora.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/t5xxl_fp16.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-ltx-i2v-av" = [
+    "diffusion_models/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors",
+    "text_encoders/gemma_3_12B_it.safetensors",
+    "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+    "vae/LTX23_audio_vae_bf16.safetensors",
+    "vae/LTX23_video_vae_bf16.safetensors",
+]
+"dgx-monarch-ltx-t2v" = [
+    "diffusion_models/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors",
+    "text_encoders/gemma_3_12B_it.safetensors",
+    "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+    "vae/LTX23_video_vae_bf16.safetensors",
+]
+"dgx-monarch-ltx25-flf2v" = [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+]
+"dgx-monarch-ltx25-i2v" = [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+]
+"dgx-monarch-ltx25-i2v-guide" = [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+]
+"dgx-monarch-ltx25-t2v" = [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+]
+"dgx-monarch-mage-flow-edit" = [
+    "diffusion_models/mage_flow_edit_bf16.safetensors",
+    "text_encoders/mage_qwen3vl_4b_bf16.safetensors",
+    "vae/mage_flow_vae_bf16.safetensors",
+]
+"dgx-monarch-mage-flow-edit-turbo" = [
+    "diffusion_models/mage_flow_edit_turbo_int8_convrot.safetensors",
+    "text_encoders/mage_qwen3vl_4b_bf16.safetensors",
+    "vae/mage_flow_vae_bf16.safetensors",
+]
+"dgx-monarch-mage-flow-t2i" = [
+    "diffusion_models/mage_flow_bf16.safetensors",
+    "text_encoders/mage_qwen3vl_4b_bf16.safetensors",
+    "vae/mage_flow_vae_bf16.safetensors",
+]
+"dgx-monarch-mage-flow-t2i-turbo" = [
+    "diffusion_models/mage_flow_turbo_int8_convrot.safetensors",
+    "text_encoders/mage_qwen3vl_4b_bf16.safetensors",
+    "vae/mage_flow_vae_bf16.safetensors",
+]
+"dgx-monarch-minimax-h3-guide" = [
+    "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "vae/minimax_h3_audio_vae_fp32.safetensors",
+    "vae/minimax_h3_video_vae_fp16.safetensors",
+]
+"dgx-monarch-minimax-h3-t2va" = [
+    "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "vae/minimax_h3_audio_vae_fp32.safetensors",
+    "vae/minimax_h3_video_vae_fp16.safetensors",
+]
+"dgx-monarch-omnigen2-t2i" = [
+    "diffusion_models/omnigen2_fp16.safetensors",
+    "text_encoders/qwen_2.5_vl_fp16.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-pid-4k" = [
+    "diffusion_models/pid_flux1_1024_to_4096_4step_bf16.safetensors",
+    "text_encoders/gemma_2_2b_it_elm_bf16.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-pixeldit-t2i" = [
+    "diffusion_models/pixeldit_1300m_1024px_bf16.safetensors",
+    "text_encoders/gemma_2_2b_it_elm_bf16.safetensors",
+]
+"dgx-monarch-quickstart" = [
+    "diffusion_models/flux1-dev.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/t5xxl_fp16.safetensors",
+    "vae/ae.safetensors",
+]
+"dgx-monarch-qwen-image-t2i" = [
+    "diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/qwen_image_vae.safetensors",
+]
+"dgx-monarch-qwen-image21-edit-mask-rgba" = [
+    "diffusion_models/qwen_image_2.1_bf16.safetensors",
+    "text_encoders/qwen3vl_8b_bf16.safetensors",
+    "vae/qwen_image_2.1_vae_bf16.safetensors",
+]
+"dgx-monarch-qwen-image21-edit-rgba" = [
+    "diffusion_models/qwen_image_2.1_bf16.safetensors",
+    "text_encoders/qwen3vl_8b_bf16.safetensors",
+    "vae/qwen_image_2.1_vae_bf16.safetensors",
+]
+"dgx-monarch-qwen-image21-t2i" = [
+    "diffusion_models/qwen_image_2.1_bf16.safetensors",
+    "text_encoders/qwen3vl_8b_bf16.safetensors",
+    "vae/qwen_image_2.1_vae_bf16.safetensors",
+]
+"dgx-monarch-radiance-t2i" = [
+    "diffusion_models/chroma-radiance-x0.safetensors",
+    "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+]
+"dgx-monarch-wan-animate2" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan_animate_2_int8_convrot.safetensors",
+    "loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/Wan2_1_VAE_bf16.safetensors",
+]
+"dgx-monarch-wan-animate2-base-quality" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan_animate_2_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/Wan2_1_VAE_bf16.safetensors",
+]
+"dgx-monarch-wan-animate2-bfloat16-warm" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan_animate_2_bf16.safetensors",
+    "loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/Wan2_1_VAE_bf16.safetensors",
+]
+"dgx-monarch-wan-animate2-distilled" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan_animate_2_distill_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/Wan2_1_VAE_bf16.safetensors",
+]
+"dgx-monarch-wan-animate2-memory-saver" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan_animate_2_bf16.safetensors",
+    "loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/Wan2_1_VAE_bf16.safetensors",
+]
+"dgx-monarch-wan-bernini" = [
+    "diffusion_models/wan2.2_bernini_r_high_noise_fp8_scaled.safetensors",
+    "diffusion_models/wan2.2_bernini_r_low_noise_fp8_scaled.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-wan-flowrvs" = [
+    "diffusion_models/wan21_1.3b_flow_rvs_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan21_flow_rvs_mask_vae_bf16.safetensors",
+]
+"dgx-monarch-wan-scail" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/Wan21-14B-SCAIL-preview_comfy_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-wan-scail2" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan2.1_14B_SCAIL_2_fp8_scaled.safetensors",
+    "loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-wan-t2v" = [
+    "diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-wan21-i2v" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan2.1_i2v_480p_14B_fp8_scaled.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-wan22-i2v" = [
+    "diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-wan22-t2v" = [
+    "diffusion_models/wan2.2_t2v_high_noise_14B_fp16.safetensors",
+    "diffusion_models/wan2.2_t2v_low_noise_14B_fp16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-wandancer" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan2.2_dancer_14b_global_fp8_scaled.safetensors",
+    "diffusion_models/wan2.2_dancer_14b_local_fp8_scaled.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-zimage-dct-t2i" = [
+    "diffusion_models/zeta-chroma-base-x0-pixel-no-dino.safetensors",
+    "text_encoders/qwen_3_4b.safetensors",
+]
+"dgx-monarch-zimage-t2i" = [
+    "diffusion_models/z_image_turbo_bf16.safetensors",
+    "text_encoders/qwen_3_4b.safetensors",
+    "vae/ae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-chroma-even" = [
+    "diffusion_models/Chroma1-HD-fp8mixed.safetensors",
+    "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/ae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-chroma-lora" = [
+    "diffusion_models/Chroma1-HD-fp8mixed.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/t5xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/ae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-flux2-lora" = [
+    "diffusion_models/flux2_dev_fp8mixed.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/mistral_3_small_flux2_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-hunyuan-image-refiner" = [
+    "diffusion_models/hunyuanimage2.1_fp8_e4m3fn.safetensors",
+    "diffusion_models/hunyuanimage2.1_refiner_fp8_e4m3fn.safetensors",
+    "text_encoders/byt5_small_glyphxl_fp16.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/hunyuan_image_2.1_vae_fp16.safetensors",
+    "vae/hunyuan_image_refiner_vae_fp16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-ideogram4-lora" = [
+    "diffusion_models/ideogram4_fp8_scaled.safetensors",
+    "diffusion_models/ideogram4_unconditional_fp8_scaled.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/qwen3vl_8b_fp8_scaled.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-kandinsky5-image-lora" = [
+    "diffusion_models/kandinsky5lite_t2i.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/ae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-kandinsky5-video-lite-lora" = [
+    "diffusion_models/kandinsky5lite_t2v_sft_5s.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/clip_l.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/hunyuan_video_vae_bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-krea2-lora" = [
+    "diffusion_models/krea2_turbo_fp8_scaled.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/qwen_image_vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-ltx-t2v-lora" = [
+    "diffusion_models/ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/gemma_3_12B_it.safetensors",
+    "text_encoders/ltx-2.3_text_projection_bf16.safetensors",
+    "vae/LTX23_video_vae_bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-ltx25-guide-mask" = [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-ltx25-multishot" = [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-ltx25-t2v-lora" = [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-ltx25-two-stage" = [
+    "diffusion_models/ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors",
+    "latent_upscale_models/ltx-2.5-latent-spatial-upscaler-x2-bf16-1.0.safetensors",
+    "text_encoders/gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors",
+    "vae/ltx-2.5-audio-vae-bf16.safetensors",
+    "vae/ltx-2.5-video-vae-bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-minimax-h3-guides" = [
+    "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "vae/minimax_h3_audio_vae_fp32.safetensors",
+    "vae/minimax_h3_video_vae_fp16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-minimax-h3-lora" = [
+    "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "vae/minimax_h3_audio_vae_fp32.safetensors",
+    "vae/minimax_h3_video_vae_fp16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-qwen-image-lora" = [
+    "diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+    "vae/qwen_image_vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-wan-animate2-distilled-int8" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan_animate_2_distill_int8_convrot.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/Wan2_1_VAE_bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-wan-animate2-int8" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan_animate_2_int8_convrot.safetensors",
+    "loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/Wan2_1_VAE_bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-wan-flowrvs" = [
+    "diffusion_models/wan21_1.3b_flow_rvs_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan21_flow_rvs_mask_vae_bf16.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-wan-scail2" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan2.1_14B_SCAIL_2_fp8_scaled.safetensors",
+    "loras/wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-wan22-i2v-lora" = [
+    "diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-wan22-t2v-lora" = [
+    "diffusion_models/wan2.2_t2v_high_noise_14B_fp16.safetensors",
+    "diffusion_models/wan2.2_t2v_low_noise_14B_fp16.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-wandancer" = [
+    "clip_vision/clip_vision_h.safetensors",
+    "diffusion_models/wan2.2_dancer_14b_global_fp8_scaled.safetensors",
+    "diffusion_models/wan2.2_dancer_14b_local_fp8_scaled.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-zimage-lora" = [
+    "diffusion_models/z_image_turbo_bf16.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/qwen_3_4b.safetensors",
+    "vae/ae.safetensors",
+]

@@ -1,0 +1,112 @@
+{
+  "_meta": {
+    "title": "dgx-monarch MiniMax H3 t2va, uly2 (ComfyUI API format)",
+    "usage": "POST this whole document to /prompt on a ComfyUI whose custom_nodes has dgx-monarch. Shape-only fixture: it is never POSTed by CI, and the checkpoint/CLIP/VAE filenames are the public Comfy-Org MiniMax-H3 release names, so a real run needs those four files staged in models/diffusion_models, models/text_encoders and models/vae on every host. Topology is uly2 on purpose: comfy caps this DiT at batch 1, so cfg2 and every data-parallel path (dp2, and single at world 2, which derives dp2) typed-refuse, and ring2 refuses whenever the packed token total needs a divisibility pad (docs/TROUBLESHOOTING.md #48 and #49). H3 denoises ONE packed video+audio sequence and returns a NestedTensor latent: node '10' decodes its video half with the video VAE and node '11' decodes its audio half with the audio VAE, both from the same sampler output. cfg is 1.0 because the released checkpoints are CFG-distilled; with the res_multistep sampler pinned here comfy skips the unconditional pass at cfg 1.0, so node '7' (the empty negative) is a wiring formality that never runs. That skip is sampler-dependent: every _cfg_pp sampler disables it and evaluates the negative even at cfg 1.0, which gives H3 a second independent packed total (docs/TROUBLESHOOTING.md #49). Sampler, scheduler, steps, canvas and frame count follow the stock ComfyUI MiniMax H3 t2v template (res_multistep/simple, 20 steps, 1344x768, 124 frames = about 5 s at 24 fps on the 17k+5 grid). Keep width/height/length identical in nodes '6' and '8': node '6' also emits an equivalent AV latent on output 1 if you would rather drop node '8'. The video sigma shift (12.0) and the derived audio shift (3.0) are checkpoint defaults, so no shift node is wired; a stock MiniMaxH3SigmaShift patches a stock MODEL and does not apply to a mesh model handle. Frames and audio are saved separately; combining them into one file is a stock ComfyUI concern (CreateVideo + SaveVideo) and is left out so the graph stays inside this repo's node contract."
+  },
+  "prompt": {
+  "1": {
+    "class_type": "DGXMonarchInit",
+    "inputs": {
+      "topology": "uly2",
+      "mode": "cluster"
+    }
+  },
+  "2": {
+    "class_type": "DGXMonarchUNETLoader",
+    "inputs": {
+      "mesh": ["1", 0],
+      "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "weight_dtype": "default"
+    }
+  },
+  "3": {
+    "class_type": "CLIPLoader",
+    "inputs": {
+      "clip_name": "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+      "type": "minimax"
+    }
+  },
+  "4": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+    }
+  },
+  "5": {
+    "class_type": "VAELoader",
+    "inputs": {
+      "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+    }
+  },
+  "6": {
+    "class_type": "MiniMaxH3ImageToVideo",
+    "inputs": {
+      "clip": ["3", 0],
+      "vae": ["4", 0],
+      "prompt": "A lighthouse keeper walks the length of a wet stone pier at dawn, handheld wide shot, low grey cloud, spray breaking over the rail. Audio: heavy surf, wind across the microphone, one long foghorn note at the end.",
+      "width": 1344,
+      "height": 768,
+      "length": 124
+    }
+  },
+  "7": {
+    "class_type": "CLIPTextEncode",
+    "inputs": {
+      "clip": ["3", 0],
+      "text": ""
+    }
+  },
+  "8": {
+    "class_type": "EmptyMiniMaxH3LatentAV",
+    "inputs": {
+      "width": 1344,
+      "height": 768,
+      "length": 124
+    }
+  },
+  "9": {
+    "class_type": "DGXMonarchKSampler",
+    "inputs": {
+      "model": ["2", 0],
+      "seed": 42,
+      "steps": 20,
+      "cfg": 1.0,
+      "sampler_name": "res_multistep",
+      "scheduler": "simple",
+      "positive": ["6", 0],
+      "negative": ["7", 0],
+      "latent_image": ["8", 0],
+      "denoise": 1.0
+    }
+  },
+  "10": {
+    "class_type": "VAEDecode",
+    "inputs": {
+      "samples": ["9", 0],
+      "vae": ["4", 0]
+    }
+  },
+  "11": {
+    "class_type": "VAEDecodeAudio",
+    "inputs": {
+      "samples": ["9", 0],
+      "vae": ["5", 0]
+    }
+  },
+  "12": {
+    "class_type": "SaveImage",
+    "inputs": {
+      "images": ["10", 0],
+      "filename_prefix": "dgxm_minimax_h3_t2va"
+    }
+  },
+  "13": {
+    "class_type": "SaveAudioAdvanced",
+    "inputs": {
+      "audio": ["11", 0],
+      "filename_prefix": "dgxm_minimax_h3_t2va",
+      "format": "flac"
+    }
+  }
+  }
+}

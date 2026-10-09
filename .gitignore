@@ -1,0 +1,17 @@
+__pycache__/
+*.log
+*.egg-info/
+benchmark/results.json
+benchmark/matrix.toml
+cluster.toml
+.review/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.hypothesis/
+dist/
+build/
+
+# Temporary Claude Code worktrees
+.claude/worktrees/

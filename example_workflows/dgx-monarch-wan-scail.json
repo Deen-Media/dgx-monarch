@@ -1,0 +1,848 @@
+{
+ "id": "wan-scail-preview-character-animation",
+ "revision": 0,
+ "last_node_id": 15,
+ "last_link_id": 18,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DGXMonarchInit",
+   "pos": [
+    80,
+    80
+   ],
+   "size": [
+    315,
+    448
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "slot_index": 0,
+     "links": [
+      1
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchInit"
+   },
+   "widgets_values": [
+    "auto",
+    "auto",
+    "TORCH_FLASH",
+    "",
+    0,
+    0.0,
+    true,
+    false,
+    1,
+    false,
+    "auto",
+    "auto",
+    "first_use",
+    false,
+    2,
+    0.0,
+    "off",
+    "auto"
+   ],
+   "dgxm_widgets": {
+    "topology": "auto",
+    "mode": "auto",
+    "attention": "TORCH_FLASH",
+    "config_path": "",
+    "gpus_per_host": 0,
+    "reserve_vram_gb": 0.0,
+    "sync_ulysses": true,
+    "compile_dit": false,
+    "pipeline_depth": 1,
+    "mmap_fallback": false,
+    "lora_low_rss": "auto",
+    "slab_weights": "auto",
+    "auto_gate": "first_use",
+    "load_profile": false,
+    "swap_verify": 2,
+    "uma_reserve_gb": 0.0,
+    "comfy_managed": "off",
+    "family_adapter": "auto"
+   }
+  },
+  {
+   "id": 2,
+   "type": "Note",
+   "pos": [
+    80,
+    270
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "Wan SCAIL Preview animates one reference character image at 512x896, 81 frames (about 5 s at 16 fps), 40 steps at cfg 5.0 with uni_pc and an SD3 sampling shift of 3.0, the vendor's own defaults. This recipe rendered, but its reference failed for capacity; that comparison remains CHECK. Hardware fidelity covers only synthetic 256x256, five-frame tests at one and four steps, using Ulysses and Torch Flash with the BF16 checkpoint executing in FP16. It does not qualify this default recipe, pose input, LoRA, ring or FSDP. See docs/VALIDATION.md for details. The driver prices the render before dispatch and can still refuse it (docs/TROUBLESHOOTING.md #47). Run the small probe from #47 first, 384x384 at length 17 with this one reference image, no pose video, and auto_gate off on the Init node, then return to this geometry; width and height must stay divisible by 32, and length must stay on the 4k+1 grid. SCAIL normally takes its motion from a rendered 3D-consistent pose video, and no stock node draws one, so pose_video is left unwired here and the clip animates from the reference image and the prompt alone. To drive a specific performance, render a pose video with the SCAIL pose pack at half this resolution and wire it in. Point Load Image at your own character; the shipped filename is a placeholder. The model was trained on long detailed prompts, so keep the description of subject, motion and scene. Expects Wan21-14B-SCAIL-preview_comfy_bf16.safetensors in models/diffusion_models, umt5_xxl_fp8_e4m3fn_scaled.safetensors in models/text_encoders, clip_vision_h.safetensors in models/clip_vision, and wan_2.1_vae.safetensors in models/vae; Wan21-14B-SCAIL-preview_fp8_scaled_mixed.safetensors halves the weights resident on each rank if bf16 does not fit, but it gives up the FSDP capacity route, which takes bf16 only. 40 steps at cfg 5.0 on a 14B video model is a long first render: the lightx2v rank64 step and cfg distill LoRA runs it in 6 steps at cfg 1.0 with shift 7.0 and dpmpp_2m_sde, which this graph does not wire because the distilled recipe is not the contract this row was built against. VAE Decode returns an image batch; Save Image writes numbered frames. For a video file, use the stock Create Video and Save Video nodes. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+   ],
+   "title": "DGX Monarch | Wan SCAIL Preview character animation"
+  },
+  {
+   "id": 3,
+   "type": "DGXMonarchUNETLoader",
+   "pos": [
+    420,
+    80
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      2
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUNETLoader"
+   },
+   "widgets_values": [
+    "Wan21-14B-SCAIL-preview_comfy_bf16.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "Wan21-14B-SCAIL-preview_comfy_bf16.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 4,
+   "type": "DGXMonarchModelSamplingSD3",
+   "pos": [
+    760,
+    80
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 2
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      12
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchModelSamplingSD3"
+   },
+   "widgets_values": [
+    3.0
+   ],
+   "dgxm_widgets": {
+    "shift": 3.0
+   }
+  },
+  {
+   "id": 5,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      3,
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan",
+    "default"
+   ]
+  },
+  {
+   "id": 6,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    460
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      7
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "A dancer with long braided hair moves along a windswept rocky shoreline at golden hour, wearing a flowing teal jacket over dark trousers and worn leather boots. She turns through a full spin, lifts both arms overhead, then steps forward and leans into the sea breeze as her jacket and hair trail the motion. Waves break on the rocks behind her, gulls cross the sky, and low warm sunlight rims her shoulders while the camera holds a steady medium-wide shot."
+   ]
+  },
+  {
+   "id": 7,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    650
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 4
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      8
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "blurry, low quality, static, watermark, text, distorted"
+   ]
+  },
+  {
+   "id": 8,
+   "type": "LoadImage",
+   "pos": [
+    80,
+    650
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      6,
+      10
+     ]
+    },
+    {
+     "name": "MASK",
+     "type": "MASK",
+     "slot_index": 1,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LoadImage"
+   },
+   "widgets_values": [
+    "example.png",
+    "image"
+   ]
+  },
+  {
+   "id": 9,
+   "type": "CLIPVisionLoader",
+   "pos": [
+    80,
+    840
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP_VISION",
+     "type": "CLIP_VISION",
+     "slot_index": 0,
+     "links": [
+      5
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPVisionLoader"
+   },
+   "widgets_values": [
+    "clip_vision_h.safetensors"
+   ]
+  },
+  {
+   "id": 10,
+   "type": "CLIPVisionEncode",
+   "pos": [
+    420,
+    840
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip_vision",
+     "type": "CLIP_VISION",
+     "link": 5
+    },
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 6
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CLIP_VISION_OUTPUT",
+     "type": "CLIP_VISION_OUTPUT",
+     "slot_index": 0,
+     "links": [
+      11
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPVisionEncode"
+   },
+   "widgets_values": [
+    "none"
+   ]
+  },
+  {
+   "id": 11,
+   "type": "VAELoader",
+   "pos": [
+    80,
+    1030
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      9,
+      17
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "wan_2.1_vae.safetensors"
+   ]
+  },
+  {
+   "id": 12,
+   "type": "WanSCAILToVideo",
+   "pos": [
+    760,
+    650
+   ],
+   "size": [
+    315,
+    536
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 7
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 8
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 9
+    },
+    {
+     "name": "pose_video",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "pose_video_mask",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "reference_image",
+     "type": "IMAGE",
+     "link": 10
+    },
+    {
+     "name": "reference_image_mask",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "clip_vision_output",
+     "type": "CLIP_VISION_OUTPUT",
+     "link": 11
+    },
+    {
+     "name": "previous_frames",
+     "type": "IMAGE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      13
+     ]
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "slot_index": 1,
+     "links": [
+      14
+     ]
+    },
+    {
+     "name": "latent",
+     "type": "LATENT",
+     "slot_index": 2,
+     "links": [
+      15
+     ]
+    },
+    {
+     "name": "video_frame_offset",
+     "type": "INT",
+     "slot_index": 3,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "WanSCAILToVideo"
+   },
+   "widgets_values": [
+    512,
+    896,
+    81,
+    1,
+    1.0,
+    0.0,
+    1.0,
+    0,
+    5,
+    false
+   ]
+  },
+  {
+   "id": 13,
+   "type": "DGXMonarchKSampler",
+   "pos": [
+    1100,
+    270
+   ],
+   "size": [
+    315,
+    294
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 12
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 13
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 14
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 15
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      16
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchKSampler"
+   },
+   "widgets_values": [
+    0,
+    "randomize",
+    40,
+    5.0,
+    "uni_pc",
+    "simple",
+    1.0
+   ],
+   "dgxm_widgets": {
+    "seed": 0,
+    "control_after_generate": "randomize",
+    "steps": 40,
+    "cfg": 5.0,
+    "sampler_name": "uni_pc",
+    "scheduler": "simple",
+    "denoise": 1.0
+   }
+  },
+  {
+   "id": 14,
+   "type": "VAEDecode",
+   "pos": [
+    1440,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 16
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 17
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      18
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 15,
+   "type": "SaveImage",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 14,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 18
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "dgx_monarch_wan_scail"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   3,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   2,
+   3,
+   0,
+   4,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   3,
+   5,
+   0,
+   6,
+   0,
+   "CLIP"
+  ],
+  [
+   4,
+   5,
+   0,
+   7,
+   0,
+   "CLIP"
+  ],
+  [
+   5,
+   9,
+   0,
+   10,
+   0,
+   "CLIP_VISION"
+  ],
+  [
+   6,
+   8,
+   0,
+   10,
+   1,
+   "IMAGE"
+  ],
+  [
+   7,
+   6,
+   0,
+   12,
+   0,
+   "CONDITIONING"
+  ],
+  [
+   8,
+   7,
+   0,
+   12,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   9,
+   11,
+   0,
+   12,
+   2,
+   "VAE"
+  ],
+  [
+   10,
+   8,
+   0,
+   12,
+   5,
+   "IMAGE"
+  ],
+  [
+   11,
+   10,
+   0,
+   12,
+   7,
+   "CLIP_VISION_OUTPUT"
+  ],
+  [
+   12,
+   4,
+   0,
+   13,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   13,
+   12,
+   0,
+   13,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   14,
+   12,
+   1,
+   13,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   15,
+   12,
+   2,
+   13,
+   3,
+   "LATENT"
+  ],
+  [
+   16,
+   13,
+   0,
+   14,
+   0,
+   "LATENT"
+  ],
+  [
+   17,
+   11,
+   0,
+   14,
+   1,
+   "VAE"
+  ],
+  [
+   18,
+   14,
+   0,
+   15,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

@@ -1,0 +1,741 @@
+{
+ "id": "ideogram-4-text-to-image-(dual-model-cfg)",
+ "revision": 0,
+ "last_node_id": 15,
+ "last_link_id": 14,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DGXMonarchInit",
+   "pos": [
+    80,
+    80
+   ],
+   "size": [
+    315,
+    448
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "slot_index": 0,
+     "links": [
+      1,
+      2
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchInit"
+   },
+   "widgets_values": [
+    "uly2",
+    "auto",
+    "TORCH_FLASH",
+    "",
+    0,
+    0.0,
+    false,
+    false,
+    1,
+    false,
+    "auto",
+    "auto",
+    "first_use",
+    false,
+    2,
+    0.0,
+    "off",
+    "auto"
+   ],
+   "dgxm_widgets": {
+    "topology": "uly2",
+    "mode": "auto",
+    "attention": "TORCH_FLASH",
+    "config_path": "",
+    "gpus_per_host": 0,
+    "reserve_vram_gb": 0.0,
+    "sync_ulysses": false,
+    "compile_dit": false,
+    "pipeline_depth": 1,
+    "mmap_fallback": false,
+    "lora_low_rss": "auto",
+    "slab_weights": "auto",
+    "auto_gate": "first_use",
+    "load_profile": false,
+    "swap_verify": 2,
+    "uma_reserve_gb": 0.0,
+    "comfy_managed": "off",
+    "family_adapter": "auto"
+   }
+  },
+  {
+   "id": 2,
+   "type": "Note",
+   "pos": [
+    80,
+    270
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "Ideogram 4 text to image at 1024x1024, 20 steps at cfg 7.0. Two things set this family apart. First, the unconditional pass is a separate checkpoint, so there is no CFG batch to split: the second loader holds the unconditional model, the Dual Model Guider drives both, and the negative input stays unconnected for the text-free unconditional. Both models are resident at once, so budget memory for the pair. Second, the topology is uly2, the row auto resolves to for this family: on 2026-08-11 uly2 matched the DP2 reference at 1-step NRMS 0.000 on this exact fp8 pair, and on 2026-10-06 this graph's uly2 render matched the single-GPU output exactly on the bf16, fp8 and int8 pairs. Ring2 measured 0.102 against the 0.100 limit and is an explicit diagnostic only, and unlisted quantizations inherit the head-divisible choice with no hardware claim of their own. The prompt is the structured JSON this family expects, not a plain sentence: plain text is accepted but performs worse and raises the safety filter's false-positive rate, and the caption is validated against a schema, so compositional_deconstruction with its background and elements is required and the key order inside style_description is fixed. The official presets drop guidance to 3 for the final polish steps, which the DGX Monarch guider cannot express, so this template runs the vendor's constant-guidance mode at cfg 7.0. Sigmas come from the stock Ideogram 4 Scheduler, so keep its width and height equal to the latent's. sync_ulysses is off for this family: dropping the per-all-to-all device sync rendered 24.0 s against 26.0 s with it on, with 1-step NRMS 0.069 against DP2 for both sync settings (2026-08-25). A gate verdict covers one sync_ulysses setting, so the first render with it off runs its own identity gate before any pixels. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. Expects ideogram4_fp8_scaled.safetensors plus ideogram4_unconditional_fp8_scaled.safetensors in models/diffusion_models, qwen3vl_8b_fp8_scaled.safetensors in models/text_encoders, and the Flux 2 VAE, flux2-vae.safetensors, in models/vae: this family uses the Flux 2 latent layout and has no VAE of its own, and all four files come from the one repack. The VAE and the decode tail come from the stock node definitions."
+   ],
+   "title": "DGX Monarch | Ideogram 4 text to image (dual model CFG)"
+  },
+  {
+   "id": 3,
+   "type": "DGXMonarchUNETLoader",
+   "pos": [
+    420,
+    80
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUNETLoader"
+   },
+   "widgets_values": [
+    "ideogram4_fp8_scaled.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "ideogram4_fp8_scaled.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 4,
+   "type": "DGXMonarchUncondUNETLoader",
+   "pos": [
+    420,
+    270
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 2
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      6
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUncondUNETLoader"
+   },
+   "widgets_values": [
+    "ideogram4_unconditional_fp8_scaled.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "ideogram4_unconditional_fp8_scaled.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 5,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      3
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "qwen3vl_8b_fp8_scaled.safetensors",
+    "ideogram4",
+    "default"
+   ]
+  },
+  {
+   "id": 6,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    460
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      5
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "{\"high_level_description\":\"A close-up photograph of a chalkboard menu sign propped on a wooden bakery counter beside a tray of fresh croissants.\",\"style_description\":{\"aesthetics\":\"warm, rustic, inviting\",\"lighting\":\"soft morning window light from the left with gentle falloff\",\"photo\":\"50mm, f/2.8, shallow depth of field, eye level\",\"medium\":\"photograph\",\"color_palette\":[\"#2B2018\",\"#E8D5B7\",\"#C98A3C\",\"#F5EFE6\",\"#6B4A2F\"]},\"compositional_deconstruction\":{\"background\":\"A warm wooden bakery counter with a softly blurred shelf of bread loaves and a copper kettle behind it.\",\"elements\":[{\"type\":\"text\",\"bbox\":[120,180,520,820],\"text\":\"FRESH BAKED DAILY\",\"desc\":\"Hand lettered white chalk capitals on a black chalkboard, set in three stacked centered lines inside a thin chalk border, with a small wheat sprig drawn beneath.\"},{\"type\":\"obj\",\"bbox\":[560,120,940,880],\"desc\":\"A shallow metal tray of golden croissants with flaky layered crusts, dusted lightly with flour, angled toward the camera.\"}]}}"
+   ]
+  },
+  {
+   "id": 7,
+   "type": "EmptyFlux2LatentImage",
+   "pos": [
+    760,
+    650
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      11
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "EmptyFlux2LatentImage"
+   },
+   "widgets_values": [
+    1024,
+    1024,
+    1
+   ]
+  },
+  {
+   "id": 8,
+   "type": "Ideogram4Scheduler",
+   "pos": [
+    760,
+    840
+   ],
+   "size": [
+    315,
+    162
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "SIGMAS",
+     "type": "SIGMAS",
+     "slot_index": 0,
+     "links": [
+      10
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "Ideogram4Scheduler"
+   },
+   "widgets_values": [
+    20,
+    1024,
+    1024,
+    0.0,
+    1.75
+   ]
+  },
+  {
+   "id": 9,
+   "type": "KSamplerSelect",
+   "pos": [
+    420,
+    840
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "SAMPLER",
+     "type": "SAMPLER",
+     "slot_index": 0,
+     "links": [
+      9
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "KSamplerSelect"
+   },
+   "widgets_values": [
+    "euler"
+   ]
+  },
+  {
+   "id": 10,
+   "type": "RandomNoise",
+   "pos": [
+    420,
+    1030
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "NOISE",
+     "type": "NOISE",
+     "slot_index": 0,
+     "links": [
+      7
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "RandomNoise"
+   },
+   "widgets_values": [
+    42,
+    "randomize"
+   ]
+  },
+  {
+   "id": 11,
+   "type": "DGXMonarchDualModelGuider",
+   "pos": [
+    1100,
+    80
+   ],
+   "size": [
+    315,
+    162
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 4
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 5
+    },
+    {
+     "name": "model_negative",
+     "type": "DGXM_MODEL",
+     "link": 6
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "guider",
+     "type": "DGXM_GUIDER",
+     "slot_index": 0,
+     "links": [
+      8
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchDualModelGuider"
+   },
+   "widgets_values": [
+    7.0
+   ],
+   "dgxm_widgets": {
+    "cfg": 7.0
+   }
+  },
+  {
+   "id": 12,
+   "type": "DGXMonarchSamplerCustom",
+   "pos": [
+    1100,
+    270
+   ],
+   "size": [
+    315,
+    184
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "noise",
+     "type": "NOISE",
+     "link": 7
+    },
+    {
+     "name": "guider",
+     "type": "DGXM_GUIDER",
+     "link": 8
+    },
+    {
+     "name": "sampler",
+     "type": "SAMPLER",
+     "link": 9
+    },
+    {
+     "name": "sigmas",
+     "type": "SIGMAS",
+     "link": 10
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 11
+    }
+   ],
+   "outputs": [
+    {
+     "name": "output",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      12
+     ]
+    },
+    {
+     "name": "denoised_output",
+     "type": "LATENT",
+     "slot_index": 1,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchSamplerCustom"
+   },
+   "widgets_values": [],
+   "dgxm_widgets": {}
+  },
+  {
+   "id": 13,
+   "type": "VAELoader",
+   "pos": [
+    1100,
+    650
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      13
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "flux2-vae.safetensors"
+   ]
+  },
+  {
+   "id": 14,
+   "type": "VAEDecode",
+   "pos": [
+    1440,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 12
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 13
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      14
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 15,
+   "type": "SaveImage",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 14,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 14
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "dgx_monarch_ideogram4"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   3,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   2,
+   1,
+   0,
+   4,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   3,
+   5,
+   0,
+   6,
+   0,
+   "CLIP"
+  ],
+  [
+   4,
+   3,
+   0,
+   11,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   5,
+   6,
+   0,
+   11,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   6,
+   4,
+   0,
+   11,
+   2,
+   "DGXM_MODEL"
+  ],
+  [
+   7,
+   10,
+   0,
+   12,
+   0,
+   "NOISE"
+  ],
+  [
+   8,
+   11,
+   0,
+   12,
+   1,
+   "DGXM_GUIDER"
+  ],
+  [
+   9,
+   9,
+   0,
+   12,
+   2,
+   "SAMPLER"
+  ],
+  [
+   10,
+   8,
+   0,
+   12,
+   3,
+   "SIGMAS"
+  ],
+  [
+   11,
+   7,
+   0,
+   12,
+   4,
+   "LATENT"
+  ],
+  [
+   12,
+   12,
+   0,
+   14,
+   0,
+   "LATENT"
+  ],
+  [
+   13,
+   13,
+   0,
+   14,
+   1,
+   "VAE"
+  ],
+  [
+   14,
+   14,
+   0,
+   15,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

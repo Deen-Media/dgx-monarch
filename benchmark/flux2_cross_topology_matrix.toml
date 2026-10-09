@@ -1,0 +1,55 @@
+# The Flux2 candidate leg, uly2+fsdp, of the 2026-07-28 offline cross-topology
+# comparison (docs/VALIDATION.md, Flux2 stock-reference record). It drives the
+# same two configs already proven on the FSDP side (external evidence:
+# family_flux2_2026-07-13.md): seed 42, cfg 1.0, guidance 4.0 (flux2 guidance
+# distillation, embedded in conditioning via sampling_path = "flux2"),
+# euler/simple. An offline stock-reference leg and an NRMS comparison driver,
+# both run outside this repository, pair with it. Run this leg on its own,
+# never beside a co-resident stock leg (docs/VALIDATION.md).
+#
+# run_matrix.py injects `--mode` and `--config` from argv into [defaults], over
+# anything set here, so this file leaves them out; record the exact invocation
+# with the run's evidence.
+#
+# `te.type = "flux2"` matches encode_prompts()'s
+# getattr(comfy.sd.CLIPType, te_spec["type"].upper()) contract.
+#
+# `latent_channels = 128` and `latent_downscale = 16` give Flux2's 128-channel,
+# 1/16 empty latent: the campaign's recorded [1, 128, 32, 32] and
+# [1, 128, 64, 64] shapes, as in benchmark/matrix.example.toml's flux2 block.
+#
+# run_matrix.py never reads `vae`: its cluster route compares raw latents and
+# never decodes pixels. The field stays so this file's artifact facts match the
+# standalone harness's byte for byte.
+
+[defaults]
+unet = "flux2-dev.safetensors"
+te = { name = "mistral_3_small_flux2_bf16.safetensors", type = "flux2" }
+vae = "flux2-vae.safetensors"
+topology = "uly2+fsdp"
+sampling_path = "flux2"
+seed = 42
+cfg = 1.0
+guidance = 4.0
+sampler = "euler"
+scheduler = "simple"
+repeats = 1
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+negative = ""
+latent_channels = 128
+latent_downscale = 16
+auto_gate = "off"
+lora_low_rss = "off"
+slab_weights = "off"
+
+[[case]]
+name = "flux2_uly2fsdp_512_1step"
+width = 512
+height = 512
+steps = 1
+
+[[case]]
+name = "flux2_uly2fsdp_1024_20step"
+width = 1024
+height = 1024
+steps = 20

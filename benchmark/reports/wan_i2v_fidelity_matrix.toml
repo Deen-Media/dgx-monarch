@@ -1,0 +1,79 @@
+# Wan 2.2 i2v cross-topology fidelity: one-step NRMS, uly2 against a dp2
+# reference. Leg 3 of the 2026-07-28 Wan i2v promotion ran these cases
+# unchanged and read 1-step NRMS 0.000, PASS (docs/VALIDATION.md, Wan 2.2 i2v
+# promotion evidence).
+# The shape follows benchmark/reports/pad_fidelity_matrix.toml: the dp2
+# batch=2 cell is the per-rank single-GPU-equivalent reference (this repo's
+# convention, not a world=1 run), and the uly2 cell names it as reference.
+# src/dgx_monarch/topology.py's AUTO_TABLE gives every Wan family row
+# ulysses=2 at any pixel count, so uly2 is the one Wan cross-topology cell on
+# this two-GPU rig; there is no cfg2 or ring2 case.
+#
+# Scope. Read these limits before citing this matrix as i2v proof.
+#
+# 1. No image conditioning. run_case() in benchmark/run_matrix.py builds a
+#    text-conditioned empty latent and has no conditioning-image path, so this
+#    matrix exercises Wan's DiT forward math (attention sharding, RoPE) but not
+#    the image-to-video conditioning path. Leg 2 of the promotion, a render
+#    with a real conditioning image, covers that (docs/VALIDATION.md).
+#
+# 2. No LoRA and no high/low switch. run_case() loads one checkpoint per case
+#    through DGXMonarchUNETLoader, with no LoraLoader and no mid-run model
+#    switch. The public Wan 2.2 4-step graph (docs/VALIDATION.md, "Wan 2.2 I2V
+#    low-RSS two-phase proof") applies a lightning/lightx2v LoRA and switches
+#    from the high-noise checkpoint (steps 0->2) to the low-noise checkpoint
+#    (steps 2->4). This matrix probes one stage of that graph: the low-noise
+#    checkpoint, base weights, no LoRA. Legs 2 and 4 of the promotion (the
+#    real render and the LoRA hot-swap) cover the LoRA and the switch.
+#
+# 3. No temporal axis. latent_t is unset, so the empty latent has no frame
+#    axis, and comfy's empty-latent fix gives it one 16-channel frame. The proof
+#    graph decodes 17 frames at 640x640, which comfy's WanImageToVideo builds
+#    as ((17 - 1) // 4) + 1 = 5 latent frames; latent_t = 5 would exercise the
+#    temporal axis of USP sharding. As written, the matrix covers the spatial
+#    forward path only.
+#
+# 4. Artifact names. unet and te.name are the names the 2026-07-28 run staged
+#    (they matched, per its record), and te.type "wan" is comfy's CLIPType.WAN.
+#    Check them against the files you staged before running.
+#
+# Resolution. These legs run at one square size, 640x640, the decode size of
+# that proof graph, instead of pad_fidelity_matrix.toml's odd/even pair
+# (1536/1448). Wan pads a sequence that does not divide the SP degree with an
+# aligned zero pad and trims the gathered output
+# (src/dgx_monarch/adapters/wan_family.py module docstring). It has no
+# excluded-pad path (no padded_row_indices or drop_rows wiring) whose odd/even
+# boundary needs a leg of its own.
+
+[defaults]
+steps = 1
+cfg = 1.0
+# docs/VALIDATION.md does not record the public graph's sampler and scheduler.
+# euler and simple stand in (the `dgxm gate` fallback in cli/main.py), and the
+# 2026-07-28 leg ran with them; confirm them against the staged graph.
+sampler = "euler"
+scheduler = "simple"
+seed = 42
+repeats = 1
+negative = ""
+
+[[case]]
+name = "ref-640"
+# The low-noise stage only, without the graph's LoRA (scope note 2).
+unet = "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+te = { name = "umt5_xxl_fp8_e4m3fn_scaled.safetensors", type = "wan" }
+topology = "dp2"
+batch = 2
+width = 640
+height = 640
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "gate-640"
+unet = "wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors"
+te = { name = "umt5_xxl_fp8_e4m3fn_scaled.safetensors", type = "wan" }
+topology = "uly2"
+reference = "ref-640"
+width = 640
+height = 640
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"

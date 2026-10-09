@@ -1,0 +1,96 @@
+# The 2026-07-10 final-head padded-path fidelity matrix: the documented cross-topology gate
+# (gate_step_fidelity, 1-step NRMS <= 0.10) for the pad-exclusion fix.
+# References are dp2 batch=2 slice 0 (exact single-GPU math on the 2-worker
+# mesh, per the in-repo example). negative = "" is 5 context tokens (odd), so
+# every uly2 cell exercises the excluded-pad path in its uncond leg; promptA
+# is 21 context tokens (odd -> cond text pad), promptB 22 (even); 1448 ->
+# 91x91 = 8281 image tokens (odd -> image pad), 1536 -> 9216 (even).
+
+[defaults]
+steps = 1
+cfg = 1.0
+sampler = "euler_cfg_pp"
+scheduler = "simple"
+seed = 42
+repeats = 1
+negative = ""
+
+[[case]]
+name = "ref-1536-A"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "dp2"
+batch = 2
+width = 1536
+height = 1536
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "ref-1536-B"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "dp2"
+batch = 2
+width = 1536
+height = 1536
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting style"
+
+[[case]]
+name = "ref-1448-A"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "dp2"
+batch = 2
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "ref-1448-B"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "dp2"
+batch = 2
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting style"
+
+[[case]]
+name = "gate-1536-A"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "uly2"
+reference = "ref-1536-A"
+width = 1536
+height = 1536
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "gate-1536-B"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "uly2"
+reference = "ref-1536-B"
+width = 1536
+height = 1536
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting style"
+
+[[case]]
+name = "gate-1448-A"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "uly2"
+reference = "ref-1448-A"
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "gate-1448-B"
+unet = "krea2_turbo_fp8_scaled.safetensors"
+te = { name = "qwen3vl_4b_bf16.safetensors", type = "krea2" }
+topology = "uly2"
+reference = "ref-1448-B"
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting style"

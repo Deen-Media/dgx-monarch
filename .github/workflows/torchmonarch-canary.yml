@@ -1,0 +1,166 @@
+name: torchmonarch-canary
+
+permissions:
+  contents: read
+
+# Compare the latest stable torchmonarch with the exact repository pin, and
+# never edit the pin. Both run in one scratch venv, so the report separates
+# dependency drift from Python or environment drift.
+on:
+  schedule:
+    - cron: "29 7 * * 1"
+  workflow_dispatch:
+
+jobs:
+  compare-latest-stable-to-pin:
+    # Pin the runner image; review Ubuntu upgrades explicitly.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
+        with:
+          python-version: "3.12"
+      - name: Resolve exact repository pin
+        id: pin
+        run: |
+          pin=$(python - <<'PY'
+          import tomllib
+          dependencies = tomllib.load(open("pyproject.toml", "rb"))["project"]["dependencies"]
+          requirement = next(item for item in dependencies if item.startswith("torchmonarch=="))
+          print(requirement.split("==", 1)[1])
+          PY
+          )
+          test -n "$pin"
+          printf 'version=%s\n' "$pin" >> "$GITHUB_OUTPUT"
+      - name: Snapshot exact pin in scratch venv
+        id: pin-snapshot
+        if: always()
+        env:
+          VENV: ${{ runner.temp }}/dgxm-torchmonarch-canary
+          ARTIFACTS: ${{ runner.temp }}/dgxm-torchmonarch-artifacts
+          PIN: ${{ steps.pin.outputs.version }}
+        run: |
+          mkdir -p "$ARTIFACTS"
+          python -m venv "$VENV"
+          py="$VENV/bin/python"
+          set +e
+          "$py" -m pip install --upgrade pip > "$ARTIFACTS/pin-install.log" 2>&1
+          pip_rc=$?
+          if [ "$pip_rc" -eq 0 ]; then
+            "$py" -m pip install torch --index-url https://download.pytorch.org/whl/cpu >> "$ARTIFACTS/pin-install.log" 2>&1
+            pip_rc=$?
+          fi
+          if [ "$pip_rc" -eq 0 ]; then
+            "$py" -m pip install "torchmonarch==$PIN" >> "$ARTIFACTS/pin-install.log" 2>&1
+            pip_rc=$?
+          fi
+          PYTHONPATH="$GITHUB_WORKSPACE/src" "$py" tests/canary/monarch_surface_canary.py \
+            snapshot --output "$ARTIFACTS/pin.json"
+          snapshot_rc=$?
+          set -e
+          printf 'install_rc=%s\n' "$pip_rc" >> "$GITHUB_OUTPUT"
+          printf 'snapshot_rc=%s\n' "$snapshot_rc" >> "$GITHUB_OUTPUT"
+      - name: Compare installed pin with checked snapshot
+        id: checked-pin
+        if: always()
+        env:
+          VENV: ${{ runner.temp }}/dgxm-torchmonarch-canary
+          ARTIFACTS: ${{ runner.temp }}/dgxm-torchmonarch-artifacts
+        run: |
+          set +e
+          PYTHONPATH="$GITHUB_WORKSPACE/src" "$VENV/bin/python" \
+            tests/canary/monarch_surface_canary.py compare \
+            --baseline tests/fixtures/torchmonarch_pin_0_6_0.json \
+            --candidate "$ARTIFACTS/pin.json" \
+            --diff-json "$ARTIFACTS/checked-pin-diff.json" \
+            --report "$ARTIFACTS/checked-pin-report.md"
+          rc=$?
+          set -e
+          printf 'rc=%s\n' "$rc" >> "$GITHUB_OUTPUT"
+      - name: Upgrade same scratch venv to latest stable and snapshot
+        id: latest-snapshot
+        if: always()
+        env:
+          VENV: ${{ runner.temp }}/dgxm-torchmonarch-canary
+          ARTIFACTS: ${{ runner.temp }}/dgxm-torchmonarch-artifacts
+        run: |
+          py="$VENV/bin/python"
+          set +e
+          "$py" -m pip install --upgrade torchmonarch > "$ARTIFACTS/latest-install.log" 2>&1
+          install_rc=$?
+          PYTHONPATH="$GITHUB_WORKSPACE/src" "$py" tests/canary/monarch_surface_canary.py \
+            snapshot --output "$ARTIFACTS/latest.json"
+          snapshot_rc=$?
+          set -e
+          printf 'install_rc=%s\n' "$install_rc" >> "$GITHUB_OUTPUT"
+          printf 'snapshot_rc=%s\n' "$snapshot_rc" >> "$GITHUB_OUTPUT"
+      - name: Compare latest stable with installed exact pin
+        id: latest-compare
+        if: always()
+        env:
+          VENV: ${{ runner.temp }}/dgxm-torchmonarch-canary
+          ARTIFACTS: ${{ runner.temp }}/dgxm-torchmonarch-artifacts
+        run: |
+          set +e
+          PYTHONPATH="$GITHUB_WORKSPACE/src" "$VENV/bin/python" \
+            tests/canary/monarch_surface_canary.py compare \
+            --baseline "$ARTIFACTS/pin.json" \
+            --candidate "$ARTIFACTS/latest.json" \
+            --diff-json "$ARTIFACTS/latest-vs-pin-diff.json" \
+            --report "$ARTIFACTS/latest-vs-pin-report.md"
+          rc=$?
+          set -e
+          printf 'rc=%s\n' "$rc" >> "$GITHUB_OUTPUT"
+      - name: Ensure failure diagnostics are artifactable
+        if: always()
+        env:
+          ARTIFACTS: ${{ runner.temp }}/dgxm-torchmonarch-artifacts
+        run: |
+          mkdir -p "$ARTIFACTS"
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          root = Path(os.environ["ARTIFACTS"])
+          for name in (
+              "pin.json",
+              "latest.json",
+              "checked-pin-diff.json",
+              "latest-vs-pin-diff.json",
+          ):
+              path = root / name
+              if not path.exists():
+                  path.write_text(json.dumps({"error": f"{name} was not produced"}) + "\n")
+          for name in ("checked-pin-report.md", "latest-vs-pin-report.md"):
+              path = root / name
+              if not path.exists():
+                  path.write_text(f"# Canary failure\n\n`{name}` was not produced.\n")
+          PY
+      - name: Upload pin/latest snapshots and reports
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: torchmonarch-surface-${{ github.run_id }}
+          path: ${{ runner.temp }}/dgxm-torchmonarch-artifacts
+          if-no-files-found: error
+          retention-days: 30
+      - name: Final compatibility and semantic gate
+        if: always()
+        env:
+          PIN_INSTALL_RC: ${{ steps.pin-snapshot.outputs.install_rc }}
+          PIN_SNAPSHOT_RC: ${{ steps.pin-snapshot.outputs.snapshot_rc }}
+          CHECKED_PIN_RC: ${{ steps.checked-pin.outputs.rc }}
+          LATEST_INSTALL_RC: ${{ steps.latest-snapshot.outputs.install_rc }}
+          LATEST_SNAPSHOT_RC: ${{ steps.latest-snapshot.outputs.snapshot_rc }}
+          LATEST_COMPARE_RC: ${{ steps.latest-compare.outputs.rc }}
+        run: |
+          test "$PIN_INSTALL_RC" = 0
+          test "$PIN_SNAPSHOT_RC" = 0
+          test "$CHECKED_PIN_RC" = 0
+          test "$LATEST_INSTALL_RC" = 0
+          test "$LATEST_SNAPSHOT_RC" = 0
+          test "$LATEST_COMPARE_RC" = 0

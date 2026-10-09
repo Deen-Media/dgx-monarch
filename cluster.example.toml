@@ -1,0 +1,50 @@
+# dgx-monarch cluster config for a DGX Spark pair.
+# Copy to ~/.config/dgx-monarch/cluster.toml, or use `dgxm setup` for guided setup.
+# Full reference: docs/CLUSTER.md
+# Addresses in 192.0.2.0/24 are documentation-only; replace every one.
+
+[cluster]
+# Required for any cluster-mode attach: bind the Monarch client to the fabric IP.
+# The default transport advertises whatever the hostname resolves to (loopback
+# on many boxes) and the attach fails with MESH_ATTACH_CONFIG_TIMEOUT.
+client_bind = "tcp://192.0.2.11:0"
+fabric_profile = "dgx-spark-pair"
+# Required acknowledgement: the attach API used here has no peer authentication
+# and actors allocate secondary dynamic ports, so source-restrict all traffic on
+# this dedicated fabric interface, not port 26600 alone. Full rules: SECURITY.md.
+transport_security = "trusted_fabric"
+nccl_master_addr = "192.0.2.11"
+nccl_master_port = 29777
+python = "~/monarch-env/bin/python"
+ssh_key = "~/.ssh/id_ed25519"      # a key every host accepts (empty = ssh config/agent)
+# rdma_latent_return = false   # off by default: see docs/DESIGN.md §5.6
+# comfy_dir = "/home/user/ComfyUI"   # default: auto-detect from the driver
+
+# dgxm commands use each name for SSH. The driver also resolves the first name
+# to detect a local rank 0; an SSH-only alias is treated as remote, causing
+# memory checks to omit the model memory needed on that host.
+[[hosts]]
+name = "192.0.2.11"            # driver fabric IP
+address = "tcp://192.0.2.11:26600"  # worker service bind; must be the fabric IP
+gpus = 1
+
+[[hosts]]
+name = "192.0.2.12"            # worker fabric IP
+address = "tcp://192.0.2.12:26600"
+gpus = 1
+
+# Override or extend the shipped fabric profile per cluster:
+# [fabric.dgx-spark-pair]
+# NCCL_DEBUG = "INFO"
+#
+# QSFP port sets: the dgx-spark-pair profile names one port set's interfaces
+# (enp1s0f0np0 / rocep1s0f0,roceP2p1s0f0). A cable in the other set needs no
+# change: when the named interface is absent or down, each worker finds its own
+# UP RDMA rails at setup, rewrites the socket and HCA variables, and logs a
+# warning. Pin them here only to make the choice explicit.
+
+# ComfyUI settings applied inside every actor process (Init-node widgets win):
+# [worker_args]
+# disable_pinned_memory = true   # UMA guidance: docs/VALIDATION.md
+# reserve_vram_gb = 8.0
+# fsdp_prefetch_depth = 1        # FSDP all-gather blocks ahead (1..8); above 1 costs reserved memory

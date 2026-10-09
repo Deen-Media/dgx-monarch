@@ -1,0 +1,1086 @@
+{
+  "note": "Refusal class ledger (docs/DESIGN.md section 5.9). `tagged` is every typed refusal site that declares its class through dgx_monarch.refusal.refusal; the test asserts set equality in both directions, so a reclassification is a reviewed edit. `untagged_by_module` is the grandfathered backlog, asserted exactly, so it can only shrink: a NEW typed refusal must be tagged or the build fails. `reserved_guards` are registry entries no site claims yet.",
+  "regenerate": "PYTHONPATH=src python tests/test_refusal_classes.py --write",
+  "grandfathered_ceiling": 198,
+  "grandfathered_dated": "2026-08-10: 198 unclassified refusal sites predate 1.0. New and edited sites must declare a class; this ceiling may only fall. Removing the retired Krea2 extension surface eliminated two actor/worker sites.",
+  "new_sites_awaiting_a_class": {},
+  "reserved_guards": {
+    "first_load_stock_memo": "no card this release: a rescue grant subsumes it for that load",
+    "shard_quant_scale": "the unscoped spelling the card and the headless env var use; every raise site is family scoped",
+    "slab_vouched_families": "no card this release: an explicit slab request still loads unvouched",
+    "sol_attn": "the unscoped spelling the card and the headless env var use; every raise site is family scoped"
+  },
+  "untagged_by_module": {
+    "actor/fsdp_checkpoint_pin.py": 8,
+    "actor/gate_cycle.py": 2,
+    "actor/gate_fsdp_cycle.py": 2,
+    "actor/sampling.py": 1,
+    "actor/store_detect.py": 1,
+    "actor/store_identity.py": 1,
+    "actor/unbake_file.py": 2,
+    "actor/worker_authorization.py": 1,
+    "adapters/__init__.py": 1,
+    "adapters/anima.py": 1,
+    "adapters/base.py": 12,
+    "adapters/boogu.py": 5,
+    "adapters/cogvideo.py": 2,
+    "adapters/detect.py": 1,
+    "adapters/ernie.py": 3,
+    "adapters/flux_family.py": 3,
+    "adapters/fsdp.py": 1,
+    "adapters/fsdp_quant.py": 2,
+    "adapters/hunyuan.py": 4,
+    "adapters/kandinsky5.py": 2,
+    "adapters/krea2.py": 2,
+    "adapters/lens.py": 2,
+    "adapters/ltx.py": 1,
+    "adapters/minimax_h3.py": 4,
+    "adapters/minimax_h3_packing.py": 2,
+    "adapters/omnigen2.py": 3,
+    "adapters/pixeldit_comfy.py": 4,
+    "adapters/qwen_image.py": 3,
+    "adapters/wan_family.py": 1,
+    "adapters/wan_ring_attention.py": 25,
+    "adapters/wan_ring_full_context.py": 39,
+    "adapters/wan_variants.py": 3,
+    "adapters/zimage.py": 5,
+    "mesh_residency.py": 5,
+    "mesh_safety.py": 2,
+    "nodes/loaders.py": 3,
+    "safetensors_header.py": 23
+  },
+  "tagged": [
+    {
+      "site": "actor/attention_dispatch.py::_AttentionDispatch._assert_cudnn_ring_prepared::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/comfy_bridge.py::load_diffusion_model_slab::StockLoadCapacityError#0",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": false
+    },
+    {
+      "site": "actor/comfy_dynamic.py::_assert_bring_up_not_failed::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/comfy_dynamic.py::_latch::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/comfy_dynamic.py::assert_rdma_compatible::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/comfy_dynamic.py::stage_a::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/comfy_dynamic.py::stage_a::ComfyManagedResidencyError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/comfy_dynamic.py::stage_b::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/comfy_dynamic.py::stage_b::ComfyManagedResidencyError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/dm_cfg2_residency.py::ready_or_raise::DualModelLoadDivergenceError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/dual_model_cfg.py::build_dual_model_guider::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/load_fault.py::check::InjectedLoadFaultError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/partial_load_guard.py::check::PartialLoadDivergenceError#0",
+      "class": "C",
+      "guard": "partial_load_divergence",
+      "waivable": false
+    },
+    {
+      "site": "actor/rank_readiness.py::ready_or_raise::PeerLoadFailureError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/sample_protocol.py::dual_model_cfg2_slot::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/sample_protocol.py::dual_model_cfg2_slot::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/sample_protocol.py::dual_model_cfg2_slot::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/sample_protocol.py::dual_model_cfg2_slot::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/slab_certificate.py::CertificateBuilder._header_digest::SlabCertificateError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/slab_certificate.py::CertificateBuilder.issue::SlabCertificateError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/slab_certificate.py::CertificateBuilder.verify_region::SlabCertificateError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/slab_certificate.py::CertificateBuilder.verify_region::SlabCertificateError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/store_fsdp.py::_assert_artifact_runnable::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/store_fsdp.py::_assert_comfy_managed_supported::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/store_fsdp.py::_assert_comfy_managed_supported::ComfyManagedResidencyError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/store_residency.py::preload_capacity_check::StockLoadCapacityError#0",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": false
+    },
+    {
+      "site": "actor/store_residency.py::preload_capacity_check::StockLoadCapacityError#1",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": false
+    },
+    {
+      "site": "actor/store_residency.py::preload_capacity_check::StockLoadCapacityError#2",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": false
+    },
+    {
+      "site": "actor/store_residency.py::resolve::SlabResidencyRescueOffer#0",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": true
+    },
+    {
+      "site": "actor/store_residency.py::resolve::StockLoadCapacityError#0",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": false
+    },
+    {
+      "site": "actor/store_residency.py::resolve::StockLoadCapacityError#1",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": false
+    },
+    {
+      "site": "actor/store_slab_admit.py::admit::StockLoadCapacityError#0",
+      "class": "C",
+      "guard": "slab_load_preflight",
+      "waivable": false
+    },
+    {
+      "site": "actor/store_slab_admit.py::admit_bake::StockLoadCapacityError#0",
+      "class": "C",
+      "guard": "slab_lora_bake_preflight",
+      "waivable": false
+    },
+    {
+      "site": "adapters/__init__.py::_forced_adapter::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/__init__.py::_forced_adapter::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/__init__.py::_forced_adapter::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/attention_capability.py::assert_kernel_capability::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/attention_capability.py::assert_static_capability::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/attention_patches.py::assert_cfg_attention_output_patches_safe::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/attention_patches.py::assert_no_foreign_attention_override::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/attention_patches.py::assert_usp_attention_patches_safe::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/base.py::assert_ulysses_only_padding::UnsupportedModelError#0",
+      "class": "K",
+      "guard": "ring_pad",
+      "waivable": true
+    },
+    {
+      "site": "adapters/base.py::assert_ulysses_only_query_bias::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/base.py::shard_seq::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/boogu.py::_keep_mask_caption_lengths::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/boogu.py::_keep_mask_caption_lengths::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/boogu_ulysses.py::double_block_options.override::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_parallel.py::assert_cfg_parallel_supported::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_parallel.py::assert_sp_quant_supported::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_parallel.py::make_cfg_parallel_wrapper.cfg_parallel_wrapper::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cfg_parallel.py::refuse_pixel_space_pad_mask::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::TorchCudnnRingProcessor.__call__::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::TorchCudnnRingProcessor.__call__::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_aten_cudnn_attention_op::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_comfy_surface::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_qkv::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_qkv::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_qkv::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_qkv::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_qkv::UnsupportedModelError#4",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_surface::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_surface::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_surface::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_surface::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_surface::UnsupportedModelError#4",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/cudnn_ring_attention.py::_validate_surface::UnsupportedModelError#5",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux_family.py::ChromaAdapter.inject_usp.usp_forward_orig::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux_family.py::_chroma_cfg_pad_trim::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::fsdp_load_capacity_check::StockLoadCapacityError#0",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::refuse_fsdp_live_cast::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_launch_loras::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_launch_quant::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_live_precision::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_live_precision::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_live_precision::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_live_precision::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_live_precision::UnsupportedModelError#4",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_live_precision::UnsupportedModelError#5",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_live_precision::UnsupportedModelError#6",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp.py::validate_fsdp_live_precision::UnsupportedModelError#7",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp_lora_admission.py::refuse_fsdp_lora_checkpoint_property::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp_quant.py::_build_class._ShardedQuantWeight.from_quantized::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/fsdp_quant.py::wrap_quantized_parameters::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/krea2.py::_krea2_reject_global_span_features::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/ltx.py::_make_usp_cross_attention.usp_cross_attention::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/ltx.py::_reject_ring_guide_bias::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/ltx.py::_shard_guide_bias::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/ltx.py::_shard_pe::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/mage_flow.py::MageFlowAdapter.inject_usp.usp_forward::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/mage_flow.py::MageFlowAdapter.inject_usp.usp_forward::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/mage_flow.py::MageFlowAdapter.matches::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3.py::_reject_latent_noise_masks::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3.py::_reject_padded_ring::UnsupportedModelError#0",
+      "class": "K",
+      "guard": "ring_pad:minimax_h3",
+      "waivable": true
+    },
+    {
+      "site": "adapters/minimax_h3.py::_reject_unsupported_h3_features::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_packing.py::h3_modulation_plan::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/pixeldit_comfy.py::_raise_exact_gather_unsupported::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/quant_activation_scale.py::assert_shard_quant_scale_covered::UnsupportedModelError#0",
+      "class": "K",
+      "guard": "shard_quant_scale:chroma",
+      "waivable": true
+    },
+    {
+      "site": "adapters/qwen_image21.py::QwenImage21Adapter.inject_usp.usp_forward::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::QwenImage21Adapter.inject_usp.usp_forward::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::QwenImage21Adapter.inject_usp.usp_forward::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::QwenImage21Adapter.inject_usp.usp_forward::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::QwenImage21Adapter.matches::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::block_causal_target_attention::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::distributed_prefix_cache_key::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::distributed_prefix_cache_key::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::prefix_cache_is_exact::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/qwen_image21.py::validate_reference_count::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention.py::_assert_waived::UnsupportedModelError#0",
+      "class": "K",
+      "guard": "sol_attn:minimax_h3",
+      "waivable": true
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::CallPreflight.expected_local_heads::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::CallPreflight.surface::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::CallPreflight.surface::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::CallPreflight.surface::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::CallPreflight.surface::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::CallPreflight.surface::UnsupportedModelError#4",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::refuse_family::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::refuse_geometry::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::refuse_missing_package::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::refuse_ring::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::refuse_unselectable_kernel::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_bthd::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_bthd::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_bthd::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_bthd::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_bthd::UnsupportedModelError#4",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_bthd::UnsupportedModelError#5",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_kernel_surface::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_kernel_surface::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_kernel_surface::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_kernel_surface::UnsupportedModelError#3",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_kernel_surface::UnsupportedModelError#4",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_kernel_surface::UnsupportedModelError#5",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_kernel_surface::UnsupportedModelError#6",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/sol_attention_guards.py::validate_kernel_surface::UnsupportedModelError#7",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/usp_pad_exclusion.py::assert_pads_are_a_tail::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/usp_pad_exclusion.py::keep_index::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/usp_query_bias.py::_contract_fault::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/usp_sequence_order.py::RankMajorJointOrder._refuse::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_animate2.py::WanAnimate2Adapter._spatial_local::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_animate2.py::WanAnimate2Adapter._spatial_local::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_animate2.py::WanAnimate2Adapter.inject_usp.forward_orig::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_animate2.py::WanAnimate2Adapter.inject_usp.forward_orig::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_animate2.py::WanAnimate2Adapter.inject_usp.forward_orig::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_animate2.py::WanAnimate2Adapter.inject_usp.gen_attn::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_animate2.py::WanAnimate2Adapter.inject_usp.pose_attn::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_animate2.py::WanAnimate2Adapter.matches::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/wan_variants.py::SCAILAdapter.inject_usp.usp_forward_orig::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/zimage.py::_reject_ming_image::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/zimage.py::_sharded_backbone::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "capacity_agreement.py::_offer_rescue::SlabResidencyRescueOffer#0",
+      "class": "C",
+      "guard": "stock_load_preflight",
+      "waivable": true
+    },
+    {
+      "site": "capacity_agreement.py::_refuse_shortfall::FleetCapacityError#0",
+      "class": "C",
+      "guard": "cross_rank_capacity",
+      "waivable": false
+    },
+    {
+      "site": "capacity_agreement.py::_refuse_unavailable::FleetQuoteUnavailableError#0",
+      "class": "C",
+      "guard": "cross_rank_capacity",
+      "waivable": false
+    },
+    {
+      "site": "driver_footprint.py::driver_footprint_preflight::DriverFootprintCapacityError#0",
+      "class": "C",
+      "guard": "driver_footprint_preflight",
+      "waivable": false
+    },
+    {
+      "site": "family_select.py::assert_override_admits_checkpoint::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "h3_activation.py::h3_activation_preflight::StockLoadCapacityError#0",
+      "class": "C",
+      "guard": "activation_footprint_preflight",
+      "waivable": false
+    },
+    {
+      "site": "mesh_residency.py::assert_normal_render_residency_mode::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/consent_waiver.py::assert_ceremony_not_blocked::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/fleet_policy.py::_fleet_worker_policy::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/loader_preflight.py::preflight_comfy_managed_topology::ComfyManagedResidencyError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/loader_preflight.py::preflight_loader_footprint::DriverFootprintCapacityError#0",
+      "class": "C",
+      "guard": "loader_footprint_preflight",
+      "waivable": false
+    },
+    {
+      "site": "nodes/loader_preflight.py::preflight_loader_footprint::DriverFootprintCapacityError#1",
+      "class": "K",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/loader_preflight.py::preflight_loader_footprint::DriverFootprintCapacityError#2",
+      "class": "C",
+      "guard": "loader_footprint_preflight",
+      "waivable": false
+    },
+    {
+      "site": "nodes/loader_preflight.py::preflight_loader_footprint::DriverFootprintCapacityError#3",
+      "class": "C",
+      "guard": "loader_footprint_preflight",
+      "waivable": false
+    },
+    {
+      "site": "nodes/loader_preflight.py::preflight_loader_footprint::DriverFootprintCapacityError#4",
+      "class": "C",
+      "guard": "loader_footprint_preflight",
+      "waivable": true
+    },
+    {
+      "site": "nodes/loader_preflight.py::preflight_upstream_gated_artifact::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/render_preflight.py::preflight_krea2_reference_latents::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/render_preflight.py::preflight_minimax_h3_topology::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/render_preflight.py::preflight_sol_attention::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/render_preflight.py::preflight_sol_sequence_parallel::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/render_validation.py::validate_render_topology::PackedCfgParallelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/render_validation.py::validate_render_topology::PackedDataParallelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "render_memory_price.py::refuse_render_memory::RenderMemoryPriceError#0",
+      "class": "C",
+      "guard": "activation_footprint_preflight",
+      "waivable": false
+    },
+    {
+      "site": "topology.py::choose_auto_topology::UnsupportedModelError#0",
+      "class": "K",
+      "guard": null,
+      "waivable": false
+    }
+  ]
+}

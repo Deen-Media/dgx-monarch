@@ -1,0 +1,24 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "dependencyDashboard": true,
+  "packageRules": [
+    {
+      "description": "Canary Python versions must have torchmonarch wheels; update them through the reviewed runtime-pin procedure.",
+      "matchManagers": ["github-actions"],
+      "matchDepNames": ["python"],
+      "enabled": false
+    },
+    {
+      "description": "Action majors change contracts (checkout v7 changes pull_request_target defaults); review them by hand.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
+    },
+    {
+      "description": "Group minor, patch, and digest updates of pinned actions in one PR.",
+      "matchManagers": ["github-actions"],
+      "matchUpdateTypes": ["minor", "patch", "digest", "pin"],
+      "groupName": "github-actions"
+    }
+  ]
+}

@@ -1,0 +1,583 @@
+{
+ "id": "qwen-image-2.1-rgba-text-to-image",
+ "revision": 0,
+ "last_node_id": 9,
+ "last_link_id": 10,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DGXMonarchInit",
+   "pos": [
+    80,
+    80
+   ],
+   "size": [
+    315,
+    448
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "slot_index": 0,
+     "links": [
+      1
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchInit"
+   },
+   "widgets_values": [
+    "auto",
+    "auto",
+    "TORCH_FLASH",
+    "",
+    0,
+    0.0,
+    true,
+    false,
+    1,
+    false,
+    "auto",
+    "auto",
+    "first_use",
+    false,
+    2,
+    0.0,
+    "off",
+    "auto"
+   ],
+   "dgxm_widgets": {
+    "topology": "auto",
+    "mode": "auto",
+    "attention": "TORCH_FLASH",
+    "config_path": "",
+    "gpus_per_host": 0,
+    "reserve_vram_gb": 0.0,
+    "sync_ulysses": true,
+    "compile_dit": false,
+    "pipeline_depth": 1,
+    "mmap_fallback": false,
+    "lora_low_rss": "auto",
+    "slab_weights": "auto",
+    "auto_gate": "first_use",
+    "load_profile": false,
+    "swap_verify": 2,
+    "uma_reserve_gb": 0.0,
+    "comfy_managed": "off",
+    "family_adapter": "auto"
+   }
+  },
+  {
+   "id": 2,
+   "type": "Note",
+   "pos": [
+    80,
+    270
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "Qwen Image 2.1 text to image: the pinned ComfyUI 2026-09-28 recipe is 1024x1024, 25 Euler/simple steps, cfg 1.0. This family uses its native Text Encode Qwen Image 2.1 node, whose positive, negative and empty 64-channel /16 latent outputs stay together. The Qwen Image 2.1 VAE decodes four channels, so Save Image writes an RGBA PNG. Expects qwen_image_2.1_bf16.safetensors in models/diffusion_models, qwen3vl_8b_bf16.safetensors in models/text_encoders, and qwen_image_2.1_vae_bf16.safetensors in models/vae. This graph leaves the Qwen prefix KV cache off. Do not insert stock Qwen Image 2.1 Cache here: its MODEL port cannot keep the resident DGXM_MODEL ownership contract. The optional DGX Qwen Image 2.1 Cache node turns on a replicated worker cache only when a custom graph asks for it; its default storage is lossless, and its int8/int4 native K/V compression is approximate. docs/MODELS.md records its limited native mode-equivalence scope, the exact 25-step T2I, masked-edit and ten-reference controls, and the classic three-step default/int8/int4 cache equivalence. These results do not extend past their named inputs, resolution, topology or FSDP scope. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+   ],
+   "title": "DGX Monarch | Qwen Image 2.1 RGBA text to image"
+  },
+  {
+   "id": 3,
+   "type": "DGXMonarchUNETLoader",
+   "pos": [
+    420,
+    80
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUNETLoader"
+   },
+   "widgets_values": [
+    "qwen_image_2.1_bf16.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "qwen_image_2.1_bf16.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 4,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      2
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "qwen3vl_8b_bf16.safetensors",
+    "qwen_image",
+    "default"
+   ]
+  },
+  {
+   "id": 5,
+   "type": "VAELoader",
+   "pos": [
+    80,
+    650
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      3,
+      9
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "qwen_image_2.1_vae_bf16.safetensors"
+   ]
+  },
+  {
+   "id": 6,
+   "type": "TextEncodeQwenImage21",
+   "pos": [
+    420,
+    460
+   ],
+   "size": [
+    315,
+    558
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 2
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 3
+    },
+    {
+     "name": "images.image_1",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_2",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_3",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_4",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_5",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_6",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_7",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_8",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_9",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_10",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_11",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_12",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_13",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_14",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_15",
+     "type": "IMAGE",
+     "link": null
+    },
+    {
+     "name": "images.image_16",
+     "type": "IMAGE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      5
+     ]
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "slot_index": 1,
+     "links": [
+      6
+     ]
+    },
+    {
+     "name": "latent",
+     "type": "LATENT",
+     "slot_index": 2,
+     "links": [
+      7
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "TextEncodeQwenImage21"
+   },
+   "widgets_values": [
+    "A quiet, sunlit studio with a ceramicist shaping a blue vase at a wooden wheel; documentary photograph, soft window light, natural materials, fine detail.",
+    "blurry, low quality, watermark, text, logo",
+    1024
+   ]
+  },
+  {
+   "id": 7,
+   "type": "DGXMonarchKSampler",
+   "pos": [
+    1100,
+    270
+   ],
+   "size": [
+    315,
+    294
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 4
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 5
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 6
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 7
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      8
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchKSampler"
+   },
+   "widgets_values": [
+    0,
+    "randomize",
+    25,
+    1.0,
+    "euler",
+    "simple",
+    1.0
+   ],
+   "dgxm_widgets": {
+    "seed": 0,
+    "control_after_generate": "randomize",
+    "steps": 25,
+    "cfg": 1.0,
+    "sampler_name": "euler",
+    "scheduler": "simple",
+    "denoise": 1.0
+   }
+  },
+  {
+   "id": 8,
+   "type": "VAEDecode",
+   "pos": [
+    1440,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 8
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 9
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      10
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 9,
+   "type": "SaveImage",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 10
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "dgx_monarch_qwen_image21_t2i"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   3,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   2,
+   4,
+   0,
+   6,
+   0,
+   "CLIP"
+  ],
+  [
+   3,
+   5,
+   0,
+   6,
+   1,
+   "VAE"
+  ],
+  [
+   4,
+   3,
+   0,
+   7,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   5,
+   6,
+   0,
+   7,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   6,
+   6,
+   1,
+   7,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   7,
+   6,
+   2,
+   7,
+   3,
+   "LATENT"
+  ],
+  [
+   8,
+   7,
+   0,
+   8,
+   0,
+   "LATENT"
+  ],
+  [
+   9,
+   5,
+   0,
+   8,
+   1,
+   "VAE"
+  ],
+  [
+   10,
+   8,
+   0,
+   9,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

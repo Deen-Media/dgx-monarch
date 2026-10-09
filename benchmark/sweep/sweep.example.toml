@@ -1,0 +1,166 @@
+# Sweep harness config (docs/SWEEP.md). Copy it somewhere rig-local, edit the
+# copy, and pass it with --config. Keep real host names, LoRA names and paths in
+# that copy, never in this committed file.
+
+driver = "http://127.0.0.1:8191"
+# ssh name of the second box. Leave empty for a one-box run.
+sibling = "worker-host"
+comfy_dir = "~/ComfyUI"
+out_dir = "~/sweep-out"
+world = 2
+
+# Both directories are read; a missing one is logged and skipped.
+template_dirs = ["example_workflows", "tests/fixtures/workflows/generated"]
+
+# Templates that are not a model row. Everything else in the dirs is swept.
+exclude = [
+    "dgx-monarch-quickstart",
+    "dgx-monarch-fleet",
+    "dgx-monarch-identity-gate",
+    "dgx-monarch-dual-spark-split",
+    "dgx-monarch-lora-low-rss",
+]
+
+image_presets = ["auto", "uly2", "cfg2", "ring2", "dp2",
+                 "uly2+fsdp", "cfg2+fsdp", "ring2+fsdp"]
+video_presets = ["auto", "uly2", "ring2", "uly2+fsdp"]
+
+# Attention kernels. Video cells run video_attention only; the other kernels are
+# still derived and marked sampled_out, so the counts show every cut.
+image_attention = ["TORCH_FLASH", "TORCH_CUDNN", "SAGE_AUTO"]
+video_attention = ["TORCH_FLASH"]
+
+# Sol-Attn runs as an extra kernel on these families only, under a class K waiver.
+sol_kernels = ["SOL_ATTN_TAU0.7"]
+sol_families = ["minimax_h3"]
+
+# Before a cell queues, the runner waits for every box of its session to reach
+# this much MemAvailable (raise it for heat-soaked video runs, docs/SWEEP.md
+# section 6); cooldown_s pauses between cells; the timeouts bound each leg.
+mem_floor_gib = 60.0
+cooldown_s = 20.0
+image_timeout_s = 3600
+video_timeout_s = 7200
+
+# Minimum seconds from fleet replacement to the next attach. At 0, derive the
+# runtime wait from HYPERACTOR_MESH_ATTACH_CONFIG_TIMEOUT: budget plus 10 s,
+# with a 70 s minimum. The default 60 s budget gives 70 s; the sweep driver's
+# 180 s gives 190 s. Export the variable in the runner's shell too, or set an
+# explicit value here. Memory-floor polling counts toward this deadline.
+# See docs/SWEEP.md section 6 for replacement policy.
+attach_pace_s = 0.0
+
+# Templates the current ComfyUI admits and the adapter cannot run. Their cells
+# are labelled skip:upstream-gated and never run. Do not list Z-Image: the
+# matrix reads each checkpoint header and labels only the L2P layout with the
+# loader's class P refusal, so the latent and DCT PixelSpace checkpoints run.
+upstream_gated = []
+
+# Where the comfy tokenizer files live; empty reads comfy/text_encoders under
+# comfy_dir. The matrix counts each prompt with its family's tokenizer, because
+# a family that shards its text stream apart from its image stream takes its
+# sequence-parallel label from the encoded length, which the graph does not hold.
+tokenizer_dir = ""
+
+# Lever combinations the one-at-a-time table cannot express. Each entry adds one
+# cell per auto cell; `preset` is optional and defaults to auto.
+toggle_combos = [
+    { comfy_managed = "on", slab_weights = "on" },
+    { comfy_managed = "on", lora_low_rss = "on" },
+]
+
+# Levers that schedule the same work differently and should change no number.
+# Each must match its row's auto output exactly on the full warm render, so
+# any difference is a finding. A lever outside this list and outside the
+# residency set (slab_weights, lora_low_rss, comfy_managed) is taken to move the
+# arithmetic and is scored probe against probe at nrms_floor.
+inert_levers = ["pipeline_depth", "sync_ulysses"]
+
+# A bare key after a [table] header belongs to that table, where the loader
+# never looks for it, so keep every top-level key above the tables.
+
+# Per video template: the kernels it runs in full, in place of video_attention.
+[video_attention_full]
+"dgx-monarch-minimax-h3-t2va" = ["TORCH_FLASH", "TORCH_CUDNN", "SAGE_AUTO"]
+
+# One-at-a-time lever changes from each row's auto cell.
+[toggles]
+slab_weights = ["on", "off"]
+lora_low_rss = ["on", "off"]
+comfy_managed = ["on"]
+pipeline_depth = [2]
+compile_dit = [true]
+sync_ulysses = [false]
+batch_size = [2]
+auto_gate = ["off"]
+
+# The presets each lever runs on. A lever with no entry runs on auto only, and
+# auto never resolves FSDP (nodes/common.py leaves fits_resident at its default),
+# so a lever with FSDP rules needs an FSDP preset here.
+[toggle_presets]
+comfy_managed = ["auto", "uly2+fsdp"]
+lora_low_rss = ["auto", "uly2+fsdp"]
+auto_gate = ["uly2+fsdp"]
+
+# A "-lora" template is its base graph plus LoRA loaders, so the matrix drops
+# its lora-off arm as a repeat of the base row (dgx-monarch-test-chroma-lora
+# also changes its prompts, so its dropped arm is not a repeat). Set a template
+# true to keep that arm, or false to drop the lora-off arm of any other template.
+[lora_off]
+
+# Template to the real LoRA files on this rig, one per loader in node-id order.
+# The templates carry placeholder names; put yours here, not in a graph. A
+# template with no entry runs its lora-off cell only, so every graph carrying a
+# Load LoRA (DGX Monarch) is listed. Names here are placeholders too.
+[loras]
+"dgx-monarch-wan-animate2" = ["your_first_lora.safetensors"]
+"dgx-monarch-wan-animate2-bfloat16-warm" = ["your_first_lora.safetensors"]
+"dgx-monarch-wan-animate2-memory-saver" = ["your_first_lora.safetensors"]
+"dgx-monarch-wan-scail2" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-wan-scail2" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-wan-animate2-int8" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-chroma-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-flux2-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-ideogram4-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-kandinsky5-image-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-kandinsky5-video-lite-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-krea2-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-ltx-t2v-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-ltx25-t2v-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-minimax-h3-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-qwen-image-lora" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-zimage-lora" = ["your_first_lora.safetensors"]
+# Two loaders: the high-noise model first, then the low-noise one.
+"dgx-monarch-test-wan22-i2v-lora" = ["your_first_lora.safetensors",
+                                     "your_second_lora.safetensors"]
+"dgx-monarch-test-wan22-t2v-lora" = ["your_first_lora.safetensors",
+                                     "your_second_lora.safetensors"]
+
+# Extra checkpoints for a template's artifact pool when the stem match misses
+# them, in one of two shapes. An array names extras for the base loader:
+#   [artifact_groups]
+#   "dgx-monarch-krea2-t2i" = ["another_krea2_quant.safetensors"]
+# The table form below keys each loader by the checkpoint it ships, which is
+# what a dual-loader template needs. A key no loader carries is reported in the
+# pruned block.
+[artifact_groups."dgx-monarch-ideogram4-t2i"]
+"ideogram4_fp8_scaled.safetensors" = []
+"ideogram4_unconditional_fp8_scaled.safetensors" = []
+
+[reference]
+# Steps for the probe leg a cross-topology comparison is scored on; a full
+# trajectory diverges and proves nothing. A staged graph takes this many steps in
+# every stage. convert.STEP_WIDGETS names the widget each node type holds it in.
+probe_steps = 1
+# A step-nrms over this reads CHECK, not FINDING: the null A/B calibrates what
+# the number means before it can name a fault. It scores probe comparisons only.
+# Two bars have no floor, so their numbers are reported and never scored: a cell
+# with no probe leg reads full-render-nrms, and a sol-kernel cell reads
+# waived-nrms, because its class K waiver admits the deviation.
+#
+# 0.10 matches the one-step latent floor of benchmark/gates.py
+# (DEFAULT_STEP_NRMS), chosen from 2026-07 one-step readings; the sweep applies
+# the same number to decoded pixels. A two-stage probe takes two steps and has
+# had one more to diverge, so re-run the null A/B on a staged template before
+# reading its probe against this number.
+nrms_floor = 0.10

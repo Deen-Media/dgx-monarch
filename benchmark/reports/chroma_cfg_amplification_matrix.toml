@@ -1,0 +1,142 @@
+# Chroma CFG amplification: distinguish unequal-call rounding from short-stream
+# error in the shipped template's W3b result (2026-09 sweep).
+# Run it with:
+#   <comfy python> benchmark/run_matrix.py --matrix benchmark/reports/chroma_cfg_amplification_matrix.toml
+#
+# RAN 2026-09-09 on integration build fa9d302 with ComfyUI 3216c62e. All eight
+# cases finished with status ok, and each gate leg read one-step NRMS against
+# its own same-run dp2 reference:
+#   gate-bf16-cfg35-unequal       0.025
+#   gate-bf16-cfg35-equal         0.027
+#   gate-fp8mixed-cfg35-unequal   0.052
+#   gate-bf16-cfg35-short-equal   0.016
+# All cases were below the floor, locating the discrepancy in the sweep probe
+# rather than the unequal prompt pair (third outcome in the table below). The 2026-10-02 Chroma text
+# projection fix later matched one GPU exactly on pure Ulysses bf16.
+# docs/VALIDATION.md records both.
+# The run read this file under an earlier header ("NOT RUN as of 2026-09-06");
+# only comments have changed since, so its results.json names an older digest.
+#
+# What this measures. The sweep reads chroma-t2i at uly2 at 0.150 on bf16 where
+# the even-token template reads 0.031 on the same build and the same kernels.
+# It is not a masked text row: this family's encoder pads to a floor of one row
+# and attaches no attention mask, so every text row the model reads is a real
+# token on one GPU and on two alike (docs/VALIDATION.md, 2026-09-06 chroma text
+# stream record; the chroma text stream seam in
+# tests/canary/comfy_seam_contracts.py holds the encoder contract). It is also
+# not the divisibility pad path: every prompt below divides the SP degree, so
+# nothing pads in any of these legs, and
+# benchmark/reports/chroma_pad_fidelity_matrix.toml tests a different path.
+#
+# Why the sibling matrix cannot answer it. Every leg there runs one step at cfg
+# 1.0 with euler_cfg_pp. At one step the final sigma is zero, so the sampler
+# takes its denoising branch and the scored latent is the cfg combination,
+# which at cfg 1.0 is the cond leg exactly. The uncond leg is computed and then
+# multiplied out. That matrix therefore scores long positives only. These
+# cases use the shipped template's cfg 3.5 with
+# euler, where the combine weights the two legs 3.5 and 2.5.
+#
+# The two candidates. ComfyUI folds this family's two conditionings
+# (CONDRegular) into one model call only when their shapes match, so a pair of
+# different lengths runs two calls whose rounding is independent while a
+# matching pair runs one call whose rounding is common-mode (docs/VALIDATION.md
+# records the fold rule in its 2026-09-05 per-cond dispatch record). Either
+# that split carries the term, or the 28-row stream deviates on its own and the
+# combine weights it 2.5.
+#
+# The gate legs are read against each other, not against the 0.1 pad gate. The
+# harness applies its standard floor to every case that names a reference. A
+# floor failure here would be the measurement, not a fault, and would say
+# nothing about the pad exclusion; gate-bf16-cfg35-unequal was expected to fail
+# it and instead read 0.025, inside the floor.
+#
+#   unequal high, both equal legs low   the split model call carries the term
+#   short-equal high as well            the short stream carries it, not the split
+#   every leg low                       the term is in the sweep's own probe
+#
+# gate-bf16-cfg35-short-equal is the discriminator. Its pair folds into one
+# model call, like the 44-token pair, and both its legs are short, like the
+# unequal pair's negative. Its two prompts differ in wording so the combine
+# cannot cancel by carrying the same tensor twice.
+#
+# Token counts, as both readers count them, comfy's own PixArt tokenizer and
+# benchmark/sweep/matrix.py's TokenCounter (chroma floor 1):
+#   template positive   100   divides at SP degree 2
+#   even positive        44   divides
+#   short positive       28   divides
+#   negative             28   divides
+#
+# References are dp2 batch = 2 slice 0, which carries exact single-GPU math on
+# the two-worker mesh; candidates are uly2 at one step.
+
+[defaults]
+steps = 1
+cfg = 3.5
+sampler = "euler"
+scheduler = "beta"
+seed = 0
+repeats = 1
+width = 1024
+height = 1024
+negative = "low quality, blurry, watermark, text artifacts, oversaturated colors, deformed anatomy, noisy background"
+te = { name = "t5xxl_fp8_e4m3fn_scaled.safetensors", type = "chroma" }
+
+[[case]]
+name = "ref-bf16-cfg35-unequal"
+unet = "Chroma1-HD.safetensors"
+topology = "dp2"
+batch = 2
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. Sharp focus."
+
+# The even-token template's own pair, 44 against 44, so the two conds carry one
+# shape and comfy folds them into a single model call.
+[[case]]
+name = "ref-bf16-cfg35-equal"
+unet = "Chroma1-HD.safetensors"
+topology = "dp2"
+batch = 2
+negative = "low quality, blurry, watermark, text artifacts, oversaturated colors, deformed anatomy, noisy background, harsh flash, plastic skin, flat lighting, banding, heavy film grain"
+prompt = "A close-up photograph of a tiger's eye, speckled amber iris ringed by intricately detailed fur, natural light, subtle shadows, unfiltered amateur photography"
+
+[[case]]
+name = "ref-fp8mixed-cfg35-unequal"
+unet = "Chroma1-HD-fp8mixed.safetensors"
+topology = "dp2"
+batch = 2
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. Sharp focus."
+
+[[case]]
+name = "gate-bf16-cfg35-unequal"
+unet = "Chroma1-HD.safetensors"
+topology = "uly2"
+reference = "ref-bf16-cfg35-unequal"
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. Sharp focus."
+
+[[case]]
+name = "gate-bf16-cfg35-equal"
+unet = "Chroma1-HD.safetensors"
+topology = "uly2"
+reference = "ref-bf16-cfg35-equal"
+negative = "low quality, blurry, watermark, text artifacts, oversaturated colors, deformed anatomy, noisy background, harsh flash, plastic skin, flat lighting, banding, heavy film grain"
+prompt = "A close-up photograph of a tiger's eye, speckled amber iris ringed by intricately detailed fur, natural light, subtle shadows, unfiltered amateur photography"
+
+[[case]]
+name = "gate-fp8mixed-cfg35-unequal"
+unet = "Chroma1-HD-fp8mixed.safetensors"
+topology = "uly2"
+reference = "ref-fp8mixed-cfg35-unequal"
+prompt = "This is a nature documentary close-up photograph of the right side of the face of a tiger. The photograph is centered on its highly detailed and speckled eye surrounded by intricately detailed fur. Overlaid at the center of the image is a title text that says \"CHROMA1-HD\" in large white 3D letters. Amateur photography. Unfiltered. Real life. Natural light. Subtle shadows. Sharp focus."
+
+[[case]]
+name = "ref-bf16-cfg35-short-equal"
+unet = "Chroma1-HD.safetensors"
+topology = "dp2"
+batch = 2
+prompt = "A close-up photograph of a tiger's eye, amber iris, warm natural light, soft shadows"
+
+[[case]]
+name = "gate-bf16-cfg35-short-equal"
+unet = "Chroma1-HD.safetensors"
+topology = "uly2"
+reference = "ref-bf16-cfg35-short-equal"
+prompt = "A close-up photograph of a tiger's eye, amber iris, warm natural light, soft shadows"

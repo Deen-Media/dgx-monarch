@@ -1,0 +1,23 @@
+{
+  "major": 1,
+  "keys": [
+    "DGXMonarchBasicGuider",
+    "DGXMonarchBasicScheduler",
+    "DGXMonarchCFGGuider",
+    "DGXMonarchClearVRAM",
+    "DGXMonarchDualModelGuider",
+    "DGXMonarchFleetKSampler",
+    "DGXMonarchIdentityGate",
+    "DGXMonarchInit",
+    "DGXMonarchKSampler",
+    "DGXMonarchKSamplerAdvanced",
+    "DGXMonarchKSamplerPipeline",
+    "DGXMonarchLoraLoader",
+    "DGXMonarchModelSamplingSD3",
+    "DGXMonarchSamplerCustom",
+    "DGXMonarchStatus",
+    "DGXMonarchUNETLoader",
+    "DGXMonarchUncondUNETLoader"
+  ],
+  "removed": {}
+}

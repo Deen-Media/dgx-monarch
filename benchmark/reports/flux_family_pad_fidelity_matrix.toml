@@ -1,0 +1,270 @@
+# Flux, Flux2 and LongCat pad-row exclusion fidelity (2026-09-09). This is the
+# probe that FluxAdapter.usp_pad_exclusion_probe names, and Flux2Adapter and
+# LongCatAdapter inherit that attribute. Run it with:
+#   <comfy python> benchmark/run_matrix.py --matrix benchmark/reports/flux_family_pad_fidelity_matrix.toml
+#
+# References are dp2 batch = 2 slice 0, which carries exact single-GPU math on
+# the two-worker mesh; candidates are uly2 at one step under gate_step_fidelity
+# (DEFAULT_STEP_NRMS 0.10). Every padded leg has a divisible companion on the
+# same checkpoint, the same day and the same reference kind. The 2026-09 chroma
+# cfg2 diagnosis measured a family's own bf16 sensitivity at about 0.03 on a
+# leg that runs no adapter code, so a number carried across builds cannot be
+# the criterion: a padded leg is read against its companion's band. Record
+# both numbers in the report.
+#
+# Which stream pads, and why it is the image one.
+# The three families take their text at a floor, so an ordinary prompt reaches
+# the model at a length that already divides two:
+#   flux      T5XXL min_length 256 (comfy/text_encoders/flux.py)
+#   flux2     comfy front-pads every text cond to 512 (model_base.Flux2)
+#   longcat   the tokenizer truncates and pads to exactly 512, always
+# So the padded path these legs exercise is the image stream, whose row count
+# is arithmetic on the canvas rather than a token count anybody has to guess:
+#   flux and longcat   latent = px / 8, patch 2, rows = ((latent + 1) // 2) ^ 2
+#                      1024 -> 64 x 64 = 4096 even; 1448 -> 91 x 91 = 8281 odd
+#   flux2              latent = px / 16, patch 1, rows = latent ^ 2
+#                      1024 -> 64 x 64 = 4096 even; 1040 -> 65 x 65 = 4225 odd
+# A text pad needs a prompt past the floor. One leg carries it on flux: the
+# long positive below counts 313 rows and its companion 316, on comfy's own
+# FluxTokenizer and on the sweep reader alike (both counted on 2026-09-09
+# against the tokenizer ComfyUI ships). LongCat can never pad its text, and
+# flux2 would need a prompt past 512 rows to.
+#
+# Both block loops pad on every gate leg here. The double loop shards text and
+# image apart and names the two pad sets in [text, image] order; the single loop
+# shards the re-joined stream and names one tail. The joint totals:
+#   flux 1448 short prompt    256 + 8281 = 8537 odd
+#   flux 1024 long prompt     313 + 4096 = 4409 odd
+#   flux2 1040                512 + 4225 = 4737 odd
+#   longcat 1448              512 + 8281 = 8793 odd
+# and every companion total is even.
+#
+# The route. run_matrix.py offers two sampling routes and this file runs the
+# ksampler one for all three families, including flux2, whose shipped graph uses
+# the Flux2Scheduler custom sampler instead. One route for three families keeps
+# the numbers readable side by side, and the cfg_pp sampler evaluates the uncond
+# leg at cfg 1.0, so each render exercises its negative stream as well. The
+# ksampler route sets no guidance on the conditioning, so every leg here runs at
+# the stock 3.5 the model's extra_conds falls back to.
+#
+# The sanity check. The divisible-stream uly2 readings in the per-model
+# evidence of docs/VALIDATION.md are what each companion re-reads: flux 1 dev
+# 0.008, flux 1 schnell 0.048, flux2 0.017 (this run; 0.016 on the 2026-08-21
+# build), longcat 0.097.
+#
+# The result, 2026-09-09. Run on the pair in cluster mode with the driver
+# stopped, 1-step NRMS against each leg's own dp2 reference:
+#   gate-flux-1448-odd-image     0.006    gate-flux-1024-even       0.006
+#   gate-flux-1024-odd-text      0.005    gate-flux-1024-even-text  0.005
+#   gate-longcat-1448-odd-image  0.008    gate-longcat-1024-even    0.009
+#   gate-flux2-1040-odd-image    0.019    gate-flux2-1024-even      0.017
+# Every gate passed: each padded case was within its control's band. The
+# 20-step render is for visual inspection only. Flux 1 Schnell has no leg
+# here, so a padded render on that checkpoint stays unmeasured. On 2026-10-06,
+# with stock key order restored in the double blocks, all eight scored legs
+# read 0.0, identical to their dp2 references (docs/VALIDATION.md, flux-family
+# key order record).
+
+[defaults]
+steps = 1
+cfg = 1.0
+sampler = "euler_cfg_pp"
+scheduler = "simple"
+seed = 42
+repeats = 1
+negative = "low quality, blurry, watermark, oversaturated colors, deformed anatomy"
+
+[[case]]
+name = "ref-flux-1448"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "dp2"
+batch = 2
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "ref-flux-1024"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "dp2"
+batch = 2
+width = 1024
+height = 1024
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "ref-flux-1024-long"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "dp2"
+batch = 2
+width = 1024
+height = 1024
+prompt = "A wide documentary photograph of a working lighthouse on a rocky headland at golden hour. The tower is whitewashed stone with a black iron gallery and a glass lantern room, and the low sun throws a long shadow across wet granite slabs. Seabirds circle above the spray. A narrow gravel path runs from the keeper cottage to the tower door, edged by rough grass bent flat by the wind. In the distance a fishing boat crosses a heavy swell under a bank of dramatic clouds lit from below. The water is dark green and streaked with foam, and the horizon line sits just above the middle of the frame. The cottage roof is slate, patched near the chimney, and a coil of blue rope hangs on a nail beside the door. Two lobster creels lean against the wall, their netting frayed and salt stained. Beyond the wall the ground falls away in ledges of grey rock, cut by narrow channels where the tide runs back out. Lichen the colour of mustard covers the highest stones, and the lower ones are black and slick. A weather vane on the cottage gable points inland. The light picks out every joint in the tower masonry and every rivet in the gallery rail. Amateur photography, unfiltered, real life, natural light, subtle shadows, fine grain, sharp detail in the stonework and soft detail in the moving water."
+
+[[case]]
+name = "ref-flux-1024-long-even"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "dp2"
+batch = 2
+width = 1024
+height = 1024
+prompt = "A wide documentary photograph of a working lighthouse on a rocky headland at golden hour. The tower is whitewashed stone with a black iron gallery and a glass lantern room, and the low sun throws a long shadow across wet granite slabs. Seabirds circle above the spray. A narrow gravel path runs from the keeper cottage to the tower door, edged by rough grass bent flat by the wind. In the distance a fishing boat crosses a heavy swell under a bank of dramatic clouds lit from below. The water is dark green and streaked with foam, and the horizon line sits just above the middle of the frame. The cottage roof is slate, patched near the chimney, and a coil of blue rope hangs on a nail beside the door. Two lobster creels lean against the wall, their netting frayed and salt stained. Beyond the wall the ground falls away in ledges of grey rock, cut by narrow channels where the tide runs back out. Lichen the colour of mustard covers the highest stones, and the lower ones are black and slick. A weather vane on the cottage gable points inland. The light picks out every joint in the tower masonry and every rivet in the gallery rail. Amateur photography, unfiltered, real life, natural light, subtle shadows, fine grain, sharp detail in the stonework and soft detail in the moving water. Wide angle."
+
+# Leg 1: the odd image stream, 8281 rows. This is the cell the divisibility
+# refusal turned away, and the same 1448 canvas krea2's own pad matrix uses.
+[[case]]
+name = "gate-flux-1448-odd-image"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "uly2"
+reference = "ref-flux-1448"
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+# Leg 2: the divisible companion for leg 1. Nothing pads, so the kernel call is
+# the one an unpadded render already made, and this number is the band leg 1 is
+# read against.
+[[case]]
+name = "gate-flux-1024-even"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "uly2"
+reference = "ref-flux-1024"
+width = 1024
+height = 1024
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+# Leg 3: the odd text stream, 313 rows, on an even image. The double loop's pad
+# then sits inside a text slice rather than at the tail of the rank's block,
+# which is the coordinate the drop set has to get right.
+[[case]]
+name = "gate-flux-1024-odd-text"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "uly2"
+reference = "ref-flux-1024-long"
+width = 1024
+height = 1024
+prompt = "A wide documentary photograph of a working lighthouse on a rocky headland at golden hour. The tower is whitewashed stone with a black iron gallery and a glass lantern room, and the low sun throws a long shadow across wet granite slabs. Seabirds circle above the spray. A narrow gravel path runs from the keeper cottage to the tower door, edged by rough grass bent flat by the wind. In the distance a fishing boat crosses a heavy swell under a bank of dramatic clouds lit from below. The water is dark green and streaked with foam, and the horizon line sits just above the middle of the frame. The cottage roof is slate, patched near the chimney, and a coil of blue rope hangs on a nail beside the door. Two lobster creels lean against the wall, their netting frayed and salt stained. Beyond the wall the ground falls away in ledges of grey rock, cut by narrow channels where the tide runs back out. Lichen the colour of mustard covers the highest stones, and the lower ones are black and slick. A weather vane on the cottage gable points inland. The light picks out every joint in the tower masonry and every rivet in the gallery rail. Amateur photography, unfiltered, real life, natural light, subtle shadows, fine grain, sharp detail in the stonework and soft detail in the moving water."
+
+# Leg 4: the divisible companion for leg 3, three tokens longer at 316 rows.
+[[case]]
+name = "gate-flux-1024-even-text"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "uly2"
+reference = "ref-flux-1024-long-even"
+width = 1024
+height = 1024
+prompt = "A wide documentary photograph of a working lighthouse on a rocky headland at golden hour. The tower is whitewashed stone with a black iron gallery and a glass lantern room, and the low sun throws a long shadow across wet granite slabs. Seabirds circle above the spray. A narrow gravel path runs from the keeper cottage to the tower door, edged by rough grass bent flat by the wind. In the distance a fishing boat crosses a heavy swell under a bank of dramatic clouds lit from below. The water is dark green and streaked with foam, and the horizon line sits just above the middle of the frame. The cottage roof is slate, patched near the chimney, and a coil of blue rope hangs on a nail beside the door. Two lobster creels lean against the wall, their netting frayed and salt stained. Beyond the wall the ground falls away in ledges of grey rock, cut by narrow channels where the tide runs back out. Lichen the colour of mustard covers the highest stones, and the lower ones are black and slick. A weather vane on the cottage gable points inland. The light picks out every joint in the tower masonry and every rivet in the gallery rail. Amateur photography, unfiltered, real life, natural light, subtle shadows, fine grain, sharp detail in the stonework and soft detail in the moving water. Wide angle."
+
+[[case]]
+name = "ref-flux2-1040"
+unet = "flux2_dev_fp8mixed.safetensors"
+te = { name = "mistral_3_small_flux2_bf16.safetensors", type = "flux2" }
+topology = "dp2"
+batch = 2
+width = 1040
+height = 1040
+latent_channels = 128
+latent_downscale = 16
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "ref-flux2-1024"
+unet = "flux2_dev_fp8mixed.safetensors"
+te = { name = "mistral_3_small_flux2_bf16.safetensors", type = "flux2" }
+topology = "dp2"
+batch = 2
+width = 1024
+height = 1024
+latent_channels = 128
+latent_downscale = 16
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+# Leg 5: the odd image stream on the /16 latent, 4225 rows.
+[[case]]
+name = "gate-flux2-1040-odd-image"
+unet = "flux2_dev_fp8mixed.safetensors"
+te = { name = "mistral_3_small_flux2_bf16.safetensors", type = "flux2" }
+topology = "uly2"
+reference = "ref-flux2-1040"
+width = 1040
+height = 1040
+latent_channels = 128
+latent_downscale = 16
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+# Leg 6: its divisible companion.
+[[case]]
+name = "gate-flux2-1024-even"
+unet = "flux2_dev_fp8mixed.safetensors"
+te = { name = "mistral_3_small_flux2_bf16.safetensors", type = "flux2" }
+topology = "uly2"
+reference = "ref-flux2-1024"
+width = 1024
+height = 1024
+latent_channels = 128
+latent_downscale = 16
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "ref-longcat-1448"
+unet = "longcat_image_bf16.safetensors"
+te = { name = "qwen_2.5_vl_7b_fp8_scaled.safetensors", type = "longcat_image" }
+topology = "dp2"
+batch = 2
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+[[case]]
+name = "ref-longcat-1024"
+unet = "longcat_image_bf16.safetensors"
+te = { name = "qwen_2.5_vl_7b_fp8_scaled.safetensors", type = "longcat_image" }
+topology = "dp2"
+batch = 2
+width = 1024
+height = 1024
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+# Leg 7: the odd image stream, 8281 rows, against a text stream this family
+# always hands over at exactly 512.
+[[case]]
+name = "gate-longcat-1448-odd-image"
+unet = "longcat_image_bf16.safetensors"
+te = { name = "qwen_2.5_vl_7b_fp8_scaled.safetensors", type = "longcat_image" }
+topology = "uly2"
+reference = "ref-longcat-1448"
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+# Leg 8: its divisible companion.
+[[case]]
+name = "gate-longcat-1024-even"
+unet = "longcat_image_bf16.safetensors"
+te = { name = "qwen_2.5_vl_7b_fp8_scaled.safetensors", type = "longcat_image" }
+topology = "uly2"
+reference = "ref-longcat-1024"
+width = 1024
+height = 1024
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"
+
+# Leg 9: inspect a full render on the odd canvas. No reference or floor
+# applies because multi-step trajectories diverge across kernel orders.
+[[case]]
+name = "render-flux-1448-odd-20step"
+unet = "flux1-dev.safetensors"
+te = { name = ["clip_l.safetensors", "t5xxl_fp16.safetensors"], type = "flux" }
+topology = "uly2"
+steps = 20
+sampler = "euler"
+width = 1448
+height = 1448
+prompt = "a lighthouse on a rocky coast at golden hour, dramatic clouds, oil painting"

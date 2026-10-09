@@ -1,0 +1,166 @@
+name: Bug report
+description: A render failed, hung, or produced wrong output
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Security vulnerabilities do not belong here. Use the private advisory
+        flow in [SECURITY.md](../blob/HEAD/SECURITY.md) instead.
+
+        Complete the required fields so the maintainer can reproduce the issue.
+
+        Do not upload diagnostic bundles to a public issue. Paste only the
+        smallest relevant excerpts. Replace hostnames, private addresses,
+        usernames, absolute paths, GPU UUIDs, model or LoRA names, command
+        lines, environment values, and tokens with clear placeholders before
+        submitting. If redacting safely would remove the evidence, stop and
+        use private vulnerability reporting instead.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: >-
+        The symptom, what you expected instead, and the sanitized error text.
+        Typed errors can contain endpoints or paths: redact those values, but
+        keep the error type and the text around them. If a different graph or
+        topology works, say which.
+      placeholder: |
+        Every X render through the custom-sampler chain fails after all 20
+        steps complete, while rebuilding the denoised output. The same graph
+        on a single KSampler renders correctly on the same topology and
+        checkpoint.
+
+        Traceback of where the remote call failed (most recent call last):
+          ...
+    validations:
+      required: true
+
+  - type: input
+    id: topology
+    attributes:
+      label: Topology
+      description: >-
+        The Init node's topology and mode, plus the driver's own line, which
+        reads `render topology: <topology> (preset|auto: <reason>)`.
+      placeholder: "uly2 (explicit preset on the Init node, mode=cluster); log line: render topology: uly2 (preset: uly2)"
+    validations:
+      required: true
+
+  - type: textarea
+    id: model
+    attributes:
+      label: Model family, quant and encoders
+      description: >-
+        Model family and quantization, text-encoder and VAE families or dtypes,
+        plus LoRA count and strengths. Never include checkpoint, encoder, VAE,
+        or adapter filenames.
+      placeholder: |
+        - diffusion model: family=example, quant=fp8_scaled
+        - text encoder: family=example, dtype=bf16
+        - VAE: family=example, dtype=fp16
+        - LoRA: one adapter at strength 0.8, name redacted
+    validations:
+      required: true
+
+  - type: input
+    id: render-settings
+    attributes:
+      label: Sampler and latent
+      description: Sampler, scheduler, steps, cfg, denoise, resolution and frame count, plus the latent shape a worker reported if you have it.
+      placeholder: "res_multistep / simple, 20 steps, cfg 1.0, denoise 1.0, 1376x768, 37 temporal; worker reported shape [1, 24, 37, 48, 86]"
+    validations:
+      required: false
+
+  - type: textarea
+    id: hardware
+    attributes:
+      label: Hardware and cluster
+      description: >-
+        Hardware models, counts, memory per box (say if it is unified), the
+        fabric class, the `fabric_profile` you configured, and whether the
+        Worker services run under systemd or nohup. Do not include hostnames,
+        addresses, interface names, serials, or GPU UUIDs.
+      placeholder: |
+        2x DGX Spark (GB10, sm_121), 1 GPU each, 128 GB unified memory per box,
+        direct 200G link, fabric_profile = "dgx-spark-pair", nohup loops
+    validations:
+      required: true
+
+  - type: input
+    id: versions
+    attributes:
+      label: Version line
+      description: dgx-monarch version and commit, torchmonarch, torch, and the ComfyUI frontend/backend you are on.
+      placeholder: "dgx-monarch 0.0.0 (commit abc1234), torchmonarch 0.0.0, torch 0.0.0+cuXXX, ComfyUI frontend 0.0.0"
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: dgxm doctor
+      description: >-
+        The summary line at minimum, plus sanitized failing or warning rows.
+        Replace hostnames, addresses, usernames, paths, and identifiers before
+        pasting. Include a clean summary too; it records which environment
+        checks passed.
+      render: text
+      placeholder: |
+        doctor: <N> checks, <M> failures
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: >-
+        Paste only a short, sanitized excerpt around the failure, plus the
+        matching driver lines if useful. Do not paste complete logs, commands,
+        environment dumps, or diagnostic bundles. Worker services log to
+        `~/.local/state/dgx-monarch/worker-loop.log` under nohup; under
+        systemd, read them with `journalctl --user -u dgxm-worker`.
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: ruled-out
+    attributes:
+      label: TROUBLESHOOTING entries you ruled out
+      description: >-
+        List the docs/TROUBLESHOOTING.md entries you checked and explain how
+        your symptoms differ.
+      placeholder: >-
+        Ruled out TROUBLESHOOTING #48 (those refusals are cfg2/dp2, this is
+        uly2), TROUBLESHOOTING #50 and TROUBLESHOOTING #56 (capacity preflight,
+        but the model loaded completely), and TROUBLESHOOTING #36, which is the
+        closest entry and describes this path as supported.
+    validations:
+      required: true
+
+  - type: textarea
+    id: ask
+    attributes:
+      label: What you would like changed
+      description: Optional. A refusal at submit time instead of a crash mid-render, a clearer log level, or a missing doc entry would each help.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: attestations
+    attributes:
+      label: Before you file
+      options:
+        - label: I searched docs/TROUBLESHOOTING.md for the error text, not just for the subsystem.
+          required: true
+        - label: >-
+            I replaced private hosts, addresses, usernames, paths, UUIDs, model
+            names, commands, environment values, and tokens with placeholders.
+          required: true
+        - label: >-
+            I pasted only narrow excerpts, not complete logs or a diagnostic
+            bundle.
+          required: true
