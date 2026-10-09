@@ -1131,6 +1131,19 @@ not test GitHub authentication or dependency upgrades. These operator checks
 do not establish model accuracy or native latent RDMA support. See
 [update requirements](INSTALL.md#updating).
 
+### Package-layout compatibility
+
+A disposable Python 3.12 environment installed the official TorchMonarch 0.6.0
+ARM64 and color-matcher 0.6.0 wheels with pip. The older ownership verifier
+rejected the resulting layout. The corrected verifier matched all 393 pinned
+TorchMonarch files to the official wheel while preserving both packages'
+records and all installed fixture files. Pip generated the external test-data
+and CLI bytecode records without manual changes.
+
+This checks installed-file compatibility. It does not test dependency
+completeness, runtime imports, renders or a completed update on an affected
+pair. See [the recovery procedure](TROUBLESHOOTING.md#110-verified-update-refuses-color-matcher-test-files).
+
 ### Fresh agent installation
 
 An independent coding-agent session received the exact README setup prompt,

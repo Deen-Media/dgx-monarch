@@ -142,6 +142,21 @@ commit fails closed instead of running workers whose versions are unverified
 or inconsistent.
 [INSTALL.md](INSTALL.md#updating) holds the complete transaction contract.
 
+Pinned payload checks permit one recorded color-matcher 0.6.0 compatibility
+case: its known external test-data/cache records and a verified empty
+`tests/__init__.py`. The initializer makes the ancillary `tests` namespace a
+regular Python package. This allowance does not extend to runtime packages,
+nonempty initializers, overlapping pinned files or ambiguous ownership. All
+pinned wheel files still require their original hashes. External record paths
+are classified without reading or changing their targets. Installed metadata
+establishes local ownership, not publisher authenticity.
+
+The recovery updater explicitly trusts a separately reviewed controller
+checkout at the selected target commit. It binds that controller separately
+from the unchanged original checkout and config, then uses the normal update
+lock, prior-release checks, confirmation, activation and recovery. It does not
+grant the new controller authority to adopt an unknown prior installation.
+
 ### GitHub Actions to trusted hardware
 
 The public source repository has no self-hosted or custom-label hardware route.

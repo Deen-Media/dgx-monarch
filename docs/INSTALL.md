@@ -888,6 +888,11 @@ an unverified release. Last,
 the command asks for final confirmation, rechecks the checkout and activity,
 and only then stops Worker services.
 
+If an older verifier refuses an intact TorchMonarch installation because of
+color-matcher 0.6.0, follow [the compatibility recovery procedure](TROUBLESHOOTING.md#110-verified-update-refuses-color-matcher-test-files).
+Keep the original checkout at its current commit until the verified update
+finishes.
+
 ### Verified activation and recovery
 
 Before stopping services, the updater captures each existing unit and source

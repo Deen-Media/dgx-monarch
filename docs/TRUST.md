@@ -1103,3 +1103,15 @@ Passing this check grants no model-gate verdict or hardware acceptance.
 | Unexpected pip output or exit status must fail. | [`test_check_dependencies.py:77-93`](../tests/test_check_dependencies.py#L77-L93 "anchor:test_other_results_fail_without_download") |
 | Platform, package, download and installed-file mismatches must fail. | [`test_check_dependencies.py:96-118`](../tests/test_check_dependencies.py#L96-L118 "anchor:test_exception_requires_original_wheel") |
 | CPU jobs must use the reviewed GitHub-hosted images. | [`test_release_surfaces.py:422-442`](../tests/test_release_surfaces.py#L422-L442 "anchor:test_public_source_has_no_hardware_route") |
+
+Verified-update file ownership follows [troubleshooting entry 110](TROUBLESHOOTING.md#110-verified-update-refuses-color-matcher-test-files).
+The color-matcher allowance applies to bundled test files only and grants
+no model verdict or runtime-package exception.
+
+| Guard | Regression coverage |
+|---|---|
+| The color-matcher layout must preserve the complete pinned payload digest without external reads. | [`test_update_color_matcher_layout.py:60-70`](../tests/test_update_color_matcher_layout.py#L60-L70 "anchor:test_complete_layout_keeps_pinned_digest_and_never_reads_external_paths") |
+| Other owners, versions, paths, changed files and executable initializers remain rejected. | [`test_update_color_matcher_layout.py:78-118`](../tests/test_update_color_matcher_layout.py#L78-L118 "anchor:test_layout_refuses_every_other_shape") |
+| Production package and module shadows remain rejected. | [`test_update_payload_ownership.py:59-63`](../tests/test_update_payload_ownership.py#L59-L63 "anchor:test_foreign_claim_cannot_shadow_or_overlap_pinned_package") |
+| Worker attestation must still reject a changed initializer or direct pinned-file claim. | [`test_update_worker_attestation.py:177-182`](../tests/test_update_worker_attestation.py#L177-L182 "anchor:test_worker_attestation_still_rejects_color_matcher_shadow_or_false_claim") |
+| Recovery must bind the original checkout, config and target independently of the fixed controller. | [`test_update_recovery_bootstrap.py:90-109`](../tests/test_update_recovery_bootstrap.py#L90-L109 "anchor:test_bound_original_refuses_drift") |

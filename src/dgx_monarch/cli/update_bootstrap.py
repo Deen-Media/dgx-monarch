@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 import shutil
 import signal
 import stat
@@ -126,6 +127,77 @@ def _snapshot(source: Path, root: Path, request: dict[str, Any]) -> tuple[Path, 
         raise
 
 
+
+def _recovery_git(repo: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false",
+         "-c", "core.untrackedCache=false", "-C", str(repo), *args],
+        capture_output=True, text=True, timeout=30,
+        env={"GIT_CONFIG_GLOBAL": os.devnull, "GIT_CONFIG_NOSYSTEM": "1", "GIT_NO_REPLACE_OBJECTS": "1",
+             "LANG": "C", "LC_ALL": "C", "PATH": os.defpath},
+    )
+    if result.returncode:
+        raise ValueError("recovery checkout Git inspection failed")
+    return result.stdout.strip()
+
+
+def _verify_loaded_controller(source: Path) -> None:
+    for name, module in tuple(sys.modules.items()):
+        if name != "dgx_monarch" and not name.startswith("dgx_monarch."):
+            continue
+        path = getattr(module, "__file__", None)
+        if not isinstance(path, str) or not Path(path).resolve(strict=True).is_relative_to(source):
+            raise ValueError("loaded recovery controller module came from another source")
+
+
+def _recovery_binding(repo: Path, controller: Path, target: str, source: Path) -> dict:
+    from .update_inspect import inspect_checkout
+
+    if re.fullmatch(r"[0-9a-f]{40}", target) is None:
+        raise ValueError("recovery target must be a full 40-character commit")
+    controller = controller.expanduser().resolve(strict=True)
+    if controller == repo or source != controller / "src/dgx_monarch":
+        raise ValueError("recovery requires the loaded controller's separate checkout")
+    _verify_loaded_controller(source)
+    for checkout in (repo, controller):
+        if _recovery_git(checkout, "status", "--porcelain=v1", "--untracked-files=all"):
+            raise ValueError("recovery checkouts must be clean")
+        if any(line[:1].islower() or line.startswith("S ") for line in _recovery_git(checkout, "ls-files", "-v").splitlines()):
+            raise ValueError("recovery checkout hides tracked changes")
+    head = _recovery_git(repo, "rev-parse", "HEAD")
+    if _recovery_git(controller, "rev-parse", "HEAD") != target:
+        raise ValueError("recovery controller HEAD differs from the exact target")
+    origin = _recovery_git(repo, "remote", "get-url", "origin")
+    if origin != _recovery_git(controller, "remote", "get-url", "origin"):
+        raise ValueError("recovery controller origin differs from the original checkout")
+    _recovery_git(controller, "merge-base", "--is-ancestor", head, target)
+    original_metadata, _ = inspect_checkout(repo, head)
+    controller_metadata, _ = inspect_checkout(controller, target)
+    if controller_metadata.source_manifest != dgx_source_manifest_sha256(source):
+        raise ValueError("loaded recovery controller differs from its reviewed checkout")
+    return {"original_head": head, "original_source_manifest": original_metadata.source_manifest,
+            "origin_sha256": hashlib.sha256(origin.encode()).hexdigest(),
+            "controller_commit": target, "controller_source_manifest": controller_metadata.source_manifest}
+
+
+def _check_recovery_original(repo: Path, request: dict, source_manifest: str) -> None:
+    recovery = request["recovery"]
+    info = repo.stat()
+    if repo.resolve(strict=True) != repo or [info.st_dev, info.st_ino] != request["repo_identity"]:
+        raise ValueError("original repository identity changed during recovery")
+    if request["target_ref"] != recovery["controller_commit"] or source_manifest != recovery["controller_source_manifest"]:
+        raise ValueError("recovery controller or target binding changed")
+    if _recovery_git(repo, "rev-parse", "HEAD") != recovery["original_head"]:
+        raise ValueError("original repository commit changed during recovery")
+    if dgx_source_manifest_sha256(repo / "src/dgx_monarch") != recovery["original_source_manifest"]:
+        raise ValueError("original repository source changed during recovery")
+    origin = _recovery_git(repo, "remote", "get-url", "origin")
+    if hashlib.sha256(origin.encode()).hexdigest() != recovery["origin_sha256"]:
+        raise ValueError("original repository origin changed during recovery")
+    if hashlib.sha256(_regular_bytes(Path(request["config"]))).hexdigest() != request["config_sha256"]:
+        raise ValueError("cluster configuration changed during recovery")
+
+
 def _child(root: Path, manifest: dict[str, Any]) -> int:
     from .update_command import SystemUpdateOps
     from .update_entrypoint import run_serialized_update
@@ -151,11 +223,24 @@ def _child(root: Path, manifest: dict[str, Any]) -> int:
         raise ValueError("original repository identity changed")
     if repo.resolve(strict=True) != repo:
         raise ValueError("original repository path changed")
-    if dgx_source_manifest_sha256(repo / "src" / "dgx_monarch") != manifest["source_manifest"]:
-        raise ValueError("original checkout source changed before update")
+    ops: SystemUpdateOps
+    if "recovery" in request:
+        _check_recovery_original(repo, request, manifest["source_manifest"])
+
+        class RecoveryOps(SystemUpdateOps):
+            def resolve_target(self, target_ref: str) -> str:
+                # run_serialized_update already holds the original checkout lock.
+                _check_recovery_original(repo, request, manifest["source_manifest"])
+                return super().resolve_target(target_ref)
+
+        ops = RecoveryOps(repo, config, driver_host=request["driver_host"])
+    else:
+        if dgx_source_manifest_sha256(repo / "src" / "dgx_monarch") != manifest["source_manifest"]:
+            raise ValueError("original checkout source changed before update")
+        ops = SystemUpdateOps(repo, config, driver_host=request["driver_host"])
     result = run_serialized_update(
         repo=repo, request=UpdateRequest(request["target_ref"], request["assume_yes"]),
-        ops=SystemUpdateOps(repo, config, driver_host=request["driver_host"]),
+        ops=ops,
         receipt_path=request["receipt_path"],
     )
     _write_private(root / "settled.json", json.dumps({"exit_code": result}).encode())
@@ -197,6 +282,7 @@ def launch_verified_update(
     assume_yes: bool,
     driver_host: str | None,
     receipt_path: str | os.PathLike[str] | None,
+    controller_repository: Path | None = None,
 ) -> int:
     snapshot: Path | None = None
     try:
@@ -212,7 +298,10 @@ def launch_verified_update(
         if config_bytes != _regular_bytes(config_path):
             raise ValueError("configuration changed while preparing update")
         source = Path(__file__).resolve().parents[1]
-        if dgx_source_manifest_sha256(source) != dgx_source_manifest_sha256(original_repo / "src" / "dgx_monarch"):
+        recovery = None
+        if controller_repository is not None:
+            recovery = _recovery_binding(original_repo, controller_repository, target_ref, source)
+        elif dgx_source_manifest_sha256(source) != dgx_source_manifest_sha256(original_repo / "src" / "dgx_monarch"):
             raise ValueError("loaded controller does not match the original checkout")
         repo_stat = original_repo.stat()
         request = {
@@ -222,8 +311,16 @@ def launch_verified_update(
             "target_ref": target_ref, "assume_yes": assume_yes,
             "driver_host": driver_host, "receipt_path": destination,
         }
+        if recovery is not None:
+            request["recovery"] = recovery
+            print(f"Original checkout: {original_repo}")
+            print(f"Current commit: {recovery['original_head']}")
+            print(f"Reviewed recovery controller and target: {target_ref}")
+            print("The normal verified-update checks and confirmation still apply.")
         root = Path.home() / ".local" / "state" / "dgx-monarch" / "update-controllers"
         snapshot, digest = _snapshot(source, root, request)
+        if recovery is not None and controller_repository is not None and _recovery_binding(original_repo, controller_repository, target_ref, source) != recovery:
+            raise ValueError("recovery identity changed while copying the controller")
         env = dict(os.environ)
         env.pop("PYTHONPATH", None)
         process = subprocess.Popen(

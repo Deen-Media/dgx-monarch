@@ -4801,3 +4801,61 @@ Remove the allowlist entry only after the pinned Torch build depends on
 `nvidia-cusparselt-cu13>=0.9.0` and a fresh ARM64 environment passes dependency
 checks, imports and the ARM64 CI job. A corrected NVIDIA wheel alone does not
 meet that condition.
+
+
+## 110. Verified update refuses color-matcher test files
+
+An older updater can report `the driver's torchmonarch does not match the
+current checkout's exact pin` even when the pinned files are intact. The
+underlying ownership error distinguishes a real file conflict from an
+unsupported package layout.
+
+The official color-matcher 0.6.0 wheel includes three test images both inside
+`site-packages/tests/data` and through the wheel's external data directory.
+Pip also records compiled bytecode for its installed CLI script. These are
+valid [installed-package records](https://packaging.python.org/en/latest/specifications/recording-installed-packages/#the-record-file),
+but older Monarch verifiers reject their path shapes. The wheel also adds an
+empty `tests/__init__.py`, which turns the shared test namespace into a regular
+Python package. That affects the bundled test namespace; it is not an overlap
+with a pinned TorchMonarch file.
+
+The compatibility check recognizes only the known external records for
+color-matcher 0.6.0, binds its three in-tree images to their official hashes, and verifies
+its uniquely owned, empty test initializer. It never reads or changes external
+record targets. Every pinned TorchMonarch file must still match; changed
+payloads, duplicate claims, nonempty initializers and runtime-package shadows
+remain errors. A successful ownership check does not prove the rest of an
+update or a render will pass.
+
+### Recover an installation with an older verifier
+
+Keep the original checkout, environment and Worker sources unchanged. Save the
+failed update receipt and close ComfyUI. Use a separate clean checkout at the
+reviewed fix commit to run the same verified update against the original
+installation:
+
+```bash
+REPO_DIR=/absolute/path/to/the/installed/dgx-monarch
+COMFY_PYTHON=/absolute/path/to/the/existing/environment/bin/python
+CONFIG_PATH=/absolute/path/to/cluster.toml
+FIX_COMMIT=REPLACE_WITH_REVIEWED_FULL_COMMIT
+CONTROLLER_DIR="$(mktemp -d /tmp/dgxm-update-controller.XXXXXXXX)"
+git clone --no-checkout "$(git -C "$REPO_DIR" remote get-url origin)" "$CONTROLLER_DIR"
+git -C "$CONTROLLER_DIR" checkout --detach "$FIX_COMMIT"
+"$COMFY_PYTHON" -I -B "$CONTROLLER_DIR/tools/update_from_checkout.py" \
+  --repo "$REPO_DIR" --config "$CONFIG_PATH" --target "$FIX_COMMIT"
+```
+
+Replace the placeholders with discovered installation paths and the reviewed
+commit before running the commands. The recovery tool requires matching Git
+origins, a clean controller at the exact selected commit, and an unchanged
+original checkout. It preserves the normal activity and ownership checks,
+confirmation, release verification, receipts and rollback. The original
+checkout advances only after the verified update succeeds. Keep the controller
+checkout and recovery records if the outcome is incomplete.
+
+Do not reinstall TorchMonarch repeatedly, delete package test files, edit
+`RECORD`, or suppress a distribution to get past this error. If the check
+reports another conflict, preserve it for diagnosis. Older Ultralytics wheels
+that claim actual TorchMonarch files are a separate collision and remain
+rejected.
