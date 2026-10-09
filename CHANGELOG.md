@@ -1,13 +1,5 @@
 # Changelog
 
-## Unreleased
-
-- Add `tools/check_dependencies.py` for installation and CI. It accepts only
-  the known cuSPARSELt 0.8.1 ARM64 platform-tag failure after checking the
-  installed files against the official wheel. Other dependency errors fail.
-- Add a GitHub-hosted ARM64 CPU job on Ubuntu 24.04 with Python 3.12.
-  Keep the existing x64 test coverage and ComfyUI canaries.
-
 ## 1.0.0
 
 Initial release of DGX Monarch: distributed image and video generation in
@@ -28,6 +20,9 @@ ComfyUI, built for a pair of NVIDIA DGX Sparks.
 
 ### Installation
 
+- Check dependencies with `tools/check_dependencies.py`. It verifies the
+  official artifact before accepting the known upstream packaging exception;
+  other dependency errors fail.
 - Install from source into the Python environment used by ComfyUI, preserving
   its CUDA Torch build and building the pinned xFuser compatibility wheel.
 - Configure both Sparks through guided setup with a reviewed plan, dependency
@@ -52,12 +47,17 @@ ComfyUI, built for a pair of NVIDIA DGX Sparks.
   Worker services remain running when ComfyUI closes; stopping them is a
   separate operator action.
 
+### Development
+
+- Run CPU checks on GitHub-hosted x64 runners with Python 3.11 and 3.12, and
+  ARM64 with Python 3.12. The x64 jobs also check package contents and CLI
+  installation; ComfyUI canaries check upstream compatibility.
+
 ### Limits
 
-- The official NVIDIA cuSPARSELt 0.8.1 ARM64 wheel has a platform-tag error
-  reported by pip 24.2 and later. The 1.0.0 installation procedure used manual
-  artifact verification and recorded this failure separately from render
-  results. See the [current dependency check](docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform).
+- PyTorch still pins the NVIDIA cuSPARSELt ARM64 wheel with a platform-tag
+  error. The [dependency checker](docs/TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
+  verifies and reports this exception without changing installed packages.
 - Support and measured speedups apply to the configurations listed in
   [Model support](docs/MODELS.md), [Benchmarks](docs/BENCHMARKS.md) and
   [Validation](docs/VALIDATION.md). A workflow template does not establish
