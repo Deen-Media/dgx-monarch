@@ -294,6 +294,7 @@ def test_price_matches_resolve_on_every_row_of_the_ladder(
     from dgx_monarch.mesh_safety import StockLoadCapacityError
 
     _slab(monkeypatch)
+    monkeypatch.setattr(cq.mesh_safety, "mem_available_bytes", lambda: 90 << 30)
     row = cq.price(**_kwargs(**overrides))
     assert (row.verdict, row.rung) == (verdict, rung)
 

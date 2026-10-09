@@ -44,8 +44,8 @@ tui = ["textual>=0.80", "nvidia-ml-py"]
 dgxm = "dgx_monarch.cli.main:main"
 
 [project.urls]
-Repository = "https://github.com/balaxxe/dgx-monarch"
-Documentation = "https://github.com/balaxxe/dgx-monarch/tree/HEAD/docs"
+Repository = "https://github.com/Deen-Media/dgx-monarch"
+Documentation = "https://github.com/Deen-Media/dgx-monarch/tree/HEAD/docs"
 
 [tool.setuptools.packages.find]
 where = ["src"]

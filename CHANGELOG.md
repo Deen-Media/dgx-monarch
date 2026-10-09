@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+
+- Update repository links and the setup prompt for Deen-Media ownership.
+- Make two CPU capacity tests use their simulated memory instead of the host's available RAM.
+
 ## 1.0.0
 
 Initial release of DGX Monarch: distributed image and video generation in

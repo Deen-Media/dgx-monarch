@@ -69,7 +69,7 @@ other custom nodes and unrelated work intact.
 
 Set these paths explicitly. `COMFY_PYTHON` must be the interpreter that starts
 this ComfyUI checkout. If the intended node-pack path is absent, clone
-`https://github.com/Balaxxe/dgx-monarch.git` there and select the same reviewed
+`https://github.com/Deen-Media/dgx-monarch.git` there and select the same reviewed
 commit on both hosts. An existing checkout or symlink must pass the inspection
 above before reuse.
 
