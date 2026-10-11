@@ -8,7 +8,7 @@ For a workflow, use [Model support](MODELS.md); for speed comparisons, use
 All hardware results below used two DGX Sparks with GB10 GPUs. They cover the
 stated models, settings and software, not every combination supported by the
 code. The records span different builds and do not constitute a complete
-retest of version 1.0.
+retest of the current release.
 
 - [Installation and recovery](#dependency-and-setup-checks): fresh environments,
   two distributed renders, setup reruns and restoration.
@@ -17,6 +17,38 @@ retest of version 1.0.
 - [Memory calibration](#memory-calibration): measurements behind capacity checks.
 - [Lifecycle](#lifecycle): cleanup, interruption and failure recovery.
 - [Native RDMA](#native-rdma): failed return-path test; remains disabled.
+
+## Onboarding and operator acceptance
+
+**2026-10-11, source `09957d971441c59d4605092c064886c66841eb6e`, two DGX
+Sparks with GB10 GPUs.** These checks preceded the v1.1.0 release commit;
+they are not an exact-release-commit hardware retest.
+
+Verified update completed with Doctor, an owned cluster smoke and exact
+two-rank source readback. Worker startup identities and source files were
+checked separately; persistent coordinator loaded imports were not directly
+inspected. The fresh client reused existing dependencies: this was not a
+clean-OS or independent dependency installation.
+
+Optional Sol installation changed only `apache-tvm-ffi`, from 0.1.13.post3 to
+0.1.14.post1, on both hosts; protected runtime file hashes remained unchanged.
+Both GPUs executed `cute_sm120` on a 4,096-token BF16 dense control, with
+relative L2 error **0.00298337** against PyTorch SDPA. This establishes kernel
+execution, not sparse-attention or model fidelity.
+
+The MiniMax MP4 workflow completed with **TORCH_FLASH, uly2, 512×320,
+124 frames and 24 fps**. H.264 video and AAC audio streams were verified;
+complete CPU decoding succeeded. The run carried an existing accuracy waiver;
+no new waiver was created. Its identity gate had no LoRA/slab configuration to compare and remained
+**INCONCLUSIVE**, not PASS.
+This was functional output acceptance without an exact-fidelity comparison.
+
+Headless rendering of actual Textual widgets showed **Health READY /
+Activity RENDERING / Maintenance Wait**, then READY / IDLE / None. The combined
+launcher's terminal handshake succeeded; native windows were not visually
+inspected. Owned mesh recycle and driver/dashboard cleanup completed;
+persistent Worker identities stayed unchanged and final idle checks passed.
+Native latent-return RDMA remains **NOT RUN / HOLD**.
 
 ## Comparison method
 

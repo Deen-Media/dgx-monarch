@@ -11,7 +11,7 @@
 
 Generate images and video across two DGX Sparks from one ComfyUI window. Split a render between the GPUs, run separate prompts at once, or shard supported model weights to fit larger checkpoints.
 
-DGX Monarch provides model loaders, samplers, memory controls, and 58 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI.
+DGX Monarch provides model loaders, samplers, memory controls, and 59 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI.
 
 [Get started](docs/QUICKSTART.md) · [Installation](docs/INSTALL.md) · [Model support](docs/MODELS.md) · [Benchmarks](docs/BENCHMARKS.md)
 
