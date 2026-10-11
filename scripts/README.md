@@ -2,7 +2,7 @@
 
 `comfy-driver.sh` launches one ComfyUI driver with the validated DGX Spark flag
 profile. It does not run `dgxm up`, `down`, or `restart`, and it never stops a
-persistent Worker service. ComfyUI replaces the launcher process, stays attached
+persistent Worker service. Without `--with-top`, ComfyUI replaces the launcher process, stays attached
 to the terminal, and receives signals normally.
 
 Pass an existing ComfyUI checkout explicitly. Select its virtual environment or
@@ -43,6 +43,47 @@ while leaving the terminal attached. The launcher refuses ComfyUI's TLS flags,
 because its confirmation probe speaks plain HTTP. `EXTRA_ARGS` accepts a list
 split on whitespace; pass real arguments when a value contains spaces.
 
+## Optional dashboard alongside ComfyUI
+
+Add `--with-top --cluster-config /absolute/path/to/cluster.toml` to the
+foreground launcher. It uses installed GNOME Terminal (`--wait`) or falls
+back to xterm. It requires a graphical display and an interactive terminal;
+no terminal or Python packages are installed automatically. Install the TUI
+extra through the constrained procedure in [INSTALL.md](../docs/INSTALL.md).
+
+```bash
+bash scripts/comfy-driver.sh \
+  --comfy-dir /opt/ComfyUI --python /opt/comfyui-env/bin/python \
+  --cluster-config /absolute/path/to/cluster.toml --with-top
+```
+
+The dashboard opens in a separate window using the exact selected Python,
+config, and driver address/port. Wildcard bind addresses map to loopback for
+local monitoring. Both processes use the same config. `--check` validates
+paths, config, imports, and the supported terminal prerequisite without
+opening a window or starting ComfyUI; graphical/interactive access is checked
+when actually launching.
+
+A new driver starts only after the dashboard process confirms its terminal
+startup. ComfyUI retains the invoking terminal, visible logs, signals, shell
+job control, and exit status. Closing the dashboard leaves ComfyUI running;
+when ComfyUI exits, its dashboard closes. Cancellation gives the owned driver
+group up to 180 seconds for graceful teardown (matching the mesh recycle
+window, with a final TERM attempt), then forces only that group to stop and
+bounds the final reap. A forced stop explicitly leaves Attached-mesh and actor
+cleanup unconfirmed; inspect cluster state before reuse. Dashboard shutdown
+and the local terminal-client reap are bounded separately. Shared terminal
+servers and reused drivers are never termination targets. If a confirmed driver already
+exists, only a dashboard opens and the launcher waits for that window; it
+never acquires ownership of or stops the existing driver. Failure to open the
+dashboard refuses a new driver start. Failures after startup are reported
+without stopping ongoing ComfyUI work.
+
+Cleanup uses a private connection to the dashboard created by this launch.
+It never closes another terminal window or a shared terminal server. Worker
+services remain unchanged. For headless use, keep the ordinary foreground
+launcher and run `dgxm top` in a second terminal yourself.
+
 ## Optional desktop entry
 
 The installer validates paths and creates a per-user desktop entry with the
@@ -56,6 +97,9 @@ bash scripts/dgxm-desktop.sh install \
 
 bash scripts/dgxm-desktop.sh uninstall
 ```
+
+The desktop installer also accepts `--with-top --cluster-config PATH` and
+persists the config in the shortcut, so later launches use the same selection.
 
 The entry lives under `${XDG_DATA_HOME:-$HOME/.local/share}/applications`.
 Install and uninstall refuse to replace or remove an entry they do not own.
@@ -75,3 +119,40 @@ Use [INSTALL.md](../docs/INSTALL.md) for dependency installation and
 [the setup skill](../skills/dgx-monarch/SKILL.md) for discovery, approved
 setup, verification and recovery. Missing ComfyUI or CUDA dependencies need a
 separate reviewed prerequisite plan.
+
+## Optional normal-terminal CLI launcher
+
+The package installs `dgxm` inside the selected Python environment. To make
+that exact executable available from an ordinary terminal, use its local
+launcher command. Planning performs no installation:
+
+```bash
+/opt/comfyui-env/bin/dgxm launcher \
+  --executable /opt/comfyui-env/bin/dgxm \
+  --cluster-config /absolute/path/to/cluster.toml \
+  --destination "$HOME/.local/bin/dgxm"
+```
+
+Repeat with `--apply` to install. The default destination is
+`~/.local/bin/dgxm`. Identical reruns leave the file unchanged. The command
+refuses an unmanaged command, a modified launcher, or a symlink destination
+or parent. It only replaces a recognized managed launcher after checking its
+identity and contents under a cooperative lock. That lock does not prevent
+manual writers; POSIX replacement still has a final check-to-rename window.
+A newly created launcher is published atomically without overwriting any
+existing command.
+
+The launcher executes the selected environment's `dgxm`, forwards arguments,
+and preserves exit status and signals. It passes the saved cluster config
+explicitly, refusing a missing saved config instead of falling through to another
+cluster. A leading global `--config PATH` or `--config=PATH` overrides the
+saved selection. Explicit overrides pass unchanged to the CLI, preserving its
+home-directory expansion and command-specific validation.
+
+Inspect the PATH report, then verify in your ordinary terminal with
+`command -v dgxm` and `dgxm version` (run `hash -r` first in Bash). Aliases,
+functions, and an earlier PATH entry can shadow the file. If its directory is
+absent from PATH, use the full path or add that directory in your own shell
+configuration. The installer does not edit shell startup files, install
+packages, start the dashboard, or change Worker services. This is entry-point
+selection; cluster operations remain implemented only by the CLI itself.

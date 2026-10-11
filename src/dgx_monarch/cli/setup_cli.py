@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import shlex
 import sys
 from argparse import Namespace
 from collections.abc import Callable, Sequence
@@ -359,4 +360,7 @@ def run(args: Namespace) -> int:
             print("  receipt: FAILED (requested receipt was not written)")
         elif outcome.receipt_written:
             print("  receipt: written")
+        if outcome.status == "succeeded" and _result_code(request, outcome) == 0:
+            command = shlex.join([sys.executable, "-m", "dgx_monarch", "launcher", "--help"])
+            print(f"  optional normal-terminal access: {command}")
     return _result_code(request, outcome)

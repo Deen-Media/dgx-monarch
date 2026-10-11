@@ -25,6 +25,7 @@ from typing import Protocol
 
 from .update_cancellation import reraise_after_cleanup
 from .update_payload_ownership import foreign_namespace_files
+from .update_pin_diagnostic import PinDiagnostic, inspect_match
 from .update_transaction import Certainty, OperationResult
 
 _PIN = re.compile(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,127}")
@@ -295,6 +296,7 @@ class DriverPinTransition:
         self._root: Path | None = None
         self._prior: _Artifact | None = None
         self._target: _Artifact | None = None
+        self.last_diagnostic: PinDiagnostic | None = None
 
     @property
     def prepared(self) -> bool:
@@ -387,13 +389,10 @@ class DriverPinTransition:
         except Exception:
             return False
     def _matches(self, artifact: _Artifact | None) -> bool:
-        try:
-            return bool(
-                artifact is not None and self._artifact_ready(artifact)
-                and self._live_matches(artifact)
-            )
-        except Exception:
-            return False
+        matched, self.last_diagnostic = inspect_match(lambda: bool(
+            artifact is not None and self._artifact_ready(artifact) and self._live_matches(artifact)
+        ))
+        return matched
 
     def _artifact_ready(self, artifact: _Artifact) -> bool:
         wheel_hash, files = _inspect_wheel(artifact.wheel, artifact.pin)

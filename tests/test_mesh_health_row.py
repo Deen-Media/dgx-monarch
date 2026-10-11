@@ -14,6 +14,7 @@ import sys
 import threading
 import types
 import urllib.error
+from itertools import permutations
 from types import SimpleNamespace
 
 import pytest
@@ -202,6 +203,35 @@ def test_a_handle_the_verdict_cannot_read_is_unknown_not_healthy():
     health = mesh_health.health_of([SimpleNamespace()])
     assert health.state == "unknown"
     assert not health.dirty
+
+
+@pytest.mark.parametrize("kind", ["ready", "active", "busy", "completed"])
+def test_unknown_handle_outranks_observed_activity_in_either_order(kind):
+    from dgx_monarch.operator_readiness import readiness_from_telemetry
+
+    other = {
+        "ready": _handle(),
+        "active": _handle(sample_leases={0: 2}),
+        "busy": _handle(setup_cleanup_state=_in_flight()),
+        "completed": _handle(teardown_complete=True),
+    }[kind]
+    unreadable = SimpleNamespace()
+    for handles in permutations((other, unreadable)):
+        health = mesh_health.health_of(handles)
+        assert health.state == "unknown"
+        report = readiness_from_telemetry(
+            [{"healthy": True}], health.as_dict(), {"active": False})
+        assert report["overall"] == "unknown"
+
+
+def test_known_dirty_handle_outranks_unknown_and_active_in_every_order():
+    handles = (
+        _handle(replacement_blocked="stop failed"),
+        SimpleNamespace(),
+        _handle(setup_cleanup_state=_in_flight()),
+    )
+    for ordered in permutations(handles):
+        assert mesh_health.health_of(ordered).state == "dirty"
 
 
 def test_one_dirty_fleet_decides_the_whole_verdict():
@@ -613,6 +643,34 @@ def test_fetch_prefers_the_driver_that_reports_a_dirty_fleet(monkeypatch):
     block = mesh_health_row.fetch_mesh_block()
     assert block is not None
     assert block["state"] == "dirty"
+
+
+@pytest.mark.parametrize("blocker", [
+    {"poisoned": True},
+    {"replacement_blocked": "unconfirmed stop"},
+    {"abandoned_samples": 1},
+    {"abandoned_leases": 1},
+    {"verdict": "blocked"},
+    {"verdict": "unresolved"},
+])
+@pytest.mark.parametrize("peer", [
+    {"state": "ok", "verdict": "live"},
+    {"state": "busy", "verdict": "unresolved", "busy_phase": "load"},
+    {"state": "unknown"},
+    None,
+])
+def test_fetch_keeps_blocking_fields_in_either_driver_order(monkeypatch, blocker, peer):
+    blocked = {"state": "ok", "verdict": "live", **blocker}
+    peer_payload = {"mesh": peer} if peer is not None else TimeoutError("unreadable")
+    for payloads in permutations(({"mesh": blocked}, peer_payload)):
+        monkeypatch.setattr(
+            mesh_health_row.urllib.request, "urlopen",
+            _fake_urlopen(dict(zip(("8188", "8191"), payloads, strict=True))))
+        chosen = mesh_health_row.fetch_mesh_block(("localhost:8188", "localhost:8191"))
+        assert chosen == blocked
+        assert mesh_health_row.doctor_verdict(chosen)[0] == "fail"
+        assert mesh_health_row.state_name(chosen) in {"dirty", "poisoned"}
+        assert mesh_health_row.status_line(chosen).startswith(("DIRTY", "POISONED"))
 
 
 def test_fetch_prefers_a_busy_driver_over_a_quiet_one(monkeypatch):

@@ -314,8 +314,8 @@ def cmd_top(args) -> int:
             replay=args.replay, record=args.record, theme=args.theme,
             config_path=getattr(args, "config", None))
     except ImportError as exc:
-        print(f"dgxm top needs the TUI extra ({exc}). Install it with the Python that runs ComfyUI: "
-              "<python> -m pip install -e '<ComfyUI dir>/custom_nodes/dgx-monarch[tui]' (docs/INSTALL.md)")
+        print(f"dgxm top needs the TUI extra ({exc}). Use the constrained optional-extra installation "
+              "procedure in docs/INSTALL.md with the Python that runs ComfyUI; preserve its working Torch build.")
         print("note: dgxm update installs with --no-deps, which keeps torch and NCCL in place "
               "and never adds this extra; install it once on each driver box")
         return 2
@@ -403,9 +403,34 @@ def _uninstall_cluster(config, source, snapshot) -> bool:
     return ok
 
 
+def cmd_launcher(args) -> int:
+    from .launcher import run
+
+    return run(args)
+
+
+def cmd_sol_install(args) -> int:
+    from .sol_install import run
+
+    return run(
+        _require_config(args), apply=args.apply, plan=args.plan,
+        plan_digest=args.plan_digest, allow_change=tuple(args.allow_change),
+        idle_maintenance=args.idle_maintenance,
+    )
+
+
+def cmd_sol_smoke(args) -> int:
+    from .sol_smoke import cmd_sol_smoke as run
+
+    return run(_require_config(args), idle_maintenance=args.idle_maintenance, timeout_s=args.timeout_s)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = arguments.build_parser({
         "version": cmd_version,
+        "launcher": cmd_launcher,
+        "sol_install": cmd_sol_install,
+        "sol_smoke": cmd_sol_smoke,
         "doctor": cmd_doctor,
         "init": cmd_init,
         "setup": cmd_setup,

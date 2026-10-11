@@ -34,14 +34,32 @@ same pool.
 
 ## Operator words
 
-**Readiness.** A health summary shared by the CLI, live dashboard, and browser
-panel. It reports the Worker service, Attached mesh, and Render session
-separately, then derives `ready`, `degraded`, `blocked`, or `unknown` overall.
+**Readiness.** The live dashboard and browser panel separate **Health** from
+**Activity** and the advisory **Maintenance** message. Healthy active rendering
+shows `Health READY`, `Activity RENDERING`, and a message to wait for the render
+to finish. Other active mesh work shows `BUSY`. Activity alone is not a health
+degradation; missing evidence and actual blockers remain `UNKNOWN` or `BLOCKED`
+even when rendering is observed. No display state grants permission to reset,
+restart, or replace a mesh; lifecycle safety checks still apply.
+
+The Worker service, Attached mesh, and Render session remain separate layers.
+For compatibility, readiness JSON retains its version-1 `overall` vocabulary
+(`ready`, `degraded`, `blocked`, `unknown`) and its existing active-work mapping
+to `degraded`. Telemetry-derived reports add `presentation`, with
+`schema_version: 1`, `health`, `activity` (`idle`, `rendering`, `busy`, or
+`unknown`), and an inert `maintenance` enum (`none`, `wait`, `inspect`, or
+`inspect_and_wait`). New displays validate this projection against the original
+layers and aggregate. An absent projection keeps the legacy **Readiness** label
+and explains that legacy `DEGRADED` includes active work; a malformed projection
+reads unknown. Doctor retains its own warning-based `degraded` verdict and does
+not publish this telemetry-only projection.
+
 Live telemetry uses this precedence: a confirmed blocker, missing or
 inconclusive evidence, known degradation, then ready. Missing, stale,
 malformed, or failed reads cannot report ready. Status does not observe Render
 sessions, so that layer stays `unknown` and the status overall is `unknown` at
-best. Doctor keeps its own checks, counts, aggregate and exit codes. Its
+best; use `dgxm top` or live telemetry to observe render activity. Doctor keeps
+its own checks, counts, aggregate and exit codes. Its
 render-session layer is `unknown` because doctor never observes one, and that
 alone never downgrades a ready doctor result; missing driver or mesh evidence
 still shows the Attached mesh as `unknown`. Readiness reports health and

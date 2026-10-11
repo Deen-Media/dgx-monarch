@@ -895,6 +895,12 @@ sha256 = ""
     "vae/minimax_h3_audio_vae_fp32.safetensors",
     "vae/minimax_h3_video_vae_fp16.safetensors",
 ]
+"dgx-monarch-minimax-h3-mp4" = [
+    "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
+    "vae/minimax_h3_audio_vae_fp32.safetensors",
+    "vae/minimax_h3_video_vae_fp16.safetensors",
+]
 "dgx-monarch-minimax-h3-t2va" = [
     "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
     "text_encoders/qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",

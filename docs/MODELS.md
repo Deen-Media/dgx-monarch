@@ -876,6 +876,12 @@ Detail status (`MiniMax H3 (t2va/fl2va/ref2va AV)`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-minimax-h3-t2va.json). Use the template settings and validated artifacts.
 
+For a combined playable file, use [MP4 with sound](../example_workflows/dgx-monarch-minimax-h3-mp4.json).
+It preserves the generation settings and joins the decoded video and audio
+with native ComfyUI nodes at 24 fps. The original workflow retains separate
+PNG/FLAC outputs. Export-format coverage does not extend the model's fidelity
+evidence.
+
 **Tested configurations.** Ulysses/ring with audio and anchored guides at the sizes listed in the linked results. The FP8 xFuser compatibility test at 512x320x5 also reproduced both latent streams, five decoded frames and audio.
 
 **Known limitations.** Batch one; packed DP/cfg2 and world-2 single refuse. Padded ring and Sol-Attn need explicit accuracy waivers. BF16 FSDP completed a render but has no reference comparison. Stacked PDD heads and other guide settings have no passing reference comparison.

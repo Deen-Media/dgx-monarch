@@ -57,7 +57,18 @@ wants the optional dgxm TUI and an easy launch script, and where to save the
 script, alongside the initial questions. If the TUI is accepted, include the
 `[tui]` extra in the initial constrained dependency plan using INSTALL's
 [optional dashboard procedure](../../docs/INSTALL.md#optional-dashboard-and-worker-services).
-If declined, skip it; do not install extras without approval. Follow INSTALL's [launch handoff](../../docs/INSTALL.md#launch-and-handoff)
+If declined, skip it; do not install extras without approval.
+Offer the separate managed `dgxm launcher` command for normal-terminal access.
+Include its chosen destination in the plan; use its read-only check before
+applying it. Preserve existing commands and verify PATH resolution from the
+user's ordinary shell. Config selection and the dashboard's HTTP endpoint
+must both identify the intended installation.
+Offer `scripts/comfy-driver.sh --with-top --cluster-config PATH` when the user
+wants the dashboard beside ComfyUI. Check the selected environment's TUI extra
+and installed terminal backend with `--check`, then verify the actual combined
+launch. The desktop installer can persist these same options. Closing the
+dashboard leaves ComfyUI running; driver exit closes only its own dashboard.
+Follow INSTALL's [launch handoff](../../docs/INSTALL.md#launch-and-handoff)
 for its contents and verification. Use existing approved
 credential helpers; let the user complete authentication,
 license acceptance, sudo prompts and SSH host-key verification themselves.
@@ -159,8 +170,11 @@ The required safeguards are:
 1. Verify compatible Python, architecture, ComfyUI and CUDA Torch on every
    host. The Python minimum alone does not prove that compatible binary
    dependencies exist. Align the ComfyUI commit and required package versions.
-2. Record Torch version, CUDA build and import path before installation. Apply
-   its exact constraint to every relevant dependency resolution, including
+2. Record Torch runtime version, distribution metadata version, CUDA build and
+   import path before installation. Derive pip's exact constraint from
+   `importlib.metadata.version("torch")`; the runtime version may include a
+   CUDA suffix absent from the distribution metadata. Apply the constraint
+   to every relevant dependency resolution, including
    ComfyUI prerequisite work. Reject a plan that replaces the working Torch
    build; do not silently change system CUDA, drivers or NCCL.
 3. Build the required xFuser compatibility wheel with
@@ -300,6 +314,11 @@ start command or shortcut, browser access, actual running state and permanent
 installation/workflow/output locations. Keep evidence-directory paths separate.
 For an accepted TUI, prefer `dgxm top` once its environment and discovery are
 verified; explain activation once and add explicit paths or options only when needed.
+When the managed CLI launcher was selected, verify the exact installed command
+and its safe rerun; a file under `~/.local/bin` alone is not proof that the
+ordinary shell selects it. Record any explicit `--host` needed by the TUI.
+When combined launch was selected, verify both windows, the dashboard endpoint
+and owned cleanup. Keep existing drivers and Worker services outside cleanup.
 Then report the tested commit, Python/ComfyUI/Torch/CUDA and dependency
 versions, reused components, saved output and two-host proof, rerun result,
 manual steps, failures/fixes, final retained/restored state and limitations.
@@ -321,6 +340,12 @@ because ComfyUI exits.
 
 Use `scripts/comfy-driver.sh` for the optional foreground launcher and
 `scripts/dgxm-desktop.sh` for an explicitly requested desktop shortcut.
+For optional Sol support, follow INSTALL's
+[plan-first procedure](../../docs/INSTALL.md#optional-sol-attention) across all
+configured workers. Review the pinned package changes before applying, and
+name any approved existing dependency change explicitly. `sol-smoke` is a
+separate explicit GPU action while idle; a dense kernel control does not grant
+the approximate-attention waiver or validate a complete render.
 [INSTALL](../../docs/INSTALL.md#updating) documents verified updates and recovery.
 [MODELS](../../docs/MODELS.md) documents additional workflows and settings;
 [CLUSTER](../../docs/CLUSTER.md) and [TUI](../../docs/TUI.md) cover configuration

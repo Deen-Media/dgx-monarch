@@ -29,6 +29,28 @@ def build_parser(commands: Mapping[str, Command]) -> argparse.ArgumentParser:
     sub.add_parser(
         "version", help="print the dgx-monarch version and its torchmonarch pin"
     ).set_defaults(func=commands["version"])
+    p_launcher = sub.add_parser("launcher", help="plan a local environment-bound dgxm launcher; --apply installs it")
+    p_launcher.add_argument("--executable", required=True, help="absolute path to the selected environment's dgxm")
+    p_launcher.add_argument("--cluster-config", required=True, help="absolute cluster config path to bind")
+    p_launcher.add_argument("--destination", default="~/.local/bin/dgxm", help="absolute launcher path (default: ~/.local/bin/dgxm)")
+    launcher_mode = p_launcher.add_mutually_exclusive_group()
+    launcher_mode.add_argument("--apply", action="store_true", help="install the reviewed launcher locally")
+    launcher_mode.add_argument("--check", action="store_true", help="validate and show the local plan without writing (default)")
+    p_launcher.set_defaults(func=commands["launcher"])
+    p_sol = sub.add_parser("sol-install", help="plan optional Sol-Attention packages on every configured Worker host")
+    p_sol.add_argument("--apply", action="store_true", help="apply an exact reviewed package plan")
+    p_sol.add_argument("--plan", default=None, help="private plan token to inspect or apply")
+    p_sol.add_argument("--plan-digest", default=None, help="exact digest printed for the reviewed fleet plan")
+    p_sol.add_argument("--allow-change", action="append", default=[], metavar="DISTRIBUTION",
+                       help="explicitly permit a named existing compiler dependency to change; core runtime stays protected")
+    p_sol.add_argument("--idle-maintenance", action="store_true",
+                       help="authorize package mutation during idle maintenance; live idle checks still apply")
+    p_sol.set_defaults(func=commands["sol_install"])
+    p_sol_smoke = sub.add_parser("sol-smoke", help="explicit model-free Sol GPU compilation and dense-control check on every host")
+    p_sol_smoke.add_argument("--idle-maintenance", action="store_true",
+                             help="authorize this GPU check during idle maintenance; never implied by Doctor")
+    p_sol_smoke.add_argument("--timeout-s", type=int, default=300, help="per-host compilation/execution deadline (default: 300)")
+    p_sol_smoke.set_defaults(func=commands["sol_smoke"])
     p_doctor = json_report.subcommand(
         sub, "doctor", "run preflight checks on the driver and every host"
     )

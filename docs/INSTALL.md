@@ -107,13 +107,19 @@ resolution, then save a dry-run report:
 XFUSER_WHEELS="$(mktemp -d)"
 "$COMFY_PYTHON" "$REPO_DIR/tools/build_xfuser_compat_wheel.py" \
   --output-dir "$XFUSER_WHEELS" &&
-  TORCH_BUILD="$("$COMFY_PYTHON" -c 'import torch; print(torch.__version__)')" &&
-  printf 'torch==%s\n' "$TORCH_BUILD" > "$XFUSER_WHEELS/torch-constraint.txt" &&
+  TORCH_DIST_VERSION="$("$COMFY_PYTHON" -c 'from importlib.metadata import version; print(version("torch"))')" &&
+  printf 'torch==%s\n' "$TORCH_DIST_VERSION" > "$XFUSER_WHEELS/torch-constraint.txt" &&
   "$COMFY_PYTHON" -m pip install --dry-run \
     --report "$XFUSER_WHEELS/install-plan.json" -e "$REPO_DIR" \
     --find-links "$XFUSER_WHEELS" \
     --constraint "$XFUSER_WHEELS/torch-constraint.txt"
 ```
+
+Pip resolves the installed distribution metadata. A working build can report
+`torch.__version__ == "2.12.0+cu130"` while its distribution version is
+`2.12.0`; use the latter for the constraint. Record both versions and the CUDA
+version and import location. A matching metadata version alone does not prove
+that the existing CUDA Torch files stayed unchanged.
 
 Review the report privately before applying it. Refuse a plan that installs,
 replaces or removes torch, including a different build with the same public
@@ -181,15 +187,65 @@ ComfyUI and Python installations; agree on durable paths for new ones during
 planning. Temporary and chat-output folders are for evidence or explicitly
 requested temporary tests, not the normal installation.
 
+Offer normal-terminal CLI access separately from the ComfyUI launch script.
+Once the selected environment and cluster config exist, the maintained local
+launcher can make bare `dgxm` available without activating the environment:
+
+```bash
+"$DGXM" launcher --executable "$DGXM" \
+  --cluster-config /absolute/path/to/cluster.toml \
+  --destination "$HOME/.local/bin/dgxm" --check
+"$DGXM" launcher --executable "$DGXM" \
+  --cluster-config /absolute/path/to/cluster.toml \
+  --destination "$HOME/.local/bin/dgxm" --apply
+```
+
+Use the actual resolved config path. The default is a read-only plan; only
+`--apply` writes. An identical rerun is a no-op. Existing unmanaged commands,
+edited launchers and symlinks are preserved and refused. The launcher binds
+the chosen executable and config, forwards arguments, and allows an explicit
+leading `--config` override, with the CLI's normal path expansion and validation.
+A missing saved config refuses instead of falling through to another
+installation. This command does not install
+packages, edit shell startup files, or operate Worker services.
+
+Verify from the user's ordinary terminal with `command -v dgxm` and
+`dgxm version` (run `hash -r` first in Bash). Confirm the selected launcher is
+on PATH and that no alias, function or earlier command shadows it. If its
+directory is absent, explain the needed PATH addition; do not claim the bare
+command works. Without the launcher, activate the chosen virtual environment
+or use its full executable path. See [troubleshooting 111](TROUBLESHOOTING.md#111-dgxm-is-missing-from-an-ordinary-terminal-or-launcher-installation-refuses).
+
+CLI config and the dashboard's ComfyUI endpoint are separate selections.
+Verify `dgxm top` reaches the intended driver; use `dgxm top --host HOST:PORT`
+when multiple drivers or a nonlocal endpoint require it. Installing the CLI
+launcher does not start ComfyUI or open the TUI alongside it.
+
 Offer an optional easy launch script and ask whether the user wants it and
 where to save it. Their home directory, `~/.local/bin` or another folder they
 choose can work; do not silently choose the Desktop or a chat folder. Check
-for an existing file and ask before replacing it. The script should only set
-`DGXM_CLUSTER_TOML` to the resolved config and `exec bash` the maintained
+for an existing file and ask before replacing it. The script should `exec bash` the maintained
 `scripts/comfy-driver.sh` with the resolved repository, ComfyUI and Python
-paths and the selected launch options. Forward arguments with `"$@"` so
+paths, `--cluster-config` and the selected launch options. Forward arguments with `"$@"` so
 `--check` works. Preserve foreground execution and signals; do not add Worker
 restarts or a second installer.
+
+For a dashboard beside ComfyUI, select `--with-top` and the absolute config:
+
+```bash
+bash "$COMFY_DIR/custom_nodes/dgx-monarch/scripts/comfy-driver.sh" \
+  --comfy-dir "$COMFY_DIR" --python "$COMFY_PYTHON" \
+  --cluster-config /absolute/path/to/cluster.toml --with-top --check
+```
+
+Remove `--check` to launch from a visible terminal. This needs the TUI extra in
+the selected environment and GNOME Terminal or xterm. ComfyUI remains in the
+foreground; a separate dashboard window uses the same config and exact driver
+endpoint. Closing that window leaves ComfyUI running. Exiting ComfyUI closes
+the dashboard created by this launch. If the selected driver is already
+running, only the dashboard opens. On a headless host, run `dgxm top` in a
+second terminal. See [scripts/README.md](../scripts/README.md)
+for ownership and shutdown behavior.
 
 Validate the exact launch command, or the chosen script, with `--check` before
 using the same paths, config and options for the first render. This checks
@@ -228,13 +284,14 @@ source install:
 
 ```bash
 bash "$COMFY_DIR/custom_nodes/dgx-monarch/scripts/dgxm-desktop.sh" install \
-  --comfy-dir "$COMFY_DIR" --python "$COMFY_PYTHON"
+  --comfy-dir "$COMFY_DIR" --python "$COMFY_PYTHON" \
+  --cluster-config /absolute/path/to/cluster.toml --with-top
 ```
 
-The shortcut opens a terminal, starts only ComfyUI, and opens the browser once
-the server is ready. It does not save a custom `DGXM_CLUSTER_TOML` value passed
-to the installer; use the chosen launch script when a custom config path is
-needed. See [scripts/README.md](../scripts/README.md) for options.
+The shortcut saves these explicit options, opens a foreground terminal and
+dashboard, and opens the browser once ComfyUI is ready. Omit `--with-top` for
+ComfyUI alone. Neither mode changes Worker services. See
+[scripts/README.md](../scripts/README.md) for options.
 
 For the first distributed render, [choose a supported model and workflow](QUICKSTART.md#first-distributed-render)
 you already have or want to use. Chroma is optional; its
@@ -766,6 +823,49 @@ than creating or overwriting another one.
 
 `dgxm update` installs with `--no-deps`, so it never adds the extra.
 
+### Optional Sol-Attention
+
+Sol is approximate and requires the explicit accuracy waiver before a workflow
+can select it. The shipped MiniMax templates use `TORCH_FLASH`; installing Sol
+does not change that default or grant the waiver. Doctor reports availability
+and prerequisites separately for every configured interpreter.
+
+The optional installer pins Sol 0.5.0 to the documented Sana revision, CUTLASS
+DSL 4.7.0 and apache-tvm-ffi 0.1.14.post1. Stop ComfyUI and settle its attached
+actors before planning; the command checks for active drivers, actors and GPU
+clients and refuses incomplete observations.
+
+```bash
+dgxm sol-install
+# Review the per-host package changes and copy the emitted token and digest.
+dgxm sol-install --apply --plan TOKEN --plan-digest SHA256 --idle-maintenance
+```
+
+Planning downloads and builds wheels in private directories on every host but
+does not install them. Existing Torch, Triton, TorchMonarch, xFuser, yunchang
+and CUDA runtime packages are protected by version and file checks. A required
+change to another existing dependency, such as protobuf, refuses until it is
+explicitly named with `--allow-change protobuf` in both plan and apply. Review
+that new plan before applying it. New dependency conflicts, file collisions,
+changed plans and unsafe environments refuse. The command never repairs
+system headers or cache ownership, restarts services, or rolls back a partial
+package change; an incomplete apply needs inspection before retrying.
+
+After installation, an optional explicit GPU check runs a bounded 4,096-token
+BF16 dense control on each configured single-GPU host:
+
+```bash
+dgxm sol-smoke --idle-maintenance
+```
+
+This verifies kernel execution, finite output and a dense SDPA comparison. It
+does not validate approximate attention or a full model render. New actors
+must start after dependency changes; keep existing meshes stopped, and follow
+[troubleshooting 84](TROUBLESHOOTING.md#84-a-sol-attn-render-refuses-with-a-waiver-card-or-stalls-on-its-first-call)
+for prerequisites and recycling.
+
+### Worker services
+
 Guided setup or `dgxm install-service` installs the systemd user units. If
 lingering is absent, ask the user before enabling it with
 `sudo loginctl enable-linger "$USER"`; it lets Worker services survive logout. With the unit in place, lifecycle commands go through systemd and
@@ -860,6 +960,13 @@ NCCL, xfuser, yunchang, or optional extras; each moves only torchmonarch, to
 the repository's exact pin. Upgrade other dependencies separately.
 Plain and verified updates share one file lock per driver checkout, so a second
 update from any process, in either mode, refuses before it changes anything.
+
+A pin check that encounters a conflicting distribution or invalid inventory
+reports a bounded package name and relative path locally when they are safe
+to show. Inspect that distribution in the selected environment and plan its
+repair separately; the updater does not weaken ownership checks or repair
+third-party packages. The sanitized receipt retains the stable
+`driver_pin_drift` code, without those local details.
 
 For a cluster running from a Git source checkout, `dgxm update --verify`
 supports remote Workers and one Worker on the driver's host. It first copies

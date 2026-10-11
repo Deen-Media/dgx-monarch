@@ -77,8 +77,8 @@ jobs:
           # at module scope, so installing pytest alone would fail collection.
           mkdir -p xfuser-compat-wheels
           python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
-          torch_build="$(python -c 'import torch; print(torch.__version__)')"
-          printf 'torch==%s\n' "$torch_build" > xfuser-compat-wheels/torch-constraint.txt
+          torch_dist_version="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
+          printf 'torch==%s\n' "$torch_dist_version" > xfuser-compat-wheels/torch-constraint.txt
           pip install --find-links xfuser-compat-wheels \
             --constraint xfuser-compat-wheels/torch-constraint.txt \
             -e .[dev] --no-build-isolation
@@ -104,6 +104,10 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: python tests/canary/template_widget_canary.py
+      - name: Native MP4 video and audio export (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: python tests/canary/video_export_canary.py
       - name: CPU-safe worker import smoke and API workflow schema
         env:
           COMFYUI_DIR: ../ComfyUI

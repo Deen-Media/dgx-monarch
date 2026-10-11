@@ -7,6 +7,7 @@ usage() {
 Usage:
   dgxm-desktop.sh install --comfy-dir ABSOLUTE_PATH [--venv PATH | --python PATH]
                        [--listen ADDRESS] [--port PORT] [--no-browser]
+                       [--with-top] [--cluster-config ABSOLUTE_PATH]
   dgxm-desktop.sh uninstall
 
 The installed entry opens a terminal and runs the foreground ComfyUI driver.
@@ -100,6 +101,8 @@ PYTHON_BIN=
 LISTEN=127.0.0.1
 PORT=8188
 NO_BROWSER=0
+WITH_TOP=0
+CLUSTER_CONFIG=${DGXM_CLUSTER_TOML:-}
 while [ "$#" -gt 0 ]; do
     case "$1" in
         --comfy-dir) need_value "$@"; COMFY_DIR=$2; shift 2 ;;
@@ -108,6 +111,8 @@ while [ "$#" -gt 0 ]; do
         --listen) need_value "$@"; LISTEN=$2; shift 2 ;;
         --port) need_value "$@"; PORT=$2; shift 2 ;;
         --no-browser) NO_BROWSER=1; shift ;;
+        --with-top) WITH_TOP=1; shift ;;
+        --cluster-config) need_value "$@"; CLUSTER_CONFIG=$2; shift 2 ;;
         -h|--help) usage; exit 0 ;;
         *) fail "unknown install argument: $1" ;;
     esac
@@ -145,8 +150,20 @@ else
     PYTHON_ARGS=(--python "$PYTHON_BIN")
 fi
 
+if [ "$WITH_TOP" = 1 ] && [ -z "$CLUSTER_CONFIG" ]; then
+    fail "--with-top needs --cluster-config or DGXM_CLUSTER_TOML"
+fi
+if [ -n "$CLUSTER_CONFIG" ]; then
+    reject_control_chars "cluster config" "$CLUSTER_CONFIG"
+    [[ "$CLUSTER_CONFIG" = /* ]] || fail "cluster config must be absolute"
+    [ -f "$CLUSTER_CONFIG" ] || fail "cluster config is missing or not a file"
+    CLUSTER_CONFIG=$(realpath -e -- "$CLUSTER_CONFIG")
+fi
+
 CHECK_ARGS=(--comfy-dir "$COMFY_DIR" "${PYTHON_ARGS[@]}" --listen "$LISTEN" --port "$PORT" --check)
 [ "$NO_BROWSER" = 1 ] && CHECK_ARGS+=(--no-browser)
+[ "$WITH_TOP" = 1 ] && CHECK_ARGS+=(--with-top)
+[ -n "$CLUSTER_CONFIG" ] && CHECK_ARGS+=(--cluster-config "$CLUSTER_CONFIG")
 "$LAUNCHER" "${CHECK_ARGS[@]}" >/dev/null
 
 EXEC_PARTS=(
@@ -160,6 +177,8 @@ else
 fi
 EXEC_PARTS+=(--listen "$(desktop_quote "$LISTEN")" --port "$PORT")
 [ "$NO_BROWSER" = 1 ] && EXEC_PARTS+=(--no-browser)
+[ "$WITH_TOP" = 1 ] && EXEC_PARTS+=(--with-top)
+[ -n "$CLUSTER_CONFIG" ] && EXEC_PARTS+=(--cluster-config "$(desktop_quote "$CLUSTER_CONFIG")")
 printf -v EXEC_LINE '%s ' "${EXEC_PARTS[@]}"
 EXEC_LINE=${EXEC_LINE% }
 
@@ -196,4 +215,4 @@ chmod 0644 "$TEMP_FILE"
 mv -f -- "$TEMP_FILE" "$DESKTOP_FILE"
 trap - EXIT HUP INT TERM
 printf 'Installed %s\n' "$DESKTOP_FILE"
-printf 'The shortcut starts only ComfyUI; Worker services are unchanged.\n'
+printf 'The shortcut starts ComfyUI%s; Worker services are unchanged.\n' "$([ "$WITH_TOP" = 1 ] && printf ' and its dashboard' || true)"

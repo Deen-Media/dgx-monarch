@@ -194,12 +194,27 @@ function readinessCard(telemetry) {
     const colors = {
         ready: "#4ade80", idle: "#4ade80", active: "#facc15",
         degraded: "#facc15", blocked: "#f87171", unknown: "#f87171",
+        rendering: "#4ade80", busy: "#4ade80",
     };
     const card = el("div", "border:1px solid var(--border-color,#333);border-radius:6px;" +
         "padding:8px;margin:6px 0;font-size:12px;");
-    const heading = el("div", "font-weight:600;", "Readiness ");
-    heading.appendChild(el("span", `color:${colors[model.overall]};`, model.overall.toUpperCase()));
+    const view = model.presentation;
+    const health = view.health ?? model.overall;
+    const heading = el("div", "font-weight:600;", view.health === null ? "Readiness " : "Health ");
+    heading.appendChild(el("span", `color:${colors[health]};`, health.toUpperCase()));
     card.appendChild(heading);
+    const activity = el("div", "margin-top:3px;", "Activity ");
+    activity.appendChild(el("span", `color:${colors[view.activity]};`, view.activity.toUpperCase()));
+    card.appendChild(activity);
+    const wait = view.activity === "rendering" ? "Wait for the active render to finish."
+        : "Wait for active mesh work to finish.";
+    const maintenance = {
+        none: "No maintenance action suggested.",
+        wait,
+        inspect: "Inspect health and activity before maintenance.",
+        inspect_and_wait: `Inspect health; ${wait[0].toLowerCase()}${wait.slice(1)}`,
+    }[view.maintenance];
+    card.appendChild(el("div", "opacity:.75;margin-top:3px;", `Maintenance ${maintenance}`));
     if (model.notice) card.appendChild(el("div", "opacity:.65;margin-top:2px;", model.notice));
     for (const row of model.rows) {
         const line = el("div", "display:grid;grid-template-columns:112px 70px 1fr;" +

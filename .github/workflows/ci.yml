@@ -48,8 +48,8 @@ jobs:
           pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
           mkdir -p xfuser-compat-wheels
           python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
-          torch_build="$(python -c 'import torch; print(torch.__version__)')"
-          printf 'torch==%s\n' "$torch_build" > xfuser-compat-wheels/torch-constraint.txt
+          torch_dist_version="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
+          printf 'torch==%s\n' "$torch_dist_version" > xfuser-compat-wheels/torch-constraint.txt
           pip install --find-links xfuser-compat-wheels \
             --constraint xfuser-compat-wheels/torch-constraint.txt \
             -e .[dev] --no-build-isolation
@@ -200,6 +200,7 @@ jobs:
               "tests/canary/monarch_surface_canary.py",
               "tests/canary/slab_hook_canary.py",
               "tests/canary/template_widget_canary.py",
+              "tests/canary/video_export_canary.py",
               "tests/canary/xfuser_import_surface.py",
               "tests/fixtures/torchmonarch_pin_0_6_0.json",
               "tests/fixtures/workflows/krea2_uly2_api.json",
@@ -227,6 +228,7 @@ jobs:
               "tests/canary/monarch_surface_canary.py",
               "tests/canary/slab_hook_canary.py",
               "tests/canary/template_widget_canary.py",
+              "tests/canary/video_export_canary.py",
               "tests/canary/xfuser_import_surface.py",
           }
           assert canary_members == expected_canaries, {
@@ -327,8 +329,8 @@ jobs:
           pip install --no-cache-dir torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132
           mkdir -p xfuser-compat-wheels
           python tools/build_xfuser_compat_wheel.py --output-dir xfuser-compat-wheels
-          torch_build="$(python -c 'import torch; print(torch.__version__)')"
-          printf 'torch==%s\n' "$torch_build" > xfuser-compat-wheels/torch-constraint.txt
+          torch_dist_version="$(python -c 'from importlib.metadata import version; print(version("torch"))')"
+          printf 'torch==%s\n' "$torch_dist_version" > xfuser-compat-wheels/torch-constraint.txt
           pip install --find-links xfuser-compat-wheels \
             --constraint xfuser-compat-wheels/torch-constraint.txt \
             -e .[dev] --no-build-isolation

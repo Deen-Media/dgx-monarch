@@ -63,6 +63,7 @@ CARDS: dict[str, tuple[str, str]] = {
     "dgx-monarch-kandinsky5-video-lite": ("Kandinsky 5 Video Lite", "Text to video"),
     "dgx-monarch-kandinsky5-video-pro": ("Kandinsky 5 Video Pro", "Text to video"),
     "dgx-monarch-minimax-h3-t2va": ("MiniMax H3", "Generate video and audio from text"),
+    "dgx-monarch-minimax-h3-mp4": ("MiniMax H3 MP4", "Save video with sound at 24 fps"),
     "dgx-monarch-minimax-h3-guide": ("MiniMax H3 Guide", "Guide video with a reference image"),
     "dgx-monarch-ltx-t2v": ("LTX 2.3", "Text to video"),
     "dgx-monarch-ltx-i2v-av": ("LTX 2.3 Image to Video", "Turn a still image into video and audio"),

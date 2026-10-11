@@ -1377,6 +1377,16 @@ Seven seams are held outside the behavioral suite:
      `dgxm install-service`: refuses a unit it does not own, syncs the package,
      then installs and starts each host's Worker service as a systemd user
      unit, and fails a host whose user lingering is off.
+   - `dgxm launcher`: separately owned local CLI launcher installation, offered
+     during onboarding. It plans by default, binds the selected executable and
+     config, preserves unmanaged commands, and makes no Worker or dependency
+     changes. Ordinary-shell PATH and dashboard endpoint verification belong
+     to the launch handoff.
+   - `dgxm sol-install`: stages per-host optional package plans and binds apply
+     to their fleet digest under host lifecycle locks. Existing core runtime
+     versions and files remain protected; other existing dependency changes
+     require explicit names. `dgxm sol-smoke` separately runs the opt-in GPU
+     dense control after passive idle checks, without creating a mesh.
    - `dgxm uninstall`: under the shared config lock, stops Worker services,
      removes units, and offers a checked unlink of the reread config path.
      The ComfyUI node-pack checkout, Python environments, and models stay in place.
@@ -1527,6 +1537,7 @@ dgx-monarch/
 │   ├── fsdp_proof_scope.py    # FSDP clean-reload scope + the topology test
 │   │                          #   that selects it, below either caller
 │   ├── operator_actions.py    # inert, safety-classed readiness remediation catalog
+│   ├── operator_activity.py   # additive health/activity/maintenance presentation
 │   ├── operator_profiles.py   # compile-time safe/balanced/advanced authoring policy
 │   ├── operator_readiness.py  # canonical three-layer readiness normalizer
 │   ├── telemetry_events.py    # bounded strict-JSON event-tail projection
@@ -1553,6 +1564,9 @@ dgx-monarch/
 │       ├── doctor_nccl.py      # loaded NCCL library probe and the cross-host row
 │       ├── doctor_permissions.py # config-mode diagnostic row
 │       ├── doctor_repair.py    # exact-file chmod-only repair transaction
+│       ├── launcher.py         # managed local command ownership and publication
+│       ├── comfy_top.py        # foreground driver and owned dashboard supervisor
+│       ├── comfy_top_process.py # bounded owned-process signal and settlement helpers
 │       ├── legacy_init.py      # compatibility interactive config writer
 │       ├── legacy_update.py    # compatibility pull/sync/restart update
 │       ├── lifecycle.py        # Worker service lifecycle and package/pin effects
@@ -1565,6 +1579,11 @@ dgx-monarch/
 │       │                       #   how long it has held it, and the doctor row
 │       ├── operator_receipt.py # bounded disclosure-safe receipt schema/writer
 │       ├── receipt_sanitize.py # conservative receipt-note redaction leaf
+│       ├── sol_attn_prerequisites.py # passive optional dependency/header/cache evidence
+│       ├── sol_install.py      # per-host plans and reviewed fleet digest
+│       ├── sol_install_payload.py # isolated wheel staging and protected package apply
+│       ├── sol_install_guard.py # bounded passive maintenance idle guard
+│       ├── sol_smoke.py        # explicit model-free GPU dense kernel control
 │       ├── setup_apply.py      # confirmed lock-held setup mutation/settlement
 │       ├── setup_cli.py        # strict public setup parsing/presentation boundary
 │       ├── setup_command.py    # plan/confirmation/config-lock coordinator
@@ -1592,12 +1611,14 @@ dgx-monarch/
 │       ├── setup_services_storage_scripts.py # private release reservation/cleanup
 │       ├── setup_source.py     # imported source identity/manifest binding
 │       ├── setup_verification.py # doctor-first cluster-smoke evidence adapter
+│       ├── sol_attn_prerequisites.py # bounded passive dependency/header/cache evidence
 │       ├── update_cancellation.py # cancellation-precedence helper
 │       ├── update_command.py   # concrete verified-update platform adapter
 │       ├── update_driver_pin.py # driver-pin change: stage both wheels, switch or restore offline
 │       ├── update_entrypoint.py # serialized execution and receipt publication
 │       ├── update_inspect.py   # exact target dependency/source inventory checks
 │       ├── update_lock.py      # per-checkout flock: one driver-side update at a time
+│       ├── update_pin_diagnostic.py # bounded local ownership errors, separate from receipts
 │       ├── update_receipt.py   # bounded update step-to-receipt adapter
 │       ├── update_release.py   # private remote release-slot switch/compensation
 │       ├── update_release_finalize.py # all-host verified finalization scripts

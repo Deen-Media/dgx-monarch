@@ -397,3 +397,26 @@ def test_restore_refuses_ambiguous_live_state_without_mutation(
     runtime.write_text("partial\n", encoding="utf-8")
     assert transition.restore_prior().certainty == Certainty.UNKNOWN
     assert runner.live_installs == 0
+
+
+def test_pin_match_retains_bounded_ownership_reason_and_clears_it(transition_fixture, monkeypatch):
+    from dgx_monarch.cli.update_payload_ownership import PayloadOwnershipError
+    from dgx_monarch.cli.update_pin_diagnostic import PinDiagnostic
+
+    transition, _runner, _release, _prior, _target = transition_fixture
+    original = transition._live_matches
+
+    def conflict(_artifact):
+        raise PayloadOwnershipError(
+            "raw details must not escape", reason="pinned_payload_claim",
+            distribution="ultralytics", relative_path="tests/__init__.py",
+        )
+
+    monkeypatch.setattr(transition, "_live_matches", conflict)
+    assert transition.matches_prior() is False
+    assert transition.last_diagnostic == PinDiagnostic(
+        "pinned_payload_claim", "ultralytics", "tests/__init__.py",
+    )
+    monkeypatch.setattr(transition, "_live_matches", original)
+    assert transition.matches_prior() is True
+    assert transition.last_diagnostic is None

@@ -10,6 +10,7 @@ from typing import Final
 from . import operator_actions
 from .mesh_evidence import mesh_block_dirty
 from .mesh_evidence import strict_count as _strict_count
+from .operator_activity import telemetry_presentation as telemetry_presentation
 
 SCHEMA_VERSION: Final = 1
 OVERALL_STATES: Final = ("ready", "degraded", "blocked", "unknown")
@@ -247,7 +248,8 @@ def _render_layer(
 ) -> tuple[dict[str, str], list[dict[str, object]], str]:
     if not isinstance(render, Mapping):
         return (
-            _layer("unknown", "Render session state is missing or malformed."),
+            _layer("unknown", _safe_override(
+                sanitized_details, "render_session", "Render session state is missing or malformed.")),
             [operator_actions.unknown(
                 "inspect-render-session", "Inspect the render session",
                 "The driver did not provide a usable render state.")],
@@ -323,9 +325,12 @@ def readiness_from_telemetry(
         actions.append(operator_actions.unknown(
             "restore-telemetry", "Restore telemetry",
             "Telemetry refresh failed; the last observation cannot establish current readiness."))
+    overall = _overall(states)
     return {
         "schema_version": SCHEMA_VERSION,
-        "overall": _overall(states),
+        "overall": overall,
+        "presentation": telemetry_presentation(overall, [
+            worker_layer["state"], mesh_layer["state"], render_layer["state"]]),
         "lifecycle": {
             "worker_service": worker_layer,
             "attached_mesh": mesh_layer,

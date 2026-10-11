@@ -55,11 +55,71 @@ def test_canonical_payload_projects_only_fixed_lifecycle_rows():
     assert model["overall"] == "ready"
     assert [row["label"] for row in model["rows"]] == [
         "Worker service", "Attached mesh", "Render session"]
-    assert set(model) == {"schemaVersion", "source", "overall", "notice", "rows"}
+    assert set(model) == {"schemaVersion", "source", "overall", "notice", "rows", "presentation"}
     encoded = json.dumps(model)
     assert "private-operation" not in encoded
     assert "/arbitrary" not in encoded
     assert "actions" not in encoded
+
+
+def _live_report(*, mesh_active=False, render_active=False, error=None, workers=None):
+    from dgx_monarch.operator_readiness import readiness_from_telemetry
+
+    return {"readiness": readiness_from_telemetry(
+        workers if workers is not None else [{"healthy": True}],
+        {"state": "ok", "verdict": "live", "active_leases": int(mesh_active),
+         "abandoned_samples": 0},
+        {"active": render_active}, error,
+    )}
+
+
+def test_python_and_browser_presentation_agree_without_changing_legacy_overall():
+    fixtures = [
+        _live_report(), _live_report(mesh_active=True), _live_report(render_active=True),
+        _live_report(render_active=True, error="timeout"),
+        _live_report(render_active=True, workers=[{"healthy": False}]),
+    ]
+    for fixture, model in zip(fixtures, _run_model(fixtures), strict=True):
+        assert model["source"] == "canonical"
+        assert model["presentation"] == fixture["readiness"]["presentation"]
+        assert model["overall"] == fixture["readiness"]["overall"]
+    assert fixtures[2]["readiness"]["overall"] == "degraded"
+    assert fixtures[2]["readiness"]["presentation"]["health"] == "ready"
+
+
+@pytest.mark.parametrize("changes", [
+    {"health": "ready"}, {"activity": "idle"}, {"maintenance": "none"},
+    {"schema_version": True}, {"schema_version": 2}, {"command": "unsafe-operation"},
+])
+def test_inconsistent_presentation_fails_closed(changes):
+    fixture = _live_report(render_active=True, error="timeout")
+    fixture["readiness"]["presentation"].update(changes)
+    (model,) = _run_model([fixture])
+    assert model["source"] == "invalid"
+    assert model["overall"] == "unknown"
+    assert model["presentation"]["health"] is None
+    assert "unsafe-operation" not in json.dumps(model)
+
+
+def test_legacy_active_payload_does_not_claim_separate_health():
+    fixture = _live_report(render_active=True)
+    del fixture["readiness"]["presentation"]
+    (model,) = _run_model([fixture])
+    assert model["source"] == "canonical"
+    assert model["overall"] == "degraded"
+    assert model["presentation"]["health"] is None
+    assert model["presentation"]["activity"] == "rendering"
+    assert model["presentation"]["maintenance"] == "inspect_and_wait"
+    assert "Legacy readiness includes active work" in model["notice"]
+
+
+def test_invalid_worker_activity_cannot_be_presented_as_healthy_occupancy():
+    fixture = _live_report()
+    fixture["readiness"]["overall"] = "degraded"
+    fixture["readiness"]["lifecycle"]["worker_service"]["state"] = "active"
+    (model,) = _run_model([fixture])
+    assert model["source"] == "invalid"
+    assert model["overall"] == "unknown"
 
 
 def test_malformed_or_healthier_than_layers_payload_fails_closed():

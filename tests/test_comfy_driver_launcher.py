@@ -505,3 +505,49 @@ def test_launcher_assets_have_no_hidden_lifecycle_or_unsafe_svg_surface() -> Non
     assert 'viewBox="0 0 256 256"' in icon
     assert "<script" not in icon.lower()
     assert "href=" not in icon.lower()
+
+
+def test_combined_launcher_binds_selected_config_host_and_python(tmp_path: Path) -> None:
+    comfy = _checkout(tmp_path / "Comfy UI")
+    python = _fake_python(tmp_path / "venv/bin/python")
+    config = tmp_path / "cluster space.toml"
+    config.write_text("[cluster]\n")
+    record = tmp_path / "calls"
+    result = _run_launcher(comfy, python, record, "--with-top", "--cluster-config", str(config), "--port", "8189")
+    assert result.returncode == 0, result.stderr
+    calls = record.read_text().splitlines()
+    assert calls.count("arg:dgx_monarch.cli.comfy_top") == 2
+    assert "arg:127.0.0.1:8189" in calls
+    assert f"arg:{config}" in calls
+    assert calls.count("arg:main.py") == 1
+    assert f"arg:{python}" in calls
+
+
+def test_combined_reuses_driver_without_starting_main(tmp_path: Path) -> None:
+    comfy = _checkout(tmp_path / "ComfyUI")
+    python = _fake_python(tmp_path / "venv/bin/python")
+    config = tmp_path / "cluster.toml"
+    config.write_text("[cluster]\n")
+    record = tmp_path / "calls"
+    result = _run_launcher(comfy, python, record, "--with-top", "--cluster-config", str(config), "--no-browser", probe=0)
+    assert result.returncode == 0
+    calls = record.read_text().splitlines()
+    assert "arg:dgx_monarch.cli.comfy_top" in calls
+    assert "arg:main.py" not in calls
+
+
+def test_desktop_persists_combined_launch_config(tmp_path: Path) -> None:
+    comfy = _checkout(tmp_path / "ComfyUI")
+    python = _fake_python(tmp_path / "venv/bin/python")
+    config = tmp_path / "cluster $ space.toml"
+    config.write_text("[cluster]\n")
+    xdg = tmp_path / "xdg"
+    result = subprocess.run([
+        str(DESKTOP), "install", "--comfy-dir", str(comfy), "--python", str(python),
+        "--with-top", "--cluster-config", str(config),
+    ], env={**os.environ, "XDG_DATA_HOME": str(xdg), "DGXM_RECORD": str(tmp_path / "calls")}, capture_output=True, text=True)
+    assert result.returncode == 0, result.stderr
+    source = (xdg / "applications/dgx-monarch.desktop").read_text()
+    assert "--with-top" in source
+    assert "--cluster-config" in source
+    assert str(config).replace("$", r"\$") in source

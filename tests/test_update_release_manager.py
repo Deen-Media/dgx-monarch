@@ -873,3 +873,46 @@ def test_finalize_retires_previous_symlink_release(tmp_path: Path):
     assert not (base / "releases" / old_release_id).exists()
     assert not transaction.exists()
     assert new_site.is_dir()
+
+
+@pytest.mark.parametrize("unsafe_context", [False, True])
+def test_pin_conflict_details_are_local_and_absent_from_receipt(monkeypatch, tmp_path, unsafe_context):
+    from dgx_monarch.cli.update_pin_diagnostic import PinDiagnostic
+
+    repo, sha = _checkout(tmp_path)
+    config_path = tmp_path / "cluster.toml"
+    config_path.write_text("[cluster]\n", encoding="utf-8")
+    root, site = tmp_path / "release", tmp_path / "release/site"
+    site.mkdir(parents=True)
+    cleaned = []
+    release = SimpleNamespace(
+        ensure_supported=lambda: None,
+        prepare=lambda *_args: SimpleNamespace(root=root, site=site, remote_staged=1),
+        cleanup=lambda: cleaned.append(True) or OperationResult(Certainty.SUCCEEDED),
+    )
+    pins = _PinHarness()
+    pins.live = "target"
+    distribution = "ultralytics\x1b[31m" if unsafe_context else "ultralytics"
+    path = "tests/\nspoof.py" if unsafe_context else "tests/__init__.py"
+    pins.last_diagnostic = PinDiagnostic("pinned_payload_claim", distribution, path)
+    ops = update_command.SystemUpdateOps(
+        repo, ClusterConfig(source=str(config_path)), release_manager=release,
+        pin_transition=pins, worktree_root=tmp_path / "worktrees",
+    )
+    monkeypatch.setattr(ops, "resolve_target", lambda _ref: sha)
+    monkeypatch.setattr(ops, "activity_snapshot", lambda: ActivitySnapshot(False, False, 0, 0))
+    monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: True)
+
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+
+    assert result.code == "driver_pin_drift" and result.exit_code == 2
+    if unsafe_context:
+        assert "ultralytics" not in result.message and "spoof" not in result.message
+        assert "\x1b" not in result.message and "\n" not in result.message
+    else:
+        assert "ultralytics" in result.message and "tests/__init__.py" in result.message
+    receipt = json.dumps(result.receipt)
+    assert "ultralytics" not in receipt and "tests/__init__.py" not in receipt
+    assert str(tmp_path) not in receipt
+    assert cleaned == [True]
+    assert not list((tmp_path / "worktrees").glob("update-*"))

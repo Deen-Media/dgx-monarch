@@ -65,6 +65,12 @@ ComfyUI runs, this menu lists the new graphs but none of them open until you
 restart ComfyUI. `dgxm update` refuses while ComfyUI runs, so an update ends
 with a ComfyUI start too.
 
+For MiniMax H3, choose [MP4 with sound](../example_workflows/dgx-monarch-minimax-h3-mp4.json)
+for a combined H.264/AAC file at the recipe's 24 fps. The
+[separate-output template](../example_workflows/dgx-monarch-minimax-h3-t2va.json)
+saves PNG frames and FLAC audio for further processing. Both use the same
+generation settings and decoded streams.
+
 Each Note node describes the output and constraints. Family graphs also name
 the required model files and directories. The five general graphs share this
 Flux 1 Dev stack, without listing it in their Notes: `flux1-dev.safetensors`
