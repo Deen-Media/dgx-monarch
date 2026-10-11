@@ -3649,8 +3649,38 @@ box without the package refuses naming that box: the driver checks every rank
 before it dispatches, because a rank raising inside a collective abandons the
 render and strands its peers.
 
-**The kernel is optional and is not a dependency of this project.** Install it
-on every box in the mesh:
+**The kernel is optional and is not a dependency of this project.** The opt-in
+installer plans every configured Worker interpreter. First stop ComfyUI and
+other GPU clients and retire their Attached meshes; idle persistent Worker
+coordinators may remain running. Planning downloads/builds artifacts into
+private per-host directories but does not install packages:
+
+```bash
+dgxm --config /absolute/cluster.toml sol-install
+# If installed compiler dependencies need changing, explicitly name each one:
+dgxm --config /absolute/cluster.toml sol-install --allow-change protobuf
+# Review the exact per-host old/new versions, then use the printed token/digest:
+dgxm --config /absolute/cluster.toml sol-install --plan TOKEN --plan-digest SHA256 --allow-change protobuf --idle-maintenance --apply
+```
+
+Use only the `--allow-change` names required by your reviewed plan. Torch,
+Triton, TorchMonarch, xFuser, yunchang and NVIDIA CUDA runtime/NCCL library
+changes are refused even with that flag. Compiler bindings (`cuda-python`,
+`cuda-bindings`, `cuda-pathfinder`) may be added; replacing an installed binding
+requires the same explicit permission as protobuf. Apply rechecks idle state,
+installed versions, staged wheel hashes and protected runtime file hashes under
+the shared lifecycle lock, installs the reviewed wheels with `--no-deps`, and
+reads back the result. Existing file-ownership overlaps refuse. Neither mode
+restarts services, installs system headers, repairs caches or rolls back an
+uncertain/partial result. Keep clients stopped throughout maintenance; the lock
+coordinates Monarch commands but cannot prevent a manual process launch.
+Failed/unknown outcomes retain their private staging for inspection; do not
+blindly retry a partially applied fleet plan.
+
+The installer uses Sana revision
+`71350faed59a6865173ddfd5a7d4471da4bde328`, CUTLASS DSL `4.7.0` and
+`apache-tvm-ffi==0.1.14.post1`. For a separately managed environment, the
+underlying manual package selection is:
 
 ```
 pip install 'sol-attn @ git+https://github.com/NVlabs/Sana@71350fae#subdirectory=techniques/sparse_backends' apache-tvm-ffi
@@ -3678,6 +3708,50 @@ percent end to end on the same graph, and two earlier runs recorded the fast
 path while running the portable one. [VALIDATION.md](VALIDATION.md) carries the
 timings for the shipped recipe and the earlier backend misidentification. Use
 the logged backend to identify which implementation ran.
+
+**Check every configured interpreter before selecting Sol.** `dgxm doctor`
+reports detected packages, installed requirement compatibility (including
+transitive protobuf constraints), and readable `Python.h` for each configured
+worker interpreter. It reads package metadata without importing Sol or compiling
+a kernel. A dependency conflict is advisory for this optional backend; it does
+not make a stock `TORCH_FLASH` installation fail. Missing or unreadable metadata
+is unknown, not proof of compatibility. Inspect requirements using that worker's
+Python (`python -m pip check` is a useful broader check); satisfy the installed
+packages' constraints rather than copying another machine's protobuf downgrade.
+Review the package plan and preserve the working Torch/CUDA build.
+
+A missing header needs the development headers matching that interpreter (for
+example, `python3.12-dev` for a system Python 3.12); installing headers for a
+different Python does not resolve it. Doctor also inspects the account-home
+Triton cache candidate for an ownership/access blocker. This is bounded,
+read-only evidence: it does not inspect existing cache children or prove that
+compilation can write. It does not attest the running Worker/actor environment.
+In particular, `TRITON_CACHE_DIR` exported in an SSH/login shell is filtered by
+Monarch's Worker environment boundary and does not reach actors. Service `HOME`
+and allowed cache settings may also differ from the diagnostic shell. Inspect
+the actual service configuration when resolving cache problems; preserve old
+caches and avoid recursive ownership changes or deletion during active work.
+Other compiler caches and their runtime access remain untested.
+
+After changing dependencies, wait for rendering and queued work to finish, then
+retire the **Attached mesh** through its owning ComfyUI client before attaching
+fresh actors. Their imported packages and cached backend choice can otherwise
+outlive the installation. This is separate from restarting persistent **Worker
+services**; service maintenance needs its own explicit authority and idle checks.
+Run Doctor again and inspect the new actor's `backend=... cute=...` kernel log.
+Detected packages and observed prerequisites do not prove GPU compilation or
+execution, and successful kernel execution does not establish full-render
+accuracy. The explicit Sol accuracy waiver still applies.
+
+**An optional compilation check is a separate GPU action.** While the cluster
+remains idle, `dgxm --config /absolute/cluster.toml sol-smoke --idle-maintenance`
+checks each configured single-GPU host with 4,096-token BF16 tensors. On GB10 it
+requires the CuTe backend, checks finite output, and compares a full-KV dense
+control with PyTorch SDPA (relative L2 at most 0.01). The reported backend and
+measured error describe that kernel control only: no model is loaded, no video
+is rendered, and no sparse-attention fidelity or accuracy waiver is granted.
+Doctor never invokes this check. A timeout or missing host result is unknown;
+inspect retained process state before attempting another GPU action.
 
 **A first-use identity check does not run under this kernel, and that has a
 cost.** The check compares residency, not kernels: every leg reuses one frozen
@@ -4859,3 +4933,28 @@ Do not reinstall TorchMonarch repeatedly, delete package test files, edit
 reports another conflict, preserve it for diagnosis. Older Ultralytics wheels
 that claim actual TorchMonarch files are a separate collision and remain
 rejected.
+
+## 111. dgxm is missing from an ordinary terminal or launcher installation refuses
+
+Installing the package places `dgxm` in the selected Python environment's
+`bin` directory. A full-path command working while bare `dgxm` is missing is
+a PATH issue. Activate that environment, use the full executable path, or
+install the optional managed launcher following [INSTALL](INSTALL.md#launch-and-handoff).
+The TUI extra must also be installed through the documented constrained
+dependency procedure.
+
+`dgxm launcher --check` plans without writing; `--apply` installs only the
+local launcher. An identical rerun preserves it. Unmanaged commands, edited
+launchers, symlink targets or parents, and unsafe directory permissions are
+refused. Inspect the existing destination and choose another location rather
+than replacing an unrelated command. A held launcher lock requires the other
+installer to finish; it is not a reason to delete its lock file.
+
+In the ordinary terminal, check `command -v dgxm` and `dgxm version`; use
+`hash -r` to clear Bash's cached command lookup. An alias, function or earlier
+PATH entry can still select a different command. The installer reports its
+own PATH view and does not edit shell startup files. A missing saved config
+refuses; reinstall the managed launcher for the new config or pass a leading
+`--config` override. For the dashboard, separately verify the ComfyUI endpoint
+and pass `top --host HOST:PORT` when discovery does not select the intended
+driver. A CLI launcher does not start ComfyUI or Worker services.

@@ -41,6 +41,8 @@ def test_schema_and_healthy_idle_lifecycle_are_ready():
     assert report == {
         "schema_version": 1,
         "overall": "ready",
+        "presentation": {"schema_version": 1, "health": "ready", "activity": "idle",
+                         "maintenance": "none"},
         "lifecycle": {
             "worker_service": {"state": "ready", "detail": "2 worker services ready."},
             "attached_mesh": {
@@ -164,11 +166,37 @@ def test_blocked_known_state_outranks_unrelated_unknown_state():
 def test_active_work_is_degraded_not_broken(mesh, render):
     report = _telemetry(mesh=mesh, render=render)
     assert report["overall"] == "degraded"
+    assert report["presentation"] == {
+        "schema_version": 1, "health": "ready",
+        "activity": "rendering" if render.get("active") else "busy", "maintenance": "wait",
+    }
     assert _action_ids(report) == ["wait-for-active-work"]
     action = report["actions"][0]
     assert action["safety"] == "automatic"
     assert action["requires_confirmation"] is False
     assert "not broken" in action["detail"]
+
+
+@pytest.mark.parametrize("changes,health", [
+    ({"workers": [{"healthy": False}]}, "blocked"),
+    ({"workers": None}, "unknown"),
+    ({"mesh": {"state": "dirty"}}, "blocked"),
+    ({"telemetry_error": "timeout"}, "unknown"),
+])
+def test_activity_never_overrides_health_or_maintenance_caution(changes, health):
+    report = _telemetry(render={"active": True}, **changes)
+    assert report["presentation"] == {
+        "schema_version": 1, "health": health, "activity": "rendering",
+        "maintenance": "inspect_and_wait",
+    }
+
+
+def test_doctor_warning_is_not_reinterpreted_as_occupancy():
+    report = readiness.readiness_from_doctor_rows([
+        {"status": "WARN", "name": "optional feature", "detail": "unavailable"},
+    ])
+    assert report["overall"] == "degraded"
+    assert "presentation" not in report
 
 
 @pytest.mark.parametrize("render", [

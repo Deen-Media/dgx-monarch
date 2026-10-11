@@ -5,6 +5,8 @@ from collections.abc import Mapping
 
 from rich.text import Text
 
+from ..operator_activity import telemetry_presentation
+
 _LAYERS = (
     ("worker_service", "Worker service"),
     ("attached_mesh", "Attached mesh"),
@@ -33,7 +35,7 @@ def _required_overall(rows: list[tuple[str, str, str]]) -> str:
     return "ready"
 
 
-def _normalize(tick: object) -> tuple[str, tuple[tuple[str, str, str], ...]]:
+def _normalize(tick: object) -> tuple[str, tuple[tuple[str, str, str], ...], dict | None]:
     if not isinstance(tick, Mapping):
         return _unknown()
     report = tick.get("readiness")
@@ -59,17 +61,40 @@ def _normalize(tick: object) -> tuple[str, tuple[tuple[str, str, str], ...]]:
     required = _required_overall(rows)
     if overall != required and not (overall == "unknown" and required in {"ready", "degraded"}):
         return _unknown()
-    return overall, tuple(rows)
+    presentation = None
+    if "presentation" in report:
+        if (rows[0][1] not in {"ready", "blocked", "unknown"}
+                or rows[2][1] not in {"idle", "active", "unknown"}):
+            return _unknown()
+        supplied = report["presentation"]
+        expected = telemetry_presentation(overall, [state for _, state, _ in rows])
+        if (not isinstance(supplied, Mapping)
+                or type(supplied.get("schema_version")) is not int
+                or dict(supplied) != expected):
+            return _unknown()
+        presentation = expected
+    return overall, tuple(rows), presentation
 
 
-def _unknown() -> tuple[str, tuple[tuple[str, str, str], ...]]:
+def _unknown() -> tuple[str, tuple[tuple[str, str, str], ...], None]:
     return "unknown", tuple(
-        (label, "unknown", _UNKNOWN_DETAIL) for _key, label in _LAYERS)
+        (label, "unknown", _UNKNOWN_DETAIL) for _key, label in _LAYERS), None
+
+
+def _maintenance_text(presentation: Mapping[str, object]) -> str:
+    wait = ("Wait for the active render to finish." if presentation["activity"] == "rendering"
+            else "Wait for active mesh work to finish.")
+    return {
+        "none": "No maintenance action suggested.",
+        "wait": wait,
+        "inspect": "Inspect health and activity before maintenance.",
+        "inspect_and_wait": f"Inspect health; {wait[0].lower()}{wait[1:]}",
+    }[str(presentation["maintenance"])]
 
 
 def readiness_text(tick: object, palette: Mapping[str, str]) -> Text:
     """Format lifecycle readiness without interpreting any supplied action."""
-    overall, rows = _normalize(tick)
+    overall, rows, presentation = _normalize(tick)
     colors = {
         "ready": palette["good"],
         "idle": palette["good"],
@@ -77,9 +102,21 @@ def readiness_text(tick: object, palette: Mapping[str, str]) -> Text:
         "degraded": palette["warn"],
         "blocked": palette["bad"],
         "unknown": palette["bad"],
+        "rendering": palette["good"],
+        "busy": palette["good"],
     }
-    out = Text("\n Readiness ", style="dim")
-    out.append(overall.upper(), style=f"bold {colors[overall]}")
+    health = str(presentation["health"]) if presentation else overall
+    out = Text("\n Health " if presentation else "\n Readiness ", style="dim")
+    out.append(health.upper(), style=f"bold {colors[health]}")
+    activity_view = presentation or telemetry_presentation(
+        overall, [state for _, state, _ in rows], legacy=True)
+    activity = str(activity_view["activity"])
+    out.append("\n Activity ", style="dim")
+    out.append(activity.upper(), style=f"bold {colors[activity]}")
+    out.append(f"\n Maintenance {_maintenance_text(activity_view)}", style="dim")
+    if presentation is None and overall == "degraded":
+        out.append("\n Legacy readiness includes active work; update the server for separate health.",
+                   style="dim")
     for label, state, detail in rows:
         out.append(f"\n {label} ", style="bold")
         out.append(state.upper(), style=f"bold {colors[state]}")

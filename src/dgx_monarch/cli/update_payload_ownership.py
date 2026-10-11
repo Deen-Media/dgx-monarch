@@ -14,6 +14,8 @@ from email.parser import BytesParser
 from importlib.machinery import EXTENSION_SUFFIXES
 from pathlib import Path, PurePosixPath
 
+from .update_pin_diagnostic import PinDiagnostic
+
 # Official color-matcher 0.6.0 wheel: data installed both inside site-packages
 # and through the wheel data scheme. External copies are never opened here.
 _COLOR_MATCHER_DATA: dict[str, tuple[str, str]] = {
@@ -25,6 +27,13 @@ _COLOR_MATCHER_DATA: dict[str, tuple[str, str]] = {
 
 class PayloadOwnershipError(ValueError):
     """Shared payload ownership could not be established."""
+
+    def __init__(
+        self, message: str, *, reason: str = "ownership_unverified",
+        distribution: str | None = None, relative_path: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.diagnostic = PinDiagnostic(reason, distribution, relative_path)
 
 
 def _read(path: Path) -> bytes:
@@ -130,7 +139,10 @@ def _color_matcher_assets(site: Path, records: Mapping[str, tuple[str, str]]) ->
     for name, expected_record in _COLOR_MATCHER_DATA.items():
         path = "tests/data/" + name
         if records.get(path) != expected_record or not _verified_record(_read(site / path), expected_record):
-            raise PayloadOwnershipError("color-matcher test data differs from its wheel")
+            raise PayloadOwnershipError(
+                "color-matcher test data differs from its wheel", reason="record_mismatch",
+                distribution="color-matcher", relative_path=path,
+            )
 
 
 def _empty_color_test_initializer(
@@ -163,7 +175,7 @@ def foreign_namespace_files(
     owners: dict[str, list[str]] = {}
     identities: dict[str, int] = {}
     candidates: list[tuple[Path, str, bytes, dict[str, tuple[str, str]], bool, bool]] = []
-    for info in site.iterdir():
+    for info in sorted(site.iterdir()):
         if not info.name.lower().endswith(".dist-info"):
             continue
         if info.is_symlink() or not info.is_dir():
@@ -190,23 +202,38 @@ def foreign_namespace_files(
     excluded: set[str] = set()
     for info, name, metadata, records, invalid, color_matcher in candidates:
         if invalid or identities[name] != 1:
-            raise PayloadOwnershipError("foreign distribution inventory is ambiguous")
+            raise PayloadOwnershipError(
+                "foreign distribution inventory is ambiguous", reason="inventory_ambiguous",
+                distribution=name, relative_path=f"{info.name}/RECORD",
+            )
         metadata_record = records.get(f"{info.name}/METADATA")
         if metadata_record is None or not _verified_record(metadata, metadata_record):
-            raise PayloadOwnershipError("foreign distribution metadata does not match its record")
+            raise PayloadOwnershipError(
+                "foreign distribution metadata does not match its record", reason="metadata_mismatch",
+                distribution=name, relative_path=f"{info.name}/METADATA",
+            )
         if records.keys() & expected.keys():
-            raise PayloadOwnershipError("foreign distribution claims pinned payload")
+            raise PayloadOwnershipError(
+                "foreign distribution claims pinned payload", reason="pinned_payload_claim",
+                distribution=name, relative_path=min(records.keys() & expected.keys()),
+            )
         if color_matcher:
             _color_matcher_assets(site, records)
-        for path in records.keys() & found.keys():
+        for path in sorted(records.keys() & found.keys()):
             owners.setdefault(path, []).append(name)
             data = _read(site / path)
             if len(owners[path]) != 1 or not (
                 _namespace_path(path, expected)
                 or (color_matcher and _empty_color_test_initializer(path, data, expected))
             ):
-                raise PayloadOwnershipError("foreign payload overlaps a protected package")
+                raise PayloadOwnershipError(
+                    "foreign payload overlaps a protected package", reason="protected_package_overlap",
+                    distribution=name, relative_path=path,
+                )
             if not _verified_record(data, records[path]) or hashlib.sha256(data).hexdigest() != found[path]:
-                raise PayloadOwnershipError("foreign payload does not match its record")
+                raise PayloadOwnershipError(
+                    "foreign payload does not match its record", reason="record_mismatch",
+                    distribution=name, relative_path=path,
+                )
             excluded.add(path)
     return excluded

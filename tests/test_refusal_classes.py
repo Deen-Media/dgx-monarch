@@ -95,6 +95,11 @@ NOT_REFUSAL_CLASSES = frozenset({
     "ConsentStoreError",
     "DriverPinError",
     "PayloadOwnershipError",
+    # Optional package installation and idle-maintenance faults are operator
+    # lifecycle/IO boundaries, not model math or capacity waiver guards.
+    "SolInstallError",
+    "IdleMaintenanceError",
+    "WheelRequirementsError",
     "GateAuditError",
     "ProfileRefusal",
     "PriorTeardownUnknownError",

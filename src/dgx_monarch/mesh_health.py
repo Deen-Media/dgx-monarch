@@ -215,8 +215,9 @@ def _handle_health(handle: Any) -> MeshHealth:
 def health_of(handles: Iterable[Any | MeshHealth], *, poison: str = "") -> MeshHealth:
     """The worst health across the driver's cached handles.
 
-    Dirty outranks all other states because it blocks the next render. Busy
-    outranks quiet states so diagnostics name the active operation. ``poison``
+    Dirty outranks all other states because it blocks the next render. Unknown
+    outranks busy and quiet states because another handle cannot establish its
+    health. Busy outranks quiet states so diagnostics name the active operation. ``poison``
     is the driver's process-wide transport state, which belongs to no handle
     and is carried onto whichever one is reported, or onto an empty report.
     """
@@ -227,7 +228,7 @@ def health_of(handles: Iterable[Any | MeshHealth], *, poison: str = "") -> MeshH
     if not ranked:
         return MeshHealth(poison=poison)
     worst = max(ranked, key=lambda health: (
-        health.dirty, bool(health.busy_phase), health.abandoned_samples,
+        health.dirty, health.state == "unknown", bool(health.busy_phase), health.abandoned_samples,
         health.active_leases))
     return replace(worst, poison=poison) if poison else worst
 

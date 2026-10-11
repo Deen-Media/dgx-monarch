@@ -4828,6 +4828,36 @@ TEMPLATES["dgx-monarch-dual-spark-split"]["nodes"] = [
     for n in TEMPLATES["dgx-monarch-dual-spark-split"]["nodes"]]
 
 
+def _minimax_mp4_spec() -> dict:
+    """Reuse the MiniMax recipe, changing only the native export tail."""
+    nodes = []
+    for node in TEMPLATES["dgx-monarch-minimax-h3-t2va"]["nodes"]:
+        if node["key"] in {"simg", "saud"}:
+            continue
+        out = dict(node)
+        if node["key"] == "note":
+            out["note"] += (
+                " Saves one MP4 with H.264 video and AAC audio through native "
+                "CreateVideo and SaveVideo. Export stays at the model's 24 fps; "
+                "changing it changes video timing without retiming the soundtrack. "
+                "Use the separate-output MiniMax H3 template for PNG frames and FLAC audio."
+            )
+        nodes.append(out)
+    nodes.extend([
+        {"key": "video", "type": "CreateVideo", "pos": (5, 1),
+         "widgets": {"fps": 24.0, "bit_depth": 8, "color_space": "sRGB", "codec": "none"},
+         "wire": {"images": ("vdec", 0), "audio": ("adec", 0)}},
+        {"key": "save", "type": "SaveVideo", "pos": (6, 1),
+         "widgets": {"filename_prefix": "video/dgx_monarch_minimax_h3",
+                     "format": "mp4", "codec": "h264"},
+         "wire": {"video": ("video", 0)}},
+    ])
+    return {"title": "MiniMax H3 MP4 with sound", "nodes": nodes}
+
+
+TEMPLATES["dgx-monarch-minimax-h3-mp4"] = _minimax_mp4_spec()
+
+
 def _wan_animate2_quality_spec() -> dict:
     """The unaccelerated upstream Base recipe, not the Comfy fast-LoRA graph."""
     nodes = []

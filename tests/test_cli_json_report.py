@@ -115,6 +115,12 @@ def test_status_json_carries_the_host_rows_and_the_mesh_row(monkeypatch, capsys)
                                "detail": "ok (cached, 2 active leases)"}
     assert payload["readiness"]["lifecycle"]["worker_service"]["state"] == "ready"
     assert payload["readiness"]["lifecycle"]["attached_mesh"]["state"] == "active"
+    assert payload["readiness"]["lifecycle"]["render_session"] == {
+        "state": "unknown",
+        "detail": "Render activity is not observed by dgxm status; use dgxm top/live telemetry.",
+    }
+    assert payload["readiness"]["overall"] == "unknown"
+    assert payload["readiness"]["presentation"]["health"] == "unknown"
 
 
 def test_status_json_names_a_dirty_mesh_without_a_regex(monkeypatch, capsys):

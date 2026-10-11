@@ -56,9 +56,15 @@ Illustrative dashboard using sample data, not a benchmark result.
   performs the gate's reference and residency checks before rendering. The
   summary lists each stage, its duration, and the total until the
   next request.
-* **Readiness:** the same health layers and advisory actions as CLI JSON and
-  the browser panel use. [CONCEPTS.md](CONCEPTS.md#operator-words) holds the
-  aggregation and observation rules.
+* **Health, activity, and maintenance:** healthy rendering shows `Health READY`
+  and `Activity RENDERING`, with a message to wait before maintenance. Other
+  active mesh work shows `BUSY`; activity does not hide unknown health or a
+  blocker. Older server payloads retain the legacy `Readiness` label with an
+  explanation of its active-work degradation. These labels are advisory, not
+  authority to change worker or mesh state. CLI JSON preserves its original
+  aggregate and adds the separate presentation fields used here and in the
+  browser panel. [CONCEPTS.md](CONCEPTS.md#operator-words) holds the observation
+  and compatibility rules.
 * **low_rss state per box:** LoRA mode, unbake file-backed GiB and the
   ambient-verify failure count (red when nonzero).
 * **Event ticker and markers:** swaps (with phase timings), loads, gate

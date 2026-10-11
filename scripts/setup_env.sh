@@ -38,25 +38,31 @@ setup_comfy_layer() {
   # rather than leave that installation unable to import ComfyUI.
   local PY="$HOME/monarch-env/bin/python"
   local P="$HOME/monarch-env/bin/pip"
-  local SP XFUSER_WHEELS TORCH_CONSTRAINT TORCH_BUILD
+  local SP XFUSER_WHEELS TORCH_CONSTRAINT TORCH_DIST_VERSION
   if [ ! -r "$XFUSER_BUILDER" ]; then
     echo "FAIL: cannot read tools/build_xfuser_compat_wheel.py; run setup_env.sh from a full dgx-monarch checkout" >&2
     return 1
   fi
   SP="$("$PY" -c 'import sysconfig; print(sysconfig.get_paths()["purelib"])')"
-  "$P" install -q -r "$HOME/ComfyUI/requirements.txt"
-  "$P" install -q diffusers==0.38.0 accelerate
   # Install xFuser's declared dependencies (distvae, peft, av and others) while
-  # a constraint holds pip to the CUDA torch build already in this venv. Do not
+  # a constraint holds pip to the installed torch distribution version. Do not
   # use --no-deps here: xFuser 0.7 adds required runtime distributions.
-  TORCH_BUILD="$("$PY" -c 'import torch; print(torch.__version__)')"
+  # Runtime torch.__version__ can include a CUDA suffix absent from pip's
+  # distribution metadata. Probe before any Comfy dependency resolution and
+  # refuse missing metadata; never guess a version or remove the constraint.
+  if ! TORCH_DIST_VERSION="$("$PY" -c 'from importlib.metadata import version; print(version("torch"))')" || [ -z "$TORCH_DIST_VERSION" ]; then
+    echo "FAIL: cannot read installed torch distribution metadata; repair the dedicated bootstrap environment before installing ComfyUI dependencies" >&2
+    return 1
+  fi
   XFUSER_WHEELS="$(mktemp -d)"
   TORCH_CONSTRAINT="$XFUSER_WHEELS/torch-constraint.txt"
-  printf 'torch==%s\n' "$TORCH_BUILD" > "$TORCH_CONSTRAINT"
+  printf 'torch==%s\n' "$TORCH_DIST_VERSION" > "$TORCH_CONSTRAINT"
   if ! "$PY" "$XFUSER_BUILDER" --output-dir "$XFUSER_WHEELS"; then
     rm -rf "$XFUSER_WHEELS"
     return 1
   fi
+  "$P" install -q --constraint "$TORCH_CONSTRAINT" -r "$HOME/ComfyUI/requirements.txt"
+  "$P" install -q --constraint "$TORCH_CONSTRAINT" diffusers==0.38.0 accelerate
   "$P" install -q --upgrade-strategy only-if-needed \
     --constraint "$TORCH_CONSTRAINT" --find-links "$XFUSER_WHEELS" \
     xfuser==0.7.0+dgxm.npuimport1 yunchang==0.6.4

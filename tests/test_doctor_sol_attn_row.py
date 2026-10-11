@@ -24,6 +24,9 @@ def _fields(sol=True, tvm=True, cutlass=True, cap="12.1",
         "solver": solver,
         "soldsl": soldsl,
         "cap": cap,
+        "soldeps": "observed",
+        "solheaders": "present",
+        "solcache": "parent-access",
     }
 
 
@@ -202,8 +205,36 @@ def test_the_probe_prints_the_line_doctor_selects_and_the_row_reads_it():
     assert len(printed) == 1
     assert printed[0].startswith(sol_attn_row.LINE_PREFIX)
     fields = doctor._env_tokens(printed[0])
-    assert set(fields) == {"sol", "tvm", "cutlass", "solver", "soldsl", "cap"}
+    assert set(fields) == {"sol", "tvm", "cutlass", "solver", "soldsl", "cap",
+                           "soldeps", "solheaders", "solcache"}
     row = _row({HEAD: fields})
     assert row["name"] == "sol-attn install"
     assert row["status"] != FAIL
-    assert "unobserved" not in row["detail"]
+    assert "install probe did not answer" not in row["detail"]
+
+
+def test_one_workers_prerequisite_conflicts_are_advisory_and_named():
+    fields = _fields()
+    fields.update(soldeps="conflict:protobuf", solheaders="missing", solcache="blocked")
+    status, _, detail = sol_attn_row.doctor_row({HEAD: _fields(), WORKER: fields})
+    assert status == WARN
+    assert "worker: installed requirement conflicts: protobuf" in detail
+    assert "worker: configured interpreter Python.h missing" in detail
+    assert "ownership/access blocker" in detail
+    assert "kernel execution remain untested" in detail
+
+
+def test_older_probe_cannot_silently_attest_new_prerequisites():
+    fields = _fields()
+    for key in ("soldeps", "solheaders", "solcache"):
+        fields.pop(key)
+    status, _, detail = sol_attn_row.doctor_row({WORKER: fields})
+    assert status == WARN
+    assert "dependency compatibility unknown" in detail
+    assert "Python.h unknown" in detail
+
+
+def test_shell_cache_observation_never_claims_actor_cache_is_ready():
+    _, _, detail = sol_attn_row.doctor_row({WORKER: _fields()})
+    assert "Worker/actor environment and existing cache entries are unobserved" in detail
+    assert "TRITON_CACHE_DIR from a login shell is filtered" in detail

@@ -20,11 +20,11 @@ from . import comfy_ports, json_report, lifecycle
 
 _TIMEOUT_S = 1.5
 _ENTRY = "docs/TROUBLESHOOTING.md #65"
-# Which responder to believe when several answer, ranked on `state` alone. An
+# Which responder to believe when several answer. A known blocker in any
+# supported field outranks missing observations, even if `state` says OK. An
 # unreadable driver outranks one with no known state, and both outrank a
 # healthy state: one instance reporting health is no observation of another.
-# Ranks are total; `max` keeps the first tied candidate. A block dirty only
-# by the non-state fields mesh_evidence weighs does not outrank a clean one.
+# Ranks are total; `max` keeps the first tied candidate.
 _UNANSWERED = 5
 _BLIND = 4
 _PREFERENCE = {"poisoned": 7, "dirty": 6, "busy": 3, "ok": 2, "idle": 1}
@@ -64,7 +64,10 @@ def fetch_mesh_block(
             continue
         block = payload.get("mesh") if isinstance(payload, Mapping) else None
         block = block if isinstance(block, Mapping) else {}
-        seen.append((_PREFERENCE.get(_state(block), _BLIND), block))
+        priority = _PREFERENCE.get(_state(block), _BLIND)
+        if mesh_block_dirty(block):
+            priority = max(priority, _PREFERENCE["dirty"])
+        seen.append((priority, block))
     if not seen:
         return None
     return max(seen, key=lambda item: item[0])[1]
@@ -124,7 +127,7 @@ def status_line(block: Mapping | None) -> str:
         return "unreadable (a local driver gave no readable answer on its telemetry route)"
     if not block:
         return "no mesh view (this driver serves no mesh block)"
-    state = _state(block)
+    state = state_name(block)
     if state == "ok":
         return f"ok (cached, {_leases(block)})"
     if state == "idle":
@@ -154,6 +157,11 @@ def state_name(block: Mapping | None) -> str:
         return "driver-unreadable"
     if not block:
         return "no-mesh-block"
+    if mesh_block_dirty(block):
+        if (_state(block) == "poisoned" or block.get("poisoned") is True
+                or block.get("verdict") == "poisoned"):
+            return "poisoned"
+        return "dirty"
     return _state(block) or "unknown"
 
 

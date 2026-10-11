@@ -26,6 +26,7 @@ function unknown(source, notice) {
         schemaVersion: null,
         source,
         overall: "unknown",
+        presentation: { health: null, activity: "unknown", maintenance: "inspect" },
         notice,
         rows: LAYERS.map(([id, label]) => ({
             id, label, state: "unknown",
@@ -40,6 +41,18 @@ function requiredOverall(rows) {
     if (states.includes("unknown")) return "unknown";
     if (states.includes("active")) return "degraded";
     return "ready";
+}
+
+function telemetryPresentation(overall, rows, legacy = false) {
+    const states = rows.map((row) => row.state);
+    const health = !legacy && overall === "degraded" && states.includes("active") ? "ready" : overall;
+    const activity = states[2] === "active" ? "rendering"
+        : states[1] === "active" ? "busy"
+        : ["ready", "idle"].includes(states[1]) && states[2] === "idle" ? "idle" : "unknown";
+    const occupied = ["rendering", "busy"].includes(activity);
+    const maintenance = health === "ready" ? (occupied ? "wait" : "none")
+        : occupied ? "inspect_and_wait" : "inspect";
+    return { schema_version: 1, health, activity, maintenance };
 }
 
 function canonical(report) {
@@ -62,13 +75,31 @@ function canonical(report) {
             && !(report.overall === "unknown" && ["ready", "degraded"].includes(required))) {
         return null;
     }
+    const hasPresentation = Object.prototype.hasOwnProperty.call(report, "presentation");
+    const presentation = telemetryPresentation(report.overall, rows, !hasPresentation);
+    if (hasPresentation) {
+        if (!["ready", "blocked", "unknown"].includes(rows[0].state)
+                || !["idle", "active", "unknown"].includes(rows[2].state)) return null;
+        const supplied = plainObject(report.presentation);
+        if (!supplied || Object.keys(supplied).length !== Object.keys(presentation).length
+                || Object.entries(presentation).some(([key, value]) => supplied[key] !== value)) {
+            return null;
+        }
+    } else {
+        // A legacy degraded aggregate can also contain genuine Doctor warnings.
+        // Keep that aggregate visible instead of asserting separate health.
+        presentation.health = null;
+    }
     return {
         schemaVersion: 1,
         source: "canonical",
         overall: report.overall,
+        presentation,
         notice: report.overall === "unknown" && required !== "unknown"
             ? "Telemetry freshness could not be established."
-            : null,
+            : presentation.health === null && report.overall === "degraded"
+                ? "Legacy readiness includes active work; update the server for separate health."
+                : null,
         rows,
     };
 }
@@ -190,10 +221,14 @@ function compatibility(payload) {
     }));
     const telemetryError = payload.telemetry_error !== undefined
         && payload.telemetry_error !== null && payload.telemetry_error !== false;
+    const overall = telemetryError ? "unknown" : requiredOverall(rows);
+    const presentation = telemetryPresentation(overall, rows, true);
+    presentation.health = null;
     return {
         schemaVersion: null,
         source: "compatibility",
-        overall: telemetryError ? "unknown" : requiredOverall(rows),
+        overall,
+        presentation,
         notice: "Compatibility view from older telemetry; restart ComfyUI so the server matches this panel.",
         rows,
     };

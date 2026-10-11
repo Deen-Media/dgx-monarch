@@ -14,6 +14,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 
 from .probe_certainty import OK, WARN
+from .sol_attn_prerequisites import PROBE_SOURCE as PREREQUISITE_SOURCE
 
 NAME = "sol-attn install"
 ENTRY = "docs/TROUBLESHOOTING.md #84"
@@ -32,7 +33,7 @@ DSL_INSTALL = "pip install nvidia-cutlass-dsl==4.7.0"
 # runs beside a live render, and the dispatch shim tests the same predicate. It
 # reads the capability from nvidia-smi because torch would build a CUDA context
 # on a box that may be rendering.
-PROBE_SOURCE = """import importlib.metadata as _md, importlib.util as _iu, subprocess as _sp
+PROBE_SOURCE = PREREQUISITE_SOURCE + "\n" + """import importlib.metadata as _md, importlib.util as _iu, subprocess as _sp
 def _sol_spec(name):
     try:
         return _iu.find_spec(name) is not None
@@ -51,7 +52,9 @@ except Exception:
     _cap = "unknown"
 print(f"sol={_sol_spec('sol_attn')} tvm={_sol_spec('tvm_ffi')} "
       f"cutlass={_sol_spec('cutlass')} solver={_sol_dist('sol-attn')} "
-      f"soldsl={_sol_dist('nvidia-cutlass-dsl')} cap={_cap}")"""
+      f"soldsl={_sol_dist('nvidia-cutlass-dsl')} cap={_cap} "
+      f"soldeps={dependency_state() if _sol_spec('sol_attn') else 'not-selected'} "
+      f"solheaders={header_state()} solcache={default_cache_state()}")"""
 
 
 def _flag(fields: Mapping[str, str], key: str) -> bool:
@@ -104,7 +107,7 @@ def _off_capability(caps: Mapping[str, str], hosts: list[str]) -> str:
             "the backend there")
 
 
-def doctor_row(per_host: Mapping[str, Mapping[str, str]]) -> tuple[str, str, str]:
+def _install_row(per_host: Mapping[str, Mapping[str, str]]) -> tuple[str, str, str]:
     """Return one (status, name, detail) row for all configured hosts.
 
     Include the row even if no host answered, keeping missing observations visible
@@ -159,3 +162,50 @@ def doctor_row(per_host: Mapping[str, Mapping[str, str]]) -> tuple[str, str, str
                       "the backend that ran: read that in the worker log line "
                       "`sol-attn kernel ... backend=... cute=...` written at kernel "
                       f"build ({ENTRY})")
+
+
+def doctor_row(per_host: Mapping[str, Mapping[str, str]]) -> tuple[str, str, str]:
+    """Combine installation and passive prerequisites without executing a kernel."""
+    status, name, detail = _install_row(per_host)
+    installed = {host: fields for host, fields in per_host.items() if _flag(fields, "sol")}
+    if not installed:
+        return status, name, detail
+    observations = []
+    for host, fields in sorted(installed.items()):
+        deps = fields.get("soldeps", "unknown")
+        if deps.startswith("conflict:"):
+            # Treat the wire payload as untrusted; display only distribution names.
+            import re
+
+            names = deps.removeprefix("conflict:").split(",")
+            if names and len(names) <= 12 and all(
+                re.fullmatch(r"[a-z0-9][a-z0-9-]{0,79}", item) for item in names
+            ):
+                observations.append(f"{host}: installed requirement conflicts: {', '.join(names)}")
+            else:
+                observations.append(f"{host}: dependency compatibility unknown")
+            status = WARN
+        elif deps != "observed":
+            observations.append(f"{host}: dependency compatibility unknown")
+            status = WARN
+        headers = fields.get("solheaders", "unknown")
+        if headers != "present":
+            observations.append(f"{host}: configured interpreter Python.h "
+                                + ("missing" if headers == "missing" else "unknown"))
+            status = WARN
+        cache = fields.get("solcache", "unknown")
+        if cache == "blocked":
+            observations.append(f"{host}: account-home Triton cache candidate has an ownership/access blocker")
+            status = WARN
+        elif cache not in {"absent", "parent-access"}:
+            observations.append(f"{host}: account-home Triton cache candidate unknown")
+    if observations:
+        detail += " Prerequisites: " + "; ".join(observations) + "."
+    else:
+        detail += " Installed requirements and configured-interpreter Python.h observed."
+    detail += (" Cache inspection covers only the account-home default candidate and parent access; "
+               "the running Worker/actor environment and existing cache entries are unobserved. "
+               "TRITON_CACHE_DIR from a login shell is filtered before actor launch. "
+               "Imports, GPU compilation and kernel execution remain untested. "
+               f"For dependency and idle recycle guidance: {ENTRY}.")
+    return status, name, detail

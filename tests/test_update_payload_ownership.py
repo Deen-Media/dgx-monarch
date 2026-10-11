@@ -159,3 +159,32 @@ def test_foreign_module_cannot_shadow_pinned_namespace(payload):
     install(site, "other", {"examples/monarch.py": b"foreign"})
     with pytest.raises(PayloadOwnershipError):
         _scan_tree(site, expected)
+
+
+@pytest.mark.parametrize(
+    ("path", "reason"),
+    [("monarch/runtime.py", "pinned_payload_claim"), ("monarch/extra.py", "protected_package_overlap")],
+)
+def test_conflict_identifies_distribution_and_relative_path(payload, path, reason):
+    site, expected = payload
+    install(site, "other-pkg", {path: b"foreign"})
+    with pytest.raises(PayloadOwnershipError) as caught:
+        _scan_tree(site, expected)
+    diagnostic = caught.value.diagnostic
+    assert diagnostic.reason == reason
+    assert diagnostic.distribution == "other-pkg"
+    assert diagnostic.relative_path == path
+    assert str(site) not in diagnostic.terminal_message()
+
+
+def test_invalid_inventory_identifies_distribution_record(payload):
+    site, expected = payload
+    info, rows = install(site, "other", {"examples/foreign.py": b"foreign"})
+    rows.append(["../../../private/secret", "", ""])
+    write_records(info, rows)
+    with pytest.raises(PayloadOwnershipError) as caught:
+        _scan_tree(site, expected)
+    assert caught.value.diagnostic.reason == "inventory_ambiguous"
+    assert caught.value.diagnostic.distribution == "other"
+    assert caught.value.diagnostic.relative_path == "other-1.dist-info/RECORD"
+    assert "secret" not in caught.value.diagnostic.terminal_message()

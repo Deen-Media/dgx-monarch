@@ -19,6 +19,8 @@ Launcher options:
   --reserve-vram GB  GiB kept free for the OS (default: 2)
   --sage             Enable ComfyUI's native Sage attention path
   --no-browser       Do not ask ComfyUI to open the browser after readiness
+  --with-top         Open an owned terminal dashboard alongside foreground ComfyUI
+  --cluster-config PATH  Absolute existing config for ComfyUI and the optional dashboard
   --log PATH         Also append visible stdout and stderr to an absolute file
   --check             Validate paths and arguments, then exit without probing or starting
   -h, --help         Show this help
@@ -103,6 +105,8 @@ SAGE=${SAGE:-0}
 LOG=${LOG:-}
 OPEN_BROWSER=1
 CHECK_ONLY=0
+WITH_TOP=0
+CLUSTER_CONFIG=${DGXM_CLUSTER_TOML:-}
 COMFY_ARGS=()
 
 while [ "$#" -gt 0 ]; do
@@ -144,6 +148,15 @@ while [ "$#" -gt 0 ]; do
         --no-browser)
             OPEN_BROWSER=0
             shift
+            ;;
+        --with-top)
+            WITH_TOP=1
+            shift
+            ;;
+        --cluster-config)
+            need_value "$@"
+            CLUSTER_CONFIG=$2
+            shift 2
             ;;
         --log)
             need_value "$@"
@@ -228,6 +241,29 @@ if [ -n "$LOG" ]; then
     LOG="$LOG_PARENT/$(basename -- "$LOG")"
 fi
 
+TOP_ARGS=()
+if [ "$WITH_TOP" = 1 ] && [ -z "$CLUSTER_CONFIG" ]; then
+    fail "--with-top needs --cluster-config or DGXM_CLUSTER_TOML"
+fi
+if [ -n "$CLUSTER_CONFIG" ]; then
+    reject_control_chars "cluster config" "$CLUSTER_CONFIG"
+    [[ "$CLUSTER_CONFIG" = /* ]] || fail "cluster config must be absolute"
+    [ -f "$CLUSTER_CONFIG" ] || fail "cluster config is missing or not a file"
+    CLUSTER_CONFIG=$(realpath -e -- "$CLUSTER_CONFIG")
+    export DGXM_CLUSTER_TOML=$CLUSTER_CONFIG
+fi
+if [ "$WITH_TOP" = 1 ]; then
+    TOP_HOST=$LISTEN
+    [ "$TOP_HOST" = "0.0.0.0" ] && TOP_HOST=127.0.0.1
+    [ "$TOP_HOST" = "::" ] && TOP_HOST=::1
+    case "$TOP_HOST" in
+        *:*) TOP_HOST="[$TOP_HOST]:$PORT" ;;
+        *) TOP_HOST="$TOP_HOST:$PORT" ;;
+    esac
+    TOP_ARGS=(-m dgx_monarch.cli.comfy_top --cluster-config "$CLUSTER_CONFIG" --host "$TOP_HOST")
+    "$PYTHON_BIN" "${TOP_ARGS[@]}" --check
+fi
+
 if [ "$CHECK_ONLY" = 1 ]; then
     printf 'launcher check: ready\n'
     printf '  comfy: %s\n' "$COMFY_DIR"
@@ -303,6 +339,9 @@ import webbrowser
 webbrowser.open(sys.argv[1])
 PY
         fi
+        if [ "$WITH_TOP" = 1 ]; then
+            exec "$PYTHON_BIN" "${TOP_ARGS[@]}"
+        fi
         exit 0
         ;;
     10) ;;
@@ -346,4 +385,7 @@ if [ -n "$LOG" ]; then
 fi
 printf 'Starting ComfyUI with DGX Monarch at http://%s:%s\n' "$LISTEN" "$PORT"
 printf 'Worker services are not changed by this launcher.\n'
+if [ "$WITH_TOP" = 1 ]; then
+    exec "$PYTHON_BIN" "${TOP_ARGS[@]}" -- "$PYTHON_BIN" main.py "${ARGS[@]}"
+fi
 exec "$PYTHON_BIN" main.py "${ARGS[@]}"

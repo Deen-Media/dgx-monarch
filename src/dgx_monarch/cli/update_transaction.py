@@ -440,7 +440,8 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
     )
     try:
         receipt = receipt_builder.finish(
-            steps, terminal, target=target, source=source, notes=(message, GATE_NOTE)
+            steps, terminal, target=target, source=source,
+            notes=((code if code == "driver_pin_drift" else message), GATE_NOTE)
         )
     except BaseException:
         if pending_base is not None:

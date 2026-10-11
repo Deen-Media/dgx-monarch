@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import shlex
 from argparse import Namespace
 from pathlib import Path
 
@@ -214,7 +215,7 @@ def test_output_path_precedes_global_config_and_global_precedes_default():
 
 def test_real_parser_namespace_maps_opt_in_setup_selections():
     names = (
-        "version", "doctor", "init", "setup", "up", "down", "reap", "top",
+        "version", "launcher", "sol_install", "sol_smoke", "doctor", "init", "setup", "up", "down", "reap", "top",
         "gate", "restart", "status", "install_service", "update", "uninstall",
     )
     parser = arguments.build_parser({name: lambda _args: 0 for name in names})
@@ -279,6 +280,7 @@ def test_terminal_builds_once_prints_exact_diff_then_applies_same_plan(monkeypat
     plan = FakePlan(diff)
     outcome = FakeOutcome(plan, status="succeeded", receipt_written=True)
     plan, _outcome, calls = _wire(monkeypatch, plan=plan, outcome=outcome)
+    monkeypatch.setattr(setup_cli.sys, "executable", "/selected env/bin/python")
 
     assert setup_cli.run(_args(apply=True, yes=True)) == 0
 
@@ -288,7 +290,9 @@ def test_terminal_builds_once_prints_exact_diff_then_applies_same_plan(monkeypat
     assert output.count("setup plan (sanitized)") == 1
     assert diff in output
     assert output.index(diff) < output.index("backend execution prose")
-    assert output.endswith("  receipt: written\n")
+    assert "  receipt: written\n" in output
+    command = output.split("optional normal-terminal access: ", 1)[1].strip()
+    assert shlex.split(command) == ["/selected env/bin/python", "-m", "dgx_monarch", "launcher", "--help"]
 
 
 def test_json_is_one_object_and_never_contains_diff_paths_hosts_or_backend_prose(
@@ -309,6 +313,15 @@ def test_json_is_one_object_and_never_contains_diff_paths_hosts_or_backend_prose
     assert private not in captured.out
     assert "backend planning prose" not in captured.out
     assert "backend execution prose" not in captured.out
+    assert "normal-terminal" not in captured.out
+
+
+@pytest.mark.parametrize("status", ["planned", "failed", "partial"])
+def test_launcher_handoff_waits_for_successful_setup(monkeypatch, capsys, status):
+    plan = FakePlan()
+    _wire(monkeypatch, plan=plan, outcome=FakeOutcome(plan, status=status))
+    setup_cli.run(_args(apply=True, yes=True))
+    assert "normal-terminal" not in capsys.readouterr().out
 
 
 def test_blocked_plan_includes_bounded_actions_in_terminal_and_json(monkeypatch, capsys):

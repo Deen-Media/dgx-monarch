@@ -101,6 +101,9 @@ def status_payload(
         "hosts": host_rows,
         "mesh": {"state": mesh_state, "detail": mesh_detail},
         "readiness": operator_readiness.readiness_from_telemetry(
-            host_rows, normalized_mesh, None
+            host_rows, normalized_mesh, None, sanitized_details={
+                "render_session": "Render activity is not observed by dgxm status; "
+                "use dgxm top/live telemetry.",
+            },
         ),
     }

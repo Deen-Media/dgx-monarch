@@ -18,6 +18,7 @@ from .update_cancellation import run_finalizer_pair
 from .update_driver_pin import DriverPinError, DriverPinTransition
 from .update_entrypoint import run_serialized_update
 from .update_inspect import inspect_checkout as _inspect_checkout
+from .update_pin_diagnostic import pin_refusal_message
 from .update_release import CommandRunner, ReleaseLayoutError, ReleaseManager, ReleaseMetadata
 from .update_site_probe import site_matches
 from .update_stage_cleanup import settle_stage_failure
@@ -187,7 +188,7 @@ class SystemUpdateOps(UpdateOps):
                 raise RuntimeError("driver pin artifacts could not be staged") from exc
             if not self._pins.matches_prior():
                 raise UpdatePreconditionError(
-                    "driver_pin_drift", "the driver's torchmonarch does not match the current checkout's exact pin",
+                    "driver_pin_drift", pin_refusal_message(self._pins),
                 )
             prior_payload = self._pins.prior_payload_digest
             if prior_payload is None or not self._releases.attest_prior(prior_metadata, prior_payload):

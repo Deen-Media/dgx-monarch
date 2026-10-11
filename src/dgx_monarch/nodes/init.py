@@ -31,7 +31,11 @@ class DGXMonarchInit:
             # Add new widgets at the end and append the matching INIT_ORDERS row
             # in web/js/dgx_monarch_widgets.js.
             "optional": {
-                "attention": (_ATTENTION_KERNELS, {"default": "TORCH_FLASH", "advanced": True}),
+                "attention": (_ATTENTION_KERNELS, {"default": "TORCH_FLASH", "advanced": True,
+                              "tooltip": "SOL_ATTN_TAU* is optional, MiniMax H3 Ulysses-only approximate "
+                              "attention and requires an explicit accuracy waiver. Install its dependencies "
+                              "on every worker; dgxm doctor reports detected packages and passive prerequisites, "
+                              "not proven kernel execution. TORCH_FLASH is the default."}),
                 "config_path": ("STRING", {"default": "", "advanced": True,
                                 "tooltip": "Path to a cluster.toml. Empty searches $DGXM_CLUSTER_TOML, "
                                 "./cluster.toml, then ~/.config/dgx-monarch/cluster.toml."}),

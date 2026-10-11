@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+- Show health separately from rendering or other active work in the dashboard
+  and browser. Preserve legacy readiness JSON and recordings, and explain the
+  render activity that CLI status does not observe. Keep unknown mesh evidence
+  and blocking fields visible when aggregating multiple meshes or drivers.
+
+- Add an opt-in `dgxm launcher` for normal-terminal access to a selected
+  environment and config. Preserve existing commands, refuse unsafe or edited
+  targets, and make identical reruns a no-op. Setup guidance verifies actual
+  PATH resolution and the intended dashboard endpoint.
+
+- Add an optional combined ComfyUI and dashboard launch with the selected
+  interpreter, config and endpoint. Preserve foreground logs and signal
+  handling, and close only the dashboard and driver owned by that launch.
+  Desktop shortcuts can save the same options.
+
+- Build pip's Torch constraint from distribution metadata while preserving
+  separate runtime/CUDA checks. Name safe package-ownership details locally
+  when verified update refuses; keep receipts disclosure-safe.
+
+- Add a MiniMax H3 template that saves H.264/AAC MP4 at 24 fps, retaining the
+  existing separate-frame/audio template. Check native export with synthetic
+  CPU video and audio in the ComfyUI canary.
+
+- Extend optional Sol-Attention diagnostics on each configured interpreter
+  with installed dependency requirements, Python headers and bounded cache
+  observations. Explain the accuracy waiver and post-install mesh recycling;
+  package detection does not claim GPU compilation or kernel execution.
+
+- Add a plan-first optional Sol installer for every configured Worker
+  interpreter. Bind apply to reviewed wheel plans, protect the existing core
+  runtime and refuse unsafe package changes. Keep the explicit GPU dense-control
+  smoke separate from installation and model accuracy validation.
+
 - Accept the verified color-matcher 0.6.0 test-data layout during pinned
   TorchMonarch checks. Preserve checks for changed files, duplicate ownership
   and executable import shadows. Add a recovery command for installations
