@@ -2,9 +2,10 @@
 
 ## [Unreleased]
 
-- Recognize a verified source `.egg-info` companion to an installed editable
-  distribution during optional Sol maintenance. Preserve installed-file
-  ownership checks and refuse mismatched or unproven duplicate metadata.
+- Support proven editable metadata and preserved core-library links during
+  optional Sol maintenance. Keep installed-file ownership authoritative, bind
+  each protected link and target, and refuse ambiguous metadata or replacement
+  through links.
 
 - Show health separately from rendering or other active work in the dashboard
   and browser. Preserve legacy readiness JSON and recordings, and explain the

@@ -1585,6 +1585,7 @@ dgx-monarch/
 │       ├── sol_install_payload.py # isolated wheel staging and protected package apply
 │       ├── sol_install_guard.py # bounded passive maintenance idle guard
 │       ├── sol_install_inventory.py # installed metadata and proven editable companions
+│       ├── sol_install_protected_links.py # read-only protected link and target evidence
 │       ├── sol_install_requirements.py # built-wheel dependency checks before mutation
 │       ├── sol_smoke.py        # explicit model-free GPU dense kernel control
 │       ├── setup_apply.py      # confirmed lock-held setup mutation/settlement

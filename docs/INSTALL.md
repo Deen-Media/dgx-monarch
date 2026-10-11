@@ -856,6 +856,11 @@ Editable installations can expose both installed `.dist-info` and source
 editable project and versions match, and uses only the installed metadata for
 file ownership. Other duplicate distributions still require inspection.
 
+A protected runtime file may be a symbolic link. The installer checks the
+link and its regular-file target before and after installation without gaining
+permission to modify either. Directory links and links in distributions
+selected for replacement remain unsupported.
+
 After installation, an optional explicit GPU check runs a bounded 4,096-token
 BF16 dense control on each configured single-GPU host:
 

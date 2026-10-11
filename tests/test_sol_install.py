@@ -158,7 +158,7 @@ def test_allowed_replacement_with_shared_ownership_is_refused(monkeypatch):
                                     locate_file=lambda item: Path("/site") / item)
                      for name in ("protobuf", "unrelated")]
     monkeypatch.setattr(payload.md, "distributions", lambda: distributions)
-    monkeypatch.setattr(payload, "inventory_path", lambda distribution, item: Path("/site") / item)
+    monkeypatch.setattr(payload, "inventory_path", lambda distribution, item, **kwargs: Path("/site") / item)
     with pytest.raises(RuntimeError, match="overlaps another"):
         payload.preserved_paths({"protobuf"})
 
