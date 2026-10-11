@@ -2,74 +2,61 @@
 
 ## [Unreleased]
 
-- Support proven editable metadata and preserved core-library links during
-  optional Sol maintenance. Keep installed-file ownership authoritative, bind
-  each protected link and target, and refuse ambiguous metadata or replacement
-  through links.
+## [1.1.0] - 2026-10-11
 
-- Show health separately from rendering or other active work in the dashboard
-  and browser. Preserve legacy readiness JSON and recordings, and explain the
-  render activity that CLI status does not observe. Keep unknown mesh evidence
-  and blocking fields visible when aggregating multiple meshes or drivers.
+### Everyday use
 
-- Add an opt-in `dgxm launcher` for normal-terminal access to a selected
-  environment and config. Preserve existing commands, refuse unsafe or edited
-  targets, and make identical reruns a no-op. Setup guidance verifies actual
-  PATH resolution and the intended dashboard endpoint.
+- Show health separately from activity in the dashboard and browser. Healthy
+  rendering reads READY / RENDERING with a wait instruction. Preserve legacy
+  readiness JSON and recordings, and explain activity that CLI status does not
+  observe. Unknown or blocked evidence remains visible.
+- Add opt-in `dgxm launcher` access from a normal terminal, bound to the selected
+  environment and cluster config. Preserve existing commands and make identical
+  reruns a no-op. Setup verifies PATH resolution and the dashboard endpoint.
+- Launch ComfyUI alongside its dashboard with `--with-top`, including from the
+  desktop shortcut. Preserve foreground logs and terminal signals, and close
+  only the driver and dashboard owned by that launch.
+- Add a MiniMax H3 workflow that saves H.264/AAC MP4 at 24 fps. Keep the existing
+  separate-frame/audio workflow. The catalog now contains 59 workflows.
 
-- Add an optional combined ComfyUI and dashboard launch with the selected
-  interpreter, config and endpoint. Preserve foreground logs and signal
-  handling, and close only the dashboard and driver owned by that launch.
-  Desktop shortcuts can save the same options.
+### Installation and updates
 
-- Build pip's Torch constraint from distribution metadata while preserving
-  separate runtime/CUDA checks. Name safe package-ownership details locally
-  when verified update refuses; keep receipts disclosure-safe.
+- Add an optional fleet-wide Sol-Attention installer with a reviewed package
+  plan and protected runtime checks. Keep the explicit GPU dense-control smoke
+  separate from installation. Diagnose dependency requirements, Python headers
+  and compiler caches; document the accuracy waiver and mesh recycling.
+- Accept proven editable metadata companions and preserved core-library links
+  during Sol maintenance. Keep installed-file ownership authoritative and reject
+  ambiguous metadata, unsafe replacements and changes to protected packages.
+- Derive the Torch install constraint from distribution metadata while retaining
+  runtime/CUDA checks. Preserve working Torch builds and report useful package
+  ownership details when verified updates refuse an installation.
+- Support the verified color-matcher 0.6.0 test-data layout in TorchMonarch
+  inventory checks, with a recovery command for older updaters. Keep checks for
+  changed files, duplicate ownership and import shadows.
+- Report Worker service health from fresh passive process and listener checks,
+  separately from attached actor telemetry. Missing or failed observations
+  remain unknown.
+- Simplify guided setup and handoff: gather prerequisites before plan approval,
+  validate private receipt paths and process-inspection capability early, and
+  put launch commands and installation paths first. Detailed network auditing
+  is optional; trusted isolation and operator acknowledgement remain required.
+- Let users select a supported first-render model; Chroma is optional. Preserve
+  recognized deletions of ComfyUI's two tracked placeholder files during setup,
+  with a warning; other checkout changes still block it.
 
-- Add a MiniMax H3 template that saves H.264/AAC MP4 at 24 fps, retaining the
-  existing separate-frame/audio template. Check native export with synthetic
-  CPU video and audio in the ComfyUI canary.
+### Compatibility and verification
 
-- Extend optional Sol-Attention diagnostics on each configured interpreter
-  with installed dependency requirements, Python headers and bounded cache
-  observations. Explain the accuracy waiver and post-install mesh recycling;
-  package detection does not claim GPU compilation or kernel execution.
+Existing node mappings, ordered inputs and defaults remain compatible. Core
+runtime dependency pins are unchanged. An upgrade requires first-use checks
+before cached identity-gate results can be reused.
 
-- Add a plan-first optional Sol installer for every configured Worker
-  interpreter. Bind apply to reviewed wheel plans, protect the existing core
-  runtime and refuse unsafe package changes. Keep the explicit GPU dense-control
-  smoke separate from installation and model accuracy validation.
-
-- Accept the verified color-matcher 0.6.0 test-data layout during pinned
-  TorchMonarch checks. Preserve checks for changed files, duplicate ownership
-  and executable import shadows. Add a recovery command for installations
-  whose older updater cannot pass this check.
-
-- Report live Worker service readiness from fresh passive process and listening
-  socket checks, separately from actor telemetry. Refresh in the background;
-  missing, expired or failed observations remain unknown.
-
-- Put start commands, browser access and installation paths first in the setup
-  handoff. Offer the optional dgxm TUI and a simple launch script in the user's
-  chosen location. Keep permanent installations outside temporary or chat-output
-  folders.
-
-- Use the default private setup receipt directory and check custom paths early.
-  Add a process-inspection capability check and a maintained foreground helper
-  command so required administrator steps can be planned before apply.
-
-- Gather setup prerequisites before asking for one installation plan approval,
-  and reuse approval for its listed actions. Make detailed network auditing
-  optional while retaining the required trusted isolation and operator
-  acknowledgement. Add private, read-only reports for requested audits. Keep isolated acceptance tests separate from normal
-  installation.
-- Permit unstaged deletions of ComfyUI's tracked `input/example.png` and
-  `output/_output_images_will_be_put_here` during setup. Preserve the missing
-  files, modified checkout status and warning; other changes still block setup.
-
-- Let users choose a supported model for their first distributed render.
-  Chroma remains an optional recommendation; setup still requires a saved
-  output, proof that both Sparks participated and a safe rerun.
+[Operator acceptance](docs/VALIDATION.md#onboarding-and-operator-acceptance)
+records the tested source, two-Spark execution and cleanup scope. Sol dense
+kernel checks and a saved MiniMax MP4 are functional evidence, not sparse
+attention or model-fidelity qualification. Native latent RDMA remains
+**NOT RUN / HOLD**. The cuSPARSELt ARM64 packaging exception remains tracked in
+[issue #5](https://github.com/Deen-Media/dgx-monarch/issues/5).
 
 ## 1.0.0
 

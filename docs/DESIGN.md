@@ -7,7 +7,8 @@ supports a Worker
 on the driver's host; [Validation](VALIDATION.md#operator-checks) records the
 update results and limits. The benchmark
 campaign covers a documented subset, not the full matrix. The package declares
-version 1.0.0; the release tag waits for launch. Section 9 tracks acceptance.
+version 1.1.0. [Release history](../CHANGELOG.md) records the compatible operator
+improvements; section 9 tracks acceptance.
 The runtime also includes low-RSS LoRA residency, zero-copy slab residency,
 the identity gate and ledger, `dgxm top`, Fleet sampling, an RDMA latent-return
 path that is off by default and **NOT RUN / HOLD** (§5.6), and the per-family
