@@ -44,6 +44,23 @@ def _identity(info: os.stat_result) -> tuple[int, ...]:
     return (info.st_dev, info.st_ino, info.st_mode, info.st_uid, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
+def _refuse_launcher_target(target: Path) -> None:
+    """Require the environment entry point, never another managed launcher.
+
+    Follow executable symlinks, but inspect bytes without executing the target.
+    A damaged or edited marker still denotes a launcher; ownership validation
+    for replacement is deliberately stricter than this chain-prevention check.
+    """
+    fd = os.open(target, os.O_RDONLY | os.O_NONBLOCK)
+    try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            raise ValueError("selected dgxm executable is not a regular file")
+        if b"dgx-monarch-launcher-" in os.read(fd, _MAX_BYTES + 1):
+            raise ValueError("selected executable is a managed launcher; select the environment's dgxm executable")
+    finally:
+        os.close(fd)
+
+
 def _read_owned(parent: int, name: str) -> tuple[bytes, tuple[int, ...]] | None:
     try:
         fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
@@ -104,6 +121,7 @@ def install(executable: str, config: str, destination: str, *, apply: bool = Fal
         raise ValueError("selected cluster config is missing or not a file")
     if target.resolve() == output.resolve():
         raise ValueError("launcher cannot execute itself")
+    _refuse_launcher_target(target)
     payload = _render(target, cluster)
     if len(payload) > _MAX_BYTES:
         raise ValueError("launcher paths exceed the supported size")
@@ -138,6 +156,7 @@ def install(executable: str, config: str, destination: str, *, apply: bool = Fal
             os.close(fd)
         if _identity(os.stat(output.parent, follow_symlinks=False))[:2] != _identity(os.fstat(parent))[:2]:
             raise ValueError("launcher directory changed during installation")
+        _refuse_launcher_target(target)
         if before is None:
             os.link(temporary, output.name, src_dir_fd=parent, dst_dir_fd=parent, follow_symlinks=False)
         else:

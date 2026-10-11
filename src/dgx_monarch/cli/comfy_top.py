@@ -18,6 +18,7 @@ import time
 from pathlib import Path
 
 from .comfy_top_process import DRIVER_GRACE_SECONDS, close_terminal, diagnostic, settle_driver, signal_driver
+from .comfy_top_signal import ForegroundDriver
 
 
 def prerequisites(config: str) -> list[str]:
@@ -106,6 +107,7 @@ def supervise(
         raise ValueError("--with-top requires a graphical display; use a separate dgxm top terminal on headless hosts")
     terminal: subprocess.Popen | None = None
     driver: subprocess.Popen | None = None
+    bridge: ForegroundDriver | None = None
     received = 0
     settlement_attempted = False
     channel: socket.socket | None = None
@@ -171,11 +173,21 @@ def supervise(
                             pass
                     result = terminal.wait(timeout=0)
                     return 128 + received if received else (128 - result if result < 0 else result)
-                driver = subprocess.Popen(command, process_group=0)
+                bridge = ForegroundDriver(command)
+                driver = bridge.driver
+                if driver is None:
+                    raise OSError("foreground driver startup was not confirmed")
+                received = received or bridge.observed_signal()
+                if received:
+                    return 128 + received
                 _foreground(driver.pid)
-                signal_driver(driver, signal.SIGCONT)  # resume if it read stdin before foreground transfer
+                received = received or bridge.observed_signal()
+                if received:
+                    return 128 + received
+                bridge.release()
                 warned = False
                 while driver.poll() is None:
+                    received = received or bridge.observed_signal()
                     if received:
                         settlement_attempted = True
                         result = settle_driver(driver, grace=shutdown_grace)
@@ -200,6 +212,11 @@ def supervise(
                 settle_driver(driver, grace=shutdown_grace)
         except BaseException as exc:
             cleanup_error = exc
+        try:
+            if bridge is not None:
+                bridge.close()
+        except BaseException as exc:
+            cleanup_error = cleanup_error or exc
         try:
             _foreground(foreground)
         except OSError:

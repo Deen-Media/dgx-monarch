@@ -81,6 +81,40 @@ def test_rerun_restores_owner_execution_even_when_other_execute_bit_is_set(paths
     assert subprocess.run([str(paths[2]), "version"], capture_output=True).returncode == 7
 
 
+@pytest.mark.parametrize("apply_change", [False, True])
+@pytest.mark.parametrize("target_kind", ["managed", "symlink", "edited"])
+def test_managed_targets_refused_without_changing_either_launcher(paths, tmp_path, apply_change, target_kind):
+    apply(paths)
+    first = paths[2]
+    second = tmp_path / "other-bin/dgxm"
+    # Represent an existing chain from the previous installer without running it.
+    second.parent.mkdir()
+    second.write_bytes(launcher._render(first, paths[1]))
+    second.chmod(0o755)
+    if target_kind == "edited":
+        second.write_bytes(second.read_bytes().replace(
+            b"# dgx-monarch-launcher-v1 ", b"#  dgx-monarch-launcher-v1 broken ",
+        ))
+    target = second
+    if target_kind == "symlink":
+        target = tmp_path / "alias"
+        target.symlink_to(second)
+    before = {path: (path.read_bytes(), path.stat().st_ino) for path in (first, second)}
+
+    with pytest.raises(ValueError, match="managed launcher"):
+        launcher.install(str(target), str(paths[1]), str(first), apply=apply_change)
+
+    assert {path: (path.read_bytes(), path.stat().st_ino) for path in (first, second)} == before
+
+
+def test_new_launcher_cannot_target_existing_managed_launcher(paths, tmp_path):
+    apply(paths)
+    output = tmp_path / "new-bin/dgxm"
+    with pytest.raises(ValueError, match="managed launcher"):
+        launcher.install(str(paths[2]), str(paths[1]), str(output), apply=True)
+    assert not output.parent.exists()
+
+
 @pytest.mark.parametrize("kind", ["foreign", "symlink", "directory", "edited"])
 def test_preserves_existing_commands(paths, kind):
     output = paths[2]

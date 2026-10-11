@@ -99,6 +99,7 @@ NOT_REFUSAL_CLASSES = frozenset({
     # lifecycle/IO boundaries, not model math or capacity waiver guards.
     "SolInstallError",
     "IdleMaintenanceError",
+    "WheelRequirementsError",
     "GateAuditError",
     "ProfileRefusal",
     "PriorTeardownUnknownError",

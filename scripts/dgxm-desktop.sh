@@ -215,4 +215,8 @@ chmod 0644 "$TEMP_FILE"
 mv -f -- "$TEMP_FILE" "$DESKTOP_FILE"
 trap - EXIT HUP INT TERM
 printf 'Installed %s\n' "$DESKTOP_FILE"
-printf 'The shortcut starts ComfyUI%s; Worker services are unchanged.\n' "$([ "$WITH_TOP" = 1 ] && printf ' and its dashboard' || true)"
+if [ "$WITH_TOP" = 1 ]; then
+    printf 'The shortcut starts ComfyUI and its dashboard; Worker services are unchanged.\n'
+else
+    printf 'The shortcut starts ComfyUI; Worker services are unchanged.\n'
+fi

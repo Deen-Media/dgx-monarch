@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict, cast, overload
 
 from .sol_install_guard import require_idle
+from .sol_install_requirements import validate_wheel_requirements
 
 SOL_SHA = "71350faed59a6865173ddfd5a7d4471da4bde328"
 ROOT_NAMES = {"sol-attn", "nvidia-cutlass-dsl", "apache-tvm-ffi"}
@@ -361,6 +362,7 @@ def plan_host(token: str, allowed: Collection[str]) -> InstallPlan:
             raise SolInstallError("downloaded wheel differs from resolver SHA256")
         if wheel_identity(wheel, paths, replacement_paths(change["name"]), staged_destinations) != (change["name"], change["new"]):
             raise SolInstallError("staged wheel metadata differs from plan")
+        validate_wheel_requirements(wheel, projected)
         artifacts.append({"file": wheel.name, "sha256": file_hash(wheel)})
     if installed() != before or protected_state()[0] != protected_hash:
         raise SolInstallError("environment changed during planning")
@@ -410,6 +412,8 @@ def apply_host(token: str, expected: str, allowed: Collection[str]) -> InstallPl
     root = private_plan(token)
     wheels: list[str] = []
     staged_destinations: set[str] = set()
+    projected = dict(plan["before"])
+    projected.update({row["name"]: row["new"] for row in plan["changes"]})
     preserved, _replaced = preserved_paths({row["name"] for row in plan["changes"]}, include_replaced=True)
     protected_paths = protected_state()[1] | preserved
     for change, artifact in zip(plan["changes"], plan["artifacts"], strict=True):
@@ -421,6 +425,7 @@ def apply_host(token: str, expected: str, allowed: Collection[str]) -> InstallPl
             raise SolInstallError("staged artifact changed")
         if wheel_identity(path, protected_paths, replacement_paths(change["name"]), staged_destinations) != (change["name"], change["new"]):
             raise SolInstallError("artifact identity changed")
+        validate_wheel_requirements(path, projected)
         wheels.append(str(path))
     require_idle()  # Embedded by the command immediately before package mutation.
     failure = None

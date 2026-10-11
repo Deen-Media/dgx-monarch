@@ -159,31 +159,40 @@ def test_terminal_start_timeout_never_starts_driver(rig, monkeypatch):
     assert not (root / "driver").exists()
 
 
-def test_real_pty_foreground_group_and_exit(tmp_path, monkeypatch):
+@pytest.mark.parametrize("ignore_interrupt", [False, True])
+def test_real_pty_foreground_group_and_exit(tmp_path, monkeypatch, ignore_interrupt):
     terminal = tmp_path / "terminal"
     terminal.write_text(f"#!{sys.executable}\n" + "import socket,sys\ns=socket.socket(socket.AF_UNIX)\ns.connect(sys.argv[sys.argv.index('--ready')+1])\ns.sendall(b'ready\\n')\ns.recv(1)\n")
     terminal.chmod(0o755)
     monkeypatch.setenv("DISPLAY", ":test")
-    driver_code = "import os,sys; print('FOREGROUND',os.tcgetpgrp(0)==os.getpgrp(),flush=True); sys.exit(7)"
+    driver_code = "import os,sys,signal,time; "
+    if ignore_interrupt:
+        driver_code += "signal.signal(signal.SIGINT,signal.SIG_IGN); signal.signal(signal.SIGTERM,signal.SIG_IGN); "
+    driver_code += "print('FOREGROUND',os.tcgetpgrp(0)==os.getpgrp(),flush=True); "
+    driver_code += "time.sleep(30)" if ignore_interrupt else "sys.exit(7)"
     script = (
         "import sys\nfrom dgx_monarch.cli import comfy_top\n"
         f"comfy_top.prerequisites=lambda _config: [{str(terminal)!r}]\n"
-        f"raise SystemExit(comfy_top.supervise('/config','127.0.0.1:8188',[sys.executable,'-c',{driver_code!r}]))\n"
+        f"raise SystemExit(comfy_top.supervise('/config','127.0.0.1:8188',[sys.executable,'-c',{driver_code!r}],shutdown_grace=.05,terminal_grace=.05))\n"
     )
     # Fork the PTY in a fresh single-threaded interpreter, not pytest's process.
     import subprocess
 
-    harness = "import os,pty,select,signal,sys,time\n" + f"script={script!r}\n" + """child,master=pty.fork()
+    harness = "import os,pty,select,signal,sys,time\n" + f"script={script!r}\ninterrupt={ignore_interrupt!r}\n" + """child,master=pty.fork()
 if child == 0:
     os.execv(sys.executable,[sys.executable,'-c',script])
 output=b''
 status=None
+sent=False
 try:
     deadline=time.monotonic()+7
     while time.monotonic()<deadline:
         if select.select([master],[],[],.1)[0]:
             try: output+=os.read(master,4096)
             except OSError: pass
+        if interrupt and not sent and b'FOREGROUND True' in output:
+            os.write(master,b'\\x03')
+            sent=True
         reaped,result=os.waitpid(child,os.WNOHANG)
         if reaped:
             status=result
@@ -198,8 +207,10 @@ finally:
 sys.exit(os.waitstatus_to_exitcode(status) if status is not None else 99)
 """
     result = subprocess.run([sys.executable, "-c", harness], capture_output=True, timeout=10)
-    assert result.returncode == 7, result.stdout + result.stderr
+    assert result.returncode == (137 if ignore_interrupt else 7), result.stdout + result.stderr
     assert b"FOREGROUND True" in result.stdout
+    if ignore_interrupt:
+        assert b"actor cleanup is NOT confirmed" in result.stdout
 
 
 def test_ignored_driver_signal_is_bounded_and_reports_unknown_actor_cleanup(rig, capsys):
@@ -303,3 +314,42 @@ def test_exception_cleanup_bounds_an_ignoring_driver_and_preserves_error(rig, mo
         comfy_top.supervise("/config", "127.0.0.1:8188", command, shutdown_grace=.05, terminal_grace=.05)
     assert time.monotonic() - started < 3
     assert (root / "stopped").exists()
+
+
+def test_observer_death_settles_owned_driver_instead_of_losing_signal_supervision(rig, monkeypatch):
+    root, _groups = rig
+    original = comfy_top.ForegroundDriver
+    class FailedObserver(original):
+        def release(self):
+            super().release()
+            assert self.observer is not None
+            self.observer.kill()
+            self.observer.wait(timeout=3)
+    monkeypatch.setattr(comfy_top, "ForegroundDriver", FailedObserver)
+    with pytest.raises(OSError, match="signal observer exited"):
+        comfy_top.supervise("/config", "127.0.0.1:8188", [sys.executable, "-c", "import time; time.sleep(30)"], shutdown_grace=.05, terminal_grace=.05)
+    assert (root / "stopped").exists()
+
+
+@pytest.mark.parametrize("source", ["supervisor", "foreground"])
+def test_cancellation_during_observer_handshake_never_releases_driver(rig, monkeypatch, source):
+    import select
+
+    root, groups = rig
+    marker = root / "must-not-start"
+    original = comfy_top.ForegroundDriver
+    class InterruptedStartup(original):
+        def __init__(self, command):
+            super().__init__(command)
+            if source == "supervisor":
+                os.kill(os.getpid(), signal.SIGTERM)
+            else:
+                assert self.driver is not None
+                os.killpg(self.driver.pid, signal.SIGINT)
+                assert select.select([self.events], [], [], 3)[0]
+    monkeypatch.setattr(comfy_top, "ForegroundDriver", InterruptedStartup)
+    command = [sys.executable, "-c", f"from pathlib import Path; Path({str(marker)!r}).touch()"]
+    result = comfy_top.supervise("/config", "127.0.0.1:8188", command, shutdown_grace=.05, terminal_grace=.05)
+    assert result == (143 if source == "supervisor" else 130)
+    assert not marker.exists()
+    assert groups == [123]

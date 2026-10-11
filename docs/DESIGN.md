@@ -1567,6 +1567,7 @@ dgx-monarch/
 │       ├── launcher.py         # managed local command ownership and publication
 │       ├── comfy_top.py        # foreground driver and owned dashboard supervisor
 │       ├── comfy_top_process.py # bounded owned-process signal and settlement helpers
+│       ├── comfy_top_signal.py # owned foreground signal observation and startup gate
 │       ├── legacy_init.py      # compatibility interactive config writer
 │       ├── legacy_update.py    # compatibility pull/sync/restart update
 │       ├── lifecycle.py        # Worker service lifecycle and package/pin effects
@@ -1583,6 +1584,7 @@ dgx-monarch/
 │       ├── sol_install.py      # per-host plans and reviewed fleet digest
 │       ├── sol_install_payload.py # isolated wheel staging and protected package apply
 │       ├── sol_install_guard.py # bounded passive maintenance idle guard
+│       ├── sol_install_requirements.py # built-wheel dependency checks before mutation
 │       ├── sol_smoke.py        # explicit model-free GPU dense kernel control
 │       ├── setup_apply.py      # confirmed lock-held setup mutation/settlement
 │       ├── setup_cli.py        # strict public setup parsing/presentation boundary
