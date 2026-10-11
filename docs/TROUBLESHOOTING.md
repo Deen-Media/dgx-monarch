@@ -3677,6 +3677,18 @@ coordinates Monarch commands but cannot prevent a manual process launch.
 Failed/unknown outcomes retain their private staging for inspection; do not
 blindly retry a partially applied fleet plan.
 
+A normal editable install may expose both installed `.dist-info` and source
+`.egg-info`. The installer accepts only a matching version and a source
+companion bound to the recorded editable project; file ownership still comes
+from the installed distribution. If a duplicate remains unproven, inspect the
+named distribution instead of deleting metadata or bypassing ownership checks.
+
+An existing protected library may be a symbolic link to a regular file outside
+the environment. Its link identity and target contents are preserved and
+checked independently; that target never becomes an allowed installation or
+uninstall destination. Directory links, replacement through a link, and
+changing or unreadable link evidence still refuse.
+
 The installer uses Sana revision
 `71350faed59a6865173ddfd5a7d4471da4bde328`, CUTLASS DSL `4.7.0` and
 `apache-tvm-ffi==0.1.14.post1`. For a separately managed environment, the

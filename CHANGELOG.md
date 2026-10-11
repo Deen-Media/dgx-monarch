@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Support proven editable metadata and preserved core-library links during
+  optional Sol maintenance. Keep installed-file ownership authoritative, bind
+  each protected link and target, and refuse ambiguous metadata or replacement
+  through links.
+
 - Show health separately from rendering or other active work in the dashboard
   and browser. Preserve legacy readiness JSON and recordings, and explain the
   render activity that CLI status does not observe. Keep unknown mesh evidence

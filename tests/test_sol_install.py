@@ -158,7 +158,7 @@ def test_allowed_replacement_with_shared_ownership_is_refused(monkeypatch):
                                     locate_file=lambda item: Path("/site") / item)
                      for name in ("protobuf", "unrelated")]
     monkeypatch.setattr(payload.md, "distributions", lambda: distributions)
-    monkeypatch.setattr(payload, "inventory_path", lambda distribution, item: Path("/site") / item)
+    monkeypatch.setattr(payload, "inventory_path", lambda distribution, item, **kwargs: Path("/site") / item)
     with pytest.raises(RuntimeError, match="overlaps another"):
         payload.preserved_paths({"protobuf"})
 
@@ -373,7 +373,7 @@ def test_staged_wheels_cannot_claim_the_same_new_file(tmp_path, monkeypatch):
 def test_replacement_ownership_is_scoped_to_each_distribution(monkeypatch, tmp_path):
     distributions = {name: SimpleNamespace(files=[f"{name}.py"], metadata={"Name": name})
                      for name in ("first", "second")}
-    monkeypatch.setattr(payload.md, "distribution", lambda name: distributions[name])
+    monkeypatch.setattr(payload, "distribution_inventory", lambda: distributions)
     monkeypatch.setattr(payload, "inventory_path", lambda dist, item: tmp_path / item)
     assert payload.replacement_paths("first") == {str(tmp_path / "first.py")}
     assert str(tmp_path / "second.py") not in payload.replacement_paths("first")

@@ -42,11 +42,17 @@ MARKER = "DGXM_SOL_INSTALL="
 def host_script(config: ClusterConfig, action: str, token: str, allowed: Collection[str], expected: str = "") -> str:
     payload = Path(__file__).with_name("sol_install_payload.py").read_text()
     payload = payload.replace("from .sol_install_guard import require_idle\n", "")
+    payload = payload.replace("from .sol_install_inventory import distribution_inventory\n", "")
+    payload = payload.replace("from .sol_install_protected_links import protected_leaf_fingerprint\n", "")
+    links = Path(__file__).with_name("sol_install_protected_links.py").read_text()
+    links = links.replace("from __future__ import annotations\n", "")
+    inventory = Path(__file__).with_name("sol_install_inventory.py").read_text()
+    inventory = inventory.replace("from __future__ import annotations\n", "")
     payload = payload.replace("from .sol_install_requirements import validate_wheel_requirements\n", "")
     requirements = Path(__file__).with_name("sol_install_requirements.py").read_text()
     requirements = requirements.replace("from __future__ import annotations\n", "")
     request = repr({"action": action, "token": token, "allowed": sorted(allowed), "expected": expected})
-    source = payload + "\n" + requirements + "\n" + PROBE_SOURCE + "\n" + lifecycle_lock_source() + f'''
+    source = payload + "\n" + links + "\n" + inventory + "\n" + requirements + "\n" + PROBE_SOURCE + "\n" + lifecycle_lock_source() + f'''
 request = {request}
 try:
     lock_fd = acquire_lifecycle_lock(Path.home(), True)
@@ -63,7 +69,7 @@ try:
     print({MARKER!r} + json.dumps({{'status': 'ok', 'plan': public}}))
 except Exception as exc:
     # Only our bounded messages are public; pip/transport logs can carry secrets.
-    reason = str(exc) if type(exc) in (SolInstallError, IdleMaintenanceError, WheelRequirementsError) else "observation_or_operation_failed"
+    reason = str(exc) if type(exc) in (SolInstallError, IdleMaintenanceError, WheelRequirementsError, DistributionInventoryError, ProtectedLeafError) else "observation_or_operation_failed"
     print({MARKER!r} + json.dumps({{'status': 'failed', 'reason': reason}}))
     raise SystemExit(1)
 '''
