@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Recognize a verified source `.egg-info` companion to an installed editable
+  distribution during optional Sol maintenance. Preserve installed-file
+  ownership checks and refuse mismatched or unproven duplicate metadata.
+
 - Show health separately from rendering or other active work in the dashboard
   and browser. Preserve legacy readiness JSON and recordings, and explain the
   render activity that CLI status does not observe. Keep unknown mesh evidence

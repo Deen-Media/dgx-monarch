@@ -851,6 +851,11 @@ changed plans and unsafe environments refuse. The command never repairs
 system headers or cache ownership, restarts services, or rolls back a partial
 package change; an incomplete apply needs inspection before retrying.
 
+Editable installations can expose both installed `.dist-info` and source
+`.egg-info` metadata. The installer accepts that pair only when the recorded
+editable project and versions match, and uses only the installed metadata for
+file ownership. Other duplicate distributions still require inspection.
+
 After installation, an optional explicit GPU check runs a bounded 4,096-token
 BF16 dense control on each configured single-GPU host:
 

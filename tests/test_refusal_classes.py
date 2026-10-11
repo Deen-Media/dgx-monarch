@@ -100,6 +100,7 @@ NOT_REFUSAL_CLASSES = frozenset({
     "SolInstallError",
     "IdleMaintenanceError",
     "WheelRequirementsError",
+    "DistributionInventoryError",
     "GateAuditError",
     "ProfileRefusal",
     "PriorTeardownUnknownError",

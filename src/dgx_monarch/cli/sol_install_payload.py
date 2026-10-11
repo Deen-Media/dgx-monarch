@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any, Literal, TypedDict, cast, overload
 
 from .sol_install_guard import require_idle
+from .sol_install_inventory import distribution_inventory
 from .sol_install_requirements import validate_wheel_requirements
 
 SOL_SHA = "71350faed59a6865173ddfd5a7d4471da4bde328"
@@ -85,7 +86,7 @@ def file_hash(path: Path) -> str:
 
 def installed() -> dict[str, str]:
     result = {}
-    for distribution in md.distributions():
+    for distribution in distribution_inventory().values():
         name = canonical(distribution.metadata["Name"])
         if name in result:
             raise SolInstallError("duplicate installed distribution metadata")
@@ -132,7 +133,7 @@ def inventory_path(distribution: md.Distribution, item: str | md.PackagePath) ->
 
 def protected_state() -> tuple[str, set[str]]:
     rows = []
-    for distribution in md.distributions():
+    for distribution in distribution_inventory().values():
         name = canonical(distribution.metadata["Name"])
         if not protected(name):
             continue
@@ -220,7 +221,7 @@ def preserved_paths(changing: Collection[str], *, include_replaced: bool = False
     """Refuse ownership overlaps before pip can uninstall an allowed replacement."""
     preserved: set[str] = set()
     replaced: set[str] = set()
-    for distribution in md.distributions():
+    for distribution in distribution_inventory().values():
         target = replaced if canonical(distribution.metadata["Name"]) in changing else preserved
         files = distribution.files
         if files is None:
@@ -242,9 +243,8 @@ def check_destination(target: str, protected_paths: Collection[str], replaceable
 
 
 def replacement_paths(name: str) -> set[str]:
-    try:
-        distribution = md.distribution(name)
-    except md.PackageNotFoundError:
+    distribution = distribution_inventory().get(canonical(name))
+    if distribution is None:
         return set()
     if distribution.files is None:
         raise SolInstallError("replacement ownership inventory unavailable")
@@ -307,7 +307,7 @@ def requirement_violations(versions: Mapping[str, str], changing: Collection[str
     from pip._vendor.packaging.requirements import Requirement
 
     violations = set()
-    for distribution in md.distributions():
+    for distribution in distribution_inventory().values():
         owner = canonical(distribution.metadata["Name"])
         if owner in changing:
             continue
@@ -393,12 +393,13 @@ def read_plan(token: str) -> InstallPlan:
 def verify_requirements(names: Collection[str]) -> None:
     from pip._vendor.packaging.requirements import Requirement
 
+    inventory = distribution_inventory()
     for name in names:
-        for raw in md.requires(name) or ():
+        for raw in inventory[canonical(name)].requires or ():
             requirement = Requirement(raw)
             if requirement.marker and not requirement.marker.evaluate({"extra": ""}):
                 continue
-            version = md.version(requirement.name)
+            version = inventory[canonical(requirement.name)].version
             if requirement.specifier and version not in requirement.specifier:
                 raise SolInstallError("installed dependency requirements unsatisfied")
 
