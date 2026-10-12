@@ -161,10 +161,12 @@ grant the new controller authority to adopt an unknown prior installation.
 
 The public source repository has no self-hosted or custom-label hardware route.
 It must not own or request a self-hosted or JIT runner. Protected hardware
-validation uses hand-run scripts from a separately reviewed private control
-repository. No CI workflow, Actions runner, or scheduled job may execute on
-protected hardware. A GitHub Environment approval or acknowledgement string
-cannot authorize hardware access.
+validation uses reviewed hand-run scripts and tools from this repository.
+No archive or separate hardware-control repository is required. Keep
+host-specific wrappers, configuration and raw evidence in a private workspace;
+review wrappers before execution. No CI workflow, Actions runner, or scheduled
+job may execute on protected hardware. A GitHub Environment approval or
+acknowledgement string cannot authorize hardware access.
 
 The operator reviews the script and selects one exact 40-character public
 source commit. Before execution, verify that commit and the source manifest
@@ -183,12 +185,15 @@ return path. No manual test may silently expand into RDMA qualification.
 
 Repository responsibilities are:
 
-- The public source repository holds reviewable code and one exact public
-  target commit. No executable hardware workflow may sit there, and no
-  public workflow may call a runner-registration endpoint such as
+- The public source repository holds the current runbook, reviewable validation
+  tools and one exact public target commit. No executable hardware workflow may
+  sit under `.github/workflows/`, and no public workflow may call a
+  runner-registration endpoint such as
   `actions/runners/generate-jitconfig`.
-- The private control repository holds reviewed hand-run scripts and private
+- The private workspace holds host-specific wrappers, configuration and raw
   evidence. It has trusted writers only and no CI hardware execution route.
+  An optional private repository may preserve these records; its existence is
+  not an execution prerequisite or a source of runtime implementation.
 - The operator owns execution, authorization, source verification, and cleanup.
   Do not expose GitHub, SSH-agent, cloud, deploy, or release credentials to
   test code. If a script needs a cluster-lifecycle SSH key, restrict it to the
@@ -212,8 +217,8 @@ Before a visibility change, complete every step:
    runners and no runner process awaiting work.
 2. Prove the public default branch carries no workflow under
    `.github/workflows/` whose `runs-on` value can select a self-hosted or
-   caller-supplied custom label. Verify that the private control repository
-   also has no CI hardware execution route.
+   caller-supplied custom label. Verify that any private control repository
+   used for wrappers or evidence also has no CI hardware execution route.
 3. Inventory registered runners, queued and in-progress jobs, workflow runs,
    historical logs, artifacts, caches, repository variables, secrets,
    Environments, deployments, and Pages or release assets that may carry

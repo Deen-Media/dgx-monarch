@@ -135,12 +135,16 @@ Attach reviewed, sanitized results.
 
 The public repository has no hardware-runner route. Follow the manual
 [hardware-smoke contract](docs/THREAT_MODEL.md#github-actions-to-trusted-hardware):
-use reviewed hand-run scripts from the private control repository, with
+use reviewed hand-run scripts and tools from this repository, with
 operator authorization, exact source commit and manifest verification on every
 host, and passive idle and ownership checks. CI, Actions runners and scheduled
 jobs must never execute on protected hardware. A client must not stop persistent
 Worker services as cleanup. Service stops or restarts require explicit
 maintenance authorization and verified restoration.
+
+Use the current runbook and source tools; no archive or separate hardware-control
+repository is required. Keep host-specific wrappers, configuration and raw
+evidence in a private workspace. Review any wrapper before execution.
 
 Keep raw evidence private. Record **NOT RUN** for a check without a clean
 recorded run. Publish measured claims in [VALIDATION](docs/VALIDATION.md) with

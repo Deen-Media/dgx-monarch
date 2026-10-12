@@ -136,12 +136,13 @@ def test_provenance_and_skill_boundaries_use_current_contracts() -> None:
     )
     assert "hardware-smoke.yml" not in dev_skill
     assert "Public-source CI" in dev_skill
-    assert "separately reviewed private control repository" in dev_skill
     dev_skill_flat = " ".join(dev_skill.split())
     for phrase in (
         "never routes a job to protected hardware",
         "exact public source commit",
         "hand-run scripts",
+        "tools from this repository",
+        "No archive or separate hardware-control repository is required",
         "No CI workflow, Actions runner, or scheduled job",
         "source manifest on every host",
         "explicit maintenance authorization",
@@ -154,8 +155,9 @@ def test_provenance_and_skill_boundaries_use_current_contracts() -> None:
         _text(REPO / "docs" / "THREAT_MODEL.md").split()
     )
     for phrase in (
-        "No executable hardware workflow may sit there",
+        "No executable hardware workflow may sit under `.github/workflows/`",
         "generate-jitconfig",
+        "No archive or separate hardware-control repository is required",
     ):
         assert phrase in threat_model_flat, phrase
 

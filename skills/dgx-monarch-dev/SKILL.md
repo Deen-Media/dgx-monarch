@@ -119,10 +119,13 @@ python benchmark/run_matrix.py --matrix benchmark/matrix.toml
 
 Public-source CI covers lint, unit tests, artifacts, and canaries on hosted
 runners. It never routes a job to protected hardware. Hardware validation
-uses hand-run scripts from a separately reviewed private control repository;
-docs/THREAT_MODEL.md records the contract. Verify the exact public source commit
-and source manifest on every host, obtain operator authorization, and passively
-check idle state and ownership before execution. No CI workflow, Actions
+uses reviewed hand-run scripts and tools from this repository;
+docs/THREAT_MODEL.md records the contract. No archive or separate hardware-control
+repository is required. Keep host-specific wrappers, configuration and raw
+evidence in a private workspace, and review wrappers before execution.
+Verify the exact public source commit and source manifest on every host, obtain
+operator authorization, and passively check idle state and ownership before
+execution. No CI workflow, Actions
 runner, or scheduled job may execute on protected hardware. For a check without
 a clean recorded run, report the hardware gate as **NOT RUN**. Worker services
 persist; stopping one requires explicit maintenance authorization and verified
@@ -179,7 +182,7 @@ setup-service script modules. Review both sets on a bump.
    explicit `COMFY_PYTHON` and the docs/INSTALL.md recipe, which builds the
    xFuser compatibility wheel, then runs `"$COMFY_PYTHON" -m pip install -e` on
    the checkout with that wheel and the torch constraint.
-2. From the separately reviewed private control repository, run the authorized
+2. Use this repository's current runbook and tools to run the authorized
    hand-run hardware checks against the exact public source SHA, including each
    feature-specific validation. Do not arm a source-repository hardware route.
    Record unperformed checks as **NOT RUN**. Keep raw evidence private and attach
