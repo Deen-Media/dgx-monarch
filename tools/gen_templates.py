@@ -185,6 +185,7 @@ STOCK = {
     "GetImageSize": [],
     "ImageFromBatch": ["batch_index", "length"],
     "ImageScale": ["upscale_method", "width", "height", "crop"],
+    "ImageScaleBy": ["upscale_method", "scale_by"],
     "ImageToMask": ["channel"],
     "MaskToImage": [],
     "LatentCutToBatch": ["dim", "slice_size"],
@@ -288,6 +289,7 @@ STOCK_OUTPUTS = {
                      ("batch_size", "INT")],
     "ImageFromBatch": [("IMAGE", "IMAGE")],
     "ImageScale": [("IMAGE", "IMAGE")],
+    "ImageScaleBy": [("IMAGE", "IMAGE")],
     "ImageToMask": [("MASK", "MASK")],
     "MaskToImage": [("IMAGE", "IMAGE")],
     "LatentCutToBatch": [("LATENT", "LATENT")],
@@ -389,6 +391,7 @@ def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
                 "GetImageSize": [("image", "IMAGE")],
                 "ImageFromBatch": [("image", "IMAGE")],
                 "ImageScale": [("image", "IMAGE")],
+                "ImageScaleBy": [("image", "IMAGE")],
                 "ImageToMask": [("image", "IMAGE")],
                 "MaskToImage": [("mask", "MASK")],
                 "LatentCutToBatch": [("samples", "LATENT")],
@@ -4745,6 +4748,113 @@ TEMPLATES = {
         ],
     },
 }
+
+
+def _kroma_template(*, int8: bool = False, upscale: bool = False) -> dict:
+    """Krea2-native OPD sampling, including the vendor sample's refinement path."""
+    artifact = ("kromaKrea2_opd.safetensors" if int8
+                else "kroma-v0.3.1-turbo-opd.safetensors")
+    suffix = "_upscale" if upscale else "_int8" if int8 else ""
+    title = "Kroma " + ("local INT8" if int8 else "v0.3.1 BF16")
+    title += " text to image" + (" with 2x refinement" if upscale else "")
+    note = (
+        "Kroma is a Krea2-based OPD model. This graph starts at 1024x1024, "
+        "8 steps, CFG 1.0, Euler and the simple scheduler. The vendor recommends "
+        "8-12 steps and CFG 1.0-1.5; the native Krea2 Flux sampling shift mu=1.15 "
+        "is preserved without a model-sampling patch. The negative branch zeros "
+        "the positive conditioning, as in the official samples. Plain Euler at "
+        "CFG 1.0 skips the unconditional call. Auto selects the existing krea2 "
+        "family and Ulysses on a configured pair; BF16 and INT8 do not enable "
+        "SAGE automatically. Kroma-specific hardware validation is NOT RUN; "
+        "the existing Krea2 results do not validate these checkpoints. "
+        "Reference-image conditioning requires single; padded ring and hybrid "
+        "retain the Krea2 waiver boundary. "
+    )
+    if int8:
+        note += (
+            "This local INT8 ConvRot conversion has unverified upstream version "
+            "and provenance. Its filename does not establish that it matches "
+            "v0.3.1, or that it is the W8A8 file named by the vendor sample. "
+        )
+    if upscale:
+        note += (
+            "The optional second pass decodes the first image, scales it 2x "
+            "with Lanczos, re-encodes it with the same VAE, and refines it at "
+            "4 steps and denoise 0.2, keeping CFG 1.0 and Euler/simple. This "
+            "adapts the vendor's W8A8 sample recipe to BF16; it is not BF16 "
+            "render evidence. The default final image is 2048x2048. "
+        )
+    note += (
+        "Expects " + artifact + " in models/diffusion_models, "
+        "qwen3vl_4b_bf16.safetensors in models/text_encoders (CLIP type krea2), "
+        "and qwen_image_vae.safetensors in models/vae. Use detailed natural-language "
+        "prompts. The graph uses stock conditioning without a prompt extension. "
+        "The first-use identity gate checks its scoped loading paths; it does "
+        "not certify output quality or every topology. Pinned model card: "
+        "https://huggingface.co/lodestones/Kroma/blob/734ec29814972997fa29a1cd313863a2e5e9921c/README.md . "
+        "Sampling and refinement recipe: "
+        "https://huggingface.co/lodestones/Kroma/resolve/734ec29814972997fa29a1cd313863a2e5e9921c/samples/output_00001.png"
+    )
+    nodes = [
+        {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
+         "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
+        {"key": "note", "type": "Note", "pos": (0, 1), "note": note},
+        {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
+         "widgets": {"unet_name": artifact, "weight_dtype": "default"},
+         "wire": {"mesh": ("init", 0)}},
+        {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
+         "widgets": {"clip_name": "qwen3vl_4b_bf16.safetensors", "type": "krea2"}},
+        {"key": "pos", "type": "CLIPTextEncode", "pos": (1, 2),
+         "widgets": {"text": "A close-up photograph of a small ceramic teapot on a "
+                             "weathered wooden table beside a rain-streaked window. "
+                             "The pot has a deep blue glaze with delicate pale "
+                             "speckles, a curved handle, and a short rounded spout. "
+                             "Soft morning light from the left reveals the uneven "
+                             "glaze and the grain of the wood. A linen napkin "
+                             "rests beside it. The quiet garden beyond the glass "
+                             "falls out of focus. Natural colors, gentle shadows, "
+                             "and realistic material textures."},
+         "wire": {"clip": ("clip", 0)}},
+        {"key": "neg", "type": "ConditioningZeroOut", "pos": (2, 2),
+         "wire": {"conditioning": ("pos", 0)}},
+        {"key": "latent", "type": "EmptyLatentImage", "pos": (2, 3),
+         "widgets": {"width": 1024, "height": 1024, "batch_size": 1}},
+        {"key": "ks", "type": "DGXMonarchKSampler", "pos": (3, 1),
+         "widgets": {"steps": 8, "cfg": 1.0, "sampler_name": "euler",
+                     "scheduler": "simple", "denoise": 1.0},
+         "wire": {"model": ("unet", 0), "positive": ("pos", 0),
+                  "negative": ("neg", 0), "latent_image": ("latent", 0)}},
+        {"key": "vae", "type": "VAELoader", "pos": (3, 3),
+         "widgets": {"vae_name": "qwen_image_vae.safetensors"}},
+        {"key": "dec", "type": "VAEDecode", "pos": (4, 1),
+         "wire": {"samples": ("ks", 0), "vae": ("vae", 0)}},
+    ]
+    if upscale:
+        nodes.extend([
+            {"key": "scale", "type": "ImageScaleBy", "pos": (5, 1),
+             "widgets": {"upscale_method": "lanczos", "scale_by": 2.0},
+             "wire": {"image": ("dec", 0)}},
+            {"key": "enc", "type": "VAEEncode", "pos": (6, 1),
+             "wire": {"pixels": ("scale", 0), "vae": ("vae", 0)}},
+            {"key": "refine", "type": "DGXMonarchKSampler", "pos": (7, 1),
+             "widgets": {"steps": 4, "cfg": 1.0, "sampler_name": "euler",
+                         "scheduler": "simple", "denoise": 0.2},
+             "wire": {"model": ("unet", 0), "positive": ("pos", 0),
+                      "negative": ("neg", 0), "latent_image": ("enc", 0)}},
+            {"key": "final", "type": "VAEDecode", "pos": (8, 1),
+             "wire": {"samples": ("refine", 0), "vae": ("vae", 0)}},
+        ])
+    nodes.append({"key": "save", "type": "SaveImage", "pos": (9 if upscale else 5, 1),
+                  "widgets": {"filename_prefix": "dgx_monarch_kroma" + suffix},
+                  "wire": {"images": ("final" if upscale else "dec", 0)}})
+    return {"title": title, "nodes": nodes}
+
+
+TEMPLATES["dgx-monarch-kroma-t2i"] = _kroma_template()
+TEMPLATES["dgx-monarch-kroma-t2i-int8"] = _kroma_template(int8=True)
+TEMPLATES["dgx-monarch-kroma-t2i-upscale"] = _kroma_template(upscale=True)
+
+
 def _mage_flow_template(*, edit: bool, turbo: bool) -> dict:
     """Native Mage conditioning and sampling, with DGX owning the DiT only."""
     variant = "mage_flow" + ("_edit" if edit else "") + ("_turbo" if turbo else "")

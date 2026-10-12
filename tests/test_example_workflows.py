@@ -100,6 +100,7 @@ _KNOWN_NODE_TYPES = frozenset({
     "GetImageSize",
     "ImageFromBatch",
     "ImageScale",
+    "ImageScaleBy",
     "ImageToMask",
     "LatentCutToBatch",
     "LatentUpscaleModelLoader",
@@ -392,6 +393,7 @@ MODELS = REPO / "docs" / "MODELS.md"
 TEMPLATE_FOR_ROW: dict[str, str | None] = {
     # image
     "Krea2 (RAW+Turbo)": "dgx-monarch-krea2-t2i.json",
+    "Kroma": "dgx-monarch-kroma-t2i.json",
     "Chroma": "dgx-monarch-chroma-t2i.json",
     "Radiance": "dgx-monarch-radiance-t2i.json",
     "Ideogram4": "dgx-monarch-ideogram4-t2i.json",

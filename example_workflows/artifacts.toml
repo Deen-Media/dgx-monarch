@@ -160,6 +160,22 @@ size = 0
 sha256 = ""
 
 [[artifact]]
+file = "kroma-v0.3.1-turbo-opd.safetensors"
+dest = "diffusion_models"
+note = "Official Kroma v0.3.1 Turbo OPD checkpoint; BF16 with FP32 components."
+url = "https://huggingface.co/lodestones/Kroma/resolve/734ec29814972997fa29a1cd313863a2e5e9921c/kroma-v0.3.1-turbo-opd.safetensors"
+size = 26283332880
+sha256 = "3cfb5bc847c804ea8e8f894677f7e16ebe4c9ff0f978896cc5e7eb1e64fc7d82"
+
+[[artifact]]
+file = "kromaKrea2_opd.safetensors"
+dest = "diffusion_models"
+note = "Local Kroma INT8 ConvRot conversion; source URL and upstream release identity remain unverified. Select your own compatible file."
+url = ""
+size = 13494715223
+sha256 = "96043ecf3e920288fbf6f13ca81ba3629fe02e9f8729ed116382ebe4978e7839"
+
+[[artifact]]
 file = "lens_bf16.safetensors"
 dest = "diffusion_models"
 url = ""
@@ -512,9 +528,9 @@ sha256 = ""
 [[artifact]]
 file = "qwen3vl_4b_bf16.safetensors"
 dest = "text_encoders"
-url = ""
-size = 0
-sha256 = ""
+url = "https://huggingface.co/Comfy-Org/Qwen3-VL/resolve/02f0d3eefb59528799653d16735818801177ef1f/text_encoders/qwen3vl_4b_bf16.safetensors"
+size = 8875719384
+sha256 = "36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34"
 
 [[artifact]]
 file = "qwen3vl_8b_bf16.safetensors"
@@ -694,9 +710,9 @@ sha256 = "bb21f7473051e1ac368515dd3f2e15cd44d7a11748ee8823e1ddca3e4876b7c9"
 [[artifact]]
 file = "qwen_image_vae.safetensors"
 dest = "vae"
-url = ""
-size = 0
-sha256 = ""
+url = "https://huggingface.co/Comfy-Org/Qwen-Image_ComfyUI/resolve/1f12b17be14c89b026c51a91d67c32f84bb047bc/split_files/vae/qwen_image_vae.safetensors"
+size = 253806246
+sha256 = "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
 
 [[artifact]]
 file = "wan21_flow_rvs_mask_vae_bf16.safetensors"
@@ -811,6 +827,21 @@ sha256 = ""
 ]
 "dgx-monarch-krea2-t2i" = [
     "diffusion_models/krea2_turbo_fp8_scaled.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/qwen_image_vae.safetensors",
+]
+"dgx-monarch-kroma-t2i" = [
+    "diffusion_models/kroma-v0.3.1-turbo-opd.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/qwen_image_vae.safetensors",
+]
+"dgx-monarch-kroma-t2i-int8" = [
+    "diffusion_models/kromaKrea2_opd.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/qwen_image_vae.safetensors",
+]
+"dgx-monarch-kroma-t2i-upscale" = [
+    "diffusion_models/kroma-v0.3.1-turbo-opd.safetensors",
     "text_encoders/qwen3vl_4b_bf16.safetensors",
     "vae/qwen_image_vae.safetensors",
 ]

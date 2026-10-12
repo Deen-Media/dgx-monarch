@@ -56,6 +56,7 @@ _SUPPORT_HEADER = [
 _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     # image models
     ("image", "Krea2 (RAW+Turbo)"): ("krea2", "HW"),
+    ("image", "Kroma"): ("krea2", "impl"),
     ("image", "Chroma"): ("chroma", "HW"),
     ("image", "Radiance"): ("chroma", "HW"),
     ("image", "Ideogram4"): ("ideogram4", "HW"),

@@ -23,6 +23,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | Model | Workflows | Before you start |
 |---|---|---|
 | [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Ulysses is the automatic choice. Explicit cfg2 can split the two calls made by a CFG++ sampler, even at CFG 1. Reference images require `single`. |
+| [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. Kroma hardware comparison is pending. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -78,6 +79,7 @@ that match the tested configurations in its model details. See
 | Model | single | cfg2 | Ulysses | ring | FSDP | Status | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | Krea2 (RAW+Turbo) | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
+| Kroma | ✓ | 🔒 | ★⏳ | 🔒 | ⚪ | impl | Krea2 architecture; Kroma checkpoint comparisons pending. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
 | Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
@@ -158,6 +160,74 @@ plain sampler drops the unconditional pass, so cfg2 has nothing to split; a
 CFG++ sampler keeps that pass and can use explicit cfg2. On cfg2, asymmetric
 prompts are padded automatically; combined Ulysses+cfg has no such padding and
 refuses them. A zeroed negative is real conditioning and stays unmasked.
+
+<a id="model-kroma"></a>
+
+### Kroma
+
+Detail status (`Kroma`): impl.
+
+Kroma is a Krea2 fine-tune. The v0.3.1 Turbo OPD release is a complete
+checkpoint: it needs no separate Krea2 diffusion checkpoint or Kroma LoRA.
+It uses the existing `krea2` adapter, model detection and quantized loader.
+The similarly named Chroma uses a different architecture.
+
+**Workflows.** [BF16 text-to-image](../example_workflows/dgx-monarch-kroma-t2i.json),
+[INT8 text-to-image](../example_workflows/dgx-monarch-kroma-t2i-int8.json), and
+[two-pass 2x upscale](../example_workflows/dgx-monarch-kroma-t2i-upscale.json).
+
+**Required files.** Install the same files under each worker's ComfyUI model
+directories and on the driver. The driver reads the diffusion checkpoint's
+header and artifact identity even when its weights load on workers.
+
+| File | ComfyUI directory | Purpose |
+|---|---|---|
+| `kroma-v0.3.1-turbo-opd.safetensors` | `models/diffusion_models` | Official unquantized checkpoint, 26.28 GB; BF16 weights with FP32 components |
+| `kromaKrea2_opd.safetensors` | `models/diffusion_models` | Alternative INT8 workflow filename; select your own compatible Kroma conversion |
+| `qwen3vl_4b_bf16.safetensors` | `models/text_encoders` | Qwen3-VL encoder; set CLIPLoader type to `krea2` |
+| `qwen_image_vae.safetensors` | `models/vae` | Official sample VAE |
+
+Download links, byte sizes and SHA-256 hashes are in
+[the artifact manifest](../example_workflows/artifacts.toml). The INT8 row's
+source is pending: a filename does not establish its release or quantizer.
+Preserve its embedded quantization metadata. INT8 ConvRot requires ComfyUI
+and comfy-kitchen support for `int8_tensorwise` with rotation; changing the
+UNET loader's weight dtype does not create that conversion. Leave weight dtype
+at `default`. The shipped graph uses only core ComfyUI and DGX Monarch nodes.
+
+**Starting settings.** The [pinned upstream model card](https://huggingface.co/lodestones/Kroma/blob/734ec29814972997fa29a1cd313863a2e5e9921c/README.md)
+recommends 8-12 steps, CFG 1.0-1.5 and mu 1.15 for Turbo OPD. The templates
+adapt the [official quantized sample graph](https://huggingface.co/lodestones/Kroma/blob/734ec29814972997fa29a1cd313863a2e5e9921c/samples/output_00001.png):
+1024×1024, 8 steps, CFG 1, `euler`, `simple`, denoise 1, `EmptyLatentImage`
+and `ConditioningZeroOut` for the negative input. Describe the subject, scene,
+lighting and composition in the positive prompt. These are upstream starting
+settings, not a measured optimum across all prompts or resolutions.
+
+ComfyUI's Krea2 configuration already sets the Flux-style mu to 1.15.
+Keep that native sampling configuration; the SD3 sampling-shift node changes
+the sampling model and does not express the same parameter. The template
+uses plain Euler, so CFG 1 omits the unconditional pass. Substituting a CFG++
+sampler changes that behavior and requires reconsidering the negative input.
+
+The upscale graph decodes the first result, scales pixels 2x with Lanczos,
+re-encodes with the same VAE, and refines for 4 steps at denoise 0.2 with
+Euler/simple and CFG 1. This reproduces the sample's processing stages;
+it costs another sampling pass and can change details.
+
+**Parallel modes and validation.** `auto` uses the Krea2 topology policy:
+one local device without a cluster, or Ulysses on a configured pair. BF16 and
+INT8 use Torch Flash. Plain Euler at CFG 1 has no unconditional pass for cfg2
+to split. Reference-image conditioning requires `single`; padded ring retains
+the Krea2 waiver boundary. FSDP and LoRA retain the
+[Krea2 restrictions](#model-krea2-raw-turbo) and have no Kroma-specific
+acceptance. Header, workflow and CPU compatibility checks do not establish
+render quality, INT8 fidelity or distributed accuracy. Kroma hardware
+comparison is **NOT RUN**; the older Krea2 results do not promote this row.
+
+**Upstream and license.** [Kroma repository](https://huggingface.co/lodestones/Kroma)
+and [Krea 2 Community License](https://github.com/krea-ai/krea-2/blob/main/docs/KREA-2-COMMUNITY-LICENSE).
+The repository metadata names that license; its older README footer says MIT.
+The template does not relabel the model weights as MIT.
 
 <a id="model-chroma"></a>
 
