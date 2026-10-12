@@ -74,7 +74,7 @@ def check_contract(contract: dict, roots: list[str]) -> list[str]:
                     continue
                 installed = Version(distribution.version)
                 children = distribution.requires or []
-                requires_python = distribution.metadata.get("Requires-Python", "")
+                requires_python = (distribution.metadata.get_all("Requires-Python") or [""])[0]
                 provided_extras = list(distribution.metadata.get_all("Provides-Extra") or ())
             if installed not in requirement.specifier:
                 errors.append(f"{name}: installed {installed}, requires {requirement.specifier}")
