@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+- Check authenticated managed Worker releases in Doctor host environment probes,
+  so a staged runtime upgrade does not falsely report the unchanged base pin as
+  Worker version skew. Keep driver and plain-install checks separate. Report
+  bounded failure categories from verified-update Doctor checks without private
+  probe details; certainty and rollback behavior remain unchanged.
 - Allow an explicit foreground process-inspector lifetime up to four hours;
   retain the launcher's 30-minute default and authenticated, bounded inspection.
 - Add Kroma v0.3.1 Turbo OPD workflows for BF16, local INT8 conversions and

@@ -1132,6 +1132,12 @@ indicates an unavailable class, not a damaged workflow file.
 
 ## Safe doctor repair
 
+For a managed Worker service, Doctor's host environment row checks its owned
+release rather than the base interpreter's TorchMonarch package. The base pin
+can differ during a verified update. Doctor still checks the driver's pin
+separately and refuses an unrecognized managed source or service unit. Plain
+installations and hosts awaiting setup retain their configured-interpreter check.
+
 `dgxm doctor` stays passive around live GPU state. It runs no load for a clock
 reading, so on a box with a CUDA device the `GPU clock under load` row reports
 its load probe as **NOT RUN**. Its one GPU workload is the `sageattention`

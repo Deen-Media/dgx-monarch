@@ -22,6 +22,7 @@ from .advertised_address import hostname_row, unresolved_row
 from .comfy_ports import find_comfy_ports as _find_comfy_ports
 from .doctor_nccl import normalize_proto as _normalize_nccl_proto
 from .doctor_nccl import uses_ll as _uses_nccl_ll
+from .doctor_worker_context import worker_context
 from .hwmon import board_hotspot_verdict
 from .lifecycle import _pybin_shell, _tcp_probe, run_on_host
 from .probe_certainty import probe_row as _row
@@ -437,6 +438,7 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
             config.resolved_fabric_env().get("NCCL_SOCKET_IFNAME", ""))
         script = f"""
 {_pybin_shell(config.python_bin)}
+{worker_context(config, host)}
 "$PYBIN" - <<'EOF'
 import glob, importlib.metadata as md, os
 try:

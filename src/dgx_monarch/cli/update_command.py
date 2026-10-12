@@ -17,6 +17,7 @@ from .cluster_smoke import exact_pass_evidence
 from .update_activity import activity_snapshot, privileged_actor_count
 from .update_cancellation import run_finalizer_pair
 from .update_dependency_contract import require_candidate_dependencies
+from .update_doctor_diagnostics import report_doctor_result
 from .update_driver_pin import DriverPinError, DriverPinTransition
 from .update_entrypoint import run_serialized_update
 from .update_inspect import inspect_checkout as _inspect_checkout
@@ -314,6 +315,7 @@ class SystemUpdateOps(UpdateOps):
             return _UNKNOWN
         # Doctor exits 75 when no row failed but a critical probe never answered.
         # That is no reason to restore the prior release over a started target.
+        report_doctor_result(result.returncode, result.stdout, tuple(host.name for host in self.config.hosts))
         return operation_from_exit(result.returncode)
 
     def cluster_smoke(self, staged: StagedRelease) -> OperationResult:
