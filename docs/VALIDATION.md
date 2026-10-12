@@ -130,6 +130,89 @@ padding. Reference-image workflows refuse sequence or CFG splitting and
 must use `single`. Padded ring/hybrid requests refuse unless an explicit
 accuracy waiver is recorded. INT8 LoRA swaps measured 10.9/9.7/9.7 seconds.
 
+<a id="evidence-kroma"></a>
+
+### Kroma
+
+**2026-10-12, source `328c16779a68feda57544cfc1ee43d1f314d73a4`, ComfyUI
+`e8665ca8e4089ab917567cdb491308e1397663d4`.** Driver and actors used source
+manifest `9af02423527ceb23064760a15350f81331ec0833797d6d3e95b9deba97619229`.
+Pure Ulysses on two NVIDIA GB10 GPUs with TORCH_FLASH was compared with
+independent stock one-GPU ComfyUI, using each checkpoint's own matched reference.
+
+The full graphs used batch 1, 1024×1024, 8 Euler/simple steps, CFG 1,
+denoise 1, native Flux-style mu 1.15 and ConditioningZeroOut. The BF16
+upscale graph then decoded, scaled pixels 2x with Lanczos, re-encoded with
+the same VAE and refined at 2048×2048 for 4 steps at denoise 0.2 and CFG 1.
+
+| Graph or control | Stock comparison | Cross-rank latents |
+|---|---|---|
+| BF16, full 8 steps at 1024×1024 | Identical conditioning, latents, floating decoded images and PNG pixels; max abs 0 | Identical |
+| Local INT8, full 8 steps at 1024×1024 | Identical conditioning, latents, floating decoded images and PNG pixels; max abs 0 | Identical |
+| BF16 upscale, initial 8-step stage at 1024×1024 | Identical latents, floating decoded images and PNG pixels; max abs 0 | Identical |
+| BF16 upscale, 4-step refinement at 2048×2048 | Identical latents, floating decoded images and PNG pixels; max abs 0 | Identical |
+| Kroma BF16 padding, one step at 1040×1040 | Identical conditioning, latents, floating decoded images and PNG pixels; PNG NRMS 0 | Identical |
+| Krea2 RAW shared-adapter control, one step at 1024×1024 | Identical conditioning, latents, floating decoded images and PNG pixels; max abs 0 | Identical |
+
+The full-workflow criterion is exact equality of the compared tensors and
+pixels. The one-step Kroma padding control uses the separately declared
+decoded-PNG NRMS limit of 0.10: RMS(pixel difference) / RMS(reference pixels),
+with a denominator of 1 for an all-zero reference. The Krea2 RAW control retains its predeclared
+exact comparison. The padding threshold does not apply to RAW or full renders.
+PNG comparisons use decoded integer pixel arrays, not PNG container hashes.
+
+| Graph or control | Seed | Positive prompt and suffix | Text rows |
+|---|---:|---|---:|
+| BF16 | 2026101201 | Teapot prompt from the BF16 template plus ` kroma-20261012-bf16.` | 119 |
+| Local INT8 | 2026101202 | Teapot prompt from the INT8 template plus ` kroma-20261012-int8.` | 117 |
+| BF16 upscale | 2026101203, both stages | Teapot prompt from the upscale template plus ` kroma-20261012-upscale.` | 117 |
+| Padding control | 2026101201 | Bicycle prompt below plus ` kroma-20261012-bf16.` | 73 |
+| Krea2 RAW control | 2026101204 | Teapot prompt from the BF16 template plus ` kroma-20261012-bf16.` | 119 |
+
+The templates at the tested source commit define the full graph and teapot
+prompt. Each reference and candidate used the same prompt, seed, conditioning,
+checkpoint and VAE. The padding control had 4,225 image rows and 73 text rows;
+it qualifies that one-step comparison, not full 8-step padded rendering.
+The independent bicycle prompt, before the table's suffix, was:
+
+> A documentary photograph of a red bicycle leaning against a pale stone wall after the rain. A woven basket on the handlebars holds yellow flowers. Afternoon light casts soft shadows across the wet cobblestones, with crisp metal spokes and natural colors. Fine detail.
+
+The RAW control derived from the BF16 graph by changing only the diffusion
+checkpoint to `krea2_raw_bf16.safetensors`, the step count to 1 and the seed
+to 2026101204. It checks the shared adapter correction, not a recommended
+RAW generation recipe.
+
+On prior source `c988d2c1ae7e7e7fd78cfb116db411a6e898f187`, the first
+BF16 8-step comparison differed from stock (decoded-PNG NRMS 0.025169).
+Preserving the complete stock row shape through Krea2's final projection
+removed that BF16 difference in the fixed-source rerun above.
+The earlier result does not qualify the fixed source or other workflows.
+All five fixed-source comparisons produced finite outputs of the expected
+shape with source-matched ranks. Their scoped identity gates passed and
+owned actor cleanup was confirmed; these checks are separate from fidelity.
+
+Tested files and SHA-256 identities:
+
+| Artifact | SHA-256 |
+|---|---|
+| `kroma-v0.3.1-turbo-opd.safetensors` | `3cfb5bc847c804ea8e8f894677f7e16ebe4c9ff0f978896cc5e7eb1e64fc7d82` |
+| Local `kromaKrea2_opd.safetensors` | `96043ecf3e920288fbf6f13ca81ba3629fe02e9f8729ed116382ebe4978e7839` |
+| Control `krea2_raw_bf16.safetensors` | `f99bb0ff8e362b77342bc4994e0c50906fe7ef7074864b181b7d48d2fa6d03d7` |
+| Local `qwen3vl_4b_bf16.safetensors` | `341d8e1bdd34d3c5119b5b768badf87ed2a1d663e79d331b85b4c1fc4f7bf498` |
+| `qwen_image_vae.safetensors` | `a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f` |
+
+The [artifact manifest](../example_workflows/artifacts.toml) separately lists
+the pinned upstream encoder download, whose SHA-256 is
+`36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34`.
+It differs from the tested local encoder; full payload equality was not
+established. The local INT8 conversion's upstream version and provenance
+remain unverified. Comparing it with itself on one GPU does not measure
+quantization error against BF16.
+
+These results do not qualify LoRA, FSDP, cfg2, ring, hybrid topologies,
+other attention kernels, reference-image conditioning, other quantizations
+or unlisted dimensions.
+
 <a id="evidence-chroma"></a>
 
 ### Chroma

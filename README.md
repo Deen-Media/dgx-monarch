@@ -55,7 +55,7 @@ Image generation and editing with up to ten references, including alpha-masked i
 </tr>
 </table>
 
-The pack also includes [Kroma BF16, INT8 and 2x upscale workflows](docs/MODELS.md#model-kroma), Flux, Chroma, LTX, Hunyuan, Wan, and other families. Kroma uses the Krea2 runtime; its own hardware comparison is pending. [Model support](docs/MODELS.md) lists the tested configurations and limits for each. Support for one workflow does not mean every precision, LoRA, or parallel mode has been tested.
+The pack also includes [Kroma BF16, INT8 and 2x upscale workflows](docs/MODELS.md#model-kroma), Flux, Chroma, LTX, Hunyuan, Wan, and other families. Kroma uses the Krea2 runtime; its BF16, local INT8 and BF16 2x refinement graphs matched their [listed stock references](docs/VALIDATION.md#evidence-kroma). [Model support](docs/MODELS.md) lists the tested configurations and limits for each. Support for one workflow does not mean every precision, LoRA, or parallel mode has been tested.
 
 <a id="what-we-measured"></a>
 

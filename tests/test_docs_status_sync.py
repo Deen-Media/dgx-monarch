@@ -56,7 +56,7 @@ _SUPPORT_HEADER = [
 _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     # image models
     ("image", "Krea2 (RAW+Turbo)"): ("krea2", "HW"),
-    ("image", "Kroma"): ("krea2", "impl"),
+    ("image", "Kroma"): ("krea2", "HW"),
     ("image", "Chroma"): ("chroma", "HW"),
     ("image", "Radiance"): ("chroma", "HW"),
     ("image", "Ideogram4"): ("ideogram4", "HW"),
@@ -105,6 +105,13 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
 _REQUIRED_DETAIL_EVIDENCE: dict[
     str, tuple[str | None, str | None, tuple[str, ...]]
 ] = {
+    "Kroma": (
+        "VALIDATION.md",
+        '<a id="evidence-kroma"></a>',
+        ("stock one-GPU", "8 Euler/simple steps", "2048\u00d72048",
+         "exact comparison", "one step at 1040\u00d71040", "one step at 1024\u00d71024",
+         "341d8e1bdd34d3c5119b5b768badf87ed2a1d663e79d331b85b4c1fc4f7bf498"),
+    ),
     "LTX 2.5 (t2v/AV packed)": (
         "VALIDATION.md",
         '<a id="evidence-ltx-2-5-t2v-av-packed"></a>',
@@ -703,6 +710,7 @@ _REAL_CFG = 3.5
 # entry here fails CI: the state is a review decision, and a glyph cannot
 # imply it.
 _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
+    ("Kroma", "uly"): ("scoped", "BF16 and local INT8, pure Ulysses"),
     ("Krea2 (RAW+Turbo)", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; detail table fp8 uly2; VALIDATION 2026-07-10 turbo fp8 uly2 vs dp2"),
     ("Chroma", "cfg2"): ("granted", "2026-08-11 FP8 cfg2 1024x1024, exact cross-rank"),

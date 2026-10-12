@@ -10,6 +10,7 @@ REPO = Path(__file__).resolve().parents[1]
 PUBLIC_GUIDES = ("README.md", "docs/MODELS.md", "docs/BENCHMARKS.md", "docs/VALIDATION.md")
 EVIDENCE_ANCHORS = {
     "evidence-krea2-raw-turbo",
+    "evidence-kroma",
     "evidence-chroma",
     "evidence-radiance",
     "evidence-ideogram4",

@@ -23,7 +23,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | Model | Workflows | Before you start |
 |---|---|---|
 | [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Ulysses is the automatic choice. Explicit cfg2 can split the two calls made by a CFG++ sampler, even at CFG 1. Reference images require `single`. |
-| [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. Kroma hardware comparison is pending. |
+| [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. BF16, local INT8 and BF16 refinement matched their own stock references. See the [tested configurations](VALIDATION.md#evidence-kroma). |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -79,7 +79,7 @@ that match the tested configurations in its model details. See
 | Model | single | cfg2 | Ulysses | ring | FSDP | Status | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | Krea2 (RAW+Turbo) | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
-| Kroma | ✓ | 🔒 | ★⏳ | 🔒 | ⚪ | impl | Krea2 architecture; Kroma checkpoint comparisons pending. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
+| Kroma | ✓ | 🔒 | ★ | 🔒 | ⚪ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. FSDP and LoRA untested. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
 | Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
@@ -165,7 +165,7 @@ refuses them. A zeroed negative is real conditioning and stays unmasked.
 
 ### Kroma
 
-Detail status (`Kroma`): impl.
+Detail status (`Kroma`): **HW**.
 
 Kroma is a Krea2 fine-tune. The v0.3.1 Turbo OPD release is a complete
 checkpoint: it needs no separate Krea2 diffusion checkpoint or Kroma LoRA.
@@ -189,7 +189,7 @@ header and artifact identity even when its weights load on workers.
 
 Download links, byte sizes and SHA-256 hashes are in
 [the artifact manifest](../example_workflows/artifacts.toml). The INT8 row's
-source is pending: a filename does not establish its release or quantizer.
+source remains unverified: a filename does not establish its release or quantizer.
 Preserve its embedded quantization metadata. INT8 ConvRot requires ComfyUI
 and comfy-kitchen support for `int8_tensorwise` with rotation; changing the
 UNET loader's weight dtype does not create that conversion. Leave weight dtype
@@ -220,9 +220,15 @@ INT8 use Torch Flash. Plain Euler at CFG 1 has no unconditional pass for cfg2
 to split. Reference-image conditioning requires `single`; padded ring retains
 the Krea2 waiver boundary. FSDP and LoRA retain the
 [Krea2 restrictions](#model-krea2-raw-turbo) and have no Kroma-specific
-acceptance. Header, workflow and CPU compatibility checks do not establish
-render quality, INT8 fidelity or distributed accuracy. Kroma hardware
-comparison is **NOT RUN**; the older Krea2 results do not promote this row.
+acceptance. The full 8-step BF16 and local INT8 graphs at 1024×1024 matched
+their own stock one-GPU references exactly under pure Ulysses on two GPUs.
+The BF16 upscale graph also matched through its 4-step 2048×2048 refinement
+at denoise 0.2. Conditioning, latents and decoded pixels were identical;
+[comparisons and limits](VALIDATION.md#evidence-kroma) record the tested
+artifacts and settings. The INT8 comparison uses the same conversion on both
+sides; it does not measure quantization error against BF16 or establish the
+conversion's upstream version. The one-step 1040×1040 padding control and a
+one-step Krea2 RAW control also matched stock exactly.
 
 **Upstream and license.** [Kroma repository](https://huggingface.co/lodestones/Kroma)
 and [Krea 2 Community License](https://github.com/krea-ai/krea-2/blob/main/docs/KREA-2-COMMUNITY-LICENSE).

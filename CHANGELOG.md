@@ -4,8 +4,11 @@
 
 - Add Kroma v0.3.1 Turbo OPD workflows for BF16, local INT8 conversions and
   two-pass 2x refinement using the existing Krea2 runtime. Document upstream
-  sampling settings, required artifacts and native shift handling; keep Kroma
-  hardware acceptance pending separately from Krea2 results.
+  sampling settings, required artifacts and native shift handling. Preserve
+  the stock Krea2 final projection shape under pure Ulysses; the BF16 and local
+  INT8 8-step graphs and BF16 2x refinement matched their own stock one-GPU
+  references in conditioning, latents and decoded pixels. Acceptance covers
+  the measured pure-Ulysses configurations.
 - Fix the torchmonarch canary's Future probe to use a returned channel Future,
   avoiding the constructor removed in 0.7.0. Show comparison reports and failed
   stages in Actions while retaining the 0.6.0 pin and semantic-drift gate.
