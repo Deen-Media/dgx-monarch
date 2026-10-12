@@ -35,6 +35,17 @@ def recognized_unit(config: ClusterConfig, host: HostConfig, snapshot: dict[str,
             return False
         if hashlib.sha256(unit.encode()).hexdigest() != snapshot["sha256"]:
             return False
+        from ..monarch_launch import worker_policy_args
+
+        policy_suffix = " " + " ".join(quote(arg) for arg in worker_policy_args(config, host))
+
+        def matches(template: str, *, extra_newlines: bool = False) -> bool:
+            # Preserve exact pre-0.7 units as migration/rollback inputs. A unit
+            # with policy arguments must match the configured policy in full.
+            legacy = template.replace(policy_suffix + "\n", "\n")
+            return any(unit == value + "\n" * extra for value in (template, legacy)
+                       for extra in range(3 if extra_newlines else 1))
+
         local = lifecycle._is_local(host)
         if local is None:
             return False
@@ -46,27 +57,27 @@ def recognized_unit(config: ClusterConfig, host: HostConfig, snapshot: dict[str,
             candidates = [legacy]
             if not local and site == managed:
                 candidates.append(hardened_worker_unit(config, host, source="%h/.local/share/dgx-monarch/src", site_packages=snapshot["site_packages"], home=home, user=snapshot["user"]))
-            if any(unit == candidate + "\n" * extra for candidate in candidates for extra in range(3)):
+            if any(matches(candidate, extra_newlines=True) for candidate in candidates):
                 return True
         canonical = systemd_worker_unit(config, host, managed_source=True)
         environment = 'Environment="PYTHONPATH=%h/.local/share/dgx-monarch/src"'
         rendered_site = site if local else site.replace(home + "/", "%h/", 1)
         normal = canonical.replace(environment, "Environment=" + quote("PYTHONPATH=" + rendered_site, preserve_home_specifier=not local))
-        if unit in (normal, normal.removeprefix("# dgxm-managed-unit-v1\n")):
+        if matches(normal) or matches(normal.removeprefix("# dgxm-managed-unit-v1\n")):
             return True
         match = re.match(r"# dgxm-update-token=(u-[0-9a-f]{12}-[0-9a-f]{16})\n", unit)
         if match and site == managed:
             target = snapshot["live"]
             expected = home + "/.local/share/dgx-monarch/releases/" + match[1] + "/site"
             actual = str((Path(managed).parent / target["target"]).resolve()) if target["kind"] == "symlink" else ""
-            return actual == expected and unit == systemd_worker_unit(config, host, managed_source=True, update_token=match[1], site_packages=snapshot.get("site_packages") or None)
+            return actual == expected and matches(systemd_worker_unit(config, host, managed_source=True, update_token=match[1], site_packages=snapshot.get("site_packages") or None))
         setup = re.match(r"# dgxm-setup-token=(s-[0-9a-f]{16}) ordinal=([1-9][0-9]*) source=([0-9a-f]{64})\n", unit)
         if setup:
             body = normal.removeprefix("# dgxm-managed-unit-v1\n")
             invalidator = systemd_generation_invalidator() + "\n"
             body = body.replace(invalidator, "").replace("ExecStart=", invalidator + "ExecStart=")
             body = body.replace("RestartSec=3\n", "RestartSec=3\nTimeoutStopSec=20\n")
-            return unit == setup[0] + body
+            return matches(setup[0] + body)
         return False
     except (KeyError, TypeError, ValueError, UnicodeError):
         return False

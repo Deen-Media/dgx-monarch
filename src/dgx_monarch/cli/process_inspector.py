@@ -319,6 +319,7 @@ def _serve_socket(
     clock=time.monotonic,
     peer_uid=_peer_uid,
     ready: Callable[[], None] | None = None,
+    should_stop: Callable[[], bool] = lambda: False,
 ) -> None:
     """Serve on ``path``, which must not exist yet, until ``lifetime`` seconds after the call."""
     if os.path.lexists(path):
@@ -370,8 +371,8 @@ def _serve_socket(
         server.listen(8)
         if ready is not None:
             ready()
-        while clock() < deadline:
-            server.settimeout(max(0.001, deadline - clock()))
+        while not should_stop() and clock() < deadline:
+            server.settimeout(max(0.001, min(0.25, deadline - clock())))
             try:
                 connection, _ = server.accept()
             except TimeoutError:
@@ -391,17 +392,19 @@ def _serve_socket(
                 raise
     finally:
         stopping.set()
-        server.close()
-        with active_lock:
-            pending = tuple(active)
-        for connection in pending:
-            try:
-                connection.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-        pool.shutdown(wait=True)
-        if created is not None:
-            _cleanup_socket(path, created)
+        try:
+            server.close()
+            with active_lock:
+                pending = tuple(active)
+            for connection in pending:
+                try:
+                    connection.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+            pool.shutdown(wait=True)
+        finally:
+            if created is not None:
+                _cleanup_socket(path, created)
 
 
 def serve(uid: int, lifetime: int) -> None:
@@ -409,9 +412,17 @@ def serve(uid: int, lifetime: int) -> None:
     source_hash = _source_hash()
     directory = _root_directory()
     path = directory / f"{uid}.sock"
-    old_term = signal.signal(signal.SIGTERM, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
-    old_int = signal.signal(signal.SIGINT, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
-    old_hup = signal.signal(signal.SIGHUP, lambda *_: (_ for _ in ()).throw(SystemExit(0)))
+    stop_requested = False
+
+    def request_stop(*_args: object) -> None:
+        # Raising here can interrupt bind's inode capture or a previous signal's
+        # cleanup. A Boolean assignment stays safe under repeated delivery.
+        nonlocal stop_requested
+        stop_requested = True
+
+    old_term = signal.signal(signal.SIGTERM, request_stop)
+    old_int = signal.signal(signal.SIGINT, request_stop)
+    old_hup = signal.signal(signal.SIGHUP, request_stop)
     try:
         _serve_socket(
             uid,
@@ -419,6 +430,7 @@ def serve(uid: int, lifetime: int) -> None:
             lifetime,
             source_hash,
             ready=lambda: print(f"dgxm process inspector ready: uid={uid} lifetime={lifetime}s", flush=True),
+            should_stop=lambda: stop_requested,
         )
     finally:
         signal.signal(signal.SIGTERM, old_term)

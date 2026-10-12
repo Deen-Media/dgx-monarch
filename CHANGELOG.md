@@ -23,6 +23,9 @@
   process inspectors when protected process markers are unreadable. Require
   fresh authenticated reports at both activity checks and record the choice
   in the receipt; initial setup defaults remain unchanged.
+- Preserve exact legacy Worker units during migration and verify policy-bearing
+  Worker commands against their captured units. Finish inspector socket cleanup
+  even when terminal shutdown delivers repeated signals.
 - Validate native RDMA binding load and package/import ownership separately from
   public API signatures. Extend the dependency canary with real local CPU actors,
   concurrent dispatch, Future timeout semantics and ProcMesh shutdown. Run it

@@ -364,7 +364,8 @@ def test_slow_connection_does_not_block_another_authenticated_request(tmp_path):
 
 
 @pytest.mark.parametrize("stop_signal", [signal.SIGTERM, signal.SIGINT, signal.SIGHUP])
-def test_foreground_signal_removes_only_its_socket_and_restores_handlers(stop_signal):
+@pytest.mark.parametrize("repeat_at", ["none", "shutdown", "bind"])
+def test_foreground_signal_removes_only_its_socket_and_restores_handlers(stop_signal, repeat_at):
     child_code = """
 import importlib.util, os, pathlib, signal, sys
 spec = importlib.util.spec_from_file_location("inspector", sys.argv[1])
@@ -377,12 +378,23 @@ def no_scan(*args, **kwargs):
 module.scan = no_scan
 signals = (signal.SIGTERM, signal.SIGINT, signal.SIGHUP)
 previous = {value: signal.getsignal(value) for value in signals}
-try:
-    module.serve(os.getuid(), 20)
-except SystemExit as error:
-    assert error.code == 0
-else:
-    raise AssertionError("Server expired instead of receiving the signal")
+if sys.argv[3] == "shutdown":
+    original_shutdown = module.ThreadPoolExecutor.shutdown
+    def repeated_shutdown(self, *args, **kwargs):
+        for value in signals:
+            os.kill(os.getpid(), value)
+        return original_shutdown(self, *args, **kwargs)
+    module.ThreadPoolExecutor.shutdown = repeated_shutdown
+elif sys.argv[3] == "bind":
+    original_socket = module.socket.socket
+    class InterruptedBind(original_socket):
+        def bind(self, address):
+            result = super().bind(address)
+            for value in signals:
+                os.kill(os.getpid(), value)
+            return result
+    module.socket.socket = InterruptedBind
+module.serve(os.getuid(), 20)
 assert all(signal.getsignal(value) == previous[value] for value in signals)
 print("handlers restored", flush=True)
 """
@@ -391,19 +403,26 @@ print("handlers restored", flush=True)
         sentinel = Path(directory) / "keep"
         sentinel.write_text("unrelated")
         process = subprocess.Popen(
-            [sys.executable, "-I", "-B", "-c", child_code, str(SCRIPT), directory],
+            [sys.executable, "-I", "-B", "-c", child_code, str(SCRIPT), directory, repeat_at],
             stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
         )
         try:
             assert process.stdout is not None
-            ready, _, _ = select.select([process.stdout], [], [], 10)
-            assert ready, "Inspector did not become ready"
-            line = process.stdout.readline()
-            assert line.startswith("dgxm process inspector ready:"), line
             path = Path(directory) / f"{os.getuid()}.sock"
-            assert path.exists()
-            process.send_signal(stop_signal)
-            output, errors = process.communicate(timeout=10)
+            if repeat_at == "bind":
+                # This child can finish before readiness is read. Mixing a
+                # buffered readline with communicate can lose read-ahead text.
+                output, errors = process.communicate(timeout=10)
+                line, output = output.split("\n", 1)
+                assert line.startswith("dgxm process inspector ready:"), line
+            else:
+                ready, _, _ = select.select([process.stdout], [], [], 10)
+                assert ready, "Inspector did not become ready"
+                line = process.stdout.readline()
+                assert line.startswith("dgxm process inspector ready:"), line
+                assert path.exists()
+                process.send_signal(stop_signal)
+                output, errors = process.communicate(timeout=10)
             assert process.returncode == 0, errors
             assert output == "handlers restored\n"
             assert not os.path.lexists(path)
@@ -412,3 +431,47 @@ print("handlers restored", flush=True)
             if process.poll() is None:
                 process.kill()
             process.communicate(timeout=10)
+
+
+def test_socket_shutdown_failure_still_removes_owned_inode(tmp_path, monkeypatch):
+    class BrokenPool:
+        def __init__(self, **kwargs):
+            pass
+
+        def shutdown(self, **kwargs):
+            raise RuntimeError("shutdown failed")
+
+    monkeypatch.setattr(inspector, "ThreadPoolExecutor", BrokenPool)
+    path = tmp_path / "inspect.sock"
+    with pytest.raises(RuntimeError, match="shutdown failed"):
+        inspector._serve_socket(os.geteuid(), path, 0, "source")
+    assert not os.path.lexists(path)
+
+
+def test_existing_socket_is_never_removed_or_replaced(tmp_path):
+    path = tmp_path / "inspect.sock"
+    with socket.socket(socket.AF_UNIX) as existing:
+        existing.bind(str(path))
+        original = path.lstat()
+        with pytest.raises(RuntimeError, match="already exists"):
+            inspector._serve_socket(os.geteuid(), path, 0, "source")
+        current = path.lstat()
+        assert (current.st_dev, current.st_ino) == (original.st_dev, original.st_ino)
+    path.unlink()
+
+
+def test_stop_requested_at_bind_still_captures_inode_and_cleans_up(tmp_path, monkeypatch):
+    original_socket = socket.socket
+    stopped = False
+
+    class StopAtBind(original_socket):
+        def bind(self, address):
+            nonlocal stopped
+            result = super().bind(address)
+            stopped = True
+            return result
+
+    monkeypatch.setattr(inspector.socket, "socket", StopAtBind)
+    path = tmp_path / "inspect.sock"
+    inspector._serve_socket(os.geteuid(), path, 20, "source", should_stop=lambda: stopped)
+    assert not os.path.lexists(path)

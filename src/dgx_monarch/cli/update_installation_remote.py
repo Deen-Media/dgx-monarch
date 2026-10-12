@@ -97,6 +97,25 @@ def link_state(live: Path) -> dict[str, str]:
     return {"kind": "absent", "target": ""}
 
 
+def worker_suffix(unit: bytes, address: str) -> list[str]:
+    """Bind optional policy arguments to the captured unit, not arbitrary argv.
+
+    The controller separately recognizes every byte of this unit against its
+    configured template. Recovery uses the same captured unit after restoring it.
+    """
+    commands = [line for line in unit.decode().splitlines() if line.startswith("ExecStart=")]
+    if len(commands) != 1:
+        raise ValueError("Worker unit command is ambiguous")
+    command = commands[0]
+    suffix = ["-m", "dgx_monarch.cli.worker_loop", "--address", address]
+    if "--runtime-policy" not in command and "--native-rdma" not in command:
+        return suffix
+    match = re.search(r' "--runtime-policy" "([A-Za-z0-9_=-]{1,16384})"( "--native-rdma")?$', command)
+    if match is None or command.count("--runtime-policy") != 1 or command.count("--native-rdma") != bool(match[2]):
+        raise ValueError("Worker unit policy arguments are invalid")
+    return suffix + ["--runtime-policy", match[1]] + (["--native-rdma"] if match[2] else [])
+
+
 def snapshot(unit: Path, live: Path, python_bin: str, address: str) -> dict[str, object]:
     for parent in (unit.parent, unit.parent.parent, unit.parent.parent.parent):
         checked(parent, directory=True)
@@ -109,8 +128,9 @@ def snapshot(unit: Path, live: Path, python_bin: str, address: str) -> dict[str,
         raise ValueError("Worker owner differs")
     interpreter = Path(python_bin).expanduser()
     argv = [value.decode() for value in (process / "cmdline").read_bytes().split(b"\0") if value]
-    suffix = ["-m", "dgx_monarch.cli.worker_loop", "--address", address]
-    if not argv or argv[-4:] != suffix or argv[1:-4] not in ([], ["-S", "-P", "-s", "-B"]) or Path(argv[0]).resolve() != interpreter.resolve() or (process / "exe").resolve() != interpreter.resolve():
+    data = read(unit)
+    suffix = worker_suffix(data, address)
+    if not argv or argv[-len(suffix):] != suffix or argv[1:-len(suffix)] not in ([], ["-S", "-P", "-s", "-B"]) or Path(argv[0]).resolve() != interpreter.resolve() or (process / "exe").resolve() != interpreter.resolve():
         raise ValueError("Worker command differs from configured installation")
     birth = (process / "stat").read_text().rsplit(") ", 1)[1].split()[19]
     paths = [value.removeprefix(b"PYTHONPATH=").decode() for value in (process / "environ").read_bytes().split(b"\0") if value.startswith(b"PYTHONPATH=")]
@@ -140,9 +160,8 @@ def snapshot(unit: Path, live: Path, python_bin: str, address: str) -> dict[str,
     for task in (process / "task").iterdir():
         if (task / "children").read_text().strip():
             raise ValueError("Worker has child actors")
-    data = read(unit)
     result: dict[str, object] = {"unit": base64.b64encode(data).decode(), "mode": stat.S_IMODE(unit.lstat().st_mode), "sha256": hashlib.sha256(data).hexdigest(), "site": str(source), "site_packages": site_packages, "user": pwd.getpwuid(os.geteuid()).pw_name, "home": str(Path.home()), "live": link_state(live), "pid": pid, "birth": birth}
-    if unit_state(unit) != state or (process / "stat").read_text().rsplit(") ", 1)[1].split()[19] != birth:
+    if read(unit) != data or unit_state(unit) != state or (process / "stat").read_text().rsplit(") ", 1)[1].split()[19] != birth:
         raise ValueError("Worker changed during capture")
     return result
 
