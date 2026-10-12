@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import ast
+import asyncio
 import copy
 import inspect
 import json
 import sys
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -16,6 +18,8 @@ from dgx_monarch.monarch_surface import (
     SNAPSHOT_SCHEMA,
     TOUCHPOINTS,
     MonarchTouchpoint,
+    _probe_future_get_asyncio,
+    collect_semantics,
     collect_snapshot,
     collect_touchpoints,
 )
@@ -321,6 +325,66 @@ def test_comparator_blocks_private_ownership_field_drift():
         "semantic drift in mesh_factory_private_ownership" in blocker
         for blocker in comparison.blockers
     )
+
+
+@pytest.mark.parametrize("get_raises", [False, True])
+def test_future_probe_observes_get_on_returned_future(get_raises):
+    sent = []
+
+    class Future:
+        def __init__(self, **_kwargs):
+            raise AssertionError("the probe must not construct a Future")
+
+        def get(self, *, timeout):
+            assert asyncio.get_running_loop().is_running()
+            assert timeout == 1
+            assert sent == [()]
+            warnings.warn("blocking get", UserWarning, stacklevel=2)
+            if get_raises:
+                raise RuntimeError("get refuses an active loop")
+            return sent.pop()
+
+    actor = SimpleNamespace(
+        Channel=SimpleNamespace(open=lambda: (
+            SimpleNamespace(send=sent.append),
+            SimpleNamespace(recv=lambda: object.__new__(Future)),
+        )),
+        Future=Future,
+    )
+    observation = _probe_future_get_asyncio({"monarch.actor": actor}.__getitem__)
+    expected = (
+        {"outcome": "raised", "exception_type": "builtins.RuntimeError",
+         "message": "get refuses an active loop"}
+        if get_raises else {"outcome": "returned", "result_type": "builtins.tuple"}
+    )
+    assert observation == {
+        **expected,
+        "warnings": [{"category": "builtins.UserWarning", "message": "blocking get"}],
+    }
+
+
+def test_future_probe_reports_channel_setup_failure_as_probe_error():
+    def unavailable_channel():
+        raise TypeError("channel setup failed")
+
+    actor = SimpleNamespace(Channel=SimpleNamespace(open=unavailable_channel))
+    observation = collect_semantics({"monarch.actor": actor}.__getitem__)
+    assert observation["public_future_get_in_asyncio"] == {
+        "outcome": "probe_error",
+        "exception_type": "builtins.TypeError",
+        "message": "channel setup failed",
+    }
+
+
+def test_comparator_still_blocks_removed_dispatch_configuration():
+    baseline = _snapshot("0.6.0")
+    candidate = copy.deepcopy(baseline)
+    candidate["version"] = "0.7.0"
+    candidate["semantics"]["actor_queue_dispatch_default"] = {"outcome": "key_absent"}
+    comparison = compare_snapshots(baseline, candidate)
+    assert not comparison.compatible
+    assert len(comparison.blockers) == 1
+    assert "semantic drift in actor_queue_dispatch_default" in comparison.blockers[0]
 
 
 def test_checked_pin_snapshot_is_complete_and_matches_manifest():

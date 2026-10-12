@@ -482,6 +482,72 @@ def test_torchmonarch_probe_surfaces_are_carried_by_sdist_patterns():
     assert "recursive-include tests *.json *.py" in manifest
 
 
+def test_torchmonarch_canary_publishes_both_reports_before_final_gate(tmp_path):
+    import os
+    import subprocess
+
+    workflow = yaml.safe_load(
+        (REPO / ".github/workflows/torchmonarch-canary.yml").read_text())
+    steps = workflow["jobs"]["compare-latest-stable-to-pin"]["steps"]
+    names = [step.get("name") for step in steps]
+    step = steps[names.index("Publish comparison reports to job summary")]
+    assert step["if"] == "always()"
+    assert names.index("Upload pin/latest snapshots and reports") < names.index(step["name"])
+    assert names.index(step["name"]) < names.index("Final compatibility and semantic gate")
+    checked = "# Exact pin\n\nPASS\n"
+    latest = "# Latest stable\n\nREVIEW REQUIRED: dispatch drift\n"
+    (tmp_path / "checked-pin-report.md").write_text(checked)
+    (tmp_path / "latest-vs-pin-report.md").write_text(latest)
+    summary = tmp_path / "summary.md"
+    summary.write_text("Existing summary\n")
+    subprocess.run(
+        ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step["run"]],
+        env={**os.environ, "ARTIFACTS": str(tmp_path), "GITHUB_STEP_SUMMARY": str(summary)},
+        check=True,
+    )
+    rendered = summary.read_text()
+    assert rendered.startswith("Existing summary\n")
+    assert checked in rendered
+    assert latest in rendered
+    assert rendered.index(checked) < rendered.index(latest)
+
+
+def test_torchmonarch_canary_gate_reports_all_failed_or_missing_stages():
+    import os
+    import subprocess
+
+    workflow = yaml.safe_load(
+        (REPO / ".github/workflows/torchmonarch-canary.yml").read_text())
+    step = next(step for step in workflow["jobs"]["compare-latest-stable-to-pin"]["steps"]
+                if step.get("name") == "Final compatibility and semantic gate")
+    assert step["if"] == "always()"
+    success = dict.fromkeys(step["env"], "0")
+
+    def run(outputs):
+        return subprocess.run(
+            ["bash", "--noprofile", "--norc", "-e", "-o", "pipefail", "-c", step["run"]],
+            env={**{key: value for key, value in os.environ.items() if key not in success},
+                 **outputs},
+            capture_output=True, text=True,
+        )
+
+    result = run(success)
+    assert result.returncode == 0, result.stderr
+    assert "::error::" not in result.stdout
+    for stage in success:
+        for rc in ("1", "", None):
+            outputs = {**success, stage: rc}
+            if rc is None:
+                outputs.pop(stage)
+            result = run(outputs)
+            assert result.returncode == 1, result.stderr
+            assert f"{stage} failed (rc={rc or 'missing'})" in result.stdout
+    result = run(dict.fromkeys(success, "1"))
+    assert result.returncode == 1
+    for stage in success:
+        assert f"{stage} failed (rc=1)" in result.stdout
+
+
 def test_header_accepts_alignment_padded_layouts(tmp_path):
     """Producers may pad between and after tensors; overlap stays a hard error.
     Strict contiguity would refuse legal files outright, because a structural

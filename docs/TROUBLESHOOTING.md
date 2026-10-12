@@ -4970,3 +4970,31 @@ refuses; reinstall the managed launcher for the new config or pass a leading
 `--config` override. For the dashboard, separately verify the ComfyUI endpoint
 and pass `top --host HOST:PORT` when discovery does not select the intended
 driver. A CLI launcher does not start ComfyUI or Worker services.
+
+## 112. The torchmonarch canary reports semantic drift against a new release
+
+**Symptom:** `torchmonarch-canary` fails its final compatibility gate while the
+checked repository pin passes. This is separate from `comfy-canary`, which checks
+ComfyUI compatibility. The dependency canary installs the candidate only in a
+scratch environment; it does not change the repository pin or running Workers.
+
+Read the Actions summary and the `torchmonarch-surface-<run_id>` artifact.
+`checked-pin-report.md` compares the installed pin with the committed baseline;
+`latest-vs-pin-report.md` compares the latest stable release with that pin.
+The final gate names failed stages, and installation logs remain in the artifact.
+
+The 2026-10-12 alert compared the passing 0.6.0 pin with
+[Monarch 0.7.0](https://github.com/meta-pytorch/monarch/releases/tag/v0.7.0), which
+removed `Future(coro=...)` construction and the `actor_queue_dispatch` setting.
+The former was used only by this canary, so its failure did not demonstrate a
+production Future failure. The probe now obtains a Future from the public
+channel API before testing `.get()` inside an asyncio loop. Queue dispatch is
+now unconditional upstream, but the removed setting still requires review.
+
+Keep the validated repository pin until the
+[pin-bump procedure](../skills/dgx-monarch-dev/SKILL.md#torchmonarch-bump-procedure-63)
+is complete. Review the candidate's shutdown-timeout cancellation and immediately started
+RDMA buffer drops as well as dispatch behavior; unchanged signatures do not
+prove those ownership contracts. Do not refresh the baseline or suppress drift
+just to clear the alert. CPU surface checks do not establish hardware or native
+RDMA acceptance.
