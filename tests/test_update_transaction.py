@@ -900,3 +900,18 @@ def test_dependency_drift_after_confirmation_refuses_without_service_mutation():
     assert result.receipt["status"] == "failed"
     assert "stop" not in ops.events and "activate" not in ops.events
     assert "cleanup" in ops.events
+
+
+@pytest.mark.parametrize("inspection", [False, True])
+@pytest.mark.parametrize("clear", [False, True])
+def test_privileged_inspection_receipt_records_selection_without_claiming_success(inspection, clear):
+    ops = FakeOps()
+    ops.privileged_process_inspection = inspection
+    if not clear:
+        ops.activity[0] = ActivitySnapshot(False, False, 0, None)
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+    note = "Privileged process inspection was required for activity guards."
+    assert (note in result.receipt["notes"]) is inspection
+    assert result.succeeded is clear
+    if not clear:
+        assert "stop" not in ops.events

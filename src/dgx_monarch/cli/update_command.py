@@ -14,6 +14,7 @@ from typing import cast
 from ..config import ClusterConfig
 from . import comfy_ports
 from .cluster_smoke import exact_pass_evidence
+from .update_activity import activity_snapshot, privileged_actor_count
 from .update_cancellation import run_finalizer_pair
 from .update_dependency_contract import require_candidate_dependencies
 from .update_driver_pin import DriverPinError, DriverPinTransition
@@ -67,15 +68,19 @@ class SystemUpdateOps(UpdateOps):
         config: ClusterConfig,
         *,
         driver_host: str | None = None,
+        privileged_process_inspection: bool = False,
         command_runner: CommandRunner = cast(CommandRunner, subprocess.run),
         release_manager: ReleaseManager | None = None,
         pin_transition: DriverPinTransition | None = None,
         worktree_root: Path | None = None,
     ) -> None:
+        if type(privileged_process_inspection) is not bool:
+            raise ValueError("invalid privileged process inspection selection")
         self.repo = repo.resolve()
         self._config_path = Path(config.source).expanduser().resolve()
         self.config = replace(config, source=str(self._config_path))
         self.driver_host = driver_host
+        self.privileged_process_inspection = privileged_process_inspection
         self._run = command_runner
         self._releases = release_manager or ReleaseManager(self.config, command_runner=command_runner)
         self._pins = pin_transition or DriverPinTransition(command_runner=command_runner)
@@ -138,25 +143,17 @@ class SystemUpdateOps(UpdateOps):
         return snapshot
 
     def activity_snapshot(self) -> ActivitySnapshot:
-        ports = comfy_ports.find_comfy_ports()
-        running, observed = comfy_ports.driver_probe(self.driver_host, ports)
-        actors = self._marked_actor_count()
-        candidates = _comfy_candidate_count()
-        candidate_running = type(candidates) is int and candidates > 0
-        ambiguous_driver = running is None and (
-            not observed
-            or self.driver_host is not None
-            or candidates is None
-        )
-        return ActivitySnapshot(
-            comfy_running=running is not None or candidate_running,
-            render_active=None if ambiguous_driver or running is not None or candidate_running else False,
-            active_leases=None if ambiguous_driver or running is not None or candidate_running else 0,
-            marked_actors=actors,
-        )
+        return activity_snapshot(self.driver_host, self._marked_actor_count(),
+                                 comfy_ports, _comfy_candidate_count)
 
     def _marked_actor_count(self) -> int | None:
-        return _count_marked_actors(self.config)
+        count = _count_marked_actors(self.config)
+        if self.privileged_process_inspection:
+            privileged = privileged_actor_count(self.config)
+            if count is None or privileged is None:
+                return None
+            count = max(count, privileged)
+        return count
 
     def stage(self, target_sha: str) -> StagedRelease:
         checkout: Path | None = None
@@ -486,6 +483,7 @@ def run_verified_update(
     target_ref: str = DEFAULT_TARGET,
     assume_yes: bool = False,
     driver_host: str | None = None,
+    privileged_process_inspection: bool = False,
     receipt_path: str | os.PathLike[str] | None = None,
     ops: UpdateOps | None = None,
 ) -> int:
@@ -495,5 +493,6 @@ def run_verified_update(
         return launch_verified_update(
             config, repo=repo, target_ref=target_ref, assume_yes=assume_yes,
             driver_host=driver_host, receipt_path=receipt_path,
+            privileged_process_inspection=privileged_process_inspection,
         )
     return run_serialized_update(repo=repo, request=UpdateRequest(target_ref, assume_yes), ops=ops, receipt_path=receipt_path)

@@ -12,6 +12,7 @@ from typing import Protocol
 
 from ..config import ClusterConfig
 from . import lifecycle, probe_certainty
+from .legacy_update_dependencies import preflight as dependency_preflight
 from .update_lock import UpdateLock, UpdateLockUnavailable
 
 DriverProbe = Callable[[str | None], tuple[str | None, bool]]
@@ -102,6 +103,14 @@ def _run_locked(
         print(f"cannot determine the exact torchmonarch pin: {exc}", file=sys.stderr)
         return 1
 
+    config = load_config(args)
+    if not dependency_preflight(pin, dependencies, config):
+        print("update refused before pin installation or Worker changes: candidate dependencies "
+              "are missing, incompatible, or could not be inspected. Review the bounded details "
+              "above and install prerequisites separately using docs/INSTALL.md; preserve the "
+              "working Torch build. The checkout may already have fast-forwarded.", file=sys.stderr)
+        return 1
+
     try:
         installed_pin = importlib.metadata.version("torchmonarch")
     except importlib.metadata.PackageNotFoundError:
@@ -121,7 +130,6 @@ def _run_locked(
         text=True,
     ).returncode:
         return 1
-    config = load_config(args)
     if config is not None and config.hosts:
         if not lifecycle.ensure_torchmonarch_pin(config, pin):
             print("worker torchmonarch pin install failed; workers were not restarted", file=sys.stderr)

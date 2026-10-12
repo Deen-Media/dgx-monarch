@@ -223,6 +223,10 @@ def _child(root: Path, manifest: dict[str, Any]) -> int:
         raise ValueError("original repository identity changed")
     if repo.resolve(strict=True) != repo:
         raise ValueError("original repository path changed")
+    inspection = request.get("privileged_process_inspection", False)
+    if type(inspection) is not bool:
+        raise ValueError("invalid privileged process inspection selection")
+    options: dict[str, Any] = {"privileged_process_inspection": True} if inspection else {}
     ops: SystemUpdateOps
     if "recovery" in request:
         _check_recovery_original(repo, request, manifest["source_manifest"])
@@ -233,11 +237,11 @@ def _child(root: Path, manifest: dict[str, Any]) -> int:
                 _check_recovery_original(repo, request, manifest["source_manifest"])
                 return super().resolve_target(target_ref)
 
-        ops = RecoveryOps(repo, config, driver_host=request["driver_host"])
+        ops = RecoveryOps(repo, config, driver_host=request["driver_host"], **options)
     else:
         if dgx_source_manifest_sha256(repo / "src" / "dgx_monarch") != manifest["source_manifest"]:
             raise ValueError("original checkout source changed before update")
-        ops = SystemUpdateOps(repo, config, driver_host=request["driver_host"])
+        ops = SystemUpdateOps(repo, config, driver_host=request["driver_host"], **options)
     result = run_serialized_update(
         repo=repo, request=UpdateRequest(request["target_ref"], request["assume_yes"]),
         ops=ops,
@@ -283,9 +287,12 @@ def launch_verified_update(
     driver_host: str | None,
     receipt_path: str | os.PathLike[str] | None,
     controller_repository: Path | None = None,
+    privileged_process_inspection: bool = False,
 ) -> int:
     snapshot: Path | None = None
     try:
+        if type(privileged_process_inspection) is not bool:
+            raise ValueError("invalid privileged process inspection selection")
         destination = str(receipt_destination(receipt_path)) if receipt_path is not None else None
         original_repo = repo.expanduser().resolve(strict=True)
         config_path = Path(config.source).expanduser().resolve(strict=True)
@@ -310,6 +317,7 @@ def launch_verified_update(
             "config_sha256": hashlib.sha256(config_bytes).hexdigest(),
             "target_ref": target_ref, "assume_yes": assume_yes,
             "driver_host": driver_host, "receipt_path": destination,
+            "privileged_process_inspection": privileged_process_inspection,
         }
         if recovery is not None:
             request["recovery"] = recovery

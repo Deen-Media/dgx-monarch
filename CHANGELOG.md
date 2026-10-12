@@ -16,8 +16,13 @@
   2 to one latent item, which DP2 correctly refuses at refinement.
 - Upgrade to TorchMonarch 0.7.0 and advance the package identity to 1.2.0 so
   previous Gate PASS rows cannot authorize the new runtime. Preserve the
-  existing Torch/CUDA build during verified updates and validate the candidate's
-  dependencies before installation.
+  existing Torch/CUDA build and validate the candidate's dependencies before
+  pin installation in plain and verified updates. Report bounded package
+  diagnostics when prerequisites are missing or incompatible.
+- Let verified updates and recovery explicitly reuse the reviewed read-only
+  process inspectors when protected process markers are unreadable. Require
+  fresh authenticated reports at both activity checks and record the choice
+  in the receipt; initial setup defaults remain unchanged.
 - Validate native RDMA binding load and package/import ownership separately from
   public API signatures. Extend the dependency canary with real local CPU actors,
   concurrent dispatch, Future timeout semantics and ProcMesh shutdown. Run it

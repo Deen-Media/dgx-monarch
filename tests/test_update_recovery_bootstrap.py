@@ -109,16 +109,19 @@ def test_bound_original_refuses_drift(checkouts, tmp_path, change):
         bootstrap._check_recovery_original(original, request, source)
 
 
-def test_child_uses_existing_serialized_flow_and_rechecks_inside_lock(checkouts, tmp_path, monkeypatch):
+@pytest.mark.parametrize("inspection", [False, True])
+def test_child_uses_existing_serialized_flow_and_rechecks_inside_lock(checkouts, tmp_path, monkeypatch, inspection):
     from dgx_monarch.cli import update_command, update_entrypoint
 
     original = checkouts[0]
     request = request_for(checkouts, tmp_path)
+    request["privileged_process_inspection"] = inspection
     monkeypatch.setattr(bootstrap, "load_cluster_config", lambda path: ClusterConfig(source=str(path)))
     monkeypatch.setattr(bootstrap.signal, "signal", Mock())
     calls = []
     class Ops:
-        def __init__(self, repo, config, driver_host=None):
+        def __init__(self, repo, config, driver_host=None, privileged_process_inspection=False):
+            assert privileged_process_inspection is inspection
             calls.append(("ops", repo))
         def resolve_target(self, target):
             calls.append(("resolve", target))
@@ -170,7 +173,8 @@ def test_loaded_foreign_controller_module_is_refused(tmp_path, monkeypatch):
         bootstrap._verify_loaded_controller(package)
 
 
-def test_isolated_tool_loads_only_reviewed_package_without_source_sibling_shadow(tmp_path):
+@pytest.mark.parametrize("inspection", [False, True])
+def test_isolated_tool_loads_only_reviewed_package_without_source_sibling_shadow(tmp_path, inspection):
     controller = tmp_path / "reviewed"
     package = controller / "src/dgx_monarch"
     (package / "cli").mkdir(parents=True)
@@ -180,6 +184,7 @@ def test_isolated_tool_loads_only_reviewed_package_without_source_sibling_shadow
     (package / "cli/update_bootstrap.py").write_text(
         "def launch_verified_update(config, **kwargs):\n"
         "    assert kwargs['assume_yes'] is False\n"
+        f"    assert kwargs['privileged_process_inspection'] is {inspection!r}\n"
         "    assert kwargs['controller_repository'].name == 'reviewed'\n"
         "    assert kwargs['repo'].name == 'original'\n"
         "    print('MOCK_RECOVERY_DISPATCH')\n"
@@ -198,7 +203,8 @@ def test_isolated_tool_loads_only_reviewed_package_without_source_sibling_shadow
     config.write_text("")
     result = subprocess.run(
         [sys.executable, "-I", "-B", str(tool), "--repo", str(tmp_path / "original"),
-         "--config", str(config), "--target", target], capture_output=True, text=True, timeout=30,
+         "--config", str(config), "--target", target,
+         *(["--privileged-process-inspection"] if inspection else [])], capture_output=True, text=True, timeout=30,
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip() == "MOCK_RECOVERY_DISPATCH"

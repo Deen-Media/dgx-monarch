@@ -75,6 +75,8 @@ def main() -> int:
     parser.add_argument("--config", type=Path, required=True, help="existing cluster configuration")
     parser.add_argument("--target", help="reviewed full commit; defaults to this controller checkout's HEAD")
     parser.add_argument("--receipt", type=Path)
+    parser.add_argument("--privileged-process-inspection", action="store_true",
+                        help="require existing read-only root inspectors on every host")
     args = parser.parse_args()
     if not sys.flags.isolated or not sys.dont_write_bytecode:
         parser.error("run this tool with the original environment's Python using -I -B")
@@ -104,6 +106,7 @@ def main() -> int:
             load_cluster_config(args.config.expanduser().resolve(strict=True)), repo=args.repo,
             target_ref=target, assume_yes=False, driver_host=None, receipt_path=args.receipt,
             controller_repository=controller,
+            privileged_process_inspection=args.privileged_process_inspection,
         )
 
 

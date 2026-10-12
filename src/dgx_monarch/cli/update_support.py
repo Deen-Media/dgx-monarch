@@ -12,6 +12,7 @@ from pathlib import Path
 from ..config import ClusterConfig
 from . import comfy_ports, lifecycle
 from .update_dependency_contract import probe_source
+from .update_dependency_diagnostics import report_result
 from .update_release import CommandRunner
 
 _DEPENDENCY_CHECK = r"""
@@ -101,17 +102,11 @@ def candidate_dependencies_available(
     payload = json.dumps({"contract": contract, "roots": list(dependencies)}, separators=(",", ":"))
     source = probe_source()
 
-    def passed(result: subprocess.CompletedProcess[str]) -> bool:
-        try:
-            return result.returncode == 0 and json.loads(result.stdout) == []
-        except (ValueError, TypeError):
-            return False
-
     try:
-        if not passed(run(
+        if not report_result(run(
             [sys.executable, "-c", source, payload],
             capture_output=True, text=True, timeout=60,
-        )):
+        ), "driver"):
             return False
         script = f"""
 set -eu
@@ -119,8 +114,8 @@ PYBIN={shlex.quote(config.python_bin)}
 case "$PYBIN" in "~/"*) PYBIN="$HOME/${{PYBIN#\\~/}}";; "~") PYBIN="$HOME";; esac
 "$PYBIN" -c {shlex.quote(source)} {shlex.quote(payload)}
 """
-        for host in config.hosts:
-            if not passed(lifecycle.run_on_host(config, host, script, timeout=60)):
+        for ordinal, host in enumerate(config.hosts, 1):
+            if not report_result(lifecycle.run_on_host(config, host, script, timeout=60), f"host_{ordinal}"):
                 return False
     except (OSError, subprocess.TimeoutExpired):
         return False

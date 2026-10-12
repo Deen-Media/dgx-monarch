@@ -976,6 +976,13 @@ Plain `dgxm update` is the compatibility path. It installs both torchmonarch
 and dgx-monarch with `--no-deps`. Neither mode resolves or replaces torch,
 NCCL, xfuser, yunchang, or optional extras; each moves only torchmonarch, to
 the repository's exact pin. Upgrade other dependencies separately.
+Before any pin install or Worker change, plain update checks the candidate's
+dependency requirements on the driver and every configured host. A changed
+pin downloads a compatible wheel into a temporary directory for metadata
+inspection; an unchanged pin uses installed metadata and needs no download.
+Missing or incompatible prerequisites refuse the update with bounded package
+details. The checkout may already have fast-forwarded; this check does not add
+verified update's rollback or receipt guarantees to the plain path.
 Plain and verified updates share one file lock per driver checkout, so a second
 update from any process, in either mode, refuses before it changes anything.
 
@@ -993,6 +1000,15 @@ isolated process from it. That process keeps using the captured code while
 the live checkout and local Worker release change. The controller verifies
 the saved config and source before starting. See the
 [recorded update results and limits](VALIDATION.md#operator-checks).
+
+When protected process environments are unreadable, start the reviewed
+[read-only process inspectors](#protected-process-inspection) on every
+configured host, then pass `--privileged-process-inspection` with `--verify`.
+The same flag is available on `tools/update_from_checkout.py`. Both activity
+checks require fresh authenticated inspector reports with no unknown processes;
+an absent, expired, mismatched or incomplete helper blocks activation. This
+option never starts a helper and does not replace ComfyUI, lease, source or
+Worker ownership checks. Without it, the existing unprivileged scan is unchanged.
 
 It fetches `origin` and
 resolves the requested ref to one full commit. By default it reads origin's

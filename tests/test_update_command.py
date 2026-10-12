@@ -783,7 +783,8 @@ def test_doctor_carries_the_unknown_exit_through_to_certainty(
         assert ops.doctor().certainty == certainty
 
 
-def test_verified_update_default_uses_isolated_bootstrap(monkeypatch, tmp_path):
+@pytest.mark.parametrize("inspection", [False, True])
+def test_verified_update_default_uses_isolated_bootstrap(monkeypatch, tmp_path, inspection):
     from dgx_monarch.cli import update_bootstrap
     calls = []
     config = ClusterConfig(source=str(tmp_path / "cluster.toml"))
@@ -798,8 +799,10 @@ def test_verified_update_default_uses_isolated_bootstrap(monkeypatch, tmp_path):
     assert update_command.run_verified_update(
         config, repo=tmp_path, target_ref="origin/master", assume_yes=True,
         driver_host="controller", receipt_path=receipt,
+        privileged_process_inspection=inspection,
     ) == 17
     assert calls == [(config, {
         "repo": tmp_path, "target_ref": "origin/master", "assume_yes": True,
         "driver_host": "controller", "receipt_path": receipt,
+        "privileged_process_inspection": inspection,
     })]

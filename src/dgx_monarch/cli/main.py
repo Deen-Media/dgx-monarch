@@ -348,9 +348,10 @@ def cmd_update(args) -> int:
             assume_yes=bool(args.yes),
             driver_host=args.host,
             receipt_path=args.receipt,
+            privileged_process_inspection=bool(getattr(args, "privileged_process_inspection", False)),
         )
-    if args.target != DEFAULT_TARGET or args.yes or args.receipt:
-        print("error: --target, --yes, and --receipt require --verify", file=sys.stderr)
+    if args.target != DEFAULT_TARGET or args.yes or args.receipt or getattr(args, "privileged_process_inspection", False):
+        print("error: --target, --yes, --receipt, and --privileged-process-inspection require --verify", file=sys.stderr)
         return 2
     return legacy_update.run(args, load_config=_load_config, driver_probe=_driver_probe)
 

@@ -260,6 +260,8 @@ def build_parser(commands: Mapping[str, Command]) -> argparse.ArgumentParser:
     p_update.add_argument(
         "--yes", action="store_true", help="with --verify, activate the staged release without asking"
     )
+    p_update.add_argument("--privileged-process-inspection", action="store_true",
+                         help="with --verify, require existing read-only root inspectors on every host")
     p_update.add_argument("--receipt", default=None, help="absolute path for the sanitized --verify receipt")
     p_update.set_defaults(func=commands["update"])
     sub.add_parser(
