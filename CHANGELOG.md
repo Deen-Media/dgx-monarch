@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Fix the torchmonarch canary's Future probe to use a returned channel Future,
+  avoiding the constructor removed in 0.7.0. Show comparison reports and failed
+  stages in Actions while retaining the 0.6.0 pin and semantic-drift gate.
+
 ## [1.1.0] - 2026-10-11
 
 ### Everyday use

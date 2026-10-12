@@ -262,15 +262,18 @@ def collect_touchpoints(
 
 def _probe_future_get_asyncio(import_module: Callable[[str], object]) -> dict[str, Any]:
     actor = import_module("monarch.actor")
-    pytokio = import_module("monarch._rust_bindings.monarch_hyperactor.pytokio")
-    future_type: Any = actor.__dict__["Future"]  # type: ignore[attr-defined]
-    python_task: Any = pytokio.__dict__["PythonTask"]  # type: ignore[attr-defined]
+    channel_type: Any = actor.__dict__["Channel"]  # type: ignore[attr-defined]
+    # Production consumes returned Futures. Their constructor changed in 0.7.0;
+    # use the public channel API so this measures get(), not construction.
+    port, receiver = channel_type.open()
+    port.send(())
+    future = receiver.recv()
 
     async def probe() -> dict[str, Any]:
         with warnings.catch_warnings(record=True) as caught:
             warnings.simplefilter("always")
             try:
-                result = future_type(coro=python_task.sleep(0)).get(timeout=1)
+                result = future.get(timeout=1)
             except BaseException as exc:
                 observed: dict[str, Any] = _exception_observation(exc)
             else:

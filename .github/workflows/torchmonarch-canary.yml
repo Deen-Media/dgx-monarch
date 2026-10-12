@@ -148,6 +148,17 @@ jobs:
           path: ${{ runner.temp }}/dgxm-torchmonarch-artifacts
           if-no-files-found: error
           retention-days: 30
+      - name: Publish comparison reports to job summary
+        if: always()
+        env:
+          ARTIFACTS: ${{ runner.temp }}/dgxm-torchmonarch-artifacts
+        run: |
+          {
+            printf '## Installed pin versus checked snapshot\n\n'
+            cat "$ARTIFACTS/checked-pin-report.md"
+            printf '\n## Latest stable versus installed pin\n\n'
+            cat "$ARTIFACTS/latest-vs-pin-report.md"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Final compatibility and semantic gate
         if: always()
         env:
@@ -158,9 +169,14 @@ jobs:
           LATEST_SNAPSHOT_RC: ${{ steps.latest-snapshot.outputs.snapshot_rc }}
           LATEST_COMPARE_RC: ${{ steps.latest-compare.outputs.rc }}
         run: |
-          test "$PIN_INSTALL_RC" = 0
-          test "$PIN_SNAPSHOT_RC" = 0
-          test "$CHECKED_PIN_RC" = 0
-          test "$LATEST_INSTALL_RC" = 0
-          test "$LATEST_SNAPSHOT_RC" = 0
-          test "$LATEST_COMPARE_RC" = 0
+          failed=0
+          for stage in PIN_INSTALL_RC PIN_SNAPSHOT_RC CHECKED_PIN_RC \
+            LATEST_INSTALL_RC LATEST_SNAPSHOT_RC LATEST_COMPARE_RC; do
+            rc="${!stage:-}"
+            if [ "$rc" != 0 ]; then
+              printf '::error::%s failed (rc=%s). See job summary and uploaded reports.\n' \
+                "$stage" "${rc:-missing}"
+              failed=1
+            fi
+          done
+          exit "$failed"
