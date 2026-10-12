@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Allow an explicit foreground process-inspector lifetime up to four hours;
+  retain the launcher's 30-minute default and authenticated, bounded inspection.
 - Add Kroma v0.3.1 Turbo OPD workflows for BF16, local INT8 conversions and
   two-pass 2x refinement using the existing Krea2 runtime. Document upstream
   sampling settings, required artifacts and native shift handling. Preserve

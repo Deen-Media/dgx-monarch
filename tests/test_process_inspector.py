@@ -475,3 +475,32 @@ def test_stop_requested_at_bind_still_captures_inode_and_cleans_up(tmp_path, mon
     path = tmp_path / "inspect.sock"
     inspector._serve_socket(os.geteuid(), path, 20, "source", should_stop=lambda: stopped)
     assert not os.path.lexists(path)
+
+
+@pytest.mark.parametrize("arguments, expected", [([], 900), (["--lifetime", "14400"], 14400)])
+def test_privileged_lifetime_dispatch(monkeypatch, arguments, expected):
+    calls = []
+    monkeypatch.setattr(sys, "argv", ["inspector", *arguments])
+    monkeypatch.setenv("SUDO_UID", "1000")
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(inspector, "serve", lambda uid, lifetime: calls.append((uid, lifetime)))
+    inspector.main()
+    assert calls == [(1000, expected)]
+
+
+@pytest.mark.parametrize("lifetime", [0, -1, 14401])
+def test_privileged_cli_lifetime_refused(monkeypatch, lifetime):
+    monkeypatch.setattr(sys, "argv", ["inspector", "--lifetime", str(lifetime)])
+    monkeypatch.setenv("SUDO_UID", "1000")
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(inspector, "serve", lambda *args: pytest.fail("must not serve"))
+    with pytest.raises(SystemExit) as exc:
+        inspector.main()
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize("lifetime", [0, -1, 14401, True, 1.5])
+def test_privileged_serve_lifetime_refused_before_filesystem(monkeypatch, lifetime):
+    monkeypatch.setattr(inspector, "_source_hash", lambda: pytest.fail("must not inspect source"))
+    with pytest.raises(ValueError, match="Lifetime"):
+        inspector.serve(1000, lifetime)

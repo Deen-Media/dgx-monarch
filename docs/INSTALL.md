@@ -637,8 +637,11 @@ reply, it checks that the peer is root, that the helper source hash, UID and
 boot id match, and that the reply is fresh. Missing, expired, incompatible or
 incomplete inspection stays unknown; nothing skips the protected processes.
 
-The launcher uses `--lifetime 1800`, the helper's 30-minute maximum;
-Ctrl-C stops it sooner. Keep it running until setup and any recovery have
+The launcher defaults to 1800 seconds (30 minutes). For a longer
+foreground session, run the same launcher with `--serve --lifetime 14400`;
+14400 seconds (four hours) is the maximum. Ctrl-C stops it sooner. A running
+helper keeps its original deadline; launching again cannot extend it.
+Keep it running until setup and any recovery have
 settled. If it expires during an uncertain transaction, keep that
 transaction's receipt and recovery state: a new helper alone does not
 authorize repeating an ambiguous change. Setup never runs sudo or starts the

@@ -14,17 +14,21 @@ from pathlib import Path
 MAX_PIDS = 65536
 DEADLINE = 10
 MAX_SOURCE = 256 * 1024
+DEFAULT_LIFETIME = 1800
+MAX_LIFETIME = 14400
 SOURCE = Path(__file__).resolve().parents[1] / 'src/dgx_monarch/cli/process_inspector.py'
 ROOT_SCRIPT = r'''set -euo pipefail
 export PATH=/usr/bin:/bin
 [[ "${SUDO_UID:-}" =~ ^[1-9][0-9]*$ ]]
 [[ "$2" =~ ^[0-9a-f]{64}$ ]]
+[[ "$3" =~ ^[1-9][0-9]{0,4}$ ]]
+(( 10#$3 <= 14400 ))
 inspector_dir=$(mktemp -d /run/dgxm-inspector.XXXXXX)
 trap 'rm -f -- "$inspector_dir/inspector.py"; rmdir -- "$inspector_dir"' EXIT
 install -o root -g root -m 0600 -- "$1" "$inspector_dir/inspector.py"
 printf '%s  %s\n' "$2" "$inspector_dir/inspector.py" | sha256sum --check --status
 env -i PATH=/usr/bin:/bin SUDO_UID="$SUDO_UID" \
-  /usr/bin/python3 -I -S "$inspector_dir/inspector.py" --lifetime 1800
+  /usr/bin/python3 -I -S "$inspector_dir/inspector.py" --lifetime "$3"
 '''
 
 
@@ -139,7 +143,9 @@ def source_hash():
     return source, hashlib.sha256(data).hexdigest()
 
 
-def serve():
+def serve(lifetime=DEFAULT_LIFETIME):
+    if type(lifetime) is not int or not 1 <= lifetime <= MAX_LIFETIME:
+        raise ValueError('Lifetime must be 1..14400 seconds')
     if not (sys.stdin.isatty() and sys.stderr.isatty()):
         raise ValueError('--serve requires a foreground interactive terminal')
     source, digest = source_hash()
@@ -150,9 +156,10 @@ def serve():
             metadata = component.stat()
             if metadata.st_uid != 0 or metadata.st_mode & 0o022:
                 raise ValueError('Unsafe system executable')
-    print('Starting the read-only inspector for up to 30 minutes. Keep this terminal open.', flush=True)
+    duration = 'four hours' if lifetime == MAX_LIFETIME else f'{lifetime // 60} minutes' if lifetime % 60 == 0 else f'{lifetime} seconds'
+    print(f'Starting the read-only inspector for up to {duration}. Keep this terminal open.', flush=True)
     return subprocess.run(
-        ['/usr/bin/sudo', '/bin/bash', '-s', '--', str(source), digest],
+        ['/usr/bin/sudo', '/bin/bash', '-s', '--', str(source), digest, str(lifetime)],
         input=ROOT_SCRIPT, text=True, check=False,
         env={'PATH': '/usr/bin:/bin', 'TERM': 'dumb'},
     ).returncode
@@ -163,12 +170,15 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--check', action='store_true', help='Check access only; this is the default')
     mode.add_argument('--serve', action='store_true', help='Run the reviewed inspector in this terminal with sudo')
+    parser.add_argument('--lifetime', type=int, help='With --serve: 1..14400 seconds (default: 1800)')
     args = parser.parse_args(argv)
+    if args.lifetime is not None and (not args.serve or not 1 <= args.lifetime <= MAX_LIFETIME):
+        parser.error('--lifetime requires --serve and a value from 1 to 14400 seconds')
     if os.geteuid() == 0 or os.getuid() != os.geteuid():
         parser.error('Run as a normal user with matching real and effective UIDs, not with sudo')
     if args.serve:
         try:
-            return serve()
+            return serve(DEFAULT_LIFETIME if args.lifetime is None else args.lifetime)
         except KeyboardInterrupt:
             print('Inspector launch interrupted. Check its terminal state before continuing.', file=sys.stderr)
             return 130

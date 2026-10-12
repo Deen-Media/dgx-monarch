@@ -89,7 +89,8 @@ def test_serve_requires_terminal(monkeypatch):
         tool.serve()
 
 
-def test_foreground_sudo_shape(monkeypatch):
+@pytest.mark.parametrize("lifetime", [1800, 14400])
+def test_foreground_sudo_shape(monkeypatch, lifetime):
     monkeypatch.setattr(tool.sys.stdin, 'isatty', lambda: True)
     monkeypatch.setattr(tool.sys.stderr, 'isatty', lambda: True)
     monkeypatch.setattr(tool, 'source_hash', lambda: (Path('/reviewed/process_inspector.py'), 'a' * 64))
@@ -98,13 +99,14 @@ def test_foreground_sudo_shape(monkeypatch):
     monkeypatch.setattr(Path, 'stat', lambda self: SimpleNamespace(st_uid=0, st_mode=0o100755))
     runner = Mock(return_value=SimpleNamespace(returncode=0))
     monkeypatch.setattr(tool.subprocess, 'run', runner)
-    assert tool.serve() == 0
+    assert tool.serve(lifetime) == 0
     argv = runner.call_args.args[0]
-    assert argv == ['/usr/bin/sudo', '/bin/bash', '-s', '--', '/reviewed/process_inspector.py', 'a' * 64]
+    assert argv == ['/usr/bin/sudo', '/bin/bash', '-s', '--', '/reviewed/process_inspector.py', 'a' * 64, str(lifetime)]
     kwargs = runner.call_args.kwargs
     assert kwargs['env'] == {'PATH': '/usr/bin:/bin', 'TERM': 'dumb'}
     assert 'sha256sum --check --status' in kwargs['input']
-    assert '--lifetime 1800' in kwargs['input']
+    assert '--lifetime "$3"' in kwargs['input']
+    assert '10#$3 <= 14400' in kwargs['input']
     assert 'install -o root -g root -m 0600' in kwargs['input']
     assert "trap 'rm -f" in kwargs['input']
     assert 'env -i' in kwargs['input']
@@ -228,3 +230,58 @@ def test_changed_uid_tuple_stays_unknown(tmp_path, monkeypatch):
     uid = os.geteuid()
     monkeypatch.setattr(tool, 'process_identity', Mock(side_effect=[(uid, (uid,) * 4), (uid, (uid, uid, 0, uid))]))
     assert tool.check_access(tmp_path)['changed_or_unknown'] == 1
+
+
+@pytest.mark.parametrize('value', [0, -1, 14401, True, 1.5, '14400'])
+def test_invalid_lifetime_never_reaches_sudo(monkeypatch, value):
+    runner = Mock(side_effect=AssertionError('No subprocess'))
+    monkeypatch.setattr(tool.subprocess, 'run', runner)
+    with pytest.raises(ValueError, match='Lifetime'):
+        tool.serve(value)
+    runner.assert_not_called()
+
+
+@pytest.mark.parametrize('argv', [['--lifetime', '14400'], ['--serve', '--lifetime', '14401'], ['--serve', '--lifetime', '0']])
+def test_lifetime_cli_refuses_invalid_use(monkeypatch, argv):
+    monkeypatch.setattr(tool, 'serve', Mock(side_effect=AssertionError('No launch')))
+    with pytest.raises(SystemExit) as exc:
+        tool.main(argv)
+    assert exc.value.code == 2
+
+
+@pytest.mark.parametrize('argv, expected', [(['--serve'], 1800), (['--serve', '--lifetime', '14400'], 14400)])
+def test_lifetime_cli_dispatch(monkeypatch, argv, expected):
+    monkeypatch.setattr(tool.os, 'getuid', lambda: 1000)
+    monkeypatch.setattr(tool.os, 'geteuid', lambda: 1000)
+    launch = Mock(return_value=0)
+    monkeypatch.setattr(tool, 'serve', launch)
+    assert tool.main(argv) == 0
+    launch.assert_called_once_with(expected)
+
+
+@pytest.mark.parametrize('lifetime', ['0', '-1', '14401', '999999999999', 'abc', '1;echo unsafe', '014400'])
+def test_root_shell_rejects_lifetime_before_mutation(lifetime):
+    import subprocess
+
+    prefix = tool.ROOT_SCRIPT.split('inspector_dir=$(mktemp', 1)[0]
+    result = subprocess.run(
+        ['/bin/bash', '-s', '--', '/unused', 'a' * 64, lifetime],
+        input=prefix + '\nprintf MUTATION_REACHED\n', text=True, capture_output=True,
+        env={'PATH': '/usr/bin:/bin', 'SUDO_UID': '1000'}, check=False,
+    )
+    assert result.returncode != 0
+    assert not result.stdout
+
+
+@pytest.mark.parametrize('lifetime', ['1', '1800', '14400'])
+def test_root_shell_accepts_bounded_lifetime(lifetime):
+    import subprocess
+
+    prefix = tool.ROOT_SCRIPT.split('inspector_dir=$(mktemp', 1)[0]
+    result = subprocess.run(
+        ['/bin/bash', '-s', '--', '/unused', 'a' * 64, lifetime],
+        input=prefix + '\nprintf VALIDATED\n', text=True, capture_output=True,
+        env={'PATH': '/usr/bin:/bin', 'SUDO_UID': '1000'}, check=False,
+    )
+    assert result.returncode == 0
+    assert result.stdout == 'VALIDATED'

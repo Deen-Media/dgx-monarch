@@ -29,7 +29,7 @@ MAX_REQUEST = 256
 CONNECTION_TIMEOUT = 10.0
 MAX_CONNECTIONS = 4
 DEFAULT_LIFETIME = 900
-MAX_LIFETIME = 1800
+MAX_LIFETIME = 14400
 ROOT_DIRECTORY = Path("/run/dgxm-process-inspection")
 
 WORKER_MODULE = "dgx_monarch.cli.worker_loop"
@@ -409,6 +409,8 @@ def _serve_socket(
 
 def serve(uid: int, lifetime: int) -> None:
     """Serve on the fixed per-UID socket, owned by ``uid`` inside the root-owned directory."""
+    if type(lifetime) is not int or not 1 <= lifetime <= MAX_LIFETIME:
+        raise ValueError("Lifetime must be 1..14400 seconds")
     source_hash = _source_hash()
     directory = _root_directory()
     path = directory / f"{uid}.sock"

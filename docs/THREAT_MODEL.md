@@ -100,8 +100,9 @@ the operational scope.
 
 An optional process-inspection helper is a separate, explicit administrator
 boundary. It executes a reviewed root-owned temporary copy under isolated
-system Python, reads only process markers for the invoking UID, and expires within
-30 minutes. Its local Unix socket authenticates the caller UID with kernel peer
+system Python and reads only process markers for the invoking UID. The launcher
+selects 30 minutes by default; an explicit lifetime can extend a new session to
+at most four hours. Its local Unix socket authenticates the caller UID with kernel peer
 credentials; setup authenticates root peer credentials, exact helper source,
 UID, boot identity and a fresh bounded response. Command lines and environment
 values never leave the helper. The fixed request cannot select a command,
