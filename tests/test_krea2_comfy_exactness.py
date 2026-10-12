@@ -16,9 +16,10 @@ the claims are:
   is stock's key set (no pad rows) in stock's order;
 * every text-path attention and every text-path Linear receives stock's
   operands: all text rows, bit-equal to stock's, in stock's shape and strides;
+* the output head's Linear receives stock's full unpadded joint rows and strides;
 * each rank's output equals stock's, max abs difference 0.0.
 
-The joint blocks and the final layer run their Linears on local rows, and the
+The joint blocks run their Linears on local rows, and the
 joint q, k and v come out of those Linears. So the joint operand checks and the
 output equality both need a CPU GEMM that gives each row the same bits at any
 row count, and no precondition here checks it. The text-path checks hold on any
@@ -131,10 +132,10 @@ class _KernelHarness(_Harness):
         return out.transpose(1, 2)
 
 
-def _linear_spy(model, seen: list) -> None:
-    """Record every text Linear input in call order: (name, shape, strides) and a copy."""
+def _linear_spy(model, seen: list, prefixes=TEXT_PREFIXES) -> None:
+    """Record selected Linear inputs: (name, shape, strides) and a copy."""
     for name, module in model.named_modules():
-        if isinstance(module, torch.nn.Linear) and name.startswith(TEXT_PREFIXES):
+        if isinstance(module, torch.nn.Linear) and name.startswith(prefixes):
             def hook(_module, args, name=name):
                 seen.append(((name, tuple(args[0].shape), args[0].stride()), args[0].clone()))
             module.register_forward_pre_hook(hook)
@@ -168,6 +169,8 @@ def _run(monkeypatch, comfy_krea2, model, args, kwargs, *, pure_ulysses):
     ranks = [copy.deepcopy(model) for _ in range(WORLD)]
     stock_linears: list = []
     _linear_spy(model, stock_linears)
+    stock_last: list = []
+    _linear_spy(model, stock_last, ("last.linear",))
     stock_attention = _Recorder(ops, per_rank=False)
     with torch.no_grad():
         stock = type(model)._forward(
@@ -179,8 +182,10 @@ def _run(monkeypatch, comfy_krea2, model, args, kwargs, *, pure_ulysses):
     rank_attention = _Recorder(ops, per_rank=True)
     kernel = base.make_usp_attention("TORCH_FLASH")
     rank_linears: list[list] = [[] for _ in range(WORLD)]
+    rank_last: list[list] = [[] for _ in range(WORLD)]
     for rank, replica in enumerate(ranks):
         _linear_spy(replica, rank_linears[rank])
+        _linear_spy(replica, rank_last[rank], ("last.linear",))
         Krea2Adapter().inject_usp(replica, InjectionContext(
             topology_sp=WORLD, usp_attention=kernel, pure_ulysses=pure_ulysses))
     outputs: list = [None] * WORLD
@@ -213,6 +218,7 @@ def _run(monkeypatch, comfy_krea2, model, args, kwargs, *, pure_ulysses):
         rank_text=[[call[1:] for call in rank_attention.calls.get(rank, [])]
                    for rank in range(WORLD)],
         rank_text_linears=rank_linears,
+        stock_last=stock_last, rank_last=rank_last,
     )
 
 
@@ -282,6 +288,25 @@ def test_joint_kernels_receive_stock_operands(monkeypatch, comfy_krea2, text_row
 def test_text_path_receives_stock_operands(monkeypatch, comfy_krea2, text_rows, latent_hw, batch):
     _assert_text_operands_are_stock(
         _scenario(monkeypatch, comfy_krea2, text_rows, latent_hw, batch))
+
+
+@pytest.mark.parametrize("batch", [1, 2])
+@pytest.mark.parametrize("text_rows,latent_hw", SHAPES)
+def test_output_head_receives_stock_full_rows_and_strides(
+    monkeypatch, comfy_krea2, text_rows, latent_hw, batch,
+):
+    run = _scenario(monkeypatch, comfy_krea2, text_rows, latent_hw, batch)
+    assert len(run.stock_last) == 1
+    expected_layout, expected_values = run.stock_last[0]
+    image_rows = ((latent_hw[0] + PATCH - 1) // PATCH
+                  * ((latent_hw[1] + PATCH - 1) // PATCH))
+    assert expected_layout[1] == (batch, text_rows + image_rows, FEATURES)
+    for calls in run.rank_last:
+        assert len(calls) == 1
+        layout, values = calls[0]
+        assert layout == expected_layout
+        assert torch.equal(values, expected_values)
+    _assert_output_is_stock(run)
 
 
 @pytest.mark.parametrize("batch", [1, 2])

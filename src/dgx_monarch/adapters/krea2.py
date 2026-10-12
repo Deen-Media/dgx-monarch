@@ -218,9 +218,18 @@ class Krea2Adapter(Adapter):
             for block in self.blocks:
                 combined = block(combined, tvec, freqs, None, transformer_options=joint_opts)
 
-            final = self.last(combined, t)
-            out = final[:, txtlen:txtlen + imglen, :]
-            out = sp_gather(out, img_orig_len, dim=1)
+            if ctx.pure_ulysses:
+                # The narrow output Linear can choose a different BF16 GEMM at
+                # a shard's row count. Restore stock's unpadded joint input so
+                # its norm, modulation, and projection see the full row shape.
+                full_text = sp_gather(combined[:, :txtlen], txt_orig_len, dim=1)
+                full_image = sp_gather(combined[:, txtlen:txtlen + imglen], img_orig_len, dim=1)
+                final = self.last(torch.cat((full_text, full_image), dim=1), t)
+                out = final[:, txt_orig_len:txt_orig_len + img_orig_len, :]
+            else:
+                final = self.last(combined, t)
+                out = final[:, txtlen:txtlen + imglen, :]
+                out = sp_gather(out, img_orig_len, dim=1)
 
             out = rearrange(out, "b (h w) (c ph pw) -> b c (h ph) (w pw)",
                             h=h_, w=w_, ph=patch, pw=patch, c=self.channels)
