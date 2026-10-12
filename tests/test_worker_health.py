@@ -293,3 +293,37 @@ def test_an_unknown_process_line_parses_as_no_answer():
     health = passive_worker_health(config, host, runner=runner)
     assert health["running"] is None
     assert health["healthy"] is not True
+
+
+@pytest.mark.parametrize('address', ['tcp://192.0.2.11:26600', 'tcp://[2001:db8::11]:26600'])
+@pytest.mark.parametrize('native', [False, True])
+def test_generated_policy_argv_is_visible_to_health_and_generation(address, native):
+    import re
+    import shlex
+
+    from dgx_monarch.cli.lifecycle_scripts import worker_loop_args
+    from dgx_monarch.cli.worker_health import loop_regex
+
+    host = HostConfig(name='worker', address=address)
+    config = ClusterConfig(hosts=(host,), rdma_latent_return=native)
+    command = '/host/python ' + ' '.join(shlex.split(worker_loop_args(host, config)))
+    pattern = loop_regex(host)
+    assert re.search(pattern, command)
+    # procps uses POSIX extended regex, while generation uses Python regex.
+    assert subprocess.run(['grep', '-E', pattern], input=command, text=True,
+                          capture_output=True).returncode == 0
+    assert re.search(pattern, '/host/python ' + ' '.join(shlex.split(worker_loop_args(host))))
+    for suffix in (' --foreign', ' --native-rdma --native-rdma', '==='):
+        assert re.search(pattern, command + suffix) is None
+
+
+def test_partial_policy_arguments_never_claim_worker_ownership():
+    import re
+
+    from dgx_monarch.cli.worker_health import loop_pattern, loop_regex
+
+    host = HostConfig(name='worker', address='tcp://192.0.2.11:26600')
+    base = '/host/python -m ' + loop_pattern(host)
+    for suffix in (' --runtime-policy', ' --native-rdma', ' --runtime-policy x===',
+                   ' --runtime-policy x/y', ' --runtime-policy x --foreign'):
+        assert re.search(loop_regex(host), base + suffix) is None

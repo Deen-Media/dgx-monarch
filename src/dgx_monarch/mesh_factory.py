@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Any
 
 from .error_utils import raise_with_distinct_cause, reconcile_error, safe_note
@@ -301,11 +302,15 @@ def spawn_worker_fleet(config, use_cluster: bool, gpus_per_host: int,
     )
 
     from .actor import GPUWorker
+    from .monarch_launch import actor_bootstrap_command, wait_initialized, wait_worker_ready
+    from .runtime_diagnostics import phase
 
     capture = handoff.proc_meshes.append
     handoff.spawn_host, handoff.spawn_host_isolated = _isolated_spawn_host(hosts)
     procs = None
     try:
+        deadline = time.monotonic() + config.monarch.startup_timeout_s
+        launch_command = actor_bootstrap_command(config, use_cluster)
         with _PROC_SPAWN_HANDOFF_LOCK:
             handoff.callback_cleanup_unconfirmed = True
             operation_error: BaseException | None = None
@@ -313,8 +318,10 @@ def spawn_worker_fleet(config, use_cluster: bool, gpus_per_host: int,
             try:
                 register_proc_mesh_spawn_callback(capture)
                 handoff.proc_spawn_called = True
-                procs = handoff.spawn_host.spawn_procs(
-                    per_host={"gpus": gpus_per_host}, bootstrap=bootstrap)
+                with phase("spawn"):
+                    procs = handoff.spawn_host.spawn_procs(
+                        per_host={"gpus": gpus_per_host}, bootstrap=bootstrap,
+                        bootstrap_command=launch_command)
             except BaseException as exc:
                 operation_error = exc
             for _attempt in range(2):
@@ -337,7 +344,10 @@ def spawn_worker_fleet(config, use_cluster: bool, gpus_per_host: int,
             raise RuntimeError(
                 "spawned ProcMesh ownership could not be proven for this invocation")
         procs = owned_procs
-        workers = procs.spawn("dgxm_worker", GPUWorker)
+        wait_initialized(procs, deadline, "dgxm-procs-ready")
+        with phase("spawn"):
+            workers = procs.spawn("dgxm_worker", GPUWorker)
+        wait_worker_ready(workers, deadline)
         handoff.fleet = hosts, procs, workers, owns_hosts
         handoff.spawn_in_progress = False
         return hosts, procs, workers, owns_hosts

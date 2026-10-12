@@ -67,6 +67,55 @@ def test_owner_ack_runs_after_read_drop_and_authority_exit():
     assert buffer.dropped == 1
 
 
+@pytest.mark.parametrize("drop_fails", [False, True])
+def test_policy_refusal_prevents_read_and_ack_requires_confirmed_drop(monkeypatch, drop_fails):
+    from dgx_monarch import monarch_policy
+
+    events = []
+
+    def refuse():
+        events.append("policy")
+        raise RuntimeError("policy mismatch")
+
+    class Buffer(_FakeRDMABuffer):
+        def read_into(self, dst, timeout=None):
+            pytest.fail("policy refusal must prevent native submission")
+
+        def drop(self):
+            events.append("drop")
+            if drop_fails:
+                raise RuntimeError("drop uncertain")
+            return super().drop()
+
+    class Authority:
+        def __enter__(self):
+            events.append("enter")
+
+        def __exit__(self, *_args):
+            events.append("exit")
+
+    class Guard:
+        def read_authority(self):
+            return Authority()
+
+        def ack_latent(self, generation, token):
+            assert (generation, token) == (7, "a" * 32)
+            events.append("ack")
+
+    monkeypatch.setattr(transfer, "_NATIVE_RDMA_BUFFER", transfer.RDMABuffer)
+    monkeypatch.setattr(monarch_policy, "verify_native_policy", refuse)
+    buffer = Buffer(torch.arange(8, dtype=torch.uint8))
+    desc = {"kind": "rdma", "dtype": "uint8", "shape": [8],
+            "parts": [{"buffer": buffer, "offset": 0, "nbytes": 8}],
+            "owner_token": "a" * 32, "setup_generation": 7}
+    with pytest.raises(RuntimeError, match="policy mismatch"):
+        read_latent_result(desc, Guard())
+    assert events == ["enter", "policy", "drop", "exit"] + ([] if drop_fails else ["ack"])
+    assert bool(transfer._RDMA_POISONED_OWNERS) is drop_fails
+    if drop_fails:
+        assert transfer._RDMA_POISONED_OWNERS[0].keepalive is None
+
+
 @pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
 def test_authority_exit_failure_never_acknowledges_sender(error_type):
     generation = 2

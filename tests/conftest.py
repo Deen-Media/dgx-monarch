@@ -126,6 +126,14 @@ def _source_only_imports_end_with_the_test():
 
 
 @pytest.fixture(autouse=True)
+def _monarch_policy_starts_unadmitted(monkeypatch):
+    """Process policy persists in production, but separate tests own separate runtimes."""
+    from dgx_monarch import monarch_policy
+
+    monkeypatch.setattr(monarch_policy, "_ACTIVE", None)
+
+
+@pytest.fixture(autouse=True)
 def _quarantine_scope_starts_empty():
     """Isolate quarantine records and cached class-K denials between tests.
 

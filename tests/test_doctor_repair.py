@@ -169,7 +169,8 @@ def test_repair_fsyncs_the_config_inode_after_fchmod(
     assert calls[1] == ("fsync", path.stat().st_ino)
 
 
-def test_cli_repair_writes_a_sanitized_receipt(tmp_path: Path) -> None:
+def test_cli_repair_writes_a_sanitized_receipt(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
     path = _config(tmp_path)
     receipt = tmp_path / "receipt.json"
     output = io.StringIO()

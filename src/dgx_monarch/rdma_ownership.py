@@ -274,11 +274,14 @@ def abort_handoff(
 
 
 def acknowledge_with_retry(callback: Callable[..., Any], *identity: Any) -> None:
+    from .runtime_diagnostics import phase
+
     """Retry only the idempotent ACK; native drops have already succeeded."""
     primary: BaseException | None = None
     for _attempt in range(RDMA_ACK_ATTEMPTS):
         try:
-            callback(*identity)
+            with phase("ack", return_mode="rdma"):
+                callback(*identity)
         except BaseException as error:
             if primary is None:
                 primary = error

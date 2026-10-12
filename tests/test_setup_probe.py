@@ -11,6 +11,7 @@ from pathlib import Path
 
 import pytest
 
+from dgx_monarch import TORCHMONARCH_PIN
 from dgx_monarch.cli import setup_config_io, setup_probe, setup_probe_script
 from dgx_monarch.config import ClusterConfig, HostConfig
 
@@ -25,7 +26,7 @@ def _payload(*, artifact_hash: str = "a" * 64) -> dict[str, object]:
         "gpu_count": 1,
         "integrated": True,
         "gpu_models": ["NVIDIA GB10"],
-        "torchmonarch_version": "0.6.0",
+        "torchmonarch_version": TORCHMONARCH_PIN,
         "comfy_exists": True,
         "comfy_runtime_marker": True,
         "comfy_git": True,

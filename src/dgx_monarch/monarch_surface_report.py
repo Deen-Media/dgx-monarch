@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
+from .monarch_capabilities import capability_blockers
 from .monarch_surface import SNAPSHOT_SCHEMA, TOUCHPOINTS, _manifest_digest
 
 
@@ -51,6 +52,9 @@ def snapshot_blockers(snapshot: Mapping[str, Any]) -> list[str]:
         )
     if snapshot.get("manifest_digest") != _manifest_digest():
         blockers.append("snapshot was produced by a different Monarch manifest")
+    blockers.extend(capability_blockers(
+        snapshot.get("capabilities"), expected_version=version if isinstance(version, str) else None
+    ))
     touchpoints = snapshot.get("touchpoints")
     if not isinstance(touchpoints, Mapping):
         blockers.append("snapshot has no touchpoint mapping")
@@ -141,6 +145,14 @@ def compare_snapshots(
                     f"{json.dumps(after, sort_keys=True)}"
                 )
 
+    before_caps, after_caps = baseline.get("capabilities"), candidate.get("capabilities")
+    if isinstance(before_caps, Mapping) and isinstance(after_caps, Mapping):
+        before_torch, after_torch = before_caps.get("torch"), after_caps.get("torch")
+        if isinstance(before_torch, Mapping) and isinstance(after_torch, Mapping):
+            for key in ("distribution_version", "runtime_version", "cuda_build"):
+                if before_torch.get(key) != after_torch.get(key):
+                    blockers.append(f"Torch {key} changed during Monarch comparison")
+
     baseline_version = _version(baseline)
     candidate_version = _version(candidate)
     if baseline_version != candidate_version:
@@ -204,6 +216,20 @@ def render_comparison_markdown(
                 f"| `{_markdown_cell(name)}` | `{_markdown_cell(before)}` | "
                 f"`{_markdown_cell(after)}` |"
             )
+    lines.extend(["", "## Native-load evidence", "",
+                  "Native binding load is not GPU or fabric acceptance.", "",
+                  "| Runtime fact | Exact pin | Latest stable |", "|---|---|---|"])
+    before_caps = baseline.get("capabilities")
+    after_caps = candidate.get("capabilities")
+    for key in ("python", "architecture", "torch", "rdma"):
+        before_fact = before_caps.get(key) if isinstance(before_caps, Mapping) else None
+        after_fact = after_caps.get(key) if isinstance(after_caps, Mapping) else None
+        if key == "torch":
+            fields = ("distribution_version", "runtime_version", "cuda_build", "import_status")
+            before_fact = {name: before_fact.get(name) for name in fields} if isinstance(before_fact, Mapping) else before_fact
+            after_fact = {name: after_fact.get(name) for name in fields} if isinstance(after_fact, Mapping) else after_fact
+        lines.append(f"| {key} | {_markdown_cell(json.dumps(before_fact, sort_keys=True))} | "
+                     f"{_markdown_cell(json.dumps(after_fact, sort_keys=True))} |")
     return "\n".join(lines) + "\n"
 
 

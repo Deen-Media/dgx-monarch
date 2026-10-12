@@ -20,11 +20,14 @@ NORMAL_RENDER_RESIDENCY_CAPABILITY = "normal_render_residency"
 
 def physical_capability_context(handle) -> dict:
     """Physical/config identity shared by capability grants and preflight."""
+    from .monarch_policy_io import trust_config_fingerprint
+
     config = getattr(handle, "config", None)
     return {
         "mesh_mode": "cluster" if getattr(config, "hosts", ()) else "local",
         "config_source": str(getattr(config, "source", "") or "local"),
-        "config_fingerprint": str(getattr(handle, "config_fingerprint", "local")),
+        "config_fingerprint": trust_config_fingerprint(
+            config, str(getattr(handle, "config_fingerprint", "local"))),
         "physical_world": int(getattr(handle, "world", 0) or 0),
         "hosts": int(getattr(handle, "n_hosts", 0) or 0),
         "gpus_per_host": int(getattr(handle, "gpus_per_host", 0) or 0),

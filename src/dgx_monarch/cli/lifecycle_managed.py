@@ -9,7 +9,7 @@ from ..config import ClusterConfig, HostConfig
 from ..log import get_logger
 from .lifecycle_host import LifecycleResult
 from .lifecycle_lock import locked_script
-from .lifecycle_systemd import MANAGED_SRC_REL, systemd_worker_unit, unit_exec_args
+from .lifecycle_systemd import MANAGED_SRC_REL, systemd_worker_unit
 
 _SENTINEL = "u-000000000000-0000000000000000"
 
@@ -28,6 +28,12 @@ def managed_source_probe(config: ClusterConfig, host: HostConfig) -> str:
         config, host, managed_source=True, update_token=_SENTINEL,
         site_packages="/DGXM_SITE_PACKAGES",
     )
+    from ..monarch_launch import worker_policy_args
+    from .systemd_unit import quote
+
+    suffix = " " + " ".join(quote(arg) for arg in worker_policy_args(config, host))
+    legacy_canonical = canonical.replace(suffix + "\n", "\n")
+    legacy_hardened = hardened.replace(suffix + "\n", "\n")
     code = r'''
 import grp,hashlib,json,os,pathlib,pwd,re,stat,sys
 home=pathlib.Path.home(); base=home/'.local/share/dgx-monarch'
@@ -44,13 +50,16 @@ def parents(path):
  for part in reversed(path.parents):
   if part==home or home in part.parents: safe(part,stat.S_ISDIR)
 def setup_unit(text,environment):
- lines=CANONICAL.splitlines()[2:]
- invalidator=next(line for line in lines if line.startswith('ExecStartPre='))
- lines.remove(invalidator)
- lines=[environment if line.startswith('Environment="PYTHONPATH=') else line for line in lines]
- lines.insert(lines.index('ExecStart='+EXEC_ARGS),invalidator)
- lines.insert(lines.index('RestartSec=3')+1,'TimeoutStopSec=20')
- if text!='\n'.join([text.splitlines()[0],*lines])+'\n': raise ValueError('setup unit mismatch')
+ for template in (CANONICAL,LEGACY_CANONICAL):
+  lines=template.splitlines()[2:]
+  invalidator=next(line for line in lines if line.startswith('ExecStartPre='))
+  lines.remove(invalidator)
+  lines=[environment if line.startswith('Environment="PYTHONPATH=') else line for line in lines]
+  index=next(i for i,line in enumerate(lines) if line.startswith('ExecStart='))
+  lines.insert(index,invalidator)
+  lines.insert(lines.index('RestartSec=3')+1,'TimeoutStopSec=20')
+  if text=='\n'.join([text.splitlines()[0],*lines])+'\n': return
+ raise ValueError('setup unit mismatch')
 def external_setup(text,target,raw):
  match=re.fullmatch(r'# dgxm-setup-token=(s-[0-9a-f]{16}) ordinal=([1-9][0-9]*) source=([0-9a-f]{64})',text.splitlines()[0])
  if match is None or not 1<=int(match[2])<=64 or raw!=str(target): raise ValueError('foreign source link')
@@ -114,11 +123,12 @@ def verdict():
  if target.resolve()!=target: raise ValueError('indirect release path')
  if re.fullmatch(r'u-[0-9a-f]{12}-[0-9a-f]{16}',token):
   expected=CANONICAL.replace(SENTINEL,token)
-  if text!=expected:
+  if text not in (expected,LEGACY_CANONICAL.replace(SENTINEL,token)):
    match=re.search(r'\"PYTHONPATH=%h/\.local/share/dgx-monarch/src:([^\"\n]+)\"',text)
    if match is None or not match[1].startswith('/') or ':' in match[1]: raise ValueError('update source mismatch')
    expected=HARDENED.replace(SENTINEL,token).replace('/DGXM_SITE_PACKAGES',match[1])
-   if text!=expected: raise ValueError('update unit mismatch')
+   legacy=LEGACY_HARDENED.replace(SENTINEL,token).replace('/DGXM_SITE_PACKAGES',match[1])
+   if text not in (expected,legacy): raise ValueError('update unit mismatch')
  elif re.fullmatch(r's-[0-9a-f]{16}-[1-9][0-9]*',token):
   setup,ordinal=token.rsplit('-',1)
   if not 1<=int(ordinal)<=64: raise ValueError('setup ordinal')
@@ -131,7 +141,7 @@ def verdict():
 try: verdict()
 except (OSError,ValueError,IndexError,KeyError): print('FAILED_SOURCE_LAYOUT'); sys.exit(1)
 '''
-    code = f"HARDENED={hardened!r}\nCANONICAL={canonical!r}\nSENTINEL={_SENTINEL!r}\nEXEC_ARGS={unit_exec_args(config, host)!r}\n" + code
+    code = f"LEGACY_CANONICAL={legacy_canonical!r}\nLEGACY_HARDENED={legacy_hardened!r}\nHARDENED={hardened!r}\nCANONICAL={canonical!r}\nSENTINEL={_SENTINEL!r}\n" + code
     python = shlex.quote(config.python_bin)
     return (
         f'PYBIN={python}\n'

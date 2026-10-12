@@ -18,12 +18,12 @@ import sys
 import zipfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
-from email.parser import BytesParser
-from email.policy import default as email_policy
 from pathlib import Path, PurePosixPath
 from typing import Protocol
 
 from .update_cancellation import reraise_after_cleanup
+from .update_dependency_contract import canonical_name as _canonical_name
+from .update_dependency_contract import dependency_contract, parse_wheel_metadata, staged_wheel_contract
 from .update_payload_ownership import foreign_namespace_files
 from .update_pin_diagnostic import PinDiagnostic, inspect_match
 from .update_transaction import Certainty, OperationResult
@@ -83,10 +83,6 @@ class _Artifact:
     site: Path
     files: Mapping[str, str]
     manifest_sha256: str
-
-
-def _canonical_name(value: str) -> str:
-    return re.sub(r"[-_.]+", "-", value).lower()
 
 
 def _validate_pin(pin: str) -> str:
@@ -164,15 +160,7 @@ def _manifest_digest(files: Mapping[str, str]) -> str:
 
 
 def _parse_metadata(payload: bytes) -> tuple[str, str]:
-    try:
-        message = BytesParser(policy=email_policy).parsebytes(payload, headersonly=True)
-        name = str(message["Name"])
-        version = str(message["Version"])
-    except Exception as exc:
-        raise DriverPinError("wheel METADATA is unreadable") from exc
-    if not name or not version or name == "None" or version == "None":
-        raise DriverPinError("wheel METADATA lacks distribution identity")
-    return name, version
+    return parse_wheel_metadata(payload, DriverPinError)
 
 
 def _inspect_wheel(wheel: Path, pin: str) -> tuple[str, Mapping[str, str]]:
@@ -257,7 +245,11 @@ def _scan_tree(site: Path, expected: Mapping[str, str]) -> Mapping[str, str]:
     return found
 
 
-def _site_metadata_matches(site: Path, pin: str) -> bool:
+def _dependency_contract(payload: bytes, pin: str) -> dict:
+    return dependency_contract(payload, pin, DriverPinError)
+
+
+def _site_metadata_matches(site: Path, pin: str, contract: dict | None = None) -> bool:
     matches = 0
     try:
         with os.scandir(site) as entries:
@@ -268,10 +260,13 @@ def _site_metadata_matches(site: Path, pin: str) -> bool:
             metadata = candidate / "METADATA"
             if not metadata.is_file() or metadata.is_symlink():
                 continue
-            name, version = _parse_metadata(metadata.read_bytes())
+            payload = metadata.read_bytes()
+            name, version = _parse_metadata(payload)
             if _canonical_name(name) == "torchmonarch":
                 matches += version == pin
                 if version != pin:
+                    return False
+                if contract is not None and _dependency_contract(payload, pin) != contract:
                     return False
     except (DriverPinError, OSError):
         return False
@@ -309,6 +304,11 @@ class DriverPinTransition:
     @property
     def prior_payload_digest(self) -> str | None:
         return None if self._prior is None else self._prior.manifest_sha256
+
+    @property
+    def target_dependency_contract(self) -> dict:
+        """Read requirements from the exact staged wheel, without importing it."""
+        return staged_wheel_contract(self._target, _inspect_wheel, _hash_file, DriverPinError)
 
     def prepare(self, root: Path, prior_pin: str, target_pin: str) -> None:
         if self.prepared or self._root is not None:
@@ -384,7 +384,7 @@ class DriverPinTransition:
             return bool(
                 target is not None and self._artifact_ready(target)
                 and _scan_tree(site, target.files) == target.files
-                and _site_metadata_matches(site, target.pin)
+                and _site_metadata_matches(site, target.pin, self.target_dependency_contract)
             )
         except Exception:
             return False

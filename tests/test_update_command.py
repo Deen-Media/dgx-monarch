@@ -492,6 +492,7 @@ class _HappyOps:
     def stage(self, _target):
         return StagedRelease("2" * 40, "0.5.0", "0.7.0", SOURCE, DEPS, True, True, True, True, 1, 1, 1)
     def confirm(self, _stage): return True
+    def recheck_dependencies(self): pass
     def stop_workers(self): return OperationResult(Certainty.SUCCEEDED)
     def stop_started_workers(self, _stage): return OperationResult(Certainty.SUCCEEDED)
     def activate(self, _stage): return OperationResult(Certainty.SUCCEEDED)

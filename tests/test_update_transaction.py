@@ -92,6 +92,9 @@ class FakeOps:
         self._event("confirm")
         return self.confirmed
 
+    def recheck_dependencies(self) -> None:
+        pass
+
     def stop_workers(self) -> OperationResult:
         self._event("stop")
         return self.stop_results.pop(0) if self.stop_results else OK
@@ -882,3 +885,18 @@ def test_interrupted_stage_with_uncertain_cleanup_has_partial_receipt():
     assert raised.value is interrupt
     receipt = interrupted_receipt(interrupt)
     assert receipt is not None and receipt["status"] == "partial"
+
+
+def test_dependency_drift_after_confirmation_refuses_without_service_mutation():
+    ops = FakeOps()
+
+    def changed():
+        assert "confirm" in ops.events
+        raise UpdatePreconditionError("target_dependencies_unsatisfied", "candidate prerequisite changed")
+
+    ops.recheck_dependencies = changed
+    result = execute_verified_update(UpdateRequest(), ops)
+    assert result.code == "target_dependencies_unsatisfied"
+    assert result.receipt["status"] == "failed"
+    assert "stop" not in ops.events and "activate" not in ops.events
+    assert "cleanup" in ops.events

@@ -8,6 +8,7 @@ import inspect
 import sys
 import threading
 import types
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,6 +19,16 @@ from dgx_monarch.mesh_factory import (
     _unregister_callback_once,
     spawn_worker_fleet,
 )
+
+_CONFIG = SimpleNamespace(monarch=SimpleNamespace(startup_timeout_s=180))
+
+
+@pytest.fixture(autouse=True)
+def _ready_test_doubles(monkeypatch):
+    from dgx_monarch import monarch_launch
+
+    monkeypatch.setattr(monarch_launch, "wait_initialized", lambda *_args: None)
+    monkeypatch.setattr(monarch_launch, "wait_worker_ready", lambda *_args: None)
 
 
 class SpawnAbort(BaseException):
@@ -140,7 +151,7 @@ def test_cluster_attach_transition_keeps_the_transport_handoff_pending(boundary)
     with pytest.raises(HandoffAbort) as failure:
         try:
             spawn_worker_fleet(
-                None, True, 1, lambda _config, _handoff: object(), None, handoff)
+                _CONFIG, True, 1, lambda _config, _handoff: object(), None, handoff)
         finally:
             monitoring.set_local_events(
                 tool_id, spawn_worker_fleet.__code__, 0)
@@ -176,7 +187,7 @@ def test_spawn_baseexception_rolls_back_partial_proc_mesh(monkeypatch):
 
     async def bring_up():
         with pytest.raises(WorkerSpawnError) as caught:
-            spawn_worker_fleet(None, True, 1, lambda _config, _handoff: hosts, None)
+            spawn_worker_fleet(_CONFIG, True, 1, lambda _config, _handoff: hosts, None)
         return caught.value
 
     error = asyncio.run(bring_up())
@@ -211,7 +222,7 @@ def test_rollback_baseexception_preserves_spawn_and_cleanup_evidence(monkeypatch
 
     async def bring_up():
         with pytest.raises(WorkerSpawnError) as caught:
-            spawn_worker_fleet(None, True, 1, lambda _config, _handoff: hosts, None)
+            spawn_worker_fleet(_CONFIG, True, 1, lambda _config, _handoff: hosts, None)
         return caught.value
 
     error = asyncio.run(bring_up())
@@ -252,7 +263,7 @@ def test_worker_spawn_error_survives_broken_original_str_and_repr(monkeypatch):
     procs = Procs()
     hosts, shutdown_calls = _hosts_for(procs)
     with pytest.raises(WorkerSpawnError) as failure:
-        spawn_worker_fleet(None, True, 1, lambda _config, _handoff: hosts, None)
+        spawn_worker_fleet(_CONFIG, True, 1, lambda _config, _handoff: hosts, None)
 
     assert failure.value.original is primary
     assert str(failure.value) == "<BrokenOriginal>"
@@ -306,7 +317,7 @@ def test_hostile_ownership_probe_preserves_exact_spawn_failure(monkeypatch, prob
 
     with pytest.raises(WorkerSpawnError) as failure:
         spawn_worker_fleet(
-            None, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
+            _CONFIG, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
 
     assert failure.value.original is primary
     assert failure.value.__cause__ is primary
@@ -342,7 +353,7 @@ def test_normal_ownership_probe_cancellation_remains_exact(monkeypatch):
 
     with pytest.raises(WorkerSpawnError) as failure:
         spawn_worker_fleet(
-            None, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
+            _CONFIG, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
 
     error = failure.value
     assert error.original is cancellation
@@ -380,7 +391,7 @@ def test_hostile_ownership_recovery_call_preserves_exact_spawn_failure(monkeypat
 
     with pytest.raises(WorkerSpawnError) as failure:
         spawn_worker_fleet(
-            None, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
+            _CONFIG, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
 
     assert failure.value.original is primary
     assert failure.value.__cause__ is primary
@@ -437,7 +448,7 @@ def test_successful_spawn_handoff_baseexception_rolls_back_owned_proc_mesh(
         try:
             with pytest.raises(WorkerSpawnError) as caught:
                 spawn_worker_fleet(
-                    None, True, 1, lambda _config, _handoff: hosts, None, handoff)
+                    _CONFIG, True, 1, lambda _config, _handoff: hosts, None, handoff)
         finally:
             sys.settrace(previous_trace)
         return caught.value
@@ -541,7 +552,7 @@ def test_spawn_procs_instruction_handoff_never_orphans_proc_mesh(
     with pytest.raises(WorkerSpawnError) as failure:
         try:
             spawn_worker_fleet(
-                None, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
+                _CONFIG, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
         finally:
             monitoring.set_local_events(tool_id, code, 0)
             monitoring.register_callback(
@@ -607,7 +618,7 @@ def test_spawn_callback_registration_instruction_is_reconciled(monkeypatch):
     with pytest.raises(WorkerSpawnError) as failure:
         try:
             spawn_worker_fleet(
-                None, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
+                _CONFIG, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
         finally:
             monitoring.set_local_events(tool_id, register.__code__, 0)
             monitoring.register_callback(
@@ -682,7 +693,7 @@ def test_spawn_callback_unregister_instruction_is_reconciled(monkeypatch):
     with pytest.raises(WorkerSpawnError) as failure:
         try:
             spawn_worker_fleet(
-                None, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
+                _CONFIG, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
         finally:
             monitoring.set_local_events(tool_id, unregister.__code__, 0)
             monitoring.register_callback(
@@ -754,7 +765,7 @@ def test_spawn_callback_cleanup_flag_instruction_is_reconciled(monkeypatch):
     with pytest.raises(WorkerSpawnError) as failure:
         try:
             spawn_worker_fleet(
-                None, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
+                _CONFIG, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
         finally:
             monitoring.set_local_events(
                 tool_id, _unregister_callback_once.__code__, 0)
@@ -805,7 +816,7 @@ def test_spawn_callback_cleanup_that_cannot_be_confirmed_stays_latched(monkeypat
         proc_mesh_api, "unregister_proc_mesh_spawn_callback", unregister)
     with pytest.raises(WorkerSpawnError) as failure:
         spawn_worker_fleet(
-            None, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
+            _CONFIG, True, 1, lambda _config, _handoff: Hosts(), None, handoff)
 
     assert failure.value.original is cleanup
     assert unregister_calls == 2 and len(callbacks) == 1

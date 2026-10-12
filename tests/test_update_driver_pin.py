@@ -26,6 +26,8 @@ def _make_wheel(
     metadata_version: str | None = None,
     extra_member: str | None = None,
     symlink_member: bool = False,
+    requirements: tuple[str, ...] = (),
+    requires_python: str = "",
 ) -> Path:
     wheel = directory / f"torchmonarch-{pin}-py3-none-any.whl"
     dist_info = f"torchmonarch-{pin}.dist-info"
@@ -34,7 +36,9 @@ def _make_wheel(
         archive.writestr("torchmonarch/runtime.py", f'PIN = "{pin}"\n')
         archive.writestr(
             f"{dist_info}/METADATA",
-            f"Metadata-Version: 2.1\nName: {metadata_name}\nVersion: {metadata_version or pin}\n",
+            f"Metadata-Version: 2.1\nName: {metadata_name}\nVersion: {metadata_version or pin}\n"
+            + (f"Requires-Python: {requires_python}\n" if requires_python else "")
+            + "".join(f"Requires-Dist: {value}\n" for value in requirements),
         )
         archive.writestr(f"{dist_info}/WHEEL", "Wheel-Version: 1.0\nRoot-Is-Purelib: true\n")
         archive.writestr(
@@ -420,3 +424,30 @@ def test_pin_match_retains_bounded_ownership_reason_and_clears_it(transition_fix
     monkeypatch.setattr(transition, "_live_matches", original)
     assert transition.matches_prior() is True
     assert transition.last_diagnostic is None
+
+
+def test_dependency_contract_is_from_exact_wheel_and_worker_metadata_must_match(tmp_path):
+    wheels = tmp_path / "wheels"
+    wheels.mkdir()
+    prior = _make_wheel(wheels, "0.6.0")
+    target = _make_wheel(wheels, "0.7.0", requirements=("xxhash", 'numpy>=1.26; python_version >= "3.11"'),
+                         requires_python=">=3.11")
+    runner = FakeRunner({"0.6.0": prior, "0.7.0": target}, tmp_path / "live")
+    transition = DriverPinTransition(command_runner=runner)
+    transition.prepare(tmp_path / "release", "0.6.0", "0.7.0")
+    assert transition.target_dependency_contract == {
+        "version": "0.7.0", "requires_python": ">=3.11",
+        "requirements": ["xxhash", 'numpy>=1.26; python_version >= "3.11"'],
+        "provides_extras": [],
+    }
+    worker_site = tmp_path / "worker"
+    _extract_wheel(target, worker_site)
+    assert transition.target_matches_site(worker_site)
+    metadata = worker_site / "torchmonarch-0.7.0.dist-info/METADATA"
+    metadata.write_text(metadata.read_text().replace("Requires-Dist: xxhash\n", ""))
+    assert not transition.target_matches_site(worker_site)
+    assert runner.live_installs == 0
+    staged_wheel = next((tmp_path / "release/driver-pin/target/artifacts").glob("*.whl"))
+    staged_wheel.write_bytes(staged_wheel.read_bytes() + b"changed")
+    with pytest.raises(DriverPinError, match="changed after staging"):
+        _ = transition.target_dependency_contract

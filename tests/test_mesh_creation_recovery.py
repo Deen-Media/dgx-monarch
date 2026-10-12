@@ -11,6 +11,7 @@ import types
 import pytest
 
 from dgx_monarch import client_lease, mesh, mesh_creation, mesh_factory
+from dgx_monarch.monarch_policy import MonarchPolicy
 
 
 class _Interrupt(BaseException):
@@ -45,6 +46,9 @@ class _Workers:
 @pytest.fixture
 def isolated_mesh_runtime(monkeypatch):
     """Give get_mesh fresh process-global registries without replacing locks."""
+    from dgx_monarch import monarch_launch
+
+    monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: None)
     monkeypatch.setattr(mesh, "install_fault_hook", lambda: None)
     monkeypatch.setattr(mesh, "find_config_path", lambda _path: None)
     monkeypatch.setattr(mesh, "_detect_comfy_dir", lambda _path: "/fake/comfy")
@@ -55,7 +59,7 @@ def isolated_mesh_runtime(monkeypatch):
         mesh,
         "local_config",
         lambda _path=None: types.SimpleNamespace(
-            source="local", comfy_dir=None, worker_args={}),
+            source="local", comfy_dir=None, worker_args={}, monarch=MonarchPolicy()),
     )
     monkeypatch.setattr(mesh, "_MESHES", {})
     monkeypatch.setattr(mesh, "_MESH_PENDING", {})
@@ -186,7 +190,7 @@ def test_local_mesh_is_replaced_when_worker_args_change(
         mesh,
         "local_config",
         lambda _path=None: types.SimpleNamespace(
-            source="local", comfy_dir=None, worker_args=dict(live)),
+            source="local", comfy_dir=None, worker_args=dict(live), monarch=MonarchPolicy()),
     )
 
     first = mesh.get_mesh(mode="local", gpus_per_host=1)

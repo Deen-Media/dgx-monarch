@@ -431,10 +431,16 @@ def test_renew_client_lease_is_a_plain_lock_free_endpoint(monkeypatch):
     assert seen == [300.0]
 
 
-def test_bootstrap_proc_arms_the_reaper_after_the_source_path_insertion():
+def test_bootstrap_proc_arms_the_reaper_after_the_source_path_insertion(monkeypatch):
     # The one piece of dgx-monarch that already runs inside every spawned proc.
-    from dgx_monarch import mesh_runtime
+    from dgx_monarch import mesh_runtime, monarch_capabilities, monarch_diagnostics, monarch_policy, runtime_provenance
 
+    monkeypatch.setenv(monarch_policy.POLICY_ENV, monarch_policy.encode_policy(monarch_policy.MonarchPolicy()))
+    monkeypatch.setattr(monarch_capabilities, "assert_supported_runtime", lambda: None)
+    monkeypatch.setattr(monarch_policy, "apply_policy", lambda *_a, **_kw: None)
+    monkeypatch.setattr(monarch_policy, "activate_native_policy", lambda: None)
+    monkeypatch.setattr(monarch_diagnostics, "configure_policy", lambda *_a: None)
+    monkeypatch.setattr(runtime_provenance, "enforce_source_only_imports", lambda: None)
     source = inspect.getsource(mesh_runtime.bootstrap_proc)
     assert source.index("sys.path.insert") < source.index("actor_lifetime")
 

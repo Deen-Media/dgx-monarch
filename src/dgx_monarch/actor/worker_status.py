@@ -105,6 +105,8 @@ def _latent_signature(t) -> dict:
 
 def status_impl(worker) -> dict:
     # Read the event sequence and tail atomically so they describe one snapshot.
+    from .. import monarch_policy, return_diagnostics, runtime_diagnostics
+    from ..monarch_capabilities import diagnostic_identity
     from ..telemetry import event_snapshot
 
     event_seq, events = event_snapshot(32)
@@ -122,6 +124,10 @@ def status_impl(worker) -> dict:
             getattr(worker, "_setup_cleanup_failed", False)),
         "event_seq": event_seq,
         "events": events,
+        "diagnostics": runtime_diagnostics.snapshot(),
+        "return_ownership": return_diagnostics.actor_snapshot(worker),
+        "monarch_policy": monarch_policy.snapshot(),
+        "diagnostic_identity": diagnostic_identity(),
     }
     attention = getattr(worker, "_attn", None)
     attention_attestation = getattr(attention, "attestation", lambda: None)()

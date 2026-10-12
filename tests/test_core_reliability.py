@@ -66,6 +66,9 @@ def test_mesh_shutdown_surfaces_proc_stop_failure_and_retires_setup():
 
 def test_stale_config_retries_cached_shutdown_before_replacement(monkeypatch, isolated_environ):
     from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_launch
+
+    monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: None)
 
     config = types.SimpleNamespace(
         source="cluster.toml",
@@ -163,6 +166,9 @@ def test_programmatic_local_gpu_count_is_bounded_before_spawn(monkeypatch, value
 
 def test_comfy_dir_only_change_retires_same_source_fleet(monkeypatch, isolated_environ):
     from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_launch
+
+    monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: None)
 
     config = types.SimpleNamespace(
         source="cluster.toml", hosts=(types.SimpleNamespace(gpus=1),), comfy_dir="/new")
@@ -190,6 +196,9 @@ def test_comfy_dir_only_change_retires_same_source_fleet(monkeypatch, isolated_e
 
 def test_concurrent_same_source_creation_publishes_one_fleet(monkeypatch, isolated_environ):
     from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_launch
+
+    monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: None)
 
     entered, release = threading.Event(), threading.Event()
     calls = []

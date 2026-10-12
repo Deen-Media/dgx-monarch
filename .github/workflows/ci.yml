@@ -5,7 +5,7 @@ permissions:
 
 on:
   push:
-    branches: [master, main]
+    branches: [master, main, dev]
   pull_request:
 
 jobs:
@@ -198,11 +198,12 @@ jobs:
               "tests/canary/comfy_seam_contracts.py",
               "tests/canary/import_canary.py",
               "tests/canary/monarch_surface_canary.py",
+              "tests/canary/monarch_cpu_smoke.py",
               "tests/canary/slab_hook_canary.py",
               "tests/canary/template_widget_canary.py",
               "tests/canary/video_export_canary.py",
               "tests/canary/xfuser_import_surface.py",
-              "tests/fixtures/torchmonarch_pin_0_6_0.json",
+              "tests/fixtures/torchmonarch_pin_0_7_0.json",
               "tests/fixtures/workflows/krea2_uly2_api.json",
               "tests/fixtures/workflows/minimax_h3_t2va_uly2_api.json",
               "tests/fixtures/workflows/wandancer_global_local_uly2_api.json",
@@ -226,6 +227,7 @@ jobs:
               "tests/canary/comfy_seam_contracts.py",
               "tests/canary/import_canary.py",
               "tests/canary/monarch_surface_canary.py",
+              "tests/canary/monarch_cpu_smoke.py",
               "tests/canary/slab_hook_canary.py",
               "tests/canary/template_widget_canary.py",
               "tests/canary/video_export_canary.py",

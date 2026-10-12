@@ -33,8 +33,9 @@ class _PublishedProcMesh:
 
 
 def _mesh_publication_fakes(monkeypatch, spawn, start):
-    from dgx_monarch import mesh, mesh_factory, mesh_helpers
+    from dgx_monarch import mesh, mesh_factory, mesh_helpers, monarch_launch
 
+    monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: None)
     monkeypatch.setattr(mesh, "install_fault_hook", lambda: None)
     monkeypatch.setattr(mesh, "find_config_path", lambda _path: None)
     monkeypatch.setattr(mesh, "_detect_comfy_dir", lambda _path: "/comfy")

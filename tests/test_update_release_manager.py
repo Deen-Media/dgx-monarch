@@ -350,6 +350,7 @@ def test_live_driver_pin_drift_is_an_actionable_end_to_end_precondition(
         ops, "activity_snapshot", lambda: ActivitySnapshot(False, False, 0, 0)
     )
     monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: True)
+    monkeypatch.setattr(update_command, "_candidate_dependencies_available", lambda *_args: True)
 
     result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
 
@@ -381,6 +382,7 @@ def test_prior_worker_drift_is_an_actionable_pre_mutation_refusal(
     monkeypatch.setattr(ops, "resolve_target", lambda _ref: sha)
     monkeypatch.setattr(ops, "activity_snapshot", lambda: ActivitySnapshot(False, False, 0, 0))
     monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: True)
+    monkeypatch.setattr(update_command, "_candidate_dependencies_available", lambda *_args: True)
 
     result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
 
@@ -410,6 +412,7 @@ def test_failed_stage_reports_unconfirmed_cleanup_in_receipt(
     monkeypatch.setattr(ops, "resolve_target", lambda _ref: sha)
     monkeypatch.setattr(ops, "activity_snapshot", lambda: ActivitySnapshot(False, False, 0, 0))
     monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: True)
+    monkeypatch.setattr(update_command, "_candidate_dependencies_available", lambda *_args: True)
 
     result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
 
@@ -902,6 +905,7 @@ def test_pin_conflict_details_are_local_and_absent_from_receipt(monkeypatch, tmp
     monkeypatch.setattr(ops, "resolve_target", lambda _ref: sha)
     monkeypatch.setattr(ops, "activity_snapshot", lambda: ActivitySnapshot(False, False, 0, 0))
     monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: True)
+    monkeypatch.setattr(update_command, "_candidate_dependencies_available", lambda *_args: True)
 
     result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
 

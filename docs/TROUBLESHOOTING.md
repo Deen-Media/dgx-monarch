@@ -4991,9 +4991,16 @@ production Future failure. The probe now obtains a Future from the public
 channel API before testing `.get()` inside an asyncio loop. Queue dispatch is
 now unconditional upstream, but the removed setting still requires review.
 
-Keep the validated repository pin until the
+The development pin is now 0.7.0, with a regenerated ARM64 schema-2 baseline.
+The canary uses Torch 2.12.0+cu132 and additionally requires a native RDMA import,
+an empty native action and a separate `cpu-smoke` run. The smoke checks local
+actors, concurrent dispatch, terminal timeout cancellation for decorated
+Futures, re-observable endpoint timeouts and lazy ProcMesh shutdown. Neither
+stage contacts configured Worker services or exercises a GPU/fabric.
+
+Complete the
 [pin-bump procedure](../skills/dgx-monarch-dev/SKILL.md#torchmonarch-bump-procedure-63)
-is complete. Review the candidate's shutdown-timeout cancellation and immediately started
+before deployment. Review the candidate's shutdown-timeout cancellation and immediately started
 RDMA buffer drops as well as dispatch behavior; unchanged signatures do not
 prove those ownership contracts. Do not refresh the baseline or suppress drift
 just to clear the alert. CPU surface checks do not establish hardware or native

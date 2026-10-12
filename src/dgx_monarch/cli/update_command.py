@@ -15,6 +15,7 @@ from ..config import ClusterConfig
 from . import comfy_ports
 from .cluster_smoke import exact_pass_evidence
 from .update_cancellation import run_finalizer_pair
+from .update_dependency_contract import require_candidate_dependencies
 from .update_driver_pin import DriverPinError, DriverPinTransition
 from .update_entrypoint import run_serialized_update
 from .update_inspect import inspect_checkout as _inspect_checkout
@@ -22,6 +23,7 @@ from .update_pin_diagnostic import pin_refusal_message
 from .update_release import CommandRunner, ReleaseLayoutError, ReleaseManager, ReleaseMetadata
 from .update_site_probe import site_matches
 from .update_stage_cleanup import settle_stage_failure
+from .update_support import candidate_dependencies_available as _candidate_dependencies_available
 from .update_support import comfy_candidate_count as _comfy_candidate_count
 from .update_support import dependencies_available as _dependencies_available
 from .update_support import marked_actor_count as _count_marked_actors
@@ -82,6 +84,7 @@ class SystemUpdateOps(UpdateOps):
         self._checkout: Path | None = None
         self._prior_sha = ""
         self._resolved = False
+        self._dependency_roots: tuple[str, ...] | None = None
 
     def _git(self, *args: str, cwd: Path | None = None, timeout: float = 60) -> subprocess.CompletedProcess[str]:
         return self._run(
@@ -195,6 +198,8 @@ class SystemUpdateOps(UpdateOps):
                 raise UpdatePreconditionError("prior_worker_drift", "worker hosts do not exactly match the current driver release")
             if not self._pins.target_matches_site(slot.site):
                 raise RuntimeError("worker and driver target pin artifacts do not match")
+            self._dependency_roots = dependencies
+            self.recheck_dependencies()
             status = self._git("status", "--porcelain=v1", "--untracked-files=all", cwd=checkout)
             if status.returncode != 0 or status.stdout.strip():
                 raise RuntimeError("staged checkout changed during release construction")
@@ -227,6 +232,11 @@ class SystemUpdateOps(UpdateOps):
         )
         print("This invalidates source-bound Gate grants; sticky FAIL evidence remains.")
         return input("continue? [y/N] ").strip().lower() == "y"
+
+    def recheck_dependencies(self) -> None:
+        """Refuse before service mutation if any target prerequisite drifted."""
+        require_candidate_dependencies(self.config, self._dependency_roots, self._pins,
+                                       self._run, _candidate_dependencies_available)
 
     def stop_workers(self) -> OperationResult:
         try:

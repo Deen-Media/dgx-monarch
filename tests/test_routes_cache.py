@@ -119,11 +119,12 @@ def test_busy_render_timeout_is_a_note_not_a_warning(monkeypatch):
     routes = _fresh_routes(monkeypatch, call_all)
     records = _capture_log(monkeypatch, routes)
     _fake_render(monkeypatch, {"active": False})
-    assert routes._workers() == [{"host": "good"}]
+    assert routes._worker_snapshot() == ([{"host": "good"}], {"fresh": True})
 
     _fake_render(monkeypatch, {"active": True, "started": 100.0})
     routes._CACHE["t"] = 0.0  # expire the TTL
-    assert routes._workers() == [{"host": "good"}]  # last good still wins
+    assert routes._worker_snapshot() == ([{"host": "good"}], {"fresh": False})
+    assert routes._CACHE["workers"] == [{"host": "good"}]  # retained rows stay intact
     assert [level for level, _ in records] == ["info"]
     assert "render is in flight" in records[0][1]
 

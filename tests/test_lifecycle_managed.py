@@ -352,3 +352,30 @@ def test_strict_managed_directory_needs_no_group_lookup():
     for permissions in (0o755, 0o700):
         info = SimpleNamespace(st_uid=1000, st_gid=1000, st_mode=stat.S_IFDIR | permissions)
         namespace['safe'](SimpleNamespace(lstat=lambda info=info: info), stat.S_ISDIR)
+
+
+@pytest.mark.parametrize('hardened', [False, True])
+def test_exact_legacy_unit_remains_owned_during_policy_migration(tmp_path, monkeypatch, hardened):
+    from dgx_monarch.cli.systemd_unit import quote
+    from dgx_monarch.monarch_launch import worker_policy_args
+
+    config, host, _base, _site, unit = layout(tmp_path, monkeypatch)
+    text = lifecycle_systemd.systemd_worker_unit(
+        config, host, managed_source=True, update_token=TOKEN,
+        site_packages='/worker/site-packages' if hardened else None)
+    suffix = ' ' + ' '.join(quote(arg) for arg in worker_policy_args(config, host))
+    assert suffix in text
+    unit.write_text(text.replace(suffix + '\n', '\n'))
+    assert run(managed_source_probe(config, host)).stdout.strip() == 'MANAGED'
+    # The migration exception recognizes a complete old template only.
+    unit.write_text(unit.read_text().replace('--address', '--foreign-argument'))
+    assert run(managed_source_probe(config, host)).stdout.strip() == 'FAILED_SOURCE_LAYOUT'
+
+
+def test_managed_policy_drift_is_not_treated_as_legacy(tmp_path, monkeypatch):
+    from dgx_monarch.monarch_launch import worker_policy_args
+
+    config, host, _base, _site, unit = layout(tmp_path, monkeypatch)
+    token = worker_policy_args(config, host)[1]
+    unit.write_text(unit.read_text().replace(token, 'tampered-policy'))
+    assert run(managed_source_probe(config, host)).stdout.strip() == 'FAILED_SOURCE_LAYOUT'

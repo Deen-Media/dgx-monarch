@@ -134,6 +134,9 @@ restoration. Native latent RDMA remains **NOT RUN / HOLD**.
    against the candidate in a scratch environment and compare it with the
    checked baseline. A `dir()` diff shows additions, not behavior. Review
    semantic changes such as dispatch behavior and warning classes explicitly.
+   Schema 2 also requires native RDMA import and empty-action construction;
+   these do not touch hardware. Run the `cpu-smoke --output <path>` subcommand
+   for local actor/Future/ProcMesh semantics with the intended Torch build.
 2. Run `tests/dispatch_contract_probe.py` under the candidate. An API-name
    comparison cannot detect changes to dispatch behavior.
 3. Update the pin in every declaration (`pyproject.toml`, `requirements.txt`,
@@ -143,8 +146,8 @@ restoration. Native latent RDMA remains **NOT RUN / HOLD**.
    reuse a PASS measured on a different runtime. Regenerate the checked baseline
    on aarch64 as `tests/fixtures/torchmonarch_pin_<version>.json`, with the
    version's dots written as underscores (`tests/test_monarch_surface.py`
-   builds the name from `TORCHMONARCH_PIN`; for 0.6.0 it is
-   `torchmonarch_pin_0_6_0.json`). Update `.github/workflows/ci.yml` and
+   builds the name from `TORCHMONARCH_PIN`; for 0.7.0 it is
+   `torchmonarch_pin_0_7_0.json`). Update `.github/workflows/ci.yml` and
    `.github/workflows/torchmonarch-canary.yml`, which name that file, and
    review `PIN_SEMANTICS` in `tests/test_monarch_surface.py`.
 4. After active work has stopped, deploy the same version atomically on every

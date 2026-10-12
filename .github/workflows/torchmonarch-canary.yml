@@ -50,7 +50,7 @@ jobs:
           "$py" -m pip install --upgrade pip > "$ARTIFACTS/pin-install.log" 2>&1
           pip_rc=$?
           if [ "$pip_rc" -eq 0 ]; then
-            "$py" -m pip install torch --index-url https://download.pytorch.org/whl/cpu >> "$ARTIFACTS/pin-install.log" 2>&1
+            "$py" -m pip install torch==2.12.0 --index-url https://download.pytorch.org/whl/cu132 >> "$ARTIFACTS/pin-install.log" 2>&1
             pip_rc=$?
           fi
           if [ "$pip_rc" -eq 0 ]; then
@@ -60,9 +60,13 @@ jobs:
           PYTHONPATH="$GITHUB_WORKSPACE/src" "$py" tests/canary/monarch_surface_canary.py \
             snapshot --output "$ARTIFACTS/pin.json"
           snapshot_rc=$?
+          PYTHONPATH="$GITHUB_WORKSPACE/src" "$py" tests/canary/monarch_surface_canary.py \
+            cpu-smoke --output "$ARTIFACTS/pin-cpu-smoke.json"
+          smoke_rc=$?
           set -e
           printf 'install_rc=%s\n' "$pip_rc" >> "$GITHUB_OUTPUT"
           printf 'snapshot_rc=%s\n' "$snapshot_rc" >> "$GITHUB_OUTPUT"
+          printf 'smoke_rc=%s\n' "$smoke_rc" >> "$GITHUB_OUTPUT"
       - name: Compare installed pin with checked snapshot
         id: checked-pin
         if: always()
@@ -73,7 +77,7 @@ jobs:
           set +e
           PYTHONPATH="$GITHUB_WORKSPACE/src" "$VENV/bin/python" \
             tests/canary/monarch_surface_canary.py compare \
-            --baseline tests/fixtures/torchmonarch_pin_0_6_0.json \
+            --baseline tests/fixtures/torchmonarch_pin_0_7_0.json \
             --candidate "$ARTIFACTS/pin.json" \
             --diff-json "$ARTIFACTS/checked-pin-diff.json" \
             --report "$ARTIFACTS/checked-pin-report.md"
@@ -94,9 +98,13 @@ jobs:
           PYTHONPATH="$GITHUB_WORKSPACE/src" "$py" tests/canary/monarch_surface_canary.py \
             snapshot --output "$ARTIFACTS/latest.json"
           snapshot_rc=$?
+          PYTHONPATH="$GITHUB_WORKSPACE/src" "$py" tests/canary/monarch_surface_canary.py \
+            cpu-smoke --output "$ARTIFACTS/latest-cpu-smoke.json"
+          smoke_rc=$?
           set -e
           printf 'install_rc=%s\n' "$install_rc" >> "$GITHUB_OUTPUT"
           printf 'snapshot_rc=%s\n' "$snapshot_rc" >> "$GITHUB_OUTPUT"
+          printf 'smoke_rc=%s\n' "$smoke_rc" >> "$GITHUB_OUTPUT"
       - name: Compare latest stable with installed exact pin
         id: latest-compare
         if: always()
@@ -129,6 +137,8 @@ jobs:
           for name in (
               "pin.json",
               "latest.json",
+              "pin-cpu-smoke.json",
+              "latest-cpu-smoke.json",
               "checked-pin-diff.json",
               "latest-vs-pin-diff.json",
           ):
@@ -164,13 +174,15 @@ jobs:
         env:
           PIN_INSTALL_RC: ${{ steps.pin-snapshot.outputs.install_rc }}
           PIN_SNAPSHOT_RC: ${{ steps.pin-snapshot.outputs.snapshot_rc }}
+          PIN_SMOKE_RC: ${{ steps.pin-snapshot.outputs.smoke_rc }}
+          LATEST_SMOKE_RC: ${{ steps.latest-snapshot.outputs.smoke_rc }}
           CHECKED_PIN_RC: ${{ steps.checked-pin.outputs.rc }}
           LATEST_INSTALL_RC: ${{ steps.latest-snapshot.outputs.install_rc }}
           LATEST_SNAPSHOT_RC: ${{ steps.latest-snapshot.outputs.snapshot_rc }}
           LATEST_COMPARE_RC: ${{ steps.latest-compare.outputs.rc }}
         run: |
           failed=0
-          for stage in PIN_INSTALL_RC PIN_SNAPSHOT_RC CHECKED_PIN_RC \
+          for stage in PIN_INSTALL_RC PIN_SNAPSHOT_RC PIN_SMOKE_RC LATEST_SMOKE_RC CHECKED_PIN_RC \
             LATEST_INSTALL_RC LATEST_SNAPSHOT_RC LATEST_COMPARE_RC; do
             rc="${!stage:-}"
             if [ "$rc" != 0 ]; then

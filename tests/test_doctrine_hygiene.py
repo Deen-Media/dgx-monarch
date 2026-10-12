@@ -551,12 +551,11 @@ def test_the_timeout_ladder_stays_ordered():
 # them.
 CANONICAL_FRAGMENTS: tuple[tuple[str, str, str], ...] = (
     ("fabric trust", "certificate/CA plumbing", "SECURITY.md"),
-    ("RDMA latent return", "hashes each host-memory registration", "docs/DESIGN.md"),
+    ("RDMA latent return", "NIC affinity pairs device names", "docs/DESIGN.md"),
     # The HOLD's terms, as opposed to its status. Operator surfaces state the
-    # status and link; whoever restates why the probe arm survives and what
-    # would lift the hold has copied the record instead of pointing at it, and
-    # that copy carries a version literal that goes stale.
-    ("RDMA latent-return HOLD", "retained outside this repository", "docs/DESIGN.md"),
+    # status and link; the canonical home explains what the qualifier covers
+    # and what would lift the hold.
+    ("RDMA latent-return HOLD", "requires a passing selected-rail matrix", "docs/DESIGN.md"),
     ("attach timeout and wedge", "a wedged creator raises", "docs/TROUBLESHOOTING.md"),
     # The self-heal's terms. Every operator surface names the action for its own
     # cause; whoever restates what the heal costs and when it refuses has copied

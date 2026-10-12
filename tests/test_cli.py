@@ -31,6 +31,7 @@ def test_doctor_runs_without_config(capsys, monkeypatch, tmp_path):
 
 
 def test_doctor_repair_is_allowlisted_and_reruns_doctor(monkeypatch, tmp_path, capsys):
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
     config_path = tmp_path / "cluster.toml"
     config_path.write_text("[cluster]\n")
     config_path.chmod(0o644)
@@ -168,6 +169,7 @@ def test_verified_update_default_tracks_the_remote_default_branch(monkeypatch):
 
 
 def test_init_propagates_worker_setup_failure(monkeypatch, tmp_path):
+    monkeypatch.setattr(Path, "home", classmethod(lambda _cls: tmp_path))
     answers = iter([
         "worker", "10.0.0.2", "1", "",  # one host
         "", "", "", "",                 # profile, client, python, ssh key
@@ -294,7 +296,7 @@ def test_recovery_commands_refuse_an_unacknowledged_transport_before_the_pin_pro
 def test_package_version_has_one_source_of_truth():
     repo = Path(__file__).resolve().parents[1]
     data = tomllib.loads((repo / "pyproject.toml").read_text())
-    assert __version__ == "1.1.0"
+    assert __version__ == "1.2.0"
     assert "version" not in data["project"]
     assert data["project"]["dynamic"] == ["version"]
     assert data["tool"]["setuptools"]["dynamic"]["version"] == {

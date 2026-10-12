@@ -61,7 +61,7 @@ coverage in [`test_gate_ledger.py:23-27`](../tests/test_gate_ledger.py#L23-L27 "
   [`gate_identity.py:133-181`](../src/dgx_monarch/nodes/gate_identity.py#L133-L181 "anchor:gate_capability_context"), and
   [`gate_identity.py:184-202`](../src/dgx_monarch/nodes/gate_identity.py#L184-L202 "anchor:fleet_residency_capability_context") from the
   physical fields in
-  [`mesh_residency.py:21-31`](../src/dgx_monarch/mesh_residency.py#L21-L31 "anchor:physical_capability_context"), and
+  [`mesh_residency.py:21-34`](../src/dgx_monarch/mesh_residency.py#L21-L34 "anchor:physical_capability_context"), and
   are covered by
   [`test_gate_orchestration.py:945-965`](../tests/test_gate_orchestration.py#L945-L965 "anchor:test_gate_context_merges_cluster_and_init_worker_args")
   and [`test_fleet.py:803-820`](../tests/test_fleet.py#L803-L820 "anchor:test_fleet_preserves_requested_policy_only_for_exact_context_pass").
@@ -507,8 +507,8 @@ copied from historical evidence.
    carries the exact source-bound Gate token. It is validated against context,
    world, policy, full requests, artifacts, selected-worker parity, and finally
    recomputed from the worker's source identity before load and adoption at
-   [`mesh_residency.py:154-234`](../src/dgx_monarch/mesh_residency.py#L154-L234 "anchor:assert_fleet_residency_grant"),
-   [`mesh_rpc.py:225-340`](../src/dgx_monarch/mesh_rpc.py#L225-L340 "anchor:verify_request_artifacts"),
+   [`mesh_residency.py:157-237`](../src/dgx_monarch/mesh_residency.py#L157-L237 "anchor:assert_fleet_residency_grant"),
+   [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"),
    [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
    [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"),
    with production call order at
@@ -518,15 +518,15 @@ copied from historical evidence.
    [`test_fleet.py:752-820`](../tests/test_fleet.py#L752-L820 "anchor:test_fleet_preserves_requested_policy_only_for_exact_context_pass"),
    [`test_fleet.py:823-845`](../tests/test_fleet.py#L823-L845 "anchor:test_fleet_omitted_slab_default_and_lookup_error_both_fail_closed"),
    [`test_fleet.py:848-948`](../tests/test_fleet.py#L848-L948 "anchor:test_fleet_dispatch_binds_authorized_policy_before_setup_and_submit"),
-   [`test_runtime_remediation.py:423-460`](../tests/test_runtime_remediation.py#L423-L460 "anchor:test_direct_fleet_submit_marks_and_rejects_risky_unconditional_model"),
-   [`test_runtime_remediation.py:463-513`](../tests/test_runtime_remediation.py#L463-L513 "anchor:test_fleet_grant_binds_full_unconditional_model_snapshot"),
-   [`test_runtime_remediation.py:576-604`](../tests/test_runtime_remediation.py#L576-L604 "anchor:test_gate_swap_cycle_rejects_replacement_between_transitions"),
-   [`test_runtime_remediation.py:607-645`](../tests/test_runtime_remediation.py#L607-L645 "anchor:test_fleet_replacement_between_authorization_and_submit_is_rejected"),
-   [`test_runtime_remediation.py:648-688`](../tests/test_runtime_remediation.py#L648-L688 "anchor:test_fleet_grant_still_requires_selected_worker_parity"),
-   [`test_runtime_remediation.py:691-720`](../tests/test_runtime_remediation.py#L691-L720 "anchor:test_worker_rechecks_fleet_grant_after_driver_preflight"),
-   [`test_runtime_remediation.py:723-760`](../tests/test_runtime_remediation.py#L723-L760 "anchor:test_worker_binds_loaded_model_to_grant_after_execution_recheck"),
+   [`test_runtime_remediation.py:425-462`](../tests/test_runtime_remediation.py#L425-L462 "anchor:test_direct_fleet_submit_marks_and_rejects_risky_unconditional_model"),
+   [`test_runtime_remediation.py:465-515`](../tests/test_runtime_remediation.py#L465-L515 "anchor:test_fleet_grant_binds_full_unconditional_model_snapshot"),
+   [`test_runtime_remediation.py:578-606`](../tests/test_runtime_remediation.py#L578-L606 "anchor:test_gate_swap_cycle_rejects_replacement_between_transitions"),
+   [`test_runtime_remediation.py:609-647`](../tests/test_runtime_remediation.py#L609-L647 "anchor:test_fleet_replacement_between_authorization_and_submit_is_rejected"),
+   [`test_runtime_remediation.py:650-690`](../tests/test_runtime_remediation.py#L650-L690 "anchor:test_fleet_grant_still_requires_selected_worker_parity"),
+   [`test_runtime_remediation.py:693-722`](../tests/test_runtime_remediation.py#L693-L722 "anchor:test_worker_rechecks_fleet_grant_after_driver_preflight"),
+   [`test_runtime_remediation.py:725-762`](../tests/test_runtime_remediation.py#L725-L762 "anchor:test_worker_binds_loaded_model_to_grant_after_execution_recheck"),
    [`test_fleet.py:1471-1499`](../tests/test_fleet.py#L1471-L1499 "anchor:test_fleet_source_manifest_failure_forces_stock_without_a_grant"), and
-   [`test_runtime_remediation.py:1672-1709`](../tests/test_runtime_remediation.py#L1672-L1709 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch").
+   [`test_runtime_remediation.py:1674-1711`](../tests/test_runtime_remediation.py#L1674-L1711 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch").
 9. **`auto_gate=first_use` gates normal KSampler and KSampler Advanced paths
    before the user's render, and LoRA-less slab renders still gate.** Omitted
    `slab_weights` remains risky even without a LoRA stack, and the sequential
@@ -586,9 +586,9 @@ copied from historical evidence.
     worker revalidation are
     [`gate_identity.py:329-477`](../src/dgx_monarch/nodes/gate_identity.py#L329-L477 "anchor:authorize_normal_render"),
     [`render_submit.py:150-369`](../src/dgx_monarch/nodes/render_submit.py#L150-L369 "anchor:_submit_render_guarded"),
-    [`mesh_residency.py:87-150`](../src/dgx_monarch/mesh_residency.py#L87-L150 "anchor:assert_normal_render_residency_mode"),
-    [`mesh_residency.py:237-369`](../src/dgx_monarch/mesh_residency.py#L237-L369 "anchor:assert_normal_render_residency_grant"),
-    [`mesh_rpc.py:225-340`](../src/dgx_monarch/mesh_rpc.py#L225-L340 "anchor:verify_request_artifacts"), and
+    [`mesh_residency.py:90-153`](../src/dgx_monarch/mesh_residency.py#L90-L153 "anchor:assert_normal_render_residency_mode"),
+    [`mesh_residency.py:240-372`](../src/dgx_monarch/mesh_residency.py#L240-L372 "anchor:assert_normal_render_residency_grant"),
+    [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"), and
     [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization").
     Exact precedence/topology, ledger-read refusal, field tampering, and mode
     regressions are
@@ -602,7 +602,7 @@ copied from historical evidence.
     [`test_runtime_remediation.py:121-136`](../tests/test_runtime_remediation.py#L121-L136 "anchor:test_normal_residency_grant_binds_every_reconstructible_boundary"),
     [`test_runtime_remediation.py:139-172`](../tests/test_runtime_remediation.py#L139-L172 "anchor:test_normal_residency_grant_rejects_tampering"),
     [`test_runtime_remediation.py:175-186`](../tests/test_runtime_remediation.py#L175-L186 "anchor:test_risky_normal_render_requires_driver_mode_and_grant"), and
-    [`test_runtime_remediation.py:1610-1643`](../tests/test_runtime_remediation.py#L1610-L1643 "anchor:test_worker_rechecks_normal_grant_before_model_load").
+    [`test_runtime_remediation.py:1612-1645`](../tests/test_runtime_remediation.py#L1612-L1645 "anchor:test_worker_rechecks_normal_grant_before_model_load").
 12. **Process verdicts cannot resurrect a newly disproved durable PASS.** One
     copy-on-write publication covers normal, Fleet, and sibling tokens. Negative
     verdicts live in a non-evicting revocation map and outrank both the bounded
@@ -647,8 +647,8 @@ copied from historical evidence.
     Later normal and Fleet workers independently recompute the same source-bound
     token before model load. Source-token and driver/worker skew are covered by
     [`test_gate_ledger.py:1006-1048`](../tests/test_gate_ledger.py#L1006-L1048 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
-    [`test_runtime_remediation.py:1672-1709`](../tests/test_runtime_remediation.py#L1672-L1709 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch"), and
-    [`test_runtime_remediation.py:1712-1738`](../tests/test_runtime_remediation.py#L1712-L1738 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
+    [`test_runtime_remediation.py:1674-1711`](../tests/test_runtime_remediation.py#L1674-L1711 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch"), and
+    [`test_runtime_remediation.py:1714-1740`](../tests/test_runtime_remediation.py#L1714-L1740 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
 13. **v9 audit rows are permanent evidence and can never become authority.**
     Every consented bypass writes a `WAIVER` row naming what was waived, under
     which capability context, from which channel, and a certified rescue load
@@ -787,10 +787,10 @@ copied from historical evidence.
   [`gate_identity.py:277-287`](../src/dgx_monarch/nodes/gate_identity.py#L277-L287 "anchor:model_for_request"),
   [`gate_identity.py:329-477`](../src/dgx_monarch/nodes/gate_identity.py#L329-L477 "anchor:authorize_normal_render"),
   [`render_submit.py:150-369`](../src/dgx_monarch/nodes/render_submit.py#L150-L369 "anchor:_submit_render_guarded"),
-  [`mesh_rpc.py:225-340`](../src/dgx_monarch/mesh_rpc.py#L225-L340 "anchor:verify_request_artifacts"),
+  [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
-  [`test_runtime_remediation.py:1712-1738`](../tests/test_runtime_remediation.py#L1712-L1738 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
+  [`test_runtime_remediation.py:1714-1740`](../tests/test_runtime_remediation.py#L1714-L1740 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
 
 - A persisted runtime grant exists only when contextual lookup selects a
   current row and returns `pass` for a known matching ComfyUI commit and

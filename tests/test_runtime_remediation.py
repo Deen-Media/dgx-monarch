@@ -188,7 +188,9 @@ def test_risky_normal_render_requires_driver_mode_and_grant():
 
 def test_rdma_native_preflight_failure_is_cached_and_safe(monkeypatch):
     import dgx_monarch.transfer as transfer
+    from dgx_monarch import monarch_policy
 
+    monkeypatch.setattr(monarch_policy, "verify_native_policy", lambda: {})
     native_marker = object()
     calls = []
     monkeypatch.setattr(transfer, "RDMABuffer", native_marker)

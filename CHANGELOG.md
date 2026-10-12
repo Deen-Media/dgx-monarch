@@ -14,9 +14,20 @@
   stock-output fidelity did not. Keep
   upscale at batch 1: native VAE encoding collapses an initial image batch of
   2 to one latent item, which DP2 correctly refuses at refinement.
-- Fix the torchmonarch canary's Future probe to use a returned channel Future,
-  avoiding the constructor removed in 0.7.0. Show comparison reports and failed
-  stages in Actions while retaining the 0.6.0 pin and semantic-drift gate.
+- Upgrade to TorchMonarch 0.7.0 and advance the package identity to 1.2.0 so
+  previous Gate PASS rows cannot authorize the new runtime. Preserve the
+  existing Torch/CUDA build during verified updates and validate the candidate's
+  dependencies before installation.
+- Validate native RDMA binding load and package/import ownership separately from
+  public API signatures. Extend the dependency canary with real local CPU actors,
+  concurrent dispatch, Future timeout semantics and ProcMesh shutdown. Run it
+  against Torch 2.12.0+cu132; hardware acceptance remains pending.
+- Add validated Monarch startup and RDMA policy with per-host target overrides,
+  native readback and transport identity. Start with one NIC, one QP and one
+  application chunk; native latent RDMA remains off and **NOT RUN / HOLD**.
+- Add bounded phase timings and opt-in supported Monarch metrics. Advanced
+  attached-cluster profiling, SQL and stack tools remain explicitly unavailable
+  where the upstream API cannot provide an owned, stoppable session.
 
 ## [1.1.0] - 2026-10-11
 

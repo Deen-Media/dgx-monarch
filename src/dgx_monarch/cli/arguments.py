@@ -29,6 +29,14 @@ def build_parser(commands: Mapping[str, Command]) -> argparse.ArgumentParser:
     sub.add_parser(
         "version", help="print the dgx-monarch version and its torchmonarch pin"
     ).set_defaults(func=commands["version"])
+    diagnostics = sub.add_parser("diagnostics", help="capture bounded sanitized telemetry without changing runtime state")
+    diagnostics.add_argument("--host", default=None, help="existing ComfyUI HOST:PORT")
+    diagnostics.add_argument("--duration-s", type=float, default=30, help="capture window, 0.1-300 seconds")
+    diagnostics.add_argument("--max-events", type=int, default=4096, help="maximum retained phase events, 1-20000")
+    diagnostics.add_argument("--max-bytes", type=int, default=1048576, help="artifact byte limit, 65536-8388608")
+    diagnostics.add_argument("--output", help="new private JSON artifact in an existing directory")
+    diagnostics.add_argument("--capabilities", action="store_true", help="show support and exact-runtime limitations without connecting")
+    diagnostics.set_defaults(func=commands["diagnostics"])
     p_launcher = sub.add_parser("launcher", help="plan a local environment-bound dgxm launcher; --apply installs it")
     p_launcher.add_argument("--executable", required=True, help="absolute path to the selected environment's dgxm")
     p_launcher.add_argument("--cluster-config", required=True, help="absolute cluster config path to bind")

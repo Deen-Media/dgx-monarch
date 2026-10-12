@@ -324,6 +324,7 @@ def test_poller_has_no_lab_specific_loop_fallback(monkeypatch, tmp_path):
 def test_textual_polling_offloads_blocking_tick(monkeypatch):
     rich = types.ModuleType("rich")
     rich_text = types.ModuleType("rich.text")
+    rich_console = types.ModuleType("rich.console")
     textual = types.ModuleType("textual")
     textual_app = types.ModuleType("textual.app")
     textual_binding = types.ModuleType("textual.binding")
@@ -344,11 +345,13 @@ def test_textual_polling_offloads_blocking_tick(monkeypatch):
 
     rich.text = rich_text
     rich_text.Text = Text
+    rich_console.Console = type("Console", (), {})
     textual_app.App = App
     textual_binding.Binding = Binding
     textual_widgets.Static = Static
     monkeypatch.setitem(sys.modules, "rich", rich)
     monkeypatch.setitem(sys.modules, "rich.text", rich_text)
+    monkeypatch.setitem(sys.modules, "rich.console", rich_console)
     monkeypatch.setitem(sys.modules, "textual", textual)
     monkeypatch.setitem(sys.modules, "textual.app", textual_app)
     monkeypatch.setitem(sys.modules, "textual.binding", textual_binding)

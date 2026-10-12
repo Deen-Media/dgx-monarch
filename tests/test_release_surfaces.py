@@ -113,13 +113,13 @@ def test_github_actions_are_pinned_to_immutable_commits():
     assert not mutable, f"actions must use immutable commit SHAs: {mutable}"
 
 
-def test_ci_push_trigger_covers_private_and_public_default_branches():
+def test_ci_push_trigger_covers_default_and_integration_branches():
     workflow_path = REPO / ".github" / "workflows" / "ci.yml"
     workflow = yaml.safe_load(workflow_path.read_text())
     triggers = workflow.get("on", workflow.get(True))
 
     assert isinstance(triggers, dict)
-    assert set(triggers["push"]["branches"]) == {"master", "main"}
+    assert set(triggers["push"]["branches"]) == {"master", "main", "dev"}
 
 
 def test_public_repository_links_follow_the_remote_default_branch():
@@ -456,7 +456,7 @@ def test_torchmonarch_canary_is_read_only_artifacted_and_never_auto_bumps():
     assert 'pip install --upgrade torchmonarch' in workflow
     assert "--pre" not in workflow
     assert workflow.count("dgxm-torchmonarch-canary") >= 2
-    assert "tests/fixtures/torchmonarch_pin_0_6_0.json" in workflow
+    assert "tests/fixtures/torchmonarch_pin_0_7_0.json" in workflow
     assert "snapshot --output \"$ARTIFACTS/pin.json\"" in workflow
     assert "snapshot --output \"$ARTIFACTS/latest.json\"" in workflow
     assert "latest-vs-pin-report.md" in workflow
@@ -473,7 +473,7 @@ def test_torchmonarch_canary_is_read_only_artifacted_and_never_auto_bumps():
     assert (REPO / "src" / "dgx_monarch" / "monarch_surface.py").is_file()
     assert (REPO / "src" / "dgx_monarch" / "monarch_surface_report.py").is_file()
     assert (REPO / "tests" / "canary" / "monarch_surface_canary.py").is_file()
-    assert (REPO / "tests" / "fixtures" / "torchmonarch_pin_0_6_0.json").is_file()
+    assert (REPO / "tests" / "fixtures" / "torchmonarch_pin_0_7_0.json").is_file()
 
 
 def test_torchmonarch_probe_surfaces_are_carried_by_sdist_patterns():

@@ -144,6 +144,7 @@ def _read_and_release_owned(
     initial_primary: BaseException | None = None,
     before_failure_ack: Callable[[], None] | None = None,
     mark_operation_entry: Callable[[], None] | None = None,
+    verify_policy: Callable[[], Any] | None = None,
 ) -> Any:
     parts = desc["parts"]
     state = {
@@ -353,11 +354,16 @@ def _read_and_release_owned(
         try:
             with witnessed_authority:
                 try:
+                    if verify_policy is not None:
+                        verify_policy()
                     state["read_started"] = True
                     if len(parts) == 1:
-                        parts[0]["buffer"].read_into(
-                            out_bytes, timeout=read_timeout).get(
-                                timeout=read_timeout + get_margin)
+                        from .runtime_diagnostics import phase
+
+                        with phase("rdma_read", return_mode="rdma"):
+                            parts[0]["buffer"].read_into(
+                                out_bytes, timeout=read_timeout).get(
+                                    timeout=read_timeout + get_margin)
                     else:
                         read_parts(parts, out_bytes)
                     state["read_complete"] = True
@@ -427,6 +433,7 @@ def _read_and_release(
     before_failure_ack: Callable[[], None] | None = None,
     mark_operation_entry: Callable[[], None] | None = None,
     publish_operation: Callable[[Any, BaseException | None], None] | None = None,
+    verify_policy: Callable[[], Any] | None = None,
 ) -> Any:
     """Own receiver entry through durable operation-outcome publication."""
     result: Any = None
@@ -437,7 +444,7 @@ def _read_and_release(
             fail_closed=fail_closed, read_timeout=read_timeout,
             get_margin=get_margin, initial_primary=initial_primary,
             before_failure_ack=before_failure_ack,
-            mark_operation_entry=mark_operation_entry)
+            mark_operation_entry=mark_operation_entry, verify_policy=verify_policy)
     except BaseException as error:
         primary = error
     finally:

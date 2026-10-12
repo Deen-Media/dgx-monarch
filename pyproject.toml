@@ -21,7 +21,7 @@ classifiers = [
 dependencies = [
     # Pinned exactly: the 0.x torchmonarch API changes between releases. Follow
     # the bump procedure in skills/dgx-monarch-dev/SKILL.md to move it.
-    "torchmonarch==0.6.0",
+    "torchmonarch==0.7.0",
     # Temporary local compatibility build of the external xfuser 0.7 wheel.
     # tools/build_xfuser_compat_wheel.py verifies the official wheel and applies
     # only the lazy optional-NPU import patch; NVIDIA attention math is unchanged.

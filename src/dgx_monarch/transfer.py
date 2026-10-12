@@ -1,7 +1,6 @@
 """Driver/actor tensor transfer (DESIGN.md §5.6; docs/VALIDATION.md)."""
 from __future__ import annotations
 
-import os
 import threading
 from typing import Any
 
@@ -9,7 +8,6 @@ import torch
 from monarch.rdma import RDMABuffer, is_ibverbs_available
 
 from . import rdma_ownership, rdma_poison, rdma_settlement, transfer_utils
-from .constants import DEFAULT_RDMA_MIN_BYTES
 from .log import get_logger
 from .rdma_read_driver import run_owned_off_loop as run_blocking_off_loop
 from .rdma_receiver import _read_and_release
@@ -107,6 +105,8 @@ def _rdma_usable() -> bool:
     global _RDMA_PREFLIGHT_RESULT
     if _rdma_poisoned():
         return False
+    if RDMABuffer is _NATIVE_RDMA_BUFFER and not transfer_utils.native_policy_ready(log):
+        return False
     if not is_ibverbs_available():
         return False
     if RDMABuffer is not _NATIVE_RDMA_BUFFER:
@@ -144,7 +144,8 @@ def _release_rdma_parts(
     try:
         for index, part in enumerate(parts):  # noqa: B007 - resume after boundary
             try:
-                _part_buffer(part).drop().get(timeout=RDMA_READ_TIMEOUT_S)
+                with transfer_utils.rdma_drop_phase():
+                    _part_buffer(part).drop().get(timeout=RDMA_READ_TIMEOUT_S)
             except BaseException as exc:
                 failures.append(_drop_failure(part, exc))
         _publish_drop_result(outcome_owner, failures, None)
@@ -161,7 +162,8 @@ def _release_rdma_parts(
             failures.append(_drop_failure(current, exc))
         for part in parts[index + 1:]:
             try:
-                _part_buffer(part).drop().get(timeout=RDMA_READ_TIMEOUT_S)
+                with transfer_utils.rdma_drop_phase():
+                    _part_buffer(part).drop().get(timeout=RDMA_READ_TIMEOUT_S)
             except BaseException as later_exc:
                 failures.append(_drop_failure(part, later_exc))
         _publish_drop_result(outcome_owner, failures, exc)
@@ -355,16 +357,8 @@ class LatentReturn:
 
     def __init__(self, mode: str = "rdma", min_bytes: int | None = None,
                  keepalive_depth: int = 1):
-        if mode not in ("message", "rdma"):
-            raise ValueError(f"unknown latent return mode {mode!r}")
-        if mode == "rdma":
-            from .actor import comfy_dynamic  # lazy: the driver has no actor stack
-
-            comfy_dynamic.assert_rdma_compatible()
+        self.min_bytes = transfer_utils.return_threshold(mode, min_bytes)
         self.mode = mode
-        if min_bytes is None:
-            min_bytes = int(os.environ.get("DGXM_RDMA_MIN_BYTES", DEFAULT_RDMA_MIN_BYTES))
-        self.min_bytes = max(1, int(min_bytes))
         self._depth = max(1, int(keepalive_depth))
         self._keepalive: dict[tuple, torch.Tensor] = {}
 
@@ -385,7 +379,8 @@ class LatentReturn:
                 handoff = {}
             handoff.update(parts=[], state="registering", keepalive=tensor)
             try:
-                _register_parts(tensor, _qp_split(), handoff)
+                with transfer_utils.rdma_register_phase():
+                    _register_parts(tensor, _qp_split(), handoff)
                 if handoff.get("token") is None:
                     self._retain(key, seq, tensor, depth)
                 return {
@@ -475,6 +470,8 @@ def read_latent_result(desc: dict, read_guard: Any = None) -> Any:
             mark_operation_entry: Any,
             publish_operation: Any,
         ) -> Any:
+            from .monarch_policy import verify_native_policy
+
             try:
                 return _read_and_release(
                     desc, read_guard, read_parts=_read_parts_concurrent,
@@ -484,7 +481,8 @@ def read_latent_result(desc: dict, read_guard: Any = None) -> Any:
                     initial_primary=initial_primary,
                     before_failure_ack=before_failure_ack,
                     mark_operation_entry=mark_operation_entry,
-                    publish_operation=publish_operation)
+                    publish_operation=publish_operation,
+                    verify_policy=(verify_native_policy if RDMABuffer is _NATIVE_RDMA_BUFFER else None))
             finally:
                 _report_poison_safely()
 

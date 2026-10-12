@@ -42,6 +42,7 @@ from ..loader_options import (
 )
 from ..log import get_logger
 from ..model_sampling import normalize_model_sampling
+from ..runtime_timing import MeasuredAsyncLock, run_gpu_phase
 from ..transfer import LatentReturn
 from . import sample_protocol, store_fsdp, worker_env, worker_status
 from .cancellation import CancellableSampleMixin
@@ -78,7 +79,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
         self._active_worker_args: dict = {}  # instance lifetime: the knobs the last setup applied
         # Serialize GPU/store/parallel-state mutation; one executor thread pins
         # every CUDA/NCCL call while async endpoints keep supervision responsive.
-        self._gpu_lock = asyncio.Lock()
+        self._gpu_lock = MeasuredAsyncLock()
         self._gpu_exec = concurrent.futures.ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="dgxm-gpu")
         self._init_cancellation()
@@ -94,7 +95,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
         loop = asyncio.get_running_loop()
         ctx = contextvars.copy_context()
         return await loop.run_in_executor(
-            self._gpu_exec, functools.partial(ctx.run, fn, *args))
+            self._gpu_exec, functools.partial(ctx.run, run_gpu_phase, fn, *args))
 
     @concurrent_endpoint
     async def setup(self, env: dict) -> dict:

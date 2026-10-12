@@ -27,12 +27,15 @@ def package_src_dir() -> Path:
 
 def unit_exec_args(config: ClusterConfig, host: HostConfig) -> str:
     """Quote the unit's ExecStart arguments; this needs no locality answer."""
+    from ..monarch_launch import worker_policy_args
+
     python_uses_home = config.python_bin == "~" or config.python_bin.startswith("~/")
     return " ".join([
         systemd_quote(resolve_python(config.python_bin),
                       preserve_home_specifier=python_uses_home),
         systemd_quote("-m"), systemd_quote("dgx_monarch.cli.worker_loop"),
         systemd_quote("--address"), systemd_quote(host.address),
+        *(systemd_quote(arg) for arg in worker_policy_args(config, host)),
     ])
 
 

@@ -7,7 +7,9 @@ supports a Worker
 on the driver's host; [Validation](VALIDATION.md#operator-checks) records the
 update results and limits. The benchmark
 campaign covers a documented subset, not the full matrix. The package declares
-version 1.1.0. [Release history](../CHANGELOG.md) records the compatible operator
+version 1.2.0 with an updated Monarch dependency. The dependency migration has local CPU
+and native-load evidence; paired render, cancellation and fidelity acceptance
+for this pin remain pending. [Release history](../CHANGELOG.md) records the compatible operator
 improvements; section 9 tracks acceptance.
 The runtime also includes low-RSS LoRA residency, zero-copy slab residency,
 the identity gate and ledger, `dgxm top`, Fleet sampling, an RDMA latent-return
@@ -300,7 +302,7 @@ to spawn an actor that mixes sync and async endpoints. The blocking render
 runs on one GPU thread (`_on_gpu`, with contextvars copied so the RDMA return
 binds to this actor's instance) under an `asyncio.Lock`, and the lock keeps
 compute serial: no two renders, or a model mutation and a render, overlap on
-one GPU, model, or topology. Under torchmonarch >= 0.6.0 queue dispatch, every
+one GPU, model, or topology. Under Monarch's queue dispatch, every
 endpoint that takes the lock must be `@concurrent_endpoint` (the comment at
 the top of `actor/worker.py` gives the rule). This lets status and supervision
 respond while rendering holds the GPU lock; model mutations remain serialized.
@@ -689,23 +691,24 @@ sampling-spec drift fails closed.
   sampling cases: three sizes around 8 MiB, repeated after fresh attach,
   exact primary/denoised tensors and confirmed owned recycle. No denoiser
   forward ran; this is messaging acceptance, not model fidelity
-  ([recorded scope](VALIDATION.md#default-off-messaging-return)). The
-  native-enabled probe arm is retained outside this repository for future
-  requalification.
-  Native RDMA is **NOT RUN / HOLD**. Requalification requires a stable
-  torchmonarch release with `rdma_ibverbs_target` and a passing selected-rail
+  ([recorded scope](VALIDATION.md#default-off-messaging-return)). The repository's
+  `benchmark/rdma_return_bench.py` now exercises CPU staged returns through the
+  production descriptor, ACK and lease machinery, in messaging or native mode.
+  Its evidence is narrower than the custom-sampling gate above and establishes
+  no render fidelity. Native RDMA is **NOT RUN / HOLD**. Requalification uses
+  the pinned runtime's `rdma_ibverbs_target` and requires a passing selected-rail
   matrix: fresh integrity, ownership, recycle and reattach evidence on the
   selected rail. [Validation](VALIDATION.md#native-rdma) records the failed
   production-path check and the limits of earlier microbenchmarks.
 
-  Current limit (measured on the tested Spark pair): the torchmonarch pin hashes each
-  host-memory registration across every NIC tying for the best CPU path, per
-  transfer end independently, so on a multi-rail point-to-point fabric it can
-  pair a transfer across rails with no network path (observed at 8 MiB). The hash is deterministic per (address, size), so one passing
-  transfer of a shape does not prove the next. `DGXM_RDMA_QP_SPLIT` above 1 is
-  expected to scatter across every tying rail rather than open several queue
-  pairs on one, so it is treated as carrying the same hazard and stays at 1. A
-  rail selector is necessary but does not by itself turn the default back on:
+  The earlier disconnected-rail failure remains historical evidence, not a
+  qualification of the upgraded runtime. Current policy requires an explicit
+  `nic:<device>` target for single-NIC native operation and validates native
+  readback before transfers. NIC affinity pairs device names; it does not
+  discover network reachability. Application chunks and native QPs are separate
+  settings, both defaulting to one; the validated chunk count cannot be changed
+  through an ambient environment override after admission. A rail selector is
+  necessary but does not by itself turn the default back on:
   the selected-rail matrix above must pass first. Dated measurements are in
   docs/VALIDATION.md. RDMABuffer requires a CPU tensor (host-staged); GB10 has
   GDR off, so no GPU-memory path is lost. ComfyUI packed `NestedTensor`

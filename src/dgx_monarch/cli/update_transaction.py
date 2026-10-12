@@ -221,6 +221,7 @@ def execute_verified_update(request: UpdateRequest, ops: UpdateOps) -> UpdateRes
 
         _repo_guard(ops.repo_snapshot(target), target=target, current=current)
         _require_clear(ops.activity_snapshot())
+        ops.recheck_dependencies()
         steps.append(_Step("pre_stop_recheck", "succeeded"))
 
         mutation_started = True

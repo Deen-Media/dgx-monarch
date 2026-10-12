@@ -417,7 +417,10 @@ class MeshHandle:
             self, index, request, progress_port, setup_token, authority)
     def collect_one(self, future, timeout_s: float = 900.0) -> dict:
         """Await a submit_sample_to future through _await_or_evict."""
-        return self._await_or_evict(future, timeout_s)
+        from .runtime_diagnostics import phase
+
+        with phase("collect"):
+            return self._await_or_evict(future, timeout_s)
 
     def _retire_completed(self) -> None:
         """Confirmed teardown: clear any stranded token, settle, evict."""
@@ -438,8 +441,11 @@ class MeshHandle:
 
     def recycle_detailed(self) -> RecycleOutcome:
         """Deliberately stop and evict worker procs with a typed outcome."""
-        return mesh_recycle.recycle_detailed(
-            self, self._retire_completed, self._evict_recycled)
+        from .runtime_diagnostics import phase
+
+        with phase("recycle"):
+            return mesh_recycle.recycle_detailed(
+                self, self._retire_completed, self._evict_recycled)
 
     def _recycle_impl(self, lock_timeout_s: float = 10.0) -> bool:
         """Internal boolean compatibility wrapper used by lifecycle tests."""
@@ -464,19 +470,15 @@ class MeshHandle:
     def collect_sample(self, future, timeout_s: float = 900.0,
                        activity_fn=None) -> list:
         """Await a sample with lifecycle eviction; ``activity_fn`` arms the stall guard."""
-        return mesh_lease.collect_sample(self, future, timeout_s, activity_fn)
+        from .runtime_diagnostics import phase
+
+        with phase("collect"):
+            return mesh_lease.collect_sample(self, future, timeout_s, activity_fn)
 
     def cancel_sample(self, render_id: str, timeout_s: float = 10.0,
                       wait: bool = True) -> list:
         """Set the per-rank denoise cancellation event outside the GPU lock."""
-        try:
-            if not wait:
-                self.workers.cancel_sample.broadcast(str(render_id))
-                return []
-            return self.call_all("cancel_sample", str(render_id), timeout_s=timeout_s)
-        except Exception as exc:
-            log.warning("distributed cancellation request failed for %s: %r", render_id, exc)
-            return []
+        return mesh_rpc.cancel_sample(self, render_id, timeout_s, wait, log)
 
     def shutdown(
         self, timeout_s: float = 60.0, *, _reconcile_token: object | None = None
@@ -646,7 +648,7 @@ def get_mesh(
             pass
         # A local mesh consumes [worker_args], so it needs a digest of its own.
         config_digest = (config_fingerprint(resolved) if use_cluster
-                         else mesh_helpers.local_worker_args_fingerprint(config.worker_args))
+                         else mesh_helpers.local_worker_args_fingerprint(config.worker_args, config.monarch))
     key = _mesh_cache_key(config.source, comfy, use_cluster)
     # The provisional claim is releasable until the fail-closed publication
     # immediately before the first native transport/fleet call below.
@@ -733,6 +735,9 @@ def get_mesh(
                     if _MESHES.get(key) is old:
                         _MESHES.pop(key, None)
             src = _src_pythonpath()
+            from .monarch_launch import prepare_driver
+
+            prepare_driver(config)
             os.environ["DGXM_PYTHONPATH"] = src
             client_lease.plant_driver_marker()  # so the CLI sweep can see the owner
             existing = os.environ.get("PYTHONPATH", "")

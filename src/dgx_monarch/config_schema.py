@@ -17,7 +17,7 @@ MAX_CLUSTER_HOSTS = 64
 MAX_GPUS_PER_HOST = 64
 MAX_WORLD_SIZE = 256
 
-_ROOT_KEYS = frozenset({"cluster", "fabric", "hosts", "worker_args"})
+_ROOT_KEYS = frozenset({"cluster", "fabric", "hosts", "worker_args", "monarch"})
 _CLUSTER_KEYS = frozenset({
     "auto_heal",
     "client_bind",

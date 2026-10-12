@@ -43,6 +43,7 @@ export const startTimelineRecording = () => {};
 export const computeMemorySegments = () => ({});
 export const selectMemoryHostCards = () => [];
 export const readinessPanelModel = () => ({ state: 'unknown', title: 'Unknown', rows: [] });
+export const diagnosticsPanelModel = () => ({ state: 'unavailable', title: 'Diagnostics unavailable', rows: [] });
 export const fleetJobRows = () => [];
 export const lastTimeline = () => null;
 """)

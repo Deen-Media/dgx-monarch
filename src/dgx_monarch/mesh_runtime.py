@@ -80,11 +80,10 @@ def config_fingerprint(path: str | os.PathLike[str] | None) -> str:
         return "unreadable"
 
 
-def local_worker_args_fingerprint(worker_args: dict) -> str:
-    """Content identity for the only part of a config a local mesh consumes.
+def local_worker_args_fingerprint(worker_args: dict, monarch_policy=None) -> str:
+    """Content identity for the worker and Monarch settings a local mesh consumes.
 
-    A local mesh takes `[worker_args]` and nothing else, so fingerprinting the
-    whole file would rebuild a live local fleet over a `[cluster]` edit that
+    Fingerprinting the whole file would rebuild a live local fleet over a `[cluster]` edit that
     cannot reach it. This changes exactly when the knobs the workers run with
     change, whichever file supplied them.
 
@@ -92,6 +91,10 @@ def local_worker_args_fingerprint(worker_args: dict) -> str:
     table hands the workers what no file hands them, and a different digest
     would recycle a live fleet over a difference the workers cannot see.
     """
+    from .monarch_policy import MonarchPolicy, policy_dict
+
+    if monarch_policy is not None and monarch_policy != MonarchPolicy():
+        worker_args = {**worker_args, "monarch": policy_dict(monarch_policy)}
     if not worker_args:
         return "local"
     payload = repr(sorted((str(key), repr(value)) for key, value in worker_args.items()))
@@ -128,6 +131,19 @@ def bootstrap_proc() -> None:
     for path in filter(None, os.environ.get("DGXM_PYTHONPATH", "").split(os.pathsep)):
         if path not in sys.path:
             sys.path.insert(0, path)
+    from .monarch_capabilities import assert_supported_runtime
+    from .monarch_diagnostics import configure_policy
+    from .monarch_launch import NATIVE_ENV
+    from .monarch_policy import POLICY_ENV, activate_native_policy, apply_policy, policy_from_token
+    from .runtime_provenance import enforce_source_only_imports
+
+    enforce_source_only_imports()
+    assert_supported_runtime()
+    policy = policy_from_token(os.environ[POLICY_ENV])
+    apply_policy(policy, role="actor", native_enabled=os.environ.get(NATIVE_ENV) == "1")
+    configure_policy(policy.diagnostics)
+    activate_native_policy()
+
     # Arm the actor-side reaper here, the one piece of dgx-monarch that already
     # runs inside every spawned proc. Imported function-locally and after the
     # path insertion above so the driver-advertised source wins, and from a
@@ -146,10 +162,12 @@ def attach_once(addresses: list[str]):
     from .log import get_logger
 
     log = get_logger(__name__)
-    with attach_trace.half(log, "attach_to_workers", hosts=len(addresses)):
+    from .runtime_diagnostics import phase
+
+    with phase("attach"), attach_trace.half(log, "attach_to_workers", hosts=len(addresses)):
         hosts = attach_to_workers(
             ca="trust_all_connections", workers=addresses, name="dgxm")
-    with attach_trace.half(log, "initialized_get", bound_s=ATTACH_INIT_WAIT_S):
+    with phase("readiness"), attach_trace.half(log, "initialized_get", bound_s=ATTACH_INIT_WAIT_S):
         get_off_loop(hosts.initialized, ATTACH_INIT_WAIT_S, "dgxm-attach-init")
     return hosts
 

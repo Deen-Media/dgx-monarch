@@ -30,7 +30,49 @@ __all__ = [
 ]
 
 
+def return_threshold(mode: str, min_bytes: int | None) -> int:
+    from .constants import DEFAULT_RDMA_MIN_BYTES
+
+    if mode not in ("message", "rdma"):
+        raise ValueError(f"unknown latent return mode {mode!r}")
+    if mode == "rdma":
+        from .actor import comfy_dynamic  # lazy: the driver has no actor stack
+
+        comfy_dynamic.assert_rdma_compatible()
+    if min_bytes is None:
+        min_bytes = int(os.environ.get("DGXM_RDMA_MIN_BYTES", DEFAULT_RDMA_MIN_BYTES))
+    return max(1, int(min_bytes))
+
+
+def native_policy_ready(log: Any) -> bool:
+    from .monarch_policy import verify_native_policy
+
+    try:
+        verify_native_policy()
+    except Exception:
+        safe_call(log.error, "RDMA policy readback unavailable; using messaging before registration")
+        return False
+    return True
+
+
+def rdma_drop_phase():
+    from .runtime_diagnostics import phase
+
+    return phase("rdma_drop", return_mode="rdma")
+
+
+def rdma_register_phase():
+    from .runtime_diagnostics import phase
+
+    return phase("rdma_register", return_mode="rdma")
+
+
 def qp_split() -> int:
+    from .monarch_policy import application_chunks
+
+    admitted = application_chunks()
+    if admitted is not None:
+        return admitted
     try:
         return max(1, min(8, int(os.environ.get("DGXM_RDMA_QP_SPLIT", "1"))))
     except ValueError:
@@ -40,10 +82,16 @@ def qp_split() -> int:
 def native_rdma_preflight() -> bool:
     """Probe native registration in a child so a native abort stays isolated."""
     code = (
+        "import os\n"
+        "from dgx_monarch.monarch_policy import POLICY_ENV, policy_from_token, apply_policy, verify_native_policy\n"
+        "apply_policy(policy_from_token(os.environ[POLICY_ENV]), role='preflight', native_enabled=True)\n"
+        "verify_native_policy()\n"
         "import torch\n"
+        "from monarch._rust_bindings import rdma as native_rdma\n"
         "from monarch.rdma import RDMABuffer, is_ibverbs_available\n"
         "assert is_ibverbs_available()\n"
-        "assert RDMABuffer(torch.zeros(4096, dtype=torch.uint8)) is not None\n"
+        "buffer = RDMABuffer(torch.zeros(4096, dtype=torch.uint8))\n"
+        "buffer.drop().get(timeout=5)\n"
     )
     try:
         result = subprocess.run(
@@ -81,10 +129,13 @@ def read_parts_concurrent(
     parts: list[dict], out_bytes: torch.Tensor, timeout: float, margin: float
 ) -> None:
     def read_one(part: dict) -> None:
+        from .runtime_diagnostics import phase
+
         offset, size = part["offset"], part["nbytes"]
-        part["buffer"].read_into(
-            out_bytes[offset:offset + size], timeout=timeout
-        ).get(timeout=timeout + margin)
+        with phase("rdma_read", return_mode="rdma"):
+            part["buffer"].read_into(
+                out_bytes[offset:offset + size], timeout=timeout
+            ).get(timeout=timeout + margin)
 
     with concurrent.futures.ThreadPoolExecutor(max_workers=len(parts)) as executor:
         for future in [executor.submit(read_one, part) for part in parts]:

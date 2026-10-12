@@ -50,8 +50,9 @@ def loop_pattern(host: HostConfig) -> str:
 
 
 def loop_regex(host: HostConfig) -> str:
-    """Anchored ERE for procps, including literal IPv6 brackets."""
-    return re.escape(loop_pattern(host)) + r"$"
+    """Match only legacy or complete generated policy argv, including IPv6."""
+    policy = r"( --runtime-policy [A-Za-z0-9_-]+={0,2}( --native-rdma)?)?"
+    return re.escape(loop_pattern(host)) + policy + r"$"
 
 
 def _proc_listener_target(address: str) -> tuple[str, str]:

@@ -19,6 +19,7 @@ import {
     startTimelineRecording,
 } from "./dgx_monarch_timeline.js";
 import { readinessPanelModel } from "./dgx_monarch_readiness_model.js";
+import { diagnosticsPanelModel } from "./dgx_monarch_diagnostics_model.js";
 import { button, el } from "./dgx_monarch_ui.js";
 import { brandHeader, brandMark, updateBrand } from "./dgx_monarch_brand.js";
 
@@ -299,6 +300,8 @@ async function refreshOnce(root, zones) {
     }
     r.appendChild(renderDetails(t.ledger, render.fleet));
     frag.appendChild(r);
+    const diagnostics = diagnosticsPanelModel(t);
+    frag.appendChild(el("div", "opacity:.75;font-size:.9em;margin:4px 0;", diagnostics.summary));
 
     for (const { name, stats, meta } of selectMemoryHostCards(t)) {
         frag.appendChild(hostCard(name, stats, meta));

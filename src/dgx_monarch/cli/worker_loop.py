@@ -17,6 +17,8 @@ def main() -> None:
     enforce_source_only_imports()
     parser = argparse.ArgumentParser(description="dgx-monarch per-host worker service")
     parser.add_argument("--address", required=True, help="bind address, such as tcp://192.0.2.12:26600")
+    parser.add_argument("--runtime-policy", default="", help="validated Monarch process policy")
+    parser.add_argument("--native-rdma", action="store_true", help="require selected native RDMA policy")
     args = parser.parse_args()
 
     from ..config import format_tcp_address, tcp_endpoint, unmapped_bind_ip
@@ -43,6 +45,17 @@ def main() -> None:
 
     prepare_worker_process_environment(Path(__file__).resolve().parents[2])
 
+    import os
+
+    from ..monarch_diagnostics import configure_policy
+    from ..monarch_launch import NATIVE_ENV
+    from ..monarch_policy import MonarchPolicy, apply_policy, policy_from_token
+
+    policy = policy_from_token(args.runtime_policy) if args.runtime_policy else MonarchPolicy()
+    apply_policy(policy, role="worker", native_enabled=args.native_rdma)
+    os.environ[NATIVE_ENV] = "1" if args.native_rdma else "0"
+    configure_policy(policy.diagnostics)
+
     # Persist actor identities for later loops and lifecycle sweeps. Use a
     # daemon thread because run_worker_loop_forever blocks in native code.
     from .actor_ledger import start_tracker
@@ -50,6 +63,12 @@ def main() -> None:
     start_tracker(args.address)
 
     from monarch.actor import enable_transport, run_worker_loop_forever
+
+    from ..monarch_capabilities import assert_supported_runtime
+    from ..monarch_policy import activate_native_policy
+
+    assert_supported_runtime()
+    activate_native_policy()
 
     # Secondary channels must advertise the same fabric IP as the loop bind, and
     # their ports are dynamic, so SECURITY.md asks for a rule on the whole

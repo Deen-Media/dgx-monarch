@@ -404,6 +404,7 @@ def test_drop_outcome_error_composes_with_durable_native_failure(
         def read_into(self, *_args, **_kwargs):
             return SimpleNamespace(get=lambda **_kwargs: None)
 
+    monkeypatch.setattr(transfer, "RDMABuffer", Buffer)
     part = {"buffer": Buffer(), "offset": 0, "nbytes": 1}
     descriptor = {
         "kind": "rdma", "dtype": "uint8", "shape": [1], "parts": [part],

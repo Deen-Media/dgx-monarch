@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..config import ClusterConfig
 from . import comfy_ports, lifecycle
+from .update_dependency_contract import probe_source
 from .update_release import CommandRunner
 
 _DEPENDENCY_CHECK = r"""
@@ -19,6 +20,7 @@ from pip._vendor.packaging.requirements import Requirement
 from pip._vendor.packaging.version import Version
 for raw in json.loads(sys.argv[1]):
     req = Requirement(raw)
+    if req.marker and not req.marker.evaluate({"extra": ""}): continue
     if req.name.lower() == "torchmonarch": continue
     try: installed = Version(md.version(req.name))
     except Exception: raise SystemExit(2)
@@ -89,6 +91,39 @@ case "$PYBIN" in "~/"*) PYBIN="$HOME/${{PYBIN#\\~/}}";; "~") PYBIN="$HOME";; esa
             return False
         if result.returncode != 0:
             return False
+    return True
+
+
+def candidate_dependencies_available(
+    config: ClusterConfig, dependencies: Sequence[str], contract: dict, run: CommandRunner,
+) -> bool:
+    """Inspect the exact candidate's dependency closure on all target interpreters."""
+    payload = json.dumps({"contract": contract, "roots": list(dependencies)}, separators=(",", ":"))
+    source = probe_source()
+
+    def passed(result: subprocess.CompletedProcess[str]) -> bool:
+        try:
+            return result.returncode == 0 and json.loads(result.stdout) == []
+        except (ValueError, TypeError):
+            return False
+
+    try:
+        if not passed(run(
+            [sys.executable, "-c", source, payload],
+            capture_output=True, text=True, timeout=60,
+        )):
+            return False
+        script = f"""
+set -eu
+PYBIN={shlex.quote(config.python_bin)}
+case "$PYBIN" in "~/"*) PYBIN="$HOME/${{PYBIN#\\~/}}";; "~") PYBIN="$HOME";; esac
+"$PYBIN" -c {shlex.quote(source)} {shlex.quote(payload)}
+"""
+        for host in config.hosts:
+            if not passed(lifecycle.run_on_host(config, host, script, timeout=60)):
+                return False
+    except (OSError, subprocess.TimeoutExpired):
+        return False
     return True
 
 

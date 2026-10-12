@@ -9,6 +9,7 @@ import pytest
 
 from dgx_monarch.cli import update_command
 from dgx_monarch.cli.update_release import ReleaseMetadata
+from dgx_monarch.cli.update_stage_failure import StageFailure
 from dgx_monarch.cli.update_transaction import Certainty, OperationResult
 from dgx_monarch.config import ClusterConfig, HostConfig
 from update_command_helpers import (  # noqa: F401  # autouse fixture import.
@@ -70,8 +71,9 @@ def test_relative_config_is_bound_once_for_lifecycle_checks_and_readback(
     assert not ops._config_current()
 
 
+@pytest.mark.parametrize("candidate_ready", [True, False])
 def test_target_pin_transition_is_fully_staged_before_live_mutation(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, candidate_ready: bool,
 ):
     repo, prior = _checkout(tmp_path)
     target = _target(repo, pin="0.7.0")
@@ -100,6 +102,17 @@ def test_target_pin_transition_is_fully_staged_before_live_mutation(
     )
     ops.repo_snapshot(target)
     monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: True)
+    monkeypatch.setattr(update_command, "_candidate_dependencies_available", lambda *_args: candidate_ready)
+
+    if not candidate_ready:
+        with pytest.raises(StageFailure, match="dependency closure") as failure:
+            ops.stage(target)
+        assert failure.value.code == "target_dependencies_unsatisfied"
+        assert failure.value.cleanup_status == "succeeded"
+        assert cleaned == [True]
+        assert pins.live == "prior"
+        assert _run("git", "rev-parse", "HEAD", cwd=repo).stdout.strip() == prior
+        return
 
     staged = ops.stage(target)
 
@@ -132,6 +145,7 @@ def test_post_build_git_status_query_failure_cleans_owned_stage(
     )
     ops.repo_snapshot(sha)
     monkeypatch.setattr(update_command, "_dependencies_available", lambda *_args: True)
+    monkeypatch.setattr(update_command, "_candidate_dependencies_available", lambda *_args: True)
     real_git = ops._git
     def broken_status(*args, cwd=None, timeout=60):
         result = real_git(*args, cwd=cwd, timeout=timeout)

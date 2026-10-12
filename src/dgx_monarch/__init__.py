@@ -13,8 +13,8 @@ import os
 ATTACH_CONFIG_TIMEOUT = "60s"
 os.environ.setdefault("HYPERACTOR_MESH_ATTACH_CONFIG_TIMEOUT", ATTACH_CONFIG_TIMEOUT)
 
-__version__ = "1.1.0"
+__version__ = "1.2.0"
 
 # pyproject.toml holds the torchmonarch pin; `dgxm doctor` compares this mirror
 # with the installed package.
-TORCHMONARCH_PIN = "0.6.0"
+TORCHMONARCH_PIN = "0.7.0"

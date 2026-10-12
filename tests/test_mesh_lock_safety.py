@@ -342,6 +342,9 @@ def transport_state(isolated_environ):
 
 
 def _attach_fakes(monkeypatch):
+    from dgx_monarch import monarch_launch
+
+    monkeypatch.setattr(monarch_launch, "prepare_driver", lambda _config: None)
     monkeypatch.setattr(mesh_mod, "_detect_comfy_dir", lambda _v: "/fake/comfy")
     monkeypatch.setattr(mesh_mod, "_visible_gpu_count", lambda: 1)
     monkeypatch.setattr(mesh_mod, "find_config_path", lambda p: p or None)
@@ -1000,12 +1003,14 @@ def test_partial_bring_up_rollback_stop_runs_off_the_loop():
             return stop_future
 
     procs = _RollbackProcs()
+    procs.initialized = _Done()
     hosts = types.SimpleNamespace(spawn_procs=lambda **_kwargs: procs)
 
     async def bring_up():
         with pytest.raises(WorkerSpawnError) as caught:
             spawn_worker_fleet(
-                None, True, 1, lambda _config, _handoff: hosts, None)
+                types.SimpleNamespace(monarch=types.SimpleNamespace(startup_timeout_s=180)),
+                True, 1, lambda _config, _handoff: hosts, None)
         return caught.value
 
     error = asyncio.run(bring_up())
@@ -1049,6 +1054,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "stdlib queue.Queue.get, not a monarch future",
     ("mesh_liveness.py", "_scan_worker"):
         "the shared dgxm-liveness thread's own body, stdlib queue.Queue.get",
+    ("monarch_diagnostics.py", "_MetricExporter._run"):
+        "the dedicated dgxm-metrics daemon body, bounded stdlib queue.Queue.get",
     ("adapters/mage_nvfp4_scale.py", "real_input"):
         "ContextVar read, not a monarch future",
     ("adoption_evidence.py", "active_context_wire"):

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,6 +16,16 @@ from dgx_monarch.mesh_factory import (
     owned_spawned_proc,
     spawn_worker_fleet,
 )
+
+_CONFIG = SimpleNamespace(monarch=SimpleNamespace(startup_timeout_s=180))
+
+
+@pytest.fixture(autouse=True)
+def _ready_test_doubles(monkeypatch):
+    from dgx_monarch import monarch_launch
+
+    monkeypatch.setattr(monarch_launch, "wait_initialized", lambda *_args: None)
+    monkeypatch.setattr(monarch_launch, "wait_worker_ready", lambda *_args: None)
 
 
 def _host() -> HostMesh:
@@ -83,7 +94,7 @@ def test_returned_proc_is_authoritative_despite_foreign_and_ambiguous_observers(
 
     monkeypatch.setattr(HostMesh, "spawn_procs", spawn_procs)
     fleet = spawn_worker_fleet(
-        None, True, 1, lambda _config, _handoff: attached, None, handoff)
+        _CONFIG, True, 1, lambda _config, _handoff: attached, None, handoff)
 
     assert fleet[1] is observed["returned"]
     assert handoff.fleet is not None
@@ -116,7 +127,7 @@ def test_foreign_proc_is_never_selected_or_stopped_after_spawn_failure(monkeypat
     monkeypatch.setattr(HostMesh, "spawn_procs", spawn_procs)
     with pytest.raises(WorkerSpawnError) as failure:
         spawn_worker_fleet(
-            None, True, 1, lambda _config, _handoff: attached, None, handoff)
+            _CONFIG, True, 1, lambda _config, _handoff: attached, None, handoff)
 
     assert failure.value.original is primary
     assert failure.value.rollback_confirmed is False
@@ -148,7 +159,7 @@ def test_multiple_exact_host_candidates_are_ambiguous_and_none_are_stopped(
     monkeypatch.setattr(HostMesh, "spawn_procs", spawn_procs)
     with pytest.raises(WorkerSpawnError) as failure:
         spawn_worker_fleet(
-            None, True, 1, lambda _config, _handoff: attached, None, handoff)
+            _CONFIG, True, 1, lambda _config, _handoff: attached, None, handoff)
 
     assert failure.value.original is primary
     assert failure.value.rollback_confirmed is False

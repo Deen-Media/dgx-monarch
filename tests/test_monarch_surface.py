@@ -56,13 +56,8 @@ PIN_SEMANTICS = {
         "outcome": "raised",
     },
     "unhandled_fault_hook_assignment": {"outcome": "writable"},
-    # torchmonarch 0.6.0 defaults to queue dispatch, and long-running GPUWorker
-    # endpoints use @concurrent_endpoint (actor/worker.py). False or a missing
-    # flag changes dispatch semantics and must produce REVIEW REQUIRED.
-    "actor_queue_dispatch_default": {
-        "outcome": "observed",
-        "actor_queue_dispatch": True,
-    },
+    # 0.7.0 removed the switch; the separate CPU smoke verifies concurrency.
+    "actor_queue_dispatch_default": {"outcome": "key_absent"},
     "mesh_factory_private_ownership": {
         "outcome": "observed",
         "host_inner_identity": True,
@@ -146,6 +141,14 @@ def _snapshot(version: str = "0.5.0") -> dict:
         import_module=modules.__getitem__,
         distribution_version=lambda _name: version,
         include_semantics=False,
+        capabilities=lambda: {
+            "schema": 1,
+            "torch": {"import_status": "ok", "package": {"distribution_owned": True}},
+            "torchmonarch": {"import_status": "ok", "distribution_version": version,
+                             "package": {"distribution_owned": True},
+                             "native": {"distribution_owned": True}},
+            "rdma": {"native_import": "ok", "empty_action": "ok"},
+        },
     )
     snapshot["semantics"] = copy.deepcopy(PIN_SEMANTICS)
     return snapshot
@@ -380,6 +383,10 @@ def test_comparator_still_blocks_removed_dispatch_configuration():
     baseline = _snapshot("0.6.0")
     candidate = copy.deepcopy(baseline)
     candidate["version"] = "0.7.0"
+    candidate["capabilities"]["torchmonarch"]["distribution_version"] = "0.7.0"
+    baseline["semantics"]["actor_queue_dispatch_default"] = {
+        "outcome": "observed", "actor_queue_dispatch": True,
+    }
     candidate["semantics"]["actor_queue_dispatch_default"] = {"outcome": "key_absent"}
     comparison = compare_snapshots(baseline, candidate)
     assert not comparison.compatible
@@ -404,3 +411,11 @@ def test_checked_pin_snapshot_is_complete_and_matches_manifest():
         touchpoint.path for touchpoint in TOUCHPOINTS
     }
     assert snapshot["semantics"] == PIN_SEMANTICS
+
+
+def test_comparator_refuses_torch_build_drift():
+    baseline = _snapshot()
+    candidate = copy.deepcopy(baseline)
+    candidate["capabilities"]["torch"]["cuda_build"] = "13.2"
+    assert "Torch cuda_build changed during Monarch comparison" in compare_snapshots(
+        baseline, candidate).blockers

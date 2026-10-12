@@ -15,6 +15,7 @@ process and the suite must stay reusable after this test.
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -22,12 +23,15 @@ from pathlib import Path
 PROBE = Path(__file__).with_name("dispatch_contract_probe.py")
 
 
-def test_out_of_band_calls_interleave_with_inflight_sample():
+def test_out_of_band_calls_interleave_with_inflight_sample(tmp_path):
+    runtime_dir = tmp_path / "runtime"
+    runtime_dir.mkdir(mode=0o700)
     proc = subprocess.run(
         [sys.executable, str(PROBE)],
         capture_output=True,
         text=True,
         timeout=300,
+        env={**os.environ, "XDG_RUNTIME_DIR": str(runtime_dir)},
     )
     assert proc.returncode == 0, (
         f"probe crashed rc={proc.returncode}\n"

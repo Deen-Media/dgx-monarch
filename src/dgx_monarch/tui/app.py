@@ -370,6 +370,9 @@ class DgxmTopApp:
                     out.append("   gates:")
                     for verdict, count in sorted(counts.items()):
                         out.append(f" {verdict}:{count}", style=gate_chip_style(pal, verdict))
+                diagnostics = tick.get("diagnostics")
+                if isinstance(diagnostics, dict) and isinstance(diagnostics.get("summary"), str):
+                    out.append("\n " + diagnostics["summary"][:320], style="dim")
                 return out
 
             def draw_story(self, tick):

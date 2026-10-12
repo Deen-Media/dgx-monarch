@@ -20,6 +20,21 @@ from .transfer_utils import (
 log = get_logger(__name__)
 
 
+def cancel_sample(handle: Any, render_id: str, timeout_s: float, wait: bool, logger: Any) -> list:
+    """Time cancellation dispatch without waiting for the GPU queue."""
+    from .runtime_diagnostics import phase
+
+    try:
+        with phase("cancel"):
+            if not wait:
+                handle.workers.cancel_sample.broadcast(str(render_id))
+                return []
+            return handle.call_all("cancel_sample", str(render_id), timeout_s=timeout_s)
+    except Exception as exc:
+        logger.warning("distributed cancellation request failed for %s: %r", render_id, exc)
+        return []
+
+
 def call_all(
     handle: Any,
     endpoint_name: str,

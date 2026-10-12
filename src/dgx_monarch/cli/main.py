@@ -66,6 +66,12 @@ def cmd_version(_args) -> int:
     return 0
 
 
+def cmd_diagnostics(args) -> int:
+    from .diagnostics_command import run
+
+    return run(args, resolve_host=_resolve_driver_host)
+
+
 def cmd_doctor(args) -> int:
     config = _load_config(args)
     if getattr(args, "repair", False):
@@ -428,6 +434,7 @@ def cmd_sol_smoke(args) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = arguments.build_parser({
         "version": cmd_version,
+        "diagnostics": cmd_diagnostics,
         "launcher": cmd_launcher,
         "sol_install": cmd_sol_install,
         "sol_smoke": cmd_sol_smoke,

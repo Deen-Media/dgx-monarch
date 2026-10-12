@@ -25,6 +25,7 @@ from collections.abc import Callable
 from dataclasses import asdict
 from typing import Any
 
+from .monarch_capabilities import collect_capabilities
 from .monarch_semantics import (
     exception_observation as _exception_observation,
 )
@@ -49,7 +50,7 @@ from .monarch_touchpoint_spec import (  # Public monarch_surface API.
     _signature_record,
 )
 
-SNAPSHOT_SCHEMA = 1
+SNAPSHOT_SCHEMA = 2
 
 
 # Public imports, returned runtime objects, and the private surfaces that
@@ -307,7 +308,8 @@ def _probe_actor_queue_dispatch_default(
     so a default flip (torchmonarch 0.6.0, meta-pytorch/monarch#4211) stops
     cancellation and live telemetry without an error unless the long-running
     endpoints are concurrent (actor/worker.py). Any change in the observed
-    default, or the flag's removal (key_absent), is a semantic-drift blocker.
+    default is a semantic-drift blocker. In 0.7.0 the flag is removed;
+    queued dispatch is unconditional, and the CPU smoke verifies concurrency.
     """
     module = import_module("monarch._rust_bindings.monarch_hyperactor.config")
     get_global_config: Any = module.__dict__["get_global_config"]  # type: ignore[attr-defined]
@@ -350,6 +352,7 @@ def collect_snapshot(
     import_module: Callable[[str], object] = importlib.import_module,
     distribution_version: Callable[[str], str] = importlib.metadata.version,
     include_semantics: bool = True,
+    capabilities: Callable[[], dict[str, Any]] = collect_capabilities,
 ) -> dict[str, Any]:
     try:
         version = distribution_version("torchmonarch")
@@ -366,6 +369,7 @@ def collect_snapshot(
             "system": platform.system(),
             "machine": platform.machine(),
         },
+        "capabilities": capabilities(),
         "touchpoints": collect_touchpoints(import_module),
         "semantics": collect_semantics(import_module) if include_semantics else {},
     }

@@ -17,6 +17,7 @@ from urllib.parse import urlsplit
 
 from . import config_schema as _schema
 from .constants import DEFAULT_NCCL_MASTER_PORT, DEFAULT_RDMA_MIN_BYTES, DEFAULT_WORKER_PORT
+from .monarch_policy import MonarchPolicy, parse_policy
 
 ClusterConfigError = _schema.ClusterConfigError
 
@@ -248,6 +249,7 @@ class ClusterConfig:
     # disable_pinned_memory, disable_smart_memory; actor/comfy_bridge._apply_worker_args).
     # Init-node widgets win on a clash.
     worker_args: dict[str, object] = field(default_factory=dict)
+    monarch: MonarchPolicy = field(default_factory=MonarchPolicy)
     source: str = ""             # path this config was loaded from ("" = local-only default)
 
     @property
@@ -461,6 +463,7 @@ def load_cluster_config(path: str | Path) -> ClusterConfig:
         python_bin=cluster.get("python", "python3"),
         transport_security=transport_security,
         worker_args=dict(worker_args),
+        monarch=parse_policy(raw.get("monarch", {}), host_names=tuple(h.name for h in hosts)),
         source=str(path),
     )
 
@@ -479,36 +482,15 @@ def local_config(config_path: Path | None = None) -> ClusterConfig:
     """
     if config_path is None:
         config_path = find_config_path()
+    from .monarch_policy_io import local_settings
+
+    worker_args, monarch = local_settings(config_path)
     return ClusterConfig(
         fabric_profile="single-node",
-        worker_args=_worker_args_only(config_path),
+        worker_args=worker_args,
+        monarch=monarch,
         source="",
     )
-
-
-def _worker_args_only(path: Path | None) -> dict[str, object]:
-    """Read just `[worker_args]` out of a cluster config, ignoring the rest.
-
-    A malformed file, or a malformed table inside it, raises the same typed
-    error cluster mode raises for it: a silent skip would drop the operator's
-    comfy knobs from local mode with no error.
-    """
-    if path is None:
-        return {}
-    try:
-        with open(path, "rb") as f:
-            raw = tomllib.load(f)
-    except tomllib.TOMLDecodeError as exc:
-        raise ClusterConfigError(f"{path}: invalid TOML: {exc}") from exc
-    except OSError:
-        # Racing removal or an unreadable file leaves the local path zero-config,
-        # which is where it started.
-        return {}
-    if not isinstance(raw, dict):
-        return {}
-    worker_args = _schema.validate_worker_args(
-        raw.get("worker_args", {}), context=f"{path}: worker_args")
-    return dict(worker_args)
 
 
 def _toml_string(value: str, field: str) -> str:

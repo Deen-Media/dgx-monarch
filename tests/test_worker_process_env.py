@@ -215,7 +215,12 @@ raise SystemExit(0 if check and child.returncode == 0 else 1)
     assert result.returncode == 0, (result.stdout, result.stderr)
 
 
-def test_worker_loop_prepares_environment_before_monarch_import(monkeypatch):
+def test_worker_loop_prepares_environment_before_monarch_import(monkeypatch, isolated_environ):
+    from dgx_monarch import monarch_capabilities, monarch_diagnostics, monarch_policy
+    monkeypatch.setattr(monarch_capabilities, "assert_supported_runtime", lambda: events.append("admission"))
+    monkeypatch.setattr(monarch_policy, "activate_native_policy", lambda: events.append("readback"))
+    monkeypatch.setattr(monarch_policy, "apply_policy", lambda *_a, **_k: events.append("policy"))
+    monkeypatch.setattr(monarch_diagnostics, "configure_policy", lambda *_a: events.append("diagnostics"))
     events: list[str] = []
     managed_paths: list[Path] = []
     monkeypatch.setattr(sys, "argv", ["dgxm-worker", "--address", "tcp://127.0.0.1:26600"])
@@ -233,7 +238,7 @@ def test_worker_loop_prepares_environment_before_monarch_import(monkeypatch):
 
     def guarded_import(name, globals=None, locals=None, fromlist=(), level=0):
         if name == "monarch.actor":
-            assert events == ["prepare"]
+            assert events == ["prepare", "policy", "diagnostics"]
             events.append("monarch-import")
             return actor_module
         return real_import(name, globals, locals, fromlist, level)
@@ -241,5 +246,5 @@ def test_worker_loop_prepares_environment_before_monarch_import(monkeypatch):
     monkeypatch.setattr(builtins, "__import__", guarded_import)
     worker_loop.main()
 
-    assert events == ["prepare", "monarch-import", "enable", "run"]
+    assert events == ["prepare", "policy", "diagnostics", "monarch-import", "admission", "readback", "enable", "run"]
     assert managed_paths == [Path(worker_loop.__file__).resolve().parents[2]]

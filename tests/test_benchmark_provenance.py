@@ -6,7 +6,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
+from types import SimpleNamespace
 
 import pytest
 
@@ -23,132 +23,168 @@ assert sys.argv == _argv_before
 assert sys.path == _path_before
 
 
-def _load_rdmabench(monkeypatch):
-    """Load the standalone benchmark through its real import boundary."""
-    actor_api = ModuleType("monarch.actor")
-    actor_api.Actor = object
-    actor_api.endpoint = lambda function: function
-    actor_api.attach_to_workers = lambda **_kwargs: None
-    actor_api.enable_transport = lambda _bind: None
-    monarch = ModuleType("monarch")
-    monarch.__path__ = []
-    monarch.actor = actor_api
-    monkeypatch.setitem(sys.modules, "monarch", monarch)
-    monkeypatch.setitem(sys.modules, "monarch.actor", actor_api)
-
+def _load_rdmabench():
     spec = importlib.util.spec_from_file_location(
-        "dgxm_rdmabench_under_test", REPO / "benchmark" / "rdma_return_bench.py"
-    )
-    assert spec and spec.loader
+        "dgxm_rdmabench_under_test", REPO / "benchmark" / "rdma_return_bench.py")
     module = importlib.util.module_from_spec(spec)
-    # The bench script inserts the repo's src into sys.path at import. Restore
-    # the path per load, or each load leaves one more copy for the whole run.
-    monkeypatch.setattr(sys, "path", list(sys.path))
     spec.loader.exec_module(module)
     return module
 
 
-@pytest.mark.parametrize(
-    ("primary", "cleanup", "winner"),
-    [
-        (RuntimeError("direct RDMA read failed"), None, "primary"),
-        (None, RuntimeError("owned ProcMesh stop failed"), "cleanup"),
-        (RuntimeError("direct RDMA read failed"), RuntimeError("owned ProcMesh stop failed"),
-         "primary"),
-        (RuntimeError("direct RDMA read failed"), KeyboardInterrupt("stop cancelled"), "cleanup"),
-    ],
-)
-def test_rdma_benchmark_stops_only_its_owned_procmesh_and_preserves_failures(
-    monkeypatch, primary, cleanup, winner,
-):
-    """A microbenchmark attach must never stop persistent Worker services."""
-    module = _load_rdmabench(monkeypatch)
-    calls: list[object] = []
+def test_rdma_qualifier_help_needs_no_native_imports(monkeypatch, capsys):
+    import builtins
 
-    class Future:
-        def __init__(self, value=None, error=None):
-            self.value, self.error = value, error
+    original = builtins.__import__
+    def guarded(name, *args, **kwargs):
+        if name == "torch" or name.startswith("monarch"):
+            raise AssertionError("help imported a native runtime")
+        return original(name, *args, **kwargs)
+    monkeypatch.setattr(builtins, "__import__", guarded)
+    module = _load_rdmabench()
+    with pytest.raises(SystemExit) as exit_info:
+        module.parse_args(["--help"])
+    assert exit_info.value.code == 0
+    assert "--return-mode" in capsys.readouterr().out
 
-        def get(self, *args, **kwargs):
-            calls.append(("get", args, kwargs))
-            if self.error is not None:
-                raise self.error
-            return self.value
 
-    class Hosts:
-        initialized = Future()
+def _qualifier_config(native=True):
+    from dgx_monarch.monarch_policy import parse_policy
+    return SimpleNamespace(
+        rdma_latent_return=native, rdma_min_bytes=8388608, client_bind="127.0.0.1",
+        hosts=[SimpleNamespace(name="one"), SimpleNamespace(name="two")],
+        monarch=parse_policy({"rdma": {"target": "nic:mlx5_0"}}))
 
-        def __init__(self):
-            self.shutdown_calls = 0
 
-        def spawn_procs(self, **kwargs):
-            calls.append(("spawn_procs", kwargs))
-            return procs
+def test_rdma_qualifier_requires_explicit_mode_and_each_selected_target():
+    from dataclasses import replace
 
-        def shutdown(self):
-            self.shutdown_calls += 1
-            raise AssertionError("benchmark must not stop persistent workers")
+    from dgx_monarch.monarch_policy import RdmaPolicy
+    module = _load_rdmabench()
+    cfg = _qualifier_config()
+    assert len(module.admit_config(cfg, "native", "one")) == 2
+    with pytest.raises(module.QualificationRefused, match="enablement"):
+        module.admit_config(cfg, "message", "one")
+    cfg.monarch = replace(cfg.monarch, rdma=RdmaPolicy(host_targets=(("one", "nic:mlx5_0"),)))
+    with pytest.raises(module.QualificationRefused, match="every host"):
+        module.admit_config(cfg, "native", "one")
+    cfg.rdma_latent_return = False
+    assert len(module.admit_config(cfg, "message", "one")) == 2
 
-    class Procs:
-        def __init__(self):
-            self.stop_reasons: list[str] = []
 
-        def spawn(self, name, actor):
-            calls.append(("spawn", name, actor))
-            return actors
+@pytest.mark.parametrize("field,value", [("rdma_min_bytes", 1), ("client_bind", "")])
+def test_rdma_qualifier_admission_rejects_wrong_gate_scope(field, value):
+    module = _load_rdmabench()
+    cfg = _qualifier_config()
+    setattr(cfg, field, value)
+    with pytest.raises(module.QualificationRefused):
+        module.admit_config(cfg, "native", "one")
 
-        def stop(self, reason):
-            self.stop_reasons.append(reason)
-            return Future(error=cleanup)
 
-    class Actors:
-        extent = SimpleNamespace(labels={"hosts": 2})
-        info = SimpleNamespace(call=lambda: Future([
-            ({"hosts": 0}, {"host": "spark-1", "ibverbs": True,
-                            "backend": "ibverbs", "ib_devices": ["mlx5_0"]}),
-        ]))
-        pack = SimpleNamespace(call_one=lambda *_args: Future((
-            {"kind": "rdma"}, hashlib.sha256(b"payload").hexdigest(), "rdma", 1,
-        )))
+def test_rdma_qualifier_source_does_not_invent_managed_copy_git_evidence():
+    module = _load_rdmabench()
+    facts = {"source_manifest_sha256": "b" * 64, "source_sha": None,
+             "source_mode": "managed_copy", "torchmonarch": "0.7.0"}
+    result = module.check_source(facts, "a" * 40, "b" * 64)
+    assert result["source_sha"] is None
+    assert result["commit_binding"] == "manifest_to_driver"
+    with pytest.raises(module.QualificationRefused):
+        module.check_source(facts, "a" * 40, "c" * 64)
 
-        def slice(self, **kwargs):
-            calls.append(("slice", kwargs))
-            return self
 
-    hosts, procs, actors = Hosts(), Procs(), Actors()
-    monkeypatch.setattr(module, "find_config_path", lambda _value: Path("cluster.toml"))
-    monkeypatch.setattr(module, "load_cluster_config", lambda _path: SimpleNamespace(
-        client_bind="10.0.0.1", hosts=[SimpleNamespace(address="spark-1")],
-    ))
-    monkeypatch.setattr(module, "enable_transport", lambda bind: calls.append(("transport", bind)))
-    monkeypatch.setattr(module, "attach_to_workers", lambda **kwargs: hosts)
-    if primary is None:
-        payload = SimpleNamespace(numpy=lambda: SimpleNamespace(tobytes=lambda: b"payload"))
-        monkeypatch.setattr(module, "read_latent_result", lambda _desc: payload)
-    else:
-        monkeypatch.setattr(
-            module,
-            "read_latent_result",
-            lambda _desc: (_ for _ in ()).throw(primary),
-        )
-    monkeypatch.setattr(sys, "argv", ["rdma_return_bench.py", "--sizes-mib", "1",
-                                       "--splits", "1", "--repeats", "1"])
+def test_rdma_qualifier_pack_preserves_actor_context_off_loop(monkeypatch):
+    import asyncio
+    import contextvars
+    import threading
+    from types import ModuleType
 
-    expected = primary if winner == "primary" else cleanup
-    if expected is None:
-        assert module.main() == 0
-    else:
-        with pytest.raises(type(expected)) as failure:
-            module.main()
-        assert failure.value is expected
-        if primary is not None and cleanup is not None:
-            expected_cause = cleanup if winner == "primary" else primary
-            assert failure.value.__cause__ is expected_cause
+    module = _load_rdmabench()
+    api = ModuleType("monarch.actor")
+    api.Actor = type("Actor", (), {})
+    api.current_rank = lambda: {"hosts": 0}
+    api.endpoint = lambda fn: fn
+    mixin = ModuleType("dgx_monarch.actor.rdma_handoff")
+    mixin.RDMAHandoffMixin = type("RDMAHandoffMixin", (), {})
+    monkeypatch.setitem(sys.modules, "monarch.actor", api)
+    monkeypatch.setitem(sys.modules, "dgx_monarch.actor.rdma_handoff", mixin)
+    actor_type = module.actor_class()
+    actor = actor_type.__new__(actor_type)
+    context = contextvars.ContextVar("qualification_actor_context")
+    context.set("owned_actor")
+    actor._pack_impl = lambda *args: (context.get(), threading.get_ident(), args)
+    result = asyncio.run(actor.pack(1, 2, 3, 4))
+    assert result[0] == "owned_actor"
+    assert result[1] != threading.get_ident()
+    assert result[2] == (1, 2, 3, 4)
 
-    assert procs.stop_reasons == ["dgx-monarch rdma return benchmark"]
-    assert hosts.shutdown_calls == 0
-    assert ("spawn_procs", {"per_host": {"gpus": 1}}) in calls
-    assert ("get", (), {"timeout": 60}) in calls
+
+def test_rdma_qualifier_evidence_is_private_and_never_overwrites(tmp_path):
+    import os
+    module = _load_rdmabench()
+    output = tmp_path / "evidence.json"
+    evidence = module.Evidence(output, {"result": "RUNNING", "native_acceptance": "NOT_RUN"})
+    try:
+        assert output.stat().st_mode & 0o777 == 0o600
+        assert json.loads(output.read_text())["native_acceptance"] == "NOT_RUN"
+        with pytest.raises(module.QualificationRefused):
+            module.Evidence(output, {"result": "PASS"})
+    finally:
+        os.close(evidence.fd)
+
+
+def test_rdma_qualifier_hold_retains_owners_and_never_claims_pass(monkeypatch, tmp_path, capsys):
+    import os
+
+    module = _load_rdmabench()
+    evidence = module.Evidence(tmp_path / "hold.json", {
+        "result": "RUNNING", "native_acceptance": "NOT_RUN"})
+    owner = object()
+    module.OWNED.append(owner)
+    monkeypatch.setattr(module.signal, "signal", lambda *_args: None)
+    class EndObservation(BaseException):
+        pass
+    class Event:
+        def wait(self, _interval):
+            raise EndObservation()
+    monkeypatch.setattr(module.threading, "Event", Event)
+    try:
+        with pytest.raises(EndObservation):
+            module.park(evidence, "settlement unknown")
+        saved = json.loads((tmp_path / "hold.json").read_text())
+        assert saved["result"] == "HOLD"
+        assert saved["retained_owner"] is True
+        assert saved["clean_exit"] is False
+        assert saved["native_acceptance"] == "NOT_RUN"
+        assert owner in module.OWNED
+        assert "Operator recovery required" in capsys.readouterr().out
+    finally:
+        os.close(evidence.fd)
+
+
+@pytest.mark.parametrize("pending,poisoned,leases", [(1, False, {}), (0, True, {}), (0, False, {1: 1})])
+def test_rdma_qualifier_never_stops_with_receiver_ownership(monkeypatch, pending, poisoned, leases):
+    import dgx_monarch.mesh_factory as factory
+    module = _load_rdmabench()
+    procs = SimpleNamespace(stop=lambda _reason: pytest.fail("unsettled owner stopped"))
+    monkeypatch.setattr(factory, "owned_spawned_proc", lambda _handoff, _procs: procs)
+    handle = SimpleNamespace(sample_leases=leases, abandoned_sample_leases={})
+    with pytest.raises(module.QualificationRefused):
+        module.stop_owned(procs, object(), handle, pending, poisoned)
+
+
+def test_rdma_qualifier_owned_stop_is_confirmed_once_and_preserves_failure(monkeypatch):
+    import dgx_monarch.mesh_factory as factory
+    module = _load_rdmabench()
+    calls = []
+    error = TimeoutError("stop unknown")
+    def get(**kwargs):
+        calls.append(kwargs)
+        raise error
+    procs = SimpleNamespace(stop=lambda reason: calls.append(reason) or SimpleNamespace(get=get))
+    monkeypatch.setattr(factory, "owned_spawned_proc", lambda _handoff, _procs: procs)
+    with pytest.raises(TimeoutError) as raised:
+        module.stop_owned(procs, object(), SimpleNamespace(sample_leases={}, abandoned_sample_leases={}), 0, False)
+    assert raised.value is error
+    assert calls == ["CPU return qualification complete", {"timeout": 90}]
 
 
 def test_matrix_provenance_embeds_hash_and_parsed_content(tmp_path):

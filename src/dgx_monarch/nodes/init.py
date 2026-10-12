@@ -161,7 +161,12 @@ class DGXMonarchInit:
         try:
             resolved = find_config_path(config_path or None)
             use_cluster = mode == "cluster" or (mode == "auto" and resolved is not None)
-            if not use_cluster or resolved is None:
+            if not use_cluster:
+                from ..mesh_runtime import local_worker_args_fingerprint
+                from ..monarch_policy_io import local_settings
+
+                return local_worker_args_fingerprint(*local_settings(resolved))
+            if resolved is None:
                 return "local"
             return f"{resolved}:{config_fingerprint(resolved)}"
         except Exception as exc:

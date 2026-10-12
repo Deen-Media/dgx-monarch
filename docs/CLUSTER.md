@@ -68,6 +68,94 @@ force: no profile change or config rewrite clears it.
 | `ssh_key` | agent default | key for `dgxm` lifecycle commands |
 | `auto_heal` | `true` | Before each attach, restart every Worker service when a probe sees one down; a host the probe cannot reach stops the attach instead. After the last attach attempt fails, restart them so the next ComfyUI session starts clean. The one in-process attach retry does not depend on this key ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout), [#2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)). Set `false` to leave every restart to you. |
 
+## `[monarch]` (optional)
+
+The 0.7.0 integration validates these settings before runtime initialization.
+`startup_timeout_s` defaults to `180` and accepts integers from `30` through
+`3600`. After host attachment completes, ProcMesh initialization and actor
+readiness share this observation budget. Host attachment and its configuration
+push retain their separate existing timeouts and retry policy. A timeout is
+not permission to reuse an unsettled mesh or restart a persistent Worker.
+
+### `[monarch.rdma]`
+
+These settings configure the native runtime independently of NCCL's fabric
+profile. They do not enable latent RDMA: `cluster.rdma_latent_return` remains
+`false`, and native selected-rail qualification remains **NOT RUN / HOLD**.
+
+| key | default | meaning |
+|---|---|---|
+| `target` | `""` | `nic:<device>`, `cpu:<numa>` or `gpu:<ordinal>`; empty uses upstream selection. An explicit selected target is required for single-NIC native operation. |
+| `host_targets` | `{}` | Table mapping configured host names to target overrides. Use each host's actual device name; names need not match between machines. |
+| `peer_device_affinity` | `"match_name"` | `any`, `match_name`, or disjoint `groups:dev0,dev1|dev2,dev3`. Affinity describes allowed NIC pairings; it does not discover reachable subnets. |
+| `max_nics_per_buffer` | `1` | Maximum registered NICs per buffer, `1..8`. An explicit NIC target pins the upstream manager to that NIC. |
+| `qps_per_peer` | `1` | Native QPs per NIC route, `1..8`. |
+| `min_stripe_size_kb` | `512` | Native minimum stripe size, `4..65536` KiB. |
+| `application_chunks` | `1` | dgx-monarch's application transfer chunks, `1..8`; separate from native QP striping. |
+| `allow_tcp_fallback` | `false` | Permit upstream TCP fallback. A fallback transfer never establishes native-RDMA acceptance. |
+| `qp_init_timeout_s` | `30` | Native queue-pair initialization timeout, `1..300` seconds. |
+
+NIC count × QPs × application chunks may not exceed `32`. Start qualification
+with the defaults and an explicit NIC. Increase one dimension at a time only
+after measuring the selected rail. Upstream's H100/GB200 defaults do not
+establish a GB10 performance gain.
+
+`benchmark/rdma_return_bench.py` provides a source-bound CPU staged-return
+qualifier. Its `--preflight-only` mode gathers passive source/process facts
+without importing Torch or Monarch. An authorized active run names the exact
+commit and source manifest, configuration, driver host, return mode, and a new
+private output path:
+
+```bash
+python -B benchmark/rdma_return_bench.py \
+  --expect-sha FULL_COMMIT --expect-manifest SOURCE_MANIFEST \
+  --config cluster.toml --driver-host CONFIGURED_HOST_NAME \
+  --return-mode message --output /existing/private-directory/control.json
+```
+
+Messaging control requires native returns disabled. The separate native arm
+requires explicit NIC targets on every host and no TCP fallback. Each policy
+variation uses a fresh process. The qualifier owns its CPU actor processes and
+tests threshold boundaries, reattachment and ownership settlement; it does not
+replace the full sampling, cancellation or render-fidelity gates. An ambiguous
+native result remains HOLD with backing retained; do not wrap it in an external
+timeout that kills its owner.
+
+The policy is resolved per host before Monarch imports it, checked against
+native configuration, and bound into transport identity. Conflicting ambient
+environment variables are refused. A transport-policy change requires a fresh
+process; it cannot change an already initialized RDMA manager safely. Preserve
+Worker ownership and follow the reviewed update/restart procedure.
+
+### `[monarch.diagnostics]`
+
+`metrics = false` is the default. Enabling it publishes supported counters and
+histograms through Monarch; gauges and observable instruments are unavailable
+in this release. Local bounded phase timings remain advisory and never prove
+transfer completion, cleanup or readiness.
+
+`otlp_endpoint = ""` disables export. A configured HTTP(S) endpoint must have no
+credentials, query or fragment and requires **`otlp_logs = true`** explicitly:
+Monarch 0.7 exports upstream raw logs as well as metrics to this destination.
+Those logs may contain more than dgx-monarch's sanitized metric labels. Use an
+operator-controlled collector and review disclosure requirements before
+opting in. Changing an initialized export destination requires a restart.
+
+`dgxm diagnostics --capabilities` explains the exact runtime's diagnostic
+limits. A finite capture reads existing telemetry only:
+
+```bash
+dgxm diagnostics --host 127.0.0.1:8188 --duration-s 30 --output /absolute/private/capture.json
+```
+
+The destination directory must already exist; the command creates a new
+mode-0600 file and refuses overwrites and symlinks. Captures are bounded by
+duration, event count and byte count; incomplete coverage stays explicit.
+Attached-cluster admin, SQL and process-stack capture
+remain unavailable because the upstream admin API does not return a stoppable
+owned handle. The integration does not manufacture a Job around persistent
+Workers to obtain those features.
+
 ## `[worker_args]` (optional)
 
 ComfyUI settings applied inside every actor process. The graph's

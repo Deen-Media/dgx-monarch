@@ -442,6 +442,8 @@ class SystemSetupServiceOps:
         return FleetPhaseResult(tuple(rows))
 
     def _unit(self, host: HostConfig, ordinal: int) -> str:
+        from ..monarch_launch import worker_policy_args
+
         python = resolve_python(self.request.config.python_bin)
         python_uses_home = python.startswith("%h")
         site = (
@@ -456,6 +458,7 @@ class SystemSetupServiceOps:
                 systemd_quote("dgx_monarch.cli.worker_loop"),
                 systemd_quote("--address"),
                 systemd_quote(host.address),
+                *(systemd_quote(arg) for arg in worker_policy_args(self.request.config, host)),
             )
         )
         environment = systemd_quote(f"PYTHONPATH={site}", preserve_home_specifier=not self._local[ordinal - 1])

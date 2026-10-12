@@ -7,6 +7,7 @@ from typing import Any
 from monarch.actor import endpoint
 
 from ..rdma_ownership import HandoffRegistry
+from ..return_diagnostics import ReturnCounts, message_reason, record_descriptor
 from ..transfer import LatentReturn
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error
 
@@ -21,6 +22,7 @@ class RDMAHandoffMixin:
 
     def _init_rdma_handoffs(self) -> None:
         self._latent_handoffs = HandoffRegistry()
+        self._return_counts = ReturnCounts()
 
     def _handoff_registry(self) -> HandoffRegistry:
         registry = getattr(self, "_latent_handoffs", None)
@@ -42,6 +44,7 @@ class RDMAHandoffMixin:
             result["latent"] = latent_return.pack(
                 "samples", leader_samples, seq=seq, depth=depth)
             result["latent_extra"] = out
+            record_descriptor(self, result["latent"], "configured_message")
             return result
 
         generation = self._setup_generation
@@ -51,6 +54,7 @@ class RDMAHandoffMixin:
         handoff: dict[str, Any] = {}
         try:
             registry.publish(handoff, generation, depth)
+            reason = "registry_capacity"
             if not registry.owns(handoff):
                 result["latent"] = self._message_descriptor(
                     "samples", leader_samples, seq, depth)
@@ -62,11 +66,15 @@ class RDMAHandoffMixin:
                     descriptor["owner_token"] = handoff["token"]
                     descriptor["setup_generation"] = generation
                     registry.mark_ready(handoff)
+                    reason = "native"
                 elif not registry.reconcile(handoff):
                     raise RuntimeError(
                         "RDMA registration ownership is ambiguous; Attached mesh reset required")
+                if descriptor.get("kind") == "message":
+                    reason = message_reason(leader_samples, getattr(latent_return, "min_bytes", None))
                 result["latent"] = descriptor
             result["latent_extra"] = out
+            record_descriptor(self, result["latent"], reason)
             return result
         except BaseException as primary:
             # Empty attempts are safe to forget.  Any ambiguity after native

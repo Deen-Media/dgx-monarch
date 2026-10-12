@@ -45,7 +45,7 @@ log = get_logger(__name__)
 # last good rows, or a status_error row (read as unknown) when there are none.
 _CACHE: dict = {
     "t": 0.0, "workers": [], "inflight": False, "busy_note": None,
-    "generation": 0,
+    "generation": 0, "fresh": False,
 }
 _CACHE_LOCK = threading.Lock()
 _CACHE_TTL_S = 1.0
@@ -83,7 +83,7 @@ def invalidate_telemetry_caches() -> None:
     services.invalidate()
     with _CACHE_LOCK:
         _CACHE.update(
-            t=0.0, workers=[], busy_note=None,
+            t=0.0, workers=[], busy_note=None, fresh=False,
             generation=int(_CACHE.get("generation", 0)) + 1,
         )
     with _TELEMETRY_CACHE_LOCK:
@@ -175,6 +175,7 @@ def _workers() -> list:
             return _CACHE["workers"]
         generation = int(_CACHE.get("generation", 0))
         _CACHE["inflight"] = True
+        _CACHE["fresh"] = False
     results: list = []
     ok = True
     try:
@@ -190,9 +191,18 @@ def _workers() -> list:
         if generation != int(_CACHE.get("generation", 0)):
             return _CACHE["workers"]
         _CACHE["t"] = time.time()
+        _CACHE["fresh"] = ok
         if ok or not _CACHE["workers"]:
             _CACHE["workers"] = results
         return _CACHE["workers"]
+
+
+def _worker_snapshot() -> tuple[list, dict]:
+    rows = _workers()
+    with _CACHE_LOCK:
+        fresh = (rows is _CACHE["workers"] and _CACHE.get("fresh") is True
+                 and not _CACHE["inflight"] and time.time() - _CACHE["t"] < _CACHE_TTL_S)
+    return rows, {"fresh": fresh}
 
 
 def _ledger_summary() -> dict:
@@ -232,12 +242,13 @@ def _stale_snapshot(cached: object, marker: str) -> dict:
 
 
 def _telemetry_uncached() -> dict:
-    from .. import telemetry, telemetry_fleet
+    from .. import monarch_policy, return_diagnostics, runtime_diagnostics, telemetry, telemetry_fleet
     from ..gate_ledger import comfy_commit
     from ..mesh_health import mesh_health_snapshot
+    from ..monarch_capabilities import diagnostic_identity
     from ..service_observations import services
 
-    workers = _workers()
+    workers, status_poll = _worker_snapshot()
     for worker in workers if isinstance(workers, list) else ():
         if isinstance(worker, dict) and "events" in worker:
             worker["events"] = telemetry.public_event_tail(worker.get("events"), 32)
@@ -249,12 +260,17 @@ def _telemetry_uncached() -> dict:
         # reader of `render` gets the per-job rows without a second key.
         "render": telemetry_fleet.with_fleet(telemetry.render_progress.snapshot()),
         "events": telemetry.events_tail(64),
+        "diagnostics": runtime_diagnostics.snapshot(),
+        "return_ownership": return_diagnostics.driver_snapshot(),
+        "monarch_policy": monarch_policy.snapshot(),
+        "diagnostic_identity": diagnostic_identity(),
         "ledger": _ledger_summary(),
         # Lease and teardown state, which _busy_render_key does not read: the
         # accessor reads it in the mesh layer, under that layer's lock order,
         # and hands this route a plain dict.
         "mesh": mesh_health_snapshot(),
         "workers": workers,
+        "status_poll": status_poll,
         "worker_services": services.snapshot(),
     }
     return _with_readiness(snapshot)

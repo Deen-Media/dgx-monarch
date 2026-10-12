@@ -48,3 +48,25 @@ gpus = 1
 # disable_pinned_memory = true   # UMA guidance: docs/VALIDATION.md
 # reserve_vram_gb = 8.0
 # fsdp_prefetch_depth = 1        # FSDP all-gather blocks ahead (1..8); above 1 costs reserved memory
+
+# Optional pinned Monarch process policy. These defaults do not enable native RDMA.
+# Native selected-rail qualification remains NOT RUN / HOLD; keep
+# cluster.rdma_latent_return=false until the documented gate passes.
+# [monarch]
+# startup_timeout_s = 180
+# [monarch.rdma]
+# target = "nic:DEVICE_FROM_THIS_HOST"
+# peer_device_affinity = "match_name"
+# max_nics_per_buffer = 1
+# qps_per_peer = 1
+# min_stripe_size_kb = 512
+# application_chunks = 1
+# allow_tcp_fallback = false
+# qp_init_timeout_s = 30
+# [monarch.rdma.host_targets]
+# "192.0.2.11" = "nic:DEVICE_ON_FIRST_HOST"
+# "192.0.2.12" = "nic:DEVICE_ON_SECOND_HOST"
+# [monarch.diagnostics]
+# metrics = false
+# otlp_endpoint = ""
+# otlp_logs = false  # a nonempty endpoint also exports raw upstream logs; explicit opt-in required

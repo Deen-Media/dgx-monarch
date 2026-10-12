@@ -337,6 +337,8 @@ class Poller:
             return self.unknown_tick(type(exc).__name__)
 
     def _tick(self) -> dict:
+        from .diagnostics_view import diagnostics_view
+
         now = time.time()
         tele = self._driver_telemetry()
         hosts: dict = {}
@@ -389,6 +391,7 @@ class Poller:
         return {
             "t": now,
             "driver_up": tele is not None,
+            "diagnostics": diagnostics_view(tele),
             "loops": [
                 {"addr": address, "up": self._loop_state(address, tele)}
                 for address in self._loop_addresses(tele)

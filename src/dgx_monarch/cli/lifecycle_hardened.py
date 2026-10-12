@@ -39,6 +39,9 @@ def hardened_worker_unit(
             'PYTHONNOUSERSITE=1', 'PYTHONSAFEPATH=1', 'PYTHONDONTWRITEBYTECODE=1',
             f'PYTHONPYCACHEPREFIX={SOURCE_ONLY_PYCACHE_PREFIX}', resolve_python(config.python_bin),
             '-S', '-P', '-s', '-B', '-m', 'dgx_monarch.cli.worker_loop', '--address', host.address]
+    from ..monarch_launch import worker_policy_args
+
+    args.extend(worker_policy_args(config, host))
     marker = '# dgxm-managed-unit-v1\n' if marked else ''
     if update_token is not None:
         import re

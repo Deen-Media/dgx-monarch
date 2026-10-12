@@ -98,6 +98,7 @@ def _stage(metadata: ReleaseMetadata, *, ranks: int = 2) -> StagedRelease:
 
 
 class _PinHarness:
+    target_dependency_contract = {"version": "0.7.0", "requires_python": "", "requirements": [], "provides_extras": []}
     def __init__(self) -> None:
         self.live = "prior"
         self.target_site_ok = True

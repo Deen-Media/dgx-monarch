@@ -18,6 +18,38 @@ retest of the current release.
 - [Lifecycle](#lifecycle): cleanup, interruption and failure recovery.
 - [Native RDMA](#native-rdma): failed return-path test; remains disabled.
 
+## Monarch dependency migration
+
+On October 12, 2026, an isolated official ARM64 TorchMonarch 0.7.0 wheel
+loaded its native RDMA bindings with the existing Torch 2.12.0+cu132 stack.
+The release wheel was built with Torch 2.14.1/CUDA 13.2; the check retained
+the installed Torch version and dependencies. The empty native RDMA action
+constructor succeeded without initializing a GPU or fabric manager.
+
+Local CPU actor checks exercised child import identity, concurrent endpoint
+dispatch, observer timeout and reobservation, lazy Future execution, terminal
+Future timeout, and deferred ProcMesh stop. The GPUWorker dispatch-contract
+probe also completed on a local CPU actor: status and cancellation remained
+responsive during a busy operation, and the actor survived cancellation.
+The production driver preparation and actor bootstrap helpers also launched
+a real local CPU child after Monarch had already been imported. Driver and
+child reported the same validated transport identity and native readback;
+neither process imported Torch. The owned ProcMesh stopped successfully.
+An explicit local OTLP check used the actual native provider and a temporary
+loopback HTTP collector. The collector received a phase counter value of one
+and a histogram with one observation totaling 0.25 seconds. After disabling
+DGX metrics, 100 further local records were not exported; the DGX exporter
+thread and test collector stopped. This does not claim shutdown of Monarch's
+upstream provider or acceptance of a remote collector. Upstream log export
+requires its separate explicit opt-in.
+The full CPU suite passed 11,236 tests with 29 skips in 209 seconds on the
+same overlay. Lint, full-package type checking, protected-test inventory and
+refusal-ledger checks passed. Local Comfy CPU canaries checked 248 touchpoints,
+86 templates and synthetic video export; these did not load learned models.
+These checks used a scratch dependency overlay; the live environment was
+unchanged. They establish native load and local semantics, not CUDA execution,
+paired-fabric performance, render fidelity, or multi-host recovery acceptance.
+
 ## Onboarding and operator acceptance
 
 **2026-10-11, source `09957d971441c59d4605092c064886c66841eb6e`, two DGX

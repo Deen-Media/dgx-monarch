@@ -146,3 +146,13 @@ else
 fi
 """
     return script + actor_sweep.sweep_script(config, host, all_loop_children=True)
+
+
+def worker_loop_args(host: HostConfig, config: ClusterConfig | None = None) -> str:
+    """Shell-safe args after the Python binary; also the process-match tail."""
+    from ..monarch_launch import worker_policy_args
+
+    args = ["-m", "dgx_monarch.cli.worker_loop", "--address", host.address]
+    if config is not None:
+        args.extend(worker_policy_args(config, host))
+    return shlex.join(args)

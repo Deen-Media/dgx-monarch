@@ -15,6 +15,9 @@ from dgx_monarch.transfer import read_latent_result
 @pytest.fixture(autouse=True)
 def _isolate_process_lifetime_rdma_poison(monkeypatch):
     """Each test gets the fresh process state production gets at actor start."""
+    # These ownership tests pass fake buffers; native policy admission belongs
+    # to the real-runtime canary and explicit policy-readback tests.
+    monkeypatch.setattr(transfer, "RDMABuffer", _FakeRDMABuffer)
     monkeypatch.setattr(transfer, "_RDMA_POISONED_OWNERS", [])
     monkeypatch.setattr(
         transfer, "_RDMA_POISON_REPORTER", transfer.rdma_poison.PoisonReporter())

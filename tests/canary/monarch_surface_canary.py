@@ -5,7 +5,11 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -65,6 +69,36 @@ def _compare(args: argparse.Namespace) -> int:
     return 0 if comparison.compatible else 1
 
 
+def _cpu_smoke(args: argparse.Namespace) -> int:
+    with tempfile.TemporaryDirectory(prefix="dgxm-monarch-cpu-") as scratch:
+        output = Path(scratch) / "result.json"
+        env = {**os.environ, "CUDA_VISIBLE_DEVICES": "",
+               "MONARCH_RDMA_DISABLE_IBVERBS": "1", "XDG_RUNTIME_DIR": scratch,
+               "PYTHONDONTWRITEBYTECODE": "1"}
+        with subprocess.Popen(
+            [sys.executable, str(Path(__file__).with_name("monarch_cpu_smoke.py")),
+             str(output)], env=env, start_new_session=True,
+        ) as process:
+            try:
+                returncode = process.wait(timeout=90)
+            except subprocess.TimeoutExpired:
+                # Only the fresh canary's process group is eligible for cleanup.
+                # Descendant actors must not outlive a timed-out controller.
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+                _write_json(args.output, {"status": "failed", "reason": "timeout"})
+                return 1
+        if returncode or not output.is_file():
+            _write_json(args.output, {"status": "failed", "returncode": returncode})
+            return 1
+        _write_json(args.output, {"status": "passed", "scope": "local_cpu_only",
+                                  "observations": _read_json(str(output))})
+        return 0
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="snapshot and compare dgx-monarch's torchmonarch API surface"
@@ -80,6 +114,9 @@ def _parser() -> argparse.ArgumentParser:
     compare.add_argument("--diff-json", required=True)
     compare.add_argument("--report", required=True)
     compare.set_defaults(run=_compare)
+    smoke = subparsers.add_parser("cpu-smoke", help="spawn and stop only local CPU actors")
+    smoke.add_argument("--output", required=True)
+    smoke.set_defaults(run=_cpu_smoke)
     return parser
 
 

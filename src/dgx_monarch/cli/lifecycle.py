@@ -23,6 +23,7 @@ from .lifecycle_host import validated_ssh_identity as _validated_ssh_identity
 from .lifecycle_lock import locked_rsync_path, locked_script
 from .lifecycle_managed import prepare_source_sync
 from .lifecycle_scripts import build_start_script, build_stop_script
+from .lifecycle_scripts import worker_loop_args as _loop_args
 from .lifecycle_systemd import MANAGED_SRC_REL as _MANAGED_SRC_REL
 from .lifecycle_systemd import UNIT_NAME as _UNIT_NAME
 from .lifecycle_systemd import UNIT_OWNERSHIP_MARKER
@@ -85,11 +86,6 @@ def run_on_host(
         text=True,
         timeout=timeout,
     )
-
-
-def _loop_args(host: HostConfig) -> str:
-    """Shell-safe args after the Python binary; also the process-match tail."""
-    return f"-m dgx_monarch.cli.worker_loop --address {shlex.quote(host.address)}"
 
 
 def _pybin_shell(python_bin: str) -> str:
@@ -175,7 +171,7 @@ def up(
             unit_name=_UNIT_NAME,
             log_path=_LOG_PATH,
             pybin_shell=_pybin_shell(config.python_bin),
-            loop_args=_loop_args(host),
+            loop_args=_loop_args(host, config),
         )
         try:
             result = run_on_host(config, host, locked_script(config.python_bin, script), timeout=60)

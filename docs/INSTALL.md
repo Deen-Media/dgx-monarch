@@ -145,6 +145,14 @@ The editable install also brings in the exact `torchmonarch` pin
 installation needs network access; it must not replace ComfyUI's CUDA torch.
 Use the same constraint and dry-run review for later optional extras too.
 
+The Monarch upgrade preserves the project's existing Torch stack. The
+[dated dependency check](VALIDATION.md#monarch-dependency-migration) records
+the tested build and its limits. The dependency canary records native imports
+and Torch build identity because public `monarch.rdma` classes can remain
+importable when native bindings are unavailable. New transitive requirements
+include `numpy>=1.26`, `pyarrow>=17` and `xxhash`; the verified updater checks the
+candidate dependency contract before changing the installation.
+
 After installation, compare torch version, CUDA version and import location
 with the recorded values, confirm CUDA availability, and run the dependency
 checker with this interpreter:

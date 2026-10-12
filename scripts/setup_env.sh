@@ -6,7 +6,7 @@
 set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
 XFUSER_BUILDER="$SCRIPT_DIR/../tools/build_xfuser_compat_wheel.py"
-MONARCH_PIN="torchmonarch==0.6.0"   # the 0.x API changes between releases; bump on purpose
+MONARCH_PIN="torchmonarch==0.7.0"   # the 0.x API changes between releases; bump on purpose
 # --worker needs DGXM_SIBLING, the other box's fabric IP. It has no default
 # because the address is your rig's. DGXM_SSH_KEY names an ssh key the sibling
 # accepts; empty uses your ssh config or agent.

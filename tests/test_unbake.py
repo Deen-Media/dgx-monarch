@@ -1612,31 +1612,28 @@ def test_pipelined_restore_after_key_ordering(rig):
     assert sorted(seen) == sorted(KEYS)
 
 
-def test_direct_read_alignment_math():
+def test_direct_read_alignment_math(tmp_path):
     """_pread_direct must land the payload at dst_off+pad regardless of the
     tensor's byte offset in the file. Runs O_DIRECT where the filesystem allows
     it and checks the buffered read where it does not (tmpfs on older kernels)."""
-    import tempfile
-
     from dgx_monarch.actor.unbake import _aligned_buffer, _open_for_restore, _pread_direct
 
-    with tempfile.TemporaryDirectory(dir=os.path.expanduser("~")) as d:
-        path = os.path.join(d, "blob.bin")
-        payload = bytes(range(256)) * 64                     # 16 KiB, recognizable
-        with open(path, "wb") as f:
-            f.write(b"\x00" * 5)                             # force an unaligned start
-            f.write(payload)
-        fd, direct = _open_for_restore(path)
-        try:
-            buf = _aligned_buffer(len(payload) + 3 * 4096)
-            if direct:
-                pad = _pread_direct(fd, 5, len(payload), buf, 0)
-                got = bytes(buf[pad:pad + len(payload)].numpy().tobytes())
-            else:  # filesystem without O_DIRECT: buffered path still serves
-                got = os.pread(fd, len(payload), 5)
-            assert got == payload
-        finally:
-            os.close(fd)
+    path = str(tmp_path / "blob.bin")
+    payload = bytes(range(256)) * 64                     # 16 KiB, recognizable
+    with open(path, "wb") as f:
+        f.write(b"\x00" * 5)                             # force an unaligned start
+        f.write(payload)
+    fd, direct = _open_for_restore(path)
+    try:
+        buf = _aligned_buffer(len(payload) + 3 * 4096)
+        if direct:
+            pad = _pread_direct(fd, 5, len(payload), buf, 0)
+            got = bytes(buf[pad:pad + len(payload)].numpy().tobytes())
+        else:  # filesystem without O_DIRECT: buffered path still serves
+            got = os.pread(fd, len(payload), 5)
+        assert got == payload
+    finally:
+        os.close(fd)
 
 
 def test_unknown_quant_format_aborts_capture(quant_rig, tmp_path):
