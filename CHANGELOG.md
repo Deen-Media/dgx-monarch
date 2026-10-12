@@ -8,7 +8,12 @@
   the stock Krea2 final projection shape under pure Ulysses; the BF16 and local
   INT8 8-step graphs and BF16 2x refinement matched their own stock one-GPU
   references in conditioning, latents and decoded pixels. Acceptance covers
-  the measured pure-Ulysses configurations.
+  the measured pure-Ulysses configurations. Manual `uly2+fsdp` also matched
+  stock for BF16/local INT8 T2I and BF16 2x refinement at batch 1. Batch-2
+  `dp2+fsdp` T2I remains CHECK: FSDP reload proofs passed, but native
+  stock-output fidelity did not. Keep
+  upscale at batch 1: native VAE encoding collapses an initial image batch of
+  2 to one latent item, which DP2 correctly refuses at refinement.
 - Fix the torchmonarch canary's Future probe to use a returned channel Future,
   avoiding the constructor removed in 0.7.0. Show comparison reports and failed
   stages in Actions while retaining the 0.6.0 pin and semantic-drift gate.

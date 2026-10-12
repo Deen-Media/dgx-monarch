@@ -79,7 +79,7 @@ that match the tested configurations in its model details. See
 | Model | single | cfg2 | Ulysses | ring | FSDP | Status | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | Krea2 (RAW+Turbo) | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
-| Kroma | ✓ | 🔒 | ★ | 🔒 | ⚪ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. FSDP and LoRA untested. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
+| Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
 | Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
@@ -218,9 +218,9 @@ it costs another sampling pass and can change details.
 one local device without a cluster, or Ulysses on a configured pair. BF16 and
 INT8 use Torch Flash. Plain Euler at CFG 1 has no unconditional pass for cfg2
 to split. Reference-image conditioning requires `single`; padded ring retains
-the Krea2 waiver boundary. FSDP and LoRA retain the
-[Krea2 restrictions](#model-krea2-raw-turbo) and have no Kroma-specific
-acceptance. The full 8-step BF16 and local INT8 graphs at 1024×1024 matched
+the Krea2 waiver boundary. LoRA remains untested and retains the
+[Krea2 restrictions](#model-krea2-raw-turbo). The full 8-step BF16 and local
+INT8 graphs at 1024×1024 matched
 their own stock one-GPU references exactly under pure Ulysses on two GPUs.
 The BF16 upscale graph also matched through its 4-step 2048×2048 refinement
 at denoise 0.2. Conditioning, latents and decoded pixels were identical;
@@ -229,6 +229,24 @@ artifacts and settings. The INT8 comparison uses the same conversion on both
 sides; it does not measure quantization error against BF16 or establish the
 conversion's upstream version. The one-step 1040×1040 padding control and a
 one-step Krea2 RAW control also matched stock exactly.
+
+For manual FSDP, use `uly2+fsdp` with batch size 1 for BF16 or local INT8
+text-to-image or the BF16 2x-refinement graph. All three full workflows matched
+their own stock references exactly, including both stages of refinement.
+This qualifies the tested manual FSDP mode; peak memory and speed benefits
+were not measured. The shipped `auto` setting and resident policy are unchanged.
+`dp2+fsdp` with batch size 2
+is **CHECK**: both checkpoints passed the normal FSDP reload proof and returned
+the expected batch, but their latents and decoded pixels differed from stock
+batch 2. Cross-group rank identity is not applicable to those independent DP
+images. See the [FSDP comparisons](VALIDATION.md#kroma-manual-fsdp) for scope,
+metrics and batch-shape diagnostics.
+
+The upscale graph is batch 1 only. On the tested ComfyUI revision, its native
+`VAEEncode` treats an IMAGE batch as video frames for this VAE: two input images
+become one latent batch item after temporal rounding. Both stock and candidate
+therefore reach refinement with batch 1, and `dp2+fsdp` correctly refuses it.
+Increasing the initial batch widget does not enable independent DP2 refinement.
 
 **Upstream and license.** [Kroma repository](https://huggingface.co/lodestones/Kroma)
 and [Krea 2 Community License](https://github.com/krea-ai/krea-2/blob/main/docs/KREA-2-COMMUNITY-LICENSE).

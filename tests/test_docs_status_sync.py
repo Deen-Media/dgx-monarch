@@ -110,6 +110,8 @@ _REQUIRED_DETAIL_EVIDENCE: dict[
         '<a id="evidence-kroma"></a>',
         ("stock one-GPU", "8 Euler/simple steps", "2048\u00d72048",
          "exact comparison", "one step at 1040\u00d71040", "one step at 1024\u00d71024",
+         "uly2+fsdp", "dp2+fsdp", "7.335538%", "8.570618%",
+         "fsdp_clean_reload", "**BLOCKED**, no end-to-end comparison",
          "341d8e1bdd34d3c5119b5b768badf87ed2a1d663e79d331b85b4c1fc4f7bf498"),
     ),
     "LTX 2.5 (t2v/AV packed)": (

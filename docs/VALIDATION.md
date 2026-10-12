@@ -209,9 +209,98 @@ established. The local INT8 conversion's upstream version and provenance
 remain unverified. Comparing it with itself on one GPU does not measure
 quantization error against BF16.
 
-These results do not qualify LoRA, FSDP, cfg2, ring, hybrid topologies,
+These resident results do not qualify LoRA, FSDP, cfg2, ring, hybrid topologies,
 other attention kernels, reference-image conditioning, other quantizations
 or unlisted dimensions.
+
+#### Kroma manual FSDP
+
+**2026-10-12, source `c334e4dca68297f7dadbc53e8982680ce04fbd6d`.** The
+runtime manifest, ComfyUI revision and artifact hashes are the same as the
+resident record above. Two NVIDIA GB10 GPUs with TORCH_FLASH used the shipped
+graphs at 1024×1024, 8 Euler/simple steps, CFG 1, denoise 1 and native mu
+1.15. BF16 refinement continued at 2048×2048 for 4 steps at denoise 0.2
+following the same Lanczos pixel-upscale and VAE re-encode sequence. Each
+candidate had an independent, matched stock one-GPU reference at
+the same image batch size. The acceptance criterion remained exact equality.
+
+| Checkpoint | Topology / batch | Stock comparison | PNG NRMS | Maximum PNG channel difference | Result |
+|---|---|---|---:|---:|---|
+| BF16 | `uly2+fsdp` / 1 | Conditioning, latents, floating decoded images and PNG pixels identical | 0 | 0 | Qualified |
+| Local INT8 | `uly2+fsdp` / 1 | Conditioning, latents, floating decoded images and PNG pixels identical | 0 | 0 | Qualified |
+| BF16 2x refinement, both stages | `uly2+fsdp` / 1 | Conditioning, both sampler latents, floating decoded images and PNG pixels identical | 0 | 0 | Qualified |
+| BF16 | `dp2+fsdp` / 2 | Conditioning identical; latents and pixels differ | 0.0733553770 (7.335538%) | 254 | **CHECK** |
+| Local INT8 | `dp2+fsdp` / 2 | Conditioning identical; latents and pixels differ | 0.0857061815 (8.570618%) | 232 | **CHECK** |
+| BF16 2x refinement | `dp2+fsdp` / initial 2 | First stage completed; native VAE re-encode produced latent batch 1 and DP2 refused refinement | n/a | n/a | **BLOCKED**, no end-to-end comparison |
+
+PNG NRMS is RMS(decoded pixel difference) / RMS(reference pixels), with a
+denominator of 1 for an all-zero reference. PNG metadata is excluded. The
+nonzero rows failed the exact criterion; no tolerance was substituted.
+Both batch-2 T2I rows passed source/artifact checks, correctly assembled their DP
+slices, and passed fresh FSDP clean-reload readiness proofs and the normal
+first-use Gate. Those checks establish execution, not stock fidelity.
+Within-group rank identity passed for `uly2+fsdp`; it is not applicable across
+the two independent singleton DP groups in `dp2+fsdp`. Owned actor cleanup
+completed for every candidate, including the blocked refinement. The final
+paired idle/ownership check passed. The blocked run had a fresh first-stage
+FSDP proof, not a passing refinement.
+
+| Checkpoint / image batch | Seed | Suffix appended to its template's teapot prompt | Text rows |
+|---|---:|---|---:|
+| BF16 / 1 | 2026101201 | ` kroma-fsdp-20261012-bf16-b1.` | 124 |
+| Local INT8 / 1 | 2026101202 | ` kroma-fsdp-20261012-int8-b1.` | 122 |
+| BF16 2x refinement / 1 | 2026101203, both stages | ` kroma-fsdp-20261012-upscale-b1.` | 122 |
+| BF16 / 2 | 2026101201 | ` kroma-fsdp-20261012-bf16-b2.` | 124 |
+| Local INT8 / 2 | 2026101202 | ` kroma-fsdp-20261012-int8-b2.` | 122 |
+| BF16 2x refinement / initial 2 | 2026101203, both stages requested | ` kroma-fsdp-20261012-upscale-b2.` | 122 |
+
+Conditioning had shape `[1, text_rows, 30720]`; batch 2 refers to generated
+images, not two separately encoded prompts. All pair inputs were identical.
+The salts specify those inputs; they are not evidence of a fresh Gate ceremony.
+The recorded normal first-use `fsdp_clean_reload` proof establishes the fresh
+FSDP reload.
+
+A BF16 resident `dp2` control reused the batch-2 inputs and produced latents
+bit-identical to `dp2+fsdp` for both images. The stock-batch2 latent mismatch
+therefore also occurs without FSDP. A stock-only BF16 diagnostic replayed
+the first denoiser call with identical inputs: repeating the full batch of 2
+was exact, while concatenating two batch-1 calls differed by maximum absolute
+0.03125. The first observed Linear difference was `tmlp.0` on input shape
+`[2, 1, 256]`: two values differed, maximum 1.4901161193847656e-8. This is not
+a claim that this one layer solely caused the final drift. The complete
+8-step diagnostic sampler still matched the original stock latent exactly;
+the observer did not replace its output. The native Krea2 batch-shape
+sensitivity was reproduced independently of FSDP.
+
+The resident control's decoded PNGs differed from FSDP by NRMS 0.0110233649
+(1.102336%), maximum channel difference 58. A separate VAE
+diagnostic reproduced the FSDP pixels by decoding the identical latents as
+one batch of 2, and reproduced the resident pixels by concatenating two
+batch-1 decodes. Repeating the full batch-2 decode was exact. This demonstrates
+a decode batch-shape difference; the original memory condition that selected
+the historical decode batch sizes was not captured. It does not qualify DP2
+or attribute all latent drift to a single operation.
+
+The FSDP result qualifies the batch-1 T2I and BF16 refinement rows above.
+Both refinement stages had exact within-group rank outputs; their native VAE
+decode batch size was 1. The first-use proof may cover both stages; a separate
+reload per stage is not claimed.
+
+The initial batch-2 upscale candidate failed before refinement sampling.
+On the pinned ComfyUI revision, native `VAEEncode` sends the IMAGE batch to
+WanVAE as video frames. Temporal rounding maps two frames to one, producing
+latent shape `[1, 16, 1, 256, 256]`. The stock graph's second sampler had that
+same batch-1 shape; DP2 correctly refused a batch it cannot divide between
+two groups. The graph is batch 1 only: increasing its initial batch widget
+does not create independent-image DP2 refinement. No graph or ComfyUI changes
+were made, and no end-to-end batch-2 refinement acceptance is claimed.
+
+LoRA and unlisted topologies or shapes are not qualified by this record.
+Existing resident refinement acceptance remains valid. The local INT8
+provenance and encoder-identity limitations above still apply. Strict actor
+module-origin attestation was unavailable under the production policy; the
+managed runtime was separately verified and normal source/artifact/generation
+checks remained active. Native RDMA was not exercised.
 
 <a id="evidence-chroma"></a>
 

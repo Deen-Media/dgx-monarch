@@ -4767,7 +4767,10 @@ def _kroma_template(*, int8: bool = False, upscale: bool = False) -> dict:
         "family and Ulysses on a configured pair; BF16 and INT8 do not enable "
         "SAGE automatically. Pure Ulysses on two GPUs matched stock one-GPU "
         "references for BF16 and local INT8 at 1024x1024, plus BF16 2x "
-        "refinement. LoRA and FSDP remain untested. "
+        "refinement. Manual uly2+fsdp at batch 1 also matched for BF16/local INT8 "
+        "text-to-image and BF16 2x refinement. Batch-2 dp2+fsdp remains CHECK "
+        "for stock fidelity; "
+        "keep the default batch 1 and auto topology. LoRA remains untested. "
         "See docs/VALIDATION.md#evidence-kroma for measured scope and limits. "
         "Reference-image conditioning requires single; padded ring and hybrid "
         "retain the Krea2 waiver boundary. "
@@ -4785,7 +4788,10 @@ def _kroma_template(*, int8: bool = False, upscale: bool = False) -> dict:
             "4 steps and denoise 0.2, keeping CFG 1.0 and Euler/simple. This "
             "adapts the vendor's W8A8 sample recipe to BF16. Both BF16 stages "
             "matched the documented stock reference. The default final image "
-            "is 2048x2048. "
+            "is 2048x2048. Keep this upscale graph at batch 1: native VAEEncode "
+            "treats this VAE's IMAGE batch as video frames; two images become "
+            "one latent batch item, so dp2+fsdp refuses refinement. Raising the "
+            "initial batch widget does not enable independent DP2 refinement. "
         )
     note += (
         "Expects " + artifact + " in models/diffusion_models, "
