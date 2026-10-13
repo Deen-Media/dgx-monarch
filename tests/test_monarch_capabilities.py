@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -41,7 +42,40 @@ def test_native_load_reports_build_and_redacts_paths_without_hardware(native_mod
     assert result["rdma"] == {"native_import": "ok", "empty_action": "ok",
                               "hardware": "not_probed"}
     assert str(tmp_path) not in json.dumps(result)
-    assert len(result["torchmonarch"]["native"]["origin_sha256"]) == 64
+    # Ownership is the only origin fact: a path digest is reversible by guessing.
+    for origin in (result["torch"]["package"], result["torchmonarch"]["package"],
+                   result["torchmonarch"]["native"]):
+        assert origin == {"distribution_owned": True}
+
+
+def test_missing_module_file_reports_no_path_fact(native_modules):
+    native_modules["monarch._rust_bindings"].__file__ = None
+    result = capabilities.collect_capabilities()
+    assert result["torchmonarch"]["native"] == {"distribution_owned": False}
+
+
+def _keys(node):
+    if isinstance(node, dict):
+        for key, value in node.items():
+            yield key
+            yield from _keys(value)
+    elif isinstance(node, list):
+        for value in node:
+            yield from _keys(value)
+
+
+def test_committed_pin_snapshots_carry_no_origin_path_digest():
+    # CI cannot recompute a digest of the host path that produced a snapshot,
+    # so the committed shape itself must exclude one.
+    fixtures = sorted((Path(__file__).parent / "fixtures").glob("torchmonarch_pin_*.json"))
+    assert fixtures
+    for fixture in fixtures:
+        snapshot = json.loads(fixture.read_text())
+        assert "origin_sha256" not in set(_keys(snapshot)), fixture.name
+        capabilities_seen = snapshot.get("capabilities")
+        if capabilities_seen is not None:
+            assert not capabilities.capability_blockers(
+                capabilities_seen, expected_version=snapshot["version"])
 
 
 def test_public_fallback_cannot_prove_native_capability(native_modules, monkeypatch):

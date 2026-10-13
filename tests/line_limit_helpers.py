@@ -16,7 +16,7 @@ CEILINGS = {
     "capacity_agreement.py": 567, "gate_ledger.py": 527,
     "nodes/gate_identity.py": 583, "nodes/loader_preflight.py": 593,
     "runtime_provenance.py": 596, "adapters/flux_family.py": 560,
-    # Progress-token retirement stays beside its lock-protected tracker state.
+    # 2026-10-12: progress-token retirement stays beside its lock-protected tracker state.
     "telemetry.py": 501,
 }
 

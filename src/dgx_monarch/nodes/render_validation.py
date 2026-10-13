@@ -34,7 +34,9 @@ PACKED_TOPOLOGY_REFUSALS = (PackedDataParallelError, PackedCfgParallelError)
 INDIVISIBLE_BATCH = (
     "{label} on world {world} preserves its literal model-parallel degree and "
     "therefore leaves dp{dp}, but latent batch {batch} is not divisible by "
-    "{dp}. Increase batch to a multiple of {dp}, choose a preset whose "
+    "{dp}. Increase batch to a multiple of {dp} (a batch that VAEEncode turns "
+    "into video frames, as in the Kroma upscale graph, stays at 1; see "
+    "docs/MODELS.md), choose a preset whose "
     "ulysses*ring*cfg degree consumes the full world, or use a smaller mesh."
 )
 

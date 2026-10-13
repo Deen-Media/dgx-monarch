@@ -62,6 +62,7 @@ PIN_ANCHOR = re.compile(
     rf"killed|forwards|changed|renamed|broke)\b"        # "0.4.10 dropped nvml_pressure"
     rf"|the\s+{_SEMVER}\s+{_QUALIFIER}default\b"        # "the 0.6.0 queue-dispatch default"
     rf"|{_SEMVER}\s*'s\b"                               # "0.5.0's broken link"
+    rf"|\bpins?\s+(?:is|are|was|were)\s+(?:now\s+)?v?{_SEMVER}"  # "the pin is now 0.7.0"
     rf"|\b(?:any|every)\s+pin\s+to\s+date\b",           # pin-anchored epistemics, no semver
     re.IGNORECASE,
 )
@@ -283,6 +284,19 @@ def test_no_pin_anchored_prose_outside_dated_records():
         "version-anchored prose in an evergreen surface; state the fact without "
         "the pin, or move it to a dated record:\n" + "\n".join(unexcused)
     )
+
+
+@pytest.mark.parametrize(("text", "anchored"), [
+    # The version after the noun: every other shape puts it before "pin".
+    ("The development pin is now 0.7.0, with a regenerated baseline.", True),
+    ("Both pins are 0.6.0 on the rig.", True),
+    ("The exact pin was v0.5.0 until the bump.", True),
+    ("The pin is checked by the canary.", False),
+    ("The pin is >= 0.7.0 on every host.", False),
+    ("A pin is a contract, and 0.7.0 is only an example.", False),
+])
+def test_pin_anchor_catches_a_version_named_after_the_pin(text: str, anchored: bool):
+    assert bool(PIN_ANCHOR.search(text)) is anchored
 
 
 def test_the_allowlist_stays_small_and_every_entry_still_matches():

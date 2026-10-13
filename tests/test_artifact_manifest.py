@@ -135,6 +135,9 @@ def test_the_synthetic_vae_entry_takes_no_row():
 def test_placeholder_rows_are_the_names_a_reader_supplies():
     placeholders = {ref for ref, row in _rows().items() if row.get("placeholder")}
     assert placeholders == {
+        # The tested INT8 conversion's hash lives in docs/VALIDATION.md; a
+        # reader stages their own conversion under this name.
+        "diffusion_models/kromaKrea2_opd.safetensors",
         "loras/test_lora_placeholder.safetensors",
         "loras/your_first_lora.safetensors",
         "loras/your_second_lora.safetensors",

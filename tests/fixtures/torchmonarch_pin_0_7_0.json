@@ -13,8 +13,7 @@
       "distribution_version": "2.12.0+cu132",
       "import_status": "ok",
       "package": {
-        "distribution_owned": true,
-        "origin_sha256": "3d47e64c9cb43b305d133474dd0ee123b0423d39129ed5d7b3147dd0f6a592e6"
+        "distribution_owned": true
       },
       "runtime_version": "2.12.0+cu132"
     },
@@ -22,12 +21,10 @@
       "distribution_version": "0.7.0",
       "import_status": "ok",
       "native": {
-        "distribution_owned": true,
-        "origin_sha256": "87a888cf61f14ab8ad241f9240a7de974bd0b517e32682c5ffa7805bfde39064"
+        "distribution_owned": true
       },
       "package": {
-        "distribution_owned": true,
-        "origin_sha256": "317cc2aed85b6d493582aeec655d2c9722841636b48dd470d1876b8871609deb"
+        "distribution_owned": true
       },
       "record_sha256": "cce0309c030f36efe28f070137e64486231874c7f9581984d3643bdf75e96b00"
     }

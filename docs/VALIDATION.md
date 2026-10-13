@@ -402,10 +402,14 @@ Tested files and SHA-256 identities:
 The [artifact manifest](../example_workflows/artifacts.toml) separately lists
 the pinned upstream encoder download, whose SHA-256 is
 `36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34`.
-It differs from the tested local encoder; full payload equality was not
-established. The local INT8 conversion's upstream version and provenance
-remain unverified. Comparing it with itself on one GPU does not measure
-quantization error against BF16.
+Its file hash differs from the tested local encoder's, but a 2026-10-12
+per-tensor comparison found all 713 tensors byte-identical, with equal dtypes
+and shapes and none missing on either side, after the `model.language_model.`
+to `model.` key rename that ComfyUI's `krea2` CLIP loader applies. Only the
+header layout and metadata differ, so these results cover the pinned
+download's encoder weights. The local INT8 conversion's upstream version and
+provenance remain unverified. Comparing it with itself on one GPU does not
+measure quantization error against BF16.
 
 These resident results do not qualify LoRA, FSDP, cfg2, ring, hybrid topologies,
 other attention kernels, reference-image conditioning, other quantizations
@@ -495,7 +499,8 @@ were made, and no end-to-end batch-2 refinement acceptance is claimed.
 
 LoRA and unlisted topologies or shapes are not qualified by this record.
 Existing resident refinement acceptance remains valid. The local INT8
-provenance and encoder-identity limitations above still apply. Strict actor
+provenance limitation above still applies; the 2026-10-12 per-tensor encoder
+comparison above extends these results to the pinned upstream file. Strict actor
 module-origin attestation was unavailable under the production policy; the
 managed runtime was separately verified and normal source/artifact/generation
 checks remained active. Native RDMA was not exercised.

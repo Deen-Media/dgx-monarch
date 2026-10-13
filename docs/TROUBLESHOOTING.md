@@ -271,8 +271,8 @@ torchmonarch is pinned; bump it on all hosts at once.
 An earlier host-death test observed `SupervisionError` after about 69 seconds,
 responsive healthy hosts and same-mesh respawn after the host returned. That
 result does not establish general same-driver recovery. The later 0.7.0
-single-Worker stop/start check reproduced a replacement-attach timeout and a
-poisoned driver transport; see [the dated lifecycle results](VALIDATION.md#lifecycle).
+single-Worker stop/start check on 2026-10-13 (UTC) reproduced a replacement-attach
+timeout and a poisoned driver transport; see [the dated lifecycle results](VALIDATION.md#lifecycle).
 A poisoned transport requires a fresh driver after confirmed owned cleanup;
 resetting its attached mesh does not clear that transport state.
 
@@ -4995,7 +4995,7 @@ production Future failure. The probe now obtains a Future from the public
 channel API before testing `.get()` inside an asyncio loop. Queue dispatch is
 now unconditional upstream, but the removed setting still requires review.
 
-The development pin is now 0.7.0, with a regenerated ARM64 schema-2 baseline.
+On 2026-10-12 the development pin moved to 0.7.0, with a regenerated ARM64 schema-2 baseline.
 The canary uses Torch 2.12.0+cu132 and additionally requires a native RDMA import,
 an empty native action and a separate `cpu-smoke` run. The smoke checks local
 actors, concurrent dispatch, terminal timeout cancellation for decorated

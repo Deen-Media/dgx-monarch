@@ -170,10 +170,11 @@ sha256 = "3cfb5bc847c804ea8e8f894677f7e16ebe4c9ff0f978896cc5e7eb1e64fc7d82"
 [[artifact]]
 file = "kromaKrea2_opd.safetensors"
 dest = "diffusion_models"
+placeholder = true
 note = "Local Kroma INT8 ConvRot conversion; source URL and upstream release identity remain unverified. Select your own compatible file."
 url = ""
-size = 13494715223
-sha256 = "96043ecf3e920288fbf6f13ca81ba3629fe02e9f8729ed116382ebe4978e7839"
+size = 0
+sha256 = ""
 
 [[artifact]]
 file = "lens_bf16.safetensors"

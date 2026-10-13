@@ -1713,7 +1713,7 @@ an enforced requirement. The current exceptions are:
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |
 | `runtime_provenance.py` | 596 | stdlib-only exact Git/source inventory, loaded-origin validation, and runtime snapshot boundary |
 | `adapters/flux_family.py` | 560 | the flux-family adapters and the sharded forwards they install |
-| `telemetry.py` | 501 | token-aware progress updates and retirement stay with the lock-protected render tracker state |
+| `telemetry.py` | 501 | token-aware progress updates and retirement stay with the lock-protected render tracker state (2026-10-12) |
 
 Refusal-class ledger (enforced by `tests/test_refusal_classes.py`, doctrine in
 section 5.9): a typed refusal declares its class through `refusal.refusal()`.

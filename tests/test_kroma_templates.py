@@ -88,3 +88,17 @@ def test_kroma_refinement_runs_after_pixel_upscale_and_vae_encode():
     assert (refine["inputs"]["steps"], refine["inputs"]["denoise"]) == (4, 0.2)
     assert len([node for node in graph.values()
                 if node["class_type"] == "DGXMonarchKSampler"]) == 2
+
+
+def test_dp_refusal_points_the_upscale_graph_at_its_batch_one_note():
+    # VAEEncode folds the upscale graph's image batch into video frames, so
+    # "increase batch" alone is advice that graph can never follow.
+    from dgx_monarch.nodes.render_validation import indivisible_batch_refusal
+    from dgx_monarch.topology import Topology
+
+    message = " ".join(str(indivisible_batch_refusal(
+        "single", Topology(world=2, dp=2), 1)).split())
+    assert "Increase batch to a multiple of 2" in message
+    assert "Kroma upscale graph, stays at 1; see docs/MODELS.md" in message
+    models = " ".join((ROOT / "docs" / "MODELS.md").read_text().split())
+    assert "The upscale graph is batch 1 only." in models
