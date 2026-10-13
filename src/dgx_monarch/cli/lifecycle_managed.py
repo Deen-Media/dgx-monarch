@@ -242,14 +242,43 @@ esac
 
 
 def probe_kind(result: subprocess.CompletedProcess[str]) -> str | None:
-    """MANAGED, PLAIN, POLICY_STALE or FAILED_SOURCE_LAYOUT; None when unanswered."""
+    """MANAGED, PLAIN, POLICY_STALE or a FAILED_* verdict; None when unanswered.
+
+    Only the probe prints FAILED_SOURCE_LAYOUT. Exit 126 or 127 means the shell
+    could not run the Worker interpreter, and exit 1 without that marker means
+    the lock wrapper (or the probe's interpreter) failed before any verdict.
+    """
     if result.returncode == 255:
         return None
     if result.returncode == 0:
         return "MANAGED" if result.stdout.strip() == "MANAGED" else "PLAIN"
     if result.returncode == POLICY_STALE_EXIT and result.stdout.strip() == POLICY_STALE:
         return POLICY_STALE
-    return "FAILED_SOURCE_LAYOUT"
+    if "FAILED_SOURCE_LAYOUT" in result.stdout.split():
+        return "FAILED_SOURCE_LAYOUT"
+    if result.returncode in (126, 127):
+        return "FAILED_WORKER_INTERPRETER"
+    return "FAILED_LIFECYCLE_LOCK" if result.returncode == 1 else "FAILED_SOURCE_PROBE"
+
+
+_PROBE_FAILURES = {
+    "FAILED_SOURCE_LAYOUT": "its managed source link or Worker unit is not one dgx-monarch wrote, "
+                            "or a unit override exists",
+    "FAILED_WORKER_INTERPRETER": "the shell could not run cluster.python there (missing or not "
+                                 "executable), so the source check never ran",
+    "FAILED_LIFECYCLE_LOCK": "the lifecycle lock wrapper failed before the source check gave a verdict, "
+                             "for example on an unsafe ~/.local/state/dgx-monarch",
+    "FAILED_SOURCE_PROBE": "the managed source check exited without a verdict",
+}
+_HOME_PREFIX = re.compile(r"(?:/home|/Users|/var/home)/[^/\s'\":]+|/root(?=[/\s'\":]|$)")
+_OTHER_PATH = re.compile(r"(?<![\w~.])/[^\s'\":,]+")
+
+
+def stderr_tail(stderr: str | None) -> str:
+    """The last stderr line, printable, home-relative, at most 200 characters."""
+    lines = [line.strip() for line in (stderr or "").splitlines() if line.strip()]
+    tail = _OTHER_PATH.sub("<path>", _HOME_PREFIX.sub("~", lines[-1] if lines else ""))
+    return "".join(char if char.isprintable() else "?" for char in tail)[:200]
 
 
 def policy_stale_detail() -> str:
@@ -262,16 +291,17 @@ def policy_stale_detail() -> str:
     )
 
 
-def probe_refusal(host_name: str, kind: str | None) -> str:
+def probe_refusal(host_name: str, kind: str | None, result: subprocess.CompletedProcess[str] | None = None) -> str:
     """Name the probe's verdict so the operator reads a cause, not a bare code."""
     if kind == POLICY_STALE:
         return f"{host_name}: {POLICY_STALE}: {policy_stale_detail()}. Its Worker service was left as it was"
     if kind is None:
         return f"{host_name}: the managed source probe was not observed (transport exited 255)"
-    return (
-        f"{host_name}: FAILED_SOURCE_LAYOUT: its managed source link or Worker unit is not one dgx-monarch "
-        "wrote, or a unit override exists; nothing was synced or started there"
-    )
+    detail = _PROBE_FAILURES.get(str(kind), _PROBE_FAILURES["FAILED_SOURCE_PROBE"])
+    code = "" if result is None or kind == "FAILED_SOURCE_LAYOUT" else f" (exit {result.returncode})"
+    tail = stderr_tail(result.stderr) if result is not None else ""
+    return (f"{host_name}: {kind}: {detail}{code}; nothing was synced or started there"
+            + (f"; stderr: {tail}" if tail else ""))
 
 
 def restart_preflight(config: ClusterConfig, runner: Runner) -> bool:
@@ -288,8 +318,8 @@ def restart_preflight(config: ClusterConfig, runner: Runner) -> bool:
         except (OSError, subprocess.TimeoutExpired):
             continue
         kind = probe_kind(result)
-        if kind in (POLICY_STALE, "FAILED_SOURCE_LAYOUT"):
-            refusals.append(probe_refusal(host.name, kind))
+        if kind is not None and kind not in ("MANAGED", "PLAIN"):
+            refusals.append(probe_refusal(host.name, kind, result))
     for line in refusals:
         print(f"  {line}")
     if refusals:
@@ -308,9 +338,10 @@ def prepare_source_sync(
     config: ClusterConfig, host: HostConfig, local: bool, runner: Runner,
 ) -> tuple[bool, LifecycleResult]:
     """Return whether rsync is needed and the definite preparation outcome."""
-    kind = probe_kind(runner(config, host, locked_script(config.python_bin, managed_source_probe(config, host))))
+    result = runner(config, host, locked_script(config.python_bin, managed_source_probe(config, host)))
+    kind = probe_kind(result)
     if kind not in ("MANAGED", "PLAIN"):
-        log.warning("%s", probe_refusal(host.name, kind))
+        log.warning("%s", probe_refusal(host.name, kind, result))
         return False, None if kind is None else False
     if kind == "MANAGED" or local:
         return False, True

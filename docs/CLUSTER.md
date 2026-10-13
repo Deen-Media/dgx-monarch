@@ -93,9 +93,9 @@ recorded workload/runtime/hardware; positive-step qualification is limited to th
 
 | key | default | meaning |
 |---|---|---|
-| `target` | `""` | `nic:<device>`, `cpu:<numa>` or `gpu:<ordinal>`; empty uses upstream selection. Native return needs a `nic:<device>` target for every participant ([DESIGN.md](DESIGN.md) §5.6). |
+| `target` | `""` | `nic:<device>`, `cpu:<numa>` or `gpu:<ordinal>`; empty uses upstream selection. A device name uses letters, digits, `_`, `.` and `-`, does not start with `-` or `.` and does not contain `..`; a number has no leading zeros. Native return needs a `nic:<device>` target for every participant ([DESIGN.md](DESIGN.md) §5.6). |
 | `host_targets` | `{}` | Table mapping configured host names to `nic:<device>` overrides; any other value, empty included, fails config loading. Use each host's actual device name; names need not match between machines. A host without an entry uses `target`. |
-| `peer_device_affinity` | `"match_name"` | `any`, `match_name`, or disjoint `groups:dev0,dev1|dev2,dev3`. Affinity describes allowed NIC pairings; it does not discover reachable subnets. |
+| `peer_device_affinity` | `"match_name"` | `any`, `match_name`, or two or more disjoint groups, as in `groups:dev0,dev1|dev2,dev3`. Affinity describes allowed NIC pairings; it does not discover reachable subnets. |
 | `max_nics_per_buffer` | `1` | Maximum registered NICs per buffer, `1..8`. An explicit NIC target pins the upstream manager to that NIC. |
 | `qps_per_peer` | `1` | Native QPs per NIC route, `1..8`. |
 | `min_stripe_size_kb` | `512` | Native minimum stripe size, `4..65536` KiB. |
@@ -150,7 +150,8 @@ in this release. Local bounded phase timings remain advisory and never prove
 transfer completion, cleanup or readiness.
 
 `otlp_endpoint = ""` disables export. A configured HTTP(S) endpoint must have no
-credentials, query or fragment and requires **`otlp_logs = true`** explicitly:
+credentials, path, query or fragment (the exporter appends each signal's path,
+such as `/v1/metrics`) and requires **`otlp_logs = true`** explicitly:
 Monarch 0.7 exports upstream raw logs as well as metrics to this destination.
 Those logs may contain more than dgx-monarch's sanitized metric labels. Use an
 operator-controlled collector and review disclosure requirements before

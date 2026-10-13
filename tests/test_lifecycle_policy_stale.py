@@ -245,6 +245,86 @@ def test_every_failed_source_probe_is_logged(installed, monkeypatch):
     assert 'not observed' in recorder.lines[1]
 
 
+PROBE_ANSWERS = {
+    'layout': (1, 'FAILED_SOURCE_LAYOUT\n', '', 'FAILED_SOURCE_LAYOUT', 'is not one dgx-monarch wrote'),
+    'interpreter_missing': (127, '', 'bash: line 2: /home/someone/monarch-env/bin/python: No such file or directory',
+                            'FAILED_WORKER_INTERPRETER', 'could not run cluster.python'),
+    'interpreter_not_executable': (126, '', 'bash: line 2: /opt/env/bin/python: Permission denied',
+                                   'FAILED_WORKER_INTERPRETER', 'missing or not executable'),
+    'lock_wrapper': (1, '', 'Traceback (most recent call last):\n  File "<string>", line 22\nRuntimeError: unsafe lock parent\n',
+                     'FAILED_LIFECYCLE_LOCK', 'lifecycle lock wrapper failed'),
+    'other_exit': (2, '', '', 'FAILED_SOURCE_PROBE', 'exited without a verdict'),
+}
+
+
+@pytest.mark.parametrize('case', sorted(PROBE_ANSWERS))
+def test_each_probe_failure_names_its_own_cause(case):
+    code, stdout, stderr, kind, phrase = PROBE_ANSWERS[case]
+    result = subprocess.CompletedProcess([], code, stdout, stderr)
+    assert lifecycle_managed.probe_kind(result) == kind
+    text = lifecycle_managed.probe_refusal('worker', kind, result)
+    assert text.startswith(f'worker: {kind}: ') and phrase in text
+    assert 'nothing was synced or started there' in text
+    assert '/home/someone' not in text and '/opt/env' not in text
+    if case == 'layout':
+        assert 'exit' not in text and 'stderr' not in text
+    else:
+        assert f'(exit {code})' in text
+    if case == 'interpreter_missing':
+        assert text.endswith('stderr: bash: line 2: ~/monarch-env/bin/python: No such file or directory')
+    if case == 'interpreter_not_executable':
+        assert text.endswith('stderr: bash: line 2: <path>: Permission denied')
+    if case == 'lock_wrapper':
+        assert text.endswith('stderr: RuntimeError: unsafe lock parent')
+    if kind != 'FAILED_SOURCE_LAYOUT':
+        assert 'not one dgx-monarch wrote' not in text
+
+
+def test_stderr_tail_is_bounded_printable_and_home_relative():
+    tail = lifecycle_managed.stderr_tail('first\n' + 'x\x1b[31m' + '/root/a ' * 60 + '\n\n')
+    assert len(tail) == 200 and '\x1b' not in tail and '/root' not in tail
+    assert tail.startswith('x?[31m~/a ~/a')
+    assert lifecycle_managed.stderr_tail('') == '' and lifecycle_managed.stderr_tail(None) == ''
+    assert lifecycle_managed.stderr_tail("denied: '/Users/me/x' and /srv/data") == "denied: '~/x' and <path>"
+
+
+def test_a_missing_worker_interpreter_is_not_reported_as_foreign_layout(installed, tmp_path, monkeypatch):
+    installed('canonical')
+    recorder = LogRecorder()
+    monkeypatch.setattr(lifecycle_managed, 'log', recorder)
+    missing = replace(BASE, python_bin=str(tmp_path / 'absent-env' / 'bin' / 'python'))
+    assert prepare_source_sync(missing, HOST, False, probe_only) == (False, False)
+    [line] = recorder.lines
+    assert line.startswith('worker: FAILED_WORKER_INTERPRETER: ') and '(exit 127)' in line
+    assert 'stderr: ' in line and str(tmp_path) not in line
+
+
+def test_an_unsafe_lock_directory_is_named_as_the_lock_wrapper(installed, tmp_path, monkeypatch):
+    installed('canonical')
+    state = tmp_path / '.local' / 'state' / 'dgx-monarch'
+    state.mkdir(parents=True)
+    state.chmod(0o777)
+    recorder = LogRecorder()
+    monkeypatch.setattr(lifecycle_managed, 'log', recorder)
+    assert prepare_source_sync(BASE, HOST, False, probe_only) == (False, False)
+    [line] = recorder.lines
+    assert line.startswith('worker: FAILED_LIFECYCLE_LOCK: ') and '(exit 1)' in line
+    assert line.endswith('stderr: RuntimeError: unsafe lock parent')
+
+
+@pytest.mark.parametrize('code', [1, 126, 127, 2])
+def test_restart_refuses_any_definite_probe_failure_before_stopping(monkeypatch, capsys, code):
+    def runner(_config, _host, _script, timeout=60):
+        return subprocess.CompletedProcess([], code, '', 'RuntimeError: unsafe lock parent')
+
+    events = _record_lifecycle(monkeypatch, runner)
+    assert lifecycle.restart(BASE, sync=False) is False
+    assert events == []
+    out = capsys.readouterr().out
+    assert f'(exit {code})' in out
+    assert out.rstrip().endswith('restart refused before stopping any Worker service')
+
+
 def _record_lifecycle(monkeypatch, runner=probe_only) -> list[str]:
     events: list[str] = []
     monkeypatch.setattr(lifecycle, 'run_on_host', runner)

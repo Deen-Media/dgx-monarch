@@ -23,7 +23,7 @@ def isolated_policy(monkeypatch, isolated_environ):
 def test_selected_host_resolves_before_serialization():
     value = policy.parse_policy({"rdma": {
         "target": "nic:driver0", "host_targets": {"worker": "nic:worker0"},
-        "peer_device_affinity": "groups:driver0,worker0", "qps_per_peer": 2,
+        "peer_device_affinity": "groups:driver0,worker0|driver1,worker1", "qps_per_peer": 2,
     }}, host_names=("worker",))
     child = policy.policy_from_token(policy.encode_policy(value, "worker"))
     assert child.rdma.target == "nic:worker0"
@@ -179,6 +179,10 @@ VALIDATOR_REFUSALS = {
     "affinity_empty_groups": {"rdma": {"peer_device_affinity": "groups:"}},
     "affinity_dup": {"rdma": {"peer_device_affinity": "groups:a,b|b,c"}},
     "affinity_trailing_bar": {"rdma": {"peer_device_affinity": "groups:a,b|"}},
+    "affinity_one_group": {"rdma": {"peer_device_affinity": "groups:a"}},
+    "affinity_one_wide_group": {"rdma": {"peer_device_affinity": "groups:a,b"}},
+    "affinity_dotdot_name": {"rdma": {"peer_device_affinity": "groups:a|.."}},
+    "affinity_option_name": {"rdma": {"peer_device_affinity": "groups:a|-rf"}},
     "host_targets_list": {"rdma": {"host_targets": ["a"]}},
     "host_targets_str": {"rdma": {"host_targets": "a"}},
     "host_targets_badval": {"rdma": {"host_targets": {"h": 5}}},
@@ -192,6 +196,17 @@ VALIDATOR_REFUSALS = {
     "target_gpu_unicode": {"rdma": {"target": "gpu:" + chr(0x661)}},  # ARABIC-INDIC DIGIT ONE
     "target_cpu_neg": {"rdma": {"target": "cpu:-1"}},
     "target_upper_kind": {"rdma": {"target": "NIC:mlx5_0"}},
+    "target_nic_dotdot": {"rdma": {"target": "nic:.."}},
+    "target_nic_inner_dotdot": {"rdma": {"target": "nic:mlx5..0"}},
+    "target_nic_dot": {"rdma": {"target": "nic:."}},
+    "target_nic_slash": {"rdma": {"target": "nic:../mlx5_0"}},
+    "target_nic_option": {"rdma": {"target": "nic:-rf"}},
+    "target_nic_colon": {"rdma": {"target": "nic:mlx5_0:1"}},
+    "target_nic_shell": {"rdma": {"target": "nic:$(id)"}},
+    "target_gpu_leading_zero": {"rdma": {"target": "gpu:007"}},
+    "target_gpu_double_zero": {"rdma": {"target": "gpu:00"}},
+    "target_cpu_leading_zero": {"rdma": {"target": "cpu:01"}},
+    "host_targets_dotdot": {"rdma": {"host_targets": {"h": "nic:.."}}},
     "startup_29": {"startup_timeout_s": 29},
     "startup_bool": {"startup_timeout_s": True},
     "unknown_key": {"rdma": {"bogus": 1}},
@@ -199,6 +214,8 @@ VALIDATOR_REFUSALS = {
     "otlp_cred": {"diagnostics": {"otlp_endpoint": "http://u:p@x:1", "otlp_logs": True}},
     "otlp_port_bad": {"diagnostics": {"otlp_endpoint": "http://x:99999", "otlp_logs": True}},
     "otlp_ftp": {"diagnostics": {"otlp_endpoint": "ftp://x", "otlp_logs": True}},
+    "otlp_signal_path": {"diagnostics": {"otlp_endpoint": "http://x:4318/v1/metrics", "otlp_logs": True}},
+    "otlp_root_path": {"diagnostics": {"otlp_endpoint": "http://x:4318/", "otlp_logs": True}},
     "qp_init_0": {"rdma": {"qp_init_timeout_s": 0}},
     "stripe_3": {"rdma": {"min_stripe_size_kb": 3}},
     "fallback_str": {"rdma": {"allow_tcp_fallback": "false"}},
@@ -216,8 +233,15 @@ def test_validator_refusals_are_typed(name):
     {"rdma": {"max_nics_per_buffer": 4, "qps_per_peer": 8, "application_chunks": 1}},
     {"rdma": {"min_stripe_size_kb": 5}},
     {"rdma": {"target": "cpu:1"}}, {"rdma": {"target": "gpu:255"}},
+    {"rdma": {"target": "gpu:0"}}, {"rdma": {"target": "cpu:0"}}, {"rdma": {"target": "gpu:10"}},
     {"rdma": {"target": "nic:mlx5_0", "host_targets": {"h": "nic:mlx5_1"}}},
+    {"rdma": {"target": "nic:rocep1s0f0"}}, {"rdma": {"target": "nic:roceP2p1s0f0"}},
+    {"rdma": {"target": "nic:enp1s0f0np0"}}, {"rdma": {"target": "nic:mlx5_bond.0"}},
+    {"rdma": {"peer_device_affinity": "any"}}, {"rdma": {"peer_device_affinity": "match_name"}},
+    {"rdma": {"peer_device_affinity": "groups:dev0,dev1|dev2,dev3"}},
+    {"rdma": {"peer_device_affinity": "groups:mlx5_0,mlx5_1|mlx5_2,mlx5_3|mlx5_4"}},
     {"diagnostics": {"otlp_endpoint": "https://collector.example:4318", "otlp_logs": True}},
+    {"diagnostics": {"otlp_endpoint": "http://127.0.0.1:4318", "otlp_logs": True}},
 ])
 def test_validator_accepts_supported_values(raw):
     assert isinstance(policy.parse_policy(raw), policy.MonarchPolicy)

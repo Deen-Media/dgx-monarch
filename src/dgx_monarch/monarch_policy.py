@@ -79,17 +79,24 @@ def _integer(value: object, low: int, high: int, context: str) -> int:
     return value
 
 
+def _device(name: str) -> bool:
+    """A device name, never a path or option spelling: no leading - or ., no .."""
+    return bool(_DEVICE.fullmatch(name)) and not name.startswith(("-", ".")) and ".." not in name
+
+
 def _target(value: object, context: str) -> str:
     if not isinstance(value, str):
         raise ClusterConfigError(f"{context} must be a target string")
     if value == "":
         return value
     kind, _, name = value.partition(":")
-    if (kind == "nic" and _DEVICE.fullmatch(name)) or (
-        kind in {"cpu", "gpu"} and name.isascii() and name.isdecimal() and int(name) <= 255
+    if (kind == "nic" and _device(name)) or (
+        kind in {"cpu", "gpu"} and name.isascii() and name.isdecimal()
+        and (name == "0" or not name.startswith("0")) and int(name) <= 255
     ):
         return value
-    raise ClusterConfigError(f"{context} must be nic:<device>, cpu:<numa>, gpu:<ordinal>, or empty")
+    raise ClusterConfigError(f"{context} must be nic:<device>, cpu:<numa>, gpu:<ordinal> "
+                             "(no leading zeros), or empty")
 
 
 def _host_target(value: object) -> str:
@@ -105,10 +112,12 @@ def _affinity(value: object) -> str:
     if value in ("any", "match_name"):
         return str(value)
     if isinstance(value, str) and value.startswith("groups:") and len(value) <= 2048:
-        names = [name for group in value[7:].split("|") for name in group.split(",")]
-        if all(_DEVICE.fullmatch(name) for name in names) and len(set(names)) == len(names):
+        groups = value[7:].split("|")
+        names = [name for group in groups for name in group.split(",")]
+        if len(groups) >= 2 and all(_device(name) for name in names) and len(set(names)) == len(names):
             return value
-    raise ClusterConfigError("monarch.rdma.peer_device_affinity must be any, match_name, or disjoint groups:<devices>")
+    raise ClusterConfigError("monarch.rdma.peer_device_affinity must be any, match_name, or two or more "
+                             "disjoint groups:<devices>|<devices>")
 
 
 def parse_policy(raw: object, *, host_names: tuple[str, ...] | None = None) -> MonarchPolicy:
@@ -153,12 +162,15 @@ def parse_policy(raw: object, *, host_names: tuple[str, ...] | None = None) -> M
     if endpoint:
         try:
             url = urlsplit(endpoint)
+            # The exporter appends each signal's path, such as /v1/metrics.
             valid = (url.scheme in {"http", "https"} and url.hostname and not url.username
-                     and not url.password and not url.query and not url.fragment and url.port != 0)
+                     and not url.password and not url.path and not url.query
+                     and not url.fragment and url.port != 0)
         except ValueError:
             valid = False
         if not valid or any(ord(char) < 33 for char in endpoint):
-            raise ClusterConfigError("monarch.diagnostics.otlp_endpoint must be an HTTP(S) URL without credentials/query/fragment")
+            raise ClusterConfigError("monarch.diagnostics.otlp_endpoint must be an HTTP(S) URL without "
+                                     "credentials/path/query/fragment")
     return MonarchPolicy(
         startup_timeout_s=_integer(values.get("startup_timeout_s", 180), 30, 3600, "monarch.startup_timeout_s"),
         rdma=transport, diagnostics=DiagnosticsPolicy(metrics, endpoint, logs),

@@ -723,6 +723,9 @@ def get_mesh(
                     _TRANSPORT_MODE = wanted_transport
                 mesh_factory.begin_creation_cleanup(
                     cleanup_claim, fleet_handoff, reserve_transport=True)
+            from .monarch_launch import prepare_driver
+            # Admit before recycling: a config edit the driver refuses keeps the working fleet.
+            prepare_driver(config)
             if old is not None:
                 log.info("mesh source/config changed; recycling the previous fleet")
                 try:
@@ -735,9 +738,6 @@ def get_mesh(
                     if _MESHES.get(key) is old:
                         _MESHES.pop(key, None)
             src = _src_pythonpath()
-            from .monarch_launch import prepare_driver
-
-            prepare_driver(config)
             os.environ["DGXM_PYTHONPATH"] = src
             client_lease.plant_driver_marker()  # so the CLI sweep can see the owner
             existing = os.environ.get("PYTHONPATH", "")
