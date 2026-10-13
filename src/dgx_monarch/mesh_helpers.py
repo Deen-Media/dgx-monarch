@@ -307,10 +307,10 @@ def mark_defunct_on_supervision_failure(handle, exc: BaseException, *,
     names = {type(e).__name__ for e in chain}
     text = f"{names} " + " ".join(failure_summary(e) for e in chain if not isinstance(e, ActorError))
     # Match the exported SupervisionError type first. The string list is a
-    # secondary net only, audited against the 0.6.0 wheel. The sole live string
-    # was "Supervision" (from the type name), so on their own the strings would
-    # miss a renamed failure and let a dead fleet be reused; isinstance survives
-    # a rename of the message text.
+    # secondary net only, audited against the 0.7.0 wheel: its binding still
+    # exports the type and carries these strings, but no longer "ProcessExited".
+    # On their own the strings would miss a renamed failure and let a dead fleet
+    # be reused; isinstance survives a rename of the message text.
     try:
         from monarch._rust_bindings.monarch_hyperactor.supervision import (
             SupervisionError,
@@ -319,8 +319,8 @@ def mark_defunct_on_supervision_failure(handle, exc: BaseException, *,
     except ImportError:
         supervision_chain = False
     if not supervision_chain and not _absorb.hits(
-            "string-fallback", text, ("Supervision", "ProcessExited",
-                                      "connection lost", "peer closed")):
+            "string-fallback", text, ("Supervision", "connection lost",
+                                      "peer closed")):
         return
     _publish_defunct(handle, exc, text, holding_lock=holding_lock)
 

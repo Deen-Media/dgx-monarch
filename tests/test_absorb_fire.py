@@ -233,8 +233,8 @@ class _TornDownHandle:
         self.teardown_complete = True
 
 
-@pytest.mark.parametrize("marker", ("Supervision", "ProcessExited",
-                                    "connection lost", "peer closed"))
+@pytest.mark.parametrize("marker", ("Supervision", "connection lost",
+                                    "peer closed"))
 def test_string_fallback_fires_only_where_the_typed_check_missed(
         marker, fired, monkeypatch):
     monkeypatch.setattr(mesh_safety, "_TEARDOWN_STATE", _CLEAN_STATE)

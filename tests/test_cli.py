@@ -270,6 +270,73 @@ def test_cmd_restart_silent_when_every_host_matches_the_pin(monkeypatch, capsys)
     assert capsys.readouterr().err == ""
 
 
+def _run_pin_probe_locally(home: Path):
+    """Run the probe script with bash in a scratch home instead of over SSH."""
+    import os
+
+    def run(_config, _host, script, timeout):
+        env = {"HOME": str(home), "PATH": os.environ.get("PATH", "/usr/bin:/bin")}
+        return subprocess.run(["bash", "-c", script], env=env, capture_output=True,
+                              text=True, timeout=timeout, check=False)
+    return run
+
+
+def test_pin_probe_reads_the_worker_release_the_way_doctor_does(monkeypatch, capsys, tmp_path):
+    """The probe runs Doctor's release selection, then reports the release's version.
+
+    A managed Worker imports its release, so a base interpreter that still has an
+    older torchmonarch must not warn while the release carries the pin, and a
+    stale release must name the release and only the fix that reaches it.
+    """
+    from dgx_monarch.cli import pincheck
+    from dgx_monarch.cli.doctor_worker_context import worker_context
+
+    host = HostConfig(name="worker", address="tcp://10.0.0.2:26600")
+    config = ClusterConfig(hosts=(host,), transport_security="trusted_fabric",
+                           python_bin=sys.executable)
+    scripts: list[str] = []
+    monkeypatch.setattr(pincheck, "run_on_host", lambda *a, **k: scripts.append(a[2]) or (
+        subprocess.CompletedProcess([], 0, f"{TORCHMONARCH_PIN}\n", "")))
+    pincheck.warn_on_pin_mismatch(config, TORCHMONARCH_PIN)
+    assert worker_context(config, host) in scripts[0]
+    assert scripts[0].index(worker_context(config, host)) < scripts[0].index("importlib.metadata")
+
+    # The real script, with only the release selection replaced by a managed
+    # release whose metadata differs from the base interpreter's.
+    release = tmp_path / "release"
+    for version in (TORCHMONARCH_PIN, "0.0.0rc0"):
+        dist = release / "torchmonarch-x.dist-info"
+        dist.mkdir(parents=True, exist_ok=True)
+        (dist / "METADATA").write_text(f"Metadata-Version: 2.1\nName: torchmonarch\nVersion: {version}\n")
+        monkeypatch.setattr(pincheck, "worker_context", lambda *_a: (
+            f'export PYTHONPATH="{release}"\necho dgxm_worker_policy=MANAGED\n'))
+        monkeypatch.setattr(pincheck, "run_on_host", _run_pin_probe_locally(tmp_path))
+        pincheck.warn_on_pin_mismatch(config, TORCHMONARCH_PIN)
+        err = capsys.readouterr().err
+        if version == TORCHMONARCH_PIN:
+            assert err == ""
+            continue
+        assert "the managed Worker release on worker carries torchmonarch 0.0.0rc0" in err
+        assert "dgxm update" in err and "pip install" not in err
+
+
+def test_pin_probe_runs_doctors_real_release_selection_on_a_plain_host(monkeypatch, capsys, tmp_path):
+    import importlib.metadata
+
+    from dgx_monarch.cli import pincheck
+
+    host = HostConfig(name="worker", address="tcp://10.0.0.2:26600")
+    config = ClusterConfig(hosts=(host,), transport_security="trusted_fabric",
+                           python_bin=sys.executable)
+    monkeypatch.setattr(pincheck, "run_on_host", _run_pin_probe_locally(tmp_path))
+    pincheck.warn_on_pin_mismatch(config, "not-the-installed-pin")
+    err = capsys.readouterr().err
+    # No release link in this home: the plain path probes the base interpreter.
+    installed = importlib.metadata.version("torchmonarch")
+    assert f"WARNING: worker has torchmonarch {installed} installed" in err
+    assert "pip install --no-deps torchmonarch==not-the-installed-pin" in err
+
+
 @pytest.mark.parametrize("command", ["up", "restart"])
 def test_recovery_commands_refuse_an_unacknowledged_transport_before_the_pin_probe(
     monkeypatch, capsys, command,

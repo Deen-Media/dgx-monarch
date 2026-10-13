@@ -59,7 +59,7 @@ clears it.
 
 | key | default | meaning |
 |---|---|---|
-| `client_bind` | none (**required** for any cluster-mode attach) | Monarch client bind on the driver's fabric IP, e.g. `tcp://192.0.2.11:0` (an RFC 5737 documentation address; use your own). It is required because the default transport advertises whatever the hostname resolves to, which is loopback on many boxes, and the attach then fails with `MESH_ATTACH_CONFIG_TIMEOUT` ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout)). |
+| `client_bind` | none (**required** for any cluster-mode attach) | Monarch client bind on the driver's fabric IP, e.g. `tcp://192.0.2.11:0` (an RFC 5737 documentation address; use your own). It is required because the default transport advertises whatever the hostname resolves to: a loopback-only name is refused, and a LAN or Tailscale address takes the mesh off the fabric or times out the attach ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout)). |
 | `fabric_profile` | `single-node` | named NCCL/GLOO/UCX env set, see [Fabric profiles](#fabric-profiles). A multi-host file that omits this key or selects `single-node` is rejected, and a name with no shipped profile needs its own `[fabric.<name>]` table. |
 | `transport_security` | none | `"trusted_fabric"` or absent; any other value fails the load. See [Worker transport security](#worker-transport-security). |
 | `nccl_master_addr` | first host's IP | literal-IP rendezvous address for the data plane |
@@ -83,7 +83,10 @@ When the budget expires in cluster mode, the driver stops the processes it
 spawned but keeps its transport poisoned, so every later queue refuses until
 ComfyUI restarts. Raise `startup_timeout_s` before that restart if the budget
 was too short. The edit does not touch the Worker units: only the driver reads
-this budget.
+this budget. Monarch separately holds a message to an actor that is still
+starting for up to 30 s (`HYPERACTOR_PENDING_ACTOR_DELIVERY_TIMEOUT`); that hold
+is upstream's default, not this budget, and raising `startup_timeout_s` does not
+lengthen it ([measured start](VALIDATION.md#ownership-and-actor-start-review-2026-10-13)).
 
 ### `[monarch.rdma]`
 

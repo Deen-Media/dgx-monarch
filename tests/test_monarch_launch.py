@@ -172,7 +172,7 @@ def driver_steps(monkeypatch):
     """Record prepare_driver's steps; the real native import still runs."""
     from dgx_monarch import mesh, monarch_capabilities, monarch_diagnostics, monarch_policy
     events: list = []
-    diagnostics_state: dict = {'metrics': False, 'traces': False, 'available': True}
+    diagnostics_state: dict = {'metrics': False, 'available': True}
     monkeypatch.setattr(monarch_policy, 'apply_policy',
                         lambda _policy, host='', **kw: events.append(('apply', host, kw['native_enabled'])))
     monkeypatch.setattr(monarch_diagnostics, 'configure_policy',

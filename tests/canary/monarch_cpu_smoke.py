@@ -6,6 +6,7 @@ import asyncio
 import importlib.metadata
 import json
 import sys
+import time
 from pathlib import Path
 
 from monarch.actor import (
@@ -110,6 +111,35 @@ def run() -> dict[str, object]:
         observations["proc_stop_lazy"] = True
         stop.get(timeout=15)
         observations["proc_stop_completed"] = True
+        # A timed-out stop cancels its remaining steps. A zero deadline lands
+        # before the native stop starts; any nonzero one races it.
+        doomed = this_host().spawn_procs(name="dgxm_cpu_canary_stop")
+        doomed.initialized.get(timeout=15)
+        survivor = doomed.spawn("stop_probe", CpuProbe)
+        assert survivor.identity.call_one().get(timeout=15) == expected
+        cancelled = doomed.stop()
+        try:
+            cancelled.get(timeout=0)
+        except TimeoutError:
+            pass
+        else:
+            raise AssertionError("ProcMesh stop finished inside a zero deadline")
+        try:
+            cancelled.get(timeout=1)
+        except TimeoutError:
+            observations["proc_stop_timeout_cancelled"] = True
+        else:
+            raise AssertionError("a timed-out ProcMesh stop resumed")
+        time.sleep(1)
+        assert survivor.identity.call_one().get(timeout=5) == expected
+        observations["proc_stop_timeout_procs_survived"] = True
+        doomed.stop().get(timeout=15)
+        try:
+            survivor.identity.call_one().get(timeout=5)
+        except Exception as exc:
+            observations["proc_stop_after_timeout_completed"] = type(exc).__name__
+        else:
+            raise AssertionError("procs answered after a completed stop")
     finally:
         shutdown_context(host_timeout=10).get(timeout=15)
     return observations

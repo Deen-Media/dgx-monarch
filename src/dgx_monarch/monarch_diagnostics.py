@@ -1,4 +1,4 @@
-"""Opt-in public Monarch metrics and spans; no Jobs, servers, or lifecycle IO.
+"""Opt-in public Monarch metrics; no Jobs, servers, spans, or lifecycle IO.
 
 Configure once outside runtime ownership locks. Metrics use a bounded daemon
 queue so an exporter cannot block a render. OTLP destination and collection
@@ -18,7 +18,7 @@ from . import runtime_diagnostics
 _QUEUE_CAPACITY = 256
 _LOCK = threading.Lock()
 _EXPORTER: _MetricExporter | None = None
-_STATE: dict[str, Any] = {"metrics": False, "traces": False, "available": True}
+_STATE: dict[str, Any] = {"metrics": False, "available": True}
 _POLICY_STATE: dict[str, Any] = {}
 
 
@@ -145,18 +145,17 @@ class _MetricExporter:
         self._stopped.set()
 
 
-def configure(*, metrics: bool = False, traces: bool = False) -> dict[str, Any]:
+def configure(*, metrics: bool = False) -> dict[str, Any]:
     """Enable supported public instruments explicitly; imports remain lazy.
 
-An unavailable runtime reports failure without enabling either consumer.
+An unavailable runtime reports failure without enabling the consumer.
 Calling again with unchanged settings is idempotent. Disable before changing
 settings. A blocked old exporter prevents a replacement, avoiding accumulation
 of daemon threads when an external backend is unhealthy.
 """
     global _EXPORTER, _STATE
     with _LOCK:
-        if (metrics == _STATE["metrics"] and traces == _STATE["traces"]
-                and _STATE["available"]):
+        if metrics == _STATE["metrics"] and _STATE["available"]:
             return status()
         runtime_diagnostics.configure_export()
         if _EXPORTER is not None:
@@ -164,29 +163,25 @@ of daemon threads when an external backend is unhealthy.
             if _EXPORTER._thread.ident is not None:
                 _EXPORTER._thread.join(timeout=0.2)
             if _EXPORTER._thread.is_alive():
-                _STATE = {"metrics": False, "traces": False, "available": False,
+                _STATE = {"metrics": False, "available": False,
                           "reason": "exporter_still_running"}
                 return status()
             _EXPORTER = None
-        _STATE = {"metrics": False, "traces": False, "available": True}
-        if not metrics and not traces:
+        _STATE = {"metrics": False, "available": True}
+        if not metrics:
             return status()
         try:
-            from monarch.actor import get_meter, span
+            from monarch.actor import get_meter
 
-            exporter = _MetricExporter(get_meter()) if metrics else None
+            exporter = _MetricExporter(get_meter())
             _EXPORTER = exporter
-            if exporter is not None:
-                exporter.start()
-            runtime_diagnostics.configure_export(
-                exporter.submit if exporter else None,
-                (lambda name: span(f"dgxm.{name}")) if traces else None,
-            )
-            _STATE = {"metrics": metrics, "traces": traces, "available": True}
+            exporter.start()
+            runtime_diagnostics.configure_export(exporter.submit)
+            _STATE = {"metrics": True, "available": True}
         except BaseException:
             if _EXPORTER is not None:
                 _EXPORTER.stop()
-            _STATE = {"metrics": False, "traces": False, "available": False,
+            _STATE = {"metrics": False, "available": False,
                       "reason": "instrument_setup_failed"}
         return status()
 

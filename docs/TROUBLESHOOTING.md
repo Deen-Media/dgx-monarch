@@ -50,17 +50,23 @@ torchmonarch builds attach and spawn cleanly, then every endpoint call times
 out with no version message in either direction. Run `dgxm doctor` and check
 both hosts' pin rows before treating it as a wedge.
 
-**Symptom:** Init node (or probe) times out attaching; Worker service logs show a
-connection that never completes.
+**Symptom:** a Monarch client started without an explicit bind fails at once
+with `hostname resolved to no non-loopback, non-link-local address; configure an
+explicit transport address`, or Init node (or probe) times out attaching while
+Worker service logs show a connection that never completes.
 
-**Cause:** the Monarch client advertised a loopback address. The default
-transport resolves the driver's own hostname, and `/etc/hosts` maps it to
-`127.0.0.1` on many distros. The workers' replies then dial themselves.
+**Cause:** without an explicit bind, Monarch's default transport advertises
+whatever the driver's own hostname resolves to. A name that resolves only to
+loopback (`/etc/hosts` maps it to `127.0.0.1` on many distros) is refused at
+once with the message above. A name that resolves to a LAN or Tailscale address
+passes that check, so the Workers answer over that network, or never reach the
+driver when that address is not routable from them.
 
 **Fix:** set `cluster.client_bind = "tcp://<driver fabric IP>:0"` in
-cluster.toml. dgx-monarch refuses a cluster attach without it, so mapping each
-box's hostname to its fabric IP in `/etc/hosts` is not enough on its own. Then
-see [#2](#2-every-attach-times-out-after-one-failed-attach): the failed attach has left the Worker services wedged.
+cluster.toml; it pins the client to the fabric address whatever the hostname
+resolves to. dgx-monarch refuses a cluster attach without it, so mapping each
+box's hostname to its fabric IP in `/etc/hosts` is not enough on its own. If an
+attach timed out, see [#2](#2-every-attach-times-out-after-one-failed-attach): the failed attach has left the Worker services wedged.
 
 `dgxm doctor`'s `hostname resolution` row reads that setting. When the
 hostname resolves to a routable address, the row reports `[ ok ]` with that
@@ -3346,8 +3352,13 @@ Three shapes tell the cases apart:
 
 ## Power-user escape hatch
 
-`monarch-tui` (ships with torchmonarch) attaches to a live mesh to inspect
-actor state when the node surface is not enough.
+When the node surface is not enough, start with `dgxm top` ([TUI.md](TUI.md)),
+the DGX Monarch sidebar panel and a bounded `dgxm diagnostics` capture
+([CLUSTER.md](CLUSTER.md#monarchdiagnostics)). `monarch-tui` (ships with
+torchmonarch) does not attach to a running mesh by itself: it needs `--addr`
+of a mesh admin server, and dgx-monarch never starts one. Using it needs an
+inspector session whose admin server you can stop, which the integration does
+not provide; [CLUSTER.md](CLUSTER.md#monarchdiagnostics) explains why.
 
 ## Never disable DynamicVRAM in stock ComfyUI on a Spark
 
@@ -5007,14 +5018,19 @@ On 2026-10-12 the development pin moved to 0.7.0, with a regenerated ARM64 schem
 The canary uses Torch 2.12.0+cu132 and additionally requires a native RDMA import,
 an empty native action and a separate `cpu-smoke` run. The smoke checks local
 actors, concurrent dispatch, terminal timeout cancellation for decorated
-Futures, re-observable endpoint timeouts and lazy ProcMesh shutdown. Neither
+Futures, re-observable endpoint timeouts and lazy ProcMesh shutdown. Since
+2026-10-13 it also times out a ProcMesh stop at once and requires that stop to
+stay cancelled and its procs to answer until a fresh stop. Neither
 stage contacts configured Worker services or exercises a GPU/fabric.
 
 Complete the
 [pin-bump procedure](../skills/dgx-monarch-dev/SKILL.md#torchmonarch-bump-procedure-63)
 before deployment. Review the candidate's shutdown-timeout cancellation and immediately started
 RDMA buffer drops as well as dispatch behavior; unchanged signatures do not
-prove those ownership contracts. Do not refresh the baseline or suppress drift
+prove those ownership contracts. The review for the current pin, dated
+2026-10-13, is in
+[VALIDATION](VALIDATION.md#ownership-and-actor-start-review-2026-10-13).
+Do not refresh the baseline or suppress drift
 just to clear the alert. CPU surface checks do not establish hardware or native
 RDMA acceptance.
 
@@ -5110,10 +5126,17 @@ actors for messaging. The return mode is part of each actor's setup identity,
 so the fresh fleet sets up in messaging mode. The latch changes only what the
 next setup requests; it never frees, drops or acknowledges anything.
 
-**What to do:** the next render resets the attached mesh once when the
+**What to do:** the next normal render resets the attached mesh once when the
 abandoned lease is its only obstruction
 ([#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn));
-otherwise follow the recovery the refusal names. Diagnose the native path from
+otherwise follow the recovery the refusal names. A Fleet queue does not run
+that reset: Fleet dispatch meets the abandoned samples directly and refuses
+with `LifecycleBusyError` (`... reset the Attached mesh first`). Run **Reset
+attached mesh**, then queue again. On 2026-10-13 a failed Fleet wave on the
+paired Sparks left two abandoned samples and one poisoned RDMA owner, and the
+next Fleet queue refused this way; after a manual reset the next one completed
+by messaging, with the latch and the poisoned owner still in place. Diagnose
+the native path from
 the original error, which the typed error carries as its cause:
 [#75](#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails)
 covers rail selection. A Fleet job fails the same way, with the same typed
