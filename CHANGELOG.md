@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+- Latch native latent return off for the rest of the driver session after a
+  native read fails on the driver. Later setups ask the actors for messaging
+  instead of repeating the fault and retaining another latent each time; the
+  failed render and any Fleet job reading that result raise
+  `NativeReturnLatchedError`, the driver logs one warning, and `/dgxm/telemetry`
+  shows the latch next to `return_ownership`. Ownership rules are unchanged;
+  the latch clears when ComfyUI restarts
+  ([TROUBLESHOOTING #115](docs/TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
+- Add `--timing` to `benchmark/rdma_return_bench.py`: first-use and warm timed
+  returns at chosen sizes inside the checked CPU-staged run, in either
+  message/native order, with `--timing-summary` pairing the reports into warmed
+  medians, savings and ratios. Timing evidence refuses host names, addresses,
+  PIDs and home paths. The recorded 2026-10-13 figures came from a private
+  workspace tool; this mode is the reproducer for later campaigns.
+- Make plain `dgxm update` fetch first, check the fetched commit's dependencies,
+  and fast-forward only after that check passes, so a refusal leaves the
+  checkout at its current commit instead of at the new commit against the old
+  torchmonarch.
 - Attribute a normal render's progress steps to the render's own telemetry
   token without transferring ownership, and ignore a step for a finished render
   or one that arrives when no render is live. A late step no longer leaves
