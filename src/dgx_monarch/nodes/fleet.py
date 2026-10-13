@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import uuid
 
-from .. import mesh_setup, sampling_contract, telemetry_fleet
+from .. import mesh_setup, native_return_latch, sampling_contract, telemetry_fleet
 from ..constants import MODEL_TYPE, NODE_CATEGORY
 from ..log import get_logger
 from ..mesh import ensure_live, mark_defunct_on_supervision_failure
@@ -143,10 +143,9 @@ def _collect_fleet_wave(handle, pending: list, results: list, timeout_s: float,
         if result.get("latent") is None:
             raise RuntimeError(
                 f"fleet job {item.job_index} returned no latent ({result})")
-        if isinstance(item.future, mesh_setup.SetupBoundFuture):
-            results[item.job_index] = read_latent_result(result["latent"], item.future)
-        else:
-            results[item.job_index] = read_latent_result(result["latent"])
+        guard = (item.future,) if isinstance(item.future, mesh_setup.SetupBoundFuture) else ()
+        results[item.job_index] = native_return_latch.typed_read(  # #115 on a latched fault
+            read_latent_result, result["latent"], *guard)
         item.consumed = True
         if job_outputs is not None:
             output = {**(latent_template or {}), "samples": results[item.job_index]}

@@ -164,6 +164,49 @@ def test_the_render_fails_typed_and_its_lease_stays_abandoned(monkeypatch):
     assert native_return_latch.snapshot()["fault_count"] == 1
 
 
+def test_a_fleet_job_fails_typed_and_abandons_its_lease(monkeypatch):
+    from dgx_monarch.nodes import fleet
+
+    class Progress:
+        def __exit__(self, *_args):
+            pass
+
+    class Handle:
+        def collect_one(self, future, timeout_s):
+            descriptor = _native_descriptor() if future == "native" else {"kind": "message"}
+            return {"latent": descriptor, "host": "rank0", "sample_s": 0.1}
+
+    error = RuntimeError("QP init timed out")
+    _failing_read(monkeypatch, error)
+    retired = []
+    monkeypatch.setattr(fleet, "_retire_fleet_future",
+                        lambda future, *, consumed: retired.append((future, consumed)))
+    monkeypatch.setattr(fleet, "mark_defunct_on_supervision_failure", lambda *_args: None)
+
+    with pytest.raises(NativeReturnLatchedError) as raised:
+        fleet._collect_fleet_wave(
+            Handle(), [(0, "native", Progress())], [None], 10.0, 1)
+
+    assert raised.value.__cause__ is error
+    assert "latched native return off" in str(raised.value)
+    assert retired == [("native", False)]  # abandoned, never consumed
+    assert native_return_latch.snapshot()["fault_count"] == 1
+
+
+def test_a_fleet_message_failure_keeps_its_own_error(monkeypatch):
+    from dgx_monarch.nodes import fleet
+
+    error = RuntimeError("message read failed")
+
+    def fail(_descriptor, *_guard):
+        raise error
+    monkeypatch.setattr(fleet, "read_latent_result", fail)
+    native_return_latch.record(TimeoutError())  # an earlier render latched
+    with pytest.raises(RuntimeError) as raised:
+        native_return_latch.typed_read(fleet.read_latent_result, {"kind": "message"})
+    assert raised.value is error
+
+
 def test_a_message_descriptor_failure_keeps_its_own_error(monkeypatch):
     from dgx_monarch.nodes import render_result
 

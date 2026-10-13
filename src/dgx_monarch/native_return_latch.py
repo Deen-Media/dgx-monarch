@@ -83,6 +83,16 @@ def snapshot() -> dict[str, Any]:
         return {"schema": 1, **_STATE, "clears_on": "driver_restart"}
 
 
+def typed_read(read: Any, descriptor: Any, *guard: Any) -> Any:
+    """Run one latent read; a failed native read that latched surfaces typed."""
+    try:
+        return read(descriptor, *guard)
+    except Exception as failure:
+        if isinstance(descriptor, dict) and descriptor.get("kind") == "rdma" and latched():
+            raise latched_error(failure) from failure
+        raise
+
+
 def latched_error(error: BaseException) -> NativeReturnLatchedError:
     """The typed render error, chained by the caller from the native failure.
 

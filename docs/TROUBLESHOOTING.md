@@ -5114,8 +5114,8 @@ abandoned lease is its only obstruction
 otherwise follow the recovery the refusal names. Diagnose the native path from
 the original error, which the typed error carries as its cause:
 [#75](#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails)
-covers rail selection. A Fleet render latches the same way but reports the
-original error rather than the typed one.
+covers rail selection. A Fleet job fails the same way, with the same typed
+error.
 
 **Clearing:** only a ComfyUI restart clears the latch. Neither **Reset attached
 mesh** nor the automatic reset clears it: both stop the actors through the same
