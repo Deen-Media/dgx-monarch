@@ -750,11 +750,12 @@ immutable release slots named for the transaction token, before their owned
 `src` links and units are published. Verified update can migrate the
 colocated unit to an immutable release slot ([Updating](#updating)).
 
-Any change to the config bytes changes the Gate capability context, and the
+A config change that alters the Gate configuration fingerprint
+([DESIGN.md](DESIGN.md) §5.2) changes the Gate capability context, and the
 plan says so before confirmation: earlier contextual `PASS` or `INCONCLUSIVE`
 results cannot authorize optimized residency with the new config. A FAIL stays durable and
 source-independent only for the same canonical model and configuration context, so an
-old-context FAIL does not govern the new config digest.
+old-context FAIL does not govern the new configuration fingerprint.
 
 Once mutation has begun, a `KeyboardInterrupt` or `SystemExit` first settles
 any owned cleanup setup can prove, records unresolved steps as `unknown`,

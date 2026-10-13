@@ -46,11 +46,13 @@ All three choices write `auto_heal = true` and `rdma_latent_return = false`
 (see [`[cluster]`](#cluster)). A dual-Spark render still runs: NCCL carries the
 split and actor messages return the latent.
 
-In cluster mode the file's byte digest is part of the identity gate's
-capability context. Setup shows the old-to-new diff and warns when applying it
-changes that digest. A changed digest makes contextual PASS and INCONCLUSIVE
-rows ineligible until the gate checks the new configuration. A sticky FAIL stays in
-force: no profile change or config rewrite clears it.
+In cluster mode the identity gate's capability context binds a fingerprint of
+the settings that can change math, residency or transport
+([DESIGN.md](DESIGN.md) §5.2). Setup shows the old-to-new diff and warns when
+applying it changes that fingerprint. A changed fingerprint makes contextual
+PASS and INCONCLUSIVE rows ineligible until the gate checks the new
+configuration. A sticky FAIL stays in force: no profile change or config rewrite
+clears it.
 
 ## `[cluster]`
 
