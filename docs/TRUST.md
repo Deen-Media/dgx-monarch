@@ -594,7 +594,7 @@ copied from historical evidence.
     Authorization, setup binding, driver validation, and
     worker revalidation are
     [`gate_identity.py:329-477`](../src/dgx_monarch/nodes/gate_identity.py#L329-L477 "anchor:authorize_normal_render"),
-    [`render_submit.py:186-409`](../src/dgx_monarch/nodes/render_submit.py#L186-L409 "anchor:_submit_render_guarded"),
+    [`render_submit.py:187-417`](../src/dgx_monarch/nodes/render_submit.py#L187-L417 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:90-153`](../src/dgx_monarch/mesh_residency.py#L90-L153 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:240-372`](../src/dgx_monarch/mesh_residency.py#L240-L372 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"), and
@@ -795,7 +795,7 @@ copied from historical evidence.
   boundaries are
   [`gate_identity.py:277-287`](../src/dgx_monarch/nodes/gate_identity.py#L277-L287 "anchor:model_for_request"),
   [`gate_identity.py:329-477`](../src/dgx_monarch/nodes/gate_identity.py#L329-L477 "anchor:authorize_normal_render"),
-  [`render_submit.py:186-409`](../src/dgx_monarch/nodes/render_submit.py#L186-L409 "anchor:_submit_render_guarded"),
+  [`render_submit.py:187-417`](../src/dgx_monarch/nodes/render_submit.py#L187-L417 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
@@ -903,7 +903,7 @@ copied from historical evidence.
   same transaction get no skip
   ([`gate_inconclusive.py:210-210`](../src/dgx_monarch/nodes/gate_inconclusive.py#L210-L210 "anchor:remember_kind")).
   This is enforced at
-  [`common.py:288-366`](../src/dgx_monarch/nodes/common.py#L288-L366 "anchor:run_render"),
+  [`common.py:293-371`](../src/dgx_monarch/nodes/common.py#L293-L371 "anchor:run_render"),
   [`auto_gate.py:200-267`](../src/dgx_monarch/nodes/auto_gate.py#L200-L267 "anchor:auto_gate_required"),
   [`auto_gate.py:270-469`](../src/dgx_monarch/nodes/auto_gate.py#L270-L469 "anchor:maybe_auto_gate"), and
   [`pipeline.py:282-367`](../src/dgx_monarch/nodes/pipeline.py#L282-L367 "anchor:_push_bound"), with

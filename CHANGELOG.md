@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+- Show more of the cluster where operators already look. `/dgxm/metrics` adds
+  `dgxm_render_sec_per_step`, `dgxm_native_return_latched` (0 or 1) and
+  `dgxm_native_return_fault_count`; under a stale telemetry payload the latch
+  series appear only when the cached latch is set, so a cached clear is never
+  reported. The render finish record in `/dgxm/telemetry` now carries the
+  resolved topology label, the auto table row, the latent megapixels, the quant
+  kind, the attention kernel and the final seconds per step, so readers of
+  `/dgxm/telemetry` and the sidebar can see where the table's choice is slow.
+  `dgxm top` and `dgxm diagnostics` captures do not show these fields yet. Each
+  render now times a step against its own previous step, so the second leader
+  of a dp>1 render, or another render in the same Fleet wave, no longer turns
+  the gap between two messages into the seconds per step. Telemetry publishes
+  the RDMA rail link state next to the byte counters, read from the same sysfs
+  files `dgxm doctor` uses, and the time the box read them, so the sidebar and
+  `dgxm top` time each rate by the box's own readings. A device with more than
+  one cabled port now reports each port as `<device>/<port>` in the counters,
+  the link state and the `/dgxm/metrics` rail label. The sidebar draws the
+  active topology above the host cards and one rails line per host with RX and
+  TX rates, and in red the link state of any rail that is not ACTIVE. A box
+  that runs two ranks has its rails read once per poll, so its two cards show
+  the same rates. The idle render line names the topology, the table row and
+  the step rate. The rail readers moved to `rails.py`, the resolved topology
+  facts live in `nodes/resolved_topology.py` and the per-render step marks in
+  `telemetry_steps.py`.
 - Fix five defects an external review of the dev branch confirmed. A
   measured or persisted identity-gate FAIL now quarantines only its own
   checkpoint combination, applied on each dispatch through a per-dispatch

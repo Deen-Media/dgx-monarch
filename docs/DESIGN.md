@@ -1512,6 +1512,7 @@ dgx-monarch/
 │   │   ├── pipeline.py        # bounded FIFO submission/abort orchestration
 │   │   ├── recycle_guard.py   # reset single-flight/rate ownership past HTTP timeout
 │   │   ├── render_session.py  # node-side names for the mesh_session.py API
+│   │   ├── resolved_topology.py # auto's row, quant and megapixels for telemetry
 │   │   ├── sampler_wire.py    # sampler output merge and stock noise rebuild
 │   │   ├── strict_json.py     # non-finite-safe public JSON normalization
 │   │   └── setup_binding.py   # follow-up RPC topology/token reassertion
@@ -1586,10 +1587,14 @@ dgx-monarch/
 │   ├── operator_activity.py   # additive health/activity/maintenance presentation
 │   ├── operator_profiles.py   # compile-time safe/balanced/advanced authoring policy
 │   ├── operator_readiness.py  # canonical three-layer readiness normalizer
+│   ├── rails.py               # RDMA rail byte counters and link state from
+│   │                          #   sysfs (stdlib leaf; telemetry reads both)
 │   ├── telemetry_events.py    # bounded strict-JSON event-tail projection
 │   ├── telemetry_fleet.py     # the last Fleet wave's per-job rows: rank, host,
 │   │                          #   box, duration, prompt digest, driver-clock start
 │   │                          #   and end, and a marker when another box's host answers
+│   ├── telemetry_steps.py     # per-render step marks: each render times a step
+│   │                          #   against its own last one (stdlib leaf)
 │   ├── transfer.py            # messaging + RDMA return paths
 │   ├── transfer_utils.py      # pure tensor-tree/split/read helpers
 │   ├── rdma_poison.py         # process-lifetime poison records + one-time report
@@ -1754,7 +1759,6 @@ an enforced requirement. The current exceptions are:
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |
 | `runtime_provenance.py` | 596 | stdlib-only exact Git/source inventory, loaded-origin validation, and runtime snapshot boundary |
 | `adapters/flux_family.py` | 560 | the flux-family adapters and the sharded forwards they install |
-| `telemetry.py` | 501 | token-aware progress updates and retirement stay with the lock-protected render tracker state (2026-10-12) |
 
 Refusal-class ledger (enforced by `tests/test_refusal_classes.py`, doctrine in
 section 5.9): a typed refusal declares its class through `refusal.refusal()`.

@@ -12,6 +12,7 @@ import shutil
 import subprocess
 import threading
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -44,6 +45,133 @@ def test_a_finished_render_retains_model_steps_wall_and_end_stamp():
     assert last["wall_s"] >= 0
     assert last["ended_at"] > 0
     assert last["ceremony"] is False
+
+
+_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step")
+
+
+def test_the_summary_keeps_where_the_render_ran_and_its_last_step_rate():
+    # render_submit passes these at start, so readers of /dgxm/telemetry and
+    # the panel can show where the auto table's choice is slow.
+    progress = RenderProgress()
+    meta = {"model": "krea2.safetensors", "topology": "uly2", "auto_row": 11,
+            "megapixels": 2.359, "quant": "fp8", "attention": "SAGE_AUTO"}
+    token = progress.start(3, meta, token=object())
+    progress.step(1, 3)
+    progress.step(2, 3)
+    running = progress.snapshot()
+    assert {key: running[key] for key in meta} == meta
+    progress.step(3, 3)
+    final_rate = progress.snapshot()["sec_per_step"]
+    progress.finish(token)
+
+    last = progress.snapshot()["last"]
+    assert {key: last[key] for key in meta} == meta
+    assert last["sec_per_step"] == final_rate
+    assert set(last) == {"model", "steps", "wall_s", "ended_at", "ceremony", *_FACTS}
+
+
+def test_a_start_without_facts_records_each_as_unknown():
+    # Fleet's receiver and older callers start with no facts; the record keeps
+    # one shape and says unknown rather than inherit a previous render's.
+    progress = RenderProgress()
+    token = progress.start(2, {"model": "a", "topology": "uly2", "auto_row": 11},
+                           token=object())
+    progress.step(1, 2)
+    progress.finish(token)
+    _run(progress, "b", 0)
+    last = progress.snapshot()["last"]
+    assert last["model"] == "b"
+    assert all(last[key] is None for key in _FACTS)
+
+
+class _Clock:
+    """A settable wall clock for the tracker, so step times are exact.
+
+    Times count from a nonzero base: a start stamped 0.0 reads as no stamp.
+    """
+
+    def __init__(self, monkeypatch):
+        self.now = 1000.0
+        monkeypatch.setattr(telemetry, "time", SimpleNamespace(time=lambda: self.now))
+
+    def at(self, seconds: float) -> None:
+        self.now = 1000.0 + seconds
+
+
+def test_a_second_dp_leader_repeating_a_step_does_not_shrink_the_rate(monkeypatch):
+    # In a dp2 render each dp group's result leader sends every step on the
+    # same port. The second copy lands milliseconds after the first; timing it
+    # would record that gap as the render's seconds per step.
+    clock = _Clock(monkeypatch)
+    progress = RenderProgress()
+    token = progress.start(4, {"model": "m", "topology": "dp2"}, token=object())
+    live = []
+    for step in range(1, 5):
+        for leader in range(2):
+            clock.at(2.0 * step + 0.01 * leader)
+            progress.step(step, 4, token=token)
+            live.append(progress.snapshot()["sec_per_step"])
+    clock.at(8.05)
+    progress.finish(token)
+
+    assert live == [2.0] * 8
+    assert progress.snapshot()["last"]["sec_per_step"] == 2.0
+
+
+def test_interleaved_fleet_renders_each_time_their_own_steps(monkeypatch):
+    # A Fleet wave runs several renders at once, one token each, and their
+    # steps interleave on the one tracker. Job a steps every 2 s from t=0 and
+    # job b every 3 s from t=0.5; no reading may be the gap between them.
+    clock = _Clock(monkeypatch)
+    progress = RenderProgress()
+    clock.at(0.0)
+    job_a = progress.start(4, token=object())
+    clock.at(0.5)
+    job_b = progress.start(4, token=object())
+    steps = sorted([(2.0 * k, job_a, k) for k in range(1, 5)]
+                   + [(0.5 + 3.0 * k, job_b, k) for k in range(1, 5)])
+    live = []
+    for at, job, step in steps:
+        clock.at(at)
+        progress.step(step, 4, token=job)
+        live.append((job is job_a, progress.snapshot()["sec_per_step"]))
+        if job is job_a and step == 4:
+            progress.finish(job_a)
+    clock.at(12.6)
+    progress.finish(job_b)
+
+    assert {rate for is_a, rate in live if is_a} == {2.0}
+    assert {rate for is_a, rate in live if not is_a} == {3.0}
+    # Job b stepped last, so the record carries its rate.
+    assert progress.snapshot()["last"]["sec_per_step"] == 3.0
+
+
+def test_two_fleet_jobs_stepping_together_record_the_step_time(monkeypatch):
+    clock = _Clock(monkeypatch)
+    progress = RenderProgress()
+    jobs = [progress.start(4, token=object()) for _ in range(2)]
+    for step in range(1, 5):
+        for offset, job in enumerate(jobs):
+            clock.at(2.0 * step + 0.02 * offset)
+            progress.step(step, 4, token=job)
+    clock.at(8.1)
+    for job in jobs:
+        progress.finish(job)
+
+    assert progress.snapshot()["last"]["sec_per_step"] == 2.0
+
+
+def test_overlapping_renders_record_the_last_starts_facts_as_they_do_its_model():
+    progress = RenderProgress()
+    first = progress.start(4, {"model": "a", "topology": "uly2", "auto_row": 11},
+                           token=object())
+    second = progress.start(4, {"model": "b", "topology": "cfg2", "auto_row": 20},
+                            token=object())
+    progress.finish(first)
+    progress.finish(second)
+    last = progress.snapshot()["last"]
+    assert (last["model"], last["topology"], last["auto_row"]) == ("b", "cfg2", 20)
 
 
 def test_the_next_render_replaces_the_retained_summary_and_survives_its_start():

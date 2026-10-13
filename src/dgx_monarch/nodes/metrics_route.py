@@ -100,6 +100,24 @@ def _return_metrics(metric: Callable, block: object, *, scope: str,
         metric("return_descriptor_total", _count(row.get("count")), kind=kind, reason=reason, **labels)
 
 
+def _latch_metrics(metric: Callable, block: object, *, stale: bool) -> None:
+    """The driver's native-return latch, as 0/1 and a fault count.
+
+    The latch only sets, and it lives in the same driver process as the
+    telemetry cache, so a cached ``latched: true`` is still true. A stale
+    ``latched: false`` may be out of date, so both series are omitted then.
+    The reason is an open set of exception class names, so it stays in
+    /dgxm/telemetry and is not a label here.
+    """
+    if not isinstance(block, dict) or block.get("schema") != 1:
+        return
+    latched = block.get("latched")
+    if not isinstance(latched, bool) or (stale and not latched):
+        return
+    metric("native_return_latched", latched)
+    metric("native_return_fault_count", _count(block.get("fault_count")))
+
+
 def _metrics_text(telemetry: dict) -> str:
     lines = []
 
@@ -127,8 +145,10 @@ def _metrics_text(telemetry: dict) -> str:
     render = render_value if isinstance(render_value, dict) else {}
     metric("render_active", int(bool(render.get("active"))))
     metric("render_step", render.get("step"))
+    metric("render_sec_per_step", render.get("sec_per_step"))
     stale = bool(telemetry.get("telemetry_error"))
     metric("telemetry_stale", stale)
+    _latch_metrics(metric, telemetry.get("native_return_latch"), stale=stale)
     mesh = telemetry.get("mesh")
     if isinstance(mesh, dict) and not stale:
         state = mesh.get("state")

@@ -46,6 +46,12 @@ export const readinessPanelModel = () => ({ state: 'unknown', title: 'Unknown', 
 export const diagnosticsPanelModel = () => ({ state: 'unavailable', title: 'Diagnostics unavailable', rows: [] });
 export const fleetJobRows = () => [];
 export const lastTimeline = () => null;
+export const activeTopology = () => null;
+export const createRailRateTracker = () => ({ update: () => ({}) });
+export const hostRailRates = () => new Map();
+export const lastRenderFacts = () => "";
+export const railLineParts = () => [];
+export const railRows = () => [];
 """)
     driver = r"""
 import assert from 'node:assert/strict';

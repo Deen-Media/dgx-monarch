@@ -136,3 +136,68 @@ def test_a_worker_on_older_source_reports_unavailable_rather_than_no_series():
     driverless = _metrics_text({})
     assert 'dgxm_diagnostics_available{scope="driver"} 0' in driverless
     assert 'dgxm_return_ownership_available{scope="driver"} 0' in driverless
+
+
+def test_step_interval_is_exported_only_when_the_render_block_has_one():
+    result = _metrics_text({"render": {"active": True, "step": 4, "sec_per_step": 1.25}})
+    assert "dgxm_render_step 4" in result
+    assert "dgxm_render_sec_per_step 1.25" in result
+    for payload in ({"render": {"active": True, "step": 0}}, {"render": {"active": False}}, {},
+                    {"render": {"active": True, "sec_per_step": float("nan")}},
+                    {"render": {"active": True, "sec_per_step": "1.2"}}):
+        assert "dgxm_render_sec_per_step" not in _metrics_text(payload)
+
+
+def _latch(**fields):
+    return {"schema": 1, "latched": False, "reason": None, "latched_unix_s": None,
+            "fault_count": 0, "last_fault_unix_s": None, "clears_on": "driver_restart",
+            **fields}
+
+
+def test_native_return_latch_exports_state_and_fault_count():
+    result = _metrics_text({"native_return_latch": _latch(
+        latched=True, reason="TimeoutError", latched_unix_s=1.0, fault_count=3,
+        last_fault_unix_s=2.0)})
+    assert "dgxm_native_return_latched 1" in result
+    assert "dgxm_native_return_fault_count 3" in result
+    # The class name stays in /dgxm/telemetry: an open set makes no bounded label.
+    assert "TimeoutError" not in result
+    clear = _metrics_text({"native_return_latch": _latch()})
+    assert "dgxm_native_return_latched 0" in clear
+    assert "dgxm_native_return_fault_count 0" in clear
+
+
+def test_absent_or_malformed_latch_block_exports_no_latch_series():
+    for payload in ({}, {"native_return_latch": None}, {"native_return_latch": "latched"},
+                    {"native_return_latch": _latch(schema=2, latched=True)},
+                    {"native_return_latch": _latch(latched="yes", fault_count=1)}):
+        result = _metrics_text(payload)
+        assert "dgxm_native_return_" not in result
+    result = _metrics_text({"native_return_latch": _latch(latched=True, fault_count=10**10000)})
+    assert "dgxm_native_return_latched 1" in result
+    assert "dgxm_native_return_fault_count" not in result
+
+
+def test_stale_payload_reports_a_set_latch_but_never_a_clear_one():
+    clear = _metrics_text({"telemetry_error": "RefreshInFlight",
+                           "native_return_latch": _latch(fault_count=0)})
+    assert "dgxm_telemetry_stale 1" in clear
+    assert "dgxm_native_return_" not in clear
+    # The latch clears only with the driver process, so a cached set latch still holds.
+    latched = _metrics_text({"telemetry_error": "RefreshInFlight",
+                             "native_return_latch": _latch(latched=True, fault_count=2)})
+    assert "dgxm_native_return_latched 1" in latched
+    assert "dgxm_native_return_fault_count 2" in latched
+
+
+def test_latch_series_follow_the_published_snapshot():
+    from dgx_monarch import native_return_latch
+
+    assert "dgxm_native_return_latched 0" in _metrics_text(
+        {"native_return_latch": native_return_latch.snapshot()})
+    native_return_latch.record(TimeoutError("peer detail"))
+    native_return_latch.record(TimeoutError("peer detail"))
+    result = _metrics_text({"native_return_latch": native_return_latch.snapshot()})
+    assert "dgxm_native_return_latched 1" in result
+    assert "dgxm_native_return_fault_count 2" in result
+    assert "peer detail" not in result

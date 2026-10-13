@@ -56,6 +56,7 @@ from .render_quarantine import (
     _apply_persisted_quarantine as _apply_persisted_quarantine,
 )
 from .render_submit import submit_render
+from .resolved_topology import ResolvedTopology, TopologyFacts
 
 log = get_logger(__name__)
 
@@ -245,7 +246,11 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     decision = choose_auto_topology(
         family, quant, megapixels, world, cfg_value=cfg_value,
         batch_size=shape[0])
-    return decision.topology, decision.sage, decision.reason
+    # Observed by telemetry only. World 1 consults no table row, whatever the
+    # decision's rule field holds, so the row stays None there.
+    row = getattr(getattr(decision, "rule", None), "row", None) if world > 1 else None
+    facts = TopologyFacts(row=row, quant=quant, megapixels=megapixels)
+    return ResolvedTopology(decision.topology, decision.sage, decision.reason, facts)
 
 
 def _resolve_topology_for_latent(
