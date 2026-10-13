@@ -21,6 +21,41 @@ def failure_text(exc: BaseException) -> str:
         return f"<{type(exc).__name__}>"
 
 
+def exception_chain(
+    exc: BaseException,
+    *,
+    opaque: type[BaseException] | tuple[type[BaseException], ...] = (),
+    depth: int = 8,
+) -> list[BaseException]:
+    """``exc`` and the exceptions chained behind it, nearest first, each once.
+
+    Both ``__cause__`` and ``__context__`` count: ``raise ... from None`` hides
+    the context from tracebacks but keeps it, and a wrapper raised ``from`` a
+    failure puts that failure's own links one step further back. The walk goes
+    at most ``depth`` links behind ``exc``, visits each exception once, so a
+    cyclic chain ends, and never looks behind an ``opaque`` exception. It reads
+    no exception text and never raises.
+    """
+    chain: list[BaseException] = []
+    seen: set[int] = set()
+    level = [exc]
+    for _ in range(depth + 1):
+        following: list[BaseException] = []
+        for current in level:
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            chain.append(current)
+            try:
+                if not isinstance(current, opaque):
+                    following += [link for link in (current.__cause__, current.__context__)
+                                  if isinstance(link, BaseException)]
+            except BaseException:
+                pass
+        level = following
+    return chain
+
+
 def safe_call(method: Any, *args: Any) -> None:
     try:
         method(*args)

@@ -986,7 +986,17 @@ dependency requirements on the driver and every configured host. A changed
 pin downloads a compatible wheel into a temporary directory for metadata
 inspection; an unchanged pin uses installed metadata and needs no download.
 Missing or incompatible prerequisites refuse the update with bounded package
-details. The checkout may already have fast-forwarded; this check does not add
+details. From a checkout whose `.git` is a directory, plain update fetches
+first and reads these requirements from the fetched commit, then fast-forwards
+to that commit only after the check passes, so a refusal leaves the checkout at
+its current commit. A checkout that already contains its fetched upstream, as
+one with local commits does, stays where it is and plain update checks its
+HEAD. A checkout that has diverged from its upstream, or a branch with no
+upstream, refuses. So does a staged, unstaged or index-hidden edit to
+`pyproject.toml`, before the fetch, because the fast-forward would install it
+without checking it; commit or discard the edit first. A linked worktree or
+submodule, whose `.git` is a file, and a copy without Git skip the fetch and
+check the working tree's requirements instead. This check does not add
 verified update's rollback or receipt guarantees to the plain path.
 Plain and verified updates share one file lock per driver checkout, so a second
 update from any process, in either mode, refuses before it changes anything.

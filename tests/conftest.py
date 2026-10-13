@@ -134,6 +134,14 @@ def _monarch_policy_starts_unadmitted(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _native_return_latch_starts_clear(monkeypatch):
+    """The latch lives as long as a driver process; each test starts as a fresh one."""
+    from dgx_monarch import native_return_latch
+
+    monkeypatch.setattr(native_return_latch, "_STATE", native_return_latch.clear_state())
+
+
+@pytest.fixture(autouse=True)
 def _quarantine_scope_starts_empty():
     """Isolate quarantine records and cached class-K denials between tests.
 

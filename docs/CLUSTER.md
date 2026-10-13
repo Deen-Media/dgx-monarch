@@ -141,7 +141,10 @@ before it starts any process. Conflicting ambient
 environment variables are refused. A transport-policy change requires a fresh
 process; it cannot change an already initialized RDMA manager safely. Preserve
 Worker ownership and follow the reviewed update/restart procedure in
-[Changing policy after install](#changing-policy-after-install).
+[Changing policy after install](#changing-policy-after-install). A failed native
+read latches native return off until ComfyUI restarts, so later setups use
+messaging
+([TROUBLESHOOTING #115](TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
 
 ### `[monarch.diagnostics]`
 
@@ -170,9 +173,14 @@ ComfyUI. `ambient_otlp_endpoint_conflict` means `OTEL_EXPORTER_OTLP_ENDPOINT` in
 the ComfyUI environment names another endpoint: make `otlp_endpoint` match it,
 or unset the variable and restart ComfyUI. Removing a configured endpoint also
 needs a restart. An actor or Worker that cannot start a requested export logs
-an ERROR with the reason and keeps running. `/dgxm/telemetry` reports the
-driver's export state as `monarch_diagnostics`, beside the requested policy in
-`monarch_policy`.
+an ERROR with the reason and keeps running. A refused edit leaves the driver's
+running export alone. When the driver accepts an edit but cannot stop the old
+workers, for example because a render still holds them, it puts back that
+fleet's policy and export; if the old exporter thread is still blocked in a
+backend call, it cannot restart, the driver logs an ERROR, and
+`monarch_diagnostics` reads `exporter_still_running` until the next mesh build.
+`/dgxm/telemetry` reports the driver's export state as `monarch_diagnostics`,
+beside the requested policy in `monarch_policy`.
 
 `dgxm diagnostics --capabilities` explains the exact runtime's diagnostic
 limits. A finite capture reads existing telemetry only:

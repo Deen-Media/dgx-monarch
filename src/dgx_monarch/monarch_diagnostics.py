@@ -36,12 +36,10 @@ def configure_policy(policy: Any) -> dict[str, Any]:
 
     validated = parse_policy({"diagnostics": asdict(policy)}).diagnostics
     endpoint = validated.otlp_endpoint
-    existing = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
-    if endpoint and existing != endpoint:
-        if existing:
-            return _policy_refused("ambient_otlp_endpoint_conflict")
-        if any(name.startswith("monarch._rust_bindings") for name in sys.modules):
-            return _policy_refused("otlp_restart_required")
+    reason = start_refusal(validated)
+    if reason:
+        return _policy_refused(reason)
+    if endpoint:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = endpoint
     configure(metrics=validated.metrics)
     with _LOCK:
@@ -50,6 +48,23 @@ def configure_policy(policy: Any) -> dict[str, Any]:
             "upstream_log_export_acknowledged": validated.otlp_logs,
         }
     return status()
+
+
+def start_refusal(policy: Any) -> str | None:
+    """Why configure_policy would refuse this policy's endpoint, or None; reads only.
+
+    The driver asks before it admits anything, so a refused edit never stops
+    the running exporter: a refusal through configure_policy would.
+    """
+    endpoint = policy.otlp_endpoint
+    existing = os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT", "")
+    if not endpoint or existing == endpoint:
+        return None
+    if existing:
+        return "ambient_otlp_endpoint_conflict"
+    if any(name.startswith("monarch._rust_bindings") for name in sys.modules):
+        return "otlp_restart_required"
+    return None
 
 
 def _policy_refused(reason: str) -> dict[str, Any]:
@@ -70,10 +85,12 @@ def requested_refusal(state: Any, policy: Any) -> str | None:
 
 
 def configure_policy_logged(policy: Any, role: str) -> dict[str, Any]:
-    """Actor and Worker form: log a refusal at ERROR and continue without export.
+    """Actor, Worker and driver-restore form: log a refusal at ERROR and continue.
 
     A raise here would surface as a spawn failure, which poisons the driver
-    transport; only the driver refuses (monarch_launch.prepare_driver).
+    transport; only the driver refuses (monarch_launch.prepare_driver). Its
+    restore_driver also uses this form, since a failed restore must not mask
+    the error that caused it.
     """
     state = configure_policy(policy)
     reason = requested_refusal(state, policy)

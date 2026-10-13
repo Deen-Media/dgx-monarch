@@ -743,7 +743,8 @@ sampling-spec drift fails closed.
   any token, preparation, or runner start, the driver proves those absences and
   removes that exact root. An incomplete or failed native read performs zero
   native drops and retains the destination and every part because the operation
-  may still be live. After a completed read, cleanup attempts each local drop
+  may still be live, and any failed native read latches later setups to messaging
+  until the driver restarts ([TROUBLESHOOTING #115](TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)). After a completed read, cleanup attempts each local drop
   exactly once. The same cleanup is safe when an off-loop scratch contender has
   proved that the native operation never started. A failed or ambiguous drop is
   never retried and sends zero ACK; only its local handle and any memory it may
@@ -1568,6 +1569,8 @@ dgx-monarch/
 │   ├── rdma_read_token.py     # read-token publication, proof, and retirement
 │   ├── rdma_receiver.py       # fail-closed read/drop/ACK transaction
 │   ├── rdma_settlement.py     # durable local-drop publication helpers
+│   ├── native_return_latch.py # driver latch: messaging after a failed native
+│   │                          #   read, cleared only by a driver restart
 │   ├── tui/readiness_view.py  # pure canonical readiness renderer for the TUI
 │   ├── tui/view_helpers.py    # dashboard rendering/recording helpers
 │   └── cli/                   # dgxm command adapters and lifecycle leaves

@@ -245,6 +245,7 @@ def _telemetry_uncached() -> dict:
     from .. import (
         monarch_diagnostics,
         monarch_policy,
+        native_return_latch,
         return_diagnostics,
         runtime_diagnostics,
         telemetry,
@@ -269,6 +270,7 @@ def _telemetry_uncached() -> dict:
         "events": telemetry.events_tail(64),
         "diagnostics": runtime_diagnostics.snapshot(),
         "return_ownership": return_diagnostics.driver_snapshot(),
+        "native_return_latch": native_return_latch.snapshot(),
         "monarch_policy": monarch_policy.snapshot(),
         # Driver metrics/OTLP export state: requested is monarch_policy, running is this.
         "monarch_diagnostics": monarch_diagnostics.status(),

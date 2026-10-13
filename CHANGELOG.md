@@ -2,6 +2,41 @@
 
 ## [Unreleased]
 
+- Keep the driver's metrics export through a config edit that does not
+  produce a new fleet. An `otlp_endpoint` the driver cannot install now refuses
+  before anything is written, so the running exporter is never stopped, and an
+  exporter thread waiting on a slow telemetry backend carries on when the
+  backend answers. When the driver admits an edit but cannot stop the old
+  workers, for example because a render still holds them, it now puts back the
+  old fleet's policy and export, so a revert that reuses that fleet finds both
+  as they were. If an exporter stopped for that edit is still blocked in a
+  backend call and cannot restart, the driver logs one ERROR and
+  `/dgxm/telemetry` shows `exporter_still_running` in `monarch_diagnostics`
+  until the next mesh build.
+- Latch native latent return off for the rest of the driver session after a
+  native read fails on the driver. Later setups ask the actors for messaging
+  instead of repeating the fault and retaining another latent each time; the
+  failed render, and a Fleet job whose own native read fails, raise
+  `NativeReturnLatchedError`, the driver logs one warning, and `/dgxm/telemetry`
+  shows the latch next to `return_ownership`. Ownership rules are unchanged;
+  the latch clears when ComfyUI restarts
+  ([TROUBLESHOOTING #115](docs/TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
+- Add `--timing` to `benchmark/rdma_return_bench.py`: first-use and warm timed
+  returns at chosen sizes inside the checked CPU-staged run, in either
+  message/native order, with `--timing-summary` pairing the reports into warmed
+  medians, savings and ratios. The summary needs both orders and refuses a set
+  that lacks one, naming the missing order. Timing evidence refuses host names,
+  addresses, PIDs and home paths, and a plan that would stage more than
+  `--timing-budget-gib` (default 8) refuses. The recorded 2026-10-13 figures
+  came from a private workspace tool; this mode implements the same protocol
+  for later campaigns and has not yet run on hardware.
+- Make plain `dgxm update` fetch first, check the fetched commit's dependencies,
+  and fast-forward only after that check passes, so a refusal leaves the
+  checkout at its current commit instead of at the new commit against the old
+  torchmonarch. A checkout whose HEAD already contains its upstream, as with
+  local commits, stays where it is and is checked at HEAD. A staged, unstaged or
+  index-hidden edit to `pyproject.toml` refuses before the fetch, because the
+  fast-forward would otherwise install it without checking it.
 - Attribute a normal render's progress steps to the render's own telemetry
   token without transferring ownership, and ignore a step for a finished render
   or one that arrives when no render is live. A late step no longer leaves

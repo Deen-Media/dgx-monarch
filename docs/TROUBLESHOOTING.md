@@ -284,6 +284,9 @@ benefited, while 8-MiB returns showed no consistent material gain. Those totals
 combine pack RPC and read/drop/ACK; they are not network-only read timings.
 Native return remains off by default. A failed or ambiguous native operation
 must retain ownership until settlement; first-use cost never authorizes retry.
+To measure your own selected rail, run the qualifier's `--timing` mode in
+`benchmark/rdma_return_bench.py` in both orders and pair the reports with its
+`--timing-summary` mode.
 
 ## 11. Custom sampler renders as euler / "sampler … is not registered on this worker"
 
@@ -5080,3 +5083,46 @@ combination prove itself once; nothing needs clearing. The narrowing matters
 only for later `cluster.toml` edits: editing a setting that
 [DESIGN.md](DESIGN.md) §5.2 lists as outside the fingerprint keeps PASS rows,
 and every other edit still needs a fresh proof.
+
+## 115. A render fails with `NativeReturnLatchedError` and later renders return by messaging
+
+**Symptom:** with `rdma_latent_return = true`, a render fails after the workers
+finish, and its error names native RDMA latent return and the latch. The driver
+log carries one WARNING saying native return is latched off for this ComfyUI
+process. Later renders return their latents by actor messaging, so large
+latents come back slower but complete. `/dgxm/telemetry` shows
+`native_return_latch` beside `return_ownership`, with `latched: true`, the
+failed read's exception type as `reason`, `latched_unix_s`, `fault_count`,
+`last_fault_unix_s` and `clears_on: driver_restart`.
+
+**Cause:** a native latent read failed on the driver. Any failure of a native
+read on the driver trips the latch: a queue-pair initialization timeout, a
+registration or read failure, a read timeout, a policy readback refusal, a
+failed ACK, or a refusal before the read starts, including a read on a lease
+that already retired. Ownership settles as
+[#29](#29-large-rdma-latent-return-fails-after-workers-finish-rendering)
+describes: nothing is dropped or acknowledged without proof, a started read
+keeps its destination, and the failed render's lease stays abandoned. Before
+the latch, the recycle and retry built fresh actors that registered natively
+again, so the same fault repeated on every render and kept one more latent
+each time. Now the driver records the fault, and every later setup asks the
+actors for messaging. The return mode is part of each actor's setup identity,
+so the fresh fleet sets up in messaging mode. The latch changes only what the
+next setup requests; it never frees, drops or acknowledges anything.
+
+**What to do:** the next render resets the attached mesh once when the
+abandoned lease is its only obstruction
+([#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn));
+otherwise follow the recovery the refusal names. Diagnose the native path from
+the original error, which the typed error carries as its cause:
+[#75](#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails)
+covers rail selection. A Fleet job fails the same way, with the same typed
+error.
+
+**Clearing:** only a ComfyUI restart clears the latch. Neither **Reset attached
+mesh** nor the automatic reset clears it: both stop the actors through the same
+recycle, the driver still holds any retained destination, and a recycle does
+not show that the fault went away. Fix the fault, then restart ComfyUI; the
+next setup requests native return again. To stay on messaging across restarts,
+set `rdma_latent_return = false`; on a managed installation, follow
+[#113](#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit).

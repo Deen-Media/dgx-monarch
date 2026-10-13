@@ -104,50 +104,68 @@ _DIAGNOSTICS_HINTS = {
 }
 
 
-def prepare_driver(config: Any) -> None:
+Admission = tuple[dict[str, Any], str | None]
+
+
+def _refuse_export(reason: str | None) -> None:
+    """Raise the typed refusal for a requested export the driver cannot start."""
+    if reason:
+        from .config_schema import ClusterConfigError
+
+        raise ClusterConfigError(
+            f"[monarch.diagnostics] metrics or OTLP export cannot start on the driver ({reason}); "
+            + _DIAGNOSTICS_HINTS.get(reason, 'set metrics = false and otlp_endpoint = "", or restart ComfyUI'))
+
+
+def prepare_driver(config: Any) -> Admission | None:
     """Admit every participant's policy, apply it before native import, admit the runtime.
 
     Each refusal is a typed ClusterConfigError raised before transport commit.
     Monarch first loads here, so the fault hook is installed here too, ahead of
-    every transport call. A refusal after an earlier completed admission puts
-    that admission back, so a refused cluster.toml edit leaves the live fleet's
-    policy, token and export state as they were.
+    every transport call. An endpoint the driver cannot install refuses before
+    anything is written, so the running exporter and its thread stay as they
+    were. Any later failure puts the earlier completed admission back through
+    restore_driver. Returns the admission this one replaced, None on a first
+    build, for the caller to restore if the fleet it admitted stays registered.
     """
-    from .config_schema import ClusterConfigError
     from .mesh import install_fault_hook
     from .monarch_capabilities import assert_supported_runtime
-    from .monarch_diagnostics import configure_policy, requested_refusal
-    from .monarch_policy import (
-        DiagnosticsPolicy,
-        activate_native_policy,
-        admit_native_targets,
-        admitted,
-        apply_policy,
-        restore_admitted,
-    )
+    from .monarch_diagnostics import configure_policy, requested_refusal, start_refusal
+    from .monarch_policy import activate_native_policy, admit_native_targets, admitted, apply_policy
     from .monarch_policy_io import driver_host
 
     host, native = driver_host(config), config.rdma_latent_return
     if native:
         admit_native_targets(config.monarch, (host, *(entry.name for entry in config.hosts)))
+    diagnostics = config.monarch.diagnostics
+    _refuse_export(start_refusal(diagnostics))
     previous = admitted()
     try:
         apply_policy(config.monarch, host, role="driver", native_enabled=native)
-        diagnostics = config.monarch.diagnostics
-        reason = requested_refusal(configure_policy(diagnostics), diagnostics)
-        if reason:
-            raise ClusterConfigError(
-                f"[monarch.diagnostics] metrics or OTLP export cannot start on the driver ({reason}); "
-                + _DIAGNOSTICS_HINTS.get(reason, 'set metrics = false and otlp_endpoint = "", or restart ComfyUI'))
+        _refuse_export(requested_refusal(configure_policy(diagnostics), diagnostics))
         import monarch.actor  # noqa: F401 - load native bindings before identity admission
 
         install_fault_hook()
         assert_supported_runtime()
         activate_native_policy()
     except BaseException:
-        if previous is not None:
-            restore_admitted(previous)
-            # A refusal already stopped the exporter thread; only a fresh
-            # configure_policy starts the earlier export again.
-            configure_policy(DiagnosticsPolicy(**previous[0]["policy"]["diagnostics"]))
+        restore_driver(previous)
         raise
+    return previous
+
+
+def restore_driver(previous: Admission | None) -> None:
+    """Put back an admission prepare_driver replaced; None, from a first build, is a no-op.
+
+    Only a fresh configure_policy restarts an exporter the replacing admission
+    stopped. When the stopped thread is still inside a backend call, that
+    restart is refused: monarch_diagnostics.status() then reads
+    exporter_still_running and one ERROR names it, instead of a silent loss.
+    """
+    if previous is None:
+        return
+    from .monarch_diagnostics import configure_policy_logged
+    from .monarch_policy import DiagnosticsPolicy, restore_admitted
+
+    restore_admitted(previous)
+    configure_policy_logged(DiagnosticsPolicy(**previous[0]["policy"]["diagnostics"]), "driver")

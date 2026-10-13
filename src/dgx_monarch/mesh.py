@@ -723,14 +723,15 @@ def get_mesh(
                     _TRANSPORT_MODE = wanted_transport
                 mesh_factory.begin_creation_cleanup(
                     cleanup_claim, fleet_handoff, reserve_transport=True)
-            from .monarch_launch import prepare_driver
+            from .monarch_launch import prepare_driver, restore_driver
             # Admit before recycling: a config edit the driver refuses keeps the working fleet.
-            prepare_driver(config)
+            previous_admission = prepare_driver(config)
             if old is not None:
                 log.info("mesh source/config changed; recycling the previous fleet")
                 try:
                     old.shutdown(timeout_s=30)  # never under _MESH_LOCK
                 except Exception as exc:
+                    restore_driver(previous_admission)  # old stays registered and reusable on a revert
                     raise MeshAttachError(
                         "configuration changed, but old workers could not be stopped safely; reset "
                         "the Attached mesh, or restart ComfyUI once they are confirmed gone") from exc
