@@ -5,7 +5,6 @@ import threading
 from typing import Any
 
 import torch
-from monarch.rdma import RDMABuffer, is_ibverbs_available
 
 from . import rdma_ownership, rdma_poison, rdma_settlement, transfer_utils
 from .log import get_logger
@@ -32,6 +31,9 @@ log = get_logger(__name__)
 RDMA_READ_TIMEOUT_S = 120
 RDMA_GET_MARGIN_S = 15
 RDMA_READ_OUTER_MARGIN_S = 30
+# monarch.rdma loads on first use, never at node registration (transfer_utils.native_rdma_buffer).
+RDMABuffer: Any = transfer_utils.native_rdma_buffer
+is_ibverbs_available = transfer_utils.ibverbs_available
 _NATIVE_RDMA_BUFFER = RDMABuffer
 _RDMA_PREFLIGHT_LOCK = threading.Lock()
 _RDMA_PREFLIGHT_RESULT: bool | None = None
@@ -313,7 +315,7 @@ def _register_parts(tensor: torch.Tensor, n: int, handoff: dict | None = None) -
                     "offset": off, "nbytes": size, "_buffer_owner": []}
                 parts.append(part)
                 intent = _publish_constructor_intent(part, tensor)
-                # C list.extend owns the constructor result before Python resumes.
+                # RDMABuffer returns via one Python frame; an interrupt there fails closed: poison, no use-after-free.
                 part["_buffer_owner"].extend(map(RDMABuffer, (flat[off:off + size],)))
                 if _part_buffer(part) is None:
                     raise RuntimeError("RDMA registration returned no buffer")

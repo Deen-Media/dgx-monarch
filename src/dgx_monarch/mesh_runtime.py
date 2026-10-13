@@ -132,7 +132,7 @@ def bootstrap_proc() -> None:
         if path not in sys.path:
             sys.path.insert(0, path)
     from .monarch_capabilities import assert_supported_runtime
-    from .monarch_diagnostics import configure_policy
+    from .monarch_diagnostics import configure_policy_logged
     from .monarch_launch import NATIVE_ENV
     from .monarch_policy import POLICY_ENV, activate_native_policy, apply_policy, policy_from_token
     from .runtime_provenance import enforce_source_only_imports
@@ -141,7 +141,7 @@ def bootstrap_proc() -> None:
     assert_supported_runtime()
     policy = policy_from_token(os.environ[POLICY_ENV])
     apply_policy(policy, role="actor", native_enabled=os.environ.get(NATIVE_ENV) == "1")
-    configure_policy(policy.diagnostics)
+    configure_policy_logged(policy.diagnostics, "actor")  # an ERROR, never a spawn failure
     activate_native_policy()
 
     # Arm the actor-side reaper here, the one piece of dgx-monarch that already

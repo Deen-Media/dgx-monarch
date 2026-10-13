@@ -145,8 +145,14 @@ def install_unhandled_fault_hook(correlation_state) -> bool:
     Deliberate teardown noise is INFO; other faults are ERROR, and an exact
     repeat is a counted line. The supplied callable returns a coherent
     ``(live, creating, teardown-in-flight)`` snapshot. Returns whether the
-    hook was installed.
+    hook was installed. Before Monarch is loaded it defers rather than import
+    it: the driver must apply its policy and OTLP endpoint first, and
+    monarch_launch.prepare_driver installs the hook right after that import.
     """
+    import sys
+
+    if "monarch.actor" not in sys.modules:
+        return False
     from . import fault_repeats, mesh_safety
     from .log import get_logger
 

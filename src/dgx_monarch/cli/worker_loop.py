@@ -47,14 +47,14 @@ def main() -> None:
 
     import os
 
-    from ..monarch_diagnostics import configure_policy
+    from ..monarch_diagnostics import configure_policy_logged
     from ..monarch_launch import NATIVE_ENV
     from ..monarch_policy import MonarchPolicy, apply_policy, policy_from_token
 
     policy = policy_from_token(args.runtime_policy) if args.runtime_policy else MonarchPolicy()
     apply_policy(policy, role="worker", native_enabled=args.native_rdma)
     os.environ[NATIVE_ENV] = "1" if args.native_rdma else "0"
-    configure_policy(policy.diagnostics)
+    configure_policy_logged(policy.diagnostics, "worker")  # an ERROR; the loop still serves
 
     # Persist actor identities for later loops and lifecycle sweeps. Use a
     # daemon thread because run_worker_loop_forever blocks in native code.

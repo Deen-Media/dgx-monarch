@@ -193,7 +193,8 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   liveness. Only confirmation from every configured host that its processes
   are gone releases the replacement latch. Supervision text, an unanswered
   probe, and every other result leave the latch set. See [TROUBLESHOOTING.md #51](TROUBLESHOOTING.md#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib) and [#87](TROUBLESHOOTING.md#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn).
-- `unhandled_fault_hook` is installed at node-pack import: faults surface as
+- `unhandled_fault_hook` is installed when the driver first loads Monarch,
+  after policy admission and before any transport call: faults surface as
   ComfyUI toasts and log lines with the actor/host named, never as silent hangs.
 ### 5.2 GPUWorker actor (endpoint surface)
 
@@ -260,7 +261,11 @@ Risky single-model normal-render residency is separately authorized for every
 immutable dispatch snapshot. A Gate PASS is only the source of authority: the
 request grant binds the primary model and detailed checkpoint/LoRA artifact
 set, the complete effective worker policy, physical config identity, resolved
-topology and attention, and the selected READY setup generation/key. A Gate
+topology and attention, and the selected READY setup generation/key. The
+physical config identity hashes only the `cluster.toml` settings that can
+change math, residency or transport, leaving out `auto_heal`, `ssh_key`,
+`monarch.startup_timeout_s` and `[monarch.diagnostics]`
+(`monarch_policy_io.trust_config_fingerprint`). A Gate
 ceremony proves exactly one model, so dual-model requests are forced onto
 complete stock residency while driver and worker artifact preflight still bind
 both model slots. Driver preflight, worker preflight, and post-adoption checks
@@ -704,9 +709,11 @@ sampling-spec drift fails closed.
   production-path check alongside the later qualification and scope limits.
 
   The earlier disconnected-rail failure remains historical evidence, not a
-  qualification of the upgraded runtime. Current policy requires an explicit
-  `nic:<device>` target for single-NIC native operation and validates native
-  readback before transfers. NIC affinity pairs device names; it does not
+  qualification of the upgraded runtime. With native return on, current policy
+  requires every participant, the driver and each configured host, to resolve
+  to an explicit `nic:<device>` target whatever `max_nics_per_buffer` allows; the
+  driver checks every host before any process starts, and each process validates
+  native readback before transfers. NIC affinity pairs device names; it does not
   discover network reachability. Application chunks and native QPs are separate
   settings, both defaulting to one; the validated chunk count cannot be changed
   through an ambient environment override after admission. A rail selector is
@@ -1713,7 +1720,7 @@ an enforced requirement. The current exceptions are:
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |
 | `runtime_provenance.py` | 596 | stdlib-only exact Git/source inventory, loaded-origin validation, and runtime snapshot boundary |
 | `adapters/flux_family.py` | 560 | the flux-family adapters and the sharded forwards they install |
-| `telemetry.py` | 501 | token-aware progress updates and retirement stay with the lock-protected render tracker state |
+| `telemetry.py` | 501 | token-aware progress updates and retirement stay with the lock-protected render tracker state (2026-10-12) |
 
 Refusal-class ledger (enforced by `tests/test_refusal_classes.py`, doctrine in
 section 5.9): a typed refusal declares its class through `refusal.refusal()`.

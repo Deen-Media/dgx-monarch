@@ -62,6 +62,30 @@ def _policy_refused(reason: str) -> dict[str, Any]:
     return status()
 
 
+def requested_refusal(state: Any, policy: Any) -> str | None:
+    """Why requested metrics or OTLP export are unavailable; None when not requested or running."""
+    if not (policy.metrics or policy.otlp_endpoint) or not isinstance(state, dict):
+        return None
+    return None if state.get("available") is not False else str(state.get("reason") or "unavailable")
+
+
+def configure_policy_logged(policy: Any, role: str) -> dict[str, Any]:
+    """Actor and Worker form: log a refusal at ERROR and continue without export.
+
+    A raise here would surface as a spawn failure, which poisons the driver
+    transport; only the driver refuses (monarch_launch.prepare_driver).
+    """
+    state = configure_policy(policy)
+    reason = requested_refusal(state, policy)
+    if reason:
+        from .log import get_logger
+
+        get_logger(__name__).error(
+            "Monarch diagnostics requested for this %s are unavailable (%s); it continues "
+            "without them", role, reason)
+    return state
+
+
 class _MetricExporter:
     def __init__(self, meter: Any) -> None:
         # The 0.7 Python wrapper does not implement gauges/observables or

@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import replace
 from typing import Any
 
 from .cli.worker_process_env import worker_environment_key_allowed
-from .monarch_policy import encode_policy, policy_environment
+from .monarch_policy import MonarchPolicy, encode_policy, policy_environment
 from .runtime_provenance import SOURCE_ONLY_PYCACHE_PREFIX
 
 NATIVE_ENV = "DGXM_MONARCH_NATIVE_ENABLED"
@@ -16,7 +17,10 @@ _REMOTE_EXEC = 'py=$1; shift; case "$py" in "~/"*) py="$HOME/${py#??}";; esac; e
 
 
 def worker_policy_args(config: Any, host: Any) -> list[str]:
-    args = ["--runtime-policy", encode_policy(config.monarch, host.name)]
+    # Only the driver reads the readiness budget, so the Worker token carries
+    # the default and a budget edit leaves the Worker units current.
+    worker = replace(config.monarch, startup_timeout_s=MonarchPolicy().startup_timeout_s)
+    args = ["--runtime-policy", encode_policy(worker, host.name)]
     if config.rdma_latent_return:
         args.append("--native-rdma")
     return args
@@ -91,15 +95,41 @@ def wait_worker_ready(workers: Any, deadline: float) -> None:
         get_off_loop(workers.status.call(), remaining, "dgxm-workers-status")
 
 
-def prepare_driver(config: Any) -> None:
-    """Apply policy before native import and admit the exact supported runtime."""
-    from .monarch_capabilities import assert_supported_runtime
-    from .monarch_diagnostics import configure_policy
-    from .monarch_policy import activate_native_policy, apply_policy
+_DIAGNOSTICS_HINTS = {
+    "otlp_restart_required": "Monarch loaded in this process before the endpoint could be "
+                             "installed; restart ComfyUI",
+    "ambient_otlp_endpoint_conflict": "OTEL_EXPORTER_OTLP_ENDPOINT in the ComfyUI environment names "
+                                      "another endpoint; make otlp_endpoint match it, or unset it and "
+                                      "restart ComfyUI",
+}
 
-    apply_policy(config.monarch, role="driver", native_enabled=config.rdma_latent_return)
-    configure_policy(config.monarch.diagnostics)
+
+def prepare_driver(config: Any) -> None:
+    """Admit every participant's policy, apply it before native import, admit the runtime.
+
+    Each refusal is a typed ClusterConfigError raised before transport commit.
+    Monarch first loads here, so the fault hook is installed here too, ahead of
+    every transport call.
+    """
+    from .config_schema import ClusterConfigError
+    from .mesh import install_fault_hook
+    from .monarch_capabilities import assert_supported_runtime
+    from .monarch_diagnostics import configure_policy, requested_refusal
+    from .monarch_policy import activate_native_policy, admit_native_targets, apply_policy
+    from .monarch_policy_io import driver_host
+
+    host, native = driver_host(config), config.rdma_latent_return
+    if native:
+        admit_native_targets(config.monarch, (host, *(entry.name for entry in config.hosts)))
+    apply_policy(config.monarch, host, role="driver", native_enabled=native)
+    diagnostics = config.monarch.diagnostics
+    reason = requested_refusal(configure_policy(diagnostics), diagnostics)
+    if reason:
+        raise ClusterConfigError(
+            f"[monarch.diagnostics] metrics or OTLP export cannot start on the driver ({reason}); "
+            + _DIAGNOSTICS_HINTS.get(reason, 'set metrics = false and otlp_endpoint = "", or restart ComfyUI'))
     import monarch.actor  # noqa: F401 - load native bindings before identity admission
 
+    install_fault_hook()
     assert_supported_runtime()
     activate_native_policy()

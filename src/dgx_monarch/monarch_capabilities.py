@@ -3,12 +3,11 @@
 Importing this module is stdlib-only. Explicit collection imports Torch and
 Monarch, but never creates an actor, RDMA manager, buffer, or device context.
 A loadable native binding is not evidence of a usable GPU or fabric. Metadata
-ownership and RECORD identity do not verify installed payload bytes.
+ownership does not verify installed payload bytes.
 """
 from __future__ import annotations
 
 import copy
-import hashlib
 import importlib
 import importlib.metadata
 import platform
@@ -18,18 +17,17 @@ from typing import Any
 
 
 def _origin(module: Any, distribution: Any) -> dict[str, object]:
+    # Ownership only: a digest of the resolved path names the install location
+    # to anyone who can guess it, and committed snapshots carry these facts.
     filename = getattr(module, "__file__", None)
     if not filename:
-        return {"distribution_owned": False, "origin_sha256": None}
+        return {"distribution_owned": False}
     origin = Path(filename).resolve()
     owned = any(
         Path(distribution.locate_file(entry)).resolve() == origin
         for entry in distribution.files or ()
     )
-    return {
-        "distribution_owned": owned,
-        "origin_sha256": hashlib.sha256(str(origin).encode()).hexdigest(),
-    }
+    return {"distribution_owned": owned}
 
 
 def collect_capabilities() -> dict[str, Any]:
@@ -48,11 +46,6 @@ def collect_capabilities() -> dict[str, Any]:
         try:
             distribution = importlib.metadata.distribution(package)
             facts["distribution_version"] = distribution.version
-            if package == "torchmonarch":
-                record = distribution.read_text("RECORD")
-                facts["record_sha256"] = (
-                    hashlib.sha256(record.encode()).hexdigest() if record else None
-                )
             module = importlib.import_module("monarch" if package == "torchmonarch" else package)
             facts["package"] = _origin(module, distribution)
             facts["import_status"] = "ok"

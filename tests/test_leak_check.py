@@ -1,6 +1,7 @@
 """Tests for tools/leak_check.py, which scans tracked files' working-tree bytes for private values."""
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import os
 import subprocess
@@ -583,3 +584,83 @@ def test_missing_tracked_file_is_an_error(tmp_path: Path):
 
     with pytest.raises(leak_check.LeakCheckError, match="cannot read tracked path"):
         leak_check.scan_repository(tmp_path, allowlist)
+
+
+def _sha256_hex(path: bytes) -> bytes:
+    return hashlib.sha256(path).hexdigest().encode("ascii")
+
+
+_PRIVATE_SITE = (
+    b"/home/" + b"project-owner" + b"/venv/lib/python3.12/site-packages/torch/__init__.py"
+)
+
+
+def test_digest_of_a_visible_private_home_path_in_a_fixture_is_a_finding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    private_home = b"/home/" + b"project-owner"
+    monkeypatch.setenv("HOME", os.fsdecode(private_home))
+    fixture = b'{\n  "origin_sha256": "' + _sha256_hex(private_home) + b'"\n}\n'
+    allowlist = _init_repo(tmp_path, {"tests/fixtures/pin.json": fixture})
+
+    result = leak_check.scan_repository(tmp_path, allowlist)
+
+    assert _finding_keys(result) == {
+        ("tests/fixtures/pin.json", 2, leak_check.PATH_DIGEST_RULE)
+    }
+
+
+def test_path_digest_matches_only_a_whole_lowercase_digest_of_a_private_path():
+    digests = leak_check.path_digests({os.fsdecode(_PRIVATE_SITE)})
+    token = _sha256_hex(_PRIVATE_SITE)
+    data = b"\n".join((
+        b"content " + _sha256_hex(b"/opt/venv/torch/__init__.py"),
+        b"upper " + token.upper(),
+        b"longer " + token + b"0",
+        b'"origin_sha256": "' + token + b'"',
+    ))
+
+    findings = [
+        item for item in leak_check.scan_bytes("pin.json", data, digests)
+        if item.rule == leak_check.PATH_DIGEST_RULE
+    ]
+
+    assert [(item.line, item.column) for item in findings] == [(4, 19)]
+    assert token.decode() not in repr(findings)
+
+
+@pytest.mark.parametrize(
+    "path",
+    (b"/home/runner/venv/torch/__init__.py", b"/opt/venv/torch/__init__.py", b"relative/x.py"),
+)
+def test_placeholder_and_non_home_paths_yield_no_digest(path: bytes):
+    assert leak_check.path_digests({os.fsdecode(path)}) == frozenset()
+
+
+def test_candidates_cover_a_site_directory_and_its_package_origins(tmp_path: Path):
+    site = tmp_path / "site-packages"
+    package = site / "pkg"
+    package.mkdir(parents=True)
+    for name in ("__init__.py", "_native.cpython-312-aarch64-linux-gnu.so", "helper.py"):
+        (package / name).write_text("")
+    (site / "module.py").write_text("")
+
+    candidates = leak_check.candidate_paths([site, tmp_path / "absent"])
+
+    assert {
+        str(site), str(package), str(site / "module.py"),
+        str(package / "__init__.py"),
+        str(package / "_native.cpython-312-aarch64-linux-gnu.so"),
+        str(tmp_path / "absent"),
+    } <= candidates
+    assert str(package / "helper.py") not in candidates
+
+
+def test_path_digest_rule_cannot_be_allowlisted(tmp_path: Path):
+    digest_allowlist = tmp_path / "digest.toml"
+    digest_allowlist.write_text(
+        _fixture_allowlist().replace('rule = "machine-hostname"', f'rule = "{leak_check.PATH_DIGEST_RULE}"'),
+        encoding="utf-8",
+    )
+    with pytest.raises(leak_check.LeakCheckError, match="unknown rule"):
+        leak_check.load_allowlist(digest_allowlist)

@@ -102,7 +102,7 @@ def test_generated_probe_uses_owned_release_not_base_or_driver_staging(context, 
         env.pop('PYTHONPATH', None)
     result = run(config, host, env)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == '0.7.0'
+    assert result.stdout.splitlines() == ['dgxm_worker_policy=MANAGED', '0.7.0']
     assert (site / 'torchmonarch-0.6.0.dist-info/METADATA').is_file()
 
 
@@ -117,7 +117,23 @@ def test_pre_setup_and_plain_install_keep_base_environment(context, layout):
     env.pop('PYTHONPATH', None)
     result = run(config, host, env)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == '0.6.0'
+    assert result.stdout.splitlines() == ['dgxm_worker_policy=PLAIN', '0.6.0']
+
+
+@pytest.mark.parametrize('unit_kind', ['canonical', 'hardened', 'legacy'])
+def test_stale_policy_still_inspects_owned_release_and_reports_the_verdict(context, unit_kind):
+    from dataclasses import replace
+
+    config, host, _base, _managed, unit, site, staging = context
+    if unit_kind == 'hardened':
+        unit.write_text(systemd_worker_unit(config, host, managed_source=True,
+                                           update_token=TOKEN, site_packages=str(site)))
+    elif unit_kind == 'legacy':
+        suffix = ' ' + ' '.join(quote(arg) for arg in worker_policy_args(config, host))
+        unit.write_text(unit.read_text().replace(suffix + '\n', '\n'))
+    result = run(replace(config, rdma_latent_return=True), host, dict(os.environ, PYTHONPATH=str(staging)))
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.splitlines() == ['dgxm_worker_policy=POLICY_STALE', '0.7.0']
 
 
 @pytest.mark.parametrize('damage', ['missing-unit', 'changed-unit', 'unknown-link', 'unit-dropin'])
@@ -140,7 +156,10 @@ def test_unverified_source_never_falls_back_to_base_or_staging(context, damage):
 
 
 
-@pytest.mark.parametrize('verdict', ["printf 'MANAGED\\nPLAIN\\n'", "echo MANAGED; exit 1", "echo UNKNOWN"])
+@pytest.mark.parametrize('verdict', [
+    "printf 'MANAGED\\nPLAIN\\n'", "echo MANAGED; exit 1", "echo UNKNOWN",
+    "echo POLICY_STALE", "echo MANAGED; exit 3", "echo POLICY_STALE; exit 1",
+])
 def test_failed_or_ambiguous_guard_never_runs_environment_probe(context, monkeypatch, verdict):
     from dgx_monarch.cli import doctor_worker_context
 
@@ -161,4 +180,5 @@ def test_wrong_managed_pin_does_not_fall_back_to_matching_base(context):
     env.pop('PYTHONPATH', None)
     result = run(config, host, env)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.strip() == '0.6.0' != TORCHMONARCH_PIN
+    assert result.stdout.splitlines()[0] == 'dgxm_worker_policy=MANAGED'
+    assert result.stdout.splitlines()[1:] == ['0.6.0'] != [TORCHMONARCH_PIN]

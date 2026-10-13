@@ -372,10 +372,32 @@ def test_exact_legacy_unit_remains_owned_during_policy_migration(tmp_path, monke
     assert run(managed_source_probe(config, host)).stdout.strip() == 'FAILED_SOURCE_LAYOUT'
 
 
-def test_managed_policy_drift_is_not_treated_as_legacy(tmp_path, monkeypatch):
+@pytest.mark.parametrize('replacement', ['tampered-policy', 'e30=', 'W10='])
+def test_managed_policy_tampering_is_neither_legacy_nor_stale(tmp_path, monkeypatch, replacement):
+    """A token that is not the canonical encoding of a whole policy is foreign.
+
+    ``e30=`` is ``{}``, which parses as the default policy but is not how any
+    renderer writes it; ``W10=`` is a JSON list.
+    """
     from dgx_monarch.monarch_launch import worker_policy_args
 
     config, host, _base, _site, unit = layout(tmp_path, monkeypatch)
     token = worker_policy_args(config, host)[1]
-    unit.write_text(unit.read_text().replace(token, 'tampered-policy'))
-    assert run(managed_source_probe(config, host)).stdout.strip() == 'FAILED_SOURCE_LAYOUT'
+    unit.write_text(unit.read_text().replace(token, replacement))
+    result = run(managed_source_probe(config, host))
+    assert result.returncode == 1 and result.stdout.strip() == 'FAILED_SOURCE_LAYOUT'
+
+
+def test_managed_policy_change_reads_stale_not_tampered(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from dgx_monarch.cli.lifecycle_managed import POLICY_STALE, POLICY_STALE_EXIT
+
+    config, host, _base, _site, unit = layout(tmp_path, monkeypatch)
+    edited = replace(config, rdma_latent_return=True)
+    result = run(managed_source_probe(edited, host))
+    assert result.returncode == POLICY_STALE_EXIT and result.stdout.strip() == POLICY_STALE
+    unit.write_text(lifecycle_systemd.systemd_worker_unit(edited, host, managed_source=True, update_token=TOKEN))
+    assert run(managed_source_probe(edited, host)).stdout.strip() == 'MANAGED'
+    result = run(managed_source_probe(config, host))
+    assert result.returncode == POLICY_STALE_EXIT and result.stdout.strip() == POLICY_STALE

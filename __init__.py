@@ -14,7 +14,9 @@ from dgx_monarch.mesh import install_fault_hook  # noqa: E402
 from dgx_monarch.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS  # noqa: E402
 
 # Broadcast actor and host fault details to logs and ComfyUI websocket toasts
-# (DESIGN.md §5.1); web/js/dgx_monarch.js displays the toast.
+# (DESIGN.md §5.1); web/js/dgx_monarch.js displays the toast. Installs now only
+# if Monarch is already loaded; otherwise prepare_driver installs the hook right
+# after the driver loads Monarch, once its policy and OTLP endpoint are applied.
 install_fault_hook()
 
 WEB_DIRECTORY = "./web/js"

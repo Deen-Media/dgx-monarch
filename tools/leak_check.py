@@ -4,12 +4,14 @@
 The checker reads the working-tree copy of every path ``git ls-files`` lists, so
 uncommitted edits are scanned and untracked files are not. It does not inspect
 index blobs, skip binary files, or print the matched value: CI diagnostics
-identify only the path, line, column, and rule.
+identify only the path, line, column, and rule. A second pass reports digests
+of private home paths; ``PATH_DIGEST_RULE`` explains its reach.
 """
 from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import os
 import re
 import stat
@@ -183,6 +185,68 @@ _APPROVED_ALLOWLIST_VALUES = {
     "gpu-identifier": frozenset({"GPU-deadbeef*"}),
     "machine-hostname": frozenset({"examplebox-*"}),
 }
+
+# A SHA-256 of a private home path leaks the path to anyone who can guess it,
+# and no pattern tells such a digest from a content hash. The scanner holds no
+# path, so it hashes the private paths this interpreter can name without a
+# filesystem walk and reports a 64-hex token equal to one of them. That catches
+# a digest only where the path is visible, such as the host that wrote the
+# fixture; CI sees placeholder homes only. The rule cannot be allowlisted.
+PATH_DIGEST_RULE = "path-digest"
+PATH_DIGEST_DESCRIPTION = "SHA-256 of a private home path this interpreter can name"
+_HEX_DIGEST = re.compile(rb"(?<![0-9A-Fa-f])[0-9a-f]{64}(?![0-9A-Fa-f])")
+
+
+def _children(directory: Path) -> list[Path]:
+    try:
+        return sorted(Path(entry.path) for entry in os.scandir(directory))
+    except OSError:
+        return []
+
+
+def candidate_paths(seeds: Sequence[Path]) -> set[str]:
+    """Each seed, resolved and as given, with its entries and their package files.
+
+    A seed's entries cover a site-packages directory's packages and modules;
+    a package's ``__init__.py`` and native ``*.so`` files cover the module
+    origins a runtime snapshot records.
+    """
+    paths: set[str] = set()
+    for seed in seeds:
+        try:
+            roots = {seed.absolute(), seed.resolve()}
+        except (OSError, RuntimeError):
+            continue
+        for root in roots:
+            paths.add(str(root))
+            for child in _children(root):
+                paths.add(str(child))
+                for grandchild in _children(child):
+                    if grandchild.name == "__init__.py" or grandchild.suffix == ".so":
+                        paths.add(str(grandchild))
+    return paths
+
+
+def path_digests(paths: Sequence[str] | set[str]) -> frozenset[bytes]:
+    """Hex SHA-256 digests of the paths under a non-placeholder home."""
+    return frozenset(
+        hashlib.sha256(raw).hexdigest().encode("ascii")
+        for raw in map(os.fsencode, paths)
+        if _PRIVATE_HOME_PATH.match(raw)
+    )
+
+
+def visible_path_digests(root: Path, tracked: Sequence[str]) -> frozenset[bytes]:
+    """Digests of the private paths this interpreter and checkout can name."""
+    seeds = [Path(sys.prefix), Path(sys.base_prefix), root]
+    try:
+        seeds.append(Path.home())
+    except RuntimeError:  # no HOME and no password entry: nothing to add
+        pass
+    seeds.extend(Path(entry) for entry in sys.path if entry)
+    paths = candidate_paths(seeds)
+    paths.update(str(root.joinpath(*PurePosixPath(relative).parts)) for relative in tracked)
+    return path_digests(paths)
 
 
 @dataclass(frozen=True, repr=False)
@@ -404,7 +468,10 @@ def _line_column(line_starts: list[int], offset: int) -> tuple[int, int]:
     return line_index + 1, offset - line_starts[line_index] + 1
 
 
-def scan_bytes(relative: str, data: bytes) -> list[Finding]:
+def scan_bytes(
+    relative: str, data: bytes, digests: frozenset[bytes] = frozenset()
+) -> list[Finding]:
+    """Rule matches in the path and contents, plus any digest in ``digests``."""
     candidates: list[Finding] = []
     path_bytes = os.fsencode(relative)
     line_starts = _line_starts(data)
@@ -430,6 +497,21 @@ def scan_bytes(relative: str, data: bytes) -> list[Finding]:
                     column=column,
                     rule=rule.name,
                     description=rule.description,
+                    matched=match.group(),
+                )
+            )
+    if digests:
+        for match in _HEX_DIGEST.finditer(data):
+            if match.group() not in digests:
+                continue
+            line, column = _line_column(line_starts, match.start())
+            candidates.append(
+                Finding(
+                    path=relative,
+                    line=line,
+                    column=column,
+                    rule=PATH_DIGEST_RULE,
+                    description=PATH_DIGEST_DESCRIPTION,
                     matched=match.group(),
                 )
             )
@@ -477,9 +559,12 @@ def scan_repository(root: Path, allowlist_path: Path) -> ScanResult:
     git_root = _git_root(root)
     allowances = load_allowlist(allowlist_path)
     paths = tracked_paths(git_root)
+    digests = visible_path_digests(git_root, paths)
     candidates: list[Finding] = []
     for relative in paths:
-        candidates.extend(scan_bytes(relative, _read_tracked_file(git_root, relative)))
+        candidates.extend(
+            scan_bytes(relative, _read_tracked_file(git_root, relative), digests)
+        )
     return ScanResult(_apply_allowlist(candidates, allowances), len(paths))
 
 

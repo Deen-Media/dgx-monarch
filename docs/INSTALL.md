@@ -750,11 +750,13 @@ immutable release slots named for the transaction token, before their owned
 `src` links and units are published. Verified update can migrate the
 colocated unit to an immutable release slot ([Updating](#updating)).
 
-Any change to the config bytes changes the Gate capability context, and the
-plan says so before confirmation: earlier contextual `PASS` or `INCONCLUSIVE`
-results cannot authorize optimized residency with the new config. A FAIL stays durable and
+The plan warns before confirmation whenever setup would change the config
+file. Only a change that alters the Gate configuration fingerprint
+([DESIGN.md](DESIGN.md) §5.2) changes the Gate capability context: earlier
+contextual `PASS` or `INCONCLUSIVE` results then cannot authorize optimized
+residency with the new config. A FAIL stays durable and
 source-independent only for the same canonical model and configuration context, so an
-old-context FAIL does not govern the new config digest.
+old-context FAIL does not govern the new configuration fingerprint.
 
 Once mutation has begun, a `KeyboardInterrupt` or `SystemExit` first settles
 any owned cleanup setup can prove, records unresolved steps as `unknown`,
@@ -1101,7 +1103,14 @@ not required for the two-Spark layout.
 setup or update unit, owner, parent directories and release target. Sync
 leaves an authenticated release unchanged. It refuses foreign links or unit
 overrides rather than writing into a release slot. Plain source directories
-retain the normal sync path.
+retain the normal sync path. A unit whose only difference is a well-formed
+`[monarch]` or `rdma_latent_return` policy other than the current one reads
+`POLICY_STALE`. `dgxm restart` refuses it before stopping any Worker,
+`dgxm up` refuses that host, and `dgxm update --verify --target HEAD` renders
+the current policy. When a host's check goes unanswered, as after an SSH
+transport error, restart keeps the old order, and `dgxm up` refuses the stale
+host after the stop
+([TROUBLESHOOTING #113](TROUBLESHOOTING.md#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit)).
 
 A clean successful update removes its temporary controller snapshot. Failed
 or interrupted runs retain it and print its recovery location. Preserve it

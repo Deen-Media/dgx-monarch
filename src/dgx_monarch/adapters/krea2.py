@@ -1,10 +1,10 @@
 """Krea2 single-stream image DiT adapter.
 
-Text, image, positions, and other token-aligned tensors take identical shards.
-Ulysses excludes divisibility-pad rows before attention, and the gathered image
-stream is trimmed before the output head. Under pure Ulysses the text path runs
-on every text row before the text shards, and the joint blocks attend in stock
-key order.
+Text, image, positions, and other token-aligned tensors take identical shards,
+and Ulysses excludes divisibility-pad rows before attention. Under pure Ulysses
+the text path runs on every text row before the text shards, joint blocks attend
+in stock key order, and both streams are gathered and trimmed before the output
+head. The ring and hybrid branch is unchanged: it runs the head per shard, then gathers.
 """
 from __future__ import annotations
 

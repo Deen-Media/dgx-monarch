@@ -79,7 +79,7 @@ that match the tested configurations in its model details. See
 | Model | single | cfg2 | Ulysses | ring | FSDP | Status | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | Krea2 (RAW+Turbo) | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
-| Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
+| Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. Plain Euler at CFG 1 leaves cfg2 nothing to split; padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
 | Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
@@ -188,8 +188,10 @@ header and artifact identity even when its weights load on workers.
 | `qwen_image_vae.safetensors` | `models/vae` | Official sample VAE |
 
 Download links, byte sizes and SHA-256 hashes are in
-[the artifact manifest](../example_workflows/artifacts.toml). The INT8 row's
-source remains unverified: a filename does not establish its release or quantizer.
+[the artifact manifest](../example_workflows/artifacts.toml). The INT8 row is a
+placeholder for a conversion you supply, so it carries no link, size or hash;
+[the test record](VALIDATION.md#evidence-kroma) lists the tested file's SHA-256.
+Its source remains unverified: a filename does not establish its release or quantizer.
 Preserve its embedded quantization metadata. INT8 ConvRot requires ComfyUI
 and comfy-kitchen support for `int8_tensorwise` with rotation; changing the
 UNET loader's weight dtype does not create that conversion. Leave weight dtype

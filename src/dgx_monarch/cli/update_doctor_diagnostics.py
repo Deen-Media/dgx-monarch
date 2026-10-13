@@ -32,6 +32,7 @@ _HOST_CHECKS = {
     "NCCL_PROTO": "worker_nccl_protocol",
     "listener generation": "worker_listener_generation",
     "swap": "worker_swap",
+    "worker policy": "worker_policy",
 }
 _UNAVAILABLE = "doctor diagnostics: unavailable"
 

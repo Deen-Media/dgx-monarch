@@ -271,8 +271,8 @@ torchmonarch is pinned; bump it on all hosts at once.
 An earlier host-death test observed `SupervisionError` after about 69 seconds,
 responsive healthy hosts and same-mesh respawn after the host returned. That
 result does not establish general same-driver recovery. The later 0.7.0
-single-Worker stop/start check reproduced a replacement-attach timeout and a
-poisoned driver transport; see [the dated lifecycle results](VALIDATION.md#lifecycle).
+single-Worker stop/start check on 2026-10-13 (UTC) reproduced a replacement-attach
+timeout and a poisoned driver transport; see [the dated lifecycle results](VALIDATION.md#lifecycle).
 A poisoned transport requires a fresh driver after confirmed owned cleanup;
 resetting its attached mesh does not clear that transport state.
 
@@ -424,6 +424,9 @@ always interpreted literally.
 
 **Fix:** use batch size 2 (two images, one per rank), or Init `mode=local` +
 `gpus_per_host=1` for a true one-GPU render, or leave topology on `auto`.
+A batch that VAEEncode turns into video frames, as in the Kroma upscale graph,
+stays at 1 whatever the batch widget says, so only the last two fixes apply
+there; see [the Kroma notes](MODELS.md#model-kroma).
 
 The same refusal also appears at the loader node, before anything loads,
 whenever the graph states a literal batch on an empty-latent node ComfyUI
@@ -837,7 +840,9 @@ registry ownership in-process.
 imports the updated source, and verify the configured hosts with `dgxm doctor`
 before retrying. If an update cannot be deployed immediately, set
 `rdma_latent_return = false` in the cluster configuration and restart the
-driver to use the slower actor-message return path. Do not infer a model or
+driver to use the slower actor-message return path; on a managed installation
+that edit reads `POLICY_STALE` until `dgxm update --verify --target HEAD`
+re-renders the Worker units (#113). Do not infer a model or
 distributed-math failure from this transport error; verify the per-rank latent
 signatures separately.
 
@@ -4995,7 +5000,7 @@ production Future failure. The probe now obtains a Future from the public
 channel API before testing `.get()` inside an asyncio loop. Queue dispatch is
 now unconditional upstream, but the removed setting still requires review.
 
-The development pin is now 0.7.0, with a regenerated ARM64 schema-2 baseline.
+On 2026-10-12 the development pin moved to 0.7.0, with a regenerated ARM64 schema-2 baseline.
 The canary uses Torch 2.12.0+cu132 and additionally requires a native RDMA import,
 an empty native action and a separate `cpu-smoke` run. The smoke checks local
 actors, concurrent dispatch, terminal timeout cancellation for decorated
@@ -5009,3 +5014,65 @@ RDMA buffer drops as well as dispatch behavior; unchanged signatures do not
 prove those ownership contracts. Do not refresh the baseline or suppress drift
 just to clear the alert. CPU surface checks do not establish hardware or native
 RDMA acceptance.
+
+## 113. Lifecycle commands refuse with POLICY_STALE after a policy edit
+
+**Symptom:** after a change to any `[monarch]` setting other than
+`startup_timeout_s`, or to `cluster.rdma_latent_return`, on an installation that
+guided setup or a verified update wrote, `dgxm restart`, `dgxm up` and
+auto-heal refuse with `POLICY_STALE` and point here. `dgxm doctor` fails the
+host's `worker policy` row with `STALE`. The Worker services keep running:
+restart checks every host before it stops any of them, unless a host's check
+goes unanswered.
+
+**Cause:** each Worker unit carries the policy resolved from cluster.toml as
+`--runtime-policy` arguments, plus `--native-rdma` when native return is on.
+Only guided setup and a verified update write a managed unit, so editing the
+file leaves the installed unit with the earlier policy. A unit whose only
+difference from the generated unit is a well-formed policy other than the
+current one reads `POLICY_STALE`, and lifecycle commands refuse to start it. A
+unit with no policy arguments counts as current only while cluster.toml selects
+the default policy with native return off. Any other difference from the
+generated unit, including a malformed policy argument, still reads
+`FAILED_SOURCE_LAYOUT`.
+
+**Remedy:** stop ComfyUI, then run a verified update to the commit the driver
+checkout already has:
+
+```bash
+dgxm update --verify --target HEAD
+```
+
+The update stages a fresh release of that commit, stops the Workers, writes
+units rendered from the current cluster.toml, starts them, and runs Doctor and
+the cluster smoke. A check that definitely fails restores the earlier units
+and release. The
+usual [verified-update conditions](INSTALL.md#updating) apply: a clean
+checkout, a reachable `origin`, and no ComfyUI, Render session or actor
+running. A transport-policy change needs a fresh driver process in any case.
+To back out instead, restore the earlier settings; the installed unit then
+matches again. If `dgxm update --verify --target HEAD` then refuses with
+`prior_worker_drift`, someone edited the Worker unit by hand to a policy value
+that config loading refuses; undo that edit to restore the earlier settings,
+then run the update again.
+
+A verified update run from a checkout older than Worker policy arguments
+writes units without them. Those units are current under the default policy
+with native return off. Under any other policy, the new release's Doctor step
+fails the `worker policy` row and the update restores the prior release. Run
+that update with `rdma_latent_return = false`, then restore the setting and
+run the command above.
+
+## 114. Every combination runs its first-use Gate again after an update
+
+**Symptom:** after deploying the 2026-10-12 change that narrowed the Gate's
+configuration fingerprint, the first render of each model, residency and LoRA
+combination runs the Identity Gate again, although `cluster.toml` is unchanged.
+
+This is expected, once per combination. Deploying any new source already
+re-proves every combination (the note at the top of this page), so the
+narrowed fingerprint changes nothing you can see at that deploy. Let each
+combination prove itself once; nothing needs clearing. The narrowing matters
+only for later `cluster.toml` edits: editing a setting that
+[DESIGN.md](DESIGN.md) §5.2 lists as outside the fingerprint keeps PASS rows,
+and every other edit still needs a fresh proof.

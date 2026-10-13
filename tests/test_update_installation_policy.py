@@ -124,8 +124,44 @@ def test_exact_policy_and_legacy_update_unit_recognition(monkeypatch, native, le
     assert recognize(unit)
     assert not recognize(unit.replace("RestartSec=3", "RestartSec=8"))
     if not legacy:
-        assert not recognize(unit.replace(worker_policy_args(config, host)[1], "e30="))
-        assert not recognize(unit.replace(' "--native-rdma"', '') if native else unit.replace(' "--runtime-policy"', ' "--native-rdma" "--runtime-policy"'))
+        token = worker_policy_args(config, host)[1]
+        # "e30=" parses as the default policy but is not its canonical encoding.
+        assert not recognize(unit.replace(token, "e30="))
+        assert not recognize(unit.replace(' "--runtime-policy"', ' "--native-rdma" "--runtime-policy"'))
+        # A flipped native flag is an earlier policy, not tampering: capture
+        # accepts it so the update can render the current one.
+        flipped = unit.replace(' "--native-rdma"', '') if native else unit.replace(f'"{token}"', f'"{token}" "--native-rdma"')
+        assert recognize(flipped)
+        assert not recognize(flipped.replace("RestartSec=3", "RestartSec=8"))
+
+
+def test_capture_binds_live_argv_to_its_own_unit_across_a_policy_rerender(capture, monkeypatch):
+    """The update captures a stale unit with the argv it started; after the
+    re-render the next capture binds the new argv to the new unit, never one
+    unit to the other's argv."""
+    from dataclasses import replace
+
+    from dgx_monarch.monarch_policy import parse_policy
+
+    run, _, _, _ = capture
+    monkeypatch.setattr(install.lifecycle, "_is_local", lambda _host: False)
+    old, host = setup()
+    new = replace(old, rdma_latent_return=True, monarch=parse_policy({"diagnostics": {"metrics": True}}))
+    stale = systemd_worker_unit(old, host, managed_source=True, update_token=TOKEN)
+    rendered = systemd_worker_unit(new, host, managed_source=True, update_token="u-333333333333-4444444444444444")  # noqa: S106
+
+    def argv(config):
+        return [sys.executable, "-m", "dgx_monarch.cli.worker_loop", "--address", host.address,
+                *worker_policy_args(config, host)]
+
+    captured = run(stale, argv(old))
+    row = {**captured, "site": "/home/user/.local/share/dgx-monarch/src", "home": "/home/user", "user": "user",
+           "live": {"kind": "symlink", "target": f"/home/user/.local/share/dgx-monarch/releases/{TOKEN}/site"}}
+    assert install.recognized_unit(new, host, row)
+    assert run(rendered, argv(new))["sha256"] == hashlib.sha256(rendered.encode()).hexdigest()
+    for unit, command in ((rendered, argv(old)), (stale, argv(new))):
+        with pytest.raises(ValueError, match="Worker command"):
+            run(unit, command)
 
 
 def test_snapshot_preserves_children_and_cgroup_refusals(capture):
