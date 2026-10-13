@@ -119,3 +119,20 @@ def test_failed_or_inflight_worker_poll_hides_cached_phase_and_ownership_counts(
         assert "dgxm_return_live_handoffs" not in result
     result = _metrics_text({"workers": [worker], "status_poll": {"fresh": True}})
     assert "dgxm_phase_duration_seconds_count" in result
+
+
+def test_a_worker_on_older_source_reports_unavailable_rather_than_no_series():
+    current = {"diagnostics": _diagnostics(),
+               "return_ownership": {"schema": 1, "available": True, "live_handoffs": 0}}
+    for older in ({}, {"diagnostics": None, "return_ownership": "absent"}):
+        result = _metrics_text({"diagnostics": _diagnostics(), "workers": [current, older]})
+        # An `== 0` alert fires for the worker that lacks the blocks after a partial deploy.
+        assert 'dgxm_diagnostics_available{scope="worker",worker_index="0"} 1' in result
+        assert 'dgxm_diagnostics_available{scope="worker",worker_index="1"} 0' in result
+        assert 'dgxm_return_ownership_available{scope="worker",worker_index="0"} 1' in result
+        assert 'dgxm_return_ownership_available{scope="worker",worker_index="1"} 0' in result
+        assert 'worker_index="1",phase=' not in result
+        assert 'dgxm_return_live_handoffs{scope="worker",worker_index="1"}' not in result
+    driverless = _metrics_text({})
+    assert 'dgxm_diagnostics_available{scope="driver"} 0' in driverless
+    assert 'dgxm_return_ownership_available{scope="driver"} 0' in driverless

@@ -59,11 +59,21 @@ def _token(payload: object) -> str:
 
 OUT_OF_RANGE = _token({**policy_dict(MonarchPolicy()), 'startup_timeout_s': 1})
 STALE_TOKEN = worker_policy_args(EDITS['metrics_on'](BASE), HOST)[1]
+_DEFAULT = policy_dict(MonarchPolicy())
 TAMPER = {
     'garbage_token': lambda text, token: text.replace(token, 'tampered-policy'),
     'default_not_canonical': lambda text, token: text.replace(token, 'e30='),
     'partial_payload': lambda text, token: text.replace(token, _token({'startup_timeout_s': 180})),
     'list_payload': lambda text, token: text.replace(token, 'W10='),
+    'extra_key': lambda text, token: text.replace(token, _token({**_DEFAULT, 'extra': 1})),
+    'string_for_int': lambda text, token: text.replace(token, _token({**_DEFAULT, 'startup_timeout_s': '180'})),
+    'bool_for_int': lambda text, token: text.replace(token, _token({**_DEFAULT, 'startup_timeout_s': True})),
+    'host_targets_entry': lambda text, token: text.replace(token, _token(
+        {**_DEFAULT, 'rdma': {**_DEFAULT['rdma'], 'host_targets': {'worker': 'nic:mlx5_0'}}})),
+    'spaced_encoding': lambda text, token: text.replace(token, base64.urlsafe_b64encode(
+        json.dumps(_DEFAULT, sort_keys=True).encode()).decode()),
+    'deep_nesting': lambda text, token: text.replace(token, base64.urlsafe_b64encode(
+        ('[' * 6000 + ']' * 6000).encode()).decode()),
     'extra_argument': lambda text, token: text.replace(f'"{token}"', f'"{token}" "--unknown"'),
     'misordered_native': lambda text, token: text.replace(' "--runtime-policy"', ' "--native-rdma" "--runtime-policy"'),
     'stale_policy_and_body': lambda text, token: text.replace(token, STALE_TOKEN).replace('RestartSec=3', 'RestartSec=4'),
@@ -213,13 +223,34 @@ def test_update_capture_accepts_a_stale_unit_for_rerendering(monkeypatch, kind):
         assert update_installation.recognized_unit(config, HOST, row)
 
 
-@pytest.mark.parametrize('damage', [*sorted(TAMPER), 'out_of_range'])
+@pytest.mark.parametrize('damage', sorted(TAMPER))
 def test_update_capture_refuses_a_malformed_policy(monkeypatch, damage):
     monkeypatch.setattr(update_installation.lifecycle, '_is_local', lambda _host: False)
-    token = worker_policy_args(BASE, HOST)[1]
-    text = render('canonical').replace(token, OUT_OF_RANGE) if damage == 'out_of_range' else TAMPER[damage](render('canonical'), token)
+    text = TAMPER[damage](render('canonical'), worker_policy_args(BASE, HOST)[1])
     for config in (BASE, EDITS['metrics_on'](BASE)):
         assert not update_installation.recognized_unit(config, HOST, _row(text, 'canonical'))
+
+
+# Values an earlier release accepted and this one refuses: shape and encoding are valid.
+REFUSED_VALUES = {
+    'out_of_range': lambda: OUT_OF_RANGE,
+    'single_group': lambda: _token({**_DEFAULT, 'rdma': {**_DEFAULT['rdma'], 'peer_device_affinity': 'groups:a,b'}}),
+    'leading_zero': lambda: _token({**_DEFAULT, 'rdma': {**_DEFAULT['rdma'], 'target': 'gpu:07'}}),
+    'otlp_path': lambda: _token({**_DEFAULT, 'diagnostics': {
+        'metrics': False, 'otlp_endpoint': 'http://collector:4318/otlp', 'otlp_logs': True}}),
+}
+
+
+@pytest.mark.parametrize('value', sorted(REFUSED_VALUES))
+def test_probe_and_update_both_take_a_now_refused_value_as_stale(installed, monkeypatch, value):
+    """rev-pr-c 2 and rev-pr-a 3: the probe names the update as the remedy, so the update must
+    accept the unit it names; it re-renders the policy from the fixed cluster.toml."""
+    monkeypatch.setattr(update_installation.lifecycle, '_is_local', lambda _host: False)
+    text = render('canonical').replace(worker_policy_args(BASE, HOST)[1], REFUSED_VALUES[value]())
+    installed('canonical', text)
+    for config in (BASE, EDITS['metrics_on'](BASE)):
+        assert verdict(config) == (POLICY_STALE_EXIT, POLICY_STALE)
+        assert update_installation.recognized_unit(config, HOST, _row(text, 'canonical'))
 
 
 def test_source_sync_warns_with_host_verdict_and_remedy(installed, monkeypatch):
@@ -243,6 +274,116 @@ def test_every_failed_source_probe_is_logged(installed, monkeypatch):
     assert prepare_source_sync(BASE, HOST, False, lambda *_a: subprocess.CompletedProcess([], 255, '', '')) == (False, None)
     assert recorder.lines[0].startswith('worker: FAILED_SOURCE_LAYOUT: ')
     assert 'not observed' in recorder.lines[1]
+
+
+PROBE_ANSWERS = {
+    'layout': (1, 'FAILED_SOURCE_LAYOUT\n', '', 'FAILED_SOURCE_LAYOUT', 'is not one dgx-monarch wrote'),
+    'interpreter_missing': (127, '', 'bash: line 2: /home/user/monarch-env/bin/python: No such file or directory',
+                            'FAILED_WORKER_INTERPRETER', 'could not run cluster.python'),
+    'interpreter_not_executable': (126, '', 'bash: line 2: /opt/env/bin/python: Permission denied',
+                                   'FAILED_WORKER_INTERPRETER', 'missing or not executable'),
+    'lock_wrapper': (1, '', 'Traceback (most recent call last):\n  File "<string>", line 22\nRuntimeError: unsafe lock parent\n',
+                     'FAILED_LIFECYCLE_LOCK', 'lifecycle lock wrapper failed'),
+    'other_exit': (2, '', '', 'FAILED_SOURCE_PROBE', 'exited without a verdict'),
+}
+
+
+@pytest.mark.parametrize('case', sorted(PROBE_ANSWERS))
+def test_each_probe_failure_names_its_own_cause(case):
+    code, stdout, stderr, kind, phrase = PROBE_ANSWERS[case]
+    result = subprocess.CompletedProcess([], code, stdout, stderr)
+    assert lifecycle_managed.probe_kind(result) == kind
+    text = lifecycle_managed.probe_refusal('worker', kind, result)
+    assert text.startswith(f'worker: {kind}: ') and phrase in text
+    assert 'nothing was synced or started there' in text
+    assert '/home/user' not in text and '/opt/env' not in text
+    if case == 'layout':
+        assert 'exit' not in text and 'stderr' not in text
+    else:
+        assert f'(exit {code})' in text
+    if case == 'interpreter_missing':
+        assert text.endswith('stderr: bash: line 2: ~/monarch-env/bin/python: No such file or directory')
+    if case == 'interpreter_not_executable':
+        assert text.endswith('stderr: bash: line 2: <path>: Permission denied')
+    if case == 'lock_wrapper':
+        assert text.endswith('stderr: RuntimeError: unsafe lock parent')
+    if kind != 'FAILED_SOURCE_LAYOUT':
+        assert 'not one dgx-monarch wrote' not in text
+
+
+def test_stderr_tail_is_bounded_printable_and_home_relative():
+    tail = lifecycle_managed.stderr_tail('first\n' + 'x\x1b[31m' + '/home/user/a ' * 60 + '\n\n')
+    assert len(tail) == 200 and '\x1b' not in tail and '/root' not in tail
+    assert tail.startswith('x?[31m~/a ~/a')
+    assert lifecycle_managed.stderr_tail('') == '' and lifecycle_managed.stderr_tail(None) == ''
+    assert lifecycle_managed.stderr_tail("denied: '/Users/user/x' and /srv/data") == "denied: '~/x' and <path>"
+
+
+@pytest.mark.parametrize(('line', 'expected'), [
+    pytest.param('bash: line 3: /srv/Client Name/venv/bin/python: No such file or directory',
+                 'bash: line 3: <path>: No such file or directory', id='bash_space'),
+    pytest.param("python: can't open file '/data/acme,inc/x': [Errno 2] No such file or directory",
+                 "python: can't open file '<path>': [Errno 2] No such file or directory", id='quoted_comma'),
+    pytest.param("PermissionError: [Errno 13] Permission denied: '/opt/a:b/secret'",
+                 "PermissionError: [Errno 13] Permission denied: '<path>'", id='quoted_colon'),
+    pytest.param('FileNotFoundError: "/srv/it\'s here/x"', 'FileNotFoundError: "<path>"', id='double_quoted'),
+    pytest.param('bash: line 1: /path: No such file', 'bash: line 1: <path>: No such file', id='bash_plain'),
+    pytest.param('bash: line 1: /a b/x: cannot execute: required file not found',
+                 'bash: line 1: <path>: cannot execute: required file not found', id='bash_error_colon'),
+])
+def test_stderr_tail_redacts_a_whole_path_with_spaces_commas_or_colons(line, expected):
+    """rev-pr-c 3: a fragment after a space, comma or colon must not survive."""
+    assert lifecycle_managed.stderr_tail(line) == expected
+
+
+def test_a_missing_interpreter_path_with_a_space_and_comma_is_redacted_whole(installed, tmp_path, monkeypatch):
+    installed('canonical')
+    recorder = LogRecorder()
+    monkeypatch.setattr(lifecycle_managed, 'log', recorder)
+    missing = replace(BASE, python_bin=str(tmp_path / 'Client Name,inc' / 'bin' / 'python'))
+    assert prepare_source_sync(missing, HOST, False, probe_only) == (False, False)
+    [line] = recorder.lines
+    assert line.startswith('worker: FAILED_WORKER_INTERPRETER: ') and '(exit 127)' in line
+    tail = line.rsplit('; stderr: ', 1)[1]
+    assert tail.startswith('bash: line ') and tail.endswith(': <path>: No such file or directory')
+    assert 'Client' not in line and 'Name' not in line and 'inc/' not in line
+
+
+def test_a_missing_worker_interpreter_is_not_reported_as_foreign_layout(installed, tmp_path, monkeypatch):
+    installed('canonical')
+    recorder = LogRecorder()
+    monkeypatch.setattr(lifecycle_managed, 'log', recorder)
+    missing = replace(BASE, python_bin=str(tmp_path / 'absent-env' / 'bin' / 'python'))
+    assert prepare_source_sync(missing, HOST, False, probe_only) == (False, False)
+    [line] = recorder.lines
+    assert line.startswith('worker: FAILED_WORKER_INTERPRETER: ') and '(exit 127)' in line
+    assert 'stderr: ' in line and str(tmp_path) not in line
+
+
+def test_an_unsafe_lock_directory_is_named_as_the_lock_wrapper(installed, tmp_path, monkeypatch):
+    installed('canonical')
+    state = tmp_path / '.local' / 'state' / 'dgx-monarch'
+    state.mkdir(parents=True)
+    state.chmod(0o777)
+    recorder = LogRecorder()
+    monkeypatch.setattr(lifecycle_managed, 'log', recorder)
+    assert prepare_source_sync(BASE, HOST, False, probe_only) == (False, False)
+    [line] = recorder.lines
+    assert line.startswith('worker: FAILED_LIFECYCLE_LOCK: ') and '(exit 1)' in line
+    assert line.endswith('stderr: RuntimeError: unsafe lock parent')
+
+
+@pytest.mark.parametrize('code', [1, 126, 127, 2])
+def test_restart_refuses_any_definite_probe_failure_before_stopping(monkeypatch, capsys, code):
+    def runner(_config, _host, _script, timeout=60):
+        return subprocess.CompletedProcess([], code, '', 'RuntimeError: unsafe lock parent')
+
+    events = _record_lifecycle(monkeypatch, runner)
+    assert lifecycle.restart(BASE, sync=False) is False
+    assert events == []
+    out = capsys.readouterr().out
+    assert f'(exit {code})' in out
+    assert out.rstrip().endswith('restart refused before stopping any Worker service')
 
 
 def _record_lifecycle(monkeypatch, runner=probe_only) -> list[str]:

@@ -29,9 +29,10 @@ def installation_script(request: dict[str, Any]) -> str:
 def recognized_unit(config: ClusterConfig, host: HostConfig, snapshot: dict[str, Any]) -> bool:
     """Match complete supported unit bytes, never an ownership comment alone.
 
-    A unit whose only difference is an earlier, parseable policy is stale, not
-    foreign: the update renders the current policy, and compensation restores
-    these exact bytes.
+    A unit whose only difference is an earlier, well-formed policy is stale, not
+    foreign, even when this release refuses one of its values: the update
+    renders the current policy, and compensation restores these exact bytes
+    together with the release that accepted them.
     """
     try:
         unit = base64.b64decode(snapshot["unit"], validate=True).decode()
@@ -48,7 +49,7 @@ def recognized_unit(config: ClusterConfig, host: HostConfig, snapshot: dict[str,
 
         def matches(template: str, *, extra_newlines: bool = False) -> bool:
             # Preserve exact pre-0.7 units as migration/rollback inputs. Any
-            # other policy tail must be a canonical, parseable earlier policy.
+            # other policy tail must be a canonical, well-formed earlier policy.
             legacy = template.replace(policy_suffix + "\n", "\n")
             return any(unit in (template + tail, legacy + tail) or stale == legacy + tail
                        for tail in ("\n" * extra for extra in range(3 if extra_newlines else 1)))

@@ -309,7 +309,7 @@ def _submit_render_guarded(
     render_progress.start(
         steps_hint, {"model": model.unet_name}, token=guard.telemetry_token)
     progress = ProgressReceiver(
-        steps_hint, on_step=progress_on_step,
+        steps_hint, on_step=progress_on_step, step_token=guard.telemetry_token,
         on_cancel=lambda: handle.cancel_sample(render_id, wait=False))
     guard.progress = progress
     progress.__enter__()

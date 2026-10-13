@@ -133,6 +133,119 @@ def test_deadline_and_fetch_failure_leave_no_collectors(monkeypatch):
     assert 0 < timeouts[0] <= 0.1
 
 
+class _Clock:
+    """Deterministic stand-in for the module's time: fetches and sleeps advance it."""
+
+    def __init__(self):
+        self.now = 0.0
+
+    def monotonic(self):
+        return self.now
+
+    def time(self):
+        return 1_000_000.0 + self.now
+
+    def sleep(self, seconds):
+        self.now += max(0.0, seconds) + 1e-9
+
+
+def _healthy(clock, costs, payload, timeouts):
+    """An endpoint that honors its deadline: a fetch longer than it times out."""
+    calls = iter(costs)
+
+    def fetch(timeout):
+        timeouts.append(timeout)
+        cost = next(calls)
+        if cost > timeout:
+            clock.now += timeout
+            raise TimeoutError("fetch exceeded its deadline")
+        clock.now += cost
+        return payload
+    return fetch
+
+
+def _steady_payload():
+    identity = {"source_manifest_sha256": "a" * 64, "transport_sha256": "b" * 64,
+                "torchmonarch": "0.7.0", "dgx_monarch": "1.2.0"}
+    return {"diagnostics": {"schema": 1, "available": True, "sequence": 0,
+                            "process_nonce": "c" * 32, "recent": []},
+            "diagnostic_identity": identity}
+
+
+@pytest.mark.parametrize("costs", [
+    pytest.param(lambda: iter(lambda: 0.2, None), id="steady-0.2s"),
+    pytest.param(lambda: (0.2 if index % 2 == 0 else 0.01 for index in range(10_000)),
+                 id="alternating-cache"),
+])
+def test_partial_reflects_coverage_not_where_the_deadline_falls(monkeypatch, costs):
+    clock = _Clock()
+    monkeypatch.setattr(sessions, "time", clock)
+    outcomes = []
+    for step in range(20):
+        clock.now = 0.0
+        timeouts = []
+        duration = round(1.0 + 0.07 * step, 2)
+        capture = sessions.collect(
+            _healthy(clock, costs(), _steady_payload(), timeouts), duration_s=duration)
+        report = capture.report()["capture"]
+        outcomes.append((duration, report["partial"], report["gaps"], report["stop_reason"]))
+        # Only the first fetch, with no cost observed yet, may run in a short window.
+        assert all(timeout >= 0.2 for timeout in timeouts[1:]), (duration, timeouts)
+    assert all(partial is False and gaps == {} and stop == "deadline"
+               for _duration, partial, gaps, stop in outcomes), outcomes
+
+
+def test_a_failing_endpoint_still_records_fetch_failures(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(sessions, "time", clock)
+
+    def refused(_timeout):
+        clock.now += 0.001
+        raise ConnectionRefusedError("private endpoint")
+
+    capture = sessions.collect(refused, duration_s=1.3)
+    report = capture.report()["capture"]
+    assert report["gaps"]["fetch_failed"] >= 2
+    assert report["partial"] is True and report["stop_reason"] == "deadline"
+
+
+def test_a_slow_endpoint_keeps_full_windows_and_skips_only_the_short_tail(monkeypatch):
+    clock = _Clock()
+    monkeypatch.setattr(sessions, "time", clock)
+    timeouts = []
+    capture = sessions.collect(
+        _healthy(clock, iter(lambda: 1.0, None), _steady_payload(), timeouts), duration_s=3.8)
+    # Fetches run 0 to 1 s and 1.5 to 2.5 s; the 0.8 s window left at 3.0 s
+    # cannot hold a 1 s fetch, so it is slept rather than recorded as a failure.
+    assert timeouts == [2.0, 2.0]
+    report = capture.report()["capture"]
+    assert report["gaps"] == {} and report["stop_reason"] == "deadline"
+    clock.now, timeouts[:] = 0.0, []
+    capture = sessions.collect(
+        _healthy(clock, iter(lambda: 1.0, None), _steady_payload(), timeouts), duration_s=4.4)
+    # A final window that can hold the slowest fetch is still polled.
+    assert timeouts == [2.0, 2.0, pytest.approx(1.4, abs=1e-6)]
+    assert capture.report()["capture"]["gaps"] == {}
+
+
+def test_a_tail_shorter_than_the_slowest_fetch_goes_unpolled_and_unflagged(monkeypatch):
+    """rev-pr-c nit 6 records the current trade: no gap, but up to fetch + poll unpolled."""
+    clock = _Clock()
+    monkeypatch.setattr(sessions, "time", clock)
+    timeouts, ended = [], []
+
+    def fetch(timeout):
+        result = _healthy(clock, iter([1.9]), _steady_payload(), timeouts)(timeout)
+        ended.append(clock.now)
+        return result
+
+    report = sessions.collect(fetch, duration_s=4.2).report()["capture"]
+    # One fetch from 0 to 1.9 s, a 0.5 s poll sleep, then the 1.8 s window is slept.
+    assert timeouts == [2.0] and report["samples"] == 1
+    assert report["partial"] is False and report["gaps"] == {} and report["stop_reason"] == "deadline"
+    assert 4.2 - ended[-1] == pytest.approx(2.3)
+
+
 def test_export_refuses_overwrite_and_symlink(tmp_path):
     capture = sessions.Capture()
     existing = tmp_path / "existing.json"
@@ -175,6 +288,74 @@ def test_capabilities_cli_never_resolves_or_connects(capsys):
     args = SimpleNamespace(capabilities=True)
     assert diagnostics_command.run(args, resolve_host=lambda _: pytest.fail("must not resolve")) == 0
     assert json.loads(capsys.readouterr().out)["phase_capture"]["available"] is True
+
+
+def _capture_args(output, **overrides):
+    values = {"capabilities": False, "output": str(output), "host": "127.0.0.1:9",
+              "duration_s": 0.1, "max_events": 4096, "max_bytes": 1_048_576}
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def _never_resolve(_host):
+    pytest.fail("the destination must be refused before any capture starts")
+
+
+def test_cli_refuses_an_existing_output_before_capturing(tmp_path, capsys):
+    existing = tmp_path / "existing.json"
+    existing.write_text("keep")
+    assert diagnostics_command.run(_capture_args(existing), resolve_host=_never_resolve) == 2
+    err = capsys.readouterr().err
+    assert "--output already exists" in err and str(tmp_path) not in err
+    assert existing.read_text() == "keep"
+    dangling = tmp_path / "dangling.json"
+    dangling.symlink_to(tmp_path / "absent.json")
+    assert diagnostics_command.run(_capture_args(dangling), resolve_host=_never_resolve) == 2
+    assert "--output already exists" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("layout", ["missing_directory", "symlink_parent", "file_parent",
+                                    "symlink_loop", "unknown_user"])
+def test_cli_refuses_an_unusable_directory_with_the_fixed_reason(tmp_path, capsys, layout):
+    real = tmp_path / "real"
+    real.mkdir()
+    if layout == "missing_directory":
+        output = tmp_path / "absent" / "capture.json"
+    elif layout == "symlink_parent":
+        (tmp_path / "link").symlink_to(real)
+        output = tmp_path / "link" / "capture.json"
+    elif layout == "symlink_loop":
+        # rev-pr-c 4: resolve() raises RuntimeError naming the loop's path.
+        (tmp_path / "loopa").symlink_to(tmp_path / "loopb")
+        (tmp_path / "loopb").symlink_to(tmp_path / "loopa")
+        output = tmp_path / "loopa" / "capture.json"
+    elif layout == "unknown_user":
+        output = "~dgxm-no-such-user-for-tests/capture.json"
+    else:
+        (tmp_path / "file").write_text("")
+        output = tmp_path / "file" / "capture.json"
+    with pytest.raises(ValueError, match=r"^capture output requires an existing directory"):
+        sessions.validate_destination(output)
+    assert diagnostics_command.run(_capture_args(output), resolve_host=_never_resolve) == 2
+    err = capsys.readouterr().err
+    assert "capture output requires an existing directory without symbolic links" in err
+    assert str(tmp_path) not in err and "no-such-user" not in err
+    assert list(real.iterdir()) == []
+
+
+def test_cli_prints_fixed_budget_refusals_and_hides_other_error_text(tmp_path, capsys):
+    output = tmp_path / "capture.json"
+    args = _capture_args(output, duration_s=301)
+    assert diagnostics_command.run(args, resolve_host=lambda host: host) == 2
+    assert "(capture duration must be between 0.1 and 300 seconds)" in capsys.readouterr().err
+
+    def hostile(_host):
+        raise ValueError("private host detail")
+
+    assert diagnostics_command.run(_capture_args(output), resolve_host=hostile) == 2
+    err = capsys.readouterr().err
+    assert "(ValueError)" in err and "private" not in err
+    assert not output.exists()
 
 
 def test_large_capture_never_exceeds_artifact_byte_budget(tmp_path):

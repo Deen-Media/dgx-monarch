@@ -24,7 +24,7 @@ class ProgressReceiver:
     """
 
     def __init__(self, total_steps: int, on_step=None, on_cancel=None, *,
-                 track_render: bool = False):
+                 track_render: bool = False, step_token: object | None = None):
         # Channel.open waits for __enter__ so a caller can publish this receiver
         # into its cleanup guard before the first channel or thread side effect.
         self.port = None
@@ -32,7 +32,13 @@ class ProgressReceiver:
         self._total = total_steps
         # Fleet submits outside render_submit/PendingRender, so it opts in
         # to receiver-owned telemetry lifetime. Other callers keep theirs.
+        if track_render and step_token is not None:
+            raise ValueError("a progress receiver owns its telemetry token or borrows one, not both")
         self._telemetry_token = object() if track_render else None
+        # A borrowed token (the normal render guard's) attributes steps only:
+        # its owner starts and retires it, and telemetry ignores a step that
+        # arrives after retirement instead of reviving an ownerless render.
+        self._step_token = self._telemetry_token if track_render else step_token
         # Optional aggregate hook: when set, each step message goes to
         # on_step(msg) instead of a per-render ProgressBar, so the pipeline and
         # fleet nodes can fold several concurrent renders into one bar.
@@ -86,12 +92,9 @@ class ProgressReceiver:
                 try:  # telemetry tap (dgxm top): never allowed to break the bar
                     from .telemetry import render_progress
 
-                    if self._telemetry_token is None:
-                        render_progress.step(msg.get("step", 0), msg.get("total", self._total))
-                    else:
-                        render_progress.step(
-                            msg.get("step", 0), msg.get("total", self._total),
-                            token=self._telemetry_token)
+                    render_progress.step(
+                        msg.get("step", 0), msg.get("total", self._total),
+                        token=self._step_token)
                 except Exception:
                     pass
                 if self._on_step is not None:

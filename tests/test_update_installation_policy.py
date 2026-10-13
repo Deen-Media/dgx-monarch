@@ -135,6 +135,43 @@ def test_exact_policy_and_legacy_update_unit_recognition(monkeypatch, native, le
         assert not recognize(flipped.replace("RestartSec=3", "RestartSec=8"))
 
 
+@pytest.mark.parametrize("rdma", [
+    pytest.param({"peer_device_affinity": "groups:a,b"}, id="single_group"),
+    pytest.param({"target": "gpu:07"}, id="leading_zero"),
+    pytest.param({"peer_device_affinity": "groups:a|b"}, id="still_valid"),
+])
+def test_a_unit_rendered_from_a_value_config_loading_now_refuses_is_stale(monkeypatch, rdma):
+    """rev-pr-c 2: the update must re-render such a unit, or the operator's fix loops on
+    prior_worker_drift. Recognition checks the token's shape and encoding, never its values."""
+    import json
+    from dataclasses import replace
+
+    from dgx_monarch.monarch_policy import MonarchPolicy, RdmaPolicy
+
+    config, host = setup()
+    monkeypatch.setattr(install.lifecycle, "_is_local", lambda _host: False)
+    # The dataclass skips parse_policy, as the earlier release that rendered this unit did.
+    earlier = replace(config, monarch=MonarchPolicy(rdma=RdmaPolicy(**rdma)))
+    unit = systemd_worker_unit(earlier, host, managed_source=True, update_token=TOKEN)
+    row = {"site": "/home/user/.local/share/dgx-monarch/src", "site_packages": "", "home": "/home/user",
+           "user": "user", "live": {"kind": "symlink",
+                                    "target": f"/home/user/.local/share/dgx-monarch/releases/{TOKEN}/site"}}
+
+    def recognize(text):
+        row.update(unit=base64.b64encode(text.encode()).decode(), sha256=hashlib.sha256(text.encode()).hexdigest())
+        return install.recognized_unit(config, host, row)
+
+    assert recognize(systemd_worker_unit(config, host, managed_source=True, update_token=TOKEN))
+    assert recognize(unit)
+    token = worker_policy_args(earlier, host)[1]
+    payload = json.loads(base64.urlsafe_b64decode(token))
+    spaced = base64.urlsafe_b64encode(json.dumps(payload, sort_keys=True).encode()).decode()
+    extra = base64.urlsafe_b64encode(json.dumps({**payload, "extra": 1}, sort_keys=True,
+                                                separators=(",", ":")).encode()).decode()
+    for tampered in (spaced, extra):
+        assert not recognize(unit.replace(token, tampered))
+
+
 def test_capture_binds_live_argv_to_its_own_unit_across_a_policy_rerender(capture, monkeypatch):
     """The update captures a stale unit with the argv it started; after the
     re-render the next capture binds the new argv to the new unit, never one

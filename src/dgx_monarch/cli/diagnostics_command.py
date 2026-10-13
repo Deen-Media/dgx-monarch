@@ -56,13 +56,21 @@ def run(args, *, resolve_host) -> int:
         print("error: diagnostics capture requires --output to a new private artifact", file=sys.stderr)
         return 2
     try:
+        # Check the destination before any capture time is spent; export checks again.
+        diagnostic_session.validate_destination(args.output)
         host = resolve_host(args.host)
         capture = diagnostic_session.collect(
             lambda timeout: fetch_telemetry(host, timeout), duration_s=args.duration_s,
             max_events=args.max_events, max_bytes=args.max_bytes)
         output = capture.export(args.output)
+    except FileExistsError:
+        print("error: diagnostics capture refused: --output already exists; name a new file", file=sys.stderr)
+        return 2
     except (OSError, ValueError) as error:
-        print(f"error: diagnostics capture could not complete ({type(error).__name__})", file=sys.stderr)
+        # Only the session's fixed refusal sentences are printed; anything else
+        # could carry caller data, so it is named by type alone.
+        reason = str(error) if str(error) in diagnostic_session.REFUSALS else type(error).__name__
+        print(f"error: diagnostics capture could not complete ({reason})", file=sys.stderr)
         return 2
     report = capture.report()
     partial = report["capture"]["partial"]

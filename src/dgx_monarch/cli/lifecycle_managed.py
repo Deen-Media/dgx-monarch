@@ -1,6 +1,8 @@
 """Read-only checks for immutable Worker release links before lifecycle changes."""
 from __future__ import annotations
 
+import base64
+import json
 import re
 import shlex
 import subprocess
@@ -27,6 +29,14 @@ def _shape(value: object) -> object:
     return {key: _shape(item) for key, item in value.items()} if isinstance(value, dict) else type(value).__name__
 
 
+def _shaped(value: object, shape: object) -> bool:
+    """The probe's rule: the schema's keys and leaf types, walked by the schema."""
+    if isinstance(shape, dict):
+        return (isinstance(value, dict) and set(value) == set(shape)
+                and all(_shaped(value[key], item) for key, item in shape.items()))
+    return type(value).__name__ == shape
+
+
 def legacy_policy_is_current(config: ClusterConfig, host: HostConfig) -> bool:
     """A unit without policy arguments runs the default policy with native return off."""
     from ..monarch_launch import worker_policy_args
@@ -36,13 +46,15 @@ def legacy_policy_is_current(config: ClusterConfig, host: HostConfig) -> bool:
 
 
 def without_policy_suffix(unit: str) -> str | None:
-    """Return ``unit`` minus a canonical, parseable policy tail, or None.
+    """Return ``unit`` minus a canonical, well-formed policy tail, or None.
 
-    The token must be the exact encoding of a policy this release parses, so a
-    hand-made payload stays foreign. The isolated probe repeats the check
-    structurally because it must not import installed code.
+    The token must be the exact encoding of a payload with the policy's keys and
+    value types, the isolated probe's rule, so a hand-made payload stays
+    foreign. Values are not checked: the update captures a unit only beside
+    its running Worker, whose release accepted them, and restores it only
+    with that release.
     """
-    from ..monarch_policy import encode_policy, policy_from_token
+    from ..monarch_policy import MonarchPolicy, policy_dict
 
     lines = unit.split("\n")
     found = [index for index, line in enumerate(lines) if line.startswith("ExecStart=")]
@@ -50,9 +62,13 @@ def without_policy_suffix(unit: str) -> str | None:
     if match is None:
         return None
     try:
-        if encode_policy(policy_from_token(match[1])) != match[1]:
-            return None
-    except (TypeError, ValueError):
+        payload = json.loads(base64.b64decode(match[1], altchars=b"-_", validate=True))
+    except (ValueError, RecursionError):
+        return None
+    if not _shaped(payload, _shape(policy_dict(MonarchPolicy()))):
+        return None
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    if base64.urlsafe_b64encode(encoded).decode() != match[1]:
         return None
     lines[found[0]] = lines[found[0]][:match.start()]
     return "\n".join(lines)
@@ -203,7 +219,7 @@ def verdict():
  kind=classify(); print(kind)
  if kind=='POLICY_STALE': sys.exit(STALE_EXIT)
 try: verdict()
-except (OSError,ValueError,IndexError,KeyError): print('FAILED_SOURCE_LAYOUT'); sys.exit(1)
+except (OSError,ValueError,IndexError,KeyError,RecursionError): print('FAILED_SOURCE_LAYOUT'); sys.exit(1)
 '''
     constants = {
         "LEGACY_CANONICAL": legacy_canonical, "LEGACY_HARDENED": legacy_hardened, "HARDENED": hardened,
@@ -242,14 +258,47 @@ esac
 
 
 def probe_kind(result: subprocess.CompletedProcess[str]) -> str | None:
-    """MANAGED, PLAIN, POLICY_STALE or FAILED_SOURCE_LAYOUT; None when unanswered."""
+    """MANAGED, PLAIN, POLICY_STALE or a FAILED_* verdict; None when unanswered.
+
+    Only the probe prints FAILED_SOURCE_LAYOUT. Exit 126 or 127 means the shell
+    could not run the Worker interpreter, and exit 1 without that marker means
+    the lock wrapper (or the probe's interpreter) failed before any verdict.
+    """
     if result.returncode == 255:
         return None
     if result.returncode == 0:
         return "MANAGED" if result.stdout.strip() == "MANAGED" else "PLAIN"
     if result.returncode == POLICY_STALE_EXIT and result.stdout.strip() == POLICY_STALE:
         return POLICY_STALE
-    return "FAILED_SOURCE_LAYOUT"
+    if "FAILED_SOURCE_LAYOUT" in result.stdout.split():
+        return "FAILED_SOURCE_LAYOUT"
+    if result.returncode in (126, 127):
+        return "FAILED_WORKER_INTERPRETER"
+    return "FAILED_LIFECYCLE_LOCK" if result.returncode == 1 else "FAILED_SOURCE_PROBE"
+
+
+_PROBE_FAILURES = {
+    "FAILED_SOURCE_LAYOUT": "its managed source link or Worker unit is not one dgx-monarch wrote, "
+                            "or a unit override exists",
+    "FAILED_WORKER_INTERPRETER": "the shell could not run cluster.python there (missing or not "
+                                 "executable), so the source check never ran",
+    "FAILED_LIFECYCLE_LOCK": "the lifecycle lock wrapper failed before the source check gave a verdict, "
+                             "for example on an unsafe ~/.local/state/dgx-monarch",
+    "FAILED_SOURCE_PROBE": "the managed source check exited without a verdict",
+}
+_HOME_PREFIX = re.compile(r"(?:/home|/Users|/var/home)/[^/\s'\":]+|/root(?=[/\s'\":]|$)")
+# A path may hold spaces, commas or colons: a quoted one is redacted whole, and
+# an unquoted one, as bash prints it, up to the ": " before the error text.
+_QUOTED_PATH = re.compile(r"""(['"])/(?:(?!\1).)*\1""")
+_OTHER_PATH = re.compile(r"(?<![\w~.])/.*?(?=: |\Z)")
+
+
+def stderr_tail(stderr: str | None) -> str:
+    """The last stderr line, printable, home-relative, at most 200 characters."""
+    lines = [line.strip() for line in (stderr or "").splitlines() if line.strip()]
+    tail = _HOME_PREFIX.sub("~", lines[-1] if lines else "")
+    tail = _OTHER_PATH.sub("<path>", _QUOTED_PATH.sub(r"\1<path>\1", tail))
+    return "".join(char if char.isprintable() else "?" for char in tail)[:200]
 
 
 def policy_stale_detail() -> str:
@@ -262,16 +311,17 @@ def policy_stale_detail() -> str:
     )
 
 
-def probe_refusal(host_name: str, kind: str | None) -> str:
+def probe_refusal(host_name: str, kind: str | None, result: subprocess.CompletedProcess[str] | None = None) -> str:
     """Name the probe's verdict so the operator reads a cause, not a bare code."""
     if kind == POLICY_STALE:
         return f"{host_name}: {POLICY_STALE}: {policy_stale_detail()}. Its Worker service was left as it was"
     if kind is None:
         return f"{host_name}: the managed source probe was not observed (transport exited 255)"
-    return (
-        f"{host_name}: FAILED_SOURCE_LAYOUT: its managed source link or Worker unit is not one dgx-monarch "
-        "wrote, or a unit override exists; nothing was synced or started there"
-    )
+    detail = _PROBE_FAILURES.get(str(kind), _PROBE_FAILURES["FAILED_SOURCE_PROBE"])
+    code = "" if result is None or kind == "FAILED_SOURCE_LAYOUT" else f" (exit {result.returncode})"
+    tail = stderr_tail(result.stderr) if result is not None else ""
+    return (f"{host_name}: {kind}: {detail}{code}; nothing was synced or started there"
+            + (f"; stderr: {tail}" if tail else ""))
 
 
 def restart_preflight(config: ClusterConfig, runner: Runner) -> bool:
@@ -288,8 +338,8 @@ def restart_preflight(config: ClusterConfig, runner: Runner) -> bool:
         except (OSError, subprocess.TimeoutExpired):
             continue
         kind = probe_kind(result)
-        if kind in (POLICY_STALE, "FAILED_SOURCE_LAYOUT"):
-            refusals.append(probe_refusal(host.name, kind))
+        if kind is not None and kind not in ("MANAGED", "PLAIN"):
+            refusals.append(probe_refusal(host.name, kind, result))
     for line in refusals:
         print(f"  {line}")
     if refusals:
@@ -308,9 +358,10 @@ def prepare_source_sync(
     config: ClusterConfig, host: HostConfig, local: bool, runner: Runner,
 ) -> tuple[bool, LifecycleResult]:
     """Return whether rsync is needed and the definite preparation outcome."""
-    kind = probe_kind(runner(config, host, locked_script(config.python_bin, managed_source_probe(config, host))))
+    result = runner(config, host, locked_script(config.python_bin, managed_source_probe(config, host)))
+    kind = probe_kind(result)
     if kind not in ("MANAGED", "PLAIN"):
-        log.warning("%s", probe_refusal(host.name, kind))
+        log.warning("%s", probe_refusal(host.name, kind, result))
         return False, None if kind is None else False
     if kind == "MANAGED" or local:
         return False, True
