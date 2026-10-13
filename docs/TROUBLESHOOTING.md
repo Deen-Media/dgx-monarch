@@ -3877,7 +3877,12 @@ the retry also fails, follow the reported recovery; it does not loop.
 
 **Automatic reset is limited:** it runs at most once per submit, only when
 abandonment is the sole obstruction, with no active sample lease or pending
-RDMA read. The ProcMesh stop must be observed before retry. Active work is left
+RDMA read. A Fleet queue now runs the same reset, once per queue and before its
+first dispatch, and its log line names Fleet. Both paths check and reset the
+fleet they dispatch on, not the Init node's first fleet, so a later wedge in
+the same ComfyUI session heals the same way. The ProcMesh stop must be
+observed before the retry or the Fleet dispatch. When it is not, both paths
+raise the original `LifecycleBusyError`. Active work is left
 alone. An unconfirmed earlier stop keeps replacement blocked; supervision text,
 a timeout, or a stalled channel is not proof that processes exited. In a
 recovery test, a reported-dead worker remained alive for eleven more minutes.
@@ -5126,16 +5131,18 @@ actors for messaging. The return mode is part of each actor's setup identity,
 so the fresh fleet sets up in messaging mode. The latch changes only what the
 next setup requests; it never frees, drops or acknowledges anything.
 
-**What to do:** the next normal render resets the attached mesh once when the
-abandoned lease is its only obstruction
-([#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn));
-otherwise follow the recovery the refusal names. A Fleet queue does not run
-that reset: Fleet dispatch meets the abandoned samples directly and refuses
-with `LifecycleBusyError` (`... reset the Attached mesh first`). Run **Reset
-attached mesh**, then queue again. On 2026-10-13 a failed Fleet wave on the
-paired Sparks left two abandoned samples and one poisoned RDMA owner, and the
-next Fleet queue refused this way; after a manual reset the next one completed
-by messaging, with the latch and the poisoned owner still in place. Diagnose
+**What to do:** the next normal render or Fleet queue resets the attached mesh
+once when the abandoned lease is its only obstruction
+([#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)),
+so a Fleet re-queue after a native fault now heals on its own. When something
+else also blocks, or the reset cannot confirm its ProcMesh stop, Fleet still
+refuses with `LifecycleBusyError` (`... reset the Attached mesh first`).
+Follow the recovery the refusal names, or run **Reset attached mesh**, then
+queue again.
+On 2026-10-13, before Fleet ran this reset, a failed Fleet wave on the paired
+Sparks left two abandoned samples and one poisoned RDMA owner, and the next
+Fleet queue refused this way; after a manual reset the next one completed by
+messaging, with the latch and the poisoned owner still in place. Diagnose
 the native path from
 the original error, which the typed error carries as its cause:
 [#75](#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails)

@@ -1480,8 +1480,10 @@ dgx-monarch/
 ├── pyproject.toml             # package metadata + pins, dgxm entrypoint
 ├── src/dgx_monarch/
 │   ├── nodes/                 # thin nodes + setup binding
+│   │   ├── abandoned_heal.py  # the #87 abandoned-lease reset, shared with Fleet
 │   │   ├── action_security.py # same-origin checks for browser driver actions
 │   │   ├── fleet_cleanup.py   # cancellation-safe Fleet resource retirement
+│   │   ├── fleet_jobs.py      # Fleet job-list assembly and its per-prompt limit
 │   │   ├── gate_ceremony.py   # one ceremony's render legs, frozen as evidence
 │   │   ├── gate_process_state.py # process-lifetime first-use Gate state
 │   │   ├── gate_provenance.py # mandatory all-rank Gate source bracket
