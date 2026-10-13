@@ -219,7 +219,7 @@ def verdict():
  kind=classify(); print(kind)
  if kind=='POLICY_STALE': sys.exit(STALE_EXIT)
 try: verdict()
-except (OSError,ValueError,IndexError,KeyError): print('FAILED_SOURCE_LAYOUT'); sys.exit(1)
+except (OSError,ValueError,IndexError,KeyError,RecursionError): print('FAILED_SOURCE_LAYOUT'); sys.exit(1)
 '''
     constants = {
         "LEGACY_CANONICAL": legacy_canonical, "LEGACY_HARDENED": legacy_hardened, "HARDENED": hardened,
