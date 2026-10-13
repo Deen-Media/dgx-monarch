@@ -8,8 +8,9 @@ from typing import TYPE_CHECKING, Any
 from . import absorb_fire as _absorb
 from . import client_lease as _client_lease
 from . import mesh_runtime as _mesh_runtime
-from . import mesh_safety, mesh_teardown
+from . import mesh_safety, mesh_teardown, native_return_latch
 from .error_utils import (
+    exception_chain,
     failure_summary,
     prefer_error,
     raise_with_distinct_cause,
@@ -293,16 +294,18 @@ def mark_defunct_on_supervision_failure(handle, exc: BaseException, *,
     """
     from monarch.actor import ActorError
 
+    # Judge what a latched native-return error wraps, and its chain, never behind an ActorError.
+    chain = exception_chain(native_return_latch.wrapped_failure(exc), opaque=ActorError)
     # ActorError is the endpoint-error boundary: the actor is still alive and
     # its worker exception belongs to the caller. Return before stringifying
     # it because ActorError.__str__ expands the complete remote traceback.
     # Subclasses are included so a hostile wrapper cannot bypass this privacy
     # boundary; typed callers remain responsible for validating the preserved
     # inner exception before accepting any worker-side refusal.
-    if isinstance(exc, ActorError):
+    if isinstance(chain[0], ActorError):
         return
-    names = {type(e).__name__ for e in (exc, exc.__cause__, exc.__context__) if e is not None}
-    text = f"{names} {failure_summary(exc)}"
+    names = {type(e).__name__ for e in chain}
+    text = f"{names} " + " ".join(failure_summary(e) for e in chain if not isinstance(e, ActorError))
     # Match the exported SupervisionError type first. The string list is a
     # secondary net only, audited against the 0.6.0 wheel. The sole live string
     # was "Supervision" (from the type name), so on their own the strings would
@@ -312,10 +315,7 @@ def mark_defunct_on_supervision_failure(handle, exc: BaseException, *,
         from monarch._rust_bindings.monarch_hyperactor.supervision import (
             SupervisionError,
         )
-        supervision_chain = any(
-            isinstance(e, SupervisionError)
-            for e in (exc, exc.__cause__, exc.__context__) if e is not None
-        )
+        supervision_chain = any(isinstance(e, SupervisionError) for e in chain)
     except ImportError:
         supervision_chain = False
     if not supervision_chain and not _absorb.hits(

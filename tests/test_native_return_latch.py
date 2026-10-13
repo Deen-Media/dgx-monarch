@@ -193,6 +193,67 @@ def test_a_fleet_job_fails_typed_and_abandons_its_lease(monkeypatch):
     assert native_return_latch.snapshot()["fault_count"] == 1
 
 
+@pytest.mark.parametrize("kind,failed_job_cancelled", [("rdma", False), ("message", True)])
+def test_a_wrapped_fleet_read_timeout_leaves_the_cancel_list(monkeypatch, kind, failed_job_cancelled):
+    """Current behaviour, kept on purpose.
+
+    Fleet's cancel broadcast treats a raw TimeoutError as ambiguous and cancels
+    the failed job too. A native read's TimeoutError arrives wrapped in the
+    typed error, a RuntimeError, so the failed job leaves the list and only live
+    peers get a cancel. That job's collection already completed, so a cancel
+    could reach only a finished render, and its lease ends abandoned either way.
+    """
+    import threading
+
+    from dgx_monarch.nodes import fleet
+
+    class Progress:
+        def __exit__(self, *_args):
+            pass
+
+    peer_released, cancelled = threading.Event(), []
+
+    class Handle:
+        def collect_one(self, future, timeout_s):
+            if future == "peer":  # still running until its cancel arrives
+                peer_released.wait(5)
+                return {"latent": {"kind": "message", "tensor": torch.zeros(1)}, "sample_s": 0.1}
+            failed = _native_descriptor() if kind == "rdma" else {"kind": "message", "tensor": None}
+            return {"latent": failed, "sample_s": 0.1}
+
+        def cancel_sample(self, render_id, wait):
+            cancelled.append(render_id)
+            if render_id == "render-peer":
+                peer_released.set()
+
+    timeout = TimeoutError("read timed out")
+    if kind == "rdma":
+        _failing_read(monkeypatch, timeout)
+    else:
+        real_read = fleet.read_latent_result
+
+        def read(descriptor, *guard):
+            if descriptor.get("tensor") is None:
+                raise timeout
+            return real_read(descriptor, *guard)
+        monkeypatch.setattr(fleet, "read_latent_result", read)
+    retired = []
+    monkeypatch.setattr(fleet, "_retire_fleet_future",
+                        lambda future, *, consumed: retired.append((future, consumed)))
+    monkeypatch.setattr(fleet, "_retire_fleet_audit", lambda _render_id: None)
+    monkeypatch.setattr(fleet, "mark_defunct_on_supervision_failure", lambda *_args: None)
+
+    with pytest.raises(NativeReturnLatchedError if kind == "rdma" else TimeoutError) as raised:
+        fleet._collect_fleet_wave(
+            Handle(), [(0, "failed", Progress(), "render-failed"),
+                       (1, "peer", Progress(), "render-peer")], [None, None], 10.0, 2)
+
+    assert (raised.value.__cause__ if kind == "rdma" else raised.value) is timeout
+    assert cancelled == (["render-failed", "render-peer"] if failed_job_cancelled
+                         else ["render-peer"])
+    assert sorted(retired) == [("failed", False), ("peer", True)]
+
+
 def test_a_fleet_message_failure_keeps_its_own_error(monkeypatch):
     from dgx_monarch.nodes import fleet
 
@@ -229,6 +290,82 @@ def test_an_actor_error_text_stays_out_of_the_typed_message():
     error = native_return_latch.latched_error(actor_error("remote traceback text"))
     assert "remote traceback text" not in str(error)
     assert "ActorError" in str(error)
+
+
+def _supervision_error():
+    from monarch._rust_bindings.monarch_hyperactor.supervision import SupervisionError
+    return SupervisionError("proc died")
+
+
+def _context_held():
+    """The receiver's shape: context kept, cause cleared by raise_with_distinct_cause."""
+    try:
+        try:
+            raise _supervision_error()
+        except BaseException:
+            raise RuntimeError("RDMA handoff ACK failed") from None
+    except RuntimeError as failure:
+        return failure
+
+
+def _cause_held():
+    failure = RuntimeError("RDMA read failed")
+    failure.__cause__ = _supervision_error()
+    return failure
+
+
+def _late_marker():
+    return RuntimeError("RDMA read failed on actor " + "a" * 600 + " (peer closed)")
+
+
+def _plain():
+    return RuntimeError("QP init timed out")
+
+
+def _actor_error():
+    from monarch.actor import ActorError
+    error = ActorError(RuntimeError("peer closed"))  # an endpoint failure: the actor lives
+    error.__context__ = _supervision_error()
+    return error
+
+
+def _wrapped(failure):
+    try:
+        try:
+            raise failure
+        except Exception as caught:
+            raise native_return_latch.latched_error(caught) from caught
+    except NativeReturnLatchedError as wrapped:
+        return wrapped
+
+
+@pytest.mark.parametrize("make,dead", [
+    (_context_held, True), (_cause_held, True), (_late_marker, True),
+    (_plain, False), (_actor_error, False)])
+def test_a_wrapped_failure_classifies_exactly_like_the_raw_failure(monkeypatch, make, dead):
+    from monarch.actor import ActorError
+
+    from dgx_monarch import mesh_helpers
+
+    published, formatted = [], []
+    monkeypatch.setattr(mesh_helpers, "_publish_defunct",
+                        lambda _handle, exc, text, holding_lock=False: published.append((exc, text)))
+
+    def refuse(_self):
+        formatted.append(True)
+        raise AssertionError("an ActorError was formatted")
+    monkeypatch.setattr(ActorError, "__str__", refuse)
+    monkeypatch.setattr(ActorError, "__repr__", refuse)
+
+    raw, wrapped = make(), _wrapped(make())
+    mesh_helpers.mark_defunct_on_supervision_failure(object(), raw)
+    mesh_helpers.mark_defunct_on_supervision_failure(object(), wrapped)
+
+    assert [exc for exc, _text in published] == ([raw, wrapped] if dead else [])
+    if dead:  # the same evidence, read from the wrapped failure, not the wrapper
+        assert published[0][1] == published[1][1]
+        assert "latched native return off" not in published[1][1]
+    assert formatted == []
 
 
 def test_telemetry_reports_the_latch_beside_return_ownership(monkeypatch):

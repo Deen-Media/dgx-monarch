@@ -243,3 +243,19 @@ def test_plain_update_refuses_a_diverged_checkout_before_admission(
     assert _plain_update(local) == 1
     assert _git(local, "rev-parse", "HEAD") == before
     assert "cannot fast-forward" in capsys.readouterr().err
+
+
+def test_plain_update_from_a_linked_worktree_skips_the_fetch(monkeypatch, tmp_path, capsys):
+    _origin, local = _checkout_behind_its_upstream(tmp_path)
+    tracking = _git(local, "rev-parse", "origin/main")
+    worktree = tmp_path / "worktree"
+    _git(local, "worktree", "add", "-q", str(worktree))
+    assert (worktree / ".git").is_file()
+    admitted = []
+    monkeypatch.setattr(legacy_update, "dependency_preflight",
+                        lambda pin, _roots, _config: admitted.append(pin) or False)
+
+    assert _plain_update(worktree) == 1
+    assert admitted == ["0.6.0"]  # the working tree's pin: nothing was fetched
+    assert _git(local, "rev-parse", "origin/main") == tracking
+    assert "not a plain git checkout" in capsys.readouterr().out

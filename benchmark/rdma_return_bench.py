@@ -33,7 +33,11 @@ message then native, then native then message, stamping each run with
 --timing-position first|second. --timing-summary REPORT... pairs the four PASS
 reports by order and prints warmed medians, savings and ratios per stratum;
 it imports neither Torch nor Monarch. Timing evidence carries no host name, IP,
-PID or home path, and refuses to write one.
+PID or home path, and refuses to write one. A plan that would stage more than
+--timing-budget-gib (default 8) across both cycles and owners refuses before
+any process starts, and a timed message return that passed its checks drops
+its roots, so timing never accumulates latents. Timing flags without --timing
+refuse, and so do run flags given to --timing-summary.
 """
 from __future__ import annotations
 
@@ -54,6 +58,9 @@ from types import SimpleNamespace
 MIB = 1024 * 1024
 THRESHOLD = 8 * MIB
 TIMING_SCHEMA = 1
+TIMING_DEFAULTS = {"timing_sizes_mib": (8, 32, 64), "timing_repeats": 7, "timing_budget_gib": 8}
+TIMING_RUN_FLAGS = ("--timing-position", "--timing-sizes-mib", "--timing-repeats",
+                    "--timing-budget-gib")
 # Process-lifetime roots also survive exceptions and failed evidence writes.
 OWNED: list[object] = []
 
@@ -279,6 +286,41 @@ def timing_order(return_mode, position):
     return f"{return_mode if position == 'first' else other}-first"
 
 
+def timing_staged_bytes(sizes_mib, repeats):
+    """Bytes a timing plan stages across both cycles and both owners."""
+    return 2 * 2 * sum(size for _phase, size, _repeat in timing_plan(sizes_mib, repeats))
+
+
+def admit_timing_args(args):
+    """Refuse timing flags that would be ignored, and plans above the staging budget."""
+    require(args.timing or not args.timing_flags_given, "timing flags need --timing")
+    require(not args.timing or args.timing_position, "--timing needs --timing-position")
+    require(1 <= args.timing_repeats <= 50, "--timing-repeats must be 1..50")
+    require(args.timing_budget_gib >= 1, "--timing-budget-gib must be at least 1")
+    require(not args.timing or timing_staged_bytes(args.timing_sizes_mib, args.timing_repeats)
+            <= args.timing_budget_gib * 1024 * MIB,
+            "timing plan stages more than --timing-budget-gib; shrink it or raise the budget")
+
+
+def timed_returns(plan, kind, row, dispatch, consume, facts):
+    """One owner's timed returns in a cycle, before any canonical case touches it.
+
+    Each call roots its guard, future and result in a list of its own, itself
+    rooted in OWNED. A message return that passed its exact-equality check owns
+    nothing, so its list empties and its tensor is freed. A native call keeps
+    its roots, and so does any call that raised, for the process lifetime.
+    """
+    for phase, size, repeat in plan:
+        roots: list[object] = []
+        OWNED.append(roots)
+        seed = 600 + len(row.get("timing_calls", []))
+        consume(dispatch(size, seed, 2, roots), kind, f"timing_{phase}", "timing_calls",
+                {"phase": phase, "repeat": repeat, "size_mib": size // MIB})
+        if kind == "message":
+            roots.clear()
+        facts(0)
+
+
 def disclosure_guard(cfg, home=None, hostname=None):
     """Refuse timing evidence that names a host, an address, a PID or a home path."""
     import socket
@@ -432,22 +474,22 @@ def run(args, evidence, cfg, driver_facts):
         for rank in (0, 1):
             owner = actors.slice(hosts=rank)
 
-            def dispatch(size, seed, depth, _handle=handle, _owner=owner):
+            def dispatch(size, seed, depth, roots=OWNED, _handle=handle, _owner=owner):
                 nonlocal sequence
                 evidence.data["stage"] = "dispatch_pack"
                 started = time.monotonic()
                 sequence += 1
                 guard = SetupBoundFuture.prepared(_handle, 1)
-                OWNED.append(guard)
+                roots.append(guard)
                 with _handle.lock:
                     guard._register_locked()
                     guard._mark_enqueue_started_locked()
                 future = _owner.pack.call_one(size, seed, sequence, depth)
-                OWNED.append(future)
+                roots.append(future)
                 with _handle.lock:
                     guard._bind_future_locked(future)
                 result = guard.get(timeout=90)
-                OWNED.append(result)
+                roots.append(result)
                 return guard, result["latent"], size, seed, time.monotonic() - started
 
             def consume(item, expected_kind, label, bucket="cases", extra=None,
@@ -480,16 +522,10 @@ def run(args, evidence, cfg, driver_facts):
                     "receiver_jobs": 0, "reader_tokens": 0, **(extra or {})})
                 evidence.save()
 
-            if args.timing:
-                # First use leads, before any canonical case touches this owner.
-                timed_kind = "rdma" if args.return_mode == "native" else "message"
-                for phase, size, repeat in timing_plan(args.timing_sizes_mib,
-                                                       args.timing_repeats):
-                    seed = 600 + len(row.get("timing_calls", []))
-                    consume(dispatch(size, seed, 2), timed_kind, f"timing_{phase}",
-                            "timing_calls", {"phase": phase, "repeat": repeat,
-                                             "size_mib": size // MIB})
-                    facts(0)
+            if args.timing:  # first use leads, before any canonical case touches this owner
+                timed_returns(timing_plan(args.timing_sizes_mib, args.timing_repeats),
+                              "rdma" if args.return_mode == "native" else "message",
+                              row, dispatch, consume, facts)
 
             for delta in (-16384, 0, 16384):
                 consume(dispatch(THRESHOLD + delta, 110 + delta, 2),
@@ -560,13 +596,24 @@ def parse_args(argv=None):
                         help="add first-use and warm timed returns to the same checked run")
     parser.add_argument("--timing-position", choices=("first", "second"),
                         help="this run's place in its fresh-process message/native order")
-    parser.add_argument("--timing-sizes-mib", type=_sizes_mib, default=(8, 32, 64),
+    parser.add_argument("--timing-sizes-mib", type=_sizes_mib,
                         help="comma-separated warm sizes, each 8..256 MiB (default 8,32,64)")
-    parser.add_argument("--timing-repeats", type=int, default=7,
+    parser.add_argument("--timing-repeats", type=int,
                         help="warm returns per size, owner and cycle, 1..50 (default 7)")
+    parser.add_argument("--timing-budget-gib", type=int,
+                        help="refuse a plan staging more GiB than this across both cycles "
+                             "and owners (default 8)")
     parser.add_argument("--timing-summary", nargs="+", metavar="REPORT",
                         help="pair PASS timing reports by order and print medians; no run")
-    return parser.parse_args(argv)
+    args = parser.parse_args(argv)
+    # Note the timing flags given before defaults fill in, so main can refuse
+    # one that would otherwise be ignored.
+    args.timing_flags_given = [flag for flag in TIMING_RUN_FLAGS
+                               if getattr(args, flag[2:].replace("-", "_")) is not None]
+    for name, default in TIMING_DEFAULTS.items():
+        if getattr(args, name) is None:
+            setattr(args, name, default)
+    return args
 
 
 def _sizes_mib(text):
@@ -640,11 +687,15 @@ def main(argv=None):
     require(re.fullmatch(r"[0-9a-f]{40}", args.expect_sha), "expected SHA must be full lowercase hex")
     require(re.fullmatch(r"[0-9a-f]{64}", args.expect_manifest), "invalid expected manifest")
     if args.timing_summary:
+        ignored = args.timing_flags_given + [flag for flag, value in (
+            ("--timing", args.timing), ("--config", args.config), ("--output", args.output),
+            ("--driver-host", args.driver_host), ("--preflight-only", args.preflight_only))
+            if value]
+        require(not ignored, "--timing-summary reads reports only; drop the run flags")
         reports = load_timing_reports(args.timing_summary, args.expect_sha, args.expect_manifest)
         print(json.dumps(compare_timing(reports), sort_keys=True, indent=2))
         return 0
-    require(not args.timing or args.timing_position, "--timing needs --timing-position")
-    require(1 <= args.timing_repeats <= 50, "--timing-repeats must be 1..50")
+    admit_timing_args(args)
     require(args.source, "explicit source required")
     root = Path(args.source).expanduser().resolve(strict=True)
     sys.dont_write_bytecode, sys.pycache_prefix = True, "/proc/self/fd/2147483647"
@@ -678,6 +729,8 @@ def main(argv=None):
             "order": timing_order(args.return_mode, args.timing_position),
             "first_use_mib": THRESHOLD // MIB, "sizes_mib": list(args.timing_sizes_mib),
             "warm_repeats": args.timing_repeats,
+            "staged_bytes": timing_staged_bytes(args.timing_sizes_mib, args.timing_repeats),
+            "staged_budget_gib": args.timing_budget_gib,
             "timed_span": "pack_rpc_plus_read_drop_ack",
             "excluded": ["verification", "evidence_writes", "status_checks"]}
     evidence = Evidence(args.output, data,

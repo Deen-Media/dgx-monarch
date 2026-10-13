@@ -5,7 +5,7 @@
 - Latch native latent return off for the rest of the driver session after a
   native read fails on the driver. Later setups ask the actors for messaging
   instead of repeating the fault and retaining another latent each time; the
-  failed render and any Fleet job reading that result raise
+  failed render, and a Fleet job whose own native read fails, raise
   `NativeReturnLatchedError`, the driver logs one warning, and `/dgxm/telemetry`
   shows the latch next to `return_ownership`. Ownership rules are unchanged;
   the latch clears when ComfyUI restarts
@@ -14,8 +14,10 @@
   returns at chosen sizes inside the checked CPU-staged run, in either
   message/native order, with `--timing-summary` pairing the reports into warmed
   medians, savings and ratios. Timing evidence refuses host names, addresses,
-  PIDs and home paths. The recorded 2026-10-13 figures came from a private
-  workspace tool; this mode is the reproducer for later campaigns.
+  PIDs and home paths, and a plan that would stage more than
+  `--timing-budget-gib` (default 8) refuses. The recorded 2026-10-13 figures
+  came from a private workspace tool; this mode implements the same protocol
+  for later campaigns and has not yet run on hardware.
 - Make plain `dgxm update` fetch first, check the fetched commit's dependencies,
   and fast-forward only after that check passes, so a refusal leaves the
   checkout at its current commit instead of at the new commit against the old

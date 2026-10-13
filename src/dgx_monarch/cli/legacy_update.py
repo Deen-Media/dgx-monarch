@@ -122,7 +122,8 @@ def _run_locked(
         if candidate is None:
             return 1
     else:
-        print(f"{repo} is not a git checkout; skipping pull")
+        print(f"{repo} is not a plain git checkout (no .git directory); skipping the fetch "
+              "and checking the working tree's pyproject.toml")
 
     try:
         if candidate is None:

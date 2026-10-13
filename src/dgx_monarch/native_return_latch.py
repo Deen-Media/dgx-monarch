@@ -93,12 +93,23 @@ def typed_read(read: Any, descriptor: Any, *guard: Any) -> Any:
         raise
 
 
+def wrapped_failure(error: BaseException) -> BaseException:
+    """The native read failure a latched error wraps, else ``error`` itself.
+
+    The supervision classifier judges this failure, so a wrapped dead fleet
+    still reads as dead and a wrapped ActorError still reads as alive.
+    """
+    cause = error.__cause__ if isinstance(error, NativeReturnLatchedError) else None
+    return cause if cause is not None else error
+
+
 def latched_error(error: BaseException) -> NativeReturnLatchedError:
     """The typed render error, chained by the caller from the native failure.
 
-    The original text rides along, so the supervision classifier's text check
-    still sees it. An ActorError's text is left out: it expands the remote
-    traceback, which mesh_helpers also refuses to stringify.
+    The first 500 characters of the original text ride along for the operator;
+    the supervision classifier reads the original through ``wrapped_failure``.
+    An ActorError's text is left out: it expands the remote traceback, which
+    mesh_helpers also refuses to stringify.
     """
     hidden = any(cls.__name__ == "ActorError" for cls in type(error).__mro__)
     detail = "" if hidden else f": {failure_text(error)[:500]}"

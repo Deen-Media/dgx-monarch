@@ -5,9 +5,11 @@ ownership checks; these tests cover what can run without a fabric.
 """
 from __future__ import annotations
 
+import gc
 import importlib.util
 import json
 import os
+import weakref
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -52,6 +54,122 @@ def test_the_timing_plan_leads_with_first_use_then_warm_repeats_per_size():
     ("native", "first", "native-first"), ("message", "second", "native-first")])
 def test_each_run_names_its_campaign_order(mode, position, order):
     assert _bench().timing_order(mode, position) == order
+
+
+def _parse(module, *extra):
+    return module.parse_args(["--expect-sha", SHA, "--expect-manifest", MANIFEST, *extra])
+
+
+def test_the_default_plan_fits_the_default_staging_budget():
+    module = _bench()
+    args = _parse(module, "--timing", "--timing-position", "first")
+    assert args.timing_budget_gib == 8
+    assert module.timing_staged_bytes(args.timing_sizes_mib, args.timing_repeats) == 2944 * module.MIB
+    module.admit_timing_args(args)
+
+
+def test_a_plan_above_the_staging_budget_refuses_until_the_budget_is_raised():
+    module = _bench()
+    plan = ("--timing", "--timing-position", "first",
+            "--timing-sizes-mib", "64,128,256", "--timing-repeats", "20")
+    with pytest.raises(module.QualificationRefused, match="budget"):
+        module.admit_timing_args(_parse(module, *plan))
+    module.admit_timing_args(_parse(module, *plan, "--timing-budget-gib", "36"))
+    with pytest.raises(module.QualificationRefused, match="at least 1"):
+        module.admit_timing_args(_parse(module, *plan, "--timing-budget-gib", "0"))
+
+
+@pytest.mark.parametrize("flag", [
+    ("--timing-position", "first"), ("--timing-sizes-mib", "8,32"),
+    ("--timing-repeats", "7"), ("--timing-budget-gib", "8")])
+def test_a_timing_flag_without_timing_refuses(flag):
+    module = _bench()
+    args = _parse(module, *flag)
+    assert args.timing_flags_given == [flag[0]]
+    with pytest.raises(module.QualificationRefused, match="need --timing"):
+        module.admit_timing_args(args)
+    module.admit_timing_args(_parse(module))  # the default mode still passes
+
+
+@pytest.mark.parametrize("flag", [
+    ("--timing",), ("--timing-repeats", "7"), ("--config", "cluster.toml"),
+    ("--output", "run.json"), ("--preflight-only",)])
+def test_the_summary_refuses_run_flags_it_would_ignore(flag):
+    module = _bench()
+    with pytest.raises(module.QualificationRefused, match="reports only"):
+        module.main(["--expect-sha", SHA, "--expect-manifest", MANIFEST,
+                     "--timing-summary", "unread.json", *flag])
+
+
+class _Root:
+    """A guard or future stand-in that can be weakly referenced."""
+
+
+def _timed_fakes(module, events):
+    """Fake dispatch, consume and facts that record the hook's calls."""
+    import torch
+
+    row, refs = {}, []
+
+    def dispatch(size, seed, depth, roots):
+        guard, future = _Root(), _Root()
+        tensor = torch.zeros(4, dtype=torch.uint8)
+        result = {"latent": {"kind": "message", "tensor": tensor}}
+        roots += [guard, future, result]
+        refs.append((weakref.ref(guard), weakref.ref(future), weakref.ref(tensor)))
+        events.append(("dispatch", size // module.MIB, seed, depth))
+        return guard, result["latent"], size, seed, 0.0
+
+    def consume(item, kind, label, bucket, extra):
+        events.append(("consume", kind, label, bucket))
+        row.setdefault(bucket, []).append({"label": label, **extra})
+
+    def facts(expected_live):
+        events.append(("facts", expected_live))
+    return row, refs, dispatch, consume, facts
+
+
+def test_the_timing_hook_runs_the_plan_in_order_and_checks_after_each_call(monkeypatch):
+    module = _bench()
+    monkeypatch.setattr(module, "OWNED", [])
+    events = []
+    row, _refs, dispatch, consume, facts = _timed_fakes(module, events)
+    module.timed_returns(module.timing_plan((8, 32), 2), "message", row, dispatch, consume, facts)
+    assert events == [
+        ("dispatch", 8, 600, 2), ("consume", "message", "timing_first_use", "timing_calls"), ("facts", 0),
+        ("dispatch", 8, 601, 2), ("consume", "message", "timing_warm", "timing_calls"), ("facts", 0),
+        ("dispatch", 8, 602, 2), ("consume", "message", "timing_warm", "timing_calls"), ("facts", 0),
+        ("dispatch", 32, 603, 2), ("consume", "message", "timing_warm", "timing_calls"), ("facts", 0),
+        ("dispatch", 32, 604, 2), ("consume", "message", "timing_warm", "timing_calls"), ("facts", 0)]
+    assert [(c["phase"], c["repeat"], c["size_mib"]) for c in row["timing_calls"]] == [
+        ("first_use", 0, 8), ("warm", 0, 8), ("warm", 1, 8), ("warm", 0, 32), ("warm", 1, 32)]
+
+
+def test_a_passed_timed_message_return_frees_its_guard_future_and_tensor(monkeypatch):
+    module = _bench()
+    monkeypatch.setattr(module, "OWNED", [])
+    row, refs, dispatch, consume, facts = _timed_fakes(module, [])
+    module.timed_returns(module.timing_plan((8,), 3), "message", row, dispatch, consume, facts)
+    gc.collect()
+    assert len(refs) == 4
+    assert all(ref() is None for call in refs for ref in call)
+
+
+def test_native_timed_returns_and_a_failed_message_return_stay_rooted(monkeypatch):
+    module = _bench()
+    monkeypatch.setattr(module, "OWNED", [])
+    row, refs, dispatch, consume, facts = _timed_fakes(module, [])
+    module.timed_returns(module.timing_plan((8,), 1), "rdma", row, dispatch, consume, facts)
+
+    def failing(item, kind, label, bucket, extra):
+        raise module.QualificationRefused("CPU tensor exact integrity mismatch")
+    with pytest.raises(module.QualificationRefused):
+        module.timed_returns(module.timing_plan((8,), 1), "message", row, dispatch, failing, facts)
+    gc.collect()
+    assert len(refs) == 3
+    assert all(ref() is not None for call in refs for ref in call)
+    rooted = [root for roots in module.OWNED for root in roots]
+    assert all(any(root is ref() for root in rooted) for call in refs for ref in call[:2])
 
 
 @pytest.mark.parametrize("sizes", ["4", "8,8", "8,512", "eight", ""])

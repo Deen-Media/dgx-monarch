@@ -5095,9 +5095,11 @@ latents come back slower but complete. `/dgxm/telemetry` shows
 failed read's exception type as `reason`, `latched_unix_s`, `fault_count`,
 `last_fault_unix_s` and `clears_on: driver_restart`.
 
-**Cause:** a native latent read failed on the driver: a queue-pair
-initialization timeout, a registration or read failure, a read timeout, a
-policy readback refusal or a failed ACK. Ownership settles as
+**Cause:** a native latent read failed on the driver. Any failure of a native
+read on the driver trips the latch: a queue-pair initialization timeout, a
+registration or read failure, a read timeout, a policy readback refusal, a
+failed ACK, or a refusal before the read starts, including a read on a lease
+that already retired. Ownership settles as
 [#29](#29-large-rdma-latent-return-fails-after-workers-finish-rendering)
 describes: nothing is dropped or acknowledged without proof, a started read
 keeps its destination, and the failed render's lease stays abandoned. Before

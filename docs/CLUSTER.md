@@ -137,14 +137,14 @@ uses its own `[[hosts]]` entry. The driver uses the entry whose `address` IP
 equals the `client_bind` IP, the rule the qualifier also applies; when none
 matches, as on a driver box without a Worker, it uses `target` and logs one
 WARNING. With native return on, the driver checks every host's resolved target
-before it starts any process. A failed native read latches native return off
-until ComfyUI restarts, so later setups use messaging
-([TROUBLESHOOTING #115](TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
-Conflicting ambient
+before it starts any process. Conflicting ambient
 environment variables are refused. A transport-policy change requires a fresh
 process; it cannot change an already initialized RDMA manager safely. Preserve
 Worker ownership and follow the reviewed update/restart procedure in
-[Changing policy after install](#changing-policy-after-install).
+[Changing policy after install](#changing-policy-after-install). A failed native
+read latches native return off until ComfyUI restarts, so later setups use
+messaging
+([TROUBLESHOOTING #115](TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
 
 ### `[monarch.diagnostics]`
 
