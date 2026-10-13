@@ -32,12 +32,13 @@ and status checks stay outside it. Measure both orders in fresh processes:
 message then native, then native then message, stamping each run with
 --timing-position first|second. --timing-summary REPORT... pairs the four PASS
 reports by order and prints warmed medians, savings and ratios per stratum;
-it imports neither Torch nor Monarch. Timing evidence carries no host name, IP,
-PID or home path, and refuses to write one. A plan that would stage more than
---timing-budget-gib (default 8) across both cycles and owners refuses before
-any process starts, and a timed message return that passed its checks drops
-its roots, so timing never accumulates latents. Timing flags without --timing
-refuse, and so do run flags given to --timing-summary.
+it refuses a set that lacks either order and imports neither Torch nor Monarch.
+Timing evidence carries no host name, IP, PID or home path, and refuses to
+write one. A plan that would stage more than --timing-budget-gib (default 8)
+across both cycles and owners refuses before any process starts, and a timed
+message return that passed its checks drops its roots, so timing never
+accumulates latents. Timing flags without --timing refuse, and so do run
+flags given to --timing-summary.
 """
 from __future__ import annotations
 
@@ -58,6 +59,7 @@ from types import SimpleNamespace
 MIB = 1024 * 1024
 THRESHOLD = 8 * MIB
 TIMING_SCHEMA = 1
+TIMING_ORDERS = ("message-first", "native-first")
 TIMING_DEFAULTS = {"timing_sizes_mib": (8, 32, 64), "timing_repeats": 7, "timing_budget_gib": 8}
 TIMING_RUN_FLAGS = ("--timing-position", "--timing-sizes-mib", "--timing-repeats",
                     "--timing-budget-gib")
@@ -604,7 +606,8 @@ def parse_args(argv=None):
                         help="refuse a plan staging more GiB than this across both cycles "
                              "and owners (default 8)")
     parser.add_argument("--timing-summary", nargs="+", metavar="REPORT",
-                        help="pair PASS timing reports by order and print medians; no run")
+                        help="pair the four PASS timing reports, message and native from "
+                             "both orders, and print medians; no run")
     args = parser.parse_args(argv)
     # Note the timing flags given before defaults fill in, so main can refuse
     # one that would otherwise be ignored.
@@ -648,13 +651,20 @@ def load_timing_reports(paths, sha, manifest):
 
 
 def compare_timing(reports):
-    """Warmed-median native savings and message/native ratios per order, cycle and owner."""
+    """Warmed-median native savings and message/native ratios per order, cycle and owner.
+
+    A campaign summary needs both orders: one order alone cannot show whether
+    reversing it changes the result, so it refuses rather than print a partial.
+    """
     orders = {}
     for report in reports:
         pair = orders.setdefault(report["timing"]["order"], {})
         require(report["return_mode"] not in pair, "one report per mode and order")
         pair[report["return_mode"]] = {(s["cycle"], s["owner_rank"]): s
                                        for s in report["timing_summary"]}
+    missing = [order for order in TIMING_ORDERS if order not in orders]
+    require(not missing, f"timing summary needs both orders; missing {' and '.join(missing)} "
+                         "(its message and native reports)")
     strata, savings, ratios, first_use = [], {}, {}, []
     for order, pair in sorted(orders.items()):
         require(set(pair) == {"message", "native"}, "each order needs a message and a native report")
@@ -692,8 +702,14 @@ def main(argv=None):
             ("--driver-host", args.driver_host), ("--preflight-only", args.preflight_only))
             if value]
         require(not ignored, "--timing-summary reads reports only; drop the run flags")
-        reports = load_timing_reports(args.timing_summary, args.expect_sha, args.expect_manifest)
-        print(json.dumps(compare_timing(reports), sort_keys=True, indent=2))
+        try:
+            summary = compare_timing(load_timing_reports(
+                args.timing_summary, args.expect_sha, args.expect_manifest))
+        except QualificationRefused as refusal:
+            # Fixed reasons naming no host, path or report content; print them.
+            print(f"REFUSED: {refusal}", file=sys.stderr)
+            return 2
+        print(json.dumps(summary, sort_keys=True, indent=2))
         return 0
     admit_timing_args(args)
     require(args.source, "explicit source required")

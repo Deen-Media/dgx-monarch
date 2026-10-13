@@ -53,11 +53,44 @@ def run(
         return 2
 
 
-def _fetch_candidate(repo: Path) -> str | None:
-    """Fetch as `git pull --ff-only` would and return the commit it would reach, unmerged.
+# The file admission reads, and the one `pip install -e` builds metadata from.
+_CONTRACT_FILES = ("pyproject.toml",)
+
+
+def _contract_edited(repo: Path) -> bool:
+    """Refuse a contract file whose working copy may differ from its committed blob.
+
+    `git merge --ff-only` keeps a local edit when the fetched commit leaves the
+    file alone, so admission would read the committed file while `pip install
+    -e` builds from the edited one. Staged, unstaged and index-hidden edits
+    (assume-unchanged or skip-worktree) all refuse; other tracked files are the
+    editable tree itself, live before and after the update, and never checked.
+    """
+    git = ["git", "-C", str(repo)]
+    for name in _CONTRACT_FILES:
+        status = subprocess.run([*git, "status", "--porcelain=v1", "--untracked-files=no",
+                                 "--", name], capture_output=True, text=True)
+        flags = subprocess.run([*git, "ls-files", "-v", "--", name],
+                               capture_output=True, text=True)
+        if status.returncode or flags.returncode:
+            print(f"cannot read the local state of {name}; resolve it by hand, then rerun "
+                  "`dgxm update`", file=sys.stderr)
+            return True
+        if status.stdout.strip() or flags.stdout.split(" ", 1)[0] != "H":
+            print(f"{name} has local changes (staged, unstaged, or hidden by an assume-unchanged "
+                  "or skip-worktree flag) that the update would install without checking them. "
+                  "Commit or discard them, then rerun `dgxm update`.", file=sys.stderr)
+            return True
+    return False
+
+
+def _fetch_candidate(repo: Path) -> tuple[str, bool] | None:
+    """Fetch as `git pull --ff-only` would; return the commit to install and whether to merge.
 
     Dependency admission reads this commit's pyproject.toml, so a refusal leaves
-    the checkout where it was; the merge then names this exact commit.
+    the checkout where it was. When HEAD already contains the fetched upstream,
+    as with local commits, HEAD is the commit to install and nothing merges;
+    otherwise the merge names this exact commit.
     """
     git = ["git", "-C", str(repo)]
     print(f"git fetch in {repo}")
@@ -68,21 +101,29 @@ def _fetch_candidate(repo: Path) -> str | None:
         path = subprocess.run([*git, "rev-parse", "--git-path", "FETCH_HEAD"],
                               capture_output=True, text=True, check=True).stdout.strip()
         lines = (repo / path).read_text(encoding="utf-8").splitlines()
+        head = subprocess.run([*git, "rev-parse", "--verify", "HEAD^{commit}"],
+                              capture_output=True, text=True, check=True).stdout.strip()
     except (OSError, UnicodeDecodeError, subprocess.CalledProcessError):
-        lines = []
+        lines, head = [], ""
     # `git pull` merges only entries not marked not-for-merge: the branch's upstream.
     heads = [fields[0] for fields in (line.split("\t") for line in lines)
              if len(fields) >= 3 and fields[1] == ""]
-    if len(heads) != 1 or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", heads[0]):
+    if len(heads) != 1 or not all(re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", sha)
+                                  for sha in (heads[0], head)):
         print("the current branch has no single upstream to fast-forward to (git pull "
               "--ff-only refuses too); set its upstream, then rerun `dgxm update`",
               file=sys.stderr)
         return None
-    if subprocess.run([*git, "merge-base", "--is-ancestor", "HEAD", heads[0]]).returncode:
-        print("the checkout cannot fast-forward to its fetched upstream; resolve it by hand, "
-              "then rerun `dgxm update`", file=sys.stderr)
+    if not subprocess.run([*git, "merge-base", "--is-ancestor", heads[0], head]).returncode:
+        print(f"HEAD {head[:12]} already contains its fetched upstream; checking HEAD and "
+              "leaving the checkout where it is")
+        return head, False
+    if subprocess.run([*git, "merge-base", "--is-ancestor", head, heads[0]]).returncode:
+        print("the checkout has diverged from its fetched upstream and cannot fast-forward "
+              "(git pull --ff-only refuses too); resolve it by hand, then rerun `dgxm update`",
+              file=sys.stderr)
         return None
-    return heads[0]
+    return heads[0], True
 
 
 def _run_locked(
@@ -116,11 +157,15 @@ def _run_locked(
             file=sys.stderr,
         )
         return probe_certainty.UNKNOWN_EXIT
-    candidate = None
+    candidate: str | None = None
+    merge = False
     if (repo / ".git").is_dir():
-        candidate = _fetch_candidate(repo)
-        if candidate is None:
+        if _contract_edited(repo):
             return 1
+        fetched = _fetch_candidate(repo)
+        if fetched is None:
+            return 1
+        candidate, merge = fetched
     else:
         print(f"{repo} is not a plain git checkout (no .git directory); skipping the fetch "
               "and checking the working tree's pyproject.toml")
@@ -128,7 +173,7 @@ def _run_locked(
     try:
         if candidate is None:
             project = (repo / "pyproject.toml").read_bytes()
-        else:  # admit the fetched commit's contract before the checkout moves
+        else:  # admit the commit to install before the checkout moves
             project = subprocess.run(
                 ["git", "-C", str(repo), "show", f"{candidate}:pyproject.toml"],
                 capture_output=True, check=True).stdout
@@ -151,7 +196,7 @@ def _run_locked(
               "above and install prerequisites separately using docs/INSTALL.md; preserve the "
               f"working Torch build.{unmoved}", file=sys.stderr)
         return 1
-    if candidate is not None:
+    if candidate is not None and merge:
         print(f"git merge --ff-only {candidate[:12]} in {repo}")
         if subprocess.run(["git", "-C", str(repo), "merge", "--ff-only", candidate],
                           text=True).returncode:

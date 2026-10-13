@@ -298,6 +298,19 @@ def test_the_summary_refuses_unbound_or_unpaired_reports(tmp_path):
         module.load_timing_reports(paths, SHA, MANIFEST)
 
 
+def test_the_summary_refuses_one_complete_pair_and_names_the_missing_order(tmp_path, capsys):
+    module = _bench()
+    paths = _campaign(module, tmp_path)  # mm, mn: message-first; nn, nm: native-first
+    for pair, missing in ((paths[:2], "native-first"), (paths[2:], "message-first")):
+        with pytest.raises(module.QualificationRefused, match=f"both orders; missing {missing}"):
+            module.compare_timing(module.load_timing_reports(pair, SHA, MANIFEST))
+        assert module.main(["--expect-sha", SHA, "--expect-manifest", MANIFEST,
+                            "--timing-summary", *pair]) == 2
+        captured = capsys.readouterr()
+        assert captured.out == "" and f"missing {missing}" in captured.err
+    assert len(module.compare_timing(module.load_timing_reports(paths, SHA, MANIFEST))["strata"]) == 8
+
+
 def test_the_summary_command_imports_no_native_runtime(monkeypatch, tmp_path, capsys):
     import builtins
 

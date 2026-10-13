@@ -24,15 +24,19 @@
 - Add `--timing` to `benchmark/rdma_return_bench.py`: first-use and warm timed
   returns at chosen sizes inside the checked CPU-staged run, in either
   message/native order, with `--timing-summary` pairing the reports into warmed
-  medians, savings and ratios. Timing evidence refuses host names, addresses,
-  PIDs and home paths, and a plan that would stage more than
+  medians, savings and ratios. The summary needs both orders and refuses a set
+  that lacks one, naming the missing order. Timing evidence refuses host names,
+  addresses, PIDs and home paths, and a plan that would stage more than
   `--timing-budget-gib` (default 8) refuses. The recorded 2026-10-13 figures
   came from a private workspace tool; this mode implements the same protocol
   for later campaigns and has not yet run on hardware.
 - Make plain `dgxm update` fetch first, check the fetched commit's dependencies,
   and fast-forward only after that check passes, so a refusal leaves the
   checkout at its current commit instead of at the new commit against the old
-  torchmonarch.
+  torchmonarch. A checkout whose HEAD already contains its upstream, as with
+  local commits, stays where it is and is checked at HEAD. A staged, unstaged or
+  index-hidden edit to `pyproject.toml` refuses before the fetch, because the
+  fast-forward would otherwise install it without checking it.
 - Attribute a normal render's progress steps to the render's own telemetry
   token without transferring ownership, and ignore a step for a finished render
   or one that arrives when no render is live. A late step no longer leaves

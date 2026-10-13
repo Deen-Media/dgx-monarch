@@ -1770,8 +1770,9 @@ timing figures above. For later campaigns, the qualifier's `--timing` mode in
 `benchmark/rdma_return_bench.py` implements this protocol through the same
 production return path, admission and ownership checks, and its
 `--timing-summary` mode pairs the four reports into per-stratum warmed medians,
-savings and ratios. The mode has not yet run on hardware, so it has not
-reproduced these figures; a campaign that runs it gets its own dated record.
+savings and ratios, and refuses a set that lacks either order. The mode has not
+yet run on hardware, so it has not reproduced these figures; a campaign that
+runs it gets its own dated record.
 
 **October 13, 2026 UTC:** a separate RAW BF16 production-return experiment
 completed one positive denoising step at 2048×4096 without VAE decoding. It

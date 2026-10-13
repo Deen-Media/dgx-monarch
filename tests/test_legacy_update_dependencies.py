@@ -154,15 +154,19 @@ def _git(repo: Path, *args: str) -> str:
     return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
 
 
-def _commit_pin(repo: Path, pin: str) -> None:
-    (repo / "pyproject.toml").write_text(f'[project]\ndependencies=["torchmonarch=={pin}"]\n')
-    _git(repo, "add", "pyproject.toml")
+def _commit_file(repo: Path, name: str, text: str) -> None:
+    (repo / name).write_text(text)
+    _git(repo, "add", name)
     _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test",
-         "-c", "commit.gpgsign=false", "commit", "-q", "-m", pin)
+         "-c", "commit.gpgsign=false", "commit", "-q", "-m", name)
 
 
-def _checkout_behind_its_upstream(tmp_path: Path) -> tuple[Path, Path]:
-    """A clone at pin 0.6.0 whose upstream has since moved to 0.7.0."""
+def _commit_pin(repo: Path, pin: str) -> None:
+    _commit_file(repo, "pyproject.toml", f'[project]\ndependencies=["torchmonarch=={pin}"]\n')
+
+
+def _checkout_at_its_upstream(tmp_path: Path) -> tuple[Path, Path]:
+    """A clone at pin 0.6.0 whose upstream has not moved."""
     origin = tmp_path / "origin"
     origin.mkdir()
     _git(origin, "init", "-q", "-b", "main")
@@ -170,6 +174,12 @@ def _checkout_behind_its_upstream(tmp_path: Path) -> tuple[Path, Path]:
     local = tmp_path / "local"
     subprocess.run(["git", "clone", "-q", str(origin), str(local)], check=True,
                    capture_output=True)
+    return origin, local
+
+
+def _checkout_behind_its_upstream(tmp_path: Path) -> tuple[Path, Path]:
+    """A clone at pin 0.6.0 whose upstream has since moved to 0.7.0."""
+    origin, local = _checkout_at_its_upstream(tmp_path)
     _commit_pin(origin, "0.7.0")
     return origin, local
 
@@ -178,6 +188,23 @@ def _plain_update(local: Path) -> int:
     return legacy_update._run_locked(
         SimpleNamespace(host=None), repo=local, load_config=lambda _args: None,
         driver_probe=lambda _host: (None, True))
+
+
+def _record_admission_merge_and_pip(monkeypatch, events: list, installed: str) -> None:
+    """Admit every pin, run git for real, and record admission, merges and pip calls."""
+    monkeypatch.setattr(legacy_update, "dependency_preflight",
+                        lambda pin, _roots, _config: events.append(("admit", pin)) or True)
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: installed)
+    real_run = subprocess.run
+
+    def run(argv, **kwargs):
+        if argv[0] == "git":
+            if "merge" in argv:
+                events.append(("merge", argv[-1]))
+            return real_run(argv, **kwargs)
+        events.append(("pip", tuple(argv[3:5])))
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(legacy_update.subprocess, "run", run)
 
 
 def test_plain_update_refusal_leaves_the_checkout_at_its_commit(monkeypatch, tmp_path, capsys):
@@ -198,25 +225,69 @@ def test_plain_update_refusal_leaves_the_checkout_at_its_commit(monkeypatch, tmp
 def test_plain_update_fast_forwards_to_the_admitted_commit_only_after_admission(
         monkeypatch, tmp_path):
     origin, local = _checkout_behind_its_upstream(tmp_path)
-    events = []
-    monkeypatch.setattr(legacy_update, "dependency_preflight",
-                        lambda pin, _roots, _config: events.append(("admit", pin)) or True)
-    monkeypatch.setattr(importlib.metadata, "version", lambda _name: "0.7.0")
-    real_run = subprocess.run
-
-    def run(argv, **kwargs):
-        if argv[0] == "git":
-            if "merge" in argv:
-                events.append(("merge", argv[-1]))
-            return real_run(argv, **kwargs)
-        events.append(("pip", tuple(argv[3:5])))
-        return subprocess.CompletedProcess(argv, 0)
-    monkeypatch.setattr(legacy_update.subprocess, "run", run)
+    events: list = []
+    _record_admission_merge_and_pip(monkeypatch, events, "0.7.0")
 
     assert _plain_update(local) == 0
     target = _git(origin, "rev-parse", "HEAD")
     assert _git(local, "rev-parse", "HEAD") == target
     assert events == [("admit", "0.7.0"), ("merge", target), ("pip", ("install", "-e"))]
+
+
+def test_plain_update_at_its_upstream_checks_head_without_merging(monkeypatch, tmp_path, capsys):
+    _origin, local = _checkout_at_its_upstream(tmp_path)
+    before = _git(local, "rev-parse", "HEAD")
+    events: list = []
+    _record_admission_merge_and_pip(monkeypatch, events, "0.6.0")
+
+    assert _plain_update(local) == 0
+    assert _git(local, "rev-parse", "HEAD") == before
+    assert events == [("admit", "0.6.0"), ("pip", ("install", "-e"))]
+    assert "already contains its fetched upstream" in capsys.readouterr().out
+
+
+def test_plain_update_with_local_commits_checks_head_not_the_older_upstream(
+        monkeypatch, tmp_path, capsys):
+    """`git pull --ff-only` leaves a checkout ahead of its upstream unmoved; so does this."""
+    _origin, local = _checkout_at_its_upstream(tmp_path)
+    _commit_pin(local, "0.7.0")
+    before = _git(local, "rev-parse", "HEAD")
+    assert _git(local, "rev-parse", "origin/main") != before
+    events: list = []
+    _record_admission_merge_and_pip(monkeypatch, events, "0.7.0")
+
+    assert _plain_update(local) == 0
+    # Admission read HEAD's pin, the commit that is installed, not the upstream's 0.6.0.
+    assert events == [("admit", "0.7.0"), ("pip", ("install", "-e"))]
+    assert _git(local, "rev-parse", "HEAD") == before
+    assert "already contains its fetched upstream" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("edit", ["unstaged", "staged", "assume-unchanged", "skip-worktree"])
+def test_plain_update_refuses_a_local_pyproject_edit_the_fast_forward_would_keep(
+        monkeypatch, tmp_path, capsys, edit):
+    origin, local = _checkout_at_its_upstream(tmp_path)
+    _commit_file(origin, "README.md", "the fetched commit leaves pyproject.toml alone\n")
+    tracking = _git(local, "rev-parse", "origin/main")
+    before = _git(local, "rev-parse", "HEAD")
+    edited = '[project]\ndependencies=["torchmonarch==0.6.1"]\n'
+    (local / "pyproject.toml").write_text(edited)
+    if edit == "staged":
+        _git(local, "add", "pyproject.toml")
+    elif edit != "unstaged":
+        _git(local, "update-index", f"--{edit}", "pyproject.toml")
+    monkeypatch.setattr(legacy_update, "dependency_preflight",
+                        lambda *_args: pytest.fail("admission ran over a local pyproject edit"))
+
+    assert _plain_update(local) == 1
+    assert _git(local, "rev-parse", "HEAD") == before
+    assert _git(local, "rev-parse", "origin/main") == tracking  # refused before the fetch
+    assert (local / "pyproject.toml").read_text() == edited
+    assert "pyproject.toml has local changes" in capsys.readouterr().err
+    # The escape is real: a fast-forward to this upstream keeps the edit in the tree.
+    _git(local, "pull", "-q", "--ff-only")
+    assert _git(local, "rev-parse", "HEAD") == _git(origin, "rev-parse", "HEAD")
+    assert (local / "pyproject.toml").read_text() == edited
 
 
 def test_plain_update_refuses_a_branch_without_upstream_before_admission(
@@ -242,7 +313,7 @@ def test_plain_update_refuses_a_diverged_checkout_before_admission(
 
     assert _plain_update(local) == 1
     assert _git(local, "rev-parse", "HEAD") == before
-    assert "cannot fast-forward" in capsys.readouterr().err
+    assert "diverged from its fetched upstream" in capsys.readouterr().err
 
 
 def test_plain_update_from_a_linked_worktree_skips_the_fetch(monkeypatch, tmp_path, capsys):
