@@ -3,12 +3,11 @@
 Importing this module is stdlib-only. Explicit collection imports Torch and
 Monarch, but never creates an actor, RDMA manager, buffer, or device context.
 A loadable native binding is not evidence of a usable GPU or fabric. Metadata
-ownership and RECORD identity do not verify installed payload bytes.
+ownership does not verify installed payload bytes.
 """
 from __future__ import annotations
 
 import copy
-import hashlib
 import importlib
 import importlib.metadata
 import platform
@@ -47,11 +46,6 @@ def collect_capabilities() -> dict[str, Any]:
         try:
             distribution = importlib.metadata.distribution(package)
             facts["distribution_version"] = distribution.version
-            if package == "torchmonarch":
-                record = distribution.read_text("RECORD")
-                facts["record_sha256"] = (
-                    hashlib.sha256(record.encode()).hexdigest() if record else None
-                )
             module = importlib.import_module("monarch" if package == "torchmonarch" else package)
             facts["package"] = _origin(module, distribution)
             facts["import_status"] = "ok"

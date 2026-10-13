@@ -25,8 +25,7 @@
       },
       "package": {
         "distribution_owned": true
-      },
-      "record_sha256": "cce0309c030f36efe28f070137e64486231874c7f9581984d3643bdf75e96b00"
+      }
     }
   },
   "distribution": "torchmonarch",

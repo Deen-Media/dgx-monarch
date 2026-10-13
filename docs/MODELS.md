@@ -188,8 +188,10 @@ header and artifact identity even when its weights load on workers.
 | `qwen_image_vae.safetensors` | `models/vae` | Official sample VAE |
 
 Download links, byte sizes and SHA-256 hashes are in
-[the artifact manifest](../example_workflows/artifacts.toml). The INT8 row's
-source remains unverified: a filename does not establish its release or quantizer.
+[the artifact manifest](../example_workflows/artifacts.toml). The INT8 row is a
+placeholder for a conversion you supply, so it carries no link, size or hash;
+[the test record](VALIDATION.md#evidence-kroma) lists the tested file's SHA-256.
+Its source remains unverified: a filename does not establish its release or quantizer.
 Preserve its embedded quantization metadata. INT8 ConvRot requires ComfyUI
 and comfy-kitchen support for `int8_tensorwise` with rotation; changing the
 UNET loader's weight dtype does not create that conversion. Leave weight dtype

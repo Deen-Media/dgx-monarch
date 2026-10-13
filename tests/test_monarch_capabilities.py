@@ -25,7 +25,6 @@ def native_modules(monkeypatch, tmp_path):
     distributions = {
         name: SimpleNamespace(
             version=version, files=list(paths), locate_file=lambda entry: paths[entry],
-            read_text=lambda _: "record-evidence",
         )
         for name, version in (("torch", "2.12.0+cu132"), ("torchmonarch", "0.7.0"))
     }
@@ -46,12 +45,19 @@ def test_native_load_reports_build_and_redacts_paths_without_hardware(native_mod
     for origin in (result["torch"]["package"], result["torchmonarch"]["package"],
                    result["torchmonarch"]["native"]):
         assert origin == {"distribution_owned": True}
+    # pip's RECORD hashes console scripts whose shebangs name the venv path.
+    assert set(result["torchmonarch"]).isdisjoint(_INSTALL_PATH_KEYS)
 
 
 def test_missing_module_file_reports_no_path_fact(native_modules):
     native_modules["monarch._rust_bindings"].__file__ = None
     result = capabilities.collect_capabilities()
     assert result["torchmonarch"]["native"] == {"distribution_owned": False}
+
+
+# Facts that vary with the install path: a digest of a resolved module path,
+# and a digest of the installer-written RECORD.
+_INSTALL_PATH_KEYS = frozenset({"origin_sha256", "record_sha256"})
 
 
 def _keys(node):
@@ -64,14 +70,14 @@ def _keys(node):
             yield from _keys(value)
 
 
-def test_committed_pin_snapshots_carry_no_origin_path_digest():
+def test_committed_pin_snapshots_carry_no_install_path_digest():
     # CI cannot recompute a digest of the host path that produced a snapshot,
     # so the committed shape itself must exclude one.
     fixtures = sorted((Path(__file__).parent / "fixtures").glob("torchmonarch_pin_*.json"))
     assert fixtures
     for fixture in fixtures:
         snapshot = json.loads(fixture.read_text())
-        assert "origin_sha256" not in set(_keys(snapshot)), fixture.name
+        assert set(_keys(snapshot)).isdisjoint(_INSTALL_PATH_KEYS), fixture.name
         capabilities_seen = snapshot.get("capabilities")
         if capabilities_seen is not None:
             assert not capabilities.capability_blockers(

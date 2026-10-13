@@ -424,6 +424,9 @@ always interpreted literally.
 
 **Fix:** use batch size 2 (two images, one per rank), or Init `mode=local` +
 `gpus_per_host=1` for a true one-GPU render, or leave topology on `auto`.
+A batch that VAEEncode turns into video frames, as in the Kroma upscale graph,
+stays at 1 whatever the batch widget says, so only the last two fixes apply
+there; see [the Kroma notes](MODELS.md#model-kroma).
 
 The same refusal also appears at the loader node, before anything loads,
 whenever the graph states a literal batch on an empty-latent node ComfyUI
