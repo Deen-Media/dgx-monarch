@@ -148,3 +148,98 @@ def test_verified_checker_uses_same_local_safe_details(monkeypatch, capsys):
         return subprocess.CompletedProcess([], 1, '["xxhash: missing"]', "private")
     assert not update_support.candidate_dependencies_available(ClusterConfig(), [], {}, run)
     assert capsys.readouterr().err == "  driver: xxhash: missing\n"
+
+
+def _git(repo: Path, *args: str) -> str:
+    return subprocess.check_output(["git", "-C", str(repo), *args], text=True).strip()
+
+
+def _commit_pin(repo: Path, pin: str) -> None:
+    (repo / "pyproject.toml").write_text(f'[project]\ndependencies=["torchmonarch=={pin}"]\n')
+    _git(repo, "add", "pyproject.toml")
+    _git(repo, "-c", "user.name=Test", "-c", "user.email=test@example.test",
+         "-c", "commit.gpgsign=false", "commit", "-q", "-m", pin)
+
+
+def _checkout_behind_its_upstream(tmp_path: Path) -> tuple[Path, Path]:
+    """A clone at pin 0.6.0 whose upstream has since moved to 0.7.0."""
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _git(origin, "init", "-q", "-b", "main")
+    _commit_pin(origin, "0.6.0")
+    local = tmp_path / "local"
+    subprocess.run(["git", "clone", "-q", str(origin), str(local)], check=True,
+                   capture_output=True)
+    _commit_pin(origin, "0.7.0")
+    return origin, local
+
+
+def _plain_update(local: Path) -> int:
+    return legacy_update._run_locked(
+        SimpleNamespace(host=None), repo=local, load_config=lambda _args: None,
+        driver_probe=lambda _host: (None, True))
+
+
+def test_plain_update_refusal_leaves_the_checkout_at_its_commit(monkeypatch, tmp_path, capsys):
+    _origin, local = _checkout_behind_its_upstream(tmp_path)
+    before = _git(local, "rev-parse", "HEAD")
+    admitted = []
+    monkeypatch.setattr(legacy_update, "dependency_preflight",
+                        lambda pin, _roots, _config: admitted.append(pin) or False)
+
+    assert _plain_update(local) == 1
+    # Admission read the fetched commit's pin, not the working tree's.
+    assert admitted == ["0.7.0"]
+    assert _git(local, "rev-parse", "HEAD") == before
+    assert "torchmonarch==0.6.0" in (local / "pyproject.toml").read_text()
+    assert "stays at its current commit" in capsys.readouterr().err
+
+
+def test_plain_update_fast_forwards_to_the_admitted_commit_only_after_admission(
+        monkeypatch, tmp_path):
+    origin, local = _checkout_behind_its_upstream(tmp_path)
+    events = []
+    monkeypatch.setattr(legacy_update, "dependency_preflight",
+                        lambda pin, _roots, _config: events.append(("admit", pin)) or True)
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: "0.7.0")
+    real_run = subprocess.run
+
+    def run(argv, **kwargs):
+        if argv[0] == "git":
+            if "merge" in argv:
+                events.append(("merge", argv[-1]))
+            return real_run(argv, **kwargs)
+        events.append(("pip", tuple(argv[3:5])))
+        return subprocess.CompletedProcess(argv, 0)
+    monkeypatch.setattr(legacy_update.subprocess, "run", run)
+
+    assert _plain_update(local) == 0
+    target = _git(origin, "rev-parse", "HEAD")
+    assert _git(local, "rev-parse", "HEAD") == target
+    assert events == [("admit", "0.7.0"), ("merge", target), ("pip", ("install", "-e"))]
+
+
+def test_plain_update_refuses_a_branch_without_upstream_before_admission(
+        monkeypatch, tmp_path, capsys):
+    _origin, local = _checkout_behind_its_upstream(tmp_path)
+    _git(local, "checkout", "-q", "-b", "local-only")
+    before = _git(local, "rev-parse", "HEAD")
+    monkeypatch.setattr(legacy_update, "dependency_preflight",
+                        lambda *_args: pytest.fail("admission ran without an upstream"))
+
+    assert _plain_update(local) == 1
+    assert _git(local, "rev-parse", "HEAD") == before
+    assert "no single upstream" in capsys.readouterr().err
+
+
+def test_plain_update_refuses_a_diverged_checkout_before_admission(
+        monkeypatch, tmp_path, capsys):
+    _origin, local = _checkout_behind_its_upstream(tmp_path)
+    _commit_pin(local, "0.6.1")
+    before = _git(local, "rev-parse", "HEAD")
+    monkeypatch.setattr(legacy_update, "dependency_preflight",
+                        lambda *_args: pytest.fail("admission ran for a diverged checkout"))
+
+    assert _plain_update(local) == 1
+    assert _git(local, "rev-parse", "HEAD") == before
+    assert "cannot fast-forward" in capsys.readouterr().err

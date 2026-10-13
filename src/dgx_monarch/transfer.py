@@ -6,7 +6,7 @@ from typing import Any
 
 import torch
 
-from . import rdma_ownership, rdma_poison, rdma_settlement, transfer_utils
+from . import native_return_latch, rdma_ownership, rdma_poison, rdma_settlement, transfer_utils
 from .log import get_logger
 from .rdma_read_driver import run_owned_off_loop as run_blocking_off_loop
 from .rdma_receiver import _read_and_release
@@ -63,15 +63,11 @@ def _publish_constructor_intent(part: dict, keepalive: Any) -> _RDMAPoisonOwner:
     return owner
 
 
-def _log_poison_latch() -> None:
-    """Claim and report the process's first durable RDMA poison owner."""
-    _RDMA_POISON_REPORTER.report(
-        _RDMA_POISON_LOCK, _RDMA_POISONED_OWNERS, log.error, _safe_log)
-
-
 def _report_poison_safely() -> None:
+    """Claim and report the process's first durable RDMA poison owner; never raises."""
     try:
-        _log_poison_latch()
+        _RDMA_POISON_REPORTER.report(
+            _RDMA_POISON_LOCK, _RDMA_POISONED_OWNERS, log.error, _safe_log)
     except BaseException:
         pass
 
@@ -495,6 +491,9 @@ def read_latent_result(desc: dict, read_guard: Any = None) -> Any:
                     rdma_ownership.RDMA_ACK_TIMEOUT_S,
                     rdma_ownership.RDMA_ACK_ATTEMPTS, RDMA_READ_OUTER_MARGIN_S),
                 thread_name="dgxm-latent-read")
+        except Exception as failure:  # latch only; this exact error propagates, ownership settled
+            native_return_latch.record(failure)
+            raise
         finally:
             _report_poison_safely()
     raise ValueError(f"unknown latent descriptor kind {desc.get('kind')!r}")

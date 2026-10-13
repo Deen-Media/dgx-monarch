@@ -53,6 +53,38 @@ def run(
         return 2
 
 
+def _fetch_candidate(repo: Path) -> str | None:
+    """Fetch as `git pull --ff-only` would and return the commit it would reach, unmerged.
+
+    Dependency admission reads this commit's pyproject.toml, so a refusal leaves
+    the checkout where it was; the merge then names this exact commit.
+    """
+    git = ["git", "-C", str(repo)]
+    print(f"git fetch in {repo}")
+    if subprocess.run([*git, "fetch"], text=True).returncode:
+        print("git fetch failed; resolve it by hand, then rerun `dgxm update`", file=sys.stderr)
+        return None
+    try:
+        path = subprocess.run([*git, "rev-parse", "--git-path", "FETCH_HEAD"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+        lines = (repo / path).read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeDecodeError, subprocess.CalledProcessError):
+        lines = []
+    # `git pull` merges only entries not marked not-for-merge: the branch's upstream.
+    heads = [fields[0] for fields in (line.split("\t") for line in lines)
+             if len(fields) >= 3 and fields[1] == ""]
+    if len(heads) != 1 or not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", heads[0]):
+        print("the current branch has no single upstream to fast-forward to (git pull "
+              "--ff-only refuses too); set its upstream, then rerun `dgxm update`",
+              file=sys.stderr)
+        return None
+    if subprocess.run([*git, "merge-base", "--is-ancestor", "HEAD", heads[0]]).returncode:
+        print("the checkout cannot fast-forward to its fetched upstream; resolve it by hand, "
+              "then rerun `dgxm update`", file=sys.stderr)
+        return None
+    return heads[0]
+
+
 def _run_locked(
     args: _Args,
     *,
@@ -84,32 +116,47 @@ def _run_locked(
             file=sys.stderr,
         )
         return probe_certainty.UNKNOWN_EXIT
+    candidate = None
     if (repo / ".git").is_dir():
-        print(f"git pull in {repo}")
-        if subprocess.run(["git", "-C", str(repo), "pull", "--ff-only"], text=True).returncode:
-            print("git pull --ff-only failed; resolve it by hand, then rerun `dgxm update`", file=sys.stderr)
+        candidate = _fetch_candidate(repo)
+        if candidate is None:
             return 1
     else:
         print(f"{repo} is not a git checkout; skipping pull")
 
     try:
-        with open(repo / "pyproject.toml", "rb") as handle:
-            dependencies = tomllib.load(handle)["project"]["dependencies"]
+        if candidate is None:
+            project = (repo / "pyproject.toml").read_bytes()
+        else:  # admit the fetched commit's contract before the checkout moves
+            project = subprocess.run(
+                ["git", "-C", str(repo), "show", f"{candidate}:pyproject.toml"],
+                capture_output=True, check=True).stdout
+        dependencies = tomllib.loads(project.decode("utf-8"))["project"]["dependencies"]
         spec = next(item for item in dependencies if item.startswith("torchmonarch=="))
         pin = spec.partition("==")[2]
         if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._+-]*", pin):
             raise ValueError(f"unsafe pin {pin!r}")
-    except (KeyError, OSError, StopIteration, tomllib.TOMLDecodeError, ValueError) as exc:
+    except (KeyError, OSError, StopIteration, subprocess.CalledProcessError,
+            tomllib.TOMLDecodeError, UnicodeDecodeError, ValueError) as exc:
         print(f"cannot determine the exact torchmonarch pin: {exc}", file=sys.stderr)
         return 1
 
     config = load_config(args)
     if not dependency_preflight(pin, dependencies, config):
+        unmoved = (" The checkout stays at its current commit; the fetch moved only "
+                   "remote-tracking refs." if candidate is not None else "")
         print("update refused before pin installation or Worker changes: candidate dependencies "
               "are missing, incompatible, or could not be inspected. Review the bounded details "
               "above and install prerequisites separately using docs/INSTALL.md; preserve the "
-              "working Torch build. The checkout may already have fast-forwarded.", file=sys.stderr)
+              f"working Torch build.{unmoved}", file=sys.stderr)
         return 1
+    if candidate is not None:
+        print(f"git merge --ff-only {candidate[:12]} in {repo}")
+        if subprocess.run(["git", "-C", str(repo), "merge", "--ff-only", candidate],
+                          text=True).returncode:
+            print("git merge --ff-only failed after dependency admission, before any pin or "
+                  "Worker change; resolve it by hand, then rerun `dgxm update`", file=sys.stderr)
+            return 1
 
     try:
         installed_pin = importlib.metadata.version("torchmonarch")

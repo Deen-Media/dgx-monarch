@@ -986,7 +986,9 @@ dependency requirements on the driver and every configured host. A changed
 pin downloads a compatible wheel into a temporary directory for metadata
 inspection; an unchanged pin uses installed metadata and needs no download.
 Missing or incompatible prerequisites refuse the update with bounded package
-details. The checkout may already have fast-forwarded; this check does not add
+details. Plain update fetches first and reads these requirements from the
+fetched commit, then fast-forwards to that commit only after the check passes,
+so a refusal leaves the checkout at its current commit. This check does not add
 verified update's rollback or receipt guarantees to the plain path.
 Plain and verified updates share one file lock per driver checkout, so a second
 update from any process, in either mode, refuses before it changes anything.

@@ -23,6 +23,17 @@ Run with --expect-sha FULL_SHA --expect-manifest MANIFEST --config cluster.toml
 [--driver-host CONFIG_HOSTNAME] --return-mode message|native --output NEW.json.
 Output is a new mode-0600 file in an existing directory. Results never change
 cluster defaults or authorize a model or full sampling gate.
+
+--timing adds timed returns to the same run, cycles, owners and checks: per
+owner and cycle, one first-use return at the threshold, then --timing-repeats
+warm returns at each --timing-sizes-mib size. A timed span is the pack RPC
+(with seeded CPU generation) plus read/drop/ACK; verification, evidence writes
+and status checks stay outside it. Measure both orders in fresh processes:
+message then native, then native then message, stamping each run with
+--timing-position first|second. --timing-summary REPORT... pairs the four PASS
+reports by order and prints warmed medians, savings and ratios per stratum;
+it imports neither Torch nor Monarch. Timing evidence carries no host name, IP,
+PID or home path, and refuses to write one.
 """
 from __future__ import annotations
 
@@ -40,7 +51,9 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
-THRESHOLD = 8 * 1024 * 1024
+MIB = 1024 * 1024
+THRESHOLD = 8 * MIB
+TIMING_SCHEMA = 1
 # Process-lifetime roots also survive exceptions and failed evidence writes.
 OWNED: list[object] = []
 
@@ -107,17 +120,23 @@ def check_source(facts, sha, manifest):
 
 
 class Evidence:
-    def __init__(self, output, data):
+    def __init__(self, output, data, guard=None):
         self.path = Path(output).absolute()
         require(self.path.parent.is_dir(), "evidence parent must already exist")
         require(not self.path.exists() and not self.path.is_symlink(),
                 "evidence file must be new")
+        # An optional disclosure check runs before every write, the first included.
+        self.guard = guard
+        if guard is not None:
+            guard(data)
         self.fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_EXCL
                           | os.O_NOFOLLOW, 0o600)
         self.data = data
         self.save()
 
     def save(self):
+        if self.guard is not None:
+            self.guard(self.data)
         payload = json.dumps(self.data, sort_keys=True, indent=2).encode() + b"\n"
         os.lseek(self.fd, 0, os.SEEK_SET)
         view = memoryview(payload)
@@ -127,10 +146,11 @@ class Evidence:
         os.fsync(self.fd)
 
 
-def park(evidence, reason, report_interval=30):
+def park(evidence, reason, report_interval=30, record_pid=True):
     evidence.data.update(result="HOLD", clean_exit=False,
-                         retained_owner=True, retained_driver_pid=os.getpid(),
-                         hold_reason=reason)
+                         retained_owner=True, hold_reason=reason)
+    if record_pid:  # timing evidence omits it; the parked process stays in its terminal
+        evidence.data["retained_driver_pid"] = os.getpid()
     try:
         evidence.save()
     except BaseException:
@@ -245,6 +265,74 @@ def stop_owned(procs, handoff, handle, pending_jobs, poisoned):
     require(not handle.sample_leases and not handle.abandoned_sample_leases
             and pending_jobs == 0 and not poisoned, "receiver unsettled at owned stop")
     procs.stop("CPU return qualification complete").get(timeout=90)
+
+
+def timing_plan(sizes_mib, repeats):
+    """One owner's timed returns in a cycle: first use at the threshold, then warm repeats."""
+    return [("first_use", THRESHOLD, 0)] + [
+        ("warm", size * MIB, repeat) for size in sizes_mib for repeat in range(repeats)]
+
+
+def timing_order(return_mode, position):
+    """The campaign order this run belongs to, from its own mode and position."""
+    other = "native" if return_mode == "message" else "message"
+    return f"{return_mode if position == 'first' else other}-first"
+
+
+def disclosure_guard(cfg, home=None, hostname=None):
+    """Refuse timing evidence that names a host, an address, a PID or a home path."""
+    import socket
+
+    hostname = hostname if hostname is not None else socket.gethostname()
+    names = {host.name for host in cfg.hosts} | {hostname, hostname.split(".")[0]}
+    literals = {str(home if home is not None else Path.home()), "/home/"}
+    for address in [cfg.client_bind, *(host.address for host in cfg.hosts)]:
+        match = re.fullmatch(r"[a-z0-9+]+://\[?([^\]]+?)\]?:\d+", address or "")
+        if match:
+            literals.add(match.group(1))
+    literals = {literal for literal in literals if len(literal) > 1}
+    # A dot ends a name, so a qualified domain name still matches its host.
+    patterns = [re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(name)}(?![A-Za-z0-9_-])")
+                for name in names if name]
+
+    def keys(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                yield str(key)
+                yield from keys(item)
+        elif isinstance(value, list):
+            for item in value:
+                yield from keys(item)
+
+    def guard(data):
+        text = json.dumps(data, sort_keys=True)
+        require(not any(literal in text for literal in literals)
+                and not any(pattern.search(text) for pattern in patterns)
+                and not any("pid" in key.lower() for key in keys(data)),
+                "timing evidence would disclose a host name, address, PID or home path")
+    return guard
+
+
+def timing_summary(cycles):
+    """Per cycle and owner: first-use total and warmed totals by size, from one report."""
+    import statistics
+
+    strata = []
+    for row in cycles:
+        for owner in (0, 1):
+            calls = [call for call in row.get("timing_calls", []) if call["owner_rank"] == owner]
+            first = [call for call in calls if call["phase"] == "first_use"]
+            require(len(first) == 1, "timing stratum lacks exactly one first-use return")
+            entry = {"cycle": row["cycle"], "owner_rank": owner, "warm": {},
+                     "first_use_total_s": first[0]["pack_rpc_s"] + first[0]["read_drop_ack_s"]}
+            for size in sorted({call["size_mib"] for call in calls if call["phase"] == "warm"}):
+                totals = [call["pack_rpc_s"] + call["read_drop_ack_s"] for call in calls
+                          if call["phase"] == "warm" and call["size_mib"] == size]
+                entry["warm"][str(size)] = {
+                    "n": len(totals), "median_total_s": statistics.median(totals),
+                    "min_total_s": min(totals), "max_total_s": max(totals)}
+            strata.append(entry)
+    return strata
 
 
 def run(args, evidence, cfg, driver_facts):
@@ -362,7 +450,8 @@ def run(args, evidence, cfg, driver_facts):
                 OWNED.append(result)
                 return guard, result["latent"], size, seed, time.monotonic() - started
 
-            def consume(item, expected_kind, label, _rank=rank, _row=row, _all_rows=all_rows):
+            def consume(item, expected_kind, label, bucket="cases", extra=None,
+                        _rank=rank, _row=row, _all_rows=all_rows):
                 evidence.data["stage"] = "read_drop_ack"
                 evidence.data["active_case"] = {"label": label, "owner_rank": _rank}
                 evidence.save()
@@ -384,12 +473,23 @@ def run(args, evidence, cfg, driver_facts):
                     duplicate = _all_rows("ack_latent_handoff", 1, descriptor["owner_token"])
                     require(sorted(r["status"] for r in duplicate) ==
                             ["already_released", "unknown"], "duplicate ACK not idempotent")
-                _row["cases"].append({"label": label, "owner_rank": _rank,
+                _row.setdefault(bucket, []).append({"label": label, "owner_rank": _rank,
                     "bytes": size, "kind": expected_kind, "exact_equal": True,
                     "pack_rpc_s": pack_s, "read_drop_ack_s": read_s,
                     "tensor_sha256": hashlib.sha256(value.numpy().tobytes()).hexdigest(),
-                    "receiver_jobs": 0, "reader_tokens": 0})
+                    "receiver_jobs": 0, "reader_tokens": 0, **(extra or {})})
                 evidence.save()
+
+            if args.timing:
+                # First use leads, before any canonical case touches this owner.
+                timed_kind = "rdma" if args.return_mode == "native" else "message"
+                for phase, size, repeat in timing_plan(args.timing_sizes_mib,
+                                                       args.timing_repeats):
+                    seed = 600 + len(row.get("timing_calls", []))
+                    consume(dispatch(size, seed, 2), timed_kind, f"timing_{phase}",
+                            "timing_calls", {"phase": phase, "repeat": repeat,
+                                             "size_mib": size // MIB})
+                    facts(0)
 
             for delta in (-16384, 0, 16384):
                 consume(dispatch(THRESHOLD + delta, 110 + delta, 2),
@@ -433,6 +533,8 @@ def run(args, evidence, cfg, driver_facts):
     evidence.data["ownership_started"] = False
     evidence.data["stage"] = "final_source_check"
     check_source(source_facts(), args.expect_sha, args.expect_manifest)
+    if args.timing:
+        evidence.data["timing_summary"] = timing_summary(evidence.data["cycles"])
     evidence.data.update(result="PASS", clean_exit=True, retained_owner=False,
                          reattach_cycles_completed=2,
                          native_acceptance="PASS" if args.return_mode == "native" else "NOT_RUN")
@@ -454,13 +556,95 @@ def parse_args(argv=None):
     parser.add_argument("--output", help="new private JSON evidence path in existing directory")
     parser.add_argument("--return-mode", choices=("message", "native"), default="message",
                         help="default-off control or explicit native ownership qualification")
+    parser.add_argument("--timing", action="store_true",
+                        help="add first-use and warm timed returns to the same checked run")
+    parser.add_argument("--timing-position", choices=("first", "second"),
+                        help="this run's place in its fresh-process message/native order")
+    parser.add_argument("--timing-sizes-mib", type=_sizes_mib, default=(8, 32, 64),
+                        help="comma-separated warm sizes, each 8..256 MiB (default 8,32,64)")
+    parser.add_argument("--timing-repeats", type=int, default=7,
+                        help="warm returns per size, owner and cycle, 1..50 (default 7)")
+    parser.add_argument("--timing-summary", nargs="+", metavar="REPORT",
+                        help="pair PASS timing reports by order and print medians; no run")
     return parser.parse_args(argv)
+
+
+def _sizes_mib(text):
+    try:
+        sizes = tuple(int(part) for part in text.split(","))
+    except ValueError:
+        raise argparse.ArgumentTypeError("sizes must be comma-separated integers") from None
+    if not sizes or len(set(sizes)) != len(sizes) or not all(8 <= size <= 256 for size in sizes):
+        raise argparse.ArgumentTypeError("sizes must be distinct values in 8..256 MiB")
+    return sizes
+
+
+def load_timing_reports(paths, sha, manifest):
+    """Read PASS timing reports bound to one source and one timing plan."""
+    reports = [json.loads(Path(path).read_text(encoding="utf-8")) for path in paths]
+    plans = set()
+    for report in reports:
+        timing = report.get("timing") or {}
+        require(report.get("schema") == 1 and report.get("result") == "PASS"
+                and timing.get("schema") == TIMING_SCHEMA and "timing_summary" in report,
+                "timing summary needs PASS timing reports")
+        driver = report.get("driver") or {}
+        require(driver.get("bound_source_sha") == sha
+                and driver.get("source_manifest_sha256") == manifest,
+                "timing report source differs from --expect-sha/--expect-manifest")
+        require(timing.get("order") == timing_order(report["return_mode"], timing.get("position")),
+                "timing report order does not match its mode and position")
+        plans.add((report.get("script_sha256"), tuple(timing.get("sizes_mib", ())),
+                   timing.get("warm_repeats")))
+    require(len(plans) == 1, "timing reports come from different scripts or timing plans")
+    return reports
+
+
+def compare_timing(reports):
+    """Warmed-median native savings and message/native ratios per order, cycle and owner."""
+    orders = {}
+    for report in reports:
+        pair = orders.setdefault(report["timing"]["order"], {})
+        require(report["return_mode"] not in pair, "one report per mode and order")
+        pair[report["return_mode"]] = {(s["cycle"], s["owner_rank"]): s
+                                       for s in report["timing_summary"]}
+    strata, savings, ratios, first_use = [], {}, {}, []
+    for order, pair in sorted(orders.items()):
+        require(set(pair) == {"message", "native"}, "each order needs a message and a native report")
+        require(set(pair["message"]) == set(pair["native"]), "paired reports cover different strata")
+        for key in sorted(pair["message"]):
+            message, native = pair["message"][key], pair["native"][key]
+            row = {"order": order, "cycle": key[0], "owner_rank": key[1], "warm": {},
+                   "first_use_s": {"message": message["first_use_total_s"],
+                                   "native": native["first_use_total_s"]}}
+            first_use.append(native["first_use_total_s"])
+            for size in sorted(set(message["warm"]) & set(native["warm"]), key=int):
+                slow, fast = message["warm"][size]["median_total_s"], native["warm"][size]["median_total_s"]
+                row["warm"][size] = {"message_median_s": slow, "native_median_s": fast,
+                                     "native_saving_ms": (slow - fast) * 1000,
+                                     "message_to_native_ratio": slow / fast if fast else None}
+                savings.setdefault(size, []).append((slow - fast) * 1000)
+                if fast:
+                    ratios.setdefault(size, []).append(slow / fast)
+            strata.append(row)
+    return {"schema": TIMING_SCHEMA, "strata": strata,
+            "native_first_use_s": [min(first_use), max(first_use)] if first_use else None,
+            "warm_ranges": {size: {"native_saving_ms": [min(values), max(values)],
+                                   "message_to_native_ratio":
+                                       [min(ratios[size]), max(ratios[size])] if ratios.get(size) else None}
+                            for size, values in savings.items()}}
 
 
 def main(argv=None):
     args = parse_args(argv)
     require(re.fullmatch(r"[0-9a-f]{40}", args.expect_sha), "expected SHA must be full lowercase hex")
     require(re.fullmatch(r"[0-9a-f]{64}", args.expect_manifest), "invalid expected manifest")
+    if args.timing_summary:
+        reports = load_timing_reports(args.timing_summary, args.expect_sha, args.expect_manifest)
+        print(json.dumps(compare_timing(reports), sort_keys=True, indent=2))
+        return 0
+    require(not args.timing or args.timing_position, "--timing needs --timing-position")
+    require(1 <= args.timing_repeats <= 50, "--timing-repeats must be 1..50")
     require(args.source, "explicit source required")
     root = Path(args.source).expanduser().resolve(strict=True)
     sys.dont_write_bytecode, sys.pycache_prefix = True, "/proc/self/fd/2147483647"
@@ -480,14 +664,24 @@ def main(argv=None):
     require(driver["source_mode"] == "git", "driver needs clean exact Git checkout")
     from dgx_monarch.config import load_cluster_config
     cfg = load_cluster_config(args.config)
-    evidence = Evidence(args.output, {"schema": 1, "result": "RUNNING",
+    data = {"schema": 1, "result": "RUNNING",
         "scope": "cpu_staged_production_return_only", "return_mode": args.return_mode,
         "native_acceptance": "NOT_RUN", "clean_exit": False,
         "render_fidelity": "NOT_RUN", "gpu": "NOT_QUERIED_OR_INITIALIZED",
         "full_sampling_gate": "NOT_RUN", "persistent_worker_policy": "OPERATOR_PREFLIGHT_REQUIRED",
         "threshold_bytes": THRESHOLD, "pipeline_depth": 2, "cycles": [],
         "script_sha256": hashlib.sha256(Path(__file__).read_bytes()).hexdigest(),
-        "started_unix_s": time.time(), "ownership_started": False})
+        "started_unix_s": time.time(), "ownership_started": False}
+    if args.timing:
+        data["timing"] = {
+            "schema": TIMING_SCHEMA, "position": args.timing_position,
+            "order": timing_order(args.return_mode, args.timing_position),
+            "first_use_mib": THRESHOLD // MIB, "sizes_mib": list(args.timing_sizes_mib),
+            "warm_repeats": args.timing_repeats,
+            "timed_span": "pack_rpc_plus_read_drop_ack",
+            "excluded": ["verification", "evidence_writes", "status_checks"]}
+    evidence = Evidence(args.output, data,
+                        guard=disclosure_guard(cfg) if args.timing else None)
     OWNED.append(evidence)
     try:
         run(args, evidence, cfg, driver)
@@ -497,7 +691,8 @@ def main(argv=None):
         if isinstance(exc, QualificationRefused):
             evidence.data["refusal"] = str(exc)
         if evidence.data["ownership_started"]:
-            park(evidence, "operation or settlement incomplete; no destructive cleanup attempted")
+            park(evidence, "operation or settlement incomplete; no destructive cleanup attempted",
+                 record_pid=not args.timing)
         evidence.data.update(result="REFUSED", clean_exit=True, retained_owner=False)
         evidence.save()
         print("REFUSED before transport startup; review private evidence.", flush=True)

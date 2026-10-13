@@ -90,6 +90,10 @@ NOT_REFUSAL_CLASSES = frozenset({
     # doctrine's rank-symmetry rule; actor/failure.py states it for the latch).
     "SampleStallError",
     "CudaContextPoisonedError",
+    # The native-return latch error (2026-10-12) is raised by the driver after
+    # its own failed read, never by a rank, so it carries no class tag and the
+    # finish-phase failure abandons the lease as before.
+    "NativeReturnLatchedError",
     "ClusterConfigError",
     "ClusterSmokeError",
     "ConsentStoreError",

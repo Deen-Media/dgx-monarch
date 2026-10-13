@@ -60,8 +60,10 @@ def dispatch_setup(
     fleet: bool,
 ) -> list[Any]:
     """Dispatch every rank inside the caller's setup rollback envelope."""
-    from . import mesh_safety
+    from . import mesh_safety, native_return_latch
 
+    # One answer for every rank; a latched driver asks every actor for messaging.
+    native = native_return_latch.native_enabled(handle.config.rdma_latent_return)
     labels = list(handle.workers.extent.labels)
     futures = []
     for host_idx in range(handle.n_hosts):
@@ -93,7 +95,7 @@ def dispatch_setup(
                 "gpus_per_host": handle.gpus_per_host,
                 "attention": attention,
                 "sync_ulysses": sync_ulysses,
-                "rdma_latent_return": handle.config.rdma_latent_return,
+                "rdma_latent_return": native,
                 "rdma_min_bytes": handle.config.rdma_min_bytes,
             }
             futures.append(worker.setup.call_one(env))

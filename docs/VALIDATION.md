@@ -1765,6 +1765,13 @@ These are combined phase timings, not continuous wall time, network-only
 bandwidth or a denoising speedup. The results support explicit selected-rail
 opt-in for repeated large returns, not a global default-on change.
 
+A private workspace tool outside this repository produced the October 13
+timing figures above. For later campaigns, the qualifier's `--timing` mode in
+`benchmark/rdma_return_bench.py` reproduces this protocol through the same
+production return path, admission and ownership checks, and its
+`--timing-summary` mode pairs the four reports into per-stratum warmed medians,
+savings and ratios.
+
 **October 13, 2026 UTC:** a separate RAW BF16 production-return experiment
 completed one positive denoising step at 2048×4096 without VAE decoding. It
 used the same model, prompt, seed and sampler in stock, messaging, selected-rail

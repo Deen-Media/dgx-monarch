@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from .. import native_return_latch
 from ..adoption_evidence import (
     RESULT_KEY as _ADOPTION_EVIDENCE_RESULT_KEY,
 )
@@ -74,14 +75,27 @@ def _finish_render(
         log.info("rank %s/%s: sample %.2fs (%s%s) stats=%s", r.get("rank"), r.get("host"),
                  r.get("sample_s", -1), r.get("transition"), phases, r.get("latent_stats"))
 
-    def materialize(descriptor):
-        if hasattr(read_guard, "begin_read"):
-            return read_latent_result(descriptor, read_guard)
-        return read_latent_result(descriptor)
+    native_failed: list[bool] = []  # this render's lifetime: did a native read fail?
 
-    samples, tensors = materialize_leader_samples(
-        leaders, leader_dp_ranks, int(topo.dp), materialize
-    )
+    def materialize(descriptor):
+        try:
+            if hasattr(read_guard, "begin_read"):
+                return read_latent_result(descriptor, read_guard)
+            return read_latent_result(descriptor)
+        except Exception:
+            if isinstance(descriptor, dict) and descriptor.get("kind") == "rdma":
+                native_failed.append(True)
+            raise
+
+    try:
+        samples, tensors = materialize_leader_samples(
+            leaders, leader_dp_ranks, int(topo.dp), materialize
+        )
+    except Exception as failure:
+        # The read already settled ownership and latched native return off.
+        if native_failed and native_return_latch.latched():
+            raise native_return_latch.latched_error(failure) from failure
+        raise
 
     # Stock samplers keep noise_mask in the output latent so a chained masked
     # sampler keeps inpainting; preserve it for stock-semantics parity. They
