@@ -275,8 +275,14 @@ def validate_destination(destination: str | Path) -> Path:
     ``export`` repeats this check and still creates the file with O_EXCL and
     O_NOFOLLOW, so a path that appears during the capture is refused too.
     """
-    output = Path(destination).expanduser().absolute()
-    if output.parent.resolve() != output.parent or not output.parent.is_dir():
+    try:
+        output = Path(destination).expanduser().absolute()
+        usable = output.parent.resolve() == output.parent and output.parent.is_dir()
+    except (OSError, RuntimeError):
+        # resolve() raises RuntimeError naming the path for a symlink loop, and
+        # expanduser() does for an unknown ~user; the fixed sentence names neither.
+        usable = False
+    if not usable:
         raise ValueError(_DESTINATION)
     if os.path.lexists(output):
         raise FileExistsError(errno.EEXIST, "capture output already exists")
@@ -289,11 +295,13 @@ def collect(fetch: Callable[[float], object], *, duration_s: float = 30,
 
     No asynchronous collectors are created, so partial startup or fetch loss
     leaves no background process, listener, or actor to clean up. A final
-    window shorter than the slowest fetch so far is slept, not polled: that
-    fetch could only lose its race with the deadline. The unpolled tail is then
-    the same whether the loop ends on a fetch or on a sleep, so ``partial``
-    reports coverage rather than where the deadline happened to fall. The
-    slowest fetch, not the last, covers the route's alternating cached reads.
+    window shorter than the slowest fetch so far is slept, not polled: a fetch
+    that slow would lose its race with the deadline and read as a gap. So
+    ``partial`` reports failed fetches, not where the deadline happened to
+    fall, but the tail after the last fetch goes unpolled and unflagged. That
+    tail can reach the slowest fetch (capped at the 2 s window) plus one poll
+    interval, as with a 1.9 s endpoint in a 4.2 s capture, which leaves 2.3 s.
+    The slowest fetch, not the last, covers the route's alternating cached reads.
     """
     capture = Capture(duration_s=duration_s, max_events=max_events, max_bytes=max_bytes)
     slowest = 0.0

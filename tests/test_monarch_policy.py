@@ -215,7 +215,9 @@ VALIDATOR_REFUSALS = {
     "otlp_port_bad": {"diagnostics": {"otlp_endpoint": "http://x:99999", "otlp_logs": True}},
     "otlp_ftp": {"diagnostics": {"otlp_endpoint": "ftp://x", "otlp_logs": True}},
     "otlp_signal_path": {"diagnostics": {"otlp_endpoint": "http://x:4318/v1/metrics", "otlp_logs": True}},
-    "otlp_root_path": {"diagnostics": {"otlp_endpoint": "http://x:4318/", "otlp_logs": True}},
+    "otlp_base_path": {"diagnostics": {"otlp_endpoint": "http://x:4318/otlp", "otlp_logs": True}},
+    "otlp_base_path_slash": {"diagnostics": {"otlp_endpoint": "http://x:4318/otlp/", "otlp_logs": True}},
+    "otlp_double_slash": {"diagnostics": {"otlp_endpoint": "http://x:4318//", "otlp_logs": True}},
     "qp_init_0": {"rdma": {"qp_init_timeout_s": 0}},
     "stripe_3": {"rdma": {"min_stripe_size_kb": 3}},
     "fallback_str": {"rdma": {"allow_tcp_fallback": "false"}},
@@ -242,6 +244,8 @@ def test_validator_refusals_are_typed(name):
     {"rdma": {"peer_device_affinity": "groups:mlx5_0,mlx5_1|mlx5_2,mlx5_3|mlx5_4"}},
     {"diagnostics": {"otlp_endpoint": "https://collector.example:4318", "otlp_logs": True}},
     {"diagnostics": {"otlp_endpoint": "http://127.0.0.1:4318", "otlp_logs": True}},
+    # A bare trailing slash is the same base URL, not a path.
+    {"diagnostics": {"otlp_endpoint": "http://127.0.0.1:4318/", "otlp_logs": True}},
 ])
 def test_validator_accepts_supported_values(raw):
     assert isinstance(policy.parse_policy(raw), policy.MonarchPolicy)

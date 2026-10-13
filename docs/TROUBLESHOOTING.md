@@ -5051,10 +5051,14 @@ usual [verified-update conditions](INSTALL.md#updating) apply: a clean
 checkout, a reachable `origin`, and no ComfyUI, Render session or actor
 running. A transport-policy change needs a fresh driver process in any case.
 To back out instead, restore the earlier settings; the installed unit then
-matches again. If `dgxm update --verify --target HEAD` then refuses with
-`prior_worker_drift`, someone edited the Worker unit by hand to a policy value
-that config loading refuses; undo that edit to restore the earlier settings,
-then run the update again.
+matches again. If config loading now refuses the earlier value, as after an
+upgrade that tightened `[monarch]` validation, fix the value in cluster.toml,
+then run the command above to re-render the unit. The update, like the probe,
+checks the unit's policy argument for its keys, value types and canonical
+encoding but not its values, so it also re-renders a unit whose policy value
+someone edited by hand. A hand edit that breaks that form, or that changes any
+other line, reads `FAILED_SOURCE_LAYOUT`, and the update refuses that unit
+with `prior_worker_drift`.
 
 A verified update run from a checkout older than Worker policy arguments
 writes units without them. Those units are current under the default policy

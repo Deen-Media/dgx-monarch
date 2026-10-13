@@ -7,6 +7,7 @@ Diagnostic export settings are deliberately outside the transport identity.
 from __future__ import annotations
 
 import base64
+import copy
 import hashlib
 import json
 import math
@@ -162,9 +163,10 @@ def parse_policy(raw: object, *, host_names: tuple[str, ...] | None = None) -> M
     if endpoint:
         try:
             url = urlsplit(endpoint)
-            # The exporter appends each signal's path, such as /v1/metrics.
+            # The exporter appends each signal's path, such as /v1/metrics. A bare
+            # trailing / still names the base URL, so only a longer path is refused.
             valid = (url.scheme in {"http", "https"} and url.hostname and not url.username
-                     and not url.password and not url.path and not url.query
+                     and not url.password and url.path in ("", "/") and not url.query
                      and not url.fragment and url.port != 0)
         except ValueError:
             valid = False
@@ -276,6 +278,30 @@ def apply_policy(policy: MonarchPolicy, host: str = "", *, role: str = "driver",
         _ACTIVE = {"schema": 1, "role": role, "transport_sha256": identity,
                    "policy": policy_dict(resolved), "native_readback": "pending",
                    "native_activated": activated}
+
+
+def admitted() -> tuple[dict[str, Any], str | None] | None:
+    """The last completed admission and its environment token, or None."""
+    with _LOCK:
+        if _ACTIVE is None or _ACTIVE.get("native_readback") != "verified":
+            return None
+        return copy.deepcopy(_ACTIVE), os.environ.get(POLICY_ENV)
+
+
+def restore_admitted(saved: tuple[dict[str, Any], str | None]) -> None:
+    """Put back an ``admitted()`` result after a later admission refused.
+
+    apply_policy refuses a transport change before it writes anything, and an
+    unchanged transport rewrites the same variables, so only the token differs.
+    """
+    global _ACTIVE
+    active, token = saved
+    with _LOCK:
+        _ACTIVE = copy.deepcopy(active)
+        if token is None:
+            os.environ.pop(POLICY_ENV, None)
+        else:
+            os.environ[POLICY_ENV] = token
 
 
 def _native_settings(policy: MonarchPolicy) -> dict[str, Any]:

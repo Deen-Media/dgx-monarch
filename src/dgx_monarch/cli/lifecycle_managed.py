@@ -1,6 +1,8 @@
 """Read-only checks for immutable Worker release links before lifecycle changes."""
 from __future__ import annotations
 
+import base64
+import json
 import re
 import shlex
 import subprocess
@@ -27,6 +29,14 @@ def _shape(value: object) -> object:
     return {key: _shape(item) for key, item in value.items()} if isinstance(value, dict) else type(value).__name__
 
 
+def _shaped(value: object, shape: object) -> bool:
+    """The probe's rule: the schema's keys and leaf types, walked by the schema."""
+    if isinstance(shape, dict):
+        return (isinstance(value, dict) and set(value) == set(shape)
+                and all(_shaped(value[key], item) for key, item in shape.items()))
+    return type(value).__name__ == shape
+
+
 def legacy_policy_is_current(config: ClusterConfig, host: HostConfig) -> bool:
     """A unit without policy arguments runs the default policy with native return off."""
     from ..monarch_launch import worker_policy_args
@@ -36,13 +46,15 @@ def legacy_policy_is_current(config: ClusterConfig, host: HostConfig) -> bool:
 
 
 def without_policy_suffix(unit: str) -> str | None:
-    """Return ``unit`` minus a canonical, parseable policy tail, or None.
+    """Return ``unit`` minus a canonical, well-formed policy tail, or None.
 
-    The token must be the exact encoding of a policy this release parses, so a
-    hand-made payload stays foreign. The isolated probe repeats the check
-    structurally because it must not import installed code.
+    The token must be the exact encoding of a payload with the policy's keys and
+    value types, the isolated probe's rule, so a hand-made payload stays
+    foreign. Values are not checked: the update captures a unit only beside
+    its running Worker, whose release accepted them, and restores it only
+    with that release.
     """
-    from ..monarch_policy import encode_policy, policy_from_token
+    from ..monarch_policy import MonarchPolicy, policy_dict
 
     lines = unit.split("\n")
     found = [index for index, line in enumerate(lines) if line.startswith("ExecStart=")]
@@ -50,9 +62,13 @@ def without_policy_suffix(unit: str) -> str | None:
     if match is None:
         return None
     try:
-        if encode_policy(policy_from_token(match[1])) != match[1]:
-            return None
-    except (TypeError, ValueError):
+        payload = json.loads(base64.b64decode(match[1], altchars=b"-_", validate=True))
+    except (ValueError, RecursionError):
+        return None
+    if not _shaped(payload, _shape(policy_dict(MonarchPolicy()))):
+        return None
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    if base64.urlsafe_b64encode(encoded).decode() != match[1]:
         return None
     lines[found[0]] = lines[found[0]][:match.start()]
     return "\n".join(lines)
@@ -271,13 +287,17 @@ _PROBE_FAILURES = {
     "FAILED_SOURCE_PROBE": "the managed source check exited without a verdict",
 }
 _HOME_PREFIX = re.compile(r"(?:/home|/Users|/var/home)/[^/\s'\":]+|/root(?=[/\s'\":]|$)")
-_OTHER_PATH = re.compile(r"(?<![\w~.])/[^\s'\":,]+")
+# A path may hold spaces, commas or colons: a quoted one is redacted whole, and
+# an unquoted one, as bash prints it, up to the ": " before the error text.
+_QUOTED_PATH = re.compile(r"""(['"])/(?:(?!\1).)*\1""")
+_OTHER_PATH = re.compile(r"(?<![\w~.])/.*?(?=: |\Z)")
 
 
 def stderr_tail(stderr: str | None) -> str:
     """The last stderr line, printable, home-relative, at most 200 characters."""
     lines = [line.strip() for line in (stderr or "").splitlines() if line.strip()]
-    tail = _OTHER_PATH.sub("<path>", _HOME_PREFIX.sub("~", lines[-1] if lines else ""))
+    tail = _HOME_PREFIX.sub("~", lines[-1] if lines else "")
+    tail = _OTHER_PATH.sub("<path>", _QUOTED_PATH.sub(r"\1<path>\1", tail))
     return "".join(char if char.isprintable() else "?" for char in tail)[:200]
 
 

@@ -109,27 +109,45 @@ def prepare_driver(config: Any) -> None:
 
     Each refusal is a typed ClusterConfigError raised before transport commit.
     Monarch first loads here, so the fault hook is installed here too, ahead of
-    every transport call.
+    every transport call. A refusal after an earlier completed admission puts
+    that admission back, so a refused cluster.toml edit leaves the live fleet's
+    policy, token and export state as they were.
     """
     from .config_schema import ClusterConfigError
     from .mesh import install_fault_hook
     from .monarch_capabilities import assert_supported_runtime
     from .monarch_diagnostics import configure_policy, requested_refusal
-    from .monarch_policy import activate_native_policy, admit_native_targets, apply_policy
+    from .monarch_policy import (
+        DiagnosticsPolicy,
+        activate_native_policy,
+        admit_native_targets,
+        admitted,
+        apply_policy,
+        restore_admitted,
+    )
     from .monarch_policy_io import driver_host
 
     host, native = driver_host(config), config.rdma_latent_return
     if native:
         admit_native_targets(config.monarch, (host, *(entry.name for entry in config.hosts)))
-    apply_policy(config.monarch, host, role="driver", native_enabled=native)
-    diagnostics = config.monarch.diagnostics
-    reason = requested_refusal(configure_policy(diagnostics), diagnostics)
-    if reason:
-        raise ClusterConfigError(
-            f"[monarch.diagnostics] metrics or OTLP export cannot start on the driver ({reason}); "
-            + _DIAGNOSTICS_HINTS.get(reason, 'set metrics = false and otlp_endpoint = "", or restart ComfyUI'))
-    import monarch.actor  # noqa: F401 - load native bindings before identity admission
+    previous = admitted()
+    try:
+        apply_policy(config.monarch, host, role="driver", native_enabled=native)
+        diagnostics = config.monarch.diagnostics
+        reason = requested_refusal(configure_policy(diagnostics), diagnostics)
+        if reason:
+            raise ClusterConfigError(
+                f"[monarch.diagnostics] metrics or OTLP export cannot start on the driver ({reason}); "
+                + _DIAGNOSTICS_HINTS.get(reason, 'set metrics = false and otlp_endpoint = "", or restart ComfyUI'))
+        import monarch.actor  # noqa: F401 - load native bindings before identity admission
 
-    install_fault_hook()
-    assert_supported_runtime()
-    activate_native_policy()
+        install_fault_hook()
+        assert_supported_runtime()
+        activate_native_policy()
+    except BaseException:
+        if previous is not None:
+            restore_admitted(previous)
+            # A refusal already stopped the exporter thread; only a fresh
+            # configure_policy starts the earlier export again.
+            configure_policy(DiagnosticsPolicy(**previous[0]["policy"]["diagnostics"]))
+        raise

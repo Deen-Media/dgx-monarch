@@ -14,8 +14,9 @@ interactive writer.
 
 In cluster mode the Init node checks a fingerprint of the file's bytes on
 every Queue, and any byte change, a comment included, retires the old fleet
-before attaching a replacement. In local mode the Init node does not
-fingerprint the file, and a local mesh reads only `[worker_args]`. An edit
+before attaching a replacement. An edit the driver refuses keeps the old fleet
+attached, and reverting the edit reuses it. In local mode the Init node does
+not fingerprint the file, and a local mesh reads only `[worker_args]`. An edit
 there does not reach a live local mesh on the next Queue; it applies when the
 Init node runs again (a changed widget or a new ComfyUI process). If the old
 processes are not confirmed stopped, replacement is blocked to prevent two
@@ -150,8 +151,9 @@ in this release. Local bounded phase timings remain advisory and never prove
 transfer completion, cleanup or readiness.
 
 `otlp_endpoint = ""` disables export. A configured HTTP(S) endpoint must have no
-credentials, path, query or fragment (the exporter appends each signal's path,
-such as `/v1/metrics`) and requires **`otlp_logs = true`** explicitly:
+credentials, query, fragment or path other than a bare trailing `/` (the
+exporter appends each signal's path, such as `/v1/metrics`) and requires
+**`otlp_logs = true`** explicitly:
 Monarch 0.7 exports upstream raw logs as well as metrics to this destination.
 Those logs may contain more than dgx-monarch's sanitized metric labels. Use an
 operator-controlled collector and review disclosure requirements before

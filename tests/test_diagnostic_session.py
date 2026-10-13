@@ -228,6 +228,24 @@ def test_a_slow_endpoint_keeps_full_windows_and_skips_only_the_short_tail(monkey
     assert capture.report()["capture"]["gaps"] == {}
 
 
+def test_a_tail_shorter_than_the_slowest_fetch_goes_unpolled_and_unflagged(monkeypatch):
+    """rev-pr-c nit 6 records the current trade: no gap, but up to fetch + poll unpolled."""
+    clock = _Clock()
+    monkeypatch.setattr(sessions, "time", clock)
+    timeouts, ended = [], []
+
+    def fetch(timeout):
+        result = _healthy(clock, iter([1.9]), _steady_payload(), timeouts)(timeout)
+        ended.append(clock.now)
+        return result
+
+    report = sessions.collect(fetch, duration_s=4.2).report()["capture"]
+    # One fetch from 0 to 1.9 s, a 0.5 s poll sleep, then the 1.8 s window is slept.
+    assert timeouts == [2.0] and report["samples"] == 1
+    assert report["partial"] is False and report["gaps"] == {} and report["stop_reason"] == "deadline"
+    assert 4.2 - ended[-1] == pytest.approx(2.3)
+
+
 def test_export_refuses_overwrite_and_symlink(tmp_path):
     capture = sessions.Capture()
     existing = tmp_path / "existing.json"
@@ -296,7 +314,8 @@ def test_cli_refuses_an_existing_output_before_capturing(tmp_path, capsys):
     assert "--output already exists" in capsys.readouterr().err
 
 
-@pytest.mark.parametrize("layout", ["missing_directory", "symlink_parent", "file_parent"])
+@pytest.mark.parametrize("layout", ["missing_directory", "symlink_parent", "file_parent",
+                                    "symlink_loop", "unknown_user"])
 def test_cli_refuses_an_unusable_directory_with_the_fixed_reason(tmp_path, capsys, layout):
     real = tmp_path / "real"
     real.mkdir()
@@ -305,13 +324,22 @@ def test_cli_refuses_an_unusable_directory_with_the_fixed_reason(tmp_path, capsy
     elif layout == "symlink_parent":
         (tmp_path / "link").symlink_to(real)
         output = tmp_path / "link" / "capture.json"
+    elif layout == "symlink_loop":
+        # rev-pr-c 4: resolve() raises RuntimeError naming the loop's path.
+        (tmp_path / "loopa").symlink_to(tmp_path / "loopb")
+        (tmp_path / "loopb").symlink_to(tmp_path / "loopa")
+        output = tmp_path / "loopa" / "capture.json"
+    elif layout == "unknown_user":
+        output = "~dgxm-no-such-user-for-tests/capture.json"
     else:
         (tmp_path / "file").write_text("")
         output = tmp_path / "file" / "capture.json"
+    with pytest.raises(ValueError, match=r"^capture output requires an existing directory"):
+        sessions.validate_destination(output)
     assert diagnostics_command.run(_capture_args(output), resolve_host=_never_resolve) == 2
     err = capsys.readouterr().err
     assert "capture output requires an existing directory without symbolic links" in err
-    assert str(tmp_path) not in err
+    assert str(tmp_path) not in err and "no-such-user" not in err
     assert list(real.iterdir()) == []
 
 

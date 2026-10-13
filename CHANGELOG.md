@@ -13,7 +13,8 @@
   exception type.
 - Report `dgxm_diagnostics_available` and `dgxm_return_ownership_available` as
   0 for a Worker whose source has no diagnostics block, as after a partial
-  deploy, instead of omitting the series.
+  deploy, instead of omitting the series. The driver scope also reads 0 when
+  its payload has no block, as when the first telemetry refresh fails.
 - Cut the `dgxm top` driver phase summary to one row instead of wrapping it over
   the panels below on an 80-column terminal.
 - Name why a host's source probe failed: a missing or non-executable Worker
@@ -25,14 +26,18 @@
   cluster.toml edit the driver refuses (native return without a `nic:` target
   for every host, an export it cannot start, a transport change that needs a
   fresh process) keeps the working fleet attached; reverting the edit reuses it.
+  The refusal puts back the driver's earlier policy and export state, so a
+  running metrics export keeps running.
 - Tighten `[monarch]` validation: `nic:` names starting with `-` or `.` or
   containing `..`, `cpu:` and `gpu:` numbers with leading zeros, a `groups:`
-  affinity with fewer than two groups, and an `otlp_endpoint` with a path now
-  fail config loading with a typed error naming the key. A Worker unit rendered
-  from such a value reads `POLICY_STALE` but cannot be re-rendered by
-  `dgxm update --verify` (it refuses with `prior_worker_drift`); restore the
-  earlier value first. Only development installs that used those values are
-  affected.
+  affinity with fewer than two groups, and an `otlp_endpoint` with a path
+  other than a bare trailing `/` now fail config loading with a typed error
+  naming the key. A Worker unit rendered from such a value reads
+  `POLICY_STALE`: fix the value in cluster.toml, then run
+  `dgxm update --verify --target HEAD` to re-render the unit. The update, like
+  the probe, checks a unit's policy argument for its keys, value types and
+  canonical encoding but not its values, so it accepts that unit as stale
+  instead of refusing with `prior_worker_drift`.
 - Treat a Worker unit that carries a well-formed Monarch policy other than
   the current one as stale rather than tampered. A `[monarch]` or
   `cluster.rdma_latent_return` edit on a managed installation no longer locks
