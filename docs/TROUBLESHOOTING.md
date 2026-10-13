@@ -5012,3 +5012,45 @@ RDMA buffer drops as well as dispatch behavior; unchanged signatures do not
 prove those ownership contracts. Do not refresh the baseline or suppress drift
 just to clear the alert. CPU surface checks do not establish hardware or native
 RDMA acceptance.
+
+## 113. Lifecycle commands refuse with POLICY_STALE after a policy edit
+
+**Symptom:** after a change to any `[monarch]` setting or to
+`cluster.rdma_latent_return` on an installation that guided setup or a verified
+update wrote, `dgxm restart`, `dgxm up` and auto-heal refuse with
+`POLICY_STALE` and point here. `dgxm doctor` fails the host's `worker policy`
+row with `STALE`. The Worker services keep running: restart checks every host
+before it stops any of them.
+
+**Cause:** each Worker unit carries the policy resolved from cluster.toml as
+`--runtime-policy` arguments, plus `--native-rdma` when native return is on.
+Only guided setup and a verified update write a managed unit, so editing the
+file leaves the installed unit with the earlier policy, and lifecycle commands
+refuse to start it. A unit with no policy arguments counts as current only
+while cluster.toml selects the default policy with native return off. Any
+other difference from the generated unit, including a malformed policy
+argument, still reads `FAILED_SOURCE_LAYOUT`.
+
+**Remedy:** stop ComfyUI, then run a verified update to the commit the driver
+checkout already has:
+
+```bash
+dgxm update --verify --target HEAD
+```
+
+The update stages a fresh release of that commit, stops the Workers, writes
+units rendered from the current cluster.toml, starts them, and runs Doctor and
+the cluster smoke. A check that definitely fails restores the earlier units
+and release. The
+usual [verified-update conditions](INSTALL.md#updating) apply: a clean
+checkout, a reachable `origin`, and no ComfyUI, Render session or actor
+running. A transport-policy change needs a fresh driver process in any case.
+To back out instead, restore the earlier settings; the installed unit then
+matches again.
+
+A verified update run from a checkout older than Worker policy arguments
+writes units without them. Those units are current under the default policy
+with native return off. Under any other policy, the new release's Doctor step
+fails the `worker policy` row and the update restores the prior release. Run
+that update with `rdma_latent_return = false`, then restore the setting and
+run the command above.

@@ -41,7 +41,8 @@ if [ -f "$UNIT" ] && ! grep -Fqx -- {directive} "$UNIT"; then
   exit 75
 fi
 '''
-    script = managed_start_guard(config, host, pythonpath) + fenced_unit + start_generation_shell(
+    guard = managed_start_guard(config, host, pythonpath, allow_stale=generation is not None)
+    script = guard + fenced_unit + start_generation_shell(
         generation, pattern, host.address, unit_name
     ) + owned_listener_probe_shell(host, pattern) + f"""
 set -u

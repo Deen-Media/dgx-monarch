@@ -157,6 +157,17 @@ remain unavailable because the upstream admin API does not return a stoppable
 owned handle. The integration does not manufacture a Job around persistent
 Workers to obtain those features.
 
+### Changing policy after install
+
+Each managed Worker unit carries the policy resolved from these tables and from
+`cluster.rdma_latent_return`. After you edit any of them, `dgxm up` and
+`dgxm restart` refuse with `POLICY_STALE` before they stop anything, and
+`dgxm doctor` marks the host's `worker policy` row `STALE`. Stop ComfyUI, then
+run `dgxm update --verify --target HEAD`: a verified update of the installed
+commit renders the units from the current file, restarts the Workers and keeps
+its rollback. [TROUBLESHOOTING #113](TROUBLESHOOTING.md#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit)
+has the details.
+
 ## `[worker_args]` (optional)
 
 ComfyUI settings applied inside every actor process. The graph's

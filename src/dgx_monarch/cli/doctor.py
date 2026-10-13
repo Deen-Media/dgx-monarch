@@ -22,7 +22,7 @@ from .advertised_address import hostname_row, unresolved_row
 from .comfy_ports import find_comfy_ports as _find_comfy_ports
 from .doctor_nccl import normalize_proto as _normalize_nccl_proto
 from .doctor_nccl import uses_ll as _uses_nccl_ll
-from .doctor_worker_context import worker_context
+from .doctor_worker_context import worker_context, worker_policy_row
 from .hwmon import board_hotspot_verdict
 from .lifecycle import _pybin_shell, _tcp_probe, run_on_host
 from .probe_certainty import probe_row as _row
@@ -524,6 +524,7 @@ EOF
             nccl_libs[host.name] = doctor_nccl.fields(lines)
             swap_line = next((ln for ln in lines if ln.startswith(doctor_probes.SWAP_LINE_PREFIX)), "")
             rows.append(_row(*doctor_probes.remote_swap_row(host.name, swap_line)))
+            rows.append(_row(*worker_policy_row(host.name, lines)))
             rows.append(_row(*listener_generation.doctor_row(
                 host.name, listener_generation.select(lines))))
             remote_proto = env_fields.get("nccl_proto", "")
