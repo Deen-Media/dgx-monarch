@@ -1,7 +1,7 @@
 """Hardware status and runtime warning policy must not drift.
 
 This module pins each support-matrix row's status, the matrix marks, the
-review footers, the RDMA hold on operator surfaces and corrected doc wording.
+review footers, scoped RDMA qualification on operator surfaces and corrected doc wording.
 The runtime warning exemption is stricter than a row's HW status, because
 header sniffing cannot bind the graph, artifact, LoRA, quantization, and
 topology scope of a hardware comparison. No current family qualifies for a family-wide exemption.
@@ -1101,23 +1101,56 @@ def test_historical_failed_native_attempt_remains_scoped_and_honest():
     assert "Device hiding is not the supported selector" in troubleshooting
 
     partial = validation.split("## Native RDMA", 1)[1].split("\n## ", 1)[0]
-    for term in ("exactly 8 MiB", "disconnected rails", "FAILED", "NOT RUN / HOLD", "native", "ACK"):
-        assert term in partial, term
+    historical, qualified = partial.split("### Selected-rail qualification", 1)
+    for term in ("exactly 8 MiB", "disconnected rails", "FAILED", "NOT RUN", "native", "ACK"):
+        assert term in historical, term
+    assert "Historical trial" in historical
+    _assert_selected_rail_scope(qualified)
 
-    # A bare "latents can return over RDMA" reads as a present capability, so
-    # every unit on an operator surface that claims the return path must carry
-    # the default-off posture and the HOLD. A check on TROUBLESHOOTING alone stays
-    # green while a surface drops the HOLD.
+
+def _assert_selected_rail_scope(text: str) -> None:
+    """Current evidence must say what passed and retain its ownership limits."""
+    flat = " ".join(text.split())
+    for term in (
+        "12 messaging cases", "28 selected-NIC native cases", "one QP",
+        "one application chunk", "CPU-staged production return",
+        "wrong-generation", "duplicate ACK", "overflow fallback",
+        "raw ACK reply arrays were not retained", "zero-step",
+        "fresh driver and actor processes", "disabled by default",
+        "A timed-out native read cannot free backing or ACK ownership",
+        "Hard unload does not override that ownership",
+    ):
+        assert term in flat, term
+
+
+def test_current_native_claims_are_default_off_and_scope_linked():
+    # An untested model-specific path may retain HOLD. A current global
+    # description must link the selected-rail scope, not pretend it was unrun.
     for surface, text in _rdma_claim_surfaces():
         for unit in _units_claiming_rdma_return(text):
             assert "off by default" in unit, (
-                f"{surface}: RDMA latent-return claim omits the default-off "
-                f"posture: {unit!r}"
+                f"{surface}: native claim omits default-off posture: {unit!r}"
             )
-            assert "NOT RUN / HOLD" in unit, (
-                f"{surface}: RDMA latent-return claim omits the HOLD "
-                f"(DESIGN.md 5.6): {unit!r}"
-            )
+            assert "NOT RUN / HOLD" in unit or (
+                "Selected-rail" in unit and "#native-rdma" in unit
+                and "recorded coverage" in unit
+            ), f"{surface}: native claim omits its qualification boundary: {unit!r}"
+    with open(README, encoding="utf-8") as fh:
+        readme = fh.read()
+    assert "Native latent RDMA is **off by default**" in readme
+    assert "Native latent RDMA is **off by default** and remains **NOT RUN / HOLD**" not in readme
+
+
+@pytest.mark.parametrize("missing", [
+    "CPU-staged production return", "raw ACK reply arrays were not retained",
+    "disabled by default", "Hard unload does not override that ownership",
+])
+def test_native_scope_guard_rejects_missing_boundaries(missing):
+    record = _validation_text().split("### Selected-rail qualification", 1)[1]
+    flat = " ".join(record.split())
+    with pytest.raises(AssertionError):
+        _assert_selected_rail_scope(flat.replace(missing, "omitted"))
+
 
 
 # Docs corrections of 2026-08-13. Each test below pins the corrected wording of
@@ -1260,3 +1293,22 @@ def test_scail_preview_hardware_scope_keeps_precision_and_workflow_limits() -> N
     ):
         assert term in section, term
     assert "wan_scail" not in _code_families()
+
+
+def test_current_operator_native_posture_preserves_scope_and_safe_defaults():
+    for path in (SECURITY, CONTRIBUTING):
+        text = _file_text(path)
+        assert "Native latent RDMA remains off by default" in text
+        assert "docs/VALIDATION.md#native-rdma" in text
+        assert "Native latent RDMA remains **NOT RUN / HOLD**" not in text
+        assert "fabric-failure" in text
+    cluster_example = os.path.join(HERE, "..", "cluster.example.toml")
+    text = _file_text(cluster_example)
+    assert "cluster.rdma_latent_return=false by default" in text
+    assert "docs/VALIDATION.md#native-rdma" in text
+    assert "qualification remains NOT RUN / HOLD" not in text
+    security = _file_text(SECURITY)
+    assert "current repository tools" in security
+    assert "separately reviewed" in security
+    assert "No CI workflow, Actions runner, or scheduled job" in security
+    assert "explicitly authorized" in security

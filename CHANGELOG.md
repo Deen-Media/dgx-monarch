@@ -36,10 +36,30 @@
 - Validate native RDMA binding load and package/import ownership separately from
   public API signatures. Extend the dependency canary with real local CPU actors,
   concurrent dispatch, Future timeout semantics and ProcMesh shutdown. Run it
-  against Torch 2.12.0+cu132; hardware acceptance remains pending.
+  against Torch 2.12.0+cu132; retain these checks as CPU-only evidence.
+- Validate the unchanged shipped Krea2 workflow at 1536×1536 with its automatic
+  topology and first-use Gate; record a slab cross-residency PASS and owned cleanup.
+- Validate the unchanged shipped H3 workflow at 1344×768×124 with full CPU
+  video/audio decode and owned cleanup. Its Gate remains INCONCLUSIVE/no_material;
+  the recorded result establishes functional output, not a fidelity or speedup claim.
+- Record exact-source GPU checks for the migration: adapted Krea2 Turbo pixel equality,
+  explicit recovery after interruption, a RAW FSDP clean-reload Gate PASS and
+  reduced-canvas H3 MP4 output. Matched latent decoding localized the pipeline/Fleet
+  pixel differences downstream of sampling; clean cancellation remains unproven.
+  See [the scoped results](docs/VALIDATION.md#gpu-checks-for-the-070-migration)
+  for reused-output counts, recipes and timing limits.
 - Add validated Monarch startup and RDMA policy with per-host target overrides,
   native readback and transport identity. Start with one NIC, one QP and one
-  application chunk; native latent RDMA remains off and **NOT RUN / HOLD**.
+  application chunk. Selected-rail CPU-staged production returns passed the
+  recorded integrity and ownership cases, and one-step at-threshold latents
+  matched stock and messaging in two fresh native sessions. Repeated large-return
+  timings support opt-in use; native return stays off by default. See [the exact scope](docs/VALIDATION.md#native-rdma).
+- Fix Fleet progress remaining active after completed jobs. Each receiver owns
+  its progress token, retires it during cleanup and ignores late steps after
+  retirement without clearing another render.
+- Record healthy no-model reattach and controlled fresh-driver recovery, while
+  preserving the reproduced same-driver stop/start and restart failures;
+  [issue #2](https://github.com/Deen-Media/dgx-monarch/issues/2) remains open.
 - Add bounded phase timings and opt-in supported Monarch metrics. Advanced
   attached-cluster profiling, SQL and stack tools remain explicitly unavailable
   where the upstream API cannot provide an owned, stoppable session.

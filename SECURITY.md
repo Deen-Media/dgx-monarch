@@ -107,15 +107,17 @@ and redact it before sharing; receipt redaction does not apply.
 ## Trusted hardware validation boundary
 
 This public source repository must not own or request a self-hosted or JIT
-runner. Hardware validation uses hand-run scripts from a separately reviewed
-private control repository. No CI workflow, Actions runner, or scheduled job
+runner. Hardware validation uses the current repository tools and separately reviewed
+private wrappers where needed; keep host configuration and raw evidence private. No CI workflow, Actions runner, or scheduled job
 may execute on protected hardware.
 
 Before a run, the operator authorizes its scope, verifies the exact source on
 every host, and passively checks idle state and ownership. Unperformed checks
 remain **NOT RUN**; a passing run qualifies only the configuration it tested.
 Persistent Worker services may be stopped only for explicitly authorized
-maintenance. Native latent RDMA remains **NOT RUN / HOLD**.
+maintenance. Native latent RDMA remains off by default;
+[selected-rail qualification](docs/VALIDATION.md#native-rdma) covers only its
+recorded scope. Native cancellation and fabric-failure recovery remain untested.
 [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md#github-actions-to-trusted-hardware)
 defines manual validation, evidence handling, and the checks required
 before changing repository visibility.

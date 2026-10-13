@@ -135,7 +135,7 @@ With the default `auto_gate=first_use`, a new combination using slab and low-RSS
 
 If the comparison fails, supported resident paths use stock residency with the memory optimizations disabled. FSDP has no stock fallback and refuses. Some large FSDP checkpoints cannot fit the gate's reload; [the model guide](docs/MODELS.md) and [troubleshooting](docs/TROUBLESHOOTING.md) explain the available choices.
 
-Native latent RDMA is **off by default** and remains **NOT RUN / HOLD**. Latents return through actor messages; this does not disable NCCL rendering across the pair. [`comfy_managed` residency](docs/TROUBLESHOOTING.md#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) is opt-in and has additional memory and LoRA restrictions. Smaller jobs may gain little from using two GPUs.
+Native latent RDMA is **off by default**. [Selected-rail return checks](docs/VALIDATION.md#native-rdma) have limited recorded coverage; positive-step qualification is limited to the recorded at-threshold case. Latents return through actor messages; this does not disable NCCL rendering across the pair. [`comfy_managed` residency](docs/TROUBLESHOOTING.md#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) is opt-in and has additional memory and LoRA restrictions. Smaller jobs may gain little from using two GPUs.
 
 ## Documentation
 

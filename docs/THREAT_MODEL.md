@@ -118,7 +118,7 @@ stores those values, not the profile label; the receipt records the selected
 profile. Conservative hardware classification
 limits unsafe optimistic configuration but does not attest hardware against a
 malicious host. [CLUSTER.md](CLUSTER.md#guided-setup-profiles) gives the exact
-profile contract, including the native-RDMA HOLD.
+profile contract, including the native-RDMA default-off setting.
 
 Safe doctor repair opens the exact config without following a final symlink,
 requires a regular inode, hashes its bytes, confirms the proposed mode-only
@@ -181,8 +181,10 @@ Worker services persist between client sessions. A validation client must not
 stop them as cleanup. Service stops or restarts require explicitly authorized
 maintenance, with the expected service identity recorded and restoration
 checked afterward. A stopped-service readiness test needs that authorization.
-Native latent RDMA remains **NOT RUN / HOLD**; actor messaging is the supported
-return path. No manual test may silently expand into RDMA qualification.
+Native latent RDMA remains off by default; actor messaging is the supported
+normal return path. [Selected-rail qualification](VALIDATION.md#native-rdma)
+covers only the recorded scope, with native cancellation and fabric-failure recovery untested. No manual test
+may silently expand into RDMA qualification.
 
 Repository responsibilities are:
 

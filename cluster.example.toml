@@ -50,8 +50,8 @@ gpus = 1
 # fsdp_prefetch_depth = 1        # FSDP all-gather blocks ahead (1..8); above 1 costs reserved memory
 
 # Optional pinned Monarch process policy. These defaults do not enable native RDMA.
-# Native selected-rail qualification remains NOT RUN / HOLD; keep
-# cluster.rdma_latent_return=false until the documented gate passes.
+# Keep cluster.rdma_latent_return=false by default. Selected-rail native opt-in
+# covers only qualified workloads; see docs/VALIDATION.md#native-rdma.
 # [monarch]
 # startup_timeout_s = 180
 # [monarch.rdma]

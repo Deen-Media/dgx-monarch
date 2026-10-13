@@ -1,19 +1,21 @@
 # dgx-monarch: Design and Architecture
 
 **Status:** current architecture contract for the two-Spark release. The
-message-return boundary and reattach checks passed on October 8;
-native latent RDMA remains **NOT RUN / HOLD**. Verified update now
+message-return boundary and reattach checks passed on October 8, before the
+0.7.0 migration. Native return stays off by default; later selected-rail checks
+have the limited scope recorded in [Validation](VALIDATION.md#native-rdma). Verified update now
 supports a Worker
 on the driver's host; [Validation](VALIDATION.md#operator-checks) records the
 update results and limits. The benchmark
 campaign covers a documented subset, not the full matrix. The package declares
-version 1.2.0 with an updated Monarch dependency. The dependency migration has local CPU
-and native-load evidence; paired render, cancellation and fidelity acceptance
-for this pin remain pending. [Release history](../CHANGELOG.md) records the compatible operator
+version 1.2.0 with an updated Monarch dependency. The migration has local CPU,
+native-load and [exact-source paired hardware evidence](VALIDATION.md#gpu-checks-for-the-070-migration).
+Clean cancellation remains unproven despite successful explicit recovery;
+native cancellation and fabric-failure recovery remain untested. [Release history](../CHANGELOG.md) records the compatible operator
 improvements; section 9 tracks acceptance.
 The runtime also includes low-RSS LoRA residency, zero-copy slab residency,
 the identity gate and ledger, `dgxm top`, Fleet sampling, an RDMA latent-return
-path that is off by default and **NOT RUN / HOLD** (§5.6), and the per-family
+path that is off by default with scoped qualification (§5.6), and the per-family
 adapter registry (§5.3). Hardware-validation scope is recorded per family and
 path in [MODELS.md](MODELS.md) and [VALIDATION.md](VALIDATION.md).
 
@@ -687,7 +689,7 @@ sampling-spec drift fails closed.
   above-threshold cases plus a fresh reattach all to use messaging with intact
   tensors, no RDMA descriptor ownership or ACK, and zero relevant leases or
   jobs. That gate covers the dual-Spark NCCL-plus-message render path, not
-  native RDMA. It passed with six production zero-step custom
+  native RDMA. The October 8 pre-migration check passed with six production zero-step custom
   sampling cases: three sizes around 8 MiB, repeated after fresh attach,
   exact primary/denoised tensors and confirmed owned recycle. No denoiser
   forward ran; this is messaging acceptance, not model fidelity
@@ -695,11 +697,11 @@ sampling-spec drift fails closed.
   `benchmark/rdma_return_bench.py` now exercises CPU staged returns through the
   production descriptor, ACK and lease machinery, in messaging or native mode.
   Its evidence is narrower than the custom-sampling gate above and establishes
-  no render fidelity. Native RDMA is **NOT RUN / HOLD**. Requalification uses
-  the pinned runtime's `rdma_ibverbs_target` and requires a passing selected-rail
-  matrix: fresh integrity, ownership, recycle and reattach evidence on the
-  selected rail. [Validation](VALIDATION.md#native-rdma) records the failed
-  production-path check and the limits of earlier microbenchmarks.
+  no render fidelity. The 0.7.0 `rdma_ibverbs_target` selector enabled the
+  [recorded selected-rail qualification](VALIDATION.md#native-rdma), including
+  fresh integrity, ownership, recycle and reattach checks. One-step at-threshold sampling passed; cancellation and fabric-failure
+  recovery remain untested; native return stays off by default. [Validation](VALIDATION.md#native-rdma) retains the historical failed
+  production-path check alongside the later qualification and scope limits.
 
   The earlier disconnected-rail failure remains historical evidence, not a
   qualification of the upgraded runtime. Current policy requires an explicit
@@ -709,7 +711,7 @@ sampling-spec drift fails closed.
   settings, both defaulting to one; the validated chunk count cannot be changed
   through an ambient environment override after admission. A rail selector is
   necessary but does not by itself turn the default back on:
-  the selected-rail matrix above must pass first. Dated measurements are in
+  each newly selected path requires a passing selected-rail matrix before use. Dated measurements are in
   docs/VALIDATION.md. RDMABuffer requires a CPU tensor (host-staged); GB10 has
   GDR off, so no GPU-memory path is lost. ComfyUI packed `NestedTensor`
   results never take RDMA. Every direct modality is detached, made contiguous,
@@ -1418,8 +1420,8 @@ migration of recognized units and source layouts to immutable releases on
 both Sparks. It retains prior installations for guarded compensation.
 [Validation](VALIDATION.md#operator-checks) records the normal CLI update
 results and rollback scope; [INSTALL](INSTALL.md#updating) gives requirements.
-Native latent RDMA remains under the default-off
-HOLD and requalification gate in §5.6.
+Native latent RDMA remains default-off; §5.6 defines the selected-rail
+qualification boundary and links the current evidence.
 
 ### 6.2 Operator and contributor skills (`skills/`)
 
@@ -1674,7 +1676,7 @@ below); evergreen prose states version-neutral facts.
 except VALIDATION.md, on README, SECURITY, CONTRIBUTING, cluster.example.toml
 and the skills, and on src and benchmark code. It also enforces the single
 home of five facts by one fragment each: fabric trust in SECURITY.md, RDMA
-latent-return posture and its HOLD in §5.6 F3, attach timeout and wedge
+latent-return posture and its qualification boundary in §5.6 F3, attach timeout and wedge
 recovery in [docs/TROUBLESHOOTING.md #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout) and [#2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach), and the attached-mesh self-heal
 in [docs/TROUBLESHOOTING.md #87](TROUBLESHOOTING.md#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn).
 
@@ -1711,6 +1713,7 @@ an enforced requirement. The current exceptions are:
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |
 | `runtime_provenance.py` | 596 | stdlib-only exact Git/source inventory, loaded-origin validation, and runtime snapshot boundary |
 | `adapters/flux_family.py` | 560 | the flux-family adapters and the sharded forwards they install |
+| `telemetry.py` | 501 | token-aware progress updates and retirement stay with the lock-protected render tracker state |
 
 Refusal-class ledger (enforced by `tests/test_refusal_classes.py`, doctrine in
 section 5.9): a typed refusal declares its class through `refusal.refusal()`.
@@ -1772,7 +1775,7 @@ Sparks, and passing CPU checks does not establish hardware acceptance.
 | Video rendering | Recorded for named configurations | LTX, Wan, HunyuanVideo, H3 and other video results are recorded in [Validation](VALIDATION.md). Completion, cross-rank agreement and reference fidelity remain separate results. |
 | Operator setup, repair and update | Passed for the recorded two-Spark scope | Setup, repair, stopped-Worker readiness and verified-update results are recorded in [operator checks](VALIDATION.md#operator-checks), with their limits and rollback evidence. |
 | Default-off messaging return | Passed for the boundary check | Zero-step production cases passed below, at and above 8 MiB and after fresh attach, with intact primary/denoised tensors and clean ownership. Section 5.6 records the scope; no denoising or native RDMA qualification follows. |
-| Native latent RDMA | **NOT RUN / HOLD** | Disabled by default. Requires the upstream release and selected-rail requalification described in section 5.6. Messaging or NCCL results do not qualify it. |
+| Native latent RDMA | Scoped selected-rail checks; one-step at-threshold sampling | Disabled by default. Section 5.6 and [Validation](VALIDATION.md#native-rdma) separate CPU-staged protocol checks, one-step sampling and untested recovery paths. Messaging or NCCL results do not qualify native return. |
 | Fresh installation on two Sparks | Passed within the documented scope | A fresh agent installed Python, ComfyUI and Monarch, saved two distributed renders, and checked a safe setup rerun. Existing OS, drivers and model files were retained; see [fresh installation](VALIDATION.md#fresh-agent-installation). |
 | Full launch benchmark matrix | Incomplete | The campaign selected 2,632 of 7,192 cases; 35 selected cases lacked a usable reference and did not run. Published results cover the recorded subset. See [campaign limits](VALIDATION.md#campaign-summary). |
 

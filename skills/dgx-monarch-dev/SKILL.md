@@ -82,9 +82,9 @@ order").
   so latents stay byte-identical with or without overlap. Overlap helps queued
   shared-model video, large latents and many fast renders; compute-bound image
   renders gain little.
-* **RDMA latent return (F3, §5.6):** default `off`, and held for
-  requalification pending the checks in docs/DESIGN.md §5.6, which explains
-  the hazard and the requirements for enabling it again. When enabled it is
+* **RDMA latent return (F3, §5.6):** default `off`; docs/DESIGN.md §5.6
+  defines selected-rail qualification and links the recorded scope. Do not
+  extend one passing configuration to an untested rail or workload. When enabled it is
   size-gated at `DEFAULT_RDMA_MIN_BYTES` (8 MiB in constants.py; config
   `rdma_min_bytes`, env `DGXM_RDMA_MIN_BYTES`). Never force-free RDMA backing
   in `unload` or `clear_vram`: a pipelined one-sided read may still be
@@ -129,7 +129,9 @@ execution. No CI workflow, Actions
 runner, or scheduled job may execute on protected hardware. For a check without
 a clean recorded run, report the hardware gate as **NOT RUN**. Worker services
 persist; stopping one requires explicit maintenance authorization and verified
-restoration. Native latent RDMA remains **NOT RUN / HOLD**.
+restoration. Native latent RDMA remains off by default. Keep
+[selected-rail return qualification](../../docs/VALIDATION.md#native-rdma)
+within its recorded scope; positive-step qualification is limited to the recorded at-threshold case.
 
 ## torchmonarch bump procedure (§6.3)
 

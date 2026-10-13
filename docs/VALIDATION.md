@@ -16,7 +16,7 @@ retest of the current release.
   measured accuracy and untested configurations.
 - [Memory calibration](#memory-calibration): measurements behind capacity checks.
 - [Lifecycle](#lifecycle): cleanup, interruption and failure recovery.
-- [Native RDMA](#native-rdma): failed return-path test; remains disabled.
+- [Native RDMA](#native-rdma): selected-rail return checks and full-sampling limits; disabled by default.
 
 ## Monarch dependency migration
 
@@ -50,6 +50,170 @@ These checks used a scratch dependency overlay; the live environment was
 unchanged. They establish native load and local semantics, not CUDA execution,
 paired-fabric performance, render fidelity, or multi-host recovery acceptance.
 
+### GPU checks for the 0.7.0 migration
+
+**October 12, 2026:** candidate [source `ad199a9`](https://github.com/Deen-Media/dgx-monarch/commit/ad199a9b7d7016cfb106a060bc9a48d5c7d851b9)
+with TorchMonarch 0.7.0 was compared with the 0.6.0 baseline at
+[source `7ba25b7`](https://github.com/Deen-Media/dgx-monarch/commit/7ba25b7512310cf89dff245b950d8f794c9d233b).
+Both used Torch 2.12.0+cu132 and ComfyUI
+[`e8665ca`](https://github.com/Comfy-Org/ComfyUI/commit/e8665ca8e4089ab917567cdb491308e1397663d4).
+These are checks of the complete upgrade configuration on the two Sparks,
+with actor messaging for latent returns. They do not establish native RDMA
+acceptance or isolate the effect of the Monarch dependency.
+
+**October 13, 2026 UTC:** the shipped
+[`dgx-monarch-krea2-t2i.json`](../example_workflows/dgx-monarch-krea2-t2i.json)
+workflow completed without recipe changes. Only UI-to-API conversion and
+private config/output locations differed. It used Turbo FP8 scaled, Qwen3VL
+4B BF16, the Qwen image VAE, the original mouse prompt and blank negative,
+1536×1536, seed 0, 8 steps, CFG 1 and euler_cfg_pp/simple. Auto mode selected
+Ulysses 2 and the SAGE_AUTO policy through table row 11. The graph retained
+its original first_use Gate and automatic residency settings.
+
+The first-use slab cross-residency Gate passed with zero latent difference
+across three two-step proof renders, taking 50.7 seconds. Its exact artifact,
+source and capability context passed the public ledger integrity lookup.
+After the requested render, both workers reported full loading with stock
+cudaMalloc backing. One uncached 1536×1536 PNG decoded completely and showed
+the intended mouse in visual review. Typed recycle, owned driver exit and
+paired passive idle checks completed with persistent Workers unchanged.
+
+The whole-prompt history interval was 145.737 seconds; the controller measured
+146.134 seconds and the main eight-step sampling log reported 38.32 seconds.
+These include different phases and establish no comparative speedup. SAGE_AUTO
+selection is bound by context and logs, not a per-kernel trace. This is
+functional acceptance of the shipped workflow and its recorded Gate; it is
+not a stock-fidelity or cross-attention-kernel comparison.
+
+The shipped
+[`dgx-monarch-minimax-h3-mp4.json`](../example_workflows/dgx-monarch-minimax-h3-mp4.json)
+also completed on October 13 UTC without recipe changes: 1344×768, 124 frames
+at 24 fps, seed 0, 20 steps, CFG 1, res_multistep/simple, TORCH_FLASH, pruned INT8 DiT,
+NVFP4 Qwen3VL encoder and both original VAEs. Only API conversion, consistent
+node identifiers and private config/output locations differed. Auto selected
+Ulysses 2; first_use and automatic residency remained enabled. Both workers
+reported full loading and stock cudaMalloc backing after sampling.
+
+The resulting MP4 passed complete CPU decoding: 124 H.264 frames at the exact
+canvas/rate and AAC 32-kHz stereo audio, with 165,888 decoded sample frames
+(165,334 expected plus 554 AAC tail samples). Four preview frames showed a
+plausible glassblowing sequence; audio quality was not assessed by listening.
+The two first-use proof renders took 133.4 seconds and remained
+INCONCLUSIVE/no_material, granting no optimization PASS. Existing Sol-only
+consent was carried unchanged; no actual use was observed in retained stamps
+or logs, and raw per-rank waiver payloads were not retained. Typed recycle,
+owned driver exit and subsequent paired idle checks completed with persistent
+Workers unchanged.
+
+The prompt history interval was 857.489 seconds, controller 858.884 seconds and
+main sampling log 555.84 seconds; these are observations of different phases,
+not a matched 0.6 comparison or a Monarch speedup. The 613 retained in-prompt
+head samples peaked at 2,093 MHz, 63.55 W and 80°C, with minimum MemAvailable
+43,578,156 KiB. Their largest gap was 205.28 seconds, so neither continuous cap
+coverage nor an exact peak-memory claim follows. The post-run boot, cap unit
+and service state matched the pre-run record.
+
+The adapted controlled image recipe used Krea2 Turbo BF16, Qwen3VL 4B BF16 and the Qwen
+image VAE at 1024×1024, 8 steps, CFG 1, Euler/simple, native shift 1.15 and
+explicit TORCH_FLASH. A fixed prompt and zeroed negative conditioning were
+used without prompt enhancement, with the identity Gate disabled for these
+controlled comparisons. This was not the unchanged shipped Krea2 workflow.
+Seeds 10041-10044 covered warmup and three
+measured renders. Stock ComfyUI, DGX local and two-GPU Ulysses outputs matched
+in decoded PNG pixels. Separate-process null controls covered stock only.
+A candidate-only 1040×1040, one-step control also matched across those three
+execution modes; it is not an eight-step or cross-version padding result.
+
+The retained core set contains **31 renders and 57 exact pixel comparisons**,
+checked with the unchanged [pixel comparator](../benchmark/sweep/compare.py).
+Those pairs reuse the same outputs; they are not 57 independent experiments.
+The comparisons comprise 18 pairings within the same topology across the
+upgrade, 32 pairings across topologies, four stock process-null pairings and
+three padding pairings. Decoded-pixel equality does not assert equality of
+unsaved intermediate tensors or untested models and settings.
+
+Warm whole-prompt history medians, excluding warmup, padding and status
+observation, were:
+
+| Execution mode | Baseline 0.6.0 | Candidate 0.7.0 |
+|---|---:|---:|
+| Stock ComfyUI | 17.547 s | 15.993 s |
+| DGX local | 15.818 s | 15.820 s |
+| Two-GPU Ulysses | 10.556 s | 10.627 s |
+
+Each median uses three seeds. These are `execution_start` to
+`execution_success` intervals, not kernel times or polling-inclusive controller
+wall times. Stock timing also changed. The observations do not establish a
+Monarch speedup or a statistically resolved performance regression.
+
+A targeted interruption correctly refused recycling during active work and
+interrupted the selected prompt, but retained one abandoned sample and did
+not reach clean settlement within the observation budget. **Clean cancellation
+acceptance remains unproven.** An explicit typed recycle stopped the owned
+actors; fresh actors then completed an uncached recovery render in the same
+driver. Its pixels matched the stock, local and Ulysses controls. The final
+typed recycle and owned driver close completed, with the persistent Workers
+preserved. This is explicit recovery evidence, not a clean-cancellation PASS.
+
+A separate Krea2 RAW BF16 diagnostic at 1024×1024, 8 steps, CFG 1,
+Euler CFG++/simple, TORCH_FLASH and `uly2+fsdp` passed the exact-context
+`fsdp_clean_reload` Gate with identical latents and maximum absolute
+difference 0. Its report and terminal ledger row agreed. This short RAW
+recipe establishes that clean-reload proof only; it is not the representative
+Turbo recipe, an external stock-pixel comparison or RAW quality acceptance.
+
+Pipeline depths 1/2 and Fleet produced matching batched decoded images for
+seeds 10042/10043, but differed from the single-image controls: NRMS
+0.005310/0.006332 and maximum 8-bit pixel differences 24/44. A follow-up saved
+the FP32 batch and verified each slice against earlier sequential and depth-1
+actor hashes. Splitting that latent before VAE decoding matched stock, local
+and Ulysses pixels exactly; decoding it together reproduced the earlier
+pipeline/Fleet outputs in six comparisons. The difference is downstream of
+matching sampled latent bytes, in the decode batch path, shape or associated
+state. No specific kernel cause or blanket batched-pixel equality is established.
+
+A reduced-canvas, adapted H3 workflow also completed: pruned INT8 DiT, NVFP4 Qwen3VL encoder,
+video/audio VAEs, 512×320, 124 frames, 24 fps, 20 steps, CFG 1,
+res_multistep/simple, TORCH_FLASH, Ulysses and seed 42. Complete CPU decoding
+verified all H.264 frames and AAC 32-kHz stereo audio. Decoded audio contained
+165,888 sample frames, including 554 AAC tail samples beyond ComfyUI's
+165,334-sample input. Four preview frames showed plausible glassblowing;
+audio quality was not assessed by listening.
+
+The single H3 controller interval was 212.219 seconds, including loading and
+two identity checks totaling about 23.2 seconds; observed sampling was
+45.32 seconds. Its Gate remained INCONCLUSIVE/no_material with normal stock
+residency, granting no optimization PASS. Existing Sol-only consent was carried
+unchanged, with no actual use observed; raw actor waiver payloads were not
+retained. No consent was created or changed. Head clocks stayed at or below
+2,093 MHz in 192 prompt-interval samples against a 2,100-MHz cap; gaps reached
+15.068 seconds, so this is not continuous coverage. Typed recycle, owned driver
+exit and subsequent passive idle checks completed with persistent Workers
+preserved. This is functional AV and cleanup evidence for the adapted
+512×320 recipe, not unchanged shipped-workflow acceptance or a matched 0.6.0
+fidelity or performance comparison.
+
+Historical H3 timings used substantially different settings:
+
+| Record | Shape and DiT | Pair timing and clock |
+|---|---|---|
+| September 0.6.0 t2va | 1344×768×124, FP8 scaled | 690.6 s cold / 564.5 s warm, whole-prompt polling |
+| September 0.6.0 guide | 1344×768×124, INT8 ConvRot, guide at frame 62 | 772.8 s cold / 636.6 s warm, whole-prompt polling |
+| Adapted 0.7.0 MP4 run | 512×320×124, INT8 ConvRot | 211.927 s prompt history / 212.219 s controller; 45.32 s sampling observation |
+| Shipped 0.7.0 MP4 workflow | 1344×768×124, INT8 ConvRot, no guide | 857.489 s prompt history / 858.884 s controller; 555.84 s sampling observation |
+
+All used 20 steps, CFG 1, res_multistep/simple and Torch Flash with Ulysses.
+The historical rows had 6.3 times as many video pixels per frame as the
+adapted 512×320 run. The shipped run matches their canvas, but model/guide,
+prompt/seed, software and output paths remain unmatched; both pair records remained CHECK because their
+audio comparator was missing. Exact historical graph/prompt/seed and full
+model payload identities were not retained in the published records. No ratio
+across these rows isolates Monarch or supplies a matched upgrade speedup.
+See the [historical video measurements](BENCHMARKS.md#campaign-render-times-video-2026-09-27-to-2026-09-28-head-capped).
+
+[Native return qualification](#native-rdma) has separate scope; the earlier
+CPU-only and historical model records retain their original limits.
+
 ## Onboarding and operator acceptance
 
 **2026-10-11, source `09957d971441c59d4605092c064886c66841eb6e`, two DGX
@@ -80,7 +244,8 @@ Activity RENDERING / Maintenance Wait**, then READY / IDLE / None. The combined
 launcher's terminal handshake succeeded; native windows were not visually
 inspected. Owned mesh recycle and driver/dashboard cleanup completed;
 persistent Worker identities stayed unchanged and final idle checks passed.
-Native latent-return RDMA remains **NOT RUN / HOLD**.
+Native latent-return RDMA was **NOT RUN / HOLD** in this October 11 record;
+see the later [selected-rail checks](#native-rdma).
 
 ## Comparison method
 
@@ -112,7 +277,8 @@ A result applies to the named checkpoint, precision, topology, inputs and
 comparison. It does not cover every workflow in a family. CPU tests, source
 inspection, admission rules and successful loads are not hardware fidelity
 results. `CHECK`, `INCONCLUSIVE` and a capacity refusal are not accuracy passes.
-Native latent RDMA remains **NOT RUN / HOLD**.
+Native latent RDMA qualification is recorded [separately](#native-rdma);
+model-render comparisons do not qualify that path.
 
 ## Campaign summary
 
@@ -647,7 +813,7 @@ also exercised a Video Lite LoRA, whose warm bake matched a fresh session.
 
 FP8-scaled auto/Ulysses completed cold and warm 121-frame renders;
 the decoded one-step probe matched its local reference exactly. Native RDMA
-latent return is separate and remains NOT RUN / HOLD.
+latent return for this LTX workload is separate and remains NOT RUN / HOLD.
 
 <a id="evidence-ltx-2-3-i2v-av-packed"></a>
 
@@ -1441,6 +1607,30 @@ A successful render never authorizes a client to stop a Worker coordinator.
 Readiness checks use telemetry and passive process/listener inspection, not
 raw TCP connections to the Worker protocol.
 
+### Monarch 0.7.0 no-model lifecycle
+
+**October 13, 2026 UTC, source `ad199a9`:** the healthy production lifecycle
+control passed attach, status and owned shutdown, then `ensure_live` reattached
+with fresh actors and completed a second shutdown. No model, NCCL setup or
+sampling ran, and native latent return was disabled.
+
+Separate authorized single-Worker stop/start and direct-restart cases both
+failed same-driver recovery. Loss observation raised `SupervisionError` and
+left the old process stop unconfirmed. After the existing all-host process-gone
+check released the stop latch, each case made one replacement attach; both
+reached the 60-second configuration-push timeout and poisoned the driver
+transport. The direct-restart loss-observation call took about 73 seconds;
+its replacement attempt took about 61 seconds. These are observed call
+intervals, not guaranteed failure-detection or recovery deadlines.
+
+Following the stop/start case, separately authorized coordinated Worker
+restoration and a fresh driver's attach/status/shutdown passed with verified
+owned exit. Recovery acceptance here is confined to that stop/start case;
+it does not establish recovery after the direct-restart failure. The no-model
+scope also establishes no mid-sampling, NCCL, physical-fabric or native-RDMA
+failure recovery. [Issue #2](https://github.com/Deen-Media/dgx-monarch/issues/2)
+remains open; upgrading the dependency did not fix same-driver replacement.
+
 Under torchmonarch 0.6.0, a 62-log two-host study supported retaining both
 in-flight and grace-window teardown handling. Log counts were upper bounds
 on actual events, and test traffic exceeded ordinary interactive use.
@@ -1496,8 +1686,8 @@ not a test of native latent-return RDMA.
 
 ## Default-off messaging return
 
-Six production zero-step custom-sampling cases passed on
-the two-Spark pair with Krea2 Turbo FP8 scaled. Returns of 8,372,224,
+**October 8, 2026, before the 0.7.0 migration:** six production zero-step
+custom-sampling cases passed on the two-Spark pair with Krea2 Turbo FP8 scaled. Returns of 8,372,224,
 8,388,608 and 8,404,992 bytes covered below, at and above the 8-MiB threshold;
 all three sizes were repeated after a fresh attach. Native RDMA remained off.
 
@@ -1508,17 +1698,97 @@ were created. Jobs and leases were empty after completion, and owned meshes
 were confirmed recycled. Messaging passed at all three threshold sizes and after reattachment. No denoiser forward ran, so it provides no denoising-fidelity,
 model-accuracy or native-RDMA result.
 
+**October 12, 2026, source `ad199a9`:** a separate Krea2 RAW BF16 message
+return check covered 8,355,840, 8,388,608 and 8,421,376-byte zero-step outputs,
+then repeated the at-threshold case in a fresh driver and actor cohort. All
+eight saved primary/denoised tensors were finite FP32 zeros with exact bytes.
+Queues, jobs and leases settled; typed recycle and owned close completed with
+persistent Workers unchanged. This is not stock zero-step equality, denoising,
+VAE fidelity or native ownership evidence.
+
 ## Native RDMA
 
-The native return-path test **FAILED** at exactly 8 MiB: the two ends
+**Historical trial before the 0.7.0 selected-rail qualification:** the native
+return-path test **FAILED** at exactly 8 MiB: the two ends
 selected disconnected rails and could not establish the queue pair.
 Below-threshold actor messaging passed tensor integrity. Above-threshold
 and reattach cases were NOT RUN. There was no native RDMA PASS, ACK,
 ownership-settlement or throughput result. Earlier host-memory microbenchmarks
 at 6.98-7.55 GiB/s do not cover the current production return path.
 
-Native latent return stays **NOT RUN / HOLD**, disabled by default. NCCL
-compute traffic and actor-message returns remain separate. Nested AV always
-uses messaging. A timed-out native read cannot free backing or ACK ownership
-until its operation and exact-owner settlement are known. Hard unload does
-not override that ownership. The selected rails still need a successful production-path test.
+### Selected-rail qualification
+
+**October 12, 2026, source `ad199a9`:** the canonical production-return
+qualifier passed 12 messaging cases and 28 selected-NIC native cases with one
+QP and one application chunk. Native coverage included both owners across two
+fresh cycles, exact CPU tensor bytes, wrong-generation and duplicate ACK
+assertions, a two-entry registry capacity check, overflow fallback and recovery,
+and confirmed owned-process stops. Paired passive checks were clear afterward.
+The audit bound source, runtime, selected policy and executed protocol assertions;
+raw ACK reply arrays were not retained.
+
+This qualifies the recorded CPU-staged production return path on that rail.
+It did not initialize a GPU or establish GPU zero-copy, full sampling,
+fidelity, cancellation, other rails/QPs/chunks or a performance gain.
+
+Two subsequent Krea2 RAW BF16 zero-step native returns at exactly 8 MiB
+matched the messaging reference and each other in saved FP32 primary and
+denoised tensor bytes. Each used fresh driver and actor processes. The primary
+return was observed as native; the denoised extra remained a separate result.
+Two fresh status observations showed no live handoffs, receiver jobs or poisoned
+owners. Typed recycle, owned driver exit and subsequent paired idle checks
+completed with persistent Workers unchanged. Phase counters and released
+tombstones are observations, not independently captured token-bound ACK receipts.
+This is actual-sampler zero-step return evidence, not a denoiser-forward test.
+
+**October 13, 2026 (UTC):** repeated CPU-staged return measurements ran
+message→native and native→message in fresh driver processes. Each mode/order
+used both owners and two fresh actor cycles, with first-use 8-MiB returns
+separated from seven warmed repeats at 8, 32 and 64 MiB. The four reports
+contain 352 timing calls, plus 80 canonical integrity/ownership cases; all
+eight owned actor stops and the following paired idle checks completed.
+
+Across the eight owner/cycle/order strata, native's warmed median savings
+were 27.9-32.8 ms at 32 MiB (1.34-1.42× message/native ratio) and
+65.5-78.4 ms at 64 MiB (1.44-1.53×). At 8 MiB, native was slower in seven
+strata; the remaining 0.108-ms difference was about 0.4%, not a consistent
+or material benefit. First native use cost 1.989-2.139 seconds.
+
+Each timed total is pack RPC plus read/drop/ACK; seeded CPU generation is
+included, while verification, evidence writes and status checks are excluded.
+These are combined phase timings, not continuous wall time, network-only
+bandwidth or a denoising speedup. The results support explicit selected-rail
+opt-in for repeated large returns, not a global default-on change.
+
+**October 13, 2026 UTC:** a separate RAW BF16 production-return experiment
+completed one positive denoising step at 2048×4096 without VAE decoding. It
+used the same model, prompt, seed and sampler in stock, messaging, selected-rail
+native and a fresh native repeat. All eight saved FP32 primary/denoised tensors
+were finite, nonzero and exactly 8 MiB; all twelve pairwise comparisons were
+byte-exact. Both native cells recorded one native primary descriptor, released
+tombstone and successful read/drop/ACK phases, with settled leases, live
+handoffs, receiver jobs and poisoned-owner counts. These counters and phases
+are observations, not separately retained raw ACK receipts.
+
+Each positive-step cell followed an excluded zero-step residency warmup. The
+experimental admission retained normal capacity handling, checked full BF16
+residency and the exact actors' UMA activation logs, and required fresh host
+MemAvailable above 40 GiB on each participating host. This is an empirical
+screen, not a measured peak-memory guarantee or a general resolution limit.
+Both native cells used fresh driver/actor processes; typed recycle, owned driver
+exit and paired passive idle checks preserved the persistent Workers. The
+scope is one positive step at the production return threshold, not a complete
+quality recipe, VAE fidelity, GPU zero-copy or a denoising speed benchmark.
+
+Native return stays **disabled by default**. Repeated large CPU-staged returns
+on an explicitly selected and qualified rail can benefit from native opt-in;
+the measured first-use cost and lack of consistent benefit at 8 MiB do not
+justify a global default-on setting. Native cancellation and fabric-failure
+recovery were **NOT RUN** and remain separate limits, rather than an unresolved
+default-policy decision. GB10 uses unified memory; raw CUDA free memory alone
+is not a sufficient capacity decision. NCCL compute
+traffic and actor-message returns are separate; nested AV always uses messaging.
+A timed-out native read cannot free backing or ACK ownership until its
+operation and exact-owner settlement are known. Hard unload does not override
+that ownership. Qualification of this selected path does not authorize general
+native use or transfer acceptance to untested workloads.

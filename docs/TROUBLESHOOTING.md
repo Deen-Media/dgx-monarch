@@ -268,19 +268,22 @@ torchmonarch is pinned; bump it on all hosts at once.
 
 ## 9. Worker host death mid-render
 
-In-flight calls fail with `SupervisionError` after ~69 s ("no status received
-from process" in the fault-injection test, [VALIDATION.md](VALIDATION.md)); the
-healthy hosts stay responsive, and respawning procs on the same mesh works
-immediately once the host returns. Restart the render; a dead host also makes
-full shutdown block (bounded by internal timeouts).
+An earlier host-death test observed `SupervisionError` after about 69 seconds,
+responsive healthy hosts and same-mesh respawn after the host returned. That
+result does not establish general same-driver recovery. The later 0.7.0
+single-Worker stop/start check reproduced a replacement-attach timeout and a
+poisoned driver transport; see [the dated lifecycle results](VALIDATION.md#lifecycle).
+A poisoned transport requires a fresh driver after confirmed owned cleanup;
+resetting its attached mesh does not clear that transport state.
 
 ## 10. First RDMA latent return is slow
 
-This applies only to the future native return path, not the current required
-release gate; see [#75](#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails). After native RDMA is requalified, a successful first
-`RDMABuffer` read is expected to pay connection/registration (~0.3 s at 64 MiB),
-while steady-state reads are milliseconds. That first-touch benchmark guidance
-does not authorize retrying a failed or ambiguous native operation.
+The [selected-rail measurements](VALIDATION.md#native-rdma) recorded a
+1.989-2.139-second first-use native return cost. Repeated 32/64-MiB returns
+benefited, while 8-MiB returns showed no consistent material gain. Those totals
+combine pack RPC and read/drop/ACK; they are not network-only read timings.
+Native return remains off by default. A failed or ambiguous native operation
+must retain ownership until settlement; first-use cost never authorizes retry.
 
 ## 11. Custom sampler renders as euler / "sampler … is not registered on this worker"
 
@@ -3089,11 +3092,12 @@ silently make the RDMA, NCCL and diagnostic views disagree. If the failed
 attempt reports ownership poison or unconfirmed settlement, follow [#29](#29-large-rdma-latent-return-fails-after-workers-finish-rendering) and do
 not reuse that process or numeric handle.
 
-Native RDMA remains **NOT RUN / HOLD**. Retesting requires a stable
-TorchMonarch release with the `rdma_ibverbs_target` rail selector. That release
-must then pass the selected-rail integrity, ownership, recycle and reattach
-checks before native latent return can be enabled. Ordinary dependency updates
-do not clear this hold.
+The pinned runtime provides `rdma_ibverbs_target`; the later
+[selected-rail qualification](VALIDATION.md#native-rdma) records its limited
+production-return integrity, ownership, recycle and reattach evidence. Native
+return stays off by default and positive-step qualification is limited to the recorded at-threshold case.
+The historical failure still governs uncertain ownership; a dependency update
+alone does not qualify another rail, workload or configuration.
 
 ## 76. An operator workflow refuses, reports `unknown`, or leaves Worker services stopped
 
@@ -3172,7 +3176,7 @@ the same service was then restored; this was not a full Doctor run. The record
 includes update successes, refusals before changes began, and rollback results.
 These results do not change
 [#75](#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails):
-native latent RDMA stays off by default and on HOLD, while ordinary dual-Spark
+native latent RDMA stays off by default with native cancellation and fabric-failure recovery untested, while ordinary dual-Spark
 NCCL rendering and actor-message latent return stay available.
 
 ## 77. A Chroma, Omnigen2, or Z-Image USP render refuses a mask or sequence length

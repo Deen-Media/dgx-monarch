@@ -150,8 +150,8 @@ The Monarch upgrade preserves the project's existing Torch stack. The
 the tested build and its limits. The dependency canary records native imports
 and Torch build identity because public `monarch.rdma` classes can remain
 importable when native bindings are unavailable. New transitive requirements
-include `numpy>=1.26`, `pyarrow>=17` and `xxhash`; the verified updater checks the
-candidate dependency contract before changing the installation.
+include `numpy>=1.26`, `pyarrow>=17` and `xxhash`; both plain and verified
+updates check the candidate dependency contract before pin installation.
 
 After installation, compare torch version, CUDA version and import location
 with the recorded values, confirm CUDA availability, and run the dependency

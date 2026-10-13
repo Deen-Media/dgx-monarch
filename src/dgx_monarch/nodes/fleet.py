@@ -410,7 +410,7 @@ class DGXMonarchFleetKSampler:
                 render_id = request["_dgxm_render_id"]
                 consent_waiver.stamp_request(request, spec, Topology(world=1), 1, render_id)
                 progress = ProgressReceiver(
-                    steps_n, on_step=on_step(i),
+                    steps_n, on_step=on_step(i), track_render=True,
                     on_cancel=lambda rid=render_id: handle.cancel_sample(rid, wait=False))
                 progress.__enter__()
                 future = mesh_setup.prepare_sample(handle, setup_token)

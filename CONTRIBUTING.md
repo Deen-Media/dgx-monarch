@@ -150,8 +150,10 @@ Keep raw evidence private. Record **NOT RUN** for a check without a clean
 recorded run. Publish measured claims in [VALIDATION](docs/VALIDATION.md) with
 the actual run date and settings; a documentation edit is not a hardware test.
 Cross-rank agreement alone does not prove agreement with native ComfyUI.
-Native latent RDMA remains **NOT RUN / HOLD**; actor messaging is the supported
-return path.
+Native latent RDMA remains off by default; actor messaging is the normal
+return path. [Selected-rail qualification](docs/VALIDATION.md#native-rdma)
+covers only its recorded scope, not untested cancellation or fabric-failure
+recovery. Do not generalize one passing configuration to another workload.
 
 ## Release checks
 

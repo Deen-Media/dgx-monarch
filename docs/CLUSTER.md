@@ -63,7 +63,7 @@ force: no profile change or config rewrite clears it.
 | `nccl_master_port` | `29777` | rendezvous port |
 | `python` | `python3` | interpreter with torchmonarch and the ComfyUI dependencies, at the same path on every host |
 | `comfy_dir` | auto-detect | ComfyUI root; per-host override via `hosts[].comfy_dir` |
-| `rdma_latent_return` | `false` | leader latents return via one-sided RDMA read, size-gated by `rdma_min_bytes`. Keep it off while native selected-rail support is on HOLD; [DESIGN.md](DESIGN.md) §5.6 and [TROUBLESHOOTING #75](TROUBLESHOOTING.md#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails) are canonical. |
+| `rdma_latent_return` | `false` | leader latents return via one-sided RDMA read, size-gated by `rdma_min_bytes`. Keep it off by default; selected-rail qualification is limited to the [recorded scope](VALIDATION.md#native-rdma), with native cancellation and fabric-failure recovery untested; [DESIGN.md](DESIGN.md) §5.6 and [TROUBLESHOOTING #75](TROUBLESHOOTING.md#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails) are canonical. |
 | `rdma_min_bytes` | `8388608` (8 MiB) | RDMA size gate: latents smaller than this return via messaging, not RDMA. |
 | `ssh_key` | agent default | key for `dgxm` lifecycle commands |
 | `auto_heal` | `true` | Before each attach, restart every Worker service when a probe sees one down; a host the probe cannot reach stops the attach instead. After the last attach attempt fails, restart them so the next ComfyUI session starts clean. The one in-process attach retry does not depend on this key ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout), [#2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)). Set `false` to leave every restart to you. |
@@ -81,12 +81,13 @@ not permission to reuse an unsettled mesh or restart a persistent Worker.
 
 These settings configure the native runtime independently of NCCL's fabric
 profile. They do not enable latent RDMA: `cluster.rdma_latent_return` remains
-`false`, and native selected-rail qualification remains **NOT RUN / HOLD**.
+`false`. [Selected-rail checks](VALIDATION.md#native-rdma) qualify only their
+recorded workload/runtime/hardware; positive-step qualification is limited to the recorded at-threshold case.
 
 | key | default | meaning |
 |---|---|---|
-| `target` | `""` | `nic:<device>`, `cpu:<numa>` or `gpu:<ordinal>`; empty uses upstream selection. An explicit selected target is required for single-NIC native operation. |
-| `host_targets` | `{}` | Table mapping configured host names to target overrides. Use each host's actual device name; names need not match between machines. |
+| `target` | `""` | `nic:<device>`, `cpu:<numa>` or `gpu:<ordinal>`; empty uses upstream selection. An explicit `nic:<device>` target is required for single-NIC native operation. |
+| `host_targets` | `{}` | Table mapping configured host names to target overrides. Use `nic:<device>` with each host's actual device name; names need not match between machines. |
 | `peer_device_affinity` | `"match_name"` | `any`, `match_name`, or disjoint `groups:dev0,dev1|dev2,dev3`. Affinity describes allowed NIC pairings; it does not discover reachable subnets. |
 | `max_nics_per_buffer` | `1` | Maximum registered NICs per buffer, `1..8`. An explicit NIC target pins the upstream manager to that NIC. |
 | `qps_per_peer` | `1` | Native QPs per NIC route, `1..8`. |

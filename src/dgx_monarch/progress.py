@@ -6,6 +6,7 @@ from __future__ import annotations
 import threading
 import time
 
+from .error_utils import prefer_error, raise_with_distinct_cause, reconcile_error
 from .log import get_logger
 
 log = get_logger(__name__)
@@ -22,12 +23,16 @@ class ProgressReceiver:
     before sampling and sends neither. The pump stops at the first done.
     """
 
-    def __init__(self, total_steps: int, on_step=None, on_cancel=None):
+    def __init__(self, total_steps: int, on_step=None, on_cancel=None, *,
+                 track_render: bool = False):
         # Channel.open waits for __enter__ so a caller can publish this receiver
         # into its cleanup guard before the first channel or thread side effect.
         self.port = None
         self._receiver = None
         self._total = total_steps
+        # Fleet submits outside render_submit/PendingRender, so it opts in
+        # to receiver-owned telemetry lifetime. Other callers keep theirs.
+        self._telemetry_token = object() if track_render else None
         # Optional aggregate hook: when set, each step message goes to
         # on_step(msg) instead of a per-render ProgressBar, so the pipeline and
         # fleet nodes can fold several concurrent renders into one bar.
@@ -52,6 +57,10 @@ class ProgressReceiver:
             note_proof_render()
         except Exception:
             pass
+        if self._telemetry_token is not None:
+            from .telemetry import render_progress
+
+            render_progress.start(self._total, token=self._telemetry_token)
         from monarch.actor import Channel
 
         self.port, self._receiver = Channel.open()
@@ -77,7 +86,12 @@ class ProgressReceiver:
                 try:  # telemetry tap (dgxm top): never allowed to break the bar
                     from .telemetry import render_progress
 
-                    render_progress.step(msg.get("step", 0), msg.get("total", self._total))
+                    if self._telemetry_token is None:
+                        render_progress.step(msg.get("step", 0), msg.get("total", self._total))
+                    else:
+                        render_progress.step(
+                            msg.get("step", 0), msg.get("total", self._total),
+                            token=self._telemetry_token)
                 except Exception:
                     pass
                 if self._on_step is not None:
@@ -114,18 +128,34 @@ class ProgressReceiver:
         # never delivers it. The driver holds the port too, so send the sentinel
         # here, or each such render leaks a thread blocked up to the 3600 s recv
         # timeout. Never block teardown.
-        self._closed.set()
-        if self.port is not None:
+        cleanup_error: BaseException | None = None
+        try:
+            self._closed.set()
+            if self.port is not None:
+                try:
+                    self.port.send({"done": True})
+                except Exception:
+                    pass
+            if (self._thread is not None
+                    and (self._thread.ident is not None
+                         or self._thread._started.is_set())):
+                self._thread.join(timeout=2.0)
+            if (self._cancel_thread is not None
+                    and (self._cancel_thread.ident is not None
+                         or self._cancel_thread._started.is_set())):
+                self._cancel_thread.join(timeout=2.0)
+        except BaseException as close_error:
+            cleanup_error = close_error
+        if self._telemetry_token is not None:
             try:
-                self.port.send({"done": True})
-            except Exception:
-                pass
-        if (self._thread is not None
-                and (self._thread.ident is not None
-                     or self._thread._started.is_set())):
-            self._thread.join(timeout=2.0)
-        if (self._cancel_thread is not None
-                and (self._cancel_thread.ident is not None
-                     or self._cancel_thread._started.is_set())):
-            self._cancel_thread.join(timeout=2.0)
+                from .telemetry import render_progress
+
+                render_progress.finish(self._telemetry_token)
+            except BaseException as telemetry_error:
+                cleanup_error = prefer_error(
+                    cleanup_error, telemetry_error, "progress telemetry retirement failed")
+        if cleanup_error is not None:
+            strongest, cause = reconcile_error(
+                exc, cleanup_error, "progress receiver cleanup failed")
+            raise_with_distinct_cause(strongest, cause)
         return False
