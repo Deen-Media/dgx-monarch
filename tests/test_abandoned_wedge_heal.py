@@ -11,7 +11,13 @@ import pytest
 
 from dgx_monarch import mesh_setup
 from dgx_monarch.mesh import MeshHandle
-from dgx_monarch.nodes import consent_waiver, recycle_drain, render_submit
+from dgx_monarch.nodes import (
+    abandoned_heal,
+    common,
+    consent_waiver,
+    recycle_drain,
+    render_submit,
+)
 from dgx_monarch.nodes.pending import PendingRenderHandoff
 from dgx_monarch.nodes.submit_guard import SubmitRenderGuard
 from render_sessions_helpers import _real_handle, _stub_direct_submit
@@ -210,3 +216,142 @@ def test_a_guard_holding_a_pending_render_leaves_the_slot_to_its_abandon():
 
     assert calls == ["abandon"]
     assert "r-pending" in consent_waiver._PENDING_AUDIT
+
+
+class _Log:
+    def __init__(self):
+        self.lines: list[tuple[str, str]] = []
+
+    def info(self, message, *args):
+        self.lines.append(("info", message % args))
+
+    def warning(self, message, *args):
+        self.lines.append(("warning", message % args))
+
+
+def _fleet_handle(name, events, *, abandoned=0):
+    """A direct-submit handle whose recycle retires it, as the real one does.
+
+    The retired handle keeps its abandoned count, and a second recycle answers
+    ok from the already-stopped branch.
+    """
+    handle = _real_handle()
+    handle.name = name
+    handle.world = 1
+    handle.cancel_sample = lambda *_args, **_kwargs: None
+    handle.sample_leases = {}
+    handle.abandoned_sample_leases = {1: abandoned} if abandoned else {}
+
+    def recycle_detailed():
+        events.append(("recycle", name))
+        handle.defunct = True
+        handle.teardown_complete = True
+        return _Outcome(True)
+
+    handle.recycle_detailed = recycle_detailed
+    return handle
+
+
+def _wire_session(monkeypatch, events, init, spares):
+    """Direct-submit seams plus a mesh cache: ensure_live answers the cached
+    fleet and builds the next spare once the cached one is recycled."""
+
+    def submit_sample(handle, *_args, **_kwargs):
+        # The check _dispatch_sample_bound makes before it leases a sample.
+        mesh_setup.require_no_abandoned_samples(handle, "dispatch another sample")
+        events.append(("submit", handle.name))
+        return object()
+
+    spec = _stub_direct_submit(monkeypatch, init, submit_sample)
+    cache = {"live": init}
+
+    def ensure_live(handle):
+        if cache["live"].defunct:
+            cache["live"] = spares.pop(0)
+        events.append(("ensure_live", handle.name, cache["live"].name))
+        return cache["live"]
+
+    log = _Log()
+    monkeypatch.setattr(common, "ensure_live", ensure_live)
+    monkeypatch.setattr(abandoned_heal, "log", log)
+    monkeypatch.setattr(
+        recycle_drain, "drop_residency_memos",
+        lambda: events.append(("drop_memos",)))
+    return spec, log
+
+
+def _heal_line(count):
+    return (
+        "info",
+        f"healing the abandoned-lease wedge: a crashed render left {count} "
+        "abandoned sample lease(s), so dispatch raises LifecycleBusyError; "
+        "recycling the attached mesh once, then retrying this submit on the new "
+        "fleet (docs/TROUBLESHOOTING.md #87)",
+    )
+
+
+def test_a_second_wedge_in_the_same_session_heals_the_live_handle(monkeypatch):
+    """The second heal recycles the fleet that refused, not the Init handle.
+
+    After the first heal the Init node's cached handle is retired and keeps
+    its abandoned count, while ensure_live dispatches on the fresh fleet.
+    Healing the cached handle answers ok from its already-stopped branch and
+    retries on the still-wedged fleet, so the retry refuses again.
+    """
+    events: list[tuple] = []
+    init = _fleet_handle("init", events, abandoned=1)
+    second = _fleet_handle("second", events)
+    third = _fleet_handle("third", events)
+    spec, log = _wire_session(monkeypatch, events, init, [second, third])
+
+    first = render_submit.submit_render(
+        spec, {}, {"samples": object()}, 1.0, 2, handoff=PendingRenderHandoff())
+    first.abandon()
+    assert spec.mesh.handle is init and init.defunct
+    assert init.abandoned_sample_leases == {1: 1}  # the stale count stays
+
+    second.abandoned_sample_leases = {1: 3}  # a crashed render on the new fleet
+    events.clear()
+    retried = render_submit.submit_render(
+        spec, {}, {"samples": object()}, 1.0, 2, handoff=PendingRenderHandoff())
+    retried.abandon()
+
+    assert events == [
+        ("ensure_live", "init", "second"),
+        ("recycle", "second"),
+        ("drop_memos",),
+        ("ensure_live", "init", "third"),
+        ("submit", "third"),
+    ]
+    assert log.lines == [_heal_line(1), _heal_line(3)]
+
+
+def test_a_retired_init_handle_s_stale_count_never_triggers_a_recycle(monkeypatch):
+    """A busy refusal on a clean live fleet is not an abandoned-lease wedge.
+
+    The live fleet refuses setup because another render holds a sample lease.
+    The Init handle's stale abandoned count must not authorize a recycle, a
+    memo drop or a retry: the original refusal is raised at once.
+    """
+    events: list[tuple] = []
+    init = _fleet_handle("init", events, abandoned=1)
+    init.defunct = True
+    init.teardown_complete = True
+    live = _fleet_handle("live", events)
+    live.sample_leases = {1: 1}
+    spec, log = _wire_session(monkeypatch, events, init, [live])
+
+    def setup(handle, *_args, **_kwargs):
+        events.append(("setup", handle.name))
+        mesh_setup.require_no_sample_leases(handle, "change distributed setup")
+        return object()
+
+    monkeypatch.setattr(mesh_setup, "ensure_request_setup", setup)
+
+    with pytest.raises(mesh_setup.SampleResultBusyError):
+        render_submit.submit_render(
+            spec, {}, {"samples": object()}, 1.0, 2,
+            handoff=PendingRenderHandoff())
+
+    assert events == [("ensure_live", "init", "live"), ("setup", "live")]
+    assert log.lines == []

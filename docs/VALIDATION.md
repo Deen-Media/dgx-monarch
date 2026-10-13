@@ -247,9 +247,17 @@ Spark, with the head under its 2,100 MHz GPU clock cap. The driver's
 journal shows about 5 s from its device line to the end of its custom-node
 preload. The first held message, the readiness `status` call, answered in
 about a tenth of the hold. No policy setting for the hold was added, because
-the measured time is not within a factor of two of 30 s. A start with a cold
-page cache, after `drop_caches`, was not measured; the setting stays out unless
-that measurement comes within a factor of two of the hold.
+the measured time is not within a factor of two of 30 s. A cold-cache start was
+measured the same day, with dev `960d999` deployed. `drop_caches` ran on both
+Sparks with the driver down, which left `Cached` at 1.3 GiB on the head and
+0.7 GiB on the sibling at launch; the head was again under its clock cap. The
+driver was ready after 10 s (5 s warm). The fresh two-actor fleet's
+`readiness` phase recorded four observations totaling 4.622 s, the longest
+4.151 s (3.519 s warm); `spawn` took at most 0.002 s and `attach` 0.016 s. The
+render took 70 s in all, with no re-gate. The actor journals show 5 s on the
+head and 6 s on the sibling from `Device: cuda:0` to `comfy bootstrapped`.
+The first held message answered in about one seventh of the 30 s hold. The
+decision stands: no policy setting for the hold.
 
 ## Onboarding and operator acceptance
 

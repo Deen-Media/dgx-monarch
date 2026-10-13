@@ -43,6 +43,7 @@ from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
 from . import consent_waiver, render_preflight
+from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_identity import (
     authorize_normal_render,
     model_for_request,
@@ -80,8 +81,11 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
         if _claimed_adoption_context is _UNCLAIMED_ADOPTION_CONTEXT
         else _claimed_adoption_context)
 
+    guards: list[_SubmitRenderGuard] = []
+
     def attempt() -> PendingRender:
         guard = _SubmitRenderGuard()
+        guards.append(guard)
 
         def body() -> PendingRender:
             return _submit_render_guarded(
@@ -99,7 +103,16 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
     try:
         return attempt()
     except mesh_setup.LifecycleBusyError as exc:
-        if not _heal_abandoned_wedge_once(model, exc):
+        # Heal the fleet that refused, guard.handle. After a recycle the Init
+        # node's cached handle stays retired with its abandoned count, while
+        # ensure_live dispatches on a newer fleet. Every busy refusal here
+        # follows the guard's publication of that fleet, so ``refused`` is
+        # None only under test doubles. The retry starts from ``model`` again.
+        refused = guards[-1].handle
+        if not _heal_abandoned_wedge_once(
+                model if refused is None
+                else render_preflight._model_with_bound_handle(model, refused),
+                exc):
             raise
         return attempt()
 
@@ -107,44 +120,15 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
 def _heal_abandoned_wedge_once(model: ModelSpec, exc: BaseException) -> bool:
     """Reset and retry once when abandoned leases are the only dispatch blocker.
 
-    An untagged worker crash abandons its lease, blocking later dispatches with
-    ``LifecycleBusyError``. Recycle permits abandoned leases but requires no live
-    sample or pending RDMA read. Confirm the ProcMesh stop, then retry on the new
-    fleet. Other busy states and unconfirmed stops still raise; active work is
-    never interrupted (docs/TROUBLESHOOTING.md #87).
+    ``model`` comes bound to the fleet whose dispatch refused. The heal itself
+    lives in ``nodes/abandoned_heal``, which Fleet shares.
+    Other busy states and unconfirmed stops still raise; active work is never
+    interrupted (docs/TROUBLESHOOTING.md #87).
     """
-    from ..rdma_read_job import pending_job_count_for_handle
-
-    spec = getattr(model, "mesh", None)
-    handle = getattr(spec, "handle", None)
-    if not isinstance(handle, MeshHandle):
-        return False
-    try:
-        abandoned = sum(
-            int(count) for count in handle.abandoned_sample_leases.values())
-        active = sum(int(count) for count in handle.sample_leases.values())
-        pending_reads = pending_job_count_for_handle(handle)
-    except Exception:
-        return False
-    if not abandoned or active or pending_reads:
-        return False
-    log.info(
-        "healing the abandoned-lease wedge: a crashed render left %d abandoned "
-        "sample lease(s), so dispatch raises %s; recycling the attached mesh "
-        "once, then retrying this submit on the new fleet "
-        "(docs/TROUBLESHOOTING.md #87)", abandoned, type(exc).__name__)
-    outcome = handle.recycle_detailed()
-    if not outcome.ok:
-        log.warning(
-            "abandoned-lease heal could not reset the mesh (%s: %s); the "
-            "original refusal stands", outcome.status.value, outcome.detail)
-        return False
-    # As on every process-stop path, clear the driver's residency
-    # memos must not credit weights the respawned fleet will not hold.
-    from . import recycle_drain
-
-    recycle_drain.drop_residency_memos()
-    return True
+    handle = getattr(getattr(model, "mesh", None), "handle", None)
+    return heal_abandoned_wedge_once(
+        handle, blocker=f"dispatch raises {type(exc).__name__}",
+        then="retrying this submit on the new fleet") is HealOutcome.HEALED
 
 
 def _submit_render_guarded(

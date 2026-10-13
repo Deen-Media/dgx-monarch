@@ -2,6 +2,20 @@
 
 ## [Unreleased]
 
+- Run the abandoned-lease reset before a Fleet queue too. When abandoned
+  samples are the only obstruction, Fleet recycles the attached mesh once
+  before its first dispatch, drops the driver's residency memos and dispatches
+  on the fresh fleet, so a Fleet queue after a failed Fleet wave no longer
+  needs **Reset attached mesh**. Both paths check and reset the fleet whose
+  dispatch refused, so a later wedge in the same ComfyUI session heals as the
+  first one did. An active sample lease, a pending RDMA read or an
+  unconfirmed stop leaves the refusal as it was
+  ([TROUBLESHOOTING #87](docs/TROUBLESHOOTING.md#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)).
+- Record the cold-cache readiness measurement in VALIDATION.md. With the page
+  cache dropped on both Sparks, the `readiness` phase peaked at 4.151 s
+  (3.519 s warm) and each actor bootstrapped in 5 to 6 s, against Monarch's
+  30 s hold on messages to a starting actor, so the hold still gets no policy
+  setting.
 - Bring the docs and three small code paths in line with the pinned
   TorchMonarch behavior. DESIGN.md now says that an endpoint Future survives a
   timed-out `.get(timeout)` while a `returns_future` body such as
@@ -13,11 +27,7 @@
   say that a loopback-only hostname fails at once and a LAN or Tailscale
   address leaves the fabric. The power-user escape hatch points at `dgxm top`,
   the sidebar and `dgxm diagnostics`, because `monarch-tui` needs a mesh admin
-  server that the integration never starts.
-  [TROUBLESHOOTING #115](docs/TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)
-  now says that a Fleet queue after a failed Fleet wave refuses with
-  `LifecycleBusyError` until **Reset attached mesh**, because the automatic
-  reset runs only for normal renders. The supervision string net no longer
+  server that the integration never starts. The supervision string net no longer
   lists `ProcessExited`, which the pinned binding no longer carries. The CPU
   smoke canary now times out a `ProcMesh.stop` at once and requires the stop to
   stay cancelled and its procs to answer until a fresh stop. VALIDATION.md

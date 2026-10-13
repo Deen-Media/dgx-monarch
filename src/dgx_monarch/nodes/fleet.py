@@ -23,6 +23,7 @@ from ..transfer_utils import (
     safe_note,
 )
 from . import consent_waiver
+from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .common import ModelSpec, conditioning_for_wire
 from .fleet_cleanup import (
     _cancel_fleet_pending,
@@ -32,6 +33,8 @@ from .fleet_cleanup import (
     _retire_fleet_audit,
     _retire_fleet_future,
 )
+from .fleet_jobs import MAX_FLEET_JOBS as MAX_FLEET_JOBS
+from .fleet_jobs import build_jobs
 from .fleet_policy import (
     _fleet_worker_policy as _fleet_worker_policy,
 )
@@ -49,7 +52,6 @@ from .render_session import RenderSession
 from .samplers import _aggregate_render_outputs, _sampler_names, _scheduler_names
 
 log = get_logger(__name__)
-MAX_FLEET_JOBS = 1024
 
 
 def _close_session_preserving_primary(
@@ -73,40 +75,6 @@ def _close_session_preserving_primary(
         primary, cleanup_error, "fleet session close failed")
     if winner is not primary:
         raise_with_distinct_cause(winner, cause)
-
-
-def build_jobs(prompts_text: str, positive_list, negative_list, base_seed: int):
-    """Assemble one job dict (positive, text, negative, seed) per job.
-
-    Conditioning-list jobs come first, then prompt lines, which carry their raw
-    ``text`` and a None ``positive`` until the caller encodes them.
-    """
-    jobs = []
-    for cond in positive_list or []:
-        jobs.append({"positive": cond, "text": None})
-        if len(jobs) > MAX_FLEET_JOBS:
-            raise ValueError(
-                f"fleet: more than {MAX_FLEET_JOBS} jobs exceeds the per-prompt limit")
-    for line in (prompts_text or "").splitlines():
-        line = line.strip()
-        if line:
-            jobs.append({"positive": None, "text": line})
-            if len(jobs) > MAX_FLEET_JOBS:
-                raise ValueError(
-                    f"fleet: more than {MAX_FLEET_JOBS} jobs exceeds the per-prompt limit")
-    if len(jobs) > MAX_FLEET_JOBS:
-        raise ValueError(
-            f"fleet: {len(jobs)} jobs exceeds the per-prompt limit of {MAX_FLEET_JOBS}")
-    negatives = list(negative_list or [])
-    if len(negatives) > 1 and len(negatives) != len(jobs):
-        raise ValueError(
-            f"negative list has {len(negatives)} entries but there are {len(jobs)} "
-            "jobs; provide one negative (broadcast) or exactly one per job")
-    for i, job in enumerate(jobs):
-        job["negative"] = negatives[i] if len(negatives) > 1 else (
-            negatives[0] if negatives else None)
-        job["seed"] = int(base_seed) + i
-    return jobs
 
 
 def _collect_fleet_wave(handle, pending: list, results: list, timeout_s: float,
@@ -305,6 +273,21 @@ class DGXMonarchFleetKSampler:
 
         mesh = spec.mesh
         handle = ensure_live(mesh.handle)
+        # Abandoned leases alone would refuse the first dispatch, so heal them
+        # once here (docs/TROUBLESHOOTING.md #87). Check the handle Fleet
+        # dispatches on: the cached Init handle keeps its count after a
+        # recycle. The recycle needs no bound session, and ensure_live then
+        # returns the fresh fleet.
+        heal = heal_abandoned_wedge_once(
+            handle, blocker="Fleet dispatch would raise LifecycleBusyError",
+            then="dispatching this Fleet queue on the new fleet")
+        if heal is HealOutcome.HEALED:
+            handle = ensure_live(handle)
+        elif heal is HealOutcome.RECYCLE_FAILED:
+            # A failed stop can retire this handle, and a bind would then
+            # refuse with a retired-handle error. Raise the dispatch refusal.
+            mesh_setup.require_no_abandoned_samples(
+                handle, "dispatch another sample")
         session = RenderSession()
         primary: BaseException | None = None
         try:
