@@ -2,13 +2,17 @@
 
 ## [Unreleased]
 
-- Treat a Worker unit that carries an earlier Monarch policy as stale rather
-  than tampered. A `[monarch]` or `cluster.rdma_latent_return` edit on a
-  managed installation no longer locks out lifecycle commands: the probe reads
-  `POLICY_STALE`, `dgxm restart` refuses before stopping any Worker service,
-  `dgxm up` names the cause, and `dgxm doctor` adds a `worker policy` row per
-  host. `dgxm update --verify --target HEAD` renders the current policy with
-  the usual rollback. A unit without policy arguments counts as current only
+- Treat a Worker unit that carries a well-formed Monarch policy other than
+  the current one as stale rather than tampered. A `[monarch]` or
+  `cluster.rdma_latent_return` edit on a managed installation no longer locks
+  out lifecycle commands: the probe reads `POLICY_STALE`, `dgxm restart`
+  refuses before stopping any Worker service, `dgxm up` names the cause, and
+  `dgxm doctor` adds a `worker policy` row per host. When a host's probe goes
+  unanswered, restart keeps the old order and `dgxm up` refuses the stale host
+  after the stop. `dgxm update --verify --target HEAD` renders the current
+  policy with the usual rollback. Worker units carry the default
+  `monarch.startup_timeout_s`, which only the driver reads, so editing it
+  leaves them current. A unit without policy arguments counts as current only
   under the default policy with native return off
   ([TROUBLESHOOTING #113](docs/TROUBLESHOOTING.md#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit)).
 - Resolve the driver's own `[monarch.rdma]` host target by matching
@@ -24,8 +28,8 @@
   `monarch_diagnostics`.
 - Narrow the Gate configuration fingerprint to settings that can change math,
   residency or transport, and the transport identity to `[monarch.rdma]`.
-  Editing `auto_heal`, `ssh_key`, `hosts[].ssh_user`, `monarch.startup_timeout_s`
-  or `[monarch.diagnostics]` keeps PASS rows. Each combination re-proves once
+  Editing `auto_heal`, `ssh_key`, `monarch.startup_timeout_s` or
+  `[monarch.diagnostics]` keeps PASS rows. Each combination re-proves once
   after this change
   ([TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
 - Stop recording digests of install paths and pip RECORD files in Monarch

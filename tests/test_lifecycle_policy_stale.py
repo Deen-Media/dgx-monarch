@@ -33,7 +33,7 @@ from dgx_monarch.cli.systemd_unit import quote
 from dgx_monarch.cli.update_transaction import Certainty, RepoSnapshot, UpdateRequest, execute_verified_update
 from dgx_monarch.config import ClusterConfig, HostConfig
 from dgx_monarch.monarch_launch import worker_policy_args
-from dgx_monarch.monarch_policy import MonarchPolicy, parse_policy, policy_dict
+from dgx_monarch.monarch_policy import MonarchPolicy, encode_policy, parse_policy, policy_dict
 from test_doctor_listener_generation import _config, cluster_rig  # noqa: F401  (fixture re-exported)
 from test_update_transaction import TARGET, FakeOps
 
@@ -46,10 +46,11 @@ BASE = ClusterConfig(hosts=(HOST,), python_bin=sys.executable, transport_securit
 KINDS = ('canonical', 'hardened', 'tokenless', 'setup')
 EDITS = {
     'metrics_on': lambda config: replace(config, monarch=parse_policy({'diagnostics': {'metrics': True}})),
-    'startup_240': lambda config: replace(config, monarch=parse_policy({'startup_timeout_s': 240})),
     'target_nic': lambda config: replace(config, monarch=parse_policy({'rdma': {'target': 'nic:mlx5_0'}})),
     'latent_on': lambda config: replace(config, rdma_latent_return=True),
 }
+# Only the driver reads the readiness budget, so the Worker token leaves it at its default.
+DRIVER_ONLY = replace(BASE, monarch=parse_policy({'startup_timeout_s': 240}))
 
 
 def _token(payload: object) -> str:
@@ -149,6 +150,25 @@ def test_a_policy_edit_reads_stale_and_its_revert_reads_managed(installed, kind,
         assert verdict(BASE) == (POLICY_STALE_EXIT, POLICY_STALE)
 
 
+@pytest.mark.parametrize('kind', KINDS)
+def test_a_driver_only_budget_edit_keeps_the_unit_managed(installed, kind):
+    installed(kind)
+    assert worker_policy_args(DRIVER_ONLY, HOST) == worker_policy_args(BASE, HOST)
+    assert legacy_policy_is_current(DRIVER_ONLY, HOST)
+    assert verdict(DRIVER_ONLY) == (0, 'MANAGED')
+    metrics = parse_policy({'startup_timeout_s': 240, 'diagnostics': {'metrics': True}})
+    assert verdict(replace(DRIVER_ONLY, monarch=metrics)) == (POLICY_STALE_EXIT, POLICY_STALE)
+
+
+def test_a_unit_written_with_a_custom_budget_reads_stale_once(installed):
+    """A unit an older controller rendered with the budget in its token re-renders once."""
+    old = encode_policy(parse_policy({'startup_timeout_s': 240}), HOST.name)
+    installed('canonical', render('canonical').replace(worker_policy_args(BASE, HOST)[1], old))
+    assert verdict(DRIVER_ONLY) == (POLICY_STALE_EXIT, POLICY_STALE)
+    installed('canonical', render('canonical', DRIVER_ONLY))
+    assert verdict(DRIVER_ONLY) == (0, 'MANAGED')
+
+
 def test_an_external_setup_checkout_reads_stale_too(tmp_path, monkeypatch):
     from test_lifecycle_managed import external_setup_layout
 
@@ -189,7 +209,7 @@ def _row(text: str, kind: str) -> dict:
 def test_update_capture_accepts_a_stale_unit_for_rerendering(monkeypatch, kind):
     monkeypatch.setattr(update_installation.lifecycle, '_is_local', lambda _host: False)
     row = _row(render(kind), kind)
-    for config in (BASE, *(edit(BASE) for edit in EDITS.values())):
+    for config in (BASE, DRIVER_ONLY, *(edit(BASE) for edit in EDITS.values())):
         assert update_installation.recognized_unit(config, HOST, row)
 
 

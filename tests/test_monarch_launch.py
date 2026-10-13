@@ -155,6 +155,18 @@ def test_worker_generators_encode_same_resolved_policy():
         assert '"--runtime-policy" "' + args[1] + '"' in unit
 
 
+def test_worker_token_omits_the_driver_only_readiness_budget():
+    """Only the driver reads startup_timeout_s; editing it must not change the Worker unit."""
+    cfg = config()
+    budget = replace(cfg, monarch=replace(cfg.monarch, startup_timeout_s=240))
+    for host in cfg.hosts:
+        args = launch.worker_policy_args(budget, host)
+        assert args == launch.worker_policy_args(cfg, host)
+        assert policy_from_token(args[1]).startup_timeout_s == MonarchPolicy().startup_timeout_s
+    metrics = replace(budget.monarch, diagnostics=replace(budget.monarch.diagnostics, metrics=True))
+    assert launch.worker_policy_args(replace(budget, monarch=metrics), cfg.hosts[0]) != launch.worker_policy_args(cfg, cfg.hosts[0])
+
+
 @pytest.fixture
 def driver_steps(monkeypatch):
     """Record prepare_driver's steps; the real native import still runs."""

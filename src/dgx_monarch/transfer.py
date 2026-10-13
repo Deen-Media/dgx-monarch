@@ -315,7 +315,7 @@ def _register_parts(tensor: torch.Tensor, n: int, handoff: dict | None = None) -
                     "offset": off, "nbytes": size, "_buffer_owner": []}
                 parts.append(part)
                 intent = _publish_constructor_intent(part, tensor)
-                # C list.extend owns the constructor result before Python resumes.
+                # RDMABuffer returns via one Python frame; an interrupt there fails closed: poison, no use-after-free.
                 part["_buffer_owner"].extend(map(RDMABuffer, (flat[off:off + size],)))
                 if _part_buffer(part) is None:
                     raise RuntimeError("RDMA registration returned no buffer")

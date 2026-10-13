@@ -48,9 +48,9 @@ split and actor messages return the latent.
 
 In cluster mode the identity gate's capability context binds a fingerprint of
 the settings that can change math, residency or transport
-([DESIGN.md](DESIGN.md) §5.2). Setup shows the old-to-new diff and warns when
-applying it changes that fingerprint. A changed fingerprint makes contextual
-PASS and INCONCLUSIVE rows ineligible until the gate checks the new
+([DESIGN.md](DESIGN.md) §5.2). Setup shows the old-to-new diff and warns
+whenever applying it changes the file. Only a changed fingerprint makes
+contextual PASS and INCONCLUSIVE rows ineligible until the gate checks the new
 configuration. A sticky FAIL stays in force: no profile change or config rewrite
 clears it.
 
@@ -81,7 +81,8 @@ not permission to reuse an unsettled mesh or restart a persistent Worker.
 When the budget expires in cluster mode, the driver stops the processes it
 spawned but keeps its transport poisoned, so every later queue refuses until
 ComfyUI restarts. Raise `startup_timeout_s` before that restart if the budget
-was too short.
+was too short. The edit does not touch the Worker units: only the driver reads
+this budget.
 
 ### `[monarch.rdma]`
 
@@ -138,7 +139,8 @@ WARNING. With native return on, the driver checks every host's resolved target
 before it starts any process. Conflicting ambient
 environment variables are refused. A transport-policy change requires a fresh
 process; it cannot change an already initialized RDMA manager safely. Preserve
-Worker ownership and follow the reviewed update/restart procedure.
+Worker ownership and follow the reviewed update/restart procedure in
+[Changing policy after install](#changing-policy-after-install).
 
 ### `[monarch.diagnostics]`
 
@@ -186,13 +188,16 @@ Workers to obtain those features.
 
 ### Changing policy after install
 
-Each managed Worker unit carries the policy resolved from these tables and from
-`cluster.rdma_latent_return`. After you edit any of them, `dgxm up` and
-`dgxm restart` refuse with `POLICY_STALE` before they stop anything, and
-`dgxm doctor` marks the host's `worker policy` row `STALE`. Stop ComfyUI, then
-run `dgxm update --verify --target HEAD`: a verified update of the installed
-commit renders the units from the current file, restarts the Workers and keeps
-its rollback. [TROUBLESHOOTING #113](TROUBLESHOOTING.md#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit)
+Each managed Worker unit carries `cluster.rdma_latent_return` and the policy
+resolved from these tables, except `startup_timeout_s`. After you edit a setting
+the unit carries, `dgxm restart` refuses with `POLICY_STALE` before it stops any
+Worker, `dgxm up` refuses each stale host and names the cause, and
+`dgxm doctor` marks the host's `worker policy` row `STALE`. When restart gets no
+answer from a host's check, as after an SSH transport error, it keeps the old
+order: it stops every Worker, and `dgxm up` then refuses the stale host. Stop
+ComfyUI, then run `dgxm update --verify --target HEAD`: a verified update of
+the installed commit renders the units from the current file, restarts the
+Workers and keeps its rollback. [TROUBLESHOOTING #113](TROUBLESHOOTING.md#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit)
 has the details.
 
 ## `[worker_args]` (optional)

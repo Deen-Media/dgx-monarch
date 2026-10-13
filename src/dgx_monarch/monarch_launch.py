@@ -3,10 +3,11 @@ from __future__ import annotations
 
 import os
 import sys
+from dataclasses import replace
 from typing import Any
 
 from .cli.worker_process_env import worker_environment_key_allowed
-from .monarch_policy import encode_policy, policy_environment
+from .monarch_policy import MonarchPolicy, encode_policy, policy_environment
 from .runtime_provenance import SOURCE_ONLY_PYCACHE_PREFIX
 
 NATIVE_ENV = "DGXM_MONARCH_NATIVE_ENABLED"
@@ -16,7 +17,10 @@ _REMOTE_EXEC = 'py=$1; shift; case "$py" in "~/"*) py="$HOME/${py#??}";; esac; e
 
 
 def worker_policy_args(config: Any, host: Any) -> list[str]:
-    args = ["--runtime-policy", encode_policy(config.monarch, host.name)]
+    # Only the driver reads the readiness budget, so the Worker token carries
+    # the default and a budget edit leaves the Worker units current.
+    worker = replace(config.monarch, startup_timeout_s=MonarchPolicy().startup_timeout_s)
+    args = ["--runtime-policy", encode_policy(worker, host.name)]
     if config.rdma_latent_return:
         args.append("--native-rdma")
     return args

@@ -299,7 +299,6 @@ FINGERPRINT_SAME = {
     "explicit_defaults": lambda c: replace(c, monarch=_monarch({"rdma": {"qps_per_peer": 1}}, c)),
     "auto_heal": lambda c: replace(c, auto_heal=not c.auto_heal),
     "ssh_key": lambda c: replace(c, ssh_key="/keys/other"),
-    "ssh_user": lambda c: replace(c, hosts=tuple(replace(h, ssh_user="operator") for h in c.hosts)),
     "source": lambda c: replace(c, source="/elsewhere/cluster.toml"),
 }
 # Anything that can change math, residency or transport re-proves.
@@ -313,6 +312,8 @@ FINGERPRINT_CHANGED = {
     "address": lambda c: replace(c, hosts=(c.hosts[0], replace(c.hosts[1], address="tcp://192.0.2.3:26600"))),
     "gpus": lambda c: replace(c, hosts=(c.hosts[0], replace(c.hosts[1], gpus=2))),
     "host_comfy": lambda c: replace(c, hosts=(c.hosts[0], replace(c.hosts[1], comfy_dir="/other/ComfyUI"))),
+    # The Worker runs the ssh_user account's interpreter and ComfyUI tree.
+    "ssh_user": lambda c: replace(c, hosts=tuple(replace(h, ssh_user="operator") for h in c.hosts)),
     "python": lambda c: replace(c, python_bin="/other/env/bin/python"),
     "fabric_env": lambda c: replace(c, fabric_env={"NCCL_ALGO": "Ring"}),
     "client_bind": lambda c: replace(c, client_bind="tcp://192.0.2.2:0"),
@@ -340,7 +341,7 @@ def test_every_config_field_is_classified_for_the_trust_fingerprint():
     from dgx_monarch.config import HostConfig
 
     assert monarch_policy_io.UNTRUSTED_FIELDS == {"auto_heal", "ssh_key", "source"}
-    assert monarch_policy_io.UNTRUSTED_HOST_FIELDS == {"ssh_user"}
+    assert monarch_policy_io.UNTRUSTED_HOST_FIELDS == frozenset()
     assert monarch_policy_io.UNTRUSTED_MONARCH_FIELDS == {"startup_timeout_s", "diagnostics"}
     assert monarch_policy_io.UNTRUSTED_FIELDS < {f.name for f in fields(ClusterConfig)}
     assert monarch_policy_io.UNTRUSTED_HOST_FIELDS < {f.name for f in fields(HostConfig)}

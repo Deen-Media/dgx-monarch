@@ -264,7 +264,7 @@ set, the complete effective worker policy, physical config identity, resolved
 topology and attention, and the selected READY setup generation/key. The
 physical config identity hashes only the `cluster.toml` settings that can
 change math, residency or transport, leaving out `auto_heal`, `ssh_key`,
-`hosts[].ssh_user`, `monarch.startup_timeout_s` and `[monarch.diagnostics]`
+`monarch.startup_timeout_s` and `[monarch.diagnostics]`
 (`monarch_policy_io.trust_config_fingerprint`). A Gate
 ceremony proves exactly one model, so dual-model requests are forced onto
 complete stock residency while driver and worker artifact preflight still bind

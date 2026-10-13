@@ -29,8 +29,9 @@ def local_settings(path: Path | None) -> tuple[dict[str, object], MonarchPolicy]
 
 # Fields that cannot change math, residency or transport. Every other field is
 # hashed, so a new config field invalidates trust until someone classifies it.
+# hosts[].ssh_user stays hashed: the Worker runs that account's interpreter and ComfyUI tree.
 UNTRUSTED_FIELDS = frozenset({"auto_heal", "ssh_key", "source"})
-UNTRUSTED_HOST_FIELDS = frozenset({"ssh_user"})
+UNTRUSTED_HOST_FIELDS: frozenset[str] = frozenset()
 UNTRUSTED_MONARCH_FIELDS = frozenset({"startup_timeout_s", "diagnostics"})
 _UNMATCHED_DRIVER_WARNED = False
 
@@ -39,10 +40,10 @@ def trust_config_fingerprint(config, fallback: str) -> str:
     """Hash the cluster settings that can change math, residency or transport.
 
     The Gate capability context binds this value (DESIGN.md section 5.2). Out
-    of it: lifecycle-only keys (auto_heal, ssh_key, hosts[].ssh_user), the
-    readiness budget (monarch.startup_timeout_s), export settings
-    (monarch.diagnostics) and the config path, which the context binds
-    separately as config_source. Editing those keeps persisted PASS rows.
+    of it: lifecycle-only keys (auto_heal, ssh_key), the readiness budget
+    (monarch.startup_timeout_s), export settings (monarch.diagnostics) and the
+    config path, which the context binds separately as config_source. Editing
+    those keeps persisted PASS rows.
     """
     from .config import ClusterConfig
 

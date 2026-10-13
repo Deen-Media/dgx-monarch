@@ -5017,21 +5017,24 @@ RDMA acceptance.
 
 ## 113. Lifecycle commands refuse with POLICY_STALE after a policy edit
 
-**Symptom:** after a change to any `[monarch]` setting or to
-`cluster.rdma_latent_return` on an installation that guided setup or a verified
-update wrote, `dgxm restart`, `dgxm up` and auto-heal refuse with
-`POLICY_STALE` and point here. `dgxm doctor` fails the host's `worker policy`
-row with `STALE`. The Worker services keep running: restart checks every host
-before it stops any of them.
+**Symptom:** after a change to any `[monarch]` setting other than
+`startup_timeout_s`, or to `cluster.rdma_latent_return`, on an installation that
+guided setup or a verified update wrote, `dgxm restart`, `dgxm up` and
+auto-heal refuse with `POLICY_STALE` and point here. `dgxm doctor` fails the
+host's `worker policy` row with `STALE`. The Worker services keep running:
+restart checks every host before it stops any of them, unless a host's check
+goes unanswered.
 
 **Cause:** each Worker unit carries the policy resolved from cluster.toml as
 `--runtime-policy` arguments, plus `--native-rdma` when native return is on.
 Only guided setup and a verified update write a managed unit, so editing the
-file leaves the installed unit with the earlier policy, and lifecycle commands
-refuse to start it. A unit with no policy arguments counts as current only
-while cluster.toml selects the default policy with native return off. Any
-other difference from the generated unit, including a malformed policy
-argument, still reads `FAILED_SOURCE_LAYOUT`.
+file leaves the installed unit with the earlier policy. A unit whose only
+difference from the generated unit is a well-formed policy other than the
+current one reads `POLICY_STALE`, and lifecycle commands refuse to start it. A
+unit with no policy arguments counts as current only while cluster.toml selects
+the default policy with native return off. Any other difference from the
+generated unit, including a malformed policy argument, still reads
+`FAILED_SOURCE_LAYOUT`.
 
 **Remedy:** stop ComfyUI, then run a verified update to the commit the driver
 checkout already has:
@@ -5048,7 +5051,10 @@ usual [verified-update conditions](INSTALL.md#updating) apply: a clean
 checkout, a reachable `origin`, and no ComfyUI, Render session or actor
 running. A transport-policy change needs a fresh driver process in any case.
 To back out instead, restore the earlier settings; the installed unit then
-matches again.
+matches again. If `dgxm update --verify --target HEAD` then refuses with
+`prior_worker_drift`, someone edited the Worker unit by hand to a policy value
+that config loading refuses; undo that edit to restore the earlier settings,
+then run the update again.
 
 A verified update run from a checkout older than Worker policy arguments
 writes units without them. Those units are current under the default policy
@@ -5063,10 +5069,10 @@ run the command above.
 configuration fingerprint, the first render of each model, residency and LoRA
 combination runs the Identity Gate again, although `cluster.toml` is unchanged.
 
-This is expected, once per combination. Each persisted PASS binds a
-fingerprint of the cluster configuration, and the change dropped settings that
-cannot change math, residency or transport, so every earlier fingerprint
-differs from the new one. Let each combination prove itself once; nothing needs
-clearing. From then on, editing a setting that [DESIGN.md](DESIGN.md) §5.2
-lists as outside the fingerprint keeps PASS rows, and every other
-`cluster.toml` edit still needs a fresh proof.
+This is expected, once per combination. Deploying any new source already
+re-proves every combination (the note at the top of this page), so the
+narrowed fingerprint changes nothing you can see at that deploy. Let each
+combination prove itself once; nothing needs clearing. The narrowing matters
+only for later `cluster.toml` edits: editing a setting that
+[DESIGN.md](DESIGN.md) §5.2 lists as outside the fingerprint keeps PASS rows,
+and every other edit still needs a fresh proof.
