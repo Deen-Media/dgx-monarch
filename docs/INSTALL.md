@@ -1101,7 +1101,11 @@ not required for the two-Spark layout.
 setup or update unit, owner, parent directories and release target. Sync
 leaves an authenticated release unchanged. It refuses foreign links or unit
 overrides rather than writing into a release slot. Plain source directories
-retain the normal sync path.
+retain the normal sync path. A unit whose only difference is an earlier
+`[monarch]` or `rdma_latent_return` policy reads `POLICY_STALE`: `dgxm up` and
+`dgxm restart` refuse it before stopping any Worker, and
+`dgxm update --verify --target HEAD` renders the current policy
+([TROUBLESHOOTING #113](TROUBLESHOOTING.md#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit)).
 
 A clean successful update removes its temporary controller snapshot. Failed
 or interrupted runs retain it and print its recovery location. Preserve it

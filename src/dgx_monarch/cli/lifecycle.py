@@ -21,7 +21,7 @@ from .lifecycle_host import transport_acknowledged as _transport_acknowledged
 from .lifecycle_host import validate_stop_arguments as _validate_stop_arguments
 from .lifecycle_host import validated_ssh_identity as _validated_ssh_identity
 from .lifecycle_lock import locked_rsync_path, locked_script
-from .lifecycle_managed import prepare_source_sync
+from .lifecycle_managed import prepare_source_sync, restart_preflight, start_failure_detail
 from .lifecycle_scripts import build_start_script, build_stop_script
 from .lifecycle_scripts import worker_loop_args as _loop_args
 from .lifecycle_systemd import MANAGED_SRC_REL as _MANAGED_SRC_REL
@@ -187,7 +187,7 @@ def up(
             result.stdout,
             ("STARTED_SYSTEMD", "STARTED_NOHUP"),
             (
-                "FAILED_SOURCE_LAYOUT",
+                "FAILED_SOURCE_LAYOUT", "POLICY_STALE",
                 "FAILED_SYSTEMD",
                 "FAILED_NOHUP",
                 "FAILED_GENERATION_INVALIDATION",
@@ -209,7 +209,7 @@ def up(
         )
         print(f"  {host.name}: {verdict} ({host.address}, {mode})")
         if not started:
-            print(f"    stdout: {result.stdout.strip()}\n    stderr: {result.stderr.strip()}")
+            print(start_failure_detail(host.name, result))
     return ok
 
 
@@ -300,9 +300,9 @@ def status(config: ClusterConfig) -> list[dict[str, str]]:
 
 
 def restart(config: ClusterConfig, sync: bool = True) -> LifecycleResult:
-    # A start refusal that needs no host comes before the stop, so a refused
-    # restart leaves the workers as they were instead of stopped.
-    if not start_preflight(config):
+    # Start refusals, the config-only ones and then each host's source verdict,
+    # come before the stop, so a refused restart leaves the workers running.
+    if not start_preflight(config) or not restart_preflight(config, run_on_host):
         return False
     stopped = down(config)
     if stopped is not True:

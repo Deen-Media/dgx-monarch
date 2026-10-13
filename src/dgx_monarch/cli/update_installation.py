@@ -27,7 +27,12 @@ def installation_script(request: dict[str, Any]) -> str:
 
 
 def recognized_unit(config: ClusterConfig, host: HostConfig, snapshot: dict[str, Any]) -> bool:
-    """Match complete supported unit bytes, never an ownership comment alone."""
+    """Match complete supported unit bytes, never an ownership comment alone.
+
+    A unit whose only difference is an earlier, parseable policy is stale, not
+    foreign: the update renders the current policy, and compensation restores
+    these exact bytes.
+    """
     try:
         unit = base64.b64decode(snapshot["unit"], validate=True).decode()
         site, home = snapshot["site"], snapshot["home"]
@@ -36,15 +41,17 @@ def recognized_unit(config: ClusterConfig, host: HostConfig, snapshot: dict[str,
         if hashlib.sha256(unit.encode()).hexdigest() != snapshot["sha256"]:
             return False
         from ..monarch_launch import worker_policy_args
+        from .lifecycle_managed import without_policy_suffix
 
         policy_suffix = " " + " ".join(quote(arg) for arg in worker_policy_args(config, host))
+        stale = without_policy_suffix(unit)
 
         def matches(template: str, *, extra_newlines: bool = False) -> bool:
-            # Preserve exact pre-0.7 units as migration/rollback inputs. A unit
-            # with policy arguments must match the configured policy in full.
+            # Preserve exact pre-0.7 units as migration/rollback inputs. Any
+            # other policy tail must be a canonical, parseable earlier policy.
             legacy = template.replace(policy_suffix + "\n", "\n")
-            return any(unit == value + "\n" * extra for value in (template, legacy)
-                       for extra in range(3 if extra_newlines else 1))
+            return any(unit in (template + tail, legacy + tail) or stale == legacy + tail
+                       for tail in ("\n" * extra for extra in range(3 if extra_newlines else 1)))
 
         local = lifecycle._is_local(host)
         if local is None:
