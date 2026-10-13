@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- Keep the driver's metrics export through a config edit that does not
+  produce a new fleet. An `otlp_endpoint` the driver cannot install now refuses
+  before anything is written, so the running exporter is never stopped, and an
+  exporter thread waiting on a slow telemetry backend carries on when the
+  backend answers. When the driver admits an edit but cannot stop the old
+  workers, for example because a render still holds them, it now puts back the
+  old fleet's policy and export, so a revert that reuses that fleet finds both
+  as they were. If an exporter stopped for that edit is still blocked in a
+  backend call and cannot restart, the driver logs one ERROR and
+  `/dgxm/telemetry` shows `exporter_still_running` in `monarch_diagnostics`
+  until the next mesh build.
 - Latch native latent return off for the rest of the driver session after a
   native read fails on the driver. Later setups ask the actors for messaging
   instead of repeating the fault and retaining another latent each time; the

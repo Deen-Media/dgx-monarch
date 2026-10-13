@@ -272,28 +272,40 @@ REFUSED_DIAGNOSTICS_EDITS = {
     # Monarch is loaded once a fleet exists, so a new endpoint needs a restart.
     "otlp_restart_required": ({"metrics": True}, {
         "metrics": True, "otlp_endpoint": _COLLECTOR, "otlp_logs": True}, None, "otlp_restart_required"),
-    # apply_policy refuses this one before it writes anything; the row keeps it that way.
+    # The driver's pre-check names this one before anything is written.
     "ambient_otlp_endpoint_conflict": ({"otlp_endpoint": _COLLECTOR, "otlp_logs": True}, {
         "otlp_endpoint": "http://127.0.0.1:4319", "otlp_logs": True}, _COLLECTOR,
-        "OTEL_EXPORTER_OTLP_ENDPOINT conflicts"),
+        "ambient_otlp_endpoint_conflict"),
     "instrument_setup_failed": ({}, {"metrics": True}, None, "instrument_setup_failed"),
 }
+_EVENT = {"phase": "ack", "outcome": "ok", "return_mode": "rdma", "duration_s": 0.1}
 
 
-@pytest.mark.parametrize("case", sorted(REFUSED_DIAGNOSTICS_EDITS))
-def test_a_refused_edit_and_its_revert_leave_the_driver_as_its_fleet_admitted_it(
-        monkeypatch, isolated_environ, case):
-    """rev-pr-c 1: a refusal must not leave the edited policy or a stopped exporter behind."""
+def _meter(recorded, *, blocked=None, entered=None, fail=False):
+    """A fake Monarch meter; with ``blocked`` its counter waits inside the backend call."""
+    def add(*_args):
+        if blocked is not None:
+            entered.set()
+            blocked.wait(5)
+
+    def get_meter():
+        if fail:
+            raise RuntimeError("meter unavailable")
+        return types.SimpleNamespace(create_counter=lambda _name: types.SimpleNamespace(add=add),
+                                     create_histogram=lambda _name: types.SimpleNamespace(
+                                         record=lambda *args: recorded.append(args)))
+    return get_meter
+
+
+def _stub_native_driver(monkeypatch, get_meter, ambient=None):
+    """Run the real driver admission against stubbed native modules from a clean state."""
     import os
-    from dataclasses import replace
 
     from dgx_monarch import mesh as mesh_mod
-    from dgx_monarch import monarch_capabilities, monarch_launch
+    from dgx_monarch import monarch_capabilities
     from dgx_monarch import monarch_diagnostics as diagnostics
     from dgx_monarch import monarch_policy as policy
-    from dgx_monarch.config import ClusterConfig, ClusterConfigError, HostConfig
 
-    before, edited, ambient, refusal = REFUSED_DIAGNOSTICS_EDITS[case]
     monkeypatch.setattr(policy, "_ACTIVE", None)
     monkeypatch.setattr(diagnostics, "_EXPORTER", None)
     monkeypatch.setattr(diagnostics, "_STATE", {"metrics": False, "traces": False, "available": True})
@@ -302,15 +314,8 @@ def test_a_refused_edit_and_its_revert_leave_the_driver_as_its_fleet_admitted_it
         monkeypatch.delenv(name, raising=False)
     if ambient:
         os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] = ambient
-
-    def meter():
-        if case == "instrument_setup_failed":
-            raise RuntimeError("meter unavailable")
-        return types.SimpleNamespace(create_counter=lambda _name: types.SimpleNamespace(add=lambda *a: None),
-                                     create_histogram=lambda _name: types.SimpleNamespace(record=lambda *a: None))
-
     native: dict = {}
-    actor = types.SimpleNamespace(get_meter=meter, span=lambda _name: None)
+    actor = types.SimpleNamespace(get_meter=get_meter, span=lambda _name: None)
     monkeypatch.setitem(sys.modules, "monarch", types.SimpleNamespace(actor=actor))
     monkeypatch.setitem(sys.modules, "monarch.actor", actor)
     monkeypatch.setitem(sys.modules, "monarch._rust_bindings", types.ModuleType("native"))
@@ -319,43 +324,235 @@ def test_a_refused_edit_and_its_revert_leave_the_driver_as_its_fleet_admitted_it
     monkeypatch.setattr(mesh_mod, "install_fault_hook", lambda: None)
     monkeypatch.setattr(monarch_capabilities, "assert_supported_runtime", lambda: None)
 
+
+def _driver_config(policy_values):
+    from dataclasses import replace
+
+    from dgx_monarch.config import ClusterConfig, HostConfig
+    from dgx_monarch.monarch_policy import parse_policy
+
     host = HostConfig(name="a", address="tcp://10.0.0.1:26600", gpus=1)
-    old = replace(ClusterConfig(hosts=(host,), monarch=policy.parse_policy({"diagnostics": before})),
-                  source="cluster.toml")
+    return replace(ClusterConfig(hosts=(host,), monarch=parse_policy(policy_values)), source="cluster.toml")
+
+
+def _driver_state():
+    import os
+
+    from dgx_monarch import monarch_diagnostics as diagnostics
+    from dgx_monarch import monarch_policy as policy
+
+    return diagnostics.status(), policy.snapshot(), os.environ[policy.POLICY_ENV]
+
+
+def _live_fleet(monkeypatch, old, edited, shutdown):
+    """Register a live fleet admitted from ``old``; cluster.toml now reads ``edited``."""
+    from dgx_monarch import mesh as mesh_mod
+
+    handle = types.SimpleNamespace(
+        defunct=False, replacement_blocked=None, config_fingerprint="old", n_hosts=1,
+        gpus_per_host=1, comfy_dir="/comfy", shutdown=shutdown)
+    key = mesh_mod._mesh_cache_key(old.source, "/comfy", True)
+    current = {"config": edited, "digest": "edited"}
+    monkeypatch.setattr(mesh_mod, "find_config_path", lambda _path: "/cluster.toml")
+    monkeypatch.setattr(mesh_mod, "load_cluster_config", lambda _path: current["config"])
+    monkeypatch.setattr(mesh_mod, "config_fingerprint", lambda _path: current["digest"])
+    monkeypatch.setattr(mesh_mod, "_detect_comfy_dir", lambda _path: "/comfy")
+    monkeypatch.setattr(mesh_mod, "_MESHES", {key: handle})
+    monkeypatch.setattr(mesh_mod, "_MESH_CREATING", {})
+    monkeypatch.setattr(mesh_mod, "_TRANSPORT_MODE", "cluster")
+    monkeypatch.setattr(mesh_mod, "_TRANSPORT_POISON", None)
+    monkeypatch.setattr(mesh_mod, "spawn_worker_fleet", lambda *a: pytest.fail("a kept fleet was replaced"))
+    return key, handle, current
+
+
+def _wait_for(predicate, timeout_s=2.0):
+    deadline = time.monotonic() + timeout_s
+    while not predicate() and time.monotonic() < deadline:
+        time.sleep(0.01)
+    return predicate()
+
+
+@pytest.mark.parametrize("case", sorted(REFUSED_DIAGNOSTICS_EDITS))
+def test_a_refused_edit_and_its_revert_leave_the_driver_as_its_fleet_admitted_it(
+        monkeypatch, isolated_environ, case):
+    """rev-pr-c 1: a refusal must not leave the edited policy or a stopped exporter behind."""
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_diagnostics as diagnostics
+    from dgx_monarch import monarch_launch
+    from dgx_monarch.config import ClusterConfigError
+
+    before, edited, ambient, refusal = REFUSED_DIAGNOSTICS_EDITS[case]
+    _stub_native_driver(monkeypatch, _meter([], fail=case == "instrument_setup_failed"), ambient)
+    old = _driver_config({"diagnostics": before})
     try:
         monarch_launch.prepare_driver(old)  # the live fleet's own admission
-        expected = (diagnostics.status(), policy.snapshot(), os.environ[policy.POLICY_ENV])
+        expected = _driver_state()
         assert expected[1]["native_readback"] == "verified"
         events: list = []
-        handle = types.SimpleNamespace(
-            defunct=False, replacement_blocked=None, config_fingerprint="old", n_hosts=1,
-            gpus_per_host=1, comfy_dir="/comfy", shutdown=lambda timeout_s: events.append("shutdown"))
-        key = mesh_mod._mesh_cache_key(old.source, "/comfy", True)
-        current = {"config": replace(old, monarch=policy.parse_policy({"diagnostics": edited})),
-                   "digest": "edited"}
-        monkeypatch.setattr(mesh_mod, "find_config_path", lambda _path: "/cluster.toml")
-        monkeypatch.setattr(mesh_mod, "load_cluster_config", lambda _path: current["config"])
-        monkeypatch.setattr(mesh_mod, "config_fingerprint", lambda _path: current["digest"])
-        monkeypatch.setattr(mesh_mod, "_detect_comfy_dir", lambda _path: "/comfy")
-        monkeypatch.setattr(mesh_mod, "_MESHES", {key: handle})
-        monkeypatch.setattr(mesh_mod, "_MESH_CREATING", {})
-        monkeypatch.setattr(mesh_mod, "_TRANSPORT_MODE", "cluster")
-        monkeypatch.setattr(mesh_mod, "_TRANSPORT_POISON", None)
-        monkeypatch.setattr(mesh_mod, "spawn_worker_fleet", lambda *a: pytest.fail("a refused edit spawned"))
+        key, handle, current = _live_fleet(monkeypatch, old, _driver_config({"diagnostics": edited}),
+                                           lambda timeout_s: events.append("shutdown"))
 
         with pytest.raises(ClusterConfigError, match=refusal):
             mesh_mod.get_mesh(mode="cluster")
         assert events == [] and mesh_mod._MESHES == {key: handle}
-        assert (diagnostics.status(), policy.snapshot(), os.environ[policy.POLICY_ENV]) == expected
+        assert _driver_state() == expected
         assert (diagnostics._EXPORTER is not None) is bool(before.get("metrics"))
 
         # A byte-identical revert reuses the fleet without a second admission.
         current.update(config=old, digest="old")
         assert mesh_mod.get_mesh(mode="cluster") is handle
         assert events == []
-        assert (diagnostics.status(), policy.snapshot(), os.environ[policy.POLICY_ENV]) == expected
+        assert _driver_state() == expected
     finally:
         diagnostics.configure()  # stop any exporter thread this test started
+
+
+@pytest.mark.parametrize("edited", [
+    {"diagnostics": {"metrics": False}},
+    {"diagnostics": {"metrics": True}, "startup_timeout_s": 240},
+], ids=["metrics_off", "startup_budget"])
+def test_an_admitted_edit_whose_recycle_refuses_puts_the_live_fleets_admission_back(
+        monkeypatch, isolated_environ, edited):
+    """Greptile on #19: the old fleet stays registered, so a revert must find its own policy and export."""
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_diagnostics as diagnostics
+    from dgx_monarch import monarch_launch
+
+    recorded: list = []
+    _stub_native_driver(monkeypatch, _meter(recorded))
+    old = _driver_config({"diagnostics": {"metrics": True}})
+    try:
+        monarch_launch.prepare_driver(old)
+        expected = _driver_state()
+        events: list = []
+
+        def refuse(timeout_s):
+            events.append("shutdown")
+            raise RuntimeError("a render still holds the fleet")
+
+        key, handle, current = _live_fleet(monkeypatch, old, _driver_config(edited), refuse)
+        with pytest.raises(mesh_mod.MeshAttachError, match="could not be stopped safely"):
+            mesh_mod.get_mesh(mode="cluster")
+        assert events == ["shutdown"] and mesh_mod._MESHES == {key: handle}
+        assert _driver_state() == expected
+        assert diagnostics._EXPORTER is not None and diagnostics._EXPORTER._thread.is_alive()
+
+        # The revert reuses that fleet with no admission, and its export still runs.
+        current.update(config=old, digest="old")
+        assert mesh_mod.get_mesh(mode="cluster") is handle
+        assert events == ["shutdown"] and _driver_state() == expected
+        diagnostics._EXPORTER.submit(_EVENT)
+        assert _wait_for(lambda: len(recorded) == 1)
+    finally:
+        diagnostics.configure()
+
+
+@pytest.mark.parametrize("case", ["otlp_restart_required", "ambient_otlp_endpoint_conflict"])
+def test_a_refused_endpoint_edit_never_stops_the_running_exporter(monkeypatch, isolated_environ, case):
+    """Greptile on #19: a refusal decided before admission leaves a stuck exporter free to resume."""
+    import threading
+
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_diagnostics as diagnostics
+    from dgx_monarch import monarch_launch
+    from dgx_monarch.config import ClusterConfigError
+
+    before, edited, ambient, _refusal = REFUSED_DIAGNOSTICS_EDITS[case]
+    before, edited = {**before, "metrics": True}, {**edited, "metrics": True}
+    recorded: list = []
+    entered, backend = threading.Event(), threading.Event()
+    _stub_native_driver(monkeypatch, _meter(recorded, blocked=backend, entered=entered), ambient)
+    old = _driver_config({"diagnostics": before})
+    try:
+        monarch_launch.prepare_driver(old)
+        exporter = diagnostics._EXPORTER
+        thread = exporter._thread
+        exporter.submit(_EVENT)
+        assert entered.wait(2)  # the exporter thread now sits inside a backend call
+        expected = _driver_state()
+        stops: list = []
+        real_stop = diagnostics._MetricExporter.stop
+        monkeypatch.setattr(diagnostics._MetricExporter, "stop",
+                            lambda self: stops.append(self) or real_stop(self))
+        events: list = []
+        key, handle, _current = _live_fleet(monkeypatch, old, _driver_config({"diagnostics": edited}),
+                                            lambda timeout_s: events.append("shutdown"))
+
+        with pytest.raises(ClusterConfigError, match=case):
+            mesh_mod.get_mesh(mode="cluster")
+        assert stops == [] and events == [] and mesh_mod._MESHES == {key: handle}
+        assert diagnostics._EXPORTER is exporter and exporter._thread is thread
+        assert thread.is_alive() and not exporter._stopped.is_set()
+        assert _driver_state() == expected
+
+        # When the backend recovers, the same thread finishes that call and keeps exporting.
+        backend.set()
+        exporter.submit(_EVENT)
+        assert _wait_for(lambda: len(recorded) == 2)
+    finally:
+        backend.set()
+        diagnostics.configure()
+
+
+@pytest.mark.parametrize("failure", ["recycle_refused", "runtime_refused"])
+def test_a_restore_that_cannot_restart_a_stuck_exporter_says_so(monkeypatch, isolated_environ, failure):
+    """Greptile on #19: an admitted metrics-off edit stopped a stuck exporter, then the edit failed."""
+    import logging
+    import threading
+
+    from dgx_monarch import mesh as mesh_mod
+    from dgx_monarch import monarch_capabilities, monarch_launch
+    from dgx_monarch import monarch_diagnostics as diagnostics
+    from dgx_monarch import monarch_policy as policy
+    from dgx_monarch.log import get_logger
+
+    entered, backend = threading.Event(), threading.Event()
+    _stub_native_driver(monkeypatch, _meter([], blocked=backend, entered=entered))
+    old = _driver_config({"diagnostics": {"metrics": True}})
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger = get_logger("dgx_monarch.monarch_diagnostics")
+    thread = None
+    try:
+        monarch_launch.prepare_driver(old)
+        thread = diagnostics._EXPORTER._thread
+        diagnostics._EXPORTER.submit(_EVENT)
+        assert entered.wait(2)
+        expected_policy = _driver_state()[1:]
+        events: list = []
+
+        def shutdown(timeout_s):
+            events.append("shutdown")
+            if failure == "recycle_refused":
+                raise RuntimeError("a render still holds the fleet")
+
+        key, handle, _current = _live_fleet(
+            monkeypatch, old, _driver_config({"diagnostics": {"metrics": False}}), shutdown)
+        if failure == "runtime_refused":
+            monkeypatch.setattr(monarch_capabilities, "assert_supported_runtime",
+                                lambda: (_ for _ in ()).throw(RuntimeError("runtime refused")))
+        logger.addHandler(handler)
+        raised, text = ((mesh_mod.MeshAttachError, "could not be stopped safely")
+                        if failure == "recycle_refused" else (RuntimeError, "runtime refused"))
+        with pytest.raises(raised, match=text):
+            mesh_mod.get_mesh(mode="cluster")
+        logger.removeHandler(handler)
+        assert events == (["shutdown"] if failure == "recycle_refused" else [])
+        assert mesh_mod._MESHES == {key: handle}
+        assert [(r.levelno, r.getMessage()) for r in records if r.levelno >= logging.ERROR] == [(
+            logging.ERROR, "Monarch diagnostics requested for this driver are unavailable "
+            "(exporter_still_running); it continues without them")]
+        state = diagnostics.status()
+        assert state["available"] is False and state["reason"] == "exporter_still_running"
+        assert _driver_state()[1:] == expected_policy
+        assert policy.snapshot()["metrics_requested"] is True
+    finally:
+        logger.removeHandler(handler)
+        backend.set()
+        if thread is not None:
+            thread.join(2)
+        diagnostics.configure()
 
 
 def test_concurrent_same_source_creation_publishes_one_fleet(monkeypatch, isolated_environ):
