@@ -242,7 +242,14 @@ def _stale_snapshot(cached: object, marker: str) -> dict:
 
 
 def _telemetry_uncached() -> dict:
-    from .. import monarch_policy, return_diagnostics, runtime_diagnostics, telemetry, telemetry_fleet
+    from .. import (
+        monarch_diagnostics,
+        monarch_policy,
+        return_diagnostics,
+        runtime_diagnostics,
+        telemetry,
+        telemetry_fleet,
+    )
     from ..gate_ledger import comfy_commit
     from ..mesh_health import mesh_health_snapshot
     from ..monarch_capabilities import diagnostic_identity
@@ -263,6 +270,8 @@ def _telemetry_uncached() -> dict:
         "diagnostics": runtime_diagnostics.snapshot(),
         "return_ownership": return_diagnostics.driver_snapshot(),
         "monarch_policy": monarch_policy.snapshot(),
+        # Driver metrics/OTLP export state: requested is monarch_policy, running is this.
+        "monarch_diagnostics": monarch_diagnostics.status(),
         "diagnostic_identity": diagnostic_identity(),
         "ledger": _ledger_summary(),
         # Lease and teardown state, which _busy_render_key does not read: the

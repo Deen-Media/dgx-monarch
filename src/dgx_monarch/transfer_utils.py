@@ -44,6 +44,25 @@ def return_threshold(mode: str, min_bytes: int | None) -> int:
     return max(1, int(min_bytes))
 
 
+def native_rdma_buffer(tensor: torch.Tensor) -> Any:
+    """Construct monarch.rdma's RDMABuffer, importing it on first use.
+
+    Node registration imports transfer.py. A module-level Monarch import there
+    loads the native runtime before prepare_driver installs the transport
+    policy and OTLP endpoint, so both native names resolve here, at call time.
+    """
+    from monarch.rdma import RDMABuffer
+
+    return RDMABuffer(tensor)
+
+
+def ibverbs_available() -> bool:
+    """monarch.rdma.is_ibverbs_available, imported on first use like native_rdma_buffer."""
+    from monarch.rdma import is_ibverbs_available
+
+    return bool(is_ibverbs_available())
+
+
 def native_policy_ready(log: Any) -> bool:
     from .monarch_policy import verify_native_policy
 

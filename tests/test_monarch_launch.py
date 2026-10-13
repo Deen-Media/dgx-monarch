@@ -4,7 +4,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from types import SimpleNamespace
 
 import pytest
@@ -32,7 +32,7 @@ def commands(monkeypatch):
 def config():
     return ClusterConfig(hosts=(HostConfig("a", "tcp://192.0.2.1:26600"),
                                 HostConfig("b", "tcp://192.0.2.2:26600")),
-                         python_bin="~/worker env/bin/python",
+                         client_bind="tcp://192.0.2.1:0", python_bin="~/worker env/bin/python",
                          monarch=MonarchPolicy(rdma=RdmaPolicy(
                              host_targets=(("a", "nic:mlx5_0"), ("b", "nic:mlx5_1")))))
 
@@ -155,15 +155,71 @@ def test_worker_generators_encode_same_resolved_policy():
         assert '"--runtime-policy" "' + args[1] + '"' in unit
 
 
-def test_driver_admission_precedes_native_policy_activation(monkeypatch):
-    from dgx_monarch import monarch_capabilities, monarch_diagnostics, monarch_policy
-    events = []
-    monkeypatch.setattr(monarch_policy, 'apply_policy', lambda *_a, **_kw: events.append('apply'))
-    monkeypatch.setattr(monarch_diagnostics, 'configure_policy', lambda *_a: events.append('diagnostics'))
+@pytest.fixture
+def driver_steps(monkeypatch):
+    """Record prepare_driver's steps; the real native import still runs."""
+    from dgx_monarch import mesh, monarch_capabilities, monarch_diagnostics, monarch_policy
+    events: list = []
+    diagnostics_state: dict = {'metrics': False, 'traces': False, 'available': True}
+    monkeypatch.setattr(monarch_policy, 'apply_policy',
+                        lambda _policy, host='', **kw: events.append(('apply', host, kw['native_enabled'])))
+    monkeypatch.setattr(monarch_diagnostics, 'configure_policy',
+                        lambda *_a: events.append('diagnostics') or diagnostics_state)
+    monkeypatch.setattr(mesh, 'install_fault_hook', lambda: events.append('hook'))
     monkeypatch.setattr(monarch_capabilities, 'assert_supported_runtime', lambda: events.append('admit'))
     monkeypatch.setattr(monarch_policy, 'activate_native_policy', lambda: events.append('activate'))
+    return events, diagnostics_state
+
+
+def test_driver_admission_precedes_native_policy_activation(driver_steps):
+    events, _ = driver_steps
     launch.prepare_driver(config())
-    assert events == ['apply', 'diagnostics', 'admit', 'activate']
+    # The fault hook waits for this first Monarch import and precedes every transport call.
+    assert events == [('apply', 'a', False), 'diagnostics', 'hook', 'admit', 'activate']
+
+
+def test_driver_resolves_its_own_host_target_like_the_qualifier(driver_steps):
+    events, _ = driver_steps
+    native = replace(config(), rdma_latent_return=True)
+    launch.prepare_driver(native)
+    assert events[0] == ('apply', 'a', True)
+    launch.prepare_driver(replace(native, client_bind='tcp://192.0.2.2:0'))
+    assert events[5] == ('apply', 'b', True)
+
+
+def test_native_admission_refuses_any_host_before_driver_policy(driver_steps):
+    from dgx_monarch.config import ClusterConfigError
+    events, _ = driver_steps
+    partial = replace(config(), rdma_latent_return=True, monarch=MonarchPolicy(rdma=RdmaPolicy(
+        host_targets=(("a", "nic:mlx5_0"),))))
+    with pytest.raises(ClusterConfigError, match=r"host 'b' resolves to upstream selection.*host_targets"):
+        launch.prepare_driver(partial)
+    assert events == []
+    multi = replace(partial, monarch=MonarchPolicy(rdma=RdmaPolicy(max_nics_per_buffer=2)))
+    with pytest.raises(ClusterConfigError, match="selected target"):
+        launch.prepare_driver(multi)
+    assert events == []
+
+
+@pytest.mark.parametrize(("reason", "hint"), [
+    ("otlp_restart_required", "restart ComfyUI"),
+    ("ambient_otlp_endpoint_conflict", "OTEL_EXPORTER_OTLP_ENDPOINT"),
+    ("instrument_setup_failed", "metrics = false"),
+])
+def test_driver_refuses_requested_diagnostics_it_cannot_start(driver_steps, reason, hint):
+    from dgx_monarch.config import ClusterConfigError
+    from dgx_monarch.monarch_policy import DiagnosticsPolicy
+    events, state = driver_steps
+    state.clear()
+    state.update(available=False, reason=reason)
+    requested = replace(config(), monarch=MonarchPolicy(diagnostics=DiagnosticsPolicy(metrics=True)))
+    with pytest.raises(ClusterConfigError, match=reason) as caught:
+        launch.prepare_driver(requested)
+    assert hint in str(caught.value) and "[monarch.diagnostics]" in str(caught.value)
+    assert events == [('apply', 'a', False), 'diagnostics']
+    events.clear()
+    launch.prepare_driver(config())  # nothing requested: the same state never refuses
+    assert events[-1] == 'activate'
 
 
 def test_local_candidate_overlay_is_explicit_and_ambient_paths_are_not(commands, monkeypatch, tmp_path):

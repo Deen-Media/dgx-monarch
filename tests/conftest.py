@@ -666,9 +666,11 @@ class _EnvironGuard:
     def _baseline_imports(self) -> None:
         """Import environment-writing libraries before recording the baseline.
 
-        The node pack sets attach timeout, execution-id, and compile-cache variables;
-        importing it here makes them part of every test's baseline. The quarantine
-        fixture would otherwise import it during the first test's setup.
+        The node pack sets attach timeout and compile-cache variables, and Monarch's
+        own import sets the execution id; importing both here makes them part of
+        every test's baseline. The node pack does not import Monarch (the driver
+        loads it after policy admission), so Monarch is imported separately. The
+        quarantine fixture would otherwise import them during the first test's setup.
 
         ComfyUI or xfuser may lazily import cv2, which changes LD_LIBRARY_PATH.
         Import it once here and restore that variable so later tests and child
@@ -677,6 +679,11 @@ class _EnvironGuard:
         if self.baseline_imported:
             return
         import dgx_monarch.nodes  # noqa: F401
+
+        try:
+            import monarch  # noqa: F401
+        except ImportError:
+            pass
 
         library_path = os.environ.get("LD_LIBRARY_PATH")
         try:
