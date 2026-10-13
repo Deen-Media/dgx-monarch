@@ -177,13 +177,13 @@ class RenderProgress:
         with self._lock:
             state = dict(self._state)
             tokens = set(state.get("_tokens", ()))
-            # A drained receiver may deliver a late step. Its retired token
-            # must neither revive activity nor update a different render.
+            # A drained receiver may deliver a late step. A retired token, or a
+            # step with no render live, must neither revive nor update a render.
             if token is not None and token not in tokens:
                 return
             legacy_count = int(state.get("_legacy_count", 0))
             if not tokens and not legacy_count:
-                legacy_count = 1
+                return
             if not state.get("active"):
                 state.update(
                     active=True,

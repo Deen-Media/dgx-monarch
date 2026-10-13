@@ -24,6 +24,8 @@ def _phase_metrics(metric: Callable, block: object, *, scope: str,
     if worker_index is not None:
         labels["worker_index"] = worker_index
     if not isinstance(block, dict):
+        # Source without the block (a partial deploy) reads 0, never absent.
+        metric("diagnostics_available", False, **labels)
         return
     available = block.get("available") is True and not stale
     metric("diagnostics_available", available, **labels)
@@ -68,6 +70,7 @@ def _return_metrics(metric: Callable, block: object, *, scope: str,
     if worker_index is not None:
         labels["worker_index"] = worker_index
     if not isinstance(block, dict):
+        metric("return_ownership_available", False, **labels)
         return
     available = block.get("schema") == 1 and block.get("available") is True and not stale
     metric("return_ownership_available", available, **labels)

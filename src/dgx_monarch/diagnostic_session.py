@@ -6,6 +6,7 @@ coverage gaps. Artifacts use the Chrome/Perfetto complete-event JSON format.
 """
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
@@ -22,6 +23,14 @@ _NONCE = re.compile(r"[0-9a-f]{32}\Z")
 _VERSION = re.compile(r"[A-Za-z0-9.+_-]{1,64}\Z")
 MAX_WORKERS = 256
 _ADMIN_REASON = "torchmonarch_0_7_admin_handle_has_no_stop_or_partial_start_recovery_api"
+_FETCH_WINDOW_S, _POLL_INTERVAL_S = 2.0, 0.5
+# Fixed refusal sentences carry no caller data, so the CLI may print them verbatim.
+_DURATION = "capture duration must be between 0.1 and 300 seconds"
+_EVENTS = "capture event limit must be between 1 and 20000"
+_BYTES = "capture byte limit must be between 65536 and 8388608"
+_DESTINATION = "capture output requires an existing directory without symbolic links"
+_METADATA = "capture metadata exceeds the byte limit; no artifact written"
+REFUSALS = frozenset({_DURATION, _EVENTS, _BYTES, _DESTINATION, _METADATA})
 
 
 def capabilities() -> dict[str, Any]:
@@ -64,11 +73,11 @@ class Capture:
                  max_bytes: int = 1_048_576) -> None:
         duration = _number(duration_s)
         if duration is None or not 0.1 <= duration <= 300:
-            raise ValueError("capture duration must be between 0.1 and 300 seconds")
+            raise ValueError(_DURATION)
         if type(max_events) is not int or not 1 <= max_events <= 20_000:
-            raise ValueError("capture event limit must be between 1 and 20000")
+            raise ValueError(_EVENTS)
         if type(max_bytes) is not int or not 65_536 <= max_bytes <= 8_388_608:
-            raise ValueError("capture byte limit must be between 65536 and 8388608")
+            raise ValueError(_BYTES)
         self.started_at = time.time()
         self.deadline = time.monotonic() + duration
         self.duration_s, self.max_events, self.max_bytes = duration, max_events, max_bytes
@@ -222,9 +231,7 @@ class Capture:
 
     def export(self, destination: str | Path) -> Path:
         """Create one private artifact; refuse overwrites and symbolic links."""
-        output = Path(destination).expanduser().absolute()
-        if output.parent.resolve() != output.parent or not output.parent.is_dir():
-            raise ValueError("capture output requires an existing directory without symbolic links")
+        output = validate_destination(destination)
         report = self.report()
         encoded = json.dumps(report, allow_nan=False, separators=(",", ":")).encode()
         while len(encoded) > self.max_bytes:
@@ -237,7 +244,7 @@ class Capture:
             elif report["identities"]:
                 report["identities"].popitem()
             else:
-                raise ValueError("capture metadata exceeds the byte limit; no artifact written")
+                raise ValueError(_METADATA)
             encoded = json.dumps(report, allow_nan=False, separators=(",", ":")).encode()
         directory = os.open(output.parent, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -262,22 +269,48 @@ class Capture:
         return output
 
 
+def validate_destination(destination: str | Path) -> Path:
+    """Refuse an unusable artifact path before any capture time is spent.
+
+    ``export`` repeats this check and still creates the file with O_EXCL and
+    O_NOFOLLOW, so a path that appears during the capture is refused too.
+    """
+    output = Path(destination).expanduser().absolute()
+    if output.parent.resolve() != output.parent or not output.parent.is_dir():
+        raise ValueError(_DESTINATION)
+    if os.path.lexists(output):
+        raise FileExistsError(errno.EEXIST, "capture output already exists")
+    return output
+
+
 def collect(fetch: Callable[[float], object], *, duration_s: float = 30,
             max_events: int = 4096, max_bytes: int = 1_048_576) -> Capture:
     """Poll an existing endpoint; ``fetch`` must honor its supplied deadline.
 
     No asynchronous collectors are created, so partial startup or fetch loss
-    leaves no background process, listener, or actor to clean up.
+    leaves no background process, listener, or actor to clean up. A final
+    window shorter than the slowest fetch so far is slept, not polled: that
+    fetch could only lose its race with the deadline. The unpolled tail is then
+    the same whether the loop ends on a fetch or on a sleep, so ``partial``
+    reports coverage rather than where the deadline happened to fall. The
+    slowest fetch, not the last, covers the route's alternating cached reads.
     """
     capture = Capture(duration_s=duration_s, max_events=max_events, max_bytes=max_bytes)
+    slowest = 0.0
     try:
         while not capture.done:
+            window = min(_FETCH_WINDOW_S, capture.remaining_s)
+            if window < min(slowest, _FETCH_WINDOW_S):
+                time.sleep(window)
+                continue
+            started = time.monotonic()
             try:
-                capture.ingest(fetch(min(2.0, capture.remaining_s)))
+                capture.ingest(fetch(window))
             except Exception:
                 capture.gap("fetch_failed")
+            slowest = max(slowest, time.monotonic() - started)
             if not capture.done:
-                time.sleep(min(0.5, capture.remaining_s))
+                time.sleep(min(_POLL_INTERVAL_S, capture.remaining_s))
     except KeyboardInterrupt:
         capture.gap("interrupted")
         capture._stopped = "interrupted"

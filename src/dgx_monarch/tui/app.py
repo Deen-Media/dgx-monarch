@@ -52,6 +52,16 @@ THEMES = {
              "cache": "grey30", "good": "white", "warn": "grey85", "bad": "white",
              "bolt": "white"},
 }
+# A panel's round border and `padding: 0 1` take four columns, and the summary
+# line starts with one space.
+_SUMMARY_INSET = 5
+
+
+def summary_row(text: str, width: int, *, cap: int = 320) -> str:
+    """Fit a dim summary on one panel row; an ASCII "..." marks a cut, never a wrap."""
+    room = max(3, min(cap, width - _SUMMARY_INSET))
+    return text if len(text) <= room else text[:room - 3] + "..."
+
 
 class DgxmTopApp:
     """Built when called, so tests and CI can import this module without textual."""
@@ -372,7 +382,7 @@ class DgxmTopApp:
                         out.append(f" {verdict}:{count}", style=gate_chip_style(pal, verdict))
                 diagnostics = tick.get("diagnostics")
                 if isinstance(diagnostics, dict) and isinstance(diagnostics.get("summary"), str):
-                    out.append("\n " + diagnostics["summary"][:320], style="dim")
+                    out.append("\n " + summary_row(diagnostics["summary"], self.size.width), style="dim")
                 return out
 
             def draw_story(self, tick):
