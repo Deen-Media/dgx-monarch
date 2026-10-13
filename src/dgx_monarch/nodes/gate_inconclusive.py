@@ -37,10 +37,13 @@ KNOWN_WRONG_ABORT_VERDICT = "ERROR_KNOWN_WRONG_ABORT"
 # The dispatch verdicts that take no lever off the graph, read by both render
 # paths so one vocabulary decides it. ``None`` (no ceremony called for) and the
 # last two disproved nothing about residency; PASS proved the path;
-# DUAL_MODEL_STOCK ran no ceremony and renders stock.
+# DUAL_MODEL_STOCK ran no ceremony and renders stock. FAIL does quarantine,
+# but only its own combination: submit turns the levers off on each dispatch
+# clone (nodes/render_quarantine), because every checkpoint on the Init node
+# shares the graph's policy dict.
 NO_QUARANTINE_VERDICTS = frozenset({
     None, "PASS", "DUAL_MODEL_STOCK", NO_MATERIAL_VERDICT,
-    KNOWN_WRONG_ABORT_VERDICT,
+    KNOWN_WRONG_ABORT_VERDICT, "FAIL",
 })
 
 # First-use state, distinct from ledger verdicts to prevent trust comparisons.

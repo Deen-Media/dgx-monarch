@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import ast
 import io
+import sys
 import threading
+import time
 import tokenize
 from pathlib import Path
 from types import SimpleNamespace
@@ -528,7 +530,7 @@ def test_a_recycle_drains_every_loader_site_memo():
     across a recycle, which is this class again."""
     loader_graph.remember(loader_preflight._CLEARED_UNETS, "model.safetensors")
     loader_graph.remember(loader_graph._CHARGED_STACK_ARTIFACTS, "te.safetensors")
-    consent_projection._AUDITED_NON_MEMO_GRANTS.add(("rescue-slab", "combo", "panel"))
+    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel")] = object()
 
     loader_preflight.reset_memos()
 
@@ -549,7 +551,7 @@ def test_a_recycle_does_not_re_arm_the_headless_warning(monkeypatch):
     monkeypatch.setattr(loader_preflight, "_UNPRICED_STACK_WARNED", {"minimax_h3"})
     loader_graph.remember(loader_preflight._CLEARED_UNETS, "model.safetensors")
     loader_graph.remember(loader_graph._CHARGED_STACK_ARTIFACTS, "te.safetensors")
-    consent_projection._AUDITED_NON_MEMO_GRANTS.add(("rescue-slab", "combo", "panel"))
+    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel")] = object()
 
     loader_preflight.reset_memos()
 
@@ -687,6 +689,356 @@ def test_a_broken_drain_never_reshapes_the_render_failure(monkeypatch):
 
     recycle_drain.evict_render_fleet(
         SimpleNamespace(defunct=False), RuntimeError("render stalled"))
+
+
+# Key space: the residency memos again, with the drain on its own thread. The
+# /dgxm/recycle route drains on an executor thread while a prompt thread's
+# loader preflight may be writing the same memos.
+
+
+class _ClearedBeforeNext(dict):
+    """A memo that a writer without the lock empties between the eviction's
+    `iter` and `next`. The unlocked eviction raised RuntimeError here."""
+
+    def __iter__(self):
+        keys = dict.__iter__(self)
+        dict.clear(self)
+        return keys
+
+
+class _ClearedBeforePop(dict):
+    """A memo emptied after `next` hands out its oldest key and before `pop`
+    removes it. The unlocked eviction raised KeyError here."""
+
+    def __iter__(self):
+        keys = list(dict.keys(self))
+        dict.clear(self)
+        return iter(keys)
+
+
+@pytest.mark.parametrize("memo_type", [_ClearedBeforeNext, _ClearedBeforePop],
+                         ids=["between-iter-and-next", "between-next-and-pop"])
+def test_a_clear_inside_an_eviction_leaves_a_consistent_memo(memo_type):
+    """Either timing used to raise out of the loader preflight, whose fail-open
+    handler then lost the row it was writing. The patched iterator runs the
+    clear at the exact step, so this needs no thread and cannot flake."""
+    store = memo_type((f"m{index}", None) for index in range(loader_graph._MEMO_LIMIT))
+
+    loader_graph.remember(store, "new")  # the 65th key starts an eviction
+
+    assert dict(store) == {}  # the clear wins and nothing is half removed
+    loader_graph.remember(store, "after")
+    assert dict(store) == {"after": None}
+
+
+def _drain_case(case: str):
+    """The lock, the drain step, and the store that step must leave alone
+    while the lock is held elsewhere."""
+    return {
+        "cleared-unets": (loader_graph._MEMO_LOCK, loader_preflight.reset_memos,
+                          loader_preflight._CLEARED_UNETS, "model.safetensors"),
+        "charged-stack": (loader_graph._MEMO_LOCK, loader_graph.reset_charged_artifacts,
+                          loader_graph._CHARGED_STACK_ARTIFACTS, "te.safetensors"),
+        "grant-audit": (consent_projection._AUDIT_LOCK,
+                        consent_projection.reset_grant_audit,
+                        consent_projection._AUDITED_NON_MEMO_GRANTS,
+                        ("rescue-slab", "combo", "panel")),
+    }[case]
+
+
+@pytest.mark.parametrize("case", ["cleared-unets", "charged-stack", "grant-audit"])
+def test_every_drain_step_waits_for_the_writer_holding_its_lock(
+        case, _restore_residency_memos):
+    """A drain step that clears without the writers' lock can land inside an
+    eviction, or between an audit check and its claim. Each step must block
+    while another thread holds the lock, with its store untouched."""
+    lock, drain_step, store, member = _drain_case(case)
+    loader_graph.remember(loader_preflight._CLEARED_UNETS, "model.safetensors")
+    loader_graph.remember(loader_graph._CHARGED_STACK_ARTIFACTS, "te.safetensors")
+    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel")] = object()
+    drain = threading.Thread(target=drain_step, daemon=True)
+
+    with lock:
+        drain.start()
+        drain.join(timeout=0.2)
+        blocked = drain.is_alive()
+        untouched = member in store
+    drain.join(timeout=5)
+
+    assert blocked, f"{case}: the drain ran while another thread held the lock"
+    assert untouched, f"{case}: the store was cleared while the lock was held"
+    assert not drain.is_alive()
+    assert not store
+
+
+def test_a_drain_racing_the_prompt_thread_never_breaks_a_memo_write(
+        _restore_residency_memos):
+    """Modelled on the review's reproduction: forced thread switches, a prompt
+    thread that holds the memo at its cap so every write evicts, and a drain
+    thread that runs the recycle drain in a loop. The unlocked code raised
+    thousands of times in three seconds; this run stops after half a second."""
+    store = loader_preflight._CLEARED_UNETS
+    errors: list[BaseException] = []
+    counts = {"writes": 0, "drains": 0}
+    deadline = time.monotonic() + 0.5
+
+    def prompt_thread() -> None:
+        index = 0
+        while time.monotonic() < deadline:
+            try:
+                for slot in range(loader_graph._MEMO_LIMIT - len(store)):
+                    loader_graph.remember(store, f"fill{index}-{slot}")
+                loader_graph.remember(store, f"new{index}")
+                loader_graph.remember(loader_graph._CHARGED_STACK_ARTIFACTS, f"te{index}")
+            except Exception as exc:
+                errors.append(exc)
+            counts["writes"] += 1
+            index += 1
+
+    def drain_thread() -> None:
+        while time.monotonic() < deadline:
+            try:
+                loader_preflight.reset_memos()
+            except Exception as exc:
+                errors.append(exc)
+            counts["drains"] += 1
+            time.sleep(0)
+
+    threads = [threading.Thread(target=prompt_thread, daemon=True),
+               threading.Thread(target=drain_thread, daemon=True)]
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+    finally:
+        sys.setswitchinterval(interval)
+
+    assert not any(thread.is_alive() for thread in threads)
+    assert errors == []
+    assert counts["writes"] and counts["drains"]
+    assert len(store) <= loader_graph._MEMO_LIMIT
+    assert len(loader_graph._CHARGED_STACK_ARTIFACTS) <= loader_graph._MEMO_LIMIT
+
+
+_AUDIT_TOKEN = ("rescue-slab", "combo", "env")
+
+
+def _environment_bypass(tmp_path, monkeypatch, writer):
+    """One environment bypass whose ledger write is `writer`; call the
+    result to fire it."""
+    from dgx_monarch.nodes import consent_routes
+
+    monkeypatch.setattr(consent_routes, "record_waiver", writer)
+    checkpoint = tmp_path / "model.safetensors"
+    checkpoint.write_bytes(b"0")
+    grant = SimpleNamespace(key=None, consent_source="env", kind="rescue-slab",
+                            id="c" * 32, reason="headless bypass")
+
+    def fire() -> None:
+        consent_projection.audit_non_memo_grant(
+            grant, combo_key="combo", artifacts="a" * 64,
+            unet_name=checkpoint.name, path=str(checkpoint), context={})
+
+    return fire
+
+
+def test_an_audit_claims_its_token_before_the_ledger_write(
+        tmp_path, monkeypatch, _restore_residency_memos):
+    """The token is in the set while the row is written, so a recycle that
+    clears the set mid-write takes the claim with it."""
+    claimed_during_write: list[bool] = []
+
+    def writer(**_row):
+        claimed_during_write.append(_AUDIT_TOKEN in consent_projection._AUDITED_NON_MEMO_GRANTS)
+        return "row-key"
+
+    fire = _environment_bypass(tmp_path, monkeypatch, writer)
+    fire()
+    fire()
+
+    assert claimed_during_write == [True]  # the second bypass reuses the row
+    assert _AUDIT_TOKEN in consent_projection._AUDITED_NON_MEMO_GRANTS
+
+
+@pytest.mark.parametrize("failure", ["no-row", "raises"])
+def test_a_failed_audit_write_releases_its_token(
+        failure, tmp_path, monkeypatch, _restore_residency_memos):
+    """No row was written, so the claim must not stand in for one: the next
+    bypass tries the ledger again."""
+    calls: list[int] = []
+
+    def writer(**_row):
+        calls.append(1)
+        if failure == "raises":
+            raise OSError("ledger is read-only")
+        return None
+
+    fire = _environment_bypass(tmp_path, monkeypatch, writer)
+    fire()
+    assert _AUDIT_TOKEN not in consent_projection._AUDITED_NON_MEMO_GRANTS
+    fire()
+    assert len(calls) == 2
+
+
+def test_a_recycle_during_the_audit_write_leaves_the_next_generation_its_own_row(
+        tmp_path, monkeypatch, _restore_residency_memos):
+    """The old order checked, wrote, then added: a drain between the write and
+    the add left the token in the new generation's set, which then wrote no
+    row of its own for the grant."""
+    calls: list[int] = []
+
+    def writer(**_row):
+        calls.append(1)
+        if len(calls) == 1:
+            consent_projection.reset_grant_audit()  # the recycle lands mid-write
+        return f"row-{len(calls)}"
+
+    fire = _environment_bypass(tmp_path, monkeypatch, writer)
+    fire()
+    assert _AUDIT_TOKEN not in consent_projection._AUDITED_NON_MEMO_GRANTS
+    fire()
+    assert len(calls) == 2
+    assert _AUDIT_TOKEN in consent_projection._AUDITED_NON_MEMO_GRANTS
+
+
+@pytest.mark.parametrize("failure", ["no-row", "raises"])
+def test_an_old_failed_write_never_releases_a_newer_calls_claim(
+        failure, tmp_path, monkeypatch, _restore_residency_memos):
+    """An old call whose write fails after a recycle must leave alone the claim
+    a newer call made on the same token. The newer call wrote its row, so a
+    release by the old call would make the next bypass write a duplicate."""
+    rows: list[str] = []
+    newer_errors: list[BaseException] = []
+
+    def newer_call() -> None:
+        try:
+            fire()
+        except BaseException as exc:  # surfaced by the assertion below
+            newer_errors.append(exc)
+
+    def writer(**_row):
+        if not calls:
+            calls.append("old")
+            consent_projection.reset_grant_audit()  # the recycle lands mid-write
+            newer = threading.Thread(target=newer_call, daemon=True)
+            newer.start()  # its own thread: the old call holds no lock here
+            newer.join(timeout=5)
+            assert not newer.is_alive(), "the newer audit blocked on the old write"
+            assert _AUDIT_TOKEN in consent_projection._AUDITED_NON_MEMO_GRANTS
+            if failure == "raises":
+                raise OSError("ledger is read-only")
+            return None  # the old write failed
+        calls.append("newer")
+        rows.append("row-newer")
+        return "row-newer"
+
+    calls: list[str] = []
+    fire = _environment_bypass(tmp_path, monkeypatch, writer)
+    fire()
+
+    assert newer_errors == []
+    assert calls == ["old", "newer"]
+    assert rows == ["row-newer"]
+    # The newer claim survived the old call's release, so the next bypass of
+    # the same kind, combination and channel reuses its row.
+    assert _AUDIT_TOKEN in consent_projection._AUDITED_NON_MEMO_GRANTS
+    fire()
+    assert calls == ["old", "newer"]
+    assert rows == ["row-newer"]
+
+
+def test_an_interrupted_audit_never_leaves_a_claim_without_a_row(
+        tmp_path, monkeypatch, _restore_residency_memos):
+    """An asynchronous exception at any line boundary of the audit either
+    leaves a row behind its claim or leaves the token free. A claim with no
+    row would skip the audit for every later bypass of that kind, combination
+    and channel until the next recycle."""
+    import dis
+
+    class StopNow(BaseException):
+        pass
+
+    rows: list[str] = []
+
+    def writer(**_row):
+        rows.append("row-key")
+        return "row-key"
+
+    fire = _environment_bypass(tmp_path, monkeypatch, writer)
+    code = consent_projection.audit_non_memo_grant.__code__
+    lines = sorted({line for _offset, line in dis.findlinestarts(code)
+                    if line is not None and line > code.co_firstlineno})
+    interrupted: list[int] = []
+    stuck: list[int] = []
+    for target in lines:
+        consent_projection.reset_grant_audit()
+        rows.clear()
+        triggered = False
+
+        def interrupt(frame, event, _arg, target=target):
+            nonlocal triggered
+            if (not triggered and event == "line" and frame.f_code is code
+                    and frame.f_lineno == target):
+                triggered = True
+                raise StopNow(f"audit interrupted at line {target}")
+            return interrupt
+
+        sys.settrace(interrupt)
+        try:
+            fire()
+        except StopNow:
+            pass
+        finally:
+            sys.settrace(None)
+        if not triggered:
+            continue  # not on the path a first audit takes
+        interrupted.append(target)
+        if _AUDIT_TOKEN in consent_projection._AUDITED_NON_MEMO_GRANTS and not rows:
+            stuck.append(target)
+            continue
+        fire()  # the next bypass of the same token
+        if not rows:
+            stuck.append(target)
+
+    # Every boundary from the claim through the write was reached.
+    assert len(interrupted) >= 10, interrupted
+    assert stuck == [], f"a claim outlived its missing row at lines {stuck}"
+
+
+@pytest.mark.parametrize("writer", ["remember", "audit-claim"])
+def test_every_memo_writer_waits_for_the_thread_holding_its_lock(
+        writer, tmp_path, monkeypatch, _restore_residency_memos):
+    """The writers take the drain's lock too, so a write cannot interleave
+    with a clear from the other side either."""
+    if writer == "remember":
+        lock = loader_graph._MEMO_LOCK
+
+        def write() -> None:
+            loader_graph.remember(loader_preflight._CLEARED_UNETS, "late.safetensors")
+
+        def landed() -> bool:
+            return "late.safetensors" in loader_preflight._CLEARED_UNETS
+    else:
+        lock = consent_projection._AUDIT_LOCK
+        write = _environment_bypass(tmp_path, monkeypatch, lambda **_row: "row-key")
+
+        def landed() -> bool:
+            return _AUDIT_TOKEN in consent_projection._AUDITED_NON_MEMO_GRANTS
+    thread = threading.Thread(target=write, daemon=True)
+
+    with lock:
+        thread.start()
+        thread.join(timeout=0.2)
+        blocked, early = thread.is_alive(), landed()
+    thread.join(timeout=5)
+
+    assert blocked, f"{writer}: the write ran while another thread held the lock"
+    assert not early, f"{writer}: the write landed while the lock was held"
+    assert not thread.is_alive()
+    assert landed()
 
 
 # Key space: retained failed-load ownership and its poison latch.

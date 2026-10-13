@@ -147,12 +147,79 @@ def test_a_persisted_gate_fail_still_quarantines_with_gating_off(
         monkeypatch, tmp_path, auto_gate="off", state="fail",
         entry={"verdict": "FAIL",
                "quarantine_levers": {"lora_low_rss": False, "slab_weights": False}})
-    _enforce_persisted_quarantine(
+    quarantined = _enforce_persisted_quarantine(
         model, handle, resolved_topology=Topology(world=1),
         resolved_attention="TORCH_FLASH")
 
-    assert model.mesh.worker_args["lora_low_rss"] is False
-    assert model.mesh.worker_args["slab_weights"] is False
+    # Per-combination scope: the dispatch clone carries the quarantine, not the shared graph dict.
+    assert quarantined.mesh.worker_args["lora_low_rss"] is False
+    assert quarantined.mesh.worker_args["slab_weights"] is False
+
+
+class _ReachedSetup(Exception):
+    """Raised by the setup stub once it has seen the policy the submit sends."""
+
+
+def test_the_submit_dispatches_the_quarantine_clone_with_gating_off(
+    monkeypatch, tmp_path,
+):
+    """A persisted FAIL reaches the dispatch through the real submit path.
+
+    Under off, ``authorize_normal_render`` returns the policy it is handed
+    without a check, so the clone the submit takes from
+    ``_enforce_persisted_quarantine`` is the only thing between the FAIL and
+    the disproved residency path. The graph's own dict stays as asked, for the
+    other checkpoints on the same Init node.
+    """
+    import dataclasses
+
+    import dgx_monarch.nodes.common as common
+    import dgx_monarch.nodes.render_submit as submit_mod
+    from dgx_monarch import mesh_setup
+    from dgx_monarch.nodes import render_quarantine
+    from dgx_monarch.nodes.pending import PendingRenderHandoff
+    from dgx_monarch.nodes.render_session import RenderSession
+    from render_sessions_helpers import _real_handle, _stub_direct_submit
+
+    graph, ledger_handle = _lora_model(
+        monkeypatch, tmp_path, auto_gate="off", state="fail",
+        entry={"verdict": "FAIL",
+               "quarantine_levers": ["lora_low_rss", "slab_weights"]})
+    handle = _real_handle()
+    for name in ("config", "config_fingerprint", "n_hosts", "gpus_per_host"):
+        setattr(handle, name, getattr(ledger_handle, name))
+    dispatched: list = []
+    _stub_direct_submit(
+        monkeypatch, handle,
+        lambda *args, **_kwargs: dispatched.append(args) or object())
+    # The helper stubs the quarantine read out; this test needs the real one.
+    monkeypatch.setattr(
+        submit_mod, "_enforce_persisted_quarantine",
+        render_quarantine._enforce_persisted_quarantine)
+    sent: list[dict] = []
+
+    def setup(_handle, _topology, _attention, _sync_ulysses, worker_args):
+        sent.append(dict(worker_args))
+        raise _ReachedSetup()
+
+    monkeypatch.setattr(mesh_setup, "ensure_request_setup", setup)
+    spec = dataclasses.replace(
+        graph, mesh=dataclasses.replace(graph.mesh, handle=handle))
+    graph_policy = spec.mesh.worker_args
+
+    with pytest.raises(_ReachedSetup):
+        common.submit_render(
+            spec, {}, {"samples": object()}, cfg_value=1.0, steps_hint=2,
+            handoff=PendingRenderHandoff())
+
+    assert sent == [{"lora_low_rss": False, "slab_weights": False}]
+    assert dispatched == []
+    assert spec.mesh.worker_args is graph_policy
+    assert graph_policy == _RISKY_POLICY
+    # The setup failure released the render session the submit claimed.
+    contender = RenderSession(timeout_s=0)
+    contender.bind(handle)
+    contender.close()
 
 
 def test_the_tooltip_states_what_off_costs_and_what_it_does_not():

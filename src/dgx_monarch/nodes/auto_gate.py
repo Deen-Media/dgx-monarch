@@ -27,7 +27,11 @@ from .gate_process_state import (  # noqa: F401 - compatibility re-export
     release_auto_gate_claim,
     restore_auto_gate_active,
 )
-from .gate_token_lifetimes import trim_session
+from .gate_process_verdicts import (  # noqa: F401 - published from here
+    process_gate_verdict,
+    process_gate_verdict_locked,
+    record_process_gate_verdicts,
+)
 from .render_validation import PACKED_TOPOLOGY_REFUSALS
 
 # read-only after import: one reason per automatic-FSDP denial source
@@ -61,47 +65,6 @@ def _raise_cleanup_cancellation(primary: BaseException | None, cleanup: BaseExce
     if winner is cleanup:
         raise_with_distinct_cause(winner, cause)
 
-def record_process_gate_verdicts(
-    tokens: list[tuple[str, ...]] | tuple[tuple[str, ...], ...],
-    verdict: str, ceremony: dict | None = None,
-) -> None:
-    """Atomically publish one ceremony across normal/Fleet capabilities."""
-    from .common import gate_inconclusive
-
-    unique_tokens = tuple(dict.fromkeys(tokens))
-    with _state._AUTO_GATE_LOCK:
-        gate_inconclusive.remember_kind(unique_tokens, ceremony)
-        denied = gate_inconclusive.session_denial_tokens(unique_tokens, ceremony)
-        denials = dict(_state._PROCESS_GATE_DENIALS)
-        if verdict in ("FAIL", "INCONCLUSIVE", "ERROR"):
-            denials.update(dict.fromkeys(denied, verdict))
-        else:
-            for token in unique_tokens:
-                denials.pop(token, None)
-        # One copy-on-write store: an async interruption exposes all old or all
-        # new revocations, never normal updated while Fleet remains stale.
-        _state._PROCESS_GATE_DENIALS = denials
-        for token in unique_tokens:
-            if token in denied:
-                _state._AUTO_GATE_SESSION[token] = verdict
-            else:  # a sibling: its retest-guard denial lifts, its PASS is revoked
-                denials.pop(token, None)
-                _state._AUTO_GATE_SESSION.pop(token, None)
-        trim_session(_state)  # the one capped store here (gate_token_lifetimes)
-
-
-def process_gate_verdict(token: tuple[str, ...]) -> str | None:
-    with _state._AUTO_GATE_LOCK:
-        return process_gate_verdict_locked(token)
-
-
-def process_gate_verdict_locked(token: tuple[str, ...]) -> str | None:
-    """Read one verdict while the caller owns ``_AUTO_GATE_LOCK``."""
-    return (
-        _state._PROCESS_GATE_DENIALS.get(token)
-        or _state._AUTO_GATE_SESSION.get(token)
-    )
-
 
 def auto_gate_context(
     model: Any,
@@ -115,7 +78,6 @@ def auto_gate_context(
         return None
     from ..gate_ledger import GateLedger, comfy_commit
     from .common import (
-        _apply_persisted_quarantine,
         _bind_packed_render_model,
         _resolve_topology_for_latent,
         ensure_live,
@@ -212,12 +174,16 @@ def auto_gate_context(
                     model.unet_name,
                 )
             else:
-                levers = _apply_persisted_quarantine(model, entry)
-                log.error(
-                    "identity gate previously FAILED for %s; the ledger's FAIL row sets "
-                    "%s=off on this graph",
-                    model.unet_name,
-                    "+".join(levers),
+                # No graph write: other checkpoints on this Init node share its
+                # policy dict. Submit re-reads this row and quarantines the
+                # dispatch clone (nodes/render_quarantine).
+                from .gate_quarantine_scope import combination_label
+
+                log.info(
+                    "identity gate previously FAILED for %s; no ceremony runs, and "
+                    "its dispatch renders with the guarded residency levers off for "
+                    "that combination in this capability context",
+                    combination_label(model),
                 )
         return state, gate_verdict_token(
             key, artifacts.current, commit, capability_context)
@@ -268,7 +234,9 @@ def auto_gate_required(
     if process_verdict in ("FAIL", "INCONCLUSIVE", "ERROR"):
         if fsdp_proof_required:
             _deny_automatic_fsdp("process-local", process_verdict)
-        return True
+        # A cached FAIL runs no ceremony and its quarantine is applied per
+        # dispatch at submit, so the pipeline need not drain for it.
+        return process_verdict != "FAIL"
     if state == "fail" and fsdp_proof_required:
         _deny_automatic_fsdp("durable", "FAIL")
     if state in ("pass", "fail", gate_inconclusive.GRANTED_STATE):

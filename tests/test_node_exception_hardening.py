@@ -8,6 +8,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from actor_lifetime_helpers import _Recorder
 from dgx_monarch import mesh_rpc, mesh_setup, telemetry
 from dgx_monarch.nodes import (
     auto_gate,
@@ -936,6 +937,50 @@ def test_pending_abandon_claim_error_reconciles_later_cleanup_cancellation(
         assert later.__cause__ is first
     assert expected.__cause__ is not expected
     assert expected.__context__ is not expected
+
+
+def test_fleet_collectors_are_daemon_threads(monkeypatch):
+    """Each collector sets its own daemon flag rather than copying the flag of
+    the thread that drains the wave, which here is not a daemon. The recorder
+    passes through to real threads, because the drain waits for each answer."""
+    recorder = _Recorder()
+    seen: list[tuple[str, bool]] = []
+    real_thread = threading.Thread
+
+    def recording_thread(*args, **kwargs):
+        if str(kwargs.get("name", "")).startswith("dgxm-fleet-drain-"):
+            recorder(**kwargs)
+        return real_thread(*args, **kwargs)
+
+    class Handle:
+        def collect_one(self, future, *, timeout_s):
+            del timeout_s
+            current = threading.current_thread()
+            seen.append((current.name, current.daemon))
+            return {"latent": future, "host": "test", "sample_s": 0.0}
+
+    monkeypatch.setattr(threading, "Thread", recording_thread)
+    monkeypatch.setattr(fleet, "read_latent_result", lambda value: value)
+    monkeypatch.setattr(fleet, "_retire_fleet_audit", lambda _rid: None)
+    monkeypatch.setattr(
+        fleet, "_retire_fleet_future", lambda _future, *, consumed: None)
+    monkeypatch.setattr(fleet, "_close_fleet_progress", lambda _progress: None)
+    pending_jobs = [
+        fleet._FleetPending(index, f"job-{index}", object(), f"render-{index}")
+        for index in range(2)
+    ]
+    results = [None, None]
+
+    assert threading.current_thread().daemon is False
+    fleet._collect_fleet_wave(Handle(), pending_jobs, results, 1.0, 2)
+
+    assert pending_jobs == []
+    assert results == ["job-0", "job-1"]
+    assert sorted(entry["name"] for entry in recorder.created) == [
+        "dgxm-fleet-drain-0", "dgxm-fleet-drain-1"]
+    assert all(entry["daemon"] is True for entry in recorder.created)
+    assert sorted(seen) == [
+        ("dgxm-fleet-drain-0", True), ("dgxm-fleet-drain-1", True)]
 
 
 @pytest.mark.parametrize("termination_type", _TERMINATIONS)

@@ -1064,7 +1064,25 @@ optimizations before dispatching the requested render.
 
 An abort leaves the earlier `RETESTING` row in place. These limits do not
 clear a measured FAIL: invariant 2 preserves that quarantine across sessions
-until the Gate protocol or package version changes. An unscoped FAIL remains.
+until the Gate protocol or package version changes. A legacy unscoped FAIL
+remains.
+
+**What a FAIL takes, and from whom.** A FAIL disables `lora_low_rss` and
+`slab_weights` for that checkpoint combination in that capability context. It
+never writes those two levers into the graph's policy dict, which every
+checkpoint wired to the same Init node shares. Each dispatch of the failed
+combination reads the FAIL back from the ledger, or from the process verdict
+cache in the session that measured it, and renders a clone with both levers off
+(`nodes/render_quarantine.py`). Another checkpoint on that Init node keeps the
+settings the graph asked for and runs its own Gate. Two writes still reach the
+shared dict. A FAIL turns `comfy_managed` off for the whole Init node, because
+a live worker cannot change that bootstrap policy for one dispatch. A ledger
+that cannot be read turns every guarded lever off, because nothing then says
+which combination is safe. Because the levers are scoped per combination, two
+checkpoints on one Init node can need different worker settings, and a live
+sample lease refuses a settings change. A pipelined dispatch whose setup
+differs from the live one first collects the renders still in flight
+(`nodes/render_submit.py`), as the pipeline does before a ceremony.
 
 For a LoRA stack under an explicitly declared FSDP topology, an abort leaves
 `lora_low_rss` unchanged and disables `slab_weights`. FSDP LoRA baking requires
@@ -1486,6 +1504,7 @@ dgx-monarch/
 │   │   ├── fleet_jobs.py      # Fleet job-list assembly and its per-prompt limit
 │   │   ├── gate_ceremony.py   # one ceremony's render legs, frozen as evidence
 │   │   ├── gate_process_state.py # process-lifetime first-use Gate state
+│   │   ├── gate_process_verdicts.py # one process-verdict publication and its reads
 │   │   ├── gate_provenance.py # mandatory all-rank Gate source bracket
 │   │   ├── gate_verdict.py    # verdict derivation, lever quarantine, publication
 │   │   ├── metrics_route.py   # bounded finite Prometheus projection
@@ -1732,7 +1751,6 @@ an enforced requirement. The current exceptions are:
 | `comfy_surface.py` | 526 | one executable inventory of every stock ComfyUI touchpoint, deliberately flat so a failing canary identifies the changed API |
 | `adapters/fsdp.py` | 589 | the FSDP launch contract in one place: admitted kinds and profiles, the live precision rescan, the wrap with ignored islands and quantized shards, the streaming shard build hand-off, and the shard-build price |
 | `nodes/gate_identity.py` | 583 | canonical normal/Fleet capability construction, proof-scope binding, authorization, and typed denial |
-| `nodes/auto_gate.py` | 506 | driver-side Gate coordination, exclusive ownership, process verdict publication, and abort handling |
 | `nodes/loader_preflight.py` | 593 | the loader-site capacity answer in one place: the two windows, the residency ladder they are priced against and the slab rescue offer |
 | `runtime_provenance.py` | 596 | stdlib-only exact Git/source inventory, loaded-origin validation, and runtime snapshot boundary |
 | `adapters/flux_family.py` | 560 | the flux-family adapters and the sharded forwards they install |

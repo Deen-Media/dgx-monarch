@@ -9,6 +9,7 @@ loads. Standing and environment grants write audit rows when their bypass fires.
 from __future__ import annotations
 
 import copy
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -34,8 +35,13 @@ log = get_logger(__name__)
 _PROJECTION_ATTR = "_dgxm_rescue_projection"
 
 # Session lifetime: record one non-memo WAIVER per kind, combination, and
-# channel per fleet generation. Recycle clears the set for the next context.
-_AUDITED_NON_MEMO_GRANTS: set[tuple[str, str, str]] = set()
+# channel per fleet generation. Recycle clears the map for the next context.
+# Each value is the claim object of the audit call that owns the token, so a
+# call that failed to write releases its own claim and never a newer one.
+_AUDITED_NON_MEMO_GRANTS: dict[tuple[str, str, str], object] = {}
+# Guards the check and claim of a token in the map above, its release after a
+# failed write, and the recycle's clear, which runs on an executor thread.
+_AUDIT_LOCK = threading.Lock()
 
 
 def projection_blocker(worker_args: Mapping[str, Any]) -> str:
@@ -219,9 +225,22 @@ def audit_non_memo_grant(grant: Any, *, combo_key: str, artifacts: Any, unet_nam
     source = str(getattr(grant, "consent_source", "") or "")
     kind = str(getattr(grant, "kind", "") or RESCUE_KIND)
     token = (kind, combo_key, source)
-    if token in _AUDITED_NON_MEMO_GRANTS:
-        return
+    # Claim the token before the slow ledger write. A recycle that clears the
+    # map during the write then leaves the next generation free to write its
+    # own row; adding the token after the write would carry it across. The
+    # claim is one store of this call's own object, inside the try whose
+    # finally releases it, so an interruption anywhere cannot leave a claim
+    # with no row behind it. The release checks that the object is still this
+    # call's: after a recycle, a newer call may own the token and have written
+    # its row, and removing that claim would make the next bypass write the
+    # row again.
+    claim = object()
+    recorded = None
     try:
+        with _AUDIT_LOCK:
+            if token in _AUDITED_NON_MEMO_GRANTS:
+                return
+            _AUDITED_NON_MEMO_GRANTS[token] = claim
         from .. import consent_store
         from ..consent_kinds import KIND_SPECS
         from .consent_routes import record_waiver
@@ -236,18 +255,21 @@ def audit_non_memo_grant(grant: Any, *, combo_key: str, artifacts: Any, unet_nam
             unet_name=unet_name, file_identity=consent_store.file_identity(path),
             loras=loras)
     except Exception as exc:
-        recorded = None
         log.error("a %s capacity bypass for %s could not be audited (%r)", source, unet_name, exc)
+    finally:
+        if recorded is None:  # no row, so the next bypass must try again
+            with _AUDIT_LOCK:
+                if _AUDITED_NON_MEMO_GRANTS.get(token) is claim:
+                    del _AUDITED_NON_MEMO_GRANTS[token]
     if recorded is None:
         log.error("a %s capacity bypass for %s was not written to the identity-gate ledger; "
                   "check that the ComfyUI output directory is writable", source, unet_name)
-        return
-    _AUDITED_NON_MEMO_GRANTS.add(token)
 
 
 def reset_grant_audit() -> None:
     """Forget which non-memo bypasses this process has already audited."""
-    _AUDITED_NON_MEMO_GRANTS.clear()
+    with _AUDIT_LOCK:
+        _AUDITED_NON_MEMO_GRANTS.clear()
 
 
 def capacity_consent_authorization(

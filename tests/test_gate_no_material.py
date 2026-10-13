@@ -615,11 +615,18 @@ def test_no_material_dispatch_never_quarantines_the_session(monkeypatch):
     assert quarantines == []
 
 
-@pytest.mark.parametrize("gate_result", ["INCONCLUSIVE", "FAIL", "ERROR"])
+# FAIL left this table: submit quarantines its own combination's dispatch, never the graph.
+@pytest.mark.parametrize("gate_result", ["INCONCLUSIVE", "ERROR"])
 def test_every_other_unproven_dispatch_still_quarantines(monkeypatch, gate_result):
     quarantines = _render_rig(monkeypatch, gate_result)
     assert common.run_render(object(), {}, {}, None, 1) == {"samples": "done"}
     assert len(quarantines) == 1
+
+
+def test_a_fail_dispatch_takes_no_lever_off_the_graph(monkeypatch):
+    quarantines = _render_rig(monkeypatch, "FAIL")
+    assert common.run_render(object(), {}, {}, None, 1) == {"samples": "done"}
+    assert quarantines == []
 
 
 def _grant_rig(monkeypatch, tmp_path):

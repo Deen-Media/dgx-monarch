@@ -1,8 +1,8 @@
 """Verdict derivation and publication for one identity-gate ceremony.
 
 Reads the record the ceremony body produced, decides PASS/FAIL/INCONCLUSIVE,
-quarantines the levers a FAIL implicates, and writes the process tokens, the
-ledger rows and the gate report row.
+pushes the levers a FAIL implicates off for that combination, and writes the
+process tokens, the ledger rows and the gate report row.
 """
 from __future__ import annotations
 
@@ -168,16 +168,18 @@ def publish_ceremony_verdict(
         # slab residency unsafe; an in-mode divergence (conclusive swaps whose
         # lineages differ) proves the lazy path unsafe. Either, or both, can
         # hold, including when the swap cycle was INCONCLUSIVE and only the
-        # cross leg failed. The local spec mutates before the RPC so an
-        # unreachable worker cannot leave the session configured for a path
-        # this exact artifact/commit has proven unsafe.
+        # cross leg failed. The quarantine belongs to this combination in this
+        # capability context, so it never touches the graph's policy dict,
+        # which other checkpoints on the same Init node share. The push below
+        # takes its policy from a per-dispatch clone; each later dispatch of
+        # this combination re-applies it from the process verdict cache and
+        # the ledger (nodes/render_quarantine).
         cross_failed = cross_mode is not None and cross_mode.get("verdict") == "FAIL"
         in_mode_diverged = conclusive and not identical
-        quarantined_args = dict(model.mesh.worker_args)
+        quarantined_args: dict[str, bool] = {}
         levers = quarantine_levers
         if cross_failed:
             quarantined_args["slab_weights"] = False
-            model.mesh.worker_args["slab_weights"] = False
             levers.append("slab_weights")
             runtime["log"].error("identity gate FAIL (%s): slab-residency render diverges from "
                       "stock residency (max latent diff %s) for %s.",
@@ -185,20 +187,31 @@ def publish_ceremony_verdict(
                       else None, model.unet_name)
         if in_mode_diverged or not cross_failed:
             quarantined_args["lora_low_rss"] = False
-            model.mesh.worker_args["lora_low_rss"] = False
             levers.append("lora_low_rss")
             runtime["log"].error("identity gate FAIL (%s): its proof renders diverge from each other "
                       "(max latent diff %s) for %s.",
                       origin, max_diff, model.unet_name)
-        runtime["log"].error("QUARANTINING: %s switched off for this graph; the gate ledger keeps the FAIL for later "
-                  "sessions. Renders use comfy's stock path where one exists; a live comfy_managed worker refuses "
-                  "them until a mesh reset. Report this with your comfy commit and dgxm status.", " + ".join(levers))
+        from .. import residency_mode
+        from .gate_quarantine_scope import combination_label
+
+        # The next dispatch of this combination turns comfy_managed off for
+        # the whole Init node (nodes/render_quarantine), so say so here too.
+        managed = residency_mode.WORKER_ARG in (getattr(model.mesh, "worker_args", None) or {})
+        runtime["log"].error("QUARANTINING: %s switched off for %s in this capability context; other "
+                  "checkpoints on this Init node keep their lora_low_rss and slab_weights.%s The gate "
+                  "ledger keeps the FAIL for later sessions. Renders of this combination use comfy's stock "
+                  "path where one exists; a live comfy_managed worker refuses them until a mesh reset. Report "
+                  "this with your comfy commit and dgxm status.", " + ".join(levers),
+                  combination_label(model),
+                  " The next dispatch of this combination turns comfy_managed off for the whole Init node."
+                  if managed else "")
+        quarantined = runtime["_model_with_worker_overrides"](model, quarantined_args, handle=handle)
         try:
             runtime["_apply_worker_policy"](
-                handle, runtime["_effective_worker_args"](model, handle), timeout_s=600)
+                handle, runtime["_effective_worker_args"](quarantined, handle), timeout_s=600)
         except Exception as exc:
-            safe_call(runtime["log"].error, "quarantine push failed (%r); set %s=off on the Init "
-                      "node manually", exc, " + ".join(levers))
+            safe_call(runtime["log"].error, "quarantine push failed (%r); the next dispatch of this "
+                      "combination sends %s=off again before it renders", exc, " + ".join(levers))
         emit("quarantine",
              model=model.unet_name,
              lever=runtime["_gate_identity"].revoke_consents_after_gate_fail(model, levers))

@@ -23,6 +23,7 @@ import types
 import pytest
 
 import dgx_monarch.mesh as mesh_mod
+from actor_lifetime_helpers import _Recorder
 from dgx_monarch import (
     mesh_factory,
     mesh_helpers,
@@ -924,6 +925,38 @@ def test_await_chokepoint_join_budget_outlasts_the_future_deadline(monkeypatch):
     assert captured[0][1] == "dgxm-await"
 
 
+def test_the_on_loop_scratch_thread_is_a_daemon_whatever_the_caller(monkeypatch):
+    """Without a daemon argument, Python copies the flag of the thread that
+    creates the new one. In ComfyUI that is the daemon prompt worker, so the
+    scratch thread was a daemon only because its caller was one. This caller
+    is not a daemon, and the scratch thread must still be one. The recorder passes through to a real
+    thread, because run_blocking_off_loop joins it."""
+    recorder = _Recorder()
+    real_thread = threading.Thread
+
+    def recording_thread(*args, **kwargs):
+        if kwargs.get("name") == "dgxm-await":
+            recorder(**kwargs)
+        return real_thread(*args, **kwargs)
+
+    monkeypatch.setattr(threading, "Thread", recording_thread)
+
+    async def on_loop():
+        caller_is_daemon = threading.current_thread().daemon
+        scratch_is_daemon = mesh_runtime.run_blocking_off_loop(
+            lambda: threading.current_thread().daemon, 5.0, "dgxm-await")
+        return caller_is_daemon, scratch_is_daemon
+
+    assert asyncio.run(on_loop()) == (False, True)
+    assert len(recorder.created) == 1
+    assert recorder.created[0]["daemon"] is True
+    assert recorder.created[0]["name"] == "dgxm-await"
+    # Off the loop the call runs inline and builds no thread.
+    assert mesh_runtime.run_blocking_off_loop(
+        lambda: "inline", 5.0, "dgxm-await") == "inline"
+    assert len(recorder.created) == 1
+
+
 def test_await_chokepoint_still_evicts_on_a_supervision_failure_off_loop():
     """The hop moves only the get: the except clause, and therefore eviction,
     still runs on the caller's own thread."""
@@ -1075,6 +1108,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
     ("mesh_session.py", "claim_render_session"):
         "ContextVar read, not a monarch future",
     ("mesh_session.py", "require_mutation_authority"):
+        "ContextVar read, not a monarch future",
+    ("nodes/render_submit.py", "_collect_earlier_results_before_setup_change"):
         "ContextVar read, not a monarch future",
 }
 

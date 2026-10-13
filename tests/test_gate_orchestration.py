@@ -30,6 +30,12 @@ from gate_orchestration_helpers import (  # noqa: F401  # autouse fixture import
 )
 
 
+def _quarantine_push(handle) -> dict:
+    """The policy a measured FAIL pushed: the last apply_worker_args call."""
+    return [args[0] for method, args in handle.calls
+            if method == "apply_worker_args"][-1]
+
+
 def _normal_authorization_rig(
     monkeypatch,
     tmp_path,
@@ -375,7 +381,9 @@ def test_canonical_failure_quarantines_and_persists(monkeypatch, tmp_path):
         {"samples": torch.zeros(1)}, 1.0, 2, "explicit", run_id="run-1",
     )
     assert result["verdict"] == "FAIL"
-    assert worker_args["lora_low_rss"] is False
+    # Per-combination scope: the push carries the lever, the shared graph dict keeps the ask.
+    assert worker_args["lora_low_rss"] is True
+    assert _quarantine_push(handle)["lora_low_rss"] is False
     assert [call[0] for call in handle.calls] == [
         "provenance_baseline", "unload", "render", "gate_swap_cycle", "render",
         "provenance_baseline", "apply_worker_args",
@@ -895,7 +903,8 @@ def test_process_denial_survives_bounded_positive_cache_pressure():
     assert common._process_gate_verdict(denied) == "PASS"
 
 
-@pytest.mark.parametrize("verdict", ["FAIL", "INCONCLUSIVE", "ERROR"])
+# FAIL left this table: it quarantines each dispatch of its own combination, never the graph.
+@pytest.mark.parametrize("verdict", ["INCONCLUSIVE", "ERROR"])
 def test_full_render_is_submitted_only_after_unproven_paths_are_quarantined(
     monkeypatch, verdict,
 ):
@@ -920,6 +929,30 @@ def test_full_render_is_submitted_only_after_unproven_paths_are_quarantined(
     monkeypatch.setattr(common, "submit_render", submit)
     common.run_render(model, {"kind": "ksampler"}, {}, 1.0, 2)
     assert events == ["gate", "submit", "result"]
+
+
+def test_a_fail_verdict_leaves_the_graph_to_the_dispatch_quarantine(monkeypatch):
+    """A FAIL takes no lever off the graph: other checkpoints on the same Init
+    node share its policy dict, and submit quarantines this dispatch's clone."""
+    events = []
+    model = SimpleNamespace(mesh=SimpleNamespace(worker_args={
+        "lora_low_rss": True, "slab_weights": True}))
+
+    class Pending:
+        def result(self):
+            return {"samples": torch.zeros(1)}
+
+    monkeypatch.setattr(
+        common, "_maybe_auto_gate", lambda *args: events.append("gate") or "FAIL")
+
+    def submit(*args, **kwargs):
+        events.append("submit")
+        assert model.mesh.worker_args == {"lora_low_rss": True, "slab_weights": True}
+        return Pending()
+
+    monkeypatch.setattr(common, "submit_render", submit)
+    common.run_render(model, {"kind": "ksampler"}, {}, 1.0, 2)
+    assert events == ["gate", "submit"]
 
 
 def test_auto_gate_preserves_cfg_zero(monkeypatch):
@@ -1048,7 +1081,7 @@ def test_low_rss_off_does_not_suppress_slab_gate(monkeypatch, tmp_path):
     assert common._auto_gate_context(model, "ksampler") is None
 
 
-def test_auto_gate_carries_known_fail_before_any_later_ledger_read(
+def test_auto_gate_reports_known_fail_and_submit_quarantines_the_dispatch(
     monkeypatch, tmp_path,
 ):
     import dgx_monarch.gate_ledger as ledger_mod
@@ -1073,12 +1106,11 @@ def test_auto_gate_carries_known_fail_before_any_later_ledger_read(
 
         def lookup_with_entry(self, *_args):
             lookups.append(True)
-            if len(lookups) == 1:
-                return "fail", {
-                    "verdict": "FAIL",
-                    "quarantine_levers": ["lora_low_rss", "slab_weights"],
-                }
-            return "unknown", None
+            # The real ledger keeps a FAIL sticky, so every read returns it.
+            return "fail", {
+                "verdict": "FAIL",
+                "quarantine_levers": ["lora_low_rss", "slab_weights"],
+            }
 
         def lookup_with_integrity(self, *_args):
             state, entry = self.lookup_with_entry()
@@ -1092,11 +1124,15 @@ def test_auto_gate_carries_known_fail_before_any_later_ledger_read(
     monkeypatch.setattr(ledger_mod, "GateLedger", Ledger)
 
     state, _token = common._auto_gate_context(model, "ksampler")
-    quarantine_mod._enforce_persisted_quarantine(model, handle)
+    quarantined = quarantine_mod._enforce_persisted_quarantine(model, handle)
 
     assert state == "fail"
-    assert lookups == [True]
+    # The one-read carry gave way to a submit-time re-read: the auto-gate
+    # lookup writes nothing to the graph, and submit quarantines its clone.
+    assert lookups == [True, True]
     assert model.mesh.worker_args == {
+        "lora_low_rss": True, "slab_weights": True}
+    assert quarantined.mesh.worker_args == {
         "lora_low_rss": False, "slab_weights": False}
 
 
@@ -1187,8 +1223,10 @@ def test_persisted_fail_quarantines_fresh_model_before_setup(monkeypatch, tmp_pa
 
     monkeypatch.setattr(ledger_mod, "GateLedger", Ledger)
     common._AUTO_GATE_ACTIVE.on = False
-    quarantine_mod._enforce_persisted_quarantine(model)
-    assert model.mesh.worker_args["lora_low_rss"] is False
+    quarantined = quarantine_mod._enforce_persisted_quarantine(model)
+    # Per-combination scope: the dispatch clone carries the quarantine, the graph keeps its ask.
+    assert quarantined.mesh.worker_args["lora_low_rss"] is False
+    assert model.mesh.worker_args["lora_low_rss"] is True
 
 
 @pytest.mark.parametrize(
@@ -1206,10 +1244,12 @@ def test_persisted_fail_lever_metadata_is_diagnostic_and_fails_closed(raw, expec
     model = SimpleNamespace(mesh=SimpleNamespace(worker_args={
         "lora_low_rss": True, "slab_weights": True}))
 
-    common._apply_persisted_quarantine(
+    quarantined, _levers = common._apply_persisted_quarantine(
         model, {"verdict": "FAIL", "quarantine_levers": raw})
 
-    assert model.mesh.worker_args == expected
+    # Per-combination scope: the dispatch clone carries the quarantine, the graph keeps its ask.
+    assert quarantined.mesh.worker_args == expected
+    assert model.mesh.worker_args == {"lora_low_rss": True, "slab_weights": True}
 
 
 def test_persisted_fail_lookup_uses_resolved_replacement_handle(
@@ -1252,10 +1292,13 @@ def test_persisted_fail_lookup_uses_resolved_replacement_handle(
     monkeypatch.setattr(ledger_mod, "GateLedger", Ledger)
     common._AUTO_GATE_ACTIVE.on = False
 
-    quarantine_mod._enforce_persisted_quarantine(model, replacement)
+    quarantined = quarantine_mod._enforce_persisted_quarantine(model, replacement)
 
     assert seen == [{"handle": id(replacement)}]
-    assert model.mesh.worker_args["lora_low_rss"] is False
+    # Per-combination scope: the dispatch clone carries the quarantine and the live handle.
+    assert quarantined.mesh.worker_args["lora_low_rss"] is False
+    assert quarantined.mesh.handle is replacement
+    assert model.mesh.worker_args["lora_low_rss"] is True
 
 
 def test_persisted_quarantine_lookup_error_forces_both_paths_off(
@@ -1313,9 +1356,11 @@ def test_persisted_fail_forces_all_risky_levers_off_via_real_ledger(
         detail={"quarantine_levers": ["slab_weights"]}, context=context)
 
     common._AUTO_GATE_ACTIVE.on = False
-    quarantine_mod._enforce_persisted_quarantine(model)
-    assert model.mesh.worker_args["slab_weights"] is False
-    assert model.mesh.worker_args["lora_low_rss"] is False
+    quarantined = quarantine_mod._enforce_persisted_quarantine(model)
+    # Per-combination scope: the dispatch clone carries the quarantine, the graph keeps its ask.
+    assert quarantined.mesh.worker_args["slab_weights"] is False
+    assert quarantined.mesh.worker_args["lora_low_rss"] is False
+    assert model.mesh.worker_args == worker_args
 
 
 def test_persisted_quarantine_skips_when_fail_was_superseded(monkeypatch, tmp_path):
@@ -1338,7 +1383,7 @@ def test_persisted_quarantine_skips_when_fail_was_superseded(monkeypatch, tmp_pa
     led.record("combo", "artifacts", "commit", "INCONCLUSIVE", context=context)
 
     common._AUTO_GATE_ACTIVE.on = False
-    quarantine_mod._enforce_persisted_quarantine(model)
+    assert quarantine_mod._enforce_persisted_quarantine(model) is None
     assert model.mesh.worker_args["slab_weights"] is True
     assert model.mesh.worker_args["lora_low_rss"] is True
 
@@ -1813,7 +1858,7 @@ def test_nested_normal_divergence_quarantines_low_rss(
     worker_args = {"lora_low_rss": True, "slab_weights": False}
     risky = _nested(NestedTensor)
     risky.unbind()[modality].flatten()[0] = 2.0
-    _handle, ledger, model = _cross_mode_rig(
+    handle, ledger, model = _cross_mode_rig(
         monkeypatch,
         tmp_path,
         [_nested(NestedTensor), risky],
@@ -1825,7 +1870,9 @@ def test_nested_normal_divergence_quarantines_low_rss(
     assert result["verdict"] == "FAIL"
     assert result["latents_identical"] is False
     assert result["max_abs_latent_diff"] == 2.0
-    assert worker_args == {"lora_low_rss": False, "slab_weights": False}
+    # Per-combination scope: the push carries the lever, the shared graph dict keeps the ask.
+    assert worker_args == {"lora_low_rss": True, "slab_weights": False}
+    assert _quarantine_push(handle)["lora_low_rss"] is False
     assert ledger.records[0][4]["quarantine_levers"] == ["lora_low_rss"]
 
 
@@ -1857,7 +1904,7 @@ def test_nested_slab_cross_mode_divergence_returns_stock_and_quarantines_slab(
     worker_args = {"lora_low_rss": True, "slab_weights": True}
     stock_reference = _nested(NestedTensor)
     stock_reference.unbind()[modality].flatten()[0] = 4.0
-    _handle, ledger, model = _cross_mode_rig(
+    handle, ledger, model = _cross_mode_rig(
         monkeypatch,
         tmp_path,
         [_nested(NestedTensor), _nested(NestedTensor), stock_reference],
@@ -1872,7 +1919,10 @@ def test_nested_slab_cross_mode_divergence_returns_stock_and_quarantines_slab(
         "max_abs_latent_diff": 4.0,
     }
     assert result["latent"]["samples"] is stock_reference
-    assert worker_args == {"lora_low_rss": True, "slab_weights": False}
+    # Per-combination scope: the push carries the lever, the shared graph dict keeps the ask.
+    assert worker_args == {"lora_low_rss": True, "slab_weights": True}
+    assert _quarantine_push(handle)["slab_weights"] is False
+    assert _quarantine_push(handle)["lora_low_rss"] is True
     assert ledger.records[0][4]["quarantine_levers"] == ["slab_weights"]
 
 
@@ -1880,7 +1930,7 @@ def test_nested_structure_mismatch_fails_and_quarantines(monkeypatch, tmp_path):
     NestedTensor = _install_nested_tensor(monkeypatch)
     worker_args = {"lora_low_rss": True, "slab_weights": False}
     malformed_lineage = NestedTensor((torch.zeros(1),))
-    _handle, ledger, model = _cross_mode_rig(
+    handle, ledger, model = _cross_mode_rig(
         monkeypatch,
         tmp_path,
         [_nested(NestedTensor), malformed_lineage],
@@ -1891,7 +1941,9 @@ def test_nested_structure_mismatch_fails_and_quarantines(monkeypatch, tmp_path):
 
     assert result["verdict"] == "FAIL"
     assert result["max_abs_latent_diff"] is None
-    assert worker_args == {"lora_low_rss": False, "slab_weights": False}
+    # Per-combination scope: the push carries the lever, the shared graph dict keeps the ask.
+    assert worker_args == {"lora_low_rss": True, "slab_weights": False}
+    assert _quarantine_push(handle)["lora_low_rss"] is False
     assert ledger.records[0][3] == "FAIL"
 
 
@@ -1973,7 +2025,7 @@ def test_world1_nonfinite_nested_ceremony_fails_and_quarantines(
     NestedTensor = _install_nested_tensor(monkeypatch)
     worker_args = {"lora_low_rss": True, "slab_weights": False}
     infinity = _nested(NestedTensor, audio=float("inf"))
-    _handle, ledger, model = _cross_mode_rig(
+    handle, ledger, model = _cross_mode_rig(
         monkeypatch,
         tmp_path,
         [infinity, _nested(NestedTensor, audio=float("inf"))],
@@ -1985,7 +2037,9 @@ def test_world1_nonfinite_nested_ceremony_fails_and_quarantines(
     assert result["verdict"] == "FAIL"
     assert result["latents_identical"] is False
     assert result["max_abs_latent_diff"] is None
-    assert worker_args == {"lora_low_rss": False, "slab_weights": False}
+    # Per-combination scope: the push carries the lever, the shared graph dict keeps the ask.
+    assert worker_args == {"lora_low_rss": True, "slab_weights": False}
+    assert _quarantine_push(handle)["lora_low_rss"] is False
     assert ledger.records[0][3] == "FAIL"
 
 
@@ -2058,10 +2112,10 @@ def test_cross_mode_divergence_fails_and_quarantines_slab(monkeypatch, tmp_path)
     assert result["verdict"] == "FAIL"
     assert result["cross_mode"]["verdict"] == "FAIL"
     assert torch.equal(result["latent"]["samples"], torch.ones(1))
-    assert wa["slab_weights"] is False
+    # Per-combination scope: the push carries the lever, the shared graph dict keeps the ask.
+    assert wa["slab_weights"] is True
     assert wa["lora_low_rss"] is True
-    quarantine = [args[0] for method, args in handle.calls
-                  if method == "apply_worker_args"][-1]
+    quarantine = _quarantine_push(handle)
     assert quarantine["slab_weights"] is False and quarantine["lora_low_rss"] is True
     assert ledger.records[0][3] == "FAIL"
     assert [record[3] for record in ledger.records] == ["FAIL", "FAIL"]
@@ -2816,21 +2870,25 @@ def test_cross_mode_fail_quarantines_slab_even_when_swaps_inconclusive(monkeypat
     result = _run(model)
     assert result["verdict"] == "FAIL"
     assert result["cross_mode"]["verdict"] == "FAIL"
-    assert wa["slab_weights"] is False
-    assert wa["lora_low_rss"] is True  # the lazy path was not disproven
+    # Per-combination scope: the push carries the lever, the shared graph dict keeps the ask.
+    assert wa == {"lora_low_rss": True, "slab_weights": True}
+    assert _quarantine_push(handle)["slab_weights"] is False
+    assert _quarantine_push(handle)["lora_low_rss"] is True  # the lazy path was not disproven
     assert ledger.records[0][3] == "FAIL"
 
 
 def test_both_levers_quarantine_when_both_findings_hold(monkeypatch, tmp_path):
     """In-mode divergence and cross-mode divergence: both levers flip."""
     wa = {"lora_low_rss": True, "slab_weights": True}
-    _handle, _ledger, model = _cross_mode_rig(
+    handle, _ledger, model = _cross_mode_rig(
         monkeypatch, tmp_path,
         [torch.zeros(1), torch.full((1,), 5.0), torch.ones(1)], wa)
     result = _run(model)
     assert result["verdict"] == "FAIL"
-    assert wa["slab_weights"] is False
-    assert wa["lora_low_rss"] is False
+    # Per-combination scope: the push carries both levers, the shared graph dict keeps the ask.
+    assert wa == {"lora_low_rss": True, "slab_weights": True}
+    assert _quarantine_push(handle)["slab_weights"] is False
+    assert _quarantine_push(handle)["lora_low_rss"] is False
 
 
 def test_cross_mode_triggers_on_worker_reported_residency(monkeypatch, tmp_path):

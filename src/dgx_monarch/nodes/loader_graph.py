@@ -12,6 +12,7 @@ capacity refusal.
 from __future__ import annotations
 
 import os
+import threading
 from collections.abc import Mapping
 from dataclasses import dataclass, replace
 
@@ -118,21 +119,44 @@ _GUIDE_FILE_KEYS = ("image",)
 _GUIDE_AUDIO_KEYS = ("audio",)
 
 _MEMO_LIMIT = 64
+# Every write to a capped memo holds this lock: `remember` on the prompt thread,
+# and `clear_memos` on the executor thread that drains a recycle. Without it, a
+# clear that lands inside an eviction raises out of `remember`, and the loader
+# preflight's fail-open handler then drops the memo entry.
+# Reads are single membership tests and take no lock.
+_MEMO_LOCK = threading.Lock()
 # Session lifetime, keyed by artifact names already charged. This avoids double
 # charging dual-model graphs. FIFO eviction and recycle reset are safe: stale
 # entries omit a charge, while lost entries only create a loud over-charge refusal.
 _CHARGED_STACK_ARTIFACTS: dict[str, None] = {}
 
 
+def clear_memos(*stores: dict[str, None]) -> None:
+    """Empty capped memos under the lock that ``remember`` holds."""
+    with _MEMO_LOCK:
+        for store in stores:
+            store.clear()
+
+
 def reset_charged_artifacts() -> None:
-    _CHARGED_STACK_ARTIFACTS.clear()
+    clear_memos(_CHARGED_STACK_ARTIFACTS)
 
 
 def remember(store: dict[str, None], key: str) -> None:
-    """Insertion-ordered set capped at ``_MEMO_LIMIT``, oldest entry evicted first."""
-    store[key] = None
-    while len(store) > _MEMO_LIMIT:
-        store.pop(next(iter(store)))
+    """Insertion-ordered set capped at ``_MEMO_LIMIT``, oldest entry evicted first.
+
+    The eviction also tolerates a writer that holds no lock: an emptied or
+    resized memo ends the step instead of raising out of ``remember``, which
+    the loader preflight's fail-open handler would turn into a lost entry.
+    """
+    with _MEMO_LOCK:
+        store[key] = None
+        while len(store) > _MEMO_LIMIT:
+            try:
+                oldest = next(iter(store))
+            except (RuntimeError, StopIteration):
+                continue  # the memo changed size under the iterator: re-read it
+            store.pop(oldest, None)
 
 
 @dataclass(frozen=True, slots=True)

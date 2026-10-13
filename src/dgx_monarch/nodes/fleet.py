@@ -294,7 +294,7 @@ class DGXMonarchFleetKSampler:
             # Keep ownership across every wave, including zero-lease gaps.
             session.bind(handle)
             with session.activate():
-                _enforce_persisted_quarantine(spec, handle)
+                spec = _enforce_persisted_quarantine(spec, handle) or spec
                 result = self._fleet_bound(
                     spec, latent, jobs, steps_n, cfg_v, sampler, sched, handle,
                     session, source_latent=source_latent)
