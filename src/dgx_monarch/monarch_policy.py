@@ -92,6 +92,15 @@ def _target(value: object, context: str) -> str:
     raise ClusterConfigError(f"{context} must be nic:<device>, cpu:<numa>, gpu:<ordinal>, or empty")
 
 
+def _host_target(value: object) -> str:
+    """A per-host override names that host's NIC; empty, cpu and gpu are refused here."""
+    target = _target(value, "monarch.rdma.host_targets")
+    if not target.startswith("nic:"):
+        raise ClusterConfigError("monarch.rdma.host_targets values must be nic:<device>; "
+                                 "omit a host to use [monarch.rdma] target")
+    return target
+
+
 def _affinity(value: object) -> str:
     if value in ("any", "match_name"):
         return str(value)
@@ -126,8 +135,7 @@ def parse_policy(raw: object, *, host_names: tuple[str, ...] | None = None) -> M
         raise ClusterConfigError("monarch.rdma.allow_tcp_fallback must be a boolean")
     transport = RdmaPolicy(
         target=_target(rdma.get("target", ""), "monarch.rdma.target"),
-        host_targets=tuple(sorted((name, _target(value, "monarch.rdma.host_targets"))
-                                 for name, value in targets.items())),
+        host_targets=tuple(sorted((name, _host_target(value)) for name, value in targets.items())),
         peer_device_affinity=_affinity(rdma.get("peer_device_affinity", defaults.peer_device_affinity)),
         allow_tcp_fallback=fallback, **numbers,
     )
@@ -164,9 +172,27 @@ def policy_dict(policy: MonarchPolicy) -> dict[str, Any]:
 
 
 def transport_identity(policy: MonarchPolicy) -> str:
-    payload = policy_dict(policy)
-    payload.pop("diagnostics")
+    """Hash the RDMA block only; the readiness budget and export settings are not transport."""
+    payload = policy_dict(policy)["rdma"]
     return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def admit_native_targets(policy: MonarchPolicy, participants: tuple[str, ...], *,
+                         unnamed: str = "the driver") -> None:
+    """Refuse native return unless every participant resolves to a named NIC.
+
+    ``participants`` holds configured host names; "" stands for a process with
+    no host entry, which uses the global target. Driver admission passes every
+    host before transport commit; each process also checks itself.
+    """
+    for name in dict.fromkeys(participants):
+        target = policy.rdma.resolved(name).target
+        if not target.startswith("nic:"):
+            who = f"host {name!r}" if name else unnamed
+            raise ClusterConfigError(
+                f"native RDMA requires an explicit selected target for every participant; {who} "
+                f"resolves to {target or 'upstream selection'}. Set [monarch.rdma] target, or that "
+                "host's host_targets entry, to nic:<device>")
 
 
 def encode_policy(policy: MonarchPolicy, host: str = "") -> str:
@@ -213,8 +239,8 @@ def apply_policy(policy: MonarchPolicy, host: str = "", *, role: str = "driver",
     global _ACTIVE
     resolved = replace(policy, rdma=policy.rdma.resolved(host))
     parse_policy(policy_dict(resolved))  # programmatic constructors obey the same contract
-    if native_enabled and not resolved.rdma.target.startswith("nic:") and resolved.rdma.max_nics_per_buffer == 1:
-        raise ClusterConfigError("native RDMA requires an explicit selected target for every participant")
+    if native_enabled:  # whatever max_nics_per_buffer says: no unqualified auto-selection
+        admit_native_targets(policy, (host,), unnamed=f"this {role} process")
     identity = transport_identity(resolved)
     environment = policy_environment(resolved)
     with _LOCK:

@@ -76,6 +76,10 @@ The 0.7.0 integration validates these settings before runtime initialization.
 readiness share this observation budget. Host attachment and its configuration
 push retain their separate existing timeouts and retry policy. A timeout is
 not permission to reuse an unsettled mesh or restart a persistent Worker.
+When the budget expires in cluster mode, the driver stops the processes it
+spawned but keeps its transport poisoned, so every later queue refuses until
+ComfyUI restarts. Raise `startup_timeout_s` before that restart if the budget
+was too short.
 
 ### `[monarch.rdma]`
 
@@ -86,8 +90,8 @@ recorded workload/runtime/hardware; positive-step qualification is limited to th
 
 | key | default | meaning |
 |---|---|---|
-| `target` | `""` | `nic:<device>`, `cpu:<numa>` or `gpu:<ordinal>`; empty uses upstream selection. An explicit `nic:<device>` target is required for single-NIC native operation. |
-| `host_targets` | `{}` | Table mapping configured host names to target overrides. Use `nic:<device>` with each host's actual device name; names need not match between machines. |
+| `target` | `""` | `nic:<device>`, `cpu:<numa>` or `gpu:<ordinal>`; empty uses upstream selection. Native return needs a `nic:<device>` target for every participant ([DESIGN.md](DESIGN.md) §5.6). |
+| `host_targets` | `{}` | Table mapping configured host names to `nic:<device>` overrides; any other value, empty included, fails config loading. Use each host's actual device name; names need not match between machines. A host without an entry uses `target`. |
 | `peer_device_affinity` | `"match_name"` | `any`, `match_name`, or disjoint `groups:dev0,dev1|dev2,dev3`. Affinity describes allowed NIC pairings; it does not discover reachable subnets. |
 | `max_nics_per_buffer` | `1` | Maximum registered NICs per buffer, `1..8`. An explicit NIC target pins the upstream manager to that NIC. |
 | `qps_per_peer` | `1` | Native QPs per NIC route, `1..8`. |
@@ -104,8 +108,9 @@ establish a GB10 performance gain.
 `benchmark/rdma_return_bench.py` provides a source-bound CPU staged-return
 qualifier. Its `--preflight-only` mode gathers passive source/process facts
 without importing Torch or Monarch. An authorized active run names the exact
-commit and source manifest, configuration, driver host, return mode, and a new
-private output path:
+commit and source manifest, configuration, return mode, and a new private
+output path. `--driver-host` is optional; when given, it must name the host the
+driver resolves to (below), or the run refuses:
 
 ```bash
 python -B benchmark/rdma_return_bench.py \
@@ -123,7 +128,12 @@ native result remains HOLD with backing retained; do not wrap it in an external
 timeout that kills its owner.
 
 The policy is resolved per host before Monarch imports it, checked against
-native configuration, and bound into transport identity. Conflicting ambient
+native configuration, and bound into transport identity. Each Worker and actor
+uses its own `[[hosts]]` entry. The driver uses the entry whose `address` IP
+equals the `client_bind` IP, the rule the qualifier also applies; when none
+matches, as on a driver box without a Worker, it uses `target` and logs one
+WARNING. With native return on, the driver checks every host's resolved target
+before it starts any process. Conflicting ambient
 environment variables are refused. A transport-policy change requires a fresh
 process; it cannot change an already initialized RDMA manager safely. Preserve
 Worker ownership and follow the reviewed update/restart procedure.
@@ -140,7 +150,22 @@ credentials, query or fragment and requires **`otlp_logs = true`** explicitly:
 Monarch 0.7 exports upstream raw logs as well as metrics to this destination.
 Those logs may contain more than dgx-monarch's sanitized metric labels. Use an
 operator-controlled collector and review disclosure requirements before
-opting in. Changing an initialized export destination requires a restart.
+opting in.
+
+Monarch fixes its export destination when its native runtime first loads.
+ComfyUI's driver loads it when the first mesh is built, after installing the
+endpoint, and actors and Workers receive the endpoint before they start. When
+the driver cannot start a requested metrics or OTLP export, the mesh build
+refuses with a typed error that names the reason, before any process starts.
+`otlp_restart_required` means Monarch loaded before the endpoint was set, which
+happens when you add or change the endpoint after a mesh was built: restart
+ComfyUI. `ambient_otlp_endpoint_conflict` means `OTEL_EXPORTER_OTLP_ENDPOINT` in
+the ComfyUI environment names another endpoint: make `otlp_endpoint` match it,
+or unset the variable and restart ComfyUI. Removing a configured endpoint also
+needs a restart. An actor or Worker that cannot start a requested export logs
+an ERROR with the reason and keeps running. `/dgxm/telemetry` reports the
+driver's export state as `monarch_diagnostics`, beside the requested policy in
+`monarch_policy`.
 
 `dgxm diagnostics --capabilities` explains the exact runtime's diagnostic
 limits. A finite capture reads existing telemetry only:

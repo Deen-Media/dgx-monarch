@@ -5056,3 +5056,17 @@ with native return off. Under any other policy, the new release's Doctor step
 fails the `worker policy` row and the update restores the prior release. Run
 that update with `rdma_latent_return = false`, then restore the setting and
 run the command above.
+
+## 114. Every combination runs its first-use Gate again after an update
+
+**Symptom:** after deploying the 2026-10-12 change that narrowed the Gate's
+configuration fingerprint, the first render of each model, residency and LoRA
+combination runs the Identity Gate again, although `cluster.toml` is unchanged.
+
+This is expected, once per combination. Each persisted PASS binds a
+fingerprint of the cluster configuration, and the change dropped settings that
+cannot change math, residency or transport, so every earlier fingerprint
+differs from the new one. Let each combination prove itself once; nothing needs
+clearing. From then on, editing a setting that [DESIGN.md](DESIGN.md) §5.2
+lists as outside the fingerprint keeps PASS rows, and every other
+`cluster.toml` edit still needs a fresh proof.

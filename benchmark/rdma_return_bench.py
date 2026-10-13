@@ -8,8 +8,11 @@ this prints passive source facts and never imports Torch/Monarch. Use the live
 tools/process_inspection.py --check for process-readability proof; neither
 command establishes idleness.
 Native mode requires cluster.rdma_latent_return=true and explicit per-host
-NIC selection. Message mode requires false. Each QP/application-chunk variant
-uses a fresh process and config; this tool never mutates a latched policy.
+NIC selection. Message mode requires false. The driver's host is the [[hosts]]
+entry whose address shares client_bind's IP, the rule the production driver
+uses; --driver-host is an optional check that must name that same host. Each
+QP/application-chunk variant uses a fresh process and config; this tool never
+mutates a latched policy.
 The old tokenless --sizes-mib/--splits bandwidth mode is intentionally retired:
 it did not exercise production ownership and could bypass policy admission.
 Run hardware only after reviewing this file. Never put the hardware invocation
@@ -17,7 +20,7 @@ under timeout(1): HOLD deliberately retains native owners until operator recover
 This proves only staged CPU returns, not GPU/render/fidelity qualification.
 
 Run with --expect-sha FULL_SHA --expect-manifest MANIFEST --config cluster.toml
---driver-host CONFIG_HOSTNAME --return-mode message|native --output NEW.json.
+[--driver-host CONFIG_HOSTNAME] --return-mode message|native --output NEW.json.
 Output is a new mode-0600 file in an existing directory. Results never change
 cluster defaults or authorize a model or full sampling gate.
 """
@@ -200,7 +203,18 @@ def actor_class():
     return ReturnProbe
 
 
-def admit_config(cfg, return_mode, driver_host):
+def admitted_driver_host(cfg, requested=None):
+    """The driver's host by production's client_bind rule; --driver-host must agree."""
+    from dgx_monarch.monarch_policy_io import driver_host
+
+    require(bool(cfg.client_bind), "explicit driver bind required")
+    resolved = driver_host(cfg)
+    require(resolved in {h.name for h in cfg.hosts}, "client_bind matches no configured host")
+    require(requested in (None, resolved), "--driver-host disagrees with the host client_bind selects")
+    return resolved
+
+
+def admit_config(cfg, return_mode, driver_host=None):
     """Configuration admission is not proof of a working native path."""
     from dataclasses import replace
 
@@ -210,8 +224,7 @@ def admit_config(cfg, return_mode, driver_host):
             "configured native enablement must match --return-mode")
     require(cfg.rdma_min_bytes == THRESHOLD, "qualification requires the 8 MiB threshold")
     require(len(cfg.hosts) == 2, "qualifier scope is exactly two persistent Workers")
-    require(driver_host in {h.name for h in cfg.hosts}, "driver host not configured")
-    require(bool(cfg.client_bind), "explicit driver bind required")
+    admitted_driver_host(cfg, driver_host)
     require(not cfg.monarch.rdma.allow_tcp_fallback, "TCP fallback must be disabled")
     require(not cfg.monarch.diagnostics.otlp_endpoint,
             "private qualifier refuses network diagnostic export")
@@ -241,8 +254,9 @@ def run(args, evidence, cfg, driver_facts):
         apply_policy,
     )
 
-    identities = admit_config(cfg, args.return_mode, args.driver_host)
-    apply_policy(cfg.monarch, args.driver_host, role="driver",
+    driver_host = admitted_driver_host(cfg, args.driver_host)
+    identities = admit_config(cfg, args.return_mode, driver_host)
+    apply_policy(cfg.monarch, driver_host, role="driver",
                  native_enabled=args.return_mode == "native")
     configure_policy(cfg.monarch.diagnostics)
     from monarch.actor import attach_to_workers, enable_transport
@@ -435,7 +449,8 @@ def parse_args(argv=None):
     parser.add_argument("--preflight-only", action="store_true",
                         help="passive source facts only; no Torch/Monarch import or mutation")
     parser.add_argument("--config", help="explicit private selected-NIC cluster TOML")
-    parser.add_argument("--driver-host", help="configured host name of this driver")
+    parser.add_argument("--driver-host",
+                        help="optional check: the configured host name client_bind must select")
     parser.add_argument("--output", help="new private JSON evidence path in existing directory")
     parser.add_argument("--return-mode", choices=("message", "native"), default="message",
                         help="default-off control or explicit native ownership qualification")
@@ -461,7 +476,7 @@ def main(argv=None):
             "process_preflight": "tools/process_inspection.py --check plus operator no-work proof"},
             sort_keys=True))
         return 0
-    require(args.config and args.driver_host and args.output, "config, driver-host, output required")
+    require(args.config and args.output, "config and output required")
     require(driver["source_mode"] == "git", "driver needs clean exact Git checkout")
     from dgx_monarch.config import load_cluster_config
     cfg = load_cluster_config(args.config)

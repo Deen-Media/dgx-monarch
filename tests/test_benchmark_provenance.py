@@ -50,9 +50,33 @@ def test_rdma_qualifier_help_needs_no_native_imports(monkeypatch, capsys):
 def _qualifier_config(native=True):
     from dgx_monarch.monarch_policy import parse_policy
     return SimpleNamespace(
-        rdma_latent_return=native, rdma_min_bytes=8388608, client_bind="127.0.0.1",
-        hosts=[SimpleNamespace(name="one"), SimpleNamespace(name="two")],
+        rdma_latent_return=native, rdma_min_bytes=8388608, client_bind="tcp://192.0.2.1:0",
+        hosts=[SimpleNamespace(name="one", address="tcp://192.0.2.1:26600"),
+               SimpleNamespace(name="two", address="tcp://192.0.2.2:26600")],
         monarch=parse_policy({"rdma": {"target": "nic:mlx5_0"}}))
+
+
+def test_rdma_qualifier_resolves_the_driver_host_by_the_production_rule():
+    from dataclasses import replace
+
+    from dgx_monarch.monarch_policy import RdmaPolicy
+    module = _load_rdmabench()
+    cfg = _qualifier_config()
+    assert module.admitted_driver_host(cfg) == "one"
+    assert module.admitted_driver_host(cfg, "one") == "one"
+    with pytest.raises(module.QualificationRefused, match="disagrees"):
+        module.admitted_driver_host(cfg, "two")
+    with pytest.raises(module.QualificationRefused, match="disagrees"):
+        module.admit_config(cfg, "native", "two")
+    cfg.client_bind = "tcp://192.0.2.9:0"
+    with pytest.raises(module.QualificationRefused, match="matches no configured host"):
+        module.admit_config(cfg, "native")
+    # Per-host targets only: the qualifier and the production driver now agree.
+    cfg.client_bind = "tcp://192.0.2.2:0"
+    cfg.monarch = replace(cfg.monarch, rdma=RdmaPolicy(
+        host_targets=(("one", "nic:mlx5_0"), ("two", "nic:mlx5_1"))))
+    assert len(module.admit_config(cfg, "native")) == 2
+    assert module.admitted_driver_host(cfg) == "two"
 
 
 def test_rdma_qualifier_requires_explicit_mode_and_each_selected_target():

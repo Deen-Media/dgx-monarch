@@ -130,9 +130,12 @@ def test_new_otlp_destination_requires_fresh_native_runtime(monkeypatch):
 
 
 def test_apply_then_configure_preserves_late_native_refusal(monkeypatch, isolated_environ):
+    """The refusal state survives, and the driver now turns it into a typed error."""
     import os
 
+    from dgx_monarch import monarch_capabilities, monarch_launch
     from dgx_monarch import monarch_policy as policy
+    from dgx_monarch.config import ClusterConfig, ClusterConfigError
 
     monkeypatch.setattr(policy, '_ACTIVE', None)
     for name in policy.policy_environment(policy.MonarchPolicy()):
@@ -146,6 +149,103 @@ def test_apply_then_configure_preserves_late_native_refusal(monkeypatch, isolate
     assert 'OTEL_EXPORTER_OTLP_ENDPOINT' not in os.environ
     assert adapter.status()['available'] is False
     assert adapter.status()['reason'] == 'otlp_restart_required'
+    # Driver semantics: a requested export that cannot start refuses before any
+    # runtime admission or transport work, instead of silently dropping metrics.
+    monkeypatch.setattr(monarch_capabilities, 'assert_supported_runtime',
+                        lambda: pytest.fail('runtime admitted after a diagnostics refusal'))
+    with pytest.raises(ClusterConfigError, match=r'otlp_restart_required.*restart ComfyUI'):
+        monarch_launch.prepare_driver(ClusterConfig(monarch=selected))
+    assert adapter.status()['reason'] == 'otlp_restart_required'
+    assert 'OTEL_EXPORTER_OTLP_ENDPOINT' not in os.environ
+
+
+def test_actor_and_worker_refusals_log_an_error_and_continue(monkeypatch):
+    import logging
+
+    from dgx_monarch.log import get_logger
+    from dgx_monarch.monarch_policy import DiagnosticsPolicy
+
+    monkeypatch.delenv('OTEL_EXPORTER_OTLP_ENDPOINT', raising=False)
+    monkeypatch.setitem(sys.modules, 'monarch._rust_bindings', types.ModuleType('native'))
+    records: list[logging.LogRecord] = []
+    handler = logging.Handler()
+    handler.emit = records.append  # type: ignore[method-assign]
+    logger = get_logger('dgx_monarch.monarch_diagnostics')
+    logger.addHandler(handler)
+    try:
+        requested = DiagnosticsPolicy(metrics=True, otlp_endpoint='http://127.0.0.1:4318', otlp_logs=True)
+        state = adapter.configure_policy_logged(requested, 'actor')
+        adapter.configure_policy_logged(DiagnosticsPolicy(), 'worker')
+    finally:
+        logger.removeHandler(handler)
+    assert state['reason'] == 'otlp_restart_required'
+    assert [(r.levelno, r.getMessage()) for r in records] == [(
+        logging.ERROR, 'Monarch diagnostics requested for this actor are unavailable '
+        '(otlp_restart_required); it continues without them')]
+
+
+@pytest.mark.parametrize(('requested', 'state', 'reason'), [
+    ({'metrics': True}, {'available': False, 'reason': 'instrument_setup_failed'}, 'instrument_setup_failed'),
+    ({'otlp_endpoint': 'http://x:1', 'otlp_logs': True}, {'available': False}, 'unavailable'),
+    ({'metrics': True}, {'available': True, 'metrics': True}, None),
+    ({}, {'available': False, 'reason': 'otlp_restart_required'}, None),
+    ({'metrics': True}, None, None),
+])
+def test_requested_refusal_reports_only_requested_export(requested, state, reason):
+    from dgx_monarch.monarch_policy import DiagnosticsPolicy
+
+    assert adapter.requested_refusal(state, DiagnosticsPolicy(**requested)) == reason
+
+
+_IMPORT_ORDER_PROBE = r'''
+import importlib.util, os, sys
+from pathlib import Path
+
+def native():
+    return sorted(m for m in sys.modules if m.startswith("monarch._rust_bindings"))
+
+import dgx_monarch.nodes  # what ComfyUI registration reaches
+assert native() == [], ("nodes", native())
+root = Path(sys.argv[1])
+spec = importlib.util.spec_from_file_location(
+    "dgxm_entry_probe", root / "__init__.py", submodule_search_locations=[str(root)])
+entry = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = entry
+spec.loader.exec_module(entry)  # the custom_nodes entrypoint, fault hook call included
+assert native() == [], ("entrypoint", native())
+import dgx_monarch.mesh as mesh
+assert mesh._FAULT_HOOK_INSTALLED is False  # deferred until prepare_driver loads Monarch
+
+from dgx_monarch.monarch_diagnostics import configure_policy
+from dgx_monarch.monarch_policy import apply_policy, parse_policy
+policy = parse_policy({"diagnostics": {"otlp_endpoint": "http://127.0.0.1:4318", "otlp_logs": True}})
+apply_policy(policy, role="driver")
+state = configure_policy(policy.diagnostics)
+assert state.get("export_scope") == "upstream_metrics_and_logs", state
+assert os.environ["OTEL_EXPORTER_OTLP_ENDPOINT"] == "http://127.0.0.1:4318"
+print("ok")
+'''
+
+
+def test_node_registration_leaves_monarch_unloaded_so_driver_otlp_can_start():
+    """Node and entrypoint import must not load Monarch's native bindings.
+
+    Their endpoint is fixed when the bindings load, so a load at registration
+    made every driver OTLP endpoint refuse with otlp_restart_required.
+    """
+    import os
+    import subprocess
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    env = {key: value for key, value in os.environ.items()
+           if key != 'OTEL_EXPORTER_OTLP_ENDPOINT' and not key.startswith('MONARCH_RDMA_')
+           and key not in ('DGXM_MONARCH_POLICY', 'DGXM_RDMA_QP_SPLIT')}
+    env.update(PYTHONPATH=str(repo / 'src'), PYTHONDONTWRITEBYTECODE='1')
+    result = subprocess.run([sys.executable, '-c', _IMPORT_ORDER_PROBE, str(repo)], env=env,
+                            capture_output=True, text=True, timeout=300, check=False)
+    assert result.returncode == 0, result.stderr[-4000:]
+    assert result.stdout.strip().endswith('ok')
 
 
 def test_otlp_endpoint_is_installed_only_before_native_import(monkeypatch, isolated_environ):
