@@ -840,7 +840,9 @@ registry ownership in-process.
 imports the updated source, and verify the configured hosts with `dgxm doctor`
 before retrying. If an update cannot be deployed immediately, set
 `rdma_latent_return = false` in the cluster configuration and restart the
-driver to use the slower actor-message return path. Do not infer a model or
+driver to use the slower actor-message return path; on a managed installation
+that edit reads `POLICY_STALE` until `dgxm update --verify --target HEAD`
+re-renders the Worker units (#113). Do not infer a model or
 distributed-math failure from this transport error; verify the per-rank latent
 signatures separately.
 
