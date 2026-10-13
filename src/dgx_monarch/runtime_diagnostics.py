@@ -107,17 +107,15 @@ class PhaseMeasurements:
 
 
 _STORE = PhaseMeasurements()
-# Optional sinks are installed explicitly by monarch_diagnostics.configure.
-# They must not retain application values or perform synchronous network IO.
+# The optional sink is installed explicitly by monarch_diagnostics.configure.
+# It must not retain application values or perform synchronous network IO.
 _OBSERVER: Callable[[dict[str, Any]], None] | None = None
-_SPAN_FACTORY: Callable[[str], Any] | None = None
 
 
-def configure_export(observer: Callable[[dict[str, Any]], None] | None = None,
-                     span_factory: Callable[[str], Any] | None = None) -> None:
-    """Install optional process-local diagnostic consumers, never a backend."""
-    global _OBSERVER, _SPAN_FACTORY
-    _OBSERVER, _SPAN_FACTORY = observer, span_factory
+def configure_export(observer: Callable[[dict[str, Any]], None] | None = None) -> None:
+    """Install the optional process-local diagnostic consumer, never a backend."""
+    global _OBSERVER
+    _OBSERVER = observer
 
 
 def record_phase(phase_name: str, duration_s: float, *, outcome: str = "ok",
@@ -168,16 +166,10 @@ def events_since(sequence: int = 0, *, limit: int = MAX_RECENT) -> dict[str, Any
 def phase(phase_name: str, *, return_mode: str = "none") -> Iterator[None]:
     """Measure a scope, preserving success, failure and cancellation exactly."""
     started: float | None = None
-    span = None
     outcome = "ok"
     try:
         if valid_labels(phase_name, outcome, return_mode):
             started = time.monotonic()
-            factory = _SPAN_FACTORY
-            if factory is not None:
-                candidate = factory(phase_name)
-                candidate.__enter__()
-                span = candidate
     except BaseException:
         pass
     try:
@@ -191,12 +183,6 @@ def phase(phase_name: str, *, return_mode: str = "none") -> Iterator[None]:
             outcome = "error"
         raise
     finally:
-        try:
-            if span is not None:
-                # Traces do not receive exception values or suppress errors.
-                span.__exit__(None, None, None)
-        except BaseException:
-            pass
         try:
             if started is not None:
                 record_phase(phase_name, max(0.0, time.monotonic() - started),

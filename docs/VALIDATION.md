@@ -214,6 +214,43 @@ See the [historical video measurements](BENCHMARKS.md#campaign-render-times-vide
 [Native return qualification](#native-rdma) has separate scope; the earlier
 CPU-only and historical model records retain their original limits.
 
+### Ownership and actor-start review (2026-10-13)
+
+**October 13, 2026:** the review that
+[TROUBLESHOOTING #112](TROUBLESHOOTING.md#112-the-torchmonarch-canary-reports-semantic-drift-against-a-new-release)
+asks for compared two TorchMonarch 0.7.0 changes with the integration's
+ownership rules: RDMA buffer drops that start at once, and shutdown timeouts
+that cancel the rest of a stop. Ownership order is unchanged. The driver drops
+its registration handles once after a completed read, sends the ACK only after
+every drop is confirmed, and never retries a drop that failed or timed out;
+since a timed-out drop may still be in flight, a retry could release it twice.
+A timed-out `ProcMesh.stop` no longer finishes its remaining steps. In local
+CPU runs on the pinned wheel, a zero deadline cancelled the stop before its
+native step in 15 of 15 runs, and the procs kept answering until a fresh stop.
+With a 10 ms deadline the Future still timed out in 10 of 10 runs, but the
+native stop had already started and the procs were gone one second later. The
+outcome of a timed-out stop is therefore unknown, as the integration already
+assumes: it refuses another stop and any reuse, so procs that outlive a
+cancelled stop are left to the actor reaper. The safety ladder stays ordered:
+the reaper's 300 s lease grace, less one 30 s renewal interval, still exceeds
+the 240 s teardown-token authority. The CPU smoke now asserts the zero-deadline
+case on every canary run. It issues a second stop only to clean up its own
+procs; production never does.
+
+**October 13, 2026:** actor-start readiness was read against TorchMonarch
+0.7.0's 30 s hold on messages to an actor that is still starting
+(`HYPERACTOR_PENDING_ACTOR_DELIVERY_TIMEOUT`, upstream default). With a warm
+page cache, a fresh driver's first queue built a two-actor fleet, one actor per
+Spark, with the head under its 2,100 MHz GPU clock cap. The driver's
+`readiness` phase recorded four observations totaling 3.921 s, the longest
+3.519 s; `spawn` took at most 0.001 s and `attach` 0.005 s. The head actor's
+journal shows about 5 s from its device line to the end of its custom-node
+preload. The first held message, the readiness `status` call, answered in
+about a tenth of the hold. No policy setting for the hold was added, because
+the measured time is not within a factor of two of 30 s. A start with a cold
+page cache, after `drop_caches`, was not measured; the setting stays out unless
+that measurement comes within a factor of two of the hold.
+
 ## Onboarding and operator acceptance
 
 **2026-10-11, source `09957d971441c59d4605092c064886c66841eb6e`, two DGX

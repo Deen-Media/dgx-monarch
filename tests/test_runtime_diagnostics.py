@@ -16,7 +16,6 @@ def measurements(monkeypatch):
     store = diagnostics.PhaseMeasurements()
     monkeypatch.setattr(diagnostics, "_STORE", store)
     monkeypatch.setattr(diagnostics, "_OBSERVER", None)
-    monkeypatch.setattr(diagnostics, "_SPAN_FACTORY", None)
     return store
 
 
@@ -96,16 +95,7 @@ def test_phase_preserves_original_exception_and_hides_payload(measurements, erro
     assert "private" not in json.dumps(result)
 
 
-def test_measurement_and_span_failure_do_not_replace_operation(monkeypatch, measurements):
-    class BrokenSpan:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_):
-            raise KeyboardInterrupt("diagnostic interruption")
-
-    monkeypatch.setattr(diagnostics, "_SPAN_FACTORY", lambda _: BrokenSpan())
-
+def test_measurement_failure_does_not_replace_operation(monkeypatch, measurements):
     def broken_record(*_args, **_kwargs):
         raise SystemExit("diagnostic failure")
 

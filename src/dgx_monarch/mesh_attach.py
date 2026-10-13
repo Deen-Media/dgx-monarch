@@ -48,8 +48,8 @@ def attach_cluster(runtime: dict[str, Any], config: ClusterConfig, handoff: Any)
         factory.safe_transport_failure(handoff)
         raise error_type(
             "cluster.toml is missing cluster.client_bind. The default transport "
-            "advertises the hostname, which often resolves to loopback, and the "
-            "attach then fails with MESH_ATTACH_CONFIG_TIMEOUT (docs/TROUBLESHOOTING.md "
+            "advertises whatever the hostname resolves to: loopback is refused, and a "
+            "LAN or Tailscale address leaves the fabric or times out (docs/TROUBLESHOOTING.md "
             '#1). Set it to a fabric address of this host, for example client_bind = "tcp://<fabric-ip>:0".')
     addresses = [host.address for host in config.hosts]
     trace = attach_trace.AttachTrace(runtime["log"], addresses)

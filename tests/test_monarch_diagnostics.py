@@ -39,18 +39,8 @@ def fake_meter(monkeypatch):
             assert name == "dgxm.phase.duration.seconds"
             return Instrument()
 
-    class Span:
-        def __init__(self, name):
-            records.append(("span", name))
-
-        def __enter__(self):
-            return self
-
-        def __exit__(self, *_args):
-            records.append(("span_closed",))
-
     monkeypatch.setitem(sys.modules, "monarch.actor", types.SimpleNamespace(
-        get_meter=lambda: Meter(), span=Span))
+        get_meter=lambda: Meter()))
     monkeypatch.setattr(diagnostics, "_STORE", diagnostics.PhaseMeasurements())
     yield records, delivered
     adapter.configure()
@@ -67,18 +57,10 @@ def test_opt_in_uses_only_supported_instruments_and_fixed_labels(fake_meter):
     ]
 
 
-def test_trace_opt_in_has_no_payload_or_private_job(fake_meter):
-    records, _ = fake_meter
-    assert adapter.configure(traces=True)["available"] is True
-    with diagnostics.phase("setup"):
-        pass
-    assert records == [("span", "dgxm.setup"), ("span_closed",)]
-
-
 def test_disabled_adapter_never_imports_monarch(monkeypatch):
     adapter.configure()
     monkeypatch.setitem(sys.modules, "monarch.actor", None)
-    assert adapter.configure() == {"metrics": False, "traces": False, "available": True}
+    assert adapter.configure() == {"metrics": False, "available": True}
     diagnostics.record_phase("compute", 1)
 
 

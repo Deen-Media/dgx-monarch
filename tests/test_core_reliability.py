@@ -308,7 +308,7 @@ def _stub_native_driver(monkeypatch, get_meter, ambient=None):
 
     monkeypatch.setattr(policy, "_ACTIVE", None)
     monkeypatch.setattr(diagnostics, "_EXPORTER", None)
-    monkeypatch.setattr(diagnostics, "_STATE", {"metrics": False, "traces": False, "available": True})
+    monkeypatch.setattr(diagnostics, "_STATE", {"metrics": False, "available": True})
     monkeypatch.setattr(diagnostics, "_POLICY_STATE", {})
     for name in (*policy.policy_environment(policy.MonarchPolicy()), "OTEL_EXPORTER_OTLP_ENDPOINT"):
         monkeypatch.delenv(name, raising=False)

@@ -235,9 +235,15 @@ policy-application, or raw sample lifecycle endpoints. A submitted sample holds
 a driver-side generation lease until every leader latent is materialized, every
 local RDMA registration drop is confirmed, and every generation/token owner ACK
 is settled; replacement, recycle, and shutdown refuse a live transaction.
-Torchmonarch's pinned future records a collection timeout as terminal: the
-driver requests cancellation and abandons the unread result rather than
-offering a retry. Abandon retires the active lease once any already-started
+A collection timeout ends the wait, not the work. An endpoint Future survives
+a timed-out `.get(timeout)` and can be observed again, which the stall guard
+relies on when it waits in slices (`mesh_lease.collect_with_liveness`); a
+`returns_future` body, such as `ProcMesh.stop`, is cancelled by the same
+timeout. After the hard timeout the driver still requests cancellation and
+abandons the unread result rather than offering a retry, because the sample may
+still be running and may still own a result or RDMA descriptor of its setup
+generation; a later read cannot settle that ownership, and only a reset can.
+Abandon retires the active lease once any already-started
 raw-read scratch thread exits, makes later reads terminally invalid, and leaves
 abandoned work that requires an Attached mesh reset before changing topology.
 Actor teardown and failed setup retain unACKed backing in the generation/token
@@ -304,8 +310,12 @@ active patcher, empties the allocator cache, and runs gc on failure.
 Every patch on a Comfy ModelPatcher is keyed, and a keyed wrapper is added only
 when its key is absent, so repeated execution cannot stack patches.
 
-**Concurrency.** Every endpoint is `async def`, because torchmonarch refuses
-to spawn an actor that mixes sync and async endpoints. The blocking render
+**Concurrency.** Every endpoint is `async def` so that out-of-band calls
+(status, sample cancellation and client-lease renewal) run beside a render. A
+synchronous actor handles one message at a time, so it would queue them behind
+the render, and a render longer than the actor reaper's lease grace would let
+the reaper stop a healthy actor. Monarch also refuses to spawn an actor that
+mixes sync and async endpoints, so no endpoint can opt out. The blocking render
 runs on one GPU thread (`_on_gpu`, with contextvars copied so the RDMA return
 binds to this actor's instance) under an `asyncio.Lock`, and the lock keeps
 compute serial: no two renders, or a model mutation and a render, overlap on
@@ -940,9 +950,10 @@ hidden `UNIQUE_ID`; no node reads its value, but it is part of that contract.
   verdict. An untyped abort keeps its denial and says what stopped the proof.
   Diagnostic status publishes its event watermark and tail from one locked
   snapshot, so the two values always describe one coherent event history.
-- For actor state the node surface does not show, `monarch-tui` (shipped with
-  torchmonarch) attaches to a live mesh; docs/TROUBLESHOOTING.md ("Power-user
-  escape hatch") covers it.
+- For state the node surface does not show, use `dgxm top`, the sidebar panel
+  or a `dgxm diagnostics` capture. `monarch-tui` (shipped with torchmonarch)
+  needs `--addr` of a mesh admin server, which the integration never starts;
+  docs/TROUBLESHOOTING.md ("Power-user escape hatch") covers the prerequisite.
 
 ### 5.9 Refusal taxonomy: what a typed refusal is allowed to do
 

@@ -2,6 +2,33 @@
 
 ## [Unreleased]
 
+- Bring the docs and three small code paths in line with the pinned
+  TorchMonarch behavior. DESIGN.md now says that an endpoint Future survives a
+  timed-out `.get(timeout)` while a `returns_future` body such as
+  `ProcMesh.stop` is cancelled, keeps abandoning a timed-out sample because a
+  later read cannot settle who owns its result, and names concurrent status,
+  cancellation and lease renewal as the reason every endpoint is async.
+  [TROUBLESHOOTING #1](docs/TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout),
+  the `client_bind` row in CLUSTER.md and the missing-`client_bind` refusal now
+  say that a loopback-only hostname fails at once and a LAN or Tailscale
+  address leaves the fabric. The power-user escape hatch points at `dgxm top`,
+  the sidebar and `dgxm diagnostics`, because `monarch-tui` needs a mesh admin
+  server that the integration never starts.
+  [TROUBLESHOOTING #115](docs/TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)
+  now says that a Fleet queue after a failed Fleet wave refuses with
+  `LifecycleBusyError` until **Reset attached mesh**, because the automatic
+  reset runs only for normal renders. The supervision string net no longer
+  lists `ProcessExited`, which the pinned binding no longer carries. The CPU
+  smoke canary now times out a `ProcMesh.stop` at once and requires the stop to
+  stay cancelled and its procs to answer until a fresh stop. VALIDATION.md
+  records that ownership review and the actor-start readiness measurement
+  against Monarch's 30 s hold on messages to a starting actor; no policy setting
+  was added for the hold, and CLUSTER.md names it beside the readiness budget.
+  The Monarch diagnostics adapter loses its unreachable trace branch and span
+  sink, so its status no longer reports `traces`. `dgxm up` and `dgxm restart`
+  now read a managed host's torchmonarch version from its Worker release, as
+  `dgxm doctor` does, so a stale base interpreter behind a current release no
+  longer warns, and a stale release names `dgxm update` as its only fix.
 - Keep the driver's metrics export through a config edit that does not
   produce a new fleet. An `otlp_endpoint` the driver cannot install now refuses
   before anything is written, so the running exporter is never stopped, and an
