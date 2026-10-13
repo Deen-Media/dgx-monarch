@@ -278,7 +278,7 @@ def test_every_failed_source_probe_is_logged(installed, monkeypatch):
 
 PROBE_ANSWERS = {
     'layout': (1, 'FAILED_SOURCE_LAYOUT\n', '', 'FAILED_SOURCE_LAYOUT', 'is not one dgx-monarch wrote'),
-    'interpreter_missing': (127, '', 'bash: line 2: /home/someone/monarch-env/bin/python: No such file or directory',
+    'interpreter_missing': (127, '', 'bash: line 2: /home/user/monarch-env/bin/python: No such file or directory',
                             'FAILED_WORKER_INTERPRETER', 'could not run cluster.python'),
     'interpreter_not_executable': (126, '', 'bash: line 2: /opt/env/bin/python: Permission denied',
                                    'FAILED_WORKER_INTERPRETER', 'missing or not executable'),
@@ -296,7 +296,7 @@ def test_each_probe_failure_names_its_own_cause(case):
     text = lifecycle_managed.probe_refusal('worker', kind, result)
     assert text.startswith(f'worker: {kind}: ') and phrase in text
     assert 'nothing was synced or started there' in text
-    assert '/home/someone' not in text and '/opt/env' not in text
+    assert '/home/user' not in text and '/opt/env' not in text
     if case == 'layout':
         assert 'exit' not in text and 'stderr' not in text
     else:
@@ -312,11 +312,11 @@ def test_each_probe_failure_names_its_own_cause(case):
 
 
 def test_stderr_tail_is_bounded_printable_and_home_relative():
-    tail = lifecycle_managed.stderr_tail('first\n' + 'x\x1b[31m' + '/root/a ' * 60 + '\n\n')
+    tail = lifecycle_managed.stderr_tail('first\n' + 'x\x1b[31m' + '/home/user/a ' * 60 + '\n\n')
     assert len(tail) == 200 and '\x1b' not in tail and '/root' not in tail
     assert tail.startswith('x?[31m~/a ~/a')
     assert lifecycle_managed.stderr_tail('') == '' and lifecycle_managed.stderr_tail(None) == ''
-    assert lifecycle_managed.stderr_tail("denied: '/Users/me/x' and /srv/data") == "denied: '~/x' and <path>"
+    assert lifecycle_managed.stderr_tail("denied: '/Users/user/x' and /srv/data") == "denied: '~/x' and <path>"
 
 
 @pytest.mark.parametrize(('line', 'expected'), [
