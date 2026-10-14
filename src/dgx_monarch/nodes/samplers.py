@@ -334,7 +334,10 @@ class DGXMonarchBasicScheduler:
                 "auto picks one at the first render, after the sigmas are needed. "
                 "Set topology to a preset such as ring2, uly2 or cfg2."
             )
-        handle = ensure_live(mesh.handle)
+        from .abandoned_heal import heal_before_eager_setup
+
+        handle = heal_before_eager_setup(
+            ensure_live(mesh.handle), site="the BasicScheduler", respawn=ensure_live)
         topo = topology_from_preset(mesh.topology_preset, handle.world)
         from .. import mesh_setup
         from .render_session import mutation_render_session

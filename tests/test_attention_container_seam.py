@@ -10,8 +10,11 @@ plain tensors before calling ``transformer_options["optimized_attention_override
 unless the override declares a ``container_function`` attribute.
 ``usp_options`` in ``adapters/base.py`` builds a plain nested function with no
 such attribute, so every family that threads ``optimized_attention_override``
-keeps working unmodified across the seam. A family that rebinds an attention
-submodule never reaches comfy's wrapper, so the seam does not touch it.
+keeps working unmodified across the seam. An op the pack installs on the
+model itself is different: comfy calls it before ``wrap_attn``, so it receives
+the containers and ``preferred_attention`` directly. Anima's ``attn_op`` is the
+one such op (tests/test_anima_adapter.py, and the "attention keyword handoff"
+seam in tests/canary/comfy_seam_contracts.py).
 
 The stub reproduces that dispatcher and imports no comfy, so it runs in the
 CPU suite; the "lumina attention container" seam in

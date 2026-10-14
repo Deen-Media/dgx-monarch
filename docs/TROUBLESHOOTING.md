@@ -3885,11 +3885,15 @@ the retry also fails, follow the reported recovery; it does not loop.
 **Automatic reset is limited:** it runs at most once per submit, only when
 abandonment is the sole obstruction, with no active sample lease or pending
 RDMA read. A Fleet queue now runs the same reset, once per queue and before its
-first dispatch, and its log line names Fleet. Both paths check and reset the
-fleet they dispatch on, not the Init node's first fleet, so a later wedge in
-the same ComfyUI session heals the same way. The ProcMesh stop must be
-observed before the retry or the Fleet dispatch. When it is not, both paths
-raise the original `LifecycleBusyError`. Active work is left
+first dispatch, and its log line names Fleet. The nodes that set the fleet up
+before any render run it too: Init with an explicit topology, the UNET Loader
+under one, and the BasicScheduler. Their log lines name the node, so changing
+the checkpoint, topology or levers after a crash no longer needs a manual
+Reset. Every path checks and resets the fleet it is about to use, not the Init
+node's first fleet, so a later wedge in the same ComfyUI session heals the same
+way. The ProcMesh stop must be
+observed before the retry, the Fleet dispatch or the node's setup. When it is
+not, every path raises a `LifecycleBusyError`. Active work is left
 alone. An unconfirmed earlier stop keeps replacement blocked; supervision text,
 a timeout, or a stalled channel is not proof that processes exited. In a
 recovery test, a reported-dead worker remained alive for eleven more minutes.
@@ -5163,3 +5167,25 @@ not show that the fault went away. Fix the fault, then restart ComfyUI; the
 next setup requests native return again. To stay on messaging across restarts,
 set `rdma_latent_return = false`; on a managed installation, follow
 [#113](#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit).
+
+## 116. An Anima render refuses because ComfyUI passed an argument to the attention op
+
+**Symptom:** an Anima render on a sequence-parallel topology (ring, uly or
+hybrid) refuses with a class P message: `anima self-attention: ComfyUI passed
+'<name>' to the attention op dgx-monarch installs, and this release does not
+apply that argument under sequence parallelism.`
+
+**Cause:** dgx-monarch replaces the attention op on each Anima self-attention
+block, and ComfyUI's cosmos attention calls that op directly. The op accepts
+the arguments ComfyUI passes today: `transformer_options`, the per-block
+`preferred_attention` and q, k and v in single-use containers. A newer
+ComfyUI passed one more. The sharded attention cannot apply an argument it
+does not know, and dropping it could change the output, so the render stops
+before any attention runs. Nothing is wrong with the checkpoint, the fleet or
+the graph.
+
+**What to do:** run the workflow on topology `single` (mode=local with
+gpus_per_host=1) for a stock one-GPU render, or run a ComfyUI build this
+release supports. Report the argument name: a dgx-monarch release has to
+adopt it, either applying it under sequence parallelism or refusing it for a
+stated reason. No consent or waiver bypasses this refusal.

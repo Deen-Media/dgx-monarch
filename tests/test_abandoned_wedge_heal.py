@@ -355,3 +355,246 @@ def test_a_retired_init_handle_s_stale_count_never_triggers_a_recycle(monkeypatc
 
     assert events == [("ensure_live", "init", "live"), ("setup", "live")]
     assert log.lines == []
+
+
+# Eager-setup sites. Init with an explicit preset, the UNET Loader and the
+# BasicScheduler set the fleet up before any render. On hardware (2026-10-13)
+# an untagged worker crash left one abandoned lease, and every later Init that
+# changed topology or levers refused with SampleResultBusyError until a manual
+# Reset, although docs/TROUBLESHOOTING.md #87 promised a later wedge heals.
+
+
+def _eager_line(count, site):
+    return (
+        "info",
+        f"healing the abandoned-lease wedge: a crashed render left {count} "
+        f"abandoned sample lease(s), so {site} would refuse its setup change; "
+        f"recycling the attached mesh once, then setting up {site} on the new "
+        "fleet (docs/TROUBLESHOOTING.md #87)",
+    )
+
+
+def _eager_handle(name, events, *, abandoned=0, active=0):
+    handle = _fleet_handle(name, events, abandoned=abandoned)
+    handle.world = 2
+    handle.sample_leases = {1: active} if active else {}
+    handle.call_all = lambda endpoint, *_a, **_k: (
+        events.append((endpoint, name)) or [{"host": name, "transition": "load"}])
+    return handle
+
+
+@pytest.fixture
+def eager_seams(monkeypatch):
+    """Setup refuses as the real one does; the session and preflights are inert."""
+    import contextlib
+
+    from dgx_monarch.nodes import render_preflight, render_session
+
+    events: list[tuple] = []
+
+    def ensure_request_setup(handle, *_args, **_kwargs):
+        mesh_setup.require_no_sample_leases(handle, "change distributed setup")
+        events.append(("setup", handle.name))
+
+    def setup_on_handle(handle):
+        handle.ensure_setup = lambda *_a, **_k: ensure_request_setup(handle)
+        return handle
+
+    log = _Log()
+    monkeypatch.setattr(mesh_setup, "ensure_request_setup", ensure_request_setup)
+    monkeypatch.setattr(render_preflight, "preflight_sol_sequence_parallel",
+                        lambda *_args: None)
+    monkeypatch.setattr(render_session, "mutation_render_session",
+                        lambda _handle: contextlib.nullcontext())
+    monkeypatch.setattr(abandoned_heal, "log", log)
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos",
+                        lambda: events.append(("drop_memos",)))
+    return events, log, setup_on_handle
+
+
+def _cache(wedged, fresh):
+    """ensure_live: the cached fleet until it is recycled, then the fresh one."""
+    return lambda handle, **_kwargs: fresh if wedged.defunct else wedged
+
+
+def test_an_explicit_init_heals_the_wedge_before_its_setup(eager_seams, monkeypatch):
+    from dgx_monarch.nodes import init as init_mod
+
+    events, log, setup_on_handle = eager_seams
+    wedged = setup_on_handle(_eager_handle("wedged", events, abandoned=1))
+    fresh = setup_on_handle(_eager_handle("fresh", events))
+    monkeypatch.setattr(init_mod, "get_mesh", lambda **_kw: _cache(wedged, fresh)(None))
+
+    (spec,) = init_mod.DGXMonarchInit().init(topology="cfg2", mode="local")
+
+    assert spec.handle is fresh
+    assert events == [("recycle", "wedged"), ("drop_memos",), ("setup", "fresh")]
+    assert log.lines == [_eager_line(1, "the Init node")]
+
+
+def test_an_explicit_init_leaves_a_live_lease_alone(eager_seams, monkeypatch):
+    from dgx_monarch.nodes import init as init_mod
+
+    events, log, setup_on_handle = eager_seams
+    busy = setup_on_handle(_eager_handle("busy", events, abandoned=1, active=1))
+    monkeypatch.setattr(init_mod, "get_mesh", lambda **_kw: busy)
+
+    with pytest.raises(mesh_setup.SampleResultBusyError, match="sample result lease"):
+        init_mod.DGXMonarchInit().init(topology="cfg2", mode="local")
+    assert events == [] and log.lines == []
+
+
+def test_an_auto_init_sets_nothing_up_and_leaves_the_heal_to_the_render(
+        eager_seams, monkeypatch):
+    from dgx_monarch.nodes import init as init_mod
+
+    events, log, setup_on_handle = eager_seams
+    wedged = setup_on_handle(_eager_handle("wedged", events, abandoned=1))
+    monkeypatch.setattr(init_mod, "get_mesh", lambda **_kw: wedged)
+
+    (spec,) = init_mod.DGXMonarchInit().init(topology="auto", mode="local")
+    assert spec.handle is wedged
+    assert events == [] and log.lines == []
+
+
+def test_an_explicit_loader_heals_the_wedge_before_its_eager_load(
+        eager_seams, monkeypatch):
+    from dgx_monarch import capacity_agreement
+    from dgx_monarch.nodes import loader_preflight, loaders
+    from dgx_monarch.nodes.common import MeshSpec
+
+    events, log, _setup_on_handle = eager_seams
+    wedged = _eager_handle("wedged", events, abandoned=1)
+    fresh = _eager_handle("fresh", events)
+    monkeypatch.setattr(loaders, "ensure_live", _cache(wedged, fresh))
+    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint",
+                        lambda *_args, **_kwargs: object())
+    monkeypatch.setattr(loader_preflight, "record_rescue_row", lambda *_a, **_k: None)
+    monkeypatch.setattr(capacity_agreement, "agree_load", lambda *_a, **_k: None)
+    mesh = MeshSpec(handle=wedged, topology_preset="uly2", attention="TORCH_FLASH",
+                    sync_ulysses=True)
+
+    loaders.DGXMonarchUNETLoader().load(mesh, "x.safetensors")
+
+    assert events == [("recycle", "wedged"), ("drop_memos",), ("setup", "fresh"),
+                      ("load_model", "fresh")]
+    assert log.lines == [_eager_line(1, "the UNET Loader")]
+
+
+def test_the_basic_scheduler_heals_the_wedge_before_its_setup(eager_seams, monkeypatch):
+    import types
+
+    import torch
+
+    from dgx_monarch.nodes import samplers
+
+    events, log, _setup_on_handle = eager_seams
+    wedged = _eager_handle("wedged", events, abandoned=2)
+    fresh = _eager_handle("fresh", events)
+    fresh.call_all = lambda endpoint, *_a, **_k: (
+        events.append((endpoint, "fresh")) or [torch.tensor([1.0, 0.0])])
+    monkeypatch.setattr(samplers, "ensure_live", _cache(wedged, fresh))
+    mesh = types.SimpleNamespace(handle=wedged, topology_preset="uly2",
+                                 attention="TORCH_FLASH", sync_ulysses=True,
+                                 worker_args={})
+    model = types.SimpleNamespace(mesh=mesh, request_dict=lambda: {})
+
+    (sigmas,) = samplers.DGXMonarchBasicScheduler().get_sigmas(model, "normal", 2, 1.0)
+
+    assert torch.equal(sigmas, torch.tensor([1.0, 0.0]))
+    assert events == [("recycle", "wedged"), ("drop_memos",), ("setup", "fresh"),
+                      ("compute_sigmas", "fresh")]
+    assert log.lines == [_eager_line(2, "the BasicScheduler")]
+
+
+def test_a_failed_recycle_before_eager_setup_raises_the_abandoned_refusal(
+        eager_seams):
+    events, _log, _setup_on_handle = eager_seams
+    handle = _eager_handle("wedged", events, abandoned=1)
+    handle.recycle_detailed = lambda: events.append(("recycle", "wedged")) or _Outcome(False)
+    respawned = []
+
+    with pytest.raises(mesh_setup.LifecycleBusyError, match="abandoned sample"):
+        abandoned_heal.heal_before_eager_setup(
+            handle, site="the Init node", respawn=respawned.append)
+    assert events == [("recycle", "wedged")] and respawned == []
+
+
+def test_a_healed_loader_keeps_the_credit_a_second_loader_of_its_checkpoint_reads(
+        eager_seams, monkeypatch, tmp_path):
+    """The heal drops the residency memos after the first footprint price wrote
+    them, so the loader prices again before the spawn. The eager load on the
+    fresh fleet then leaves its credit behind, and a second loader of the same
+    checkpoint on the same Init is not charged those weights again (the real
+    preflight, against MemAvailable that the first load lowered)."""
+    import sys
+    import types
+
+    from dgx_monarch import (
+        capacity_agreement,
+        consent_store,
+        driver_footprint,
+        mesh_safety,
+    )
+    from dgx_monarch.adapters import detect
+    from dgx_monarch.nodes import consent_projection, loader_preflight, loaders
+    from dgx_monarch.nodes.common import MeshSpec
+
+    events, log, _setup_on_handle = eager_seams
+    gib = 2 ** 30
+    name = "dit.safetensors"
+    checkpoint = tmp_path / name
+    checkpoint.write_bytes(b"dit")
+    folder_paths = types.ModuleType("folder_paths")
+    folder_paths.get_full_path = lambda folder, unet: (  # type: ignore[attr-defined]
+        str(checkpoint) if (folder, unet) == ("diffusion_models", name) else None)
+    folder_paths.get_output_directory = lambda: str(tmp_path)  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+    monkeypatch.setattr(detect, "sniff_checkpoint", lambda _path: ("minimax_h3", "bf16"))
+    monkeypatch.delenv(driver_footprint.DRIVER_PREFLIGHT_DISABLE_ENV, raising=False)
+    monkeypatch.setattr(driver_footprint, "file_size_bytes", lambda _path: 40 * gib)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    memory = {"available": 114 * gib}
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: memory["available"])
+    monkeypatch.setattr(loader_preflight, "_CLEARED_UNETS", {})
+    monkeypatch.setattr(loader_preflight, "_UNPRICED_STACK_WARNED", {"minimax_h3"})
+    monkeypatch.setattr(consent_store, "MEMO_PATH", str(tmp_path / "consent_memo.json"))
+    monkeypatch.setattr(consent_projection, "project_for_loader", lambda *_a, **_k: None)
+    monkeypatch.setattr(loader_preflight, "record_rescue_row", lambda *_a, **_k: None)
+    monkeypatch.setattr(capacity_agreement, "agree_load", lambda *_a, **_k: None)
+    # The real drop: the memos the first price wrote go with the old fleet.
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: (
+        events.append(("drop_memos",)), loader_preflight.reset_memos()))
+    price = loader_preflight.preflight_loader_footprint
+    key = loader_preflight._memo_key(name, 0)
+    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint", lambda *a, **k: (
+        events.append(("price", "credited" if key in loader_preflight._CLEARED_UNETS
+                       else "charged")), price(*a, **k))[1])
+
+    wedged = _eager_handle("wedged", events, abandoned=1)
+    fresh = _eager_handle("fresh", events)
+    for handle in (wedged, fresh):
+        handle.owns_hosts = False  # rank 0 shares the driver host: weights are charged
+    loaded = set()
+
+    def load_on_fresh(endpoint, unet_name, *_args, **_kwargs):
+        events.append((endpoint, "fresh"))
+        if unet_name not in loaded:  # the second load reuses the resident weights
+            loaded.add(unet_name)
+            memory["available"] -= 40 * gib
+        return [{"host": "fresh", "transition": "load"}]
+
+    fresh.call_all = load_on_fresh
+    monkeypatch.setattr(loaders, "ensure_live", _cache(wedged, fresh))
+    mesh = MeshSpec(handle=wedged, topology_preset="uly2", attention="TORCH_FLASH",
+                    sync_ulysses=True)
+
+    loaders.DGXMonarchUNETLoader().load(mesh, name)
+    assert events == [("price", "charged"), ("recycle", "wedged"), ("drop_memos",),
+                      ("price", "charged"), ("setup", "fresh"), ("load_model", "fresh")]
+    assert log.lines == [_eager_line(1, "the UNET Loader")]
+    assert memory["available"] == 74 * gib  # where charging 40 GiB again refuses
+
+    events.clear()
+    loaders.DGXMonarchUNETLoader().load(mesh, name)  # no capacity refusal
+    assert events == [("price", "credited"), ("setup", "fresh"), ("load_model", "fresh")]

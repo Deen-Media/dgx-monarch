@@ -97,6 +97,14 @@ The seams, in run order:
                               both trees, and once AttentionTensorContainer
                               exists, usp_options' override still receives
                               plain tensors through comfy's real wrap_attn
+ 39. attention keyword handoff  a pack op installed on a cosmos Attention
+                              the way Anima installs its attn_op takes the
+                              q/k/v containers and preferred_attention comfy
+                              hands it and matches stock output, and a real
+                              comfy CrossAttention hands an
+                              optimized_attention_override exactly func, q, k,
+                              v, heads, attn_precision, transformer_options and
+                              _inside_attn_wrapper
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -3509,6 +3517,207 @@ def _assert_lumina_attention_container_seam() -> None:
     )
 
 
+
+def _seeded(module, seed: int):
+    """Fill a comfy module built with disable_weight_init, which leaves weights empty."""
+    import torch
+
+    generator = torch.Generator().manual_seed(seed)
+    with torch.no_grad():
+        for parameter in module.parameters():
+            parameter.copy_(torch.randn(parameter.shape, generator=generator) * 0.1)
+    return module
+
+
+def _assert_attention_keyword_handoff_seam() -> None:
+    """What comfy hands the attention callables the pack installs.
+
+    Comfy c194dd00c lets a model file pin an attention kernel per block, so
+    models pass ``preferred_attention=self.comfy_attention``; comfy 8d534945e
+    boxes q/k/v in AttentionTensorContainer. Cosmos ``Attention.
+    compute_attention`` calls ``self.attn_op`` directly with both, and Anima
+    replaces that op on every self-attention, so the replacement must take the
+    containers and accept the keyword. On 2026-10-13 it did neither, and an
+    Anima uly2 render died with a TypeError inside the worker's sample.
+
+    Half one builds a real cosmos Attention, installs
+    ``anima._make_usp_attn_op`` exactly as ``AnimaAdapter.inject_usp`` does,
+    and drives ``forward`` through the real dispatcher an ordinary kernel
+    gets, with comfy's own attention standing in for xFuser's, so the output
+    must equal the stock op's bit for bit. That dispatcher drops a keyword it
+    does not know, so the op must refuse one with a typed class P refusal
+    instead: a keyword comfy starts passing fails here by name, and an op
+    that lets one through fails the refusal check. Half two drives a real comfy CrossAttention, a call site that passes
+    containers, ``attn_precision`` and ``preferred_attention``, through
+    ``usp_options``' override, and pins the exact arguments ``wrap_attn``
+    hands an override: a keyword that starts reaching the overrides fails here
+    before it reaches a ring kernel's surface check on hardware.
+    """
+    import comfy.ldm.modules.attention as attention_module
+    import comfy.ops
+    import torch
+    from comfy.ldm.cosmos import predict2
+
+    from dgx_monarch.adapters.anima import _make_usp_attn_op
+    from dgx_monarch.adapters.base import (
+        UnsupportedModelError,
+        _make_usp_attention_callable,
+        usp_options,
+    )
+    from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
+
+    container_cls = getattr(attention_module, "AttentionTensorContainer", None)
+    stock_takes_keyword = "preferred_attention" in inspect.signature(
+        predict2.torch_attention_op).parameters
+    operations = comfy.ops.disable_weight_init
+    heads, head_dim = 2, 8
+    x = torch.randn(1, 6, heads * head_dim, generator=torch.Generator().manual_seed(1))
+
+    cosmos = _seeded(predict2.Attention(heads * head_dim, None, n_heads=heads,
+                                        head_dim=head_dim, operations=operations), 0)
+    stock = cosmos(x)
+
+    kernel_calls = []
+
+    def stub_kernel(_unused, q_l, k_l, v_l):
+        # xFuser's place in the real dispatcher: (B, L, H, D) in and out.
+        kernel_calls.append(1)
+        b, s, h, d = q_l.shape
+        out = attention_module.optimized_attention(
+            q_l.transpose(1, 2), k_l.transpose(1, 2), v_l.transpose(1, 2), h,
+            skip_reshape=True)
+        return out.reshape(b, s, h, d)
+
+    real_dispatcher = _make_usp_attention_callable(stub_kernel)
+    dispatched = {}
+
+    def recording_dispatcher(q, k, v, heads, skip_reshape=False, **kwargs):
+        dispatched.update(q=q, k=k, v=v, heads=heads, skip_reshape=skip_reshape,
+                          kwargs=dict(kwargs))
+        return real_dispatcher(q, k, v, heads, skip_reshape=skip_reshape, **kwargs)
+
+    handed = {}
+    pack_op = _make_usp_attn_op(recording_dispatcher)
+
+    def recording_op(q, k, v, **kwargs):
+        handed.update(q=q, kwargs=dict(kwargs))
+        return pack_op(q, k, v, **kwargs)
+
+    cosmos.attn_op = recording_op  # the assignment AnimaAdapter.inject_usp makes
+    try:
+        pack = cosmos(x)
+    except UnsupportedModelError as exc:
+        raise AssertionError(
+            "attention keyword handoff: comfy now hands attn_op "
+            f"{sorted(handed.get('kwargs', {}))}, and Anima's op refuses what it "
+            "does not apply; decide whether a sharded kernel can apply it, then "
+            "adopt it") from exc
+
+    assert stock_takes_keyword == ("preferred_attention" in handed["kwargs"]), (
+        "attention keyword handoff: cosmos compute_attention and the stock "
+        "torch_attention_op disagree on preferred_attention, so the keyword "
+        "contract Anima's op mirrors has moved"
+    )
+    if stock_takes_keyword:
+        assert handed["kwargs"]["preferred_attention"] is cosmos.comfy_attention, (
+            "attention keyword handoff: compute_attention no longer passes the "
+            "block's own ComfyAttention as preferred_attention"
+        )
+    if container_cls is not None:
+        assert isinstance(handed["q"], container_cls), (
+            "attention keyword handoff: cosmos forward stopped boxing q/k/v in "
+            "AttentionTensorContainer before attn_op"
+        )
+    assert all(isinstance(dispatched[name], torch.Tensor) for name in "qkv"), (
+        "attention keyword handoff: Anima's op passed a container to the "
+        "sharded dispatcher instead of taking it"
+    )
+    assert dispatched["heads"] == heads and dispatched["skip_reshape"] is True, (
+        "attention keyword handoff: Anima's op lost the (B, H, S, D) layout"
+    )
+    assert dispatched["kwargs"] == {}, (
+        f"attention keyword handoff: comfy now hands attn_op {sorted(dispatched['kwargs'])} "
+        "beyond transformer_options and preferred_attention; decide whether a "
+        "sharded kernel can apply it"
+    )
+    assert torch.equal(stock, pack), (
+        "attention keyword handoff: Anima's op under comfy's real cosmos "
+        "Attention no longer matches the stock torch_attention_op"
+    )
+
+    def op_with_a_new_keyword(q, k, v, **kwargs):
+        # Stands in for a keyword a later comfy adds to compute_attention.
+        return pack_op(q, k, v, **kwargs, future_option=1)
+
+    cosmos.attn_op = op_with_a_new_keyword
+    kernel_calls.clear()
+    refused = ""
+    try:
+        cosmos(x)
+    except UnsupportedModelError as exc:
+        refused = str(exc)
+    tag = parse_leading_refusal_tag(refused)
+    assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS, (
+        "attention keyword handoff: Anima's op let a keyword it does not apply "
+        "reach the dispatcher, which drops it for an ordinary kernel, instead "
+        "of refusing with a typed class P refusal"
+    )
+    assert "'future_option'" in refused and not kernel_calls, (
+        "attention keyword handoff: the refusal must name the keyword and land "
+        "before any attention kernel runs"
+    )
+
+    cross = _seeded(attention_module.CrossAttention(heads * head_dim, heads=heads,
+                                                   dim_head=head_dim,
+                                                   attn_precision=torch.float32,
+                                                   operations=operations), 2)
+    stock = cross(x)
+
+    received = {}
+
+    def fake_sharded(q, k, v, heads, **kwargs):
+        received.update(q=q, kwargs=dict(kwargs))
+        return attention_module.optimized_attention(
+            q, k, v, heads, attn_precision=kwargs.get("attn_precision"))
+
+    options = usp_options({}, fake_sharded)
+    override = options["optimized_attention_override"]
+
+    def recording_override(func, *args, **kwargs):
+        received.update(func=func, args=args, override_kwargs=dict(kwargs))
+        return override(func, *args, **kwargs)
+
+    options["optimized_attention_override"] = recording_override
+    pack = cross(x, transformer_options=options)
+
+    args = received["args"]
+    assert callable(received["func"]) and len(args) == 4 and args[3] == heads, (
+        "attention keyword handoff: wrap_attn no longer hands an override "
+        "(func, q, k, v, heads) positionally"
+    )
+    assert all(isinstance(t, torch.Tensor) for t in args[:3]), (
+        "attention keyword handoff: wrap_attn handed an override containers "
+        "instead of taking them"
+    )
+    assert set(received["override_kwargs"]) == {
+        "attn_precision", "transformer_options", "_inside_attn_wrapper"}, (
+        "attention keyword handoff: wrap_attn now hands an override "
+        f"{sorted(received['override_kwargs'])}; the pack's overrides forward "
+        "unknown keywords to the dispatcher, whose ring checks refuse them"
+    )
+    assert received["override_kwargs"]["attn_precision"] is torch.float32, (
+        "attention keyword handoff: attn_precision did not reach the override"
+    )
+    assert received["kwargs"] == {"attn_precision": torch.float32, "drop_rows": None}, (
+        "attention keyword handoff: usp_options' override handed the dispatcher "
+        f"{sorted(received['kwargs'])} rather than attn_precision and drop_rows"
+    )
+    assert torch.equal(stock, pack), (
+        "attention keyword handoff: CrossAttention through usp_options' override "
+        "no longer matches the stock call"
+    )
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -3548,6 +3757,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("media load inputs", _assert_media_load_inputs_seam),
     ("waiver history", _assert_waiver_history_seam),
     ("lumina attention container", _assert_lumina_attention_container_seam),
+    ("attention keyword handoff", _assert_attention_keyword_handoff_seam),
 )
 
 

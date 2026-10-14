@@ -114,6 +114,23 @@
       "test_shifted_distinct_storages_are_detected_as_aliases": "255d417e8e5ba017",
       "test_zimage_cfg_trim_rederives_num_tokens": "4f75d8111b190c56"
     },
+    "tests/test_anima_adapter.py": {
+      "test_dp_cond_exempt_keys_covers_raw_t5_sequences": "9ad6068ed5132520",
+      "test_inject_binds_self_attn_only_and_forward": "f4b6376501ced38b",
+      "test_llm_adapter_is_never_in_the_bound_set": "46088de2340ec182",
+      "test_matches_excludes_sibling_cosmos_predict2": "2c4f11632313bc60",
+      "test_naive_unpadded_rope_chunk_misaligns_the_later_rank": "243fcafafcc8526c",
+      "test_pad_unit_is_one_h_row_of_w_tokens_and_gather_trims": "9f7e13656cee3476",
+      "test_rope_shards_identically_to_h_tokens": "72ed054c49412fb0",
+      "test_state_dict_keys_never_mis_detect_as_another_family": "f029c72ed53bb4ac",
+      "test_t1_shard_is_a_contiguous_token_slice": "643bb5497b765462",
+      "test_the_ignored_block_preference_is_logged_once_per_site": "acc13a800027ea69",
+      "test_usp_attn_op_hands_usp_the_bhsd_layout": "b7a920c6e1ceeb18",
+      "test_usp_attn_op_refuses_a_keyword_it_does_not_apply": "37752d087fd25559",
+      "test_usp_attn_op_refuses_a_mix_of_containers_and_tensors": "c4750aeff6fe4093",
+      "test_usp_attn_op_takes_comfy_containers_and_ignores_the_block_preference": "b1bfca86842f9941",
+      "test_usp_attn_op_under_the_real_dispatcher_matches_the_plain_call": "a5b32f5f5ed2e0c1"
+    },
     "tests/test_auto_gate_fsdp_refusal.py": {
       "test_a_priced_capacity_stop_publishes_no_process_verdict": "c58ad4604abc47e8",
       "test_a_reprice_stop_leaves_no_process_denial": "4f60c6cbf558c179",

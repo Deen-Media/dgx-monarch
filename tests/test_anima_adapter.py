@@ -9,7 +9,11 @@ port shards the H axis. These tests pin the layout that shard depends on:
     differing pad (or an unpadded chunk on the flat L axis) rotates later
     ranks' tokens by the wrong position, for T=1 and for the T>1 interleave;
   * the pad unit is one whole H-row (W tokens) and the gather trims it, bit-exact;
-  * the attn_op wrapper hands USP the (B, H, S, D) layout and returns (B, S, H*D);
+  * the attn_op wrapper hands USP the (B, H, S, D) layout and returns (B, S, H*D),
+    and takes the q/k/v containers and per-block attention preference comfy's
+    cosmos Attention.compute_attention now passes it, with no change in output,
+    and refuses any other keyword with a typed class P refusal, because the
+    real dispatcher drops an unknown keyword for an ordinary kernel;
   * the exact-type allowlist keeps the sibling Cosmos-Predict2 model out;
   * the llm_adapter, which runs in extra_conds before the sharded forward, is
     never in the bound set (self-attn is; cross-attn stays stock).
@@ -19,7 +23,12 @@ import torch
 
 from dgx_monarch.adapters import base
 from dgx_monarch.adapters.anima import AnimaAdapter, _make_usp_attn_op, _shard_rope_h
-from dgx_monarch.adapters.base import InjectionContext
+from dgx_monarch.adapters.base import (
+    InjectionContext,
+    UnsupportedModelError,
+    _make_usp_attention_callable,
+)
+from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
 from fake_model_base_helpers import install_fake_model_base
 
 
@@ -108,6 +117,128 @@ def test_usp_attn_op_hands_usp_the_bhsd_layout():
     assert captured["heads"] == H
     assert captured["skip_reshape"] is True
     assert out.shape == (B, S, H * D)
+
+
+
+class _Container:
+    """Stand-in for comfy's AttentionTensorContainer: peek, and a single take."""
+
+    __slots__ = ("tensor",)
+
+    def __init__(self, tensor):
+        self.tensor = tensor
+
+    def peek(self):
+        if self.tensor is None:
+            raise RuntimeError("attention tensor container has already been consumed")
+        return self.tensor
+
+    def take(self):
+        tensor = self.peek()
+        self.tensor = None
+        return tensor
+
+
+class _Preference:
+    """Stand-in for comfy's ComfyAttention: a config and a pinned kernel."""
+
+    config = {"attention": "comfy_kitchen_int8"}
+
+    @staticmethod
+    def function(*args, **kwargs):  # pragma: no cover - must never run
+        raise AssertionError("the per-block kernel must not run under USP")
+
+
+def _bhsd_sdpa(q, k, v, heads, skip_reshape=False, **kw):
+    assert skip_reshape is True and q.shape[1] == heads and not kw
+    b, h, s, d = q.shape
+    out = torch.nn.functional.scaled_dot_product_attention(q, k, v)
+    return out.transpose(1, 2).reshape(b, s, h * d)
+
+
+def test_usp_attn_op_takes_comfy_containers_and_ignores_the_block_preference():
+    # Comfy 8d534945e: cosmos Attention.compute_attention calls
+    # attn_op(q, k, v, transformer_options=..., preferred_attention=...) with
+    # q/k/v boxed in AttentionTensorContainer. That call raised TypeError on
+    # hardware (2026-10-13). The output must equal the plain call bit for bit.
+    torch.manual_seed(0)
+    B, S, H, D = 1, 12, 4, 8
+    q, k, v = (torch.randn(B, S, H, D) for _ in range(3))
+    op = _make_usp_attn_op(_bhsd_sdpa)
+    plain = op(q, k, v, transformer_options={})
+    keyword = op(q, k, v, transformer_options={}, preferred_attention=_Preference())
+    boxes = [_Container(t) for t in (q, k, v)]
+    boxed = op(*boxes, transformer_options={}, preferred_attention=_Preference())
+    assert torch.equal(plain, keyword)
+    assert torch.equal(plain, boxed)
+    assert all(box.tensor is None for box in boxes)  # each taken exactly once
+
+
+def test_usp_attn_op_refuses_a_mix_of_containers_and_tensors():
+    q = torch.randn(1, 4, 2, 8)
+    op = _make_usp_attn_op(_bhsd_sdpa)
+    with pytest.raises(TypeError, match="attention tensor containers"):
+        op(_Container(q), q, q, preferred_attention=None)
+    with pytest.raises(TypeError, match="attention tensor containers"):
+        op(q, _Container(q), _Container(q))
+
+
+def _real_dispatcher(calls):
+    """The dispatcher an ordinary kernel gets: no surface validator, with a
+    stub in xFuser's place that attends (B, L, H, D) on CPU and counts calls."""
+
+    def inner(_unused, q_l, k_l, v_l):
+        calls.append(tuple(q_l.shape))
+        out = torch.nn.functional.scaled_dot_product_attention(
+            q_l.transpose(1, 2), k_l.transpose(1, 2), v_l.transpose(1, 2))
+        return out.transpose(1, 2)
+
+    return _make_usp_attention_callable(inner)
+
+
+def test_usp_attn_op_under_the_real_dispatcher_matches_the_plain_call():
+    torch.manual_seed(1)
+    B, S, H, D = 1, 12, 4, 8
+    q, k, v = (torch.randn(B, S, H, D) for _ in range(3))
+    calls = []
+    op = _make_usp_attn_op(_real_dispatcher(calls))
+    boxes = [_Container(t) for t in (q, k, v)]
+    out = op(*boxes, transformer_options={}, preferred_attention=_Preference())
+    assert calls == [(B, S, H, D)]
+    assert torch.equal(out, _make_usp_attn_op(_bhsd_sdpa)(q, k, v))
+
+
+@pytest.mark.parametrize("keyword,value", [
+    ("future_option", 3),                 # a keyword no pack code knows
+    ("mask", None),                       # names the dispatcher would accept
+    ("skip_output_reshape", True),
+    ("attn_precision", torch.float32),
+])
+def test_usp_attn_op_refuses_a_keyword_it_does_not_apply(keyword, value):
+    # The op runs outside comfy's wrap_attn, so nothing upstream filters its
+    # keywords, and the real dispatcher drops an unknown one for an ordinary
+    # kernel: forwarding it would let a ComfyUI change pass unapplied.
+    calls = []
+    dispatcher = _real_dispatcher(calls)
+    q = torch.randn(1, 4, 2, 8)
+    if keyword == "future_option":
+        bhsd = q.transpose(1, 2)
+        dispatcher(bhsd, bhsd, bhsd, heads=2, skip_reshape=True, future_option=3)
+        assert len(calls) == 1  # attended as if the keyword were absent
+        calls.clear()
+    boxes = [_Container(q.clone()) for _ in range(3)]
+    with pytest.raises(UnsupportedModelError) as excinfo:
+        _make_usp_attn_op(dispatcher)(*boxes, transformer_options={},
+                                      preferred_attention=_Preference(),
+                                      **{keyword: value})
+    message = str(excinfo.value)
+    tag = parse_leading_refusal_tag(message)  # consumes the lease, not abandons it
+    assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+    assert tag.guard is None and tag.waivable is False
+    assert repr(keyword) in message and "topology 'single'" in message
+    assert "docs/TROUBLESHOOTING.md #116" in message
+    assert calls == []                                   # no kernel ran
+    assert all(box.tensor is not None for box in boxes)  # nothing was taken
 
 
 @pytest.fixture
@@ -215,3 +346,19 @@ def test_state_dict_keys_never_mis_detect_as_another_family():
     # llm_adapter): llm_adapter separates the two families.
     cosmos_predict2 = [k for k in stripped if "llm_adapter." not in k]
     assert not all(_has_segment(cosmos_predict2, n) for n in ("llm_adapter.", "mlp.layer1."))
+
+
+def test_the_ignored_block_preference_is_logged_once_per_site(monkeypatch):
+    from dgx_monarch.adapters import attention_inputs
+
+    lines = []
+    monkeypatch.setattr(attention_inputs, "_noted_sites", set())
+    monkeypatch.setattr(attention_inputs.log, "debug", lambda *a: lines.append(a))
+    q = torch.randn(1, 4, 2, 8)
+    op = _make_usp_attn_op(_bhsd_sdpa)
+    op(q, q, q)                                      # no preference: no line
+    for _ in range(3):
+        op(q, q, q, preferred_attention=_Preference())
+    assert len(lines) == 1
+    assert lines[0][1] == "anima self-attention"
+    assert lines[0][2] == {"attention": "comfy_kitchen_int8"} and lines[0][3] is True

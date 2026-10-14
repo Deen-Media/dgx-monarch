@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+- Render Anima under sequence parallelism again on current ComfyUI builds.
+  ComfyUI now hands a model's attention op its q, k and v in single-use
+  containers and names a preferred kernel for each block; Anima's op refused
+  both with a TypeError inside the worker. The op now takes the containers and
+  ignores the preference, because the Init node's attention setting picks the
+  kernel, and a new seam contract holds that handoff against the real ComfyUI
+  tree so the daily canary catches the next change of this kind.
+- Heal the abandoned-lease wedge before eager setup too. After a worker crash,
+  changing the checkpoint, topology or levers no longer needs a manual Reset:
+  Init with an explicit topology, the UNET Loader and the BasicScheduler now
+  run the same one-shot reset that renders and Fleet queues run, and log it.
 - Show more of the cluster where operators already look. `/dgxm/metrics` adds
   `dgxm_render_sec_per_step`, `dgxm_native_return_latched` (0 or 1) and
   `dgxm_native_return_fault_count`; under a stale telemetry payload the latch
