@@ -3679,7 +3679,16 @@ A ring or hybrid topology refuses: the kernel returns no log-sum-exp for ring
 ranks to merge. A family other than MiniMax H3 refuses with its own reason. A
 box without the package refuses naming that box: the driver checks every rank
 before it dispatches, because a rank raising inside a collective abandons the
-render and strands its peers.
+render and strands its peers. A checkpoint that pins `comfy_kitchen_sol` on
+its blocks raises no card under sequence parallelism: the attention the pack
+runs ignores the pin and uses the widget's kernel, so the card appears only
+when the widget selects Sol. Stock attention that the pack leaves in place
+with the original transformer options still runs a pinned kernel, with no
+card: cross-attention in the Wan models, LTX, Kandinsky 5 and Anima, and the
+self-attention that several families run whole before the sharded block loop
+([ADAPTERS.md](ADAPTERS.md) lists them). A topology without sequence
+parallelism keeps every stock attention call, so a pin runs there as it does
+in stock ComfyUI.
 
 **The kernel is optional and is not a dependency of this project.** The opt-in
 installer plans every configured Worker interpreter. First stop ComfyUI and

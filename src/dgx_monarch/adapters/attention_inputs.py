@@ -13,8 +13,14 @@ as Anima's ``attn_op``, is called before ``wrap_attn`` and receives both.
 Under sequence parallelism the Init node's ``attention`` widget and the
 sequence-parallel dispatcher choose the kernel. The per-block preference is
 logged at debug level once per call site and otherwise ignored, so a
-checkpoint that pins a kernel per block renders with the widget's kernel
-where stock ComfyUI on one GPU would use the pinned one (docs/ADAPTERS.md).
+checkpoint that pins a kernel per block renders this attention with the
+widget's kernel where stock ComfyUI on one GPU would use the pinned one
+(docs/ADAPTERS.md). Qwen Image 2.1 and Wan-Animate 2 call comfy's native
+attention themselves and admit only TORCH_FLASH. They note the preference the
+same way and hand comfy none, so comfy's default backend runs. In a worker
+that cannot import xformers, that is torch's scaled dot product attention,
+which tries flash first and falls back to another exact backend where flash
+cannot take the call.
 
 Such an op accepts a closed set of keywords. Nothing upstream filters what
 comfy hands it, and the dispatcher drops an unknown keyword for an ordinary

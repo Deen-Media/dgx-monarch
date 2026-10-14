@@ -289,22 +289,71 @@ shape for all of them.
    q, k and v in `AttentionTensorContainer`. Comfy's `wrap_attn` drops the
    keyword and takes the tensors out of their boxes before it calls
    `optimized_attention_override`, so the `usp_options` overrides see
-   neither. An op the pack installs on the model itself runs before
-   `wrap_attn` and sees both. Anima's `attn_op` is the one such op: it takes
-   the boxes once and ignores the keyword (`adapters/attention_inputs.py`).
-   It accepts no other keyword. The dispatcher drops an unknown keyword for
-   an ordinary kernel, so the op refuses one with a class P refusal that
-   names it (docs/TROUBLESHOOTING.md #116) rather than let it pass unapplied.
+   neither. An op or callback the pack installs on the model itself runs
+   before `wrap_attn` and sees both. Anima's `attn_op` is one such op: it
+   takes the boxes once and ignores the keyword
+   (`adapters/attention_inputs.py`). It accepts no other keyword. The
+   dispatcher drops an unknown keyword for an ordinary kernel, so the op
+   refuses one with a class P refusal that names it
+   (docs/TROUBLESHOOTING.md #116) rather than let it pass unapplied. Qwen
+   Image 2.1's attention callbacks also receive both, but they do not refuse
+   an unknown keyword as Anima's op does: the two callbacks its forward
+   builds drop any keyword but the preference without a word, and the
+   prefix-fill wrapper hands one to comfy's own callback, which accepts no
+   keyword but the preference.
    Under sequence parallelism the Init `attention` widget and the dispatcher
-   choose the kernel, so the preference is logged at debug level once per
-   call site and otherwise ignored. A checkpoint that pins a kernel per block
-   (the comfy-kitchen int8 kernel, or the comfy-kitchen Sol kernel,
-   `comfy_kitchen_sol`, with its tau) therefore renders with the widget's
-   kernel where stock ComfyUI on one GPU would use the pinned one. Qwen Image
-   2.1 and Wan-Animate 2, whose distributed paths call native Comfy
-   attention, hand the preference on to that call as stock does. The
-   "attention keyword handoff" seam in `tests/canary/comfy_seam_contracts.py`
-   holds both halves against the real ComfyUI tree.
+   choose the kernel, so the pack logs the preference at debug level once
+   per call site and otherwise ignores it. Qwen Image 2.1 and Wan-Animate 2, whose
+   distributed paths call native Comfy attention themselves, follow the same
+   rule: they log the preference once and pass `preferred_attention=None`,
+   so comfy's default backend runs, and these paths admit no widget value
+   but `TORCH_FLASH`. A worker starts ComfyUI with no attention flags, so on
+   NVIDIA, when the worker interpreter cannot import xformers, that default
+   is torch's scaled dot product attention. With xformers importable, comfy
+   picks xformers attention instead. For a call with at least 131,072 query
+   elements, comfy's wrapper asks torch to try flash first, then cuDNN, the
+   efficient kernel and math; it leaves smaller calls to torch's own order.
+   Flash takes no mask, so Qwen's masked text rows run one of the other
+   backends. Each of these is exact, so no approximate kernel runs under the
+   `TORCH_FLASH` stamp, though the stamp does not name the one kernel that
+   ran. Qwen's cache-miss prefix fill runs comfy's own
+   `block_causal_attention` callback, which hands the preference on, so the
+   adapter wraps that callback to pass none. A checkpoint that pins a kernel
+   per block (the comfy-kitchen int8 kernel, or the comfy-kitchen Sol
+   kernel, `comfy_kitchen_sol`, with its tau) therefore renders this
+   attention with the widget's kernel where stock ComfyUI on one GPU would
+   use the pinned one. The pack asks for the class-K Sol-Attn waiver only
+   when the widget selects Sol.
+
+   Under sequence parallelism one gap remains. Stock attention that the pack
+   leaves in place gets the original `transformer_options`, with no
+   `usp_options` override, so comfy's `wrap_attn` still runs a block's pin
+   there under the widget's stamp, and no class-K card appears. A read of
+   every adapter against ComfyUI e8665ca8 on 2026-10-14 found these sites:
+
+   * cross-attention: every block's `cross_attn` in Wan 2.1 and 2.2, Wan
+     SCAIL, WanDancer and Wan-Animate 2; `attn2` in LTX, and `audio_attn2`
+     as well in LTX audio-video; the visual blocks' `cross_attention` in
+     Kandinsky 5; and Anima's cross-attention, which runs cosmos' stock
+     `torch_attention_op`;
+   * self-attention that every rank runs whole before the sharded block
+     loop: the context and noise refiners in Z-Image; the context, noise and
+     reference-image refiners in OmniGen2; Boogu's context refiner; the
+     token refiner (`txt_in`) in HunyuanImage 2.1 and HunyuanVideo 1.5;
+     MiniMax H3's token refiner; Kandinsky 5's text transformer blocks; and
+     the text fusion blocks in Krea2 and Kroma (all of them under pure
+     Ulysses, the layerwise blocks under ring or hybrid).
+
+   The other families leave no such call: their sharded forwards call the
+   pack's kernel directly, install an override that `wrap_attn` checks
+   before the preference, or, as in Qwen Image 2.1, hand comfy no
+   preference. Topologies without
+   sequence parallelism (cfg2, dp and single) leave every stock attention
+   call in place, so a pin runs there as it does in stock ComfyUI, and the
+   render record still names the widget's kernel. The "attention keyword
+   handoff" seam in `tests/canary/comfy_seam_contracts.py` holds the Anima
+   op, the `usp_options` override, the Qwen Image 2.1 attention and the
+   Wan-Animate 2 self-attention against the real ComfyUI tree.
 
    **Lens joint order, key bias and text rows.** Each Lens block joins
    `[image, text]`, so Ulysses' head all-to-all gathers `[image0, text0,

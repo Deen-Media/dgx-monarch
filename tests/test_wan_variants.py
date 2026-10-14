@@ -686,3 +686,84 @@ def test_wandancer_per_frame_e0_expansion_arithmetic():
     scalar = torch.zeros(1, 1, 1, 1)
     if scalar.shape[1] > 1:
         pytest.fail("scalar e0 must take the broadcast path")
+
+
+class _PinnedPreference:
+    """Stand-in for comfy's ComfyAttention on a block a checkpoint pins to Sol."""
+
+    config = {"attention": "comfy_kitchen_sol", "tau": 1.0}
+
+    @staticmethod
+    def function(*_args, **_kwargs):  # pragma: no cover - must never run
+        raise AssertionError("the pinned per-block kernel must not run under USP")
+
+
+def test_wan_animate2_native_attention_drops_the_block_preference(monkeypatch):
+    """Issue #30: pose and generation attention hand comfy no preference, so a
+    block whose self-attention is pinned to comfy-kitchen Sol renders that
+    attention with the widget's kernel, and the adapter logs the ignored
+    preference once."""
+    from dgx_monarch.adapters import attention_inputs
+
+    class Container:
+        def __init__(self, tensor):
+            self.tensor = tensor
+
+        def take(self):
+            tensor, self.tensor = self.tensor, None
+            return tensor
+
+    calls = []
+
+    def optimized_attention(q, k, v, heads=None, **kwargs):
+        calls.append(dict(kwargs, heads=heads))
+        k.take(), v.take()
+        return q.take()
+
+    attention = types.ModuleType("comfy.ldm.modules.attention")
+    attention.AttentionTensorContainer = Container
+    attention.optimized_attention = optimized_attention
+    comfy = types.ModuleType("comfy")
+    ldm = types.ModuleType("comfy.ldm")
+    modules = types.ModuleType("comfy.ldm.modules")
+    comfy.ldm, ldm.modules, modules.attention = ldm, modules, attention
+    for name, module in (("comfy", comfy), ("comfy.ldm", ldm),
+                         ("comfy.ldm.modules", modules),
+                         ("comfy.ldm.modules.attention", attention)):
+        monkeypatch.setitem(sys.modules, name, module)
+    lines = []
+    monkeypatch.setattr(attention_inputs, "_noted_sites", set())
+    monkeypatch.setattr(attention_inputs.log, "debug", lambda *args: lines.append(args))
+    # One rank: the spatial gather is the identity.
+    monkeypatch.setattr(wan_animate2.WanAnimate2Adapter, "_gather_spatial",
+                        staticmethod(lambda t, _frames, _pixels: t))
+
+    heads, head_dim, pixels = 2, 4, 3
+    self_attn = types.SimpleNamespace(
+        num_heads=heads, head_dim=head_dim, comfy_attention=_PinnedPreference(),
+        qkv=lambda x, _freqs: tuple(x.reshape(x.shape[0], x.shape[1], heads, head_dim)
+                                    for _ in range(3)),
+        o=lambda out: out,
+        _attn1_patch=lambda out, _q, _k, _options: out,
+    )
+    wan_animate2.WanAnimate2Adapter().inject_usp(
+        types.SimpleNamespace(blocks=[types.SimpleNamespace(self_attn=self_attn)]),
+        InjectionContext(topology_sp=1, usp_attention=types.SimpleNamespace(
+            effective_kernel="TORCH_FLASH")))
+
+    options = {"_dgxm_animate2_pose_frames": 1, "_dgxm_animate2_pixels": pixels}
+    pose_x = torch.randn(1, pixels, heads * head_dim)
+    out, k_pose, v_pose = self_attn.forward_pose(pose_x, None, transformer_options=options)
+    assert torch.equal(out, pose_x)
+    gen_x = torch.randn(1, 2 * pixels, heads * head_dim)
+    gen = self_attn.forward_gen(gen_x, None, k_pose, v_pose, 2, pixels, None,
+                                transformer_options=options)
+    assert torch.equal(gen, gen_x)
+    assert len(calls) == 3  # one pose call and one per generation frame
+    assert all("preferred_attention" in call and call["preferred_attention"] is None
+               for call in calls)
+    assert all(call["transformer_options"] is options and call["heads"] == heads
+               for call in calls)
+    assert len(lines) == 1
+    assert lines[0][1] == "wan_animate2 attention"
+    assert lines[0][2] == _PinnedPreference.config and lines[0][3] is True

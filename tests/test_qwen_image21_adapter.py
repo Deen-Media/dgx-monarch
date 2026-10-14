@@ -562,3 +562,181 @@ def test_qwen21_signature_does_not_fall_into_legacy_qwen():
         "model.diffusion_model.img_in.weight",
     ]
     assert detect_family_from_keys(keys) == "qwen_image21"
+
+
+class _PinnedPreference:
+    """Stand-in for comfy's ComfyAttention on a block a checkpoint pins to Sol."""
+
+    config = {"attention": "comfy_kitchen_sol", "tau": 1.0}
+
+    @staticmethod
+    def function(*_args, **_kwargs):  # pragma: no cover - must never run
+        raise AssertionError("the pinned per-block kernel must not run under USP")
+
+
+def _record_native_attention(monkeypatch):
+    """Stub comfy's attention module; record what reaches optimized_attention."""
+    calls = []
+    attention = types.ModuleType("comfy.ldm.modules.attention")
+
+    def optimized_attention(q, k, v, heads, **kwargs):
+        calls.append(kwargs)
+        return q
+
+    attention.optimized_attention = optimized_attention
+    comfy = types.ModuleType("comfy")
+    ldm = types.ModuleType("comfy.ldm")
+    modules = types.ModuleType("comfy.ldm.modules")
+    comfy.ldm, ldm.modules, modules.attention = ldm, modules, attention
+    for name, module in (("comfy", comfy), ("comfy.ldm", ldm),
+                         ("comfy.ldm.modules", modules),
+                         ("comfy.ldm.modules.attention", attention)):
+        monkeypatch.setitem(sys.modules, name, module)
+    return calls
+
+
+def _record_notes(monkeypatch):
+    from dgx_monarch.adapters import attention_inputs
+
+    lines = []
+    monkeypatch.setattr(attention_inputs, "_noted_sites", set())
+    monkeypatch.setattr(attention_inputs.log, "debug", lambda *args: lines.append(args))
+    return lines
+
+
+def test_native_attention_drops_the_block_preference_and_notes_it_once(monkeypatch):
+    """Issue #30: a checkpoint that pins comfy-kitchen Sol per block must not run
+    it under the TORCH_FLASH stamp. Every native call gets no preference, and
+    the ignored preference is logged once for the call site."""
+    import dgx_monarch.adapters.qwen_image21 as q21
+
+    calls = _record_native_attention(monkeypatch)
+    lines = _record_notes(monkeypatch)
+    options = {"native": "options"}
+    q = torch.randn(1, 9, 3, 4)
+    marker = object()
+    for _ in range(2):
+        block_causal_target_attention(
+            q[:, :4], q[:, :4], q[:, :4], q[:, 4:], q[:, 4:], q[:, 4:],
+            [(0, 2, marker), (2, 4, None)], 3,
+            transformer_options=options, preferred_attention=_PinnedPreference(),
+        )
+        q21.cached_target_attention(
+            q[:, :4], q[:, :4], q[:, 4:], q[:, 4:], q[:, 4:], 3,
+            transformer_options=options, preferred_attention=_PinnedPreference(),
+        )
+    assert len(calls) == 8
+    assert all("preferred_attention" in call and call["preferred_attention"] is None
+               for call in calls)
+    assert all(call["transformer_options"] is options for call in calls)
+    assert [call["mask"] for call in calls[:4]] == [marker, None, None, None]
+    assert len(lines) == 1
+    assert lines[0][1] == "qwen_image21 attention"
+    assert lines[0][2] == _PinnedPreference.config and lines[0][3] is True
+
+
+def test_prefix_fill_callback_drops_the_block_preference_and_notes_it_once(monkeypatch):
+    """The cache-miss prefix fill runs comfy's own block_causal_attention
+    callback, which hands the preference on; the wrapper hands it none."""
+    from dgx_monarch.adapters.qwen_image21 import without_block_preference
+
+    lines = _record_notes(monkeypatch)
+    received = []
+
+    def stock_callback(q, k, v, heads, preferred_attention=None, **kwargs):
+        received.append((q, k, v, heads, preferred_attention, kwargs))
+        return q
+
+    attn = without_block_preference(stock_callback, "qwen_image21 prefix fill attention")
+    boxes = (object(), object(), object())
+    for _ in range(3):
+        assert attn(*boxes, 4, preferred_attention=_PinnedPreference()) is boxes[0]
+    attn(*boxes, 4, preferred_attention=_PinnedPreference(), later_option=1)
+    assert [entry[:5] for entry in received] == [(*boxes, 4, None)] * 4
+    assert [entry[5] for entry in received] == [{}, {}, {}, {"later_option": 1}]
+    assert len(lines) == 1
+    assert lines[0][1] == "qwen_image21 prefix fill attention"
+
+
+def test_cache_miss_forward_hands_the_prefix_fill_callback_no_preference(monkeypatch):
+    """Drive the injected forward through a prefix-cache miss. The fill runs
+    comfy's own block_causal_attention callback; a block that passes its pin
+    must reach that callback, and the target attention after it, with none."""
+    import dgx_monarch.adapters.qwen_image21 as q21
+    from dgx_monarch.adapters import base as adapter_base
+
+    calls = _record_native_attention(monkeypatch)
+    lines = _record_notes(monkeypatch)
+    fills = []
+
+    class Cache:
+        def __init__(self):
+            self.entries = {}
+
+        def put(self, index, kv):
+            self.entries[index] = kv
+
+        def take(self, index, _device, _dtype, _batch):
+            return self.entries[index]
+
+    def block_causal_attention(segments, transformer_options, cache, index, prefix_len):
+        # Comfy's callback accepts only preferred_attention beside q, k, v, heads.
+        def attn(q, k, v, heads, preferred_attention=None):
+            fills.append((index, preferred_attention))
+            cache.put(index, torch.stack([k[:, :prefix_len], v[:, :prefix_len]], dim=1))
+            return q.flatten(2)
+        return attn
+
+    model = types.ModuleType("comfy.ldm.qwen_image21.model")
+    model.block_causal_attention = block_causal_attention
+    model.prefix_cache_key = lambda x, _context, _refs, _slots: torch.zeros(x.shape[0], 1)
+    model._split_rows = lambda tensor: tensor
+    package = types.ModuleType("comfy.ldm.qwen_image21")
+    package.model = model
+    monkeypatch.setattr(sys.modules["comfy.ldm"], "qwen_image21", package, raising=False)
+    monkeypatch.setitem(sys.modules, "comfy.ldm.qwen_image21", package)
+    monkeypatch.setitem(sys.modules, "comfy.ldm.qwen_image21.model", model)
+    # One rank: sharding is the identity and the gather trims to the real rows.
+    monkeypatch.setattr(adapter_base, "sp_world", lambda: 1)
+    monkeypatch.setattr(adapter_base, "sp_rank", lambda: 0)
+    monkeypatch.setattr(q21, "sp_gather", lambda tensor, orig, dim=1: tensor.narrow(dim, 0, orig))
+
+    heads, head_dim, prefix_len, h, w = 2, 4, 3, 1, 2
+    inner = heads * head_dim
+
+    def block(states, _mod, _pe, attn_fn, _active_prefix_len, _options):
+        b, s, _ = states.shape
+        q = states.view(b, s, heads, head_dim)
+        return states + attn_fn(q, q, q, heads, preferred_attention=_PinnedPreference())
+
+    cache = Cache()
+    fake = types.SimpleNamespace(
+        transformer_blocks=[block, block],
+        inner_dim=inner,
+        out_channels=inner,
+        prefix_cache_enabled=True,
+        reset_prefix_cache=lambda _enabled: None,
+        build_sequence=lambda x, _context, _refs, _slots: (
+            torch.randn(x.shape[0], prefix_len + h * w, inner),
+            torch.zeros(x.shape[0], prefix_len + h * w, 1),
+            [(0, prefix_len, None), (prefix_len, prefix_len + h * w, None)]),
+        time_text_embed=lambda t, _dtype: torch.zeros(t.shape[0], inner),
+        modulation=lambda temb: torch.zeros(temb.shape[0], 4 * inner),
+        select_prefix_cache=lambda _key, _bytes, _device, _options: (cache, False),
+        norm_out=lambda target, _temb: target,
+        proj_out=lambda target: target,
+    )
+    QwenImage21Adapter().inject_usp(
+        fake, InjectionContext(topology_sp=1, usp_attention=types.SimpleNamespace(
+            effective_kernel="TORCH_FLASH")))
+    out = fake._forward(
+        torch.randn(1, inner, h, w), torch.tensor([0.5]), torch.randn(1, 2, 4),
+        transformer_options={"qwen_image21_cache": {"device": "gpu", "dtype": "default"}})
+
+    assert out.shape == (1, inner, h, w)
+    assert fills == [(0, None), (1, None)]
+    assert sorted(cache.entries) == [0, 1]
+    assert len(calls) == 2  # one target attention per block, after its fill
+    assert all(call["preferred_attention"] is None and call["mask"] is None for call in calls)
+    assert sorted(line[1] for line in lines) == [
+        "qwen_image21 attention", "qwen_image21 prefix fill attention"]
