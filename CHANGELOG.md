@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+- Price the FSDP clean-reload proof against what the proof frees. The initial
+  preflight and the post-baseline reprice now credit each rank's resident shard
+  pool, read from the worker's reserved figure and capped at one share, because
+  the proof unloads that shard set before it builds the next one. The Worker's
+  own check after the real unload stays decisive. On the 60 GiB bf16 Flux2
+  checkpoint the preflight refused at 39.1 GiB available against 39.8 required
+  while 30 GiB of shards it was about to drop were resident. With the credit the
+  price fits, but the Flux2 proof has not been rerun on hardware with it.
+  Every refusal names the credit it applied
+  ([TROUBLESHOOTING #88](docs/TROUBLESHOOTING.md#88-the-first-render-of-an-fsdp-topology-refuses-with-a-capacity-figure-and-no-proof)).
 - Clear a set of small defects and hygiene items an external review and the
   2026-10-13 audit turned up. `dgxm setup` closes each config-directory
   descriptor once and never retries a released number. `dgxm top` rail rates

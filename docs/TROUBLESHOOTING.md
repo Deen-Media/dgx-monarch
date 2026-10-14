@@ -3939,38 +3939,55 @@ worker-death recovery above.
 
 **What you see:** first-use FSDP proof refuses with a capacity estimate before
 it can establish PASS. Clean-reload proof unloads/reloads every rank and
-compares two renders; on UMA, retained allocations can prevent that reload.
-This says nothing about topology or weight correctness.
+compares two renders; the refusal says the next load does not fit beside
+other resident memory, often the driver's text encoder. This says nothing
+about topology or weight correctness.
 
 **What to do:** free memory outside this render's shards, such as another
-model or the driver's text encoder (Clear VRAM, `include_driver=True`). A
-smaller bf16/fp16 checkpoint may help; fp8/int8 still pays the full-file bound
-below. Reset alone does not help because the estimate runs after your next
-initial load. To render without proof, set Init's `auto_gate=off` and accept
-its ordinary ungated status.
+model or the driver's text encoder (Clear VRAM, `include_driver=True`). The
+estimate already counts this render's own shard pool, so freeing those shards
+gains nothing. A smaller bf16/fp16 checkpoint may help; fp8/int8 still pays
+the full-file bound below. Reset alone does not help because the estimate runs
+after your next initial load. To render without proof, set Init's
+`auto_gate=off` and accept its ordinary ungated status.
 
 **Read where the refusal occurred:**
 
 | Stage | Resident state and retry cost |
 |---|---|
 | Initial preflight | No shards unloaded or proof render run. The ledger records INCONCLUSIVE with `cross_mode: CAPACITY` and measured bytes; no verdict is cached. Free memory and requeue to re-estimate. |
-| Reprice after baseline, or capacity refusal during proof | Shards have already been unloaded and a baseline may have run. Requeue repeats proof and its render cost. Only initial preflight preserves the starting residency. |
+| Reprice after baseline, or capacity refusal during proof | Shards have already been unloaded and a baseline may have run. Requeue repeats proof and its render cost. Only initial preflight preserves the starting residency. The reprice credits the baseline shards the cycle drops before it reloads, up to one share. It does not credit the baseline render's sampling reservations, though the cycle frees them too. A refusal there means the driver's text encoder, another resident model, or those sampling reservations leave too little. |
 
-The least-free rank governs. The driver uses the worker launch estimate:
+The least-free rank governs, after a credit for its resident shard pool. Every
+load the proof prices follows an unload: the ceremony unloads your shards
+before the baseline load, and the cycle unloads the baseline before the
+reload. So the driver adds each rank's torch reserved memory, capped at one
+share of the file, to its MemAvailable. The refusal and the driver log state
+both figures: the GiB available and the GiB of resident shards the proof drops
+first. An unknown world gets no credit. The price is the worker launch estimate:
 known-world bf16/fp16 needs `(1/world + 0.08) * file + 5 GiB`; other precisions
 or unknown world need `1.2 * file + 5 GiB` (DESIGN.md 5.4). The streaming build
 commits shards plus one block; its world-2 0.58 factor exceeds the measured
-0.547x high-water on a 60 GiB file. A 60 GiB bf16 Flux2 reload fit beside the
-initial shards but failed the post-baseline reprice after the driver's encoder
-became resident ([VALIDATION.md](VALIDATION.md#evidence-kandinsky5-image)).
+0.547x high-water on a 60 GiB file. The Worker prices the same load again after
+the real unload, and its guard stays decisive.
 
-Proof does not replace the entire fleet to reclaim its arena: that would
-unload existing residents and break the initial-preflight preservation promise.
+On 2026-10-13 a 60.02 GiB bf16 Flux2 proof refused at the initial preflight
+with the driver's encoder resident: rank 0 read 39.1 GiB available, with its
+30.0 GiB share resident, against 39.8 GiB. A 24.48 GiB bf16 Krea2 proof passed,
+and both of its unloads returned the whole share to the host. With the credit
+the Flux2 preflight reads 39.1 plus 29.9 GiB against 39.8 GiB. The Flux2 proof
+has not been rerun on hardware with the credit
+([VALIDATION.md](VALIDATION.md#fsdp-calibration)).
+
+Proof does not replace the entire fleet to free memory: that would unload
+existing residents and break the initial-preflight preservation promise. A
+preflight refusal still unloads nothing.
 
 **A worker refusal inside proof** can mean the estimate was unavailable
 (discrete GPU, loader dtype cast, unmeasurable checkpoint, or missing rank
-memory), or that an initially fitting load was followed by another load while
-sampling reservations remained. The driver logs every applied estimate, even
+memory), that an unload returned less than the credit counted, or that an
+initially fitting load was followed by another load while sampling
+reservations remained. The driver logs every applied estimate, even
 when it fits. Such ledger rows retain `cross_mode: CAPACITY` and classify the
 refusal instead of recording driver-measured bytes. The estimate covers one
 load, not proof's peak memory.

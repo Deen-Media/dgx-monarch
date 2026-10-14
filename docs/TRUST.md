@@ -935,7 +935,7 @@ copied from historical evidence.
   abort path, and the price that precedes it, are
   [`gate_ceremony.py:328-450`](../src/dgx_monarch/nodes/gate_ceremony.py#L328-L450 "anchor:gather_ceremony_evidence"),
   [`gate_ceremony.py:191-222`](../src/dgx_monarch/nodes/gate_ceremony.py#L191-L222 "anchor:gather_ceremony_evidence"),
-  [`fsdp_reload_price.py:181-215`](../src/dgx_monarch/fsdp_reload_price.py#L181-L215 "anchor:price_fsdp_clean_reload") and
+  [`fsdp_reload_price.py:240-279`](../src/dgx_monarch/fsdp_reload_price.py#L240-L279 "anchor:price_fsdp_clean_reload") and
   [`gate_session.py:19-174`](../src/dgx_monarch/nodes/gate_session.py#L19-L174 "anchor:run_identity_ceremony"),
   [`gate_fsdp.py:179-235`](../src/dgx_monarch/nodes/gate_fsdp.py#L179-L235 "anchor:cleanup_aborted_fsdp_proof"),
   [`gate_fsdp.py:241-264`](../src/dgx_monarch/nodes/gate_fsdp.py#L241-L264 "anchor:cleanup_rejected_fsdp_pass"), and

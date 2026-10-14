@@ -262,7 +262,7 @@ def gather_ceremony_evidence(
             # Reprice before reload: the baseline render may have loaded the driver's
             # text encoder since preflight. This is an in-flight stop, so cleanup
             # retires ceremony residency and records the new measurements. See
-            # docs/VALIDATION.md, the 2026-08-26 flux2 first-use proof.
+            # docs/VALIDATION.md, FSDP calibration.
             reprice = runtime["fsdp_reload_price"].price_fsdp_clean_reload(
                 handle, model_request)
             if reprice.applies and not reprice.fits:

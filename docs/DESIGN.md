@@ -524,14 +524,21 @@ take the identical live-validation path. Exact-inode Comfy loading is supported
 only on Linux workers with `/proc/self/fd` available, because the proven open
 descriptor is exposed through a suffix-preserving procfs alias.
 
-**Proving a clean reload is a capacity question, not a liveness one.** An
-in-process unload on unified memory leaves the allocator arena committed to
-the worker. The FSDP Gate must therefore fit a second load beside the memory
-retained from the first. Before any proof side effect, the driver estimates
-that load using the worker's admission helper. An estimated non-fit records
-INCONCLUSIVE without unloading or rendering.
+**Proving a clean reload is a capacity question, not a liveness one.** The
+proof unloads every rank before each load it makes: the ceremony drops the
+user's shards before the baseline load, and the cycle drops the baseline
+before the reload, so two shard sets never coexist. The in-place shard drop
+returns that storage to the host; on 2026-10-13 both unloads of a 24.5 GiB
+bf16 proof gave back the whole share. Before any proof side effect, and again
+after the baseline render, the driver estimates the next load with the
+worker's admission helper. It compares that estimate with each rank's
+MemAvailable plus the shard pool the next unload drops (torch reserved, capped
+at one share), and the leanest rank after that credit decides. An estimated
+non-fit at the first price records INCONCLUSIVE without unloading or
+rendering. The Worker prices the load again after the real unload, and its
+guard stays decisive.
 
-Recycling the fleet would return the arena, but would also violate that
+Recycling the fleet would free other residents too, and would violate that
 no-side-effect refusal guarantee. Instead, `actor/fsdp_streaming.py` assigns
 mmap-backed checkpoint tensors and shards each block before allocating the
 next. A rank needs its shards plus one block rather than a full second copy.
@@ -541,14 +548,16 @@ full-file bound plus that floor.
 
 In the Flux2 capacity measurement, the head had 42 GiB free when
 the 60 GiB BF16 reload was estimated (`capacity_fit.py`). With the driver's
-text encoder resident, however, a 60 GiB Flux2 render under
-`auto_gate=first_use` returns INCONCLUSIVE: the Gate rechecks reload capacity
-after the baseline render (VALIDATION.md). The BF16 streaming and
+33 GiB text encoder resident, a 60 GiB Flux2 render under
+`auto_gate=first_use` returned INCONCLUSIVE at the first price on 2026-10-13:
+39.1 GiB available against 39.8 GiB, with the user's 30.0 GiB share resident.
+The credit reads that state as about 69 GiB; the Flux2 proof has not been
+rerun on hardware with it (VALIDATION.md, FSDP calibration). The BF16 streaming and
 FP8-mixed direct-wrap FSDP runs kept every sampled host above the floor, but
 did not recalibrate the 1.20 bound. Additional runs exercised INT8
 stored-byte FSDP for Krea2, Chroma, and Ideogram4 without calibrating that
-bound or its floor (VALIDATION.md, memory calibration). If an in-process
-second load cannot fit, `auto_gate=off` permits execution without that proof,
+bound or its floor (VALIDATION.md, memory calibration). If a load still cannot
+fit after that credit, `auto_gate=off` permits execution without that proof,
 subject to the ordinary admission guards.
 
 **A rank holds its shard once.** Never hand shard rows to the device straight
@@ -1279,7 +1288,7 @@ bound or its floor.
 | `consented_rescue` | the same, after both probes ran | the consent branch of `actor/capacity_quote.price`, over the same `capacity_fit.slab_load_fit`, taken again by `actor/store_slab_admit.admit` |
 | `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak | `capacity_fit.stock_load_fit` over `stock_required_bytes`, re-taken by `actor/store_residency.preload_capacity_check` |
 | an FSDP launch | bf16/fp16: this rank's shards plus one block; fp8/int8 or an unreadable kind: the conservative full-file bound; every case includes the floor | `actor/capacity_quote_fsdp.fsdp_rung`, `adapters/fsdp.fsdp_load_capacity_check`, and `actor/store_residency.preload_capacity_check`, all over `capacity_fit.fsdp_required_bytes` |
-| the gate ceremony's clean reload | the same kind-aware FSDP figure | `fsdp_reload_price.price_fsdp_clean_reload` |
+| the gate ceremony's clean reload | the same kind-aware FSDP figure, against each rank's MemAvailable plus its resident shard pool (torch reserved, capped at one share) | `fsdp_reload_price.price_fsdp_clean_reload`, crediting `fsdp_reload_price._rank_credit_bytes` |
 | the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
 | every rank at once | the leanest rank's row, before any rank allocates | `capacity_agreement.collect` and `capacity_agreement.decide` |
 

@@ -326,12 +326,16 @@ Reading the row:
   run spread), while the nightly itself, on the same dgx-monarch source,
   moved the row by 9.5%. Re-time the whole ledger on one ComfyUI commit
   before quoting cross-date ratios.
-- Run with the first-use gate off. The gate's clean-reload proof loads this
-  checkpoint a second time inside the same worker processes, where the first
-  load's footprint is still committed, so on an artifact this size the second
-  load does not fit. The driver checks reload capacity before starting and
-  reports both figures on refusal. It names `auto_gate=off` as the intended path for a
-  checkpoint this size ([TROUBLESHOOTING #88](TROUBLESHOOTING.md#88-the-first-render-of-an-fsdp-topology-refuses-with-a-capacity-figure-and-no-proof)).
+- Run with the first-use gate off. On 2026-10-13 the gate's clean-reload proof
+  on this file refused at its initial price. The driver's 33 GiB text encoder
+  was resident, and the driver host read 39.1 GiB available, with its 30.0 GiB
+  share resident, against a 39.8 GiB price. The proof unloads each rank's
+  shards before every load it makes, so the price now credits that resident
+  shard pool, capped at one share. That state now reads 39.1 plus 29.9 GiB.
+  The Flux2 proof has not been rerun on hardware with the credit. A refusal
+  names the GiB available and the credit it applied. If the load still does
+  not fit, the refusal names `auto_gate=off` as the intended path
+  ([TROUBLESHOOTING #88](TROUBLESHOOTING.md#88-the-first-render-of-an-fsdp-topology-refuses-with-a-capacity-figure-and-no-proof)).
 
 ## Updating results
 

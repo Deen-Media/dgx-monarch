@@ -1,10 +1,23 @@
-"""Price the second load required by an FSDP clean-reload proof.
+"""Price the next load an FSDP clean-reload proof makes.
 
-Read every rank through the read-only, setup-independent ``status`` endpoint,
-then apply the worker FSDP price to the lowest MemAvailable. Telemetry rounds
-to 0.01 GiB, introducing about 5 MiB of uncertainty. The pre-unload reading
-assumes an in-process unload returns no memory to the host pool; if that
-changes, the estimate becomes conservative and the next prompt reprices.
+Read every rank through the read-only, setup-independent ``status`` endpoint:
+the host's MemAvailable, rounded to 0.01 GiB, and the Worker's torch reserved
+bytes, ``vram.reserved_gib``, rounded to 0.1 GiB.
+
+The proof unloads every rank before each load it prices. The ceremony unloads
+the user's shards before the baseline load, and the cycle unloads the baseline
+before the reload. So the price credits each rank's resident shard pool: torch
+reserved less 0.05 GiB of rounding, capped at one share of the checkpoint. The
+cap keeps sampling reservations out of the credit. A rank fits when the price
+is at most its MemAvailable plus that credit, and the leanest rank after the
+credit decides. A missing or malformed reading, or an unknown world, credits
+nothing. On 2026-10-13 both unloads of a 24.5 GiB bf16 proof returned the
+whole share to the host (docs/VALIDATION.md, FSDP calibration).
+
+The Worker guard prices the same load again after the real unload
+(``actor/store_residency.preload_capacity_check``) and stays decisive. A credit
+the unload does not honor becomes that guard's in-flight class C refusal, not
+an over-commit. A preflight refusal still unloads and renders nothing.
 
 Make no claim for dtype casts, a non-integrated driver GPU, an unmeasurable
 checkpoint, or any rank without readable MemAvailable. The integrated-device
@@ -17,6 +30,7 @@ no authority.
 """
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
@@ -52,6 +66,10 @@ _SKIP_DISCRETE = "the driver CUDA device is not integrated"
 _SKIP_NO_CHECKPOINT = "the checkpoint file could not be measured here"
 _SKIP_NO_STATUS = "no rank reported a readable MemAvailable"
 
+# ``vram.reserved_gib`` is rounded to 0.1 GiB, so this much comes off each
+# reading before it is credited: the credit never exceeds what torch holds.
+_RESERVED_ROUNDING_GIB = 0.05
+
 
 @dataclass(frozen=True, slots=True)
 class ReloadPrice:
@@ -64,6 +82,9 @@ class ReloadPrice:
     mem_available_bytes: int | None = None
     rank: int | None = None
     skipped_reason: str = ""
+    # The leanest rank's resident shard pool, which the proof drops before
+    # this load. Last, so the positional constructors keep their meaning.
+    credit_bytes: int = 0
 
     @staticmethod
     def no_claim(reason: str) -> ReloadPrice:
@@ -84,10 +105,15 @@ class ReloadPrice:
         return round(self.mem_available_bytes / (1 << 30), 1)
 
     @property
+    def credit_gib(self) -> float:
+        return round(self.credit_bytes / (1 << 30), 1)
+
+    @property
     def headroom_bytes(self) -> int:
+        """MemAvailable plus the credit, less the price."""
         if self.mem_available_bytes is None:
             return 0
-        return int(self.mem_available_bytes - self.required_bytes)
+        return int(self.mem_available_bytes + self.credit_bytes - self.required_bytes)
 
     def measured(self) -> dict[str, Any]:
         """Measurement block in the field names capacity rows already carry."""
@@ -101,6 +127,8 @@ class ReloadPrice:
             "weights_gib": self.checkpoint_gib,
             "required_gib": self.required_gib,
             "mem_available_gib": self.mem_available_gib,
+            "credit_bytes": int(self.credit_bytes),
+            "credit_gib": self.credit_gib,
             "rank": self.rank,
         }
 
@@ -142,21 +170,52 @@ def _rank_mem_available_bytes(row: Any) -> int | None:
     return int(value * (1 << 30))
 
 
-def _leanest_rank(rows: Any, world: Any) -> tuple[int, int] | None:
-    """(rank, MemAvailable bytes) for the rank with the least left."""
+def _share_bytes(size: int, world: Any) -> int:
+    """One rank's share of the checkpoint, or 0 when the world is unknown."""
+    if isinstance(world, bool) or not isinstance(world, int) or world < 1:
+        return 0
+    return int(size) // world
+
+
+def _rank_credit_bytes(row: Any, share_bytes: int) -> int:
+    """The resident shard pool this rank's next unload drops, in bytes.
+
+    Torch reserved less the rounding margin, capped at one share. A missing,
+    None, boolean, negative or non-numeric reading credits 0.
+    """
+    vram = row.get("vram") if isinstance(row, Mapping) else None
+    value = vram.get("reserved_gib") if isinstance(vram, Mapping) else None
+    if share_bytes <= 0 or isinstance(value, bool) or not isinstance(value, int | float):
+        return 0
+    try:
+        reading = float(value) - _RESERVED_ROUNDING_GIB
+    except OverflowError:
+        return 0
+    if not math.isfinite(reading) or reading <= 0:
+        return 0
+    capped = min(reading, share_bytes / (1 << 30))
+    return min(int(capped * (1 << 30)), share_bytes)
+
+
+def _leanest_rank(
+    rows: Any, world: Any, share_bytes: int = 0,
+) -> tuple[int, int, int] | None:
+    """(rank, MemAvailable bytes, credit bytes) for the rank with the least
+    left once its resident shard pool is credited."""
     if not isinstance(rows, list) or not rows:
         return None
     if isinstance(world, int) and not isinstance(world, bool) and world >= 1 and len(rows) != world:
         return None
-    leanest: tuple[int, int] | None = None
+    leanest: tuple[int, int, int] | None = None
     for index, row in enumerate(rows):
         available = _rank_mem_available_bytes(row)
         if available is None:
             return None
+        credit = _rank_credit_bytes(row, share_bytes)
         rank = row.get("rank") if isinstance(row, Mapping) else None
         named = rank if isinstance(rank, int) and not isinstance(rank, bool) else index
-        if leanest is None or available < leanest[1]:
-            leanest = (named, available)
+        if leanest is None or available + credit < leanest[1] + leanest[2]:
+            leanest = (named, available, credit)
     return leanest
 
 
@@ -195,23 +254,28 @@ def price_fsdp_clean_reload(handle: Any, model_request: Mapping[str, Any]) -> Re
                   "FSDP clean-reload price could not read fleet status (%r); "
                   "the ceremony proceeds unpriced", exc)
         return ReloadPrice.no_claim(_SKIP_NO_STATUS)
-    leanest = _leanest_rank(rows, getattr(handle, "world", None))
+    world = getattr(handle, "world", None)
+    leanest = _leanest_rank(rows, world, _share_bytes(size, world))
     if leanest is None:
         return ReloadPrice.no_claim(_SKIP_NO_STATUS)
-    rank, available = leanest
+    rank, available, credit = leanest
     kind = checkpoint_kind(str(model_request.get("unet_name") or ""))
-    required = fsdp_required_bytes(size, getattr(handle, "world", None), kind)
-    price = ReloadPrice(True, required <= available, size, required, available, rank)
+    required = fsdp_required_bytes(size, world, kind)
+    price = ReloadPrice(True, required <= available + credit, size, required,
+                        available, rank, credit_bytes=credit)
     # Log both outcomes. If the price logged only on a refusal, a price that
     # fits would look like one that made no claim, and the per-rank numbers
-    # would exist only for proofs that failed.
+    # would exist only for proofs that failed. Keep the text up to "leaving"
+    # stable: probe parsers read it.
     safe_call(log.info,
               "FSDP clean-reload price: %s. Leanest rank %s reports %.1f GiB "
               "available; one more load of the %.1f GiB checkpoint needs about "
-              "%.1f GiB, leaving %.1f GiB",
+              "%.1f GiB, leaving %.1f GiB. It counted %.1f GiB available plus "
+              "%.1f GiB of resident shards the proof drops first",
               "fits" if price.fits else "does not fit", price.rank,
               price.mem_available_gib, price.checkpoint_gib, price.required_gib,
-              price.headroom_bytes / (1 << 30))
+              price.headroom_bytes / (1 << 30), price.mem_available_gib,
+              price.credit_gib)
     return price
 
 
@@ -239,7 +303,7 @@ def operator_sentence(
 
     Preflight runs before mutation. Repricing runs after the baseline render,
     which may have loaded the driver's text encoder. Its message must therefore
-    acknowledge that work has already occurred.
+    acknowledge that work has already occurred. Both name the credit applied.
     """
     if stage == "reprice":
         middle = (
@@ -254,19 +318,23 @@ def operator_sentence(
             "The proof was not started: nothing was "
             "unloaded and nothing was rendered. "
         )
+    counted = (
+        "That estimate already counts this render's own shards, up to one "
+        "share. What is short is other memory, such as the driver's text "
+        "encoder or another resident model, or this render's sampling "
+        "reservations, which the estimate does not count. "
+        if price.credit_bytes > 0 else ""
+    )
     return refusal(
         RefusalClass.CAPACITY,
         f"the FSDP clean-reload proof for {unet_name} needs one more load of "
-        f"the {price.checkpoint_gib:.1f} GiB checkpoint beside the shards "
-        f"already resident, about {price.required_gib:.1f} GiB, but rank "
-        f"{price.rank} reports only {price.mem_available_gib:.1f} GiB of "
-        "unified memory available. "
-        f"{middle}"
-        "A checkpoint this large cannot be proved in place on unified memory. A "
-        "fresh-process proof was declined on 2026-08-26: only a whole-fleet "
-        "replace frees the memory a load keeps after its unload, and a replace "
-        "unloads every model. Set auto_gate=off on the Init node: it is the "
-        "intended path for this checkpoint, not a fallback, and it runs this "
+        f"the {price.checkpoint_gib:.1f} GiB checkpoint, about "
+        f"{price.required_gib:.1f} GiB, but rank {price.rank} reports only "
+        f"{price.mem_available_gib:.1f} GiB of unified memory available plus "
+        f"{price.credit_gib:.1f} GiB of resident shards the proof drops first. "
+        f"{middle}{counted}"
+        "Set auto_gate=off on the Init node: for a checkpoint that still does "
+        "not fit, it is the intended path, not a fallback, and it runs this "
         "render ungated. What else fits: free unified memory that is not this "
         "render's own model (another resident model, or the driver's text "
         "encoder), or a smaller bf16 or fp16 checkpoint (an fp8 or int8 file "

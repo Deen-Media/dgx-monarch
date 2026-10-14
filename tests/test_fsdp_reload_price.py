@@ -453,13 +453,17 @@ def test_both_stops_carry_the_same_tag_the_worker_guard_stamps():
 
 
 def test_the_priced_stop_names_auto_gate_off_as_the_intended_path():
-    """The fresh-process proof was declined on 2026-08-26, so the refusal on a
-    too-large checkpoint frames auto_gate=off as intended, not a fallback."""
+    """A checkpoint that still does not fit once the credit is counted has
+    auto_gate=off as its intended path, not a fallback. The refusal states the
+    credit it applied, and no longer claims an in-place proof is impossible:
+    the 2026-10-13 probe measured the unload returning the shards."""
     priced = price_mod.ReloadPrice(True, False, 60 * GIB, 72 * GIB, int(47.2 * GIB), 1)
     sentence = price_mod.operator_sentence(priced, "flux2-dev.safetensors")
     assert "auto_gate=off" in sentence
     assert "intended path" in sentence
-    assert "2026-08-26" in sentence
+    assert ("47.2 GiB of unified memory available plus 0.0 GiB of resident "
+            "shards the proof drops first") in sentence
+    assert "cannot be proved in place" not in sentence
 
 
 def test_the_reprice_sentence_does_not_claim_nothing_happened():
@@ -472,7 +476,8 @@ def test_the_reprice_sentence_does_not_claim_nothing_happened():
     assert "The proof was not started" in preflight
     assert "The proof was not started" not in reprice
     assert "stopped before its reload cycle" in reprice
-    assert "auto_gate=off" in reprice and "2026-08-26" in reprice
+    assert "auto_gate=off" in reprice
+    assert "resident shards the proof drops first" in reprice
 
 
 def test_a_worker_tag_quoted_inside_the_in_flight_stop_stays_body_text():
@@ -565,3 +570,216 @@ def test_the_capacity_row_survives_a_real_ledger_round_trip(tmp_path):
     assert row["measured"]["rank"] == 1
     assert "inconclusive_kind" not in row
     assert sentence
+
+
+# The resident shard pool the proof drops before each load it prices. The
+# figures are the 2026-10-13 probe legs on the tested pair.
+
+FLUX2_BF16_BYTES = 64_446_596_128   # 60.02 GiB, the file TROUBLESHOOTING #88 is about
+KREA2_BF16_BYTES = 26_283_332_608   # 24.48 GiB, the leg that passed
+
+
+def _pooled(mem_gib: float, rank: int, reserved_gib: object) -> dict:
+    """A status row whose Worker reports ``reserved_gib`` of torch pool."""
+    row = _row(mem_gib, rank)
+    row["vram"] = {"reserved_gib": reserved_gib}
+    return row
+
+
+def _credited(reserved_gib: float) -> int:
+    return int((reserved_gib - 0.05) * GIB)
+
+
+def test_the_flux2_preflight_that_refused_fits_once_its_shards_are_credited(
+    monkeypatch,
+):
+    """The shipped price refused this proof at the initial preflight: rank 0
+    read 39.1 GiB available with its 30.0 GiB share and the driver's text
+    encoder resident, against 39.8 GiB. The ceremony's baseline unload drops
+    that share before the next load, so the price counts it."""
+    recorder = _Log()
+    monkeypatch.setattr(price_mod, "log", recorder)
+    _integrated(monkeypatch, size=FLUX2_BF16_BYTES)
+
+    bare = _price(_Handle([_row(39.1, 0), _row(82.6, 1)]))
+    assert (bare.applies, bare.fits, bare.rank) == (True, False, 0)
+    assert (bare.required_gib, bare.mem_available_gib, bare.credit_bytes) == (39.8, 39.1, 0)
+
+    recorder.lines.clear()
+    credited = _price(_Handle([_pooled(39.1, 0, 30.0), _pooled(82.6, 1, 30.0)]))
+    assert (credited.applies, credited.fits, credited.rank) == (True, True, 0)
+    assert credited.required_bytes == bare.required_bytes
+    assert credited.mem_available_bytes == int(39.1 * GIB)  # the reading stays raw
+    assert credited.credit_bytes == _credited(30.0)
+    assert credited.headroom_bytes == (
+        int(39.1 * GIB) + _credited(30.0) - credited.required_bytes)
+    assert "fits" in recorder.text and "leaving 29.2 GiB" in recorder.text
+    assert ("39.1 GiB available plus 29.9 GiB of resident shards the proof "
+            "drops first") in recorder.text
+
+
+def test_the_krea2_proof_that_passed_prices_the_same_way_at_both_stages(monkeypatch):
+    """At the preflight each rank held its share; telemetry did not sample
+    reserved at that instant, so 12.0 GiB is build B's reading of the same
+    load. At the reprice each rank held 18.0 GiB: the 12.24 GiB share plus
+    render B's sampling pool, which the credit leaves out."""
+    _integrated(monkeypatch, size=KREA2_BF16_BYTES)
+
+    preflight = _price(_Handle([_pooled(81.8, 0, 12.0), _pooled(100.2, 1, 12.0)]))
+    reprice = _price(_Handle([_pooled(66.6, 0, 18.0), _pooled(85.2, 1, 18.0)]))
+
+    assert (preflight.fits, preflight.rank, preflight.required_gib) == (True, 0, 19.2)
+    assert preflight.credit_bytes == _credited(12.0)
+    assert (reprice.fits, reprice.rank, reprice.required_gib) == (True, 0, 19.2)
+    assert reprice.credit_bytes == KREA2_BF16_BYTES // 2
+    assert reprice.credit_gib == 12.2
+
+
+def test_the_credit_never_exceeds_one_share(monkeypatch):
+    _integrated(monkeypatch, size=FLUX2_BF16_BYTES)
+
+    priced = _price(_Handle([_pooled(20.0, 0, 45.0), _pooled(20.0, 1, 45.0)]))
+
+    assert priced.credit_bytes == FLUX2_BF16_BYTES // 2
+    assert priced.credit_gib == 30.0
+
+
+@pytest.mark.parametrize(
+    "vram",
+    [
+        pytest.param({"reserved_gib": 0.05}, id="rounds-to-nothing"),
+        pytest.param({"reserved_gib": 0.0}, id="empty-pool"),
+        pytest.param({"reserved_gib": True}, id="boolean"),
+        pytest.param({"reserved_gib": "30.0"}, id="string"),
+        pytest.param({"reserved_gib": -1.0}, id="negative"),
+        pytest.param({"reserved_gib": None}, id="none"),
+        pytest.param({"reserved_gib": float("nan")}, id="nan"),
+        pytest.param({"reserved_gib": float("inf")}, id="infinite"),
+        pytest.param({"reserved_gib": 10**400}, id="too-large-for-a-float"),
+        pytest.param({}, id="no-reserved-field"),
+        pytest.param(None, id="not-set-up"),
+        pytest.param("30.0", id="not-a-mapping"),
+    ],
+)
+def test_an_unreadable_or_empty_pool_credits_nothing(monkeypatch, vram):
+    """The verdict is the bare MemAvailable price's, which still refuses."""
+    _integrated(monkeypatch, size=FLUX2_BF16_BYTES)
+    rows = [_row(39.1, 0), _row(82.6, 1)]
+    for row in rows:
+        row["vram"] = vram
+
+    priced = _price(_Handle(rows))
+
+    assert (priced.applies, priced.fits, priced.rank) == (True, False, 0)
+    assert priced.credit_bytes == 0
+    assert priced.headroom_bytes == int(39.1 * GIB) - priced.required_bytes
+
+
+@pytest.mark.parametrize("world", [None, 0], ids=["unknown", "zero"])
+def test_an_unknown_world_credits_nothing(monkeypatch, world):
+    """With no share to cap at, the full-copy bound (77.0 GiB here) applies
+    uncredited; a credit would have let 60.0 GiB through."""
+    _integrated(monkeypatch, size=FLUX2_BF16_BYTES)
+
+    priced = _price(_Handle([_pooled(60.0, 0, 30.0), _pooled(60.0, 1, 30.0)], world=world))
+
+    assert priced.applies and not priced.fits
+    assert priced.credit_bytes == 0
+    assert priced.required_bytes == adapters_fsdp.fsdp_required_bytes(
+        FLUX2_BF16_BYTES, None, "bf16")
+
+
+def test_the_leanest_rank_is_chosen_after_the_credit(monkeypatch):
+    """Rank 1 reads less raw memory, but its pool returns before the load;
+    rank 0 holds no pool, so rank 0 decides."""
+    _integrated(monkeypatch, size=FLUX2_BF16_BYTES)
+
+    fits = _price(_Handle([_row(50.0, 0), _pooled(40.0, 1, 30.0)]))
+    assert (fits.fits, fits.rank, fits.credit_bytes) == (True, 0, 0)
+    assert fits.mem_available_bytes == int(50.0 * GIB)
+
+    short = _price(_Handle([_row(35.0, 0), _pooled(30.0, 1, 30.0)]))
+    assert (short.fits, short.rank, short.credit_bytes) == (False, 0, 0)
+    assert short.mem_available_bytes == int(35.0 * GIB)
+
+
+def test_the_refusal_names_the_credit_and_what_is_short():
+    priced = price_mod.ReloadPrice(
+        True, False, 60 * GIB, 72 * GIB, int(31.7 * GIB), 0,
+        credit_bytes=int(30.0 * GIB))
+
+    for stage in ("preflight", "reprice"):
+        sentence = price_mod.operator_sentence(
+            priced, "flux2-dev.safetensors", stage=stage)
+        assert ("rank 0 reports only 31.7 GiB of unified memory available plus "
+                "30.0 GiB of resident shards the proof drops first") in sentence
+        assert "already counts this render's own shards" in sentence
+        assert "driver's text encoder" in sentence
+        assert "auto_gate=off" in sentence and "fits:" in sentence
+
+    bare = price_mod.ReloadPrice(True, False, 60 * GIB, 72 * GIB, int(31.7 * GIB), 0)
+    assert "already counts" not in price_mod.operator_sentence(
+        bare, "flux2-dev.safetensors")
+
+
+def test_a_credited_capacity_row_survives_a_real_ledger_round_trip(tmp_path):
+    """The row keeps the raw reading and adds the credit beside it."""
+    import json
+
+    from dgx_monarch.gate_ledger import LEDGER_NAME, GateLedger
+
+    priced = price_mod.ReloadPrice(
+        True, False, 60 * GIB, 72 * GIB, int(31.7 * GIB), 0,
+        credit_bytes=int(30.0 * GIB))
+
+    sentence = price_mod.record_capacity_stop(
+        GateLedger(str(tmp_path)), "combo-key", "artifact-sig", "comfy-sha",
+        {"proof_scope": "fsdp_clean_reload"}, "flux2-dev.safetensors",
+        origin="auto_first_use", run_id="r1", price=priced, stage="reprice")
+
+    rows = [json.loads(line) for line in
+            (tmp_path / LEDGER_NAME).read_text().splitlines() if line.strip()]
+    measured = rows[0]["measured"]
+    assert measured["mem_available_bytes"] == int(31.7 * GIB)
+    assert measured["credit_bytes"] == int(30.0 * GIB)
+    assert measured["credit_gib"] == 30.0
+    assert measured["headroom_bytes"] == int(31.7 * GIB) + int(30.0 * GIB) - 72 * GIB
+    assert "30.0 GiB of resident shards" in sentence
+
+
+@pytest.mark.parametrize(
+    "size_gib, avail_gib",
+    [
+        pytest.param(8, 0.5, id="short-even-with-the-share"),
+        pytest.param(8, 5.0, id="just-short-with-the-share"),
+        pytest.param(8, 5.7, id="fits-only-with-the-share"),
+        pytest.param(8, 47, id="fits-either-way"),
+    ],
+)
+def test_the_credited_price_agrees_with_the_worker_guard_after_the_unload(
+    monkeypatch, tmp_path, size_gib, avail_gib,
+):
+    """The driver reads MemAvailable while a share is resident; the Worker
+    guard prices after the unload has returned that share. They agree."""
+    path = tmp_path / "checkpoint.safetensors"
+    with open(path, "wb") as handle:  # sparse: no bytes are written
+        handle.truncate(size_gib * GIB)
+    share = size_gib * GIB // 2
+    monkeypatch.setattr(adapters_fsdp, "gpu_is_integrated", lambda: True)
+    monkeypatch.setattr(
+        adapters_fsdp, "mem_available_bytes", lambda: int(avail_gib * GIB) + share)
+    guard_refused = False
+    try:
+        adapters_fsdp.fsdp_load_capacity_check(
+            str(path), "checkpoint.safetensors", {}, world=2,
+            checkpoint_kind="bf16")
+    except mesh_safety.StockLoadCapacityError:
+        guard_refused = True
+
+    _integrated(monkeypatch, size=size_gib * GIB)
+    reserved = share / GIB + 1.0  # the share plus a sampling pool
+    priced = _price(_Handle(
+        [_pooled(avail_gib, 0, reserved), _pooled(avail_gib, 1, reserved)]))
+
+    assert priced.credit_bytes == share
+    assert (not priced.fits) is guard_refused
