@@ -5,7 +5,8 @@ sequence shard, then gather before the output reshape. Divisibility padding is
 zero-pad plus trim. Odd-token testing stayed within the 0.10 one-step NRMS
 threshold; see docs/VALIDATION.md for the evidence requirements.
 Text blocks stay replicated; cross-attention uses local q against replicated
-text k/v.
+text k/v. Both keep stock attention, which runs with no per-block kernel pin
+(adapters/stock_attention.py).
 
 Self-attention is bound directly because decoder blocks share one options dict
 between self- and cross-attention. The replacement also removes the exact
@@ -24,6 +25,7 @@ from typing import Any
 from ..log import get_logger
 from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather
 from .krea2 import _trim_trailing_pad
+from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
 
@@ -94,6 +96,7 @@ class Kandinsky5Adapter(Adapter):
             # Shard visual embeddings and frequencies around the visual loop.
             # Text stays replicated, time_embed is per-batch, and gather must
             # precede the `(B, T, H, W, D)` reshape consumed by out_layer.
+            transformer_options = stock_attention_options(transformer_options)
             patches_replace = transformer_options.get("patches_replace", {})
             context = self.text_embeddings(context)
             time_embed = self.time_embeddings(timestep, x.dtype) + self.pooled_text_embeddings(y)

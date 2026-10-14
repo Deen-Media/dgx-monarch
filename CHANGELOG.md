@@ -2,6 +2,39 @@
 
 ## [Unreleased]
 
+- Drop a checkpoint's per-block kernel pin at every stock attention call the
+  pack leaves in place under sequence parallelism (issue #30). ComfyUI runs a
+  block's pinned kernel unless the call's transformer options carry an
+  attention override, which it checks first. Cross-attention in Wan 2.1 and
+  2.2, Wan SCAIL, WanDancer, Wan-Animate 2, LTX, Kandinsky 5 and Anima, and the
+  refiners every rank runs whole in Z-Image, OmniGen2, Boogu, HunyuanImage 2.1
+  and HunyuanVideo 1.5, MiniMax H3, Kandinsky 5's text blocks, Krea2 and Kroma,
+  got the original options or none, so a checkpoint that pinned comfy-kitchen
+  Sol ran it there under the widget's stamp, and the pack asked for no class-K
+  card. Those forwards now hand the stock modules a copy of the options whose
+  override runs ComfyUI's default backend with the call's own arguments, as
+  stock runs it with no pin (`adapters/stock_attention.py`), so a checkpoint
+  with no pin renders bit for bit as before. The source read found two sites
+  the issue did not list: WanDancer's music encoder, which calls attention
+  with no options and now runs a bound copy of its forward that passes no
+  pin, and the LTX audio-video text connectors, which ComfyUI runs from
+  `extra_conds` with no options. It also found that ComfyUI runs MiniMax H3's
+  token refiner, which the issue did list, from `extra_conds` with no options
+  as well as from the forward, so no options copy can reach that call. The
+  attention modules of the connectors and the token refiner now get a bound
+  forward that adds the override. The override cannot log the pin, because
+  ComfyUI removes it before the call; the bound forwards log it once at debug
+  level and say that ComfyUI's default backend runs the call. The copy keeps
+  an override the graph installs where the forward admits one; LTX and
+  Wan-Animate 2 refuse a foreign override before they build the copy
+  ([TROUBLESHOOTING #72](docs/TROUBLESHOOTING.md#72-a-distributed-render-refuses-a-comfy-attention-patch-or-nag-style-hook)).
+  Topologies without sequence parallelism keep every stock call and honor a
+  pin, as stock ComfyUI does. CPU tests drive each family's injected forward
+  with stand-in pinned sites, and the canary's attention keyword handoff seam
+  drives tiny real ComfyUI models of Wan 2.1, LTX, Kandinsky 5, Anima's cosmos
+  DiT, Z-Image and Krea2, and the three sites the forward's options copy
+  cannot reach, through the same check ([ADAPTERS](docs/ADAPTERS.md) lists
+  each site).
 - Stop a checkpoint's per-block kernel pin from bypassing the Sol-Attn
   waiver in the attention the pack runs on Qwen Image 2.1 and in Wan-Animate 2
   self-attention (issue #30). Their sequence-parallel forwards call ComfyUI's
@@ -17,12 +50,8 @@
   ComfyUI's own callback, drops the pin too, and a CPU test now drives that
   branch. The daily canary's attention keyword handoff seam checks the Qwen
   Image 2.1 attention and the Wan-Animate 2 self-attention against the real
-  ComfyUI tree. Under sequence parallelism, stock
-  attention that the pack leaves in place still honors a pin: cross-attention
-  in the Wan models, LTX, Kandinsky 5 and Anima, and the self-attention that
-  several families run whole before the sharded block loop. Topologies
-  without sequence parallelism honor it everywhere, as stock ComfyUI does
-  ([ADAPTERS](docs/ADAPTERS.md) lists each site).
+  ComfyUI tree. The entry above covers the stock attention the pack leaves in
+  place.
 - Close the small follow-ups from the 2026-10-12 review (issue #23).
   `dgxm doctor` now names a failed source probe as `dgxm restart` and a
   syncing `dgxm up` do: a missing or non-executable Worker interpreter reads

@@ -21,6 +21,7 @@ from .base import (
     sp_gather,
     usp_options,
 )
+from .stock_attention import stock_attention_options
 from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
@@ -169,13 +170,16 @@ class Krea2Adapter(Adapter):
             imgids[..., 2] = torch.arange(w_, device=device, dtype=torch.float32)[None, :]
             imgpos = imgids.reshape(1, h_ * w_, 3).repeat(bs, 1, 1)
 
+            # The text attention every rank runs stock ignores a block's pinned
+            # kernel (adapters/stock_attention.py).
+            text_options = stock_attention_options(transformer_options)
             if ctx.pure_ulysses:
                 # A shard runs the text Linears and norms on half the text rows,
                 # and the BLAS can pick another kernel for another row count. The
                 # conditioning is replicated, so every rank runs stock's text
                 # path on all rows, with native attention, and shards its output.
                 context = self.txtmlp(self.txtfusion(
-                    context, mask=None, transformer_options=transformer_options))
+                    context, mask=None, transformer_options=text_options))
             context, txt_orig_len = shard_seq(context, dim=1)
             txtpos, _ = shard_seq(txtpos, dim=1)
             img, img_orig_len = shard_seq(img, dim=1)
@@ -194,7 +198,7 @@ class Krea2Adapter(Adapter):
                 ctx_tokens = context.reshape(b_ * l_, n_, d_)
                 for block in tf.layerwise_blocks:
                     ctx_tokens = block(ctx_tokens.contiguous(), mask=None,
-                                       transformer_options=transformer_options)
+                                       transformer_options=text_options)
                 ctx_tokens = rearrange(ctx_tokens, "(b l) n d -> b l d n", b=b_, l=l_)
                 ctx_tokens = tf.projector(ctx_tokens).squeeze(-1)
                 for block in tf.refiner_blocks:

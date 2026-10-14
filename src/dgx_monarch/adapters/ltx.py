@@ -11,7 +11,9 @@ Injection points:
     (i2v) token filtering and `_process_output` stay stock.
   * Self-attention modules route through USP. Text cross-attention (attn2 /
     audio_attn2) stays stock: local q against full text k/v is already
-    correct, and the text attention_mask keeps being honored.
+    correct, and the text attention_mask keeps being honored. It runs with
+    no per-block kernel pin, as do the LTXAV text connectors comfy runs from
+    ``extra_conds`` (adapters/stock_attention.py).
   * LTXAV also shards the audio sequence and routes the bidirectional
     audio<->video cross attentions through USP. Video-to-audio needs the
     full video keys on every rank, which the ulysses all-to-all provides.
@@ -57,6 +59,7 @@ from .base import (
     shard_seq,
     sp_gather,
 )
+from .stock_attention import bind_stock_attention, stock_attention_options
 
 log = get_logger(__name__)
 
@@ -289,8 +292,8 @@ class LTXAdapter(Adapter):
 
             x = stock_process_blocks(
                 self, x, context, attention_mask, timestep, pe,
-                transformer_options={**transformer_options,
-                                     _PAD_ROWS_KEY: pad_rows},
+                transformer_options=stock_attention_options(
+                    {**transformer_options, _PAD_ROWS_KEY: pad_rows}),
                 self_attention_mask=guide_bias, **kwargs,
             )
             return sp_gather(x, orig_len, dim=1)
@@ -385,8 +388,8 @@ class LTXAdapter(Adapter):
             out = stock_process_blocks(
                 self, [vx, ax], context, attention_mask, timestep,
                 [(v_pe, av_cross_v), (a_pe, av_cross_a)],
-                transformer_options={**transformer_options,
-                                     _PAD_ROWS_KEY: pad_rows},
+                transformer_options=stock_attention_options(
+                    {**transformer_options, _PAD_ROWS_KEY: pad_rows}),
                 self_attention_mask=guide_bias, **kwargs,
             )
             vx, ax = out[0], out[1]
@@ -404,6 +407,12 @@ class LTXAdapter(Adapter):
             self.bind(block.audio_attn1, "forward", audio_self)
             self.bind(block.audio_to_video_attn, "forward", audio_to_video)
             self.bind(block.video_to_audio_attn, "forward", video_to_audio)
+        # comfy runs the two text connectors from extra_conds on every rank,
+        # with no transformer_options; their stock self-attention must ignore
+        # a pinned kernel too.
+        for name in ("video_embeddings_connector", "audio_embeddings_connector"):
+            for block in getattr(getattr(diffusion_model, name, None), "transformer_1d_blocks", ()):
+                bind_stock_attention(block.attn1, "ltx text connector attention")
         self.bind(diffusion_model, "_process_transformer_blocks", usp_process_blocks)
         log.info("ltxav USP injected: %d blocks, sp=%d",
                  len(diffusion_model.transformer_blocks), ctx.topology_sp)

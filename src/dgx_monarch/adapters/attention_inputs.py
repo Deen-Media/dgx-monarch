@@ -20,7 +20,9 @@ attention themselves and admit only TORCH_FLASH. They note the preference the
 same way and hand comfy none, so comfy's default backend runs. In a worker
 that cannot import xformers, that is torch's scaled dot product attention,
 which tries flash first and falls back to another exact backend where flash
-cannot take the call.
+cannot take the call. The stock attention the pack leaves in place under
+sequence parallelism drops the preference too, through an override comfy
+checks first (adapters/stock_attention.py).
 
 Such an op accepts a closed set of keywords. Nothing upstream filters what
 comfy hands it, and the dispatcher drops an unknown keyword for an ordinary
@@ -89,8 +91,18 @@ def take_qkv(q, k, v):
     return q.take(), k.take(), v.take()
 
 
-def note_preferred_attention(site: str, preferred) -> None:
-    """Log once per call site that a per-block kernel preference was ignored."""
+_PACK_CHOOSES = ("the Init attention widget and the sequence-parallel dispatcher "
+                 "choose the kernel")
+STOCK_BACKEND_RUNS = "ComfyUI's default attention backend runs this stock call"
+
+
+def note_preferred_attention(site: str, preferred, *, chooser: str = _PACK_CHOOSES) -> None:
+    """Log once per call site that a per-block kernel preference was ignored.
+
+    ``chooser`` names what runs the call instead. The default fits the
+    attention the pack runs; a stock call the pack leaves in place passes
+    ``STOCK_BACKEND_RUNS``.
+    """
     if preferred is None:
         return
     with _noted_lock:
@@ -100,6 +112,5 @@ def note_preferred_attention(site: str, preferred) -> None:
     pinned = getattr(preferred, "function", None) is not None
     log.debug(
         "%s: ComfyUI passed a per-block attention preference (config=%r, "
-        "kernel pinned=%s); the Init attention widget and the sequence-parallel "
-        "dispatcher choose the kernel, so it is ignored",
-        site, getattr(preferred, "config", None), pinned)
+        "kernel pinned=%s); %s, so it is ignored",
+        site, getattr(preferred, "config", None), pinned, chooser)

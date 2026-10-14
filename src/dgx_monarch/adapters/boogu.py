@@ -29,6 +29,7 @@ from .base import (
 )
 from .boogu_ulysses import double_block_options, instruct_projections, stream_options
 from .chroma_text import full_row_text_projections
+from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
 
@@ -302,10 +303,12 @@ class BooguAdapter(Adapter):
             pure = ctx.pure_ulysses
 
             # Stage 1: replicated text refinement preserves its attention mask.
+            # Its stock attention ignores a block's pinned kernel.
+            refiner_options = stock_attention_options(transformer_options)
             for layer in self.context_refiner:
                 text_hidden_states = layer(
                     text_hidden_states, text_attention_mask, context_rotary_emb,
-                    transformer_options=transformer_options)
+                    transformer_options=refiner_options)
 
             img_len = flat_hidden_states.shape[1]  # noise-token count (head keeps this tail)
 

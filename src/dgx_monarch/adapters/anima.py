@@ -7,9 +7,11 @@ noise floor. Per-`(B, T)` time and adaLN tensors stay replicated because they
 broadcast over H and W.
 
 Only `blocks[i].self_attn.attn_op` routes through USP. Cross-attention keeps local
-image q against replicated text k/v. `llm_adapter` runs before this denoise path
-and must remain unbound, unsharded, and outside any FSDP collective; under FSDP
-its parameters go in ``ignored_params`` (adapters/fsdp_islands.py).
+image q against replicated text k/v through cosmos' stock `torch_attention_op`,
+which runs with no per-block kernel pin (adapters/stock_attention.py).
+`llm_adapter` runs before this denoise path and must remain unbound,
+unsharded, and outside any FSDP collective; under FSDP its parameters go in
+``ignored_params`` (adapters/fsdp_islands.py).
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ from .attention_inputs import (
     take_qkv,
 )
 from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather
+from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
 
@@ -134,7 +137,8 @@ class AnimaAdapter(Adapter):
                 "rope_emb_L_1_1_D": rope_local.unsqueeze(1).unsqueeze(0),
                 "adaln_lora_B_T_3D": adaln_lora_B_T_3D,
                 "extra_per_block_pos_emb": extra_pos_emb,
-                "transformer_options": kwargs.get("transformer_options", {}),
+                # Stock cross-attention ignores a pinned kernel.
+                "transformer_options": stock_attention_options(kwargs.get("transformer_options")),
             }
 
             # Preserve the stock fp32 residual stream for fp16 blocks.

@@ -34,6 +34,7 @@ from .base import (
     usp_options,
 )
 from .krea2 import _trim_trailing_pad
+from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
 
@@ -177,11 +178,12 @@ def _sharded_backbone(self, x, timesteps, context, num_tokens, attention_mask,
         adaln_input = self.time_text_embed(torch.cat((t, pooled), dim=-1))
 
     x_is_tensor = isinstance(x, torch.Tensor)
-    # Use original options so replicated refiners keep stock local attention.
+    # The replicated refiners keep stock local attention, which ignores a
+    # block's pinned kernel (adapters/stock_attention.py).
     img, mask, img_size, cap_size, freqs_cis, _timestep_zero_index = self.patchify_and_embed(
         x, cap_feats, cap_mask, adaln_input, num_tokens,
-        ref_latents=ref_latents, ref_contexts=ref_contexts,
-        siglip_feats=siglip_feats, transformer_options=transformer_options)
+        ref_latents=ref_latents, ref_contexts=ref_contexts, siglip_feats=siglip_feats,
+        transformer_options=stock_attention_options(transformer_options))
     freqs_cis = freqs_cis.to(img.device)
 
     # double_block patches use the global caption/image boundary, which a local

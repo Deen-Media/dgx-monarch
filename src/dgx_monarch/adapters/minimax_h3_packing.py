@@ -5,6 +5,7 @@ uses ComfyUI only to move the curve table onto the compute device.
 """
 from __future__ import annotations
 
+import inspect
 from typing import Any
 
 import torch
@@ -19,6 +20,25 @@ H3_SEG_MODALITY: dict[str, int] = {
     "text": 1, "video": 0, "audio": 2,
     "cond": 0, "ref_img": 0, "cond_audio": 2, "ref_audio": 2,
 }
+
+
+def _build_packed_layout(packed_layout_cls, payload, text_len, latent_t,
+                         lat_h, lat_w, audio_t):
+    """Build the stock PackedLayout across the frame_count seam.
+
+    Comfy e01fb4c56 removed PackedLayout's frame_count parameter (the new
+    guide anchoring replaced it). Older comfy revisions still take it and use
+    it for last-frame keyframes, so it is passed only where the installed
+    class accepts it.
+    """
+    extra = {}
+    init = inspect.signature(packed_layout_cls.__init__)
+    if "frame_count" in init.parameters:
+        extra["frame_count"] = payload.get("frame_count")
+    return packed_layout_cls(text_len, latent_t, lat_h, lat_w, audio_t,
+                             keyframes=payload.get("keyframes"),
+                             refs=payload.get("refs"),
+                             **extra)
 
 
 def h3_timestep_embedding(model: Any, t_vals: torch.Tensor, dtype: torch.dtype) -> torch.Tensor:

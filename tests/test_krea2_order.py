@@ -68,12 +68,21 @@ def krea2_comfy_stub(monkeypatch):
 pytestmark = pytest.mark.usefixtures("krea2_comfy_stub")
 
 
+def _native_attention(q, k, v, _heads, **_kwargs):
+    """The harness kernel on the whole key axis, in comfy's backend layout."""
+    rows = [t.transpose(1, 2) for t in (q, k, v)]
+    out = flux_harness._ACTIVE.attend("native", *rows)
+    return out.reshape(out.shape[0], out.shape[1], -1)
+
+
 def _toy_attention(label, q, k, v, pe, options):
     """Call the installed override as comfy's wrap_attn does, else attend natively.
 
-    Native attention is what stock runs and what the layerwise and refiner
+    Native attention is what stock runs, and what the layerwise and refiner
     blocks get when no scoped override is installed: the whole key axis is on
-    this rank, so the harness kernel attends it directly.
+    this rank, so the harness kernel attends it directly. ``wrap_attn`` hands
+    an override the backend function as its first argument; the override that
+    drops a block's kernel pin (adapters/stock_attention.py) runs it.
     """
     _CONTEXT.where = label
     if pe is not None:
@@ -82,10 +91,8 @@ def _toy_attention(label, q, k, v, pe, options):
               for t in (q, k, v)]
     override = options.get("optimized_attention_override")
     if override is None:
-        rows = [t.transpose(1, 2) for t in shaped]
-        out = flux_harness._ACTIVE.attend("native", *rows)
-        return out.reshape(out.shape[0], out.shape[1], -1)
-    return override(None, *shaped, HEADS, skip_reshape=True, mask=None,
+        return _native_attention(*shaped, HEADS)
+    return override(_native_attention, *shaped, HEADS, skip_reshape=True, mask=None,
                     transformer_options=options, _inside_attn_wrapper=True)
 
 

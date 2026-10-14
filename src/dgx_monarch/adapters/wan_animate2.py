@@ -13,6 +13,7 @@ from .attention_patches import (
     assert_usp_attention_patches_safe,
 )
 from .base import Adapter, InjectionContext, UnsupportedModelError, sp_rank, sp_world
+from .stock_attention import stock_attention_options
 
 # The site gets one debug line from note_preferred_attention.
 _ATTENTION_SITE = "wan_animate2 attention"
@@ -195,6 +196,9 @@ class WanAnimate2Adapter(Adapter):
                 raise UnsupportedModelError(refusal(RefusalClass.PHYSICS,
                     "Wan-Animate-2 sequence parallelism cannot apply dit block-replacement or double_block patches. "
                     "Remove the patch, or run on topology 'single'."))
+            # Each block keeps stock cross-attention, which must ignore a
+            # pinned kernel too (adapters/stock_attention.py).
+            transformer_options = stock_attention_options(transformer_options)
             x = self.patch_embedding(x.float()).to(x.dtype)
             grid = x.shape[2:]
             f_gen, gh, gw = grid
