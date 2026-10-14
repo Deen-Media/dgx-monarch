@@ -11,7 +11,8 @@ Three small pieces, importable on the driver and on every worker:
   last finished render's summary for an idle reader.
 * host_stats(), the readings of this host: the unified-pool breakdown from
   /proc/meminfo, GPU util/clock/power/temp (pynvml when present, nvidia-smi
-  fallback, neither required), and the RDMA rail byte counters from sysfs.
+  fallback, neither required), and the RDMA rail byte counters, their read
+  time and link state from sysfs (read in rails.py).
 
 The event ring and the progress tracker only take a lock and copy in memory.
 host_stats() costs more: every call runs nvidia-smi (3 s timeout; twice when
@@ -22,7 +23,6 @@ with the driver down, `dgxm top` calls it directly every 1 s by default.
 """
 from __future__ import annotations
 
-import glob
 import os
 import subprocess
 import threading
@@ -30,7 +30,9 @@ import time
 from collections import deque
 from typing import Any, cast
 
+from . import telemetry_steps
 from .capacity_memory import read_meminfo, shmem_credited
+from .rails import rail_counters, rail_readings, rail_state  # noqa: F401  # re-exported names
 from .telemetry_events import public_event_tail
 
 # Process lifetime, unkeyed, self-evicting: the ring drops its oldest event at
@@ -45,6 +47,11 @@ _LEGACY_PROGRESS_TOKEN = object()
 # leaves a claim nothing will spend, so the claim expires rather than label an
 # unrelated later render a first render.
 _CEREMONY_CLAIM_S = 300.0
+# Keys a finished render's summary copies from the tracker. render_submit
+# passes the first five to start(); a preset leaves the auto facts None.
+_RENDER_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step")
+
+
 def emit(kind: str, **fields) -> None:
     """Append one structured event to the ring; this does not log."""
     global _EVENT_SEQ
@@ -155,6 +162,7 @@ class RenderProgress:
                 "steps": int(steps),
                 "started": started,
                 "last_step_t": now,
+                "_step_marks": telemetry_steps.seeded(previous, token, now),
                 **(meta or {}),
                 "ceremony": bool(ceremony_tokens) or ceremony_legacy > 0,
                 "_tokens": frozenset(active_tokens),
@@ -191,15 +199,16 @@ class RenderProgress:
                     started=time.time(),
                 )
             now = time.time()
-            prev = state.get("last_step_t", now)
+            marks, rate = telemetry_steps.advance(
+                state, _LEGACY_PROGRESS_TOKEN if token is None else token, int(step), now)
             state.update({
                 "step": int(step),
                 "steps": int(total) if total else state.get("steps"),
-                "sec_per_step": round(now - prev, 3),
-                "last_step_t": now,
                 "_tokens": frozenset(tokens),
                 "_legacy_count": legacy_count,
             })
+            if rate is not None:
+                state.update(sec_per_step=rate, last_step_t=now, _step_marks=marks)
             self._state = state
 
     def finish(self, token: object | None = None) -> None:
@@ -231,6 +240,7 @@ class RenderProgress:
                     _legacy_count=legacy_count,
                     _ceremony_tokens=frozenset(ceremony_tokens),
                     _ceremony_legacy=ceremony_legacy,
+                    _step_marks=telemetry_steps.retired(self._state, token, _LEGACY_PROGRESS_TOKEN),
                 )
             else:
                 now = time.time()
@@ -249,6 +259,10 @@ class RenderProgress:
                         # says whether any of them was a ceremony render, not
                         # only the last to finish.
                         "ceremony": bool(self._state.get("_bundle_ceremony")),
+                        # Where it ran and how fast it stepped, so a reader
+                        # can see where the auto table's choice is slow: the
+                        # last start's facts and the last step time (telemetry_steps).
+                        **{key: self._state.get(key) for key in _RENDER_FACTS},
                     }
                 else:
                     wall_s = self._state.get("last_wall_s")
@@ -321,24 +335,6 @@ class RenderProgress:
 
 
 render_progress = RenderProgress()
-
-
-_RAIL_LANE_BYTES = 4  # infiniband port_{rcv,xmit}_data counters tick in 4-byte lanes
-
-
-def rail_counters() -> dict[str, dict[str, int]]:
-    """Cumulative RX/TX bytes per RDMA device (sysfs; cheap)."""
-    out: dict[str, dict[str, int]] = {}
-    for port in glob.glob("/sys/class/infiniband/*/ports/*/counters"):
-        dev = port.split("/")[4]
-        try:
-            rx = int(open(os.path.join(port, "port_rcv_data")).read()) * _RAIL_LANE_BYTES
-            tx = int(open(os.path.join(port, "port_xmit_data")).read()) * _RAIL_LANE_BYTES
-        except (OSError, ValueError):
-            continue
-        if rx or tx:  # skip uncabled ports: both counters stay at zero on an unused rail.
-            out[dev] = {"rx_bytes": rx, "tx_bytes": tx}
-    return out
 
 
 def _meminfo() -> dict[str, float]:
@@ -489,7 +485,7 @@ def host_stats() -> dict:
         "gpu": _gpu_stats(),
         "gpu_proc_gib": _gpu_proc_gib(),
         "pool_gib": _retained_pool_gib(),
-        "rails": rail_counters(),
+        **rail_readings(),  # rails, rails_t and rail_state, from one sysfs walk
     }
     # False is what every price assumes, None is a reading with no LRU counters,
     # and a missing key means no reading. A raise here would lose every other

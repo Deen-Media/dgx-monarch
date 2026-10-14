@@ -46,8 +46,12 @@ Illustrative dashboard using sample data, not a benchmark result.
 * **RDMA rails:** per-rail GB/s, with a braille history graph, for one box: the first
   host by name (the rails are symmetric, so one host represents the pair). The
   counters are `/sys/class/infiniband/*/ports/*/counters/port_{rcv,xmit}_data`.
-  During a sequence-parallel render, the all-to-all traffic shows as one pulse
-  per denoise step.
+  A rate is timed by the box's own stamps of when it read the counters, so a
+  reading that waited in the driver's cache does not read fast or slow. A
+  device with one cabled port shows under its own name. A device with more
+  than one shows each port as `<device>/<port>`, the same key the link state
+  and the `/dgxm/metrics` rail label use. During a sequence-parallel render,
+  the all-to-all traffic shows as one pulse per denoise step.
 * **Render line:** live step progress (fed by the driver's own progress
   channel), s/it and ETA, or the last render's duration when idle, then the
   gate ledger's count of each verdict. The label names the active stage, such as
@@ -78,6 +82,23 @@ host-memory report arrives, so a worker still starting up never shows a card of
 default values or hides valid driver telemetry. A driver on its own host keeps
 its card beside the workers; on a worker's host, that worker's card replaces
 the driver's.
+
+Above the cards, one sidebar line names the topology the workers set up, such
+as `uly2` or `uly2+fsdp`, and names each one when workers disagree. Each card
+adds one line for its box's RDMA rails: RX and TX GB/s per rail between two
+readings of its counters, and in red the port state of a rail that is not
+ACTIVE. The panel reads each box's rails once per poll, so a box that runs two
+ranks shows the same rates on both of its cards. A rail appears when it
+carries traffic, or when its link is physically up but its port is down. An
+unused or uncabled port stays off the line, and so does a rail that never
+trained at boot, because sysfs reads it the same as an uncabled port;
+`dgxm doctor` reports that rail. When the panel is idle, the last render's
+line also names the topology it ran, its auto table row, and its last seconds
+per step. Each render times a step against its own previous step, so the
+second leader of a dp>1 render, or another render in the same Fleet wave,
+cannot shrink that number to the gap between two messages. `dgxm top` does not
+draw these facts yet; they are in the `render.last` block of
+`/dgxm/telemetry`.
 
 ## Butterfly header
 

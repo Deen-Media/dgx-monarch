@@ -430,7 +430,7 @@ def test_the_panel_feeds_the_fleet_block_in_and_keeps_the_memory_bars():
     # The per-box cards and their bars are what a fleet wave is watched on;
     # the job rows are added beside them and displace nothing.
     assert "selectMemoryHostCards(t)" in panel
-    assert "frag.appendChild(hostCard(name, stats, meta));" in panel
+    assert "frag.appendChild(hostCard(name, stats, meta, rates.get(stats.host)));" in panel
 
 
 def _fleet_rows(block):

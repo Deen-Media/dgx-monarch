@@ -57,6 +57,7 @@ from .render_quarantine import _enforce_persisted_quarantine
 from .render_result import _finish_render
 from .render_session import RetiredRenderHandleError, claim_render_session
 from .render_validation import validate_render_topology
+from .resolved_topology import telemetry_facts
 from .submit_guard import SubmitRenderGuard as _SubmitRenderGuard
 from .submit_guard import run_guarded_submit
 
@@ -251,8 +252,9 @@ def _submit_render_guarded(
     session_close = session.close if owns_session else None
     with session.activate():
         world = int(getattr(handle, "world", getattr(spec, "world", 1)))
-        topo, sage, reason = _resolve_topology_for_latent(
+        resolved = _resolve_topology_for_latent(
             model, latent, cfg_value, world)
+        topo, sage, reason = resolved
         render_preflight.preflight_krea2_reference_latents(model, ref_summary, topo)
         render_preflight.preflight_minimax_h3_topology(model, topo)
         sample_attention = resolve_sample_attention(spec.attention, sage)
@@ -286,7 +288,8 @@ def _submit_render_guarded(
             model, authorization.worker_args, handle=handle)
         spec = model.mesh
         validate_render_topology(model, topo, latent["samples"])
-        log.info("render topology: %s (%s)", topo.describe(), reason)
+        topology_label = topo.describe()
+        log.info("render topology: %s (%s)", topology_label, reason)
         _collect_earlier_results_before_setup_change(handle, topo, spec)
         setup_token = mesh_setup.ensure_request_setup(
             handle, topo, spec.attention, spec.sync_ulysses, spec.worker_args)
@@ -343,11 +346,16 @@ def _submit_render_guarded(
     timeout = max(_SAMPLE_TIMEOUT_S, steps_hint * 120.0)
     from ..telemetry import render_progress
 
+    # What the finished render's summary records beside its wall time: the
+    # topology it ran, the auto facts behind it and the kernel it used.
+    progress_meta = {
+        "model": model.unet_name, "topology": topology_label,
+        "attention": sample_attention, **telemetry_facts(resolved)}
     # Publish the cleanup intent before either helper can start background
     # work and then lose its return value to an asynchronous exception.
     guard.telemetry_started = True
     render_progress.start(
-        steps_hint, {"model": model.unet_name}, token=guard.telemetry_token)
+        steps_hint, progress_meta, token=guard.telemetry_token)
     progress = ProgressReceiver(
         steps_hint, on_step=progress_on_step, step_token=guard.telemetry_token,
         on_cancel=lambda: handle.cancel_sample(render_id, wait=False))

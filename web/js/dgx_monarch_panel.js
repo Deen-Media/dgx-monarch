@@ -20,11 +20,21 @@ import {
 } from "./dgx_monarch_timeline.js";
 import { readinessPanelModel } from "./dgx_monarch_readiness_model.js";
 import { diagnosticsPanelModel } from "./dgx_monarch_diagnostics_model.js";
+import {
+    activeTopology,
+    createRailRateTracker,
+    hostRailRates,
+    lastRenderFacts,
+    railLineParts,
+    railRows,
+} from "./dgx_monarch_fabric_model.js";
 import { button, el } from "./dgx_monarch_ui.js";
 import { brandHeader, brandMark, updateBrand } from "./dgx_monarch_brand.js";
 
 const POLL_MS = 2500;
 let refreshInFlight = false;
+// Page lifetime: the last rail byte counters per host, for the GB/s between polls.
+const railRates = createRailRateTracker();
 const actionState = {
     free: { busy: false, label: "Free driver memory" },
     recycle: { busy: false, label: "Reset attached mesh" },
@@ -52,7 +62,7 @@ function bar(segments, total) {
     return wrap;
 }
 
-function hostCard(name, stats, meta) {
+function hostCard(name, stats, meta, rates) {
     const card = el("div",
         "border:1px solid var(--border-color,#333);border-radius:6px;padding:8px;margin:6px 0;");
     const gpu = stats.gpu || {};
@@ -85,6 +95,18 @@ function hostCard(name, stats, meta) {
         card.appendChild(el("div", "font-size:11px;opacity:.75;margin-top:2px;",
             `GPU ${gpu.util_pct}% · ${((gpu.clock_mhz || 0) / 1000).toFixed(2)} GHz · ` +
             `${gpu.power_w ?? "?"} W · ${gpu.temp_c ?? "?"}°C`));
+    }
+    // One line per box: RX and TX GB/s per rail between two polls, which
+    // refreshOnce measures once per box, and in red the state of any rail that
+    // is not ACTIVE.
+    const railParts = railLineParts(railRows(rates, stats.rail_state));
+    if (railParts.length) {
+        const line = el("div", "font-size:11px;opacity:.75;margin-top:2px;");
+        for (const part of railParts) {
+            line.appendChild(part.alert ? el("span", "color:#f87171;", part.text)
+                : document.createTextNode(part.text));
+        }
+        card.appendChild(line);
     }
     if (mm) {
         const fails = mm.swap_verify_failures || 0;
@@ -291,8 +313,9 @@ async function refreshOnce(root, zones) {
         r.appendChild(el("div", "font-weight:600;",
             `last render · ${last.model || "model unknown"}`));
         const steps = last.steps ? `${last.steps} steps` : "steps unknown";
+        const ran = lastRenderFacts(last);
         r.appendChild(el("div", "opacity:.75;margin-top:2px;",
-            `${last.wall_s ?? "?"}s · ${steps}` +
+            `${last.wall_s ?? "?"}s · ${steps}` + (ran ? ` · ${ran}` : "") +
             (last.ceremony ? " · paid a first-use identity gate" : "")));
     } else {
         r.appendChild(el("div", "",
@@ -303,8 +326,15 @@ async function refreshOnce(root, zones) {
     const diagnostics = diagnosticsPanelModel(t);
     frag.appendChild(el("div", "opacity:.75;font-size:.9em;margin:4px 0;", diagnostics.summary));
 
-    for (const { name, stats, meta } of selectMemoryHostCards(t)) {
-        frag.appendChild(hostCard(name, stats, meta));
+    // The topology the workers report, then one card per box.
+    const topology = activeTopology(t.workers);
+    if (topology) frag.appendChild(el("div", "opacity:.75;font-size:.9em;margin:4px 0;", topology));
+    const cards = selectMemoryHostCards(t);
+    // One rail reading per box per poll, on the monotonic clock, however many
+    // ranks (and so cards) the box runs.
+    const rates = hostRailRates(railRates, cards, performance.now());
+    for (const { name, stats, meta } of cards) {
+        frag.appendChild(hostCard(name, stats, meta, rates.get(stats.host)));
     }
 
     // gates
