@@ -85,7 +85,9 @@ class LensJointOrder(RankMajorJointOrder):
     the real rows in stock's order, then the pad rows: the kernel never sees a
     pad row, so its place does not change the math, and at the tail they pass
     the shared check that a query-bias group's pads trail every group. The
-    inverse and the output restore are the parent's.
+    inverse, the output restore and the per-layout index cache are the
+    parent's; the cache builds every index from this ``permutation``, so the
+    pad-row remap and the restore follow this order with no code of their own.
     """
 
     image_real: int

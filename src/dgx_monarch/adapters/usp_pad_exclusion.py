@@ -14,8 +14,14 @@ at video coordinates, so the query side and the key side are separate arguments
 throughout.
 
 The caller owns the all-to-all and the kernel; this leaf owns the row algebra
-and takes no project import beyond the refusal vocabulary, so the float64
-oracle in tests/test_usp_pad_exact.py runs the whole thing on a CPU box.
+and takes no project import beyond the refusal vocabulary and its index
+cache, so the float64 oracle in tests/test_usp_pad_exact.py runs the whole
+thing on a CPU box.
+
+The keep index is built on the device from the integer row list, one
+``arange`` per run of kept rows, and cached per layout. The device never hands
+a value back to the host here: a ``nonzero`` or a copy from host memory would
+make the host wait for the stream, several times per attention call.
 """
 from __future__ import annotations
 
@@ -23,6 +29,25 @@ import torch
 
 from ..refusal import RefusalClass, refusal
 from .base import UnsupportedModelError
+from .index_cache import BoundedIndexCache, device_key
+
+# One render uses a few keep layouts (each stream, cond and uncond); the bound
+# leaves room for several renders' worth before the oldest goes.
+_KEEP_INDEX: BoundedIndexCache[torch.Tensor] = BoundedIndexCache(32)
+
+
+def _kept_rows(rows: int, drop_rows, device: torch.device) -> torch.Tensor:
+    """Ascending indices of the rows not in ``drop_rows``, built on ``device``."""
+    runs, start = [], 0
+    for dropped in sorted(set(drop_rows)):
+        if dropped > start:
+            runs.append(torch.arange(start, dropped, dtype=torch.long, device=device))
+        start = dropped + 1
+    if start < rows:
+        runs.append(torch.arange(start, rows, dtype=torch.long, device=device))
+    if not runs:
+        return torch.empty(0, dtype=torch.long, device=device)
+    return runs[0] if len(runs) == 1 else torch.cat(runs)
 
 
 def keep_index(rows: int, drop_rows, device) -> torch.Tensor | None:
@@ -32,9 +57,17 @@ def keep_index(rows: int, drop_rows, device) -> torch.Tensor | None:
     does not have raises a device-side assert, which aborts the worker process
     and with it the fleet. The range check costs a comparison on a short list
     and turns the same mistake into a message naming both numbers.
+
+    The result is shared by every call with the same rows, row list and
+    device, so callers must only read it.
     """
     if not drop_rows:
         return None
+    device = device_key(device)
+    key = (rows, tuple(drop_rows), device)
+    cached = _KEEP_INDEX.get(key)
+    if cached is not None:
+        return cached
     highest = max(drop_rows)
     if highest >= rows or min(drop_rows) < 0:
         raise UnsupportedModelError(refusal(
@@ -46,9 +79,11 @@ def keep_index(rows: int, drop_rows, device) -> torch.Tensor | None:
             "workflow setting: report the shapes. Use topology 'single' "
             "(mode=local with gpus_per_host=1) until it is fixed.",
         ))
-    keep = torch.ones(rows, dtype=torch.bool, device=device)
-    keep[torch.as_tensor(drop_rows, dtype=torch.long, device=device)] = False
-    return keep.nonzero(as_tuple=True)[0]
+    # Comfy samples under inference mode; build a normal tensor so a later
+    # call outside it can still use the shared index.
+    with torch.inference_mode(False):
+        index = _kept_rows(rows, drop_rows, device)
+    return _KEEP_INDEX.put(key, index)
 
 
 def assert_pads_are_a_tail(drop_rows, rows: int) -> None:
@@ -85,7 +120,10 @@ def attend_without_pads(q, k, v, *, drop_rows, kv_drop_rows, groups, attend):
     if groups:
         assert_pads_are_a_tail(drop_rows, q.shape[1])
     query_index = keep_index(q.shape[1], drop_rows, q.device)
-    key_index = keep_index(k.shape[1], kv_drop_rows, k.device)
+    if kv_drop_rows is drop_rows and k.shape[1] == q.shape[1] and k.device == q.device:
+        key_index = query_index   # a self-attention drops the same rows on both sides
+    else:
+        key_index = keep_index(k.shape[1], kv_drop_rows, k.device)
     out = attend(
         q if query_index is None else q.index_select(1, query_index),
         k if key_index is None else k.index_select(1, key_index),
