@@ -5,11 +5,22 @@ from __future__ import annotations
 
 import threading
 import time
+from typing import Any, cast
 
 from .error_utils import prefer_error, raise_with_distinct_cause, reconcile_error
 from .log import get_logger
 
 log = get_logger(__name__)
+
+
+def _thread_started(thread: threading.Thread) -> bool:
+    """Whether this thread got far enough through start() to join.
+
+    ident alone misses a start() that an exception interrupted after the OS
+    thread existed. CPython's private _started event covers that case.
+    typeshed does not declare _started, so the read goes through a cast.
+    """
+    return thread.ident is not None or cast(Any, thread)._started.is_set()
 
 
 class ProgressReceiver:
@@ -28,7 +39,7 @@ class ProgressReceiver:
         # Channel.open waits for __enter__ so a caller can publish this receiver
         # into its cleanup guard before the first channel or thread side effect.
         self.port = None
-        self._receiver = None
+        self._receiver: Any = None
         self._total = total_steps
         # Fleet submits outside render_submit/PendingRender, so it opts in
         # to receiver-owned telemetry lifetime. Other callers keep theirs.
@@ -139,13 +150,9 @@ class ProgressReceiver:
                     self.port.send({"done": True})
                 except Exception:
                     pass
-            if (self._thread is not None
-                    and (self._thread.ident is not None
-                         or self._thread._started.is_set())):
+            if self._thread is not None and _thread_started(self._thread):
                 self._thread.join(timeout=2.0)
-            if (self._cancel_thread is not None
-                    and (self._cancel_thread.ident is not None
-                         or self._cancel_thread._started.is_set())):
+            if self._cancel_thread is not None and _thread_started(self._cancel_thread):
                 self._cancel_thread.join(timeout=2.0)
         except BaseException as close_error:
             cleanup_error = close_error

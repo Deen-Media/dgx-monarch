@@ -1,14 +1,22 @@
 """RDMA rail readings from sysfs for the telemetry payload (stdlib leaf).
 
 rail_readings() walks ``/sys/class/infiniband/<dev>/ports/<n>`` once and
-returns the three keys host_stats() publishes:
+returns the four keys host_stats() publishes:
 
 * ``rails``, the cumulative RX and TX bytes per rail. A rail whose two byte
   counters are both zero has no row.
 * ``rails_t``, the wall-clock time (time.time()) at which those counters were
-  read. A reader times a rate by the interval between two of these stamps
+  read, for display. No reader times a rate by it, because NTP can step the
+  wall clock between two readings.
+* ``rails_m``, the monotonic time (time.monotonic()) taken at the same
+  instant. A reader times a rate by the interval between two of these stamps
   from the same box, so a reading that waited in a cache, or behind the
-  slower readings in host_stats(), is not timed by when the reader saw it.
+  slower readings in host_stats(), is not timed by when the reader saw it,
+  and a wall-clock step cannot stretch or shrink the interval. On Linux the
+  monotonic clock counts from boot for every process on the box, so stamps
+  from the driver and a worker on one box compare. When a stamp is missing
+  (an older driver) or did not move forward (the same reading again, or a
+  reboot), the reader times the rate by its own monotonic clock.
 * ``rail_state``, the port state and physical state per rail, read from the
   same files and parsed the same way as the RDMA rails row in ``dgxm doctor``.
 
@@ -67,10 +75,10 @@ def _link(port: str) -> dict[str, str] | None:
     return {"state": "ACTIVE" if "ACTIVE" in state else state, "phys_state": phys}
 
 
-def _walk() -> tuple[dict[str, dict[str, int]], float, dict[str, dict[str, str]]]:
+def _walk() -> tuple[dict[str, dict[str, int]], float, float, dict[str, dict[str, str]]]:
     ports = sorted(glob.glob(os.path.join(_SYSFS_IB, "*", "ports", "*")))
     counters = {port: _counters(port) for port in ports}
-    read_at = time.time()
+    read_at, read_mono = time.time(), time.monotonic()
     links = {port: _link(port) for port in ports}
     cabled = []
     for port in ports:
@@ -90,13 +98,14 @@ def _walk() -> tuple[dict[str, dict[str, int]], float, dict[str, dict[str, str]]
             rails[key] = {"rx_bytes": count[0], "tx_bytes": count[1]}
         if link is not None:
             state[key] = link
-    return rails, read_at, state
+    return rails, read_at, read_mono, state
 
 
 def rail_readings() -> dict[str, object]:
-    """The rail counters, the time they were read, and the link state, from one walk."""
-    rails, read_at, state = _walk()
-    return {"rails": rails, "rails_t": read_at, "rail_state": state}
+    """The rail counters, the wall-clock and monotonic times they were read, and
+    the link state, from one walk."""
+    rails, read_at, read_mono, state = _walk()
+    return {"rails": rails, "rails_t": read_at, "rails_m": read_mono, "rail_state": state}
 
 
 def rail_counters() -> dict[str, dict[str, int]]:
@@ -106,4 +115,4 @@ def rail_counters() -> dict[str, dict[str, int]]:
 
 def rail_state() -> dict[str, dict[str, str]]:
     """Port state and physical state per rail (sysfs; cheap)."""
-    return _walk()[2]
+    return _walk()[3]

@@ -485,7 +485,7 @@ def host_stats() -> dict:
         "gpu": _gpu_stats(),
         "gpu_proc_gib": _gpu_proc_gib(),
         "pool_gib": _retained_pool_gib(),
-        **rail_readings(),  # rails, rails_t and rail_state, from one sysfs walk
+        **rail_readings(),  # rails, rails_t, rails_m and rail_state, from one sysfs walk
     }
     # False is what every price assumes, None is a reading with no LRU counters,
     # and a missing key means no reading. A raise here would lose every other

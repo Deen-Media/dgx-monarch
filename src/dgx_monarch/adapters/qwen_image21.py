@@ -340,6 +340,8 @@ class QwenImage21Adapter(Adapter):
             for index, block in enumerate(self.transformer_blocks):
                 if cache is not None:
                     if not cached:
+                        # The cache-miss arm above sliced prefix_states from states.
+                        assert prefix_states is not None
                         from comfy.ldm.qwen_image21.model import block_causal_attention
 
                         prefix_attn = block_causal_attention(

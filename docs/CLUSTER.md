@@ -327,6 +327,11 @@ deletes everything else there (compiled bytecode included), and starts workers
 with bytecode reads and writes in that tree turned off. Strict acceptance
 checks each worker's live source set and loaded module origins on its own.
 
+Each Worker host also needs `/usr/bin/python3` (Python 3.9 or newer, standard
+library only): the Worker lifecycle helpers run on it, not on `python`, so they
+still work while that venv is broken or being replaced, and `dgxm doctor` checks
+that it starts and is new enough.
+
 ## Worker transport security
 
 Peer authentication is unavailable at the attach API dgx-monarch calls, and its

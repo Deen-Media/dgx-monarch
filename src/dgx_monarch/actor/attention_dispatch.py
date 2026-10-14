@@ -1,10 +1,13 @@
 """Setup-generation-bound selection of stock, sol, Wan ring and cuDNN ring USP attention."""
 from __future__ import annotations
 
-from typing import cast
+from typing import TYPE_CHECKING, cast
 
 from ..log import get_logger
 from ..transfer_utils import failure_summary, safe_call
+
+if TYPE_CHECKING:
+    from ..adapters.sol_attention import SolScope
 
 log = get_logger(__name__)
 
@@ -42,7 +45,7 @@ class _AttentionDispatch:
         self._authority_key: tuple | None = None
         self._wan_impl = None
         self._wan_view: _WanAttentionView | None = None
-        self._sol_scope = None
+        self._sol_scope: SolScope | None = None
         self._effective_kernel = ""
         self._family = ""
         self._head_dim: int | None = None

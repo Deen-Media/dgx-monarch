@@ -1,8 +1,9 @@
 """Driver-side runtime primitives shared by the mesh lifecycle.
 
-These helpers cover environment discovery, bounded creation waits, worker-loop
-attachment and the event-loop bridge. They own no mesh lifecycle state and no
-supervision reconciliation.
+These helpers cover environment discovery, the creation-wait bound, worker-loop
+attachment and the event-loop bridge; ``mesh_helpers.wait_for_mesh_creation``
+applies that bound. They own no mesh lifecycle state and no supervision
+reconciliation.
 """
 from __future__ import annotations
 
@@ -208,21 +209,6 @@ def mesh_creation_timeout_s(environ: dict[str, str] | None = None) -> float:
             f"{_MESH_CREATION_TIMEOUT_ENV} must be a number in "
             f"(0, {_MAX_MESH_CREATION_TIMEOUT_S:g}]")
     return timeout_s
-
-
-def wait_for_mesh_creation(condition, creating: set[tuple], key: tuple,
-                           error_type: type[RuntimeError]) -> None:
-    """Bound one same-key creation wait while the caller holds *condition*."""
-    try:
-        timeout_s = mesh_creation_timeout_s()
-    except ValueError as exc:
-        raise error_type(str(exc)) from exc
-    if condition.wait_for(lambda: key not in creating, timeout=timeout_s):
-        return
-    raise error_type(
-        f"timed out after {timeout_s:g}s waiting for another caller to finish "
-        "creating this mesh; inspect the driver log and retry after it finishes, "
-        "or restart ComfyUI if that creator is wedged")
 
 
 def run_blocking_off_loop(fn, timeout_s: float, thread_name: str):

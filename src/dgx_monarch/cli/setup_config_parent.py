@@ -41,9 +41,13 @@ def prepare_config_parent(path: Path, *, fsync: Callable[[int], None] = os.fsync
                 or (created and (not safe_owner or info.st_mode & 0o077))
             ):
                 raise OSError("setup config parent chain is unsafe")
-            os.close(descriptor)
-            descriptor = pending
-            pending = -1
+            # Linux releases the number even when close(2) fails or an interrupt
+            # follows it. Drop the number before the syscall and never retry it.
+            # An interrupt that lands before the syscall leaks one directory fd.
+            # This CLI process is short-lived, so that is the safer trade.
+            owned, descriptor = descriptor, -1
+            os.close(owned)
+            descriptor, pending = pending, -1
     except BaseException:
         for owned in (descriptor, pending):
             if owned >= 0:
@@ -53,14 +57,8 @@ def prepare_config_parent(path: Path, *, fsync: Callable[[int], None] = os.fsync
                     pass
         raise
     else:
-        try:
-            os.close(descriptor)
-        except BaseException as primary:
-            try:
-                os.close(descriptor)
-            except BaseException:
-                pass
-            raise primary
+        owned, descriptor = descriptor, -1
+        os.close(owned)
 
 
 def validate_real_parent(path: Path) -> None:

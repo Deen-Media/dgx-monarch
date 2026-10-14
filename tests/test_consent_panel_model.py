@@ -102,6 +102,27 @@ def test_confirmation_expires_and_a_failed_poll_keeps_the_card_clickable():
     assert errored["badge"] == 1
 
 
+def test_an_accepted_row_hides_only_the_card_it_accepted():
+    """A poll that raced the accept may still serve the card just accepted.
+
+    That card (same id) stays hidden behind the confirmation. After a revoke
+    the driver raises the key again with a new id, and that card must show at
+    once with its badge, not wait out the confirmation's 15 s.
+    """
+    accepted = {CARD["key"]: {"card": CARD, "at": 4000, "message": "Allowed"}}
+    same_id, new_id = _run_model([
+        {"state": {"payload": {"pending": [CARD], "active": []}},
+         "ui": {"now": 5000, "justAccepted": accepted}},
+        {"state": {"payload": {"pending": [{**CARD, "id": "p-new"}], "active": []}},
+         "ui": {"now": 5000, "justAccepted": accepted}},
+    ])
+    assert [row["type"] for row in same_id["rows"]] == ["accepted"]
+    assert same_id["badge"] == 0
+    assert [row["type"] for row in new_id["rows"]] == ["card"]
+    assert new_id["badge"] == 1
+    assert new_id["rows"][0]["card"]["id"] == "p-new"
+
+
 def test_a_malformed_card_or_active_row_is_dropped_not_rendered():
     (only_good,) = _run_model([
         {"state": {"payload": {"pending": [

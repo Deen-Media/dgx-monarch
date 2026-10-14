@@ -13,7 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from threading import Event, Lock
-from typing import cast
+from typing import Any, cast
 
 import torch
 
@@ -91,7 +91,7 @@ class _Binding:
     def __call__(self, *args, **kwargs):
         with self._call_lock:
             before = self._processor_receipt.snapshot()
-            result = self.implementation(*args, **kwargs)
+            result = cast(Any, self.implementation)(*args, **kwargs)
             q = args[0] if args else kwargs.get("q")
             expected = q.shape[0] if isinstance(q, torch.Tensor) and q.ndim else 1
             observed = self._processor_receipt.snapshot() - before

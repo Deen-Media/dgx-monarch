@@ -2,6 +2,25 @@
 
 ## [Unreleased]
 
+- Clear a set of small defects and hygiene items an external review and the
+  2026-10-13 audit turned up. `dgxm setup` closes each config-directory
+  descriptor once and never retries a released number. `dgxm top` rail rates
+  and the driver's telemetry cache TTL use a monotonic clock, so a wall-clock
+  step cannot print a 1000x rate or hold a stale payload. The whole package now
+  type-checks under mypy's `check_untyped_defs`, and CI prints the mypy version;
+  the TUI attribute that shadowed Textual's `App.animate` is renamed. The
+  sidebar refreshes once when a reset outcome lands, and a revoked consent no
+  longer hides the re-raised card for 15 s. The lifecycle helpers name the
+  system interpreter through one `SYSTEM_PYTHON` constant with its reasons, a
+  new doctor row checks that `/usr/bin/python3` on each host starts and is 3.9
+  or newer, CLUSTER.md states the requirement, the generation helper is
+  assembled from two constants instead of a string split, and the Sol-Attn
+  install script refuses to ship a relative import. Load profiles are written
+  under `~/.cache/dgx-monarch/profiles/` with the newest 20 kept,
+  `/proc/meminfo` is read with a context manager, a dead duplicate
+  `wait_for_mesh_creation` is gone, ADAPTERS.md and VALIDATION.md say that
+  `sync_ulysses` has no effect on the pinned xfuser, and the ComfyUI canary's
+  path filter lists every module its real-Comfy steps import.
 - Render Anima under sequence parallelism again on current ComfyUI builds.
   ComfyUI now hands a model's attention op its q, k and v in single-use
   containers and names a preferred kernel for each block; Anima's op refused

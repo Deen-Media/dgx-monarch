@@ -37,18 +37,39 @@ on:
 
       # Check Ernie imports before running its forward-path harness.
       - "tests/test_ernie_stock_equivalence.py"
-      - "tests/test_flux_pad_exclusion.py"
       - "tests/test_mage_flow_comfy_differential.py"
       - "tests/test_qwen_image21_adapter.py"
       - "tests/test_qwen_text_projections.py"
       - "tests/test_render_memory_price.py"
       - "tests/test_wan_variants.py"
       - "tests/test_worker_latent_size_tags.py"
+      # No step runs these files, but the files the steps run import them. The
+      # pad-exclusion file holds the Ernie, Hunyuan, Ideogram4 and Lens
+      # two-rank harness. tests/test_canary_path_filter.py checks that every
+      # repo file the steps import by name is listed here.
+      - "tests/fake_model_base_helpers.py"
+      - "tests/module_location_helpers.py"
+      - "tests/test_flux_pad_exclusion.py"
+      - "tests/test_lens_order.py"
+      - "tests/test_qwen_image_order.py"
+      - "tests/test_sweep_matrix.py"
+      # The entrypoint canary checks the web/js assets. The template and video
+      # export canaries read the committed workflows, and the template canary
+      # imports tools/gen_templates.py.
       - "web/**"
       - "example_workflows/**"
       - "tools/gen_templates.py"
+      # The cfg combine seam loads this file with benchmark/ on sys.path.
+      - "benchmark/gates.py"
+      # The auto-topology step imports test_sweep_matrix.py, which loads these.
+      # report.py is not here: only test functions no step runs import it.
+      - "benchmark/sweep/__init__.py"
+      - "benchmark/sweep/compare.py"
       - "benchmark/sweep/convert.py"
-      # The media-load seam prunes inputs using this matrix's media map.
+      - "benchmark/sweep/run.py"
+      # The media-load seam prunes inputs using this matrix's media map, and
+      # the waiver history seam reads the driver's waiver run ids.
+      - "benchmark/sweep/driver.py"
       - "benchmark/sweep/matrix.py"
       - ".github/workflows/comfy-canary.yml"
 

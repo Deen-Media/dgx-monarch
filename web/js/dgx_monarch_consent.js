@@ -214,7 +214,11 @@ function activeRowNode(row) {
         busyState[row.key] && busyState[row.key].label ? busyState[row.key].label : "Revoke",
         ACCURACY, true);
     revoke.disabled = row.busy;
-    revoke.onclick = () => answer(row.key, { action: "revoke", key: row.key, id: row.id });
+    // Forget a local "Allowed" row for this key: the grant is gone, and a card
+    // the driver raises again for it must show at once.
+    revoke.onclick = () => answer(row.key, { action: "revoke", key: row.key, id: row.id }, () => {
+        delete justAccepted[row.key];
+    });
     line.appendChild(revoke);
     const failed = busyState[row.key] && busyState[row.key].error;
     if (!failed) return line;

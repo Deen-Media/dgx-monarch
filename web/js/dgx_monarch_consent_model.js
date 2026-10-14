@@ -45,14 +45,12 @@ export function consentPanelModel(state = {}, ui = {}) {
     // Accepted rows are local UI state, not server state: they must survive the
     // poll that drops the pending entry, or the user's confirmation is wiped
     // before it can be read.
-    const accepted = [];
-    const acceptedKeys = new Set();
+    const acceptedByKey = new Map();
     for (const [key, entry] of Object.entries(justAccepted)) {
         const record = plainObject(entry);
         const at = typeof record.at === "number" && Number.isFinite(record.at) ? record.at : 0;
         if (now - at > ttl) continue;
-        acceptedKeys.add(key);
-        accepted.push({
+        acceptedByKey.set(key, {
             type: "accepted",
             key,
             at,
@@ -62,11 +60,19 @@ export function consentPanelModel(state = {}, ui = {}) {
                 : "Allowed.",
         });
     }
-    accepted.sort((a, b) => b.at - a.at);
 
     const cards = [];
     for (const card of Array.isArray(payload.pending) ? payload.pending : []) {
-        if (!cardIsRenderable(card) || acceptedKeys.has(card.key)) continue;
+        if (!cardIsRenderable(card)) continue;
+        const done = acceptedByKey.get(card.key);
+        if (done) {
+            // The same id is the card just accepted, served by a poll that
+            // raced the accept: hide it. A new id means the driver asked again
+            // after the grant went away, so the card shows and the stale
+            // "Allowed" row goes.
+            if (done.card.id === card.id) continue;
+            acceptedByKey.delete(card.key);
+        }
         const local = plainObject(own(busy, card.key));
         cards.push({
             type: "card",
@@ -80,6 +86,8 @@ export function consentPanelModel(state = {}, ui = {}) {
         });
     }
 
+    const accepted = Array.from(acceptedByKey.values());
+    accepted.sort((a, b) => b.at - a.at);
     const rows = accepted.concat(cards);
     if (state.error) rows.push({ type: "error", detail: String(state.error) });
     if (!rows.length) rows.push({ type: "empty" });

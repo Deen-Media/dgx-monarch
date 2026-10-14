@@ -73,7 +73,10 @@ jobs:
             exit 1
           fi
       - name: mypy (full package)
-        run: mypy -p dgx_monarch
+        run: |
+          # The dev extra does not pin mypy, so print the version this run uses.
+          mypy --version
+          mypy -p dgx_monarch
       - name: pytest (no-GPU unit suite)
         run: bash scripts/test_cpu.sh
       - name: Surface artifact checks

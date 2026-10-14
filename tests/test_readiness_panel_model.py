@@ -385,21 +385,22 @@ def test_a_repeated_reading_keeps_its_rates_instead_of_reading_idle():
 
 
 def test_rail_rates_use_the_boxs_read_stamps_when_both_readings_carry_one():
-    # The panel's clock says when a poll arrived; rails_t says when the box
-    # read its counters. A reading that waited in the driver's cache arrives
-    # late, so only the box's stamps give the true interval. Without a stamp
-    # on both readings, or when the stamp did not move forward, the panel's
-    # clock applies, as for an older driver.
+    # The panel's clock says when a poll arrived; rails_m says when the box
+    # read its counters, by its monotonic clock. A reading that waited in the
+    # driver's cache arrives late, so only the box's stamps give the true
+    # interval. Without a stamp on both readings, or when the stamp did not
+    # move forward, the panel's clock applies, as for an older driver. The
+    # wall-clock stamps (the fifth argument) jump about and never time a rate.
     out = _run_fabric("""
         const tracker = fabric.createRailRateTracker();
         const r = (rx) => ({r0: {rx_bytes: rx, tx_bytes: 0}});
-        tracker.update("a", r(0), 1, 0, 50);
-        const stamped = tracker.update("a", r(5e9), 2, 4000, 52.5);
+        tracker.update("a", r(0), 1, 0, 1000, 50);
+        const stamped = tracker.update("a", r(5e9), 2, 4000, 4602.5, 52.5);
         const unstamped = tracker.update("a", r(7e9), 3, 6000);
-        const mixed = tracker.update("a", r(8e9), 4, 7000, 60);
-        const backwards = tracker.update("a", r(10e9), 5, 9000, 59);
-        const resumed = tracker.update("a", r(14e9), 6, 9500, 61);
-        const repeat = tracker.update("a", r(14e9), 7, 12000, 61);
+        const mixed = tracker.update("a", r(8e9), 4, 7000, 4610, 60);
+        const backwards = tracker.update("a", r(10e9), 5, 9000, 4612, 59);
+        const resumed = tracker.update("a", r(14e9), 6, 9500, 900, 61);
+        const repeat = tracker.update("a", r(14e9), 7, 12000, 900, 61);
         out = {stamped, unstamped, mixed, backwards, resumed, repeat};
     """)
     rx = {name: rates["r0"]["rx_gbs"] for name, rates in out.items()}
@@ -408,7 +409,7 @@ def test_rail_rates_use_the_boxs_read_stamps_when_both_readings_carry_one():
     # Unstamped, then stamped after an unstamped one: the panel's 2 s and 1 s.
     assert rx["unstamped"] == 1.0
     assert rx["mixed"] == 1.0
-    # A stamp that went back (a clock step) falls back to the panel's 2 s.
+    # A stamp that went back (the box rebooted) falls back to the panel's 2 s.
     assert rx["backwards"] == 1.0
     # Both stamped again: 4e9 over the box's 2 s, not the panel's 0.5 s.
     assert rx["resumed"] == 2.0
@@ -419,13 +420,38 @@ def test_rail_rates_use_the_boxs_read_stamps_when_both_readings_carry_one():
 def test_each_poll_passes_the_boxs_read_stamp_to_the_tracker():
     out = _run_fabric("""
         const tracker = fabric.createRailRateTracker();
-        const cards = (rx, t, readAt) => [{name: "boxA", stats: {
-            host: "boxA", t, rails_t: readAt, rails: {r0: {rx_bytes: rx, tx_bytes: 0}}}}];
-        fabric.hostRailRates(tracker, cards(0, 10, 100), 1000);
-        out = Object.fromEntries(fabric.hostRailRates(tracker, cards(3e9, 14, 101), 5000));
+        const cards = (rx, t, readAt, readMono) => [{name: "boxA", stats: {
+            host: "boxA", t, rails_t: readAt, rails_m: readMono,
+            rails: {r0: {rx_bytes: rx, tx_bytes: 0}}}}];
+        fabric.hostRailRates(tracker, cards(0, 10, 100, 40), 1000);
+        out = Object.fromEntries(fabric.hostRailRates(tracker, cards(3e9, 14, 101, 41), 5000));
     """)
     # 3e9 over the box's 1 s, not the panel's 4 s.
     assert out == {"boxA": {"r0": {"rx_gbs": 3.0, "tx_gbs": 0}}}
+
+
+def test_a_wall_clock_step_on_the_box_never_times_a_rail_rate():
+    # The box's wall clock jumps forward an hour between two readings one
+    # second apart, and the second one waits 3 s in the driver's cache. With
+    # the monotonic stamp the rate is the true 10 GB/s, where the wall-clock
+    # stamps would give about 0.003 GB/s. A driver that sends only the
+    # wall-clock stamp is timed by the panel's clock, as an older driver is.
+    out = _run_fabric("""
+        const card = (host, rx, t, readAt, readMono) => ({name: host, stats: {
+            host, t, rails_t: readAt, rails_m: readMono,
+            rails: {r0: {rx_bytes: rx, tx_bytes: 0}}}});
+        const run = (readMono) => {
+            const tracker = fabric.createRailRateTracker();
+            fabric.hostRailRates(tracker, [card("boxA", 0, 10, 1000, readMono(0))], 1000);
+            return Object.fromEntries(fabric.hostRailRates(
+                tracker, [card("boxA", 10e9, 11, 4601, readMono(1))], 5000));
+        };
+        out = {monotonic: run((s) => 40 + s), wallOnly: run(() => undefined)};
+    """)
+    # 10e9 over the box's monotonic 1 s.
+    assert out["monotonic"] == {"boxA": {"r0": {"rx_gbs": 10.0, "tx_gbs": 0}}}
+    # 10e9 over the panel's 4 s, not over the box's 3601 wall-clock seconds.
+    assert out["wallOnly"] == {"boxA": {"r0": {"rx_gbs": 2.5, "tx_gbs": 0}}}
 
 
 def test_two_cards_for_one_box_read_its_rails_once_per_poll():
@@ -562,7 +588,8 @@ def test_the_panel_rates_equal_dgxm_tops_for_the_same_two_readings():
 
 def test_the_panel_and_dgxm_top_agree_on_stamped_readings():
     # Polls 4 s and 1 s apart carry readings the boxes took 2.5 s and 2 s
-    # apart. Both readers time the rates by the readings, so they agree.
+    # apart by their monotonic clocks. Both readers time the rates by those
+    # stamps, so they agree.
     from dgx_monarch.tui.data import Poller
 
     samples = [
@@ -571,12 +598,12 @@ def test_the_panel_and_dgxm_top_agree_on_stamped_readings():
         (15.0, 504.5, {"rocep1s0f0": {"rx_bytes": 9_000_001_000, "tx_bytes": 2_500_000_000}}),
     ]
     poller = Poller(loops=())
-    tui = [poller._rail_rates("box", rails, at, read_at=read) for at, read, rails in samples][1:]
+    tui = [poller._rail_rates("box", rails, at, read_mono=read) for at, read, rails in samples][1:]
     panel = _run_fabric(
         "const tracker = fabric.createRailRateTracker();\n"
         f"const samples = {json.dumps(samples)};\n"
         "out = samples.map(([at, read, rails]) => "
-        "tracker.update('box', rails, at, at * 1000, read)).slice(1);")
+        "tracker.update('box', rails, at, at * 1000, undefined, read)).slice(1);")
     assert [rate["rocep1s0f0"] for rate in panel] == [
         {"rx_gbs": 2.0, "tx_gbs": 1.0}, {"rx_gbs": 2.0, "tx_gbs": 0}]
     for tui_rate, panel_rate in zip(tui, panel, strict=True):

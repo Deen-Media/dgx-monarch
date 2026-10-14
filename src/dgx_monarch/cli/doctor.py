@@ -429,9 +429,10 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
     for host in config.hosts:
         health = passive_worker_health(config, host, runner=run_on_host)
         rows.append(_row(*worker_service_row(host.name, host.address, health)))
+        rows.append(_row(*doctor_probes.system_python_row(config, host, run_on_host)))
 
-        # One heredoc carries every remote probe. Add a probe as a new print
-        # line: each consumer below selects its own line by prefix.
+        # One heredoc carries the remote probes that run under the Worker venv. Add a
+        # probe as a new print line: each consumer below selects its own line by prefix.
         comfy_dir = host.comfy_dir or config.comfy_dir or "~/ComfyUI"
         comfy_dir_literal = repr(comfy_dir)
         wanted_iface_literal = repr(

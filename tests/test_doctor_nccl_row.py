@@ -157,7 +157,11 @@ def test_doctor_sends_the_probe_and_fails_on_a_version_split(monkeypatch, capsys
     ok, output, scripts = _run_doctor(monkeypatch, capsys, remote)
     assert ok is False
     assert "[FAIL] NCCL library" in output
-    assert all(doctor_nccl.PROBE_SOURCE in script for script in scripts)
+    # Doctor also runs a one-line system Python probe per host. The NCCL probe
+    # is part of the heredoc env script, which runs once per host.
+    env_scripts = [script for script in scripts if "<<'EOF'" in script]
+    assert len(env_scripts) == 2
+    assert all(doctor_nccl.PROBE_SOURCE in script for script in env_scripts)
 
 
 def test_doctor_is_ok_when_both_hosts_load_one_library(monkeypatch, capsys):

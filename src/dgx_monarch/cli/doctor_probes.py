@@ -1,8 +1,11 @@
-"""Read swap state and check SageAttention for ``dgxm doctor``.
+"""Read swap state, check SageAttention and each host's system Python for ``dgxm doctor``.
 
 The remote swap probe emits prefixed lines in doctor's per-host heredoc. The
 Sage kernel probe checks the same ``nvidia-smi`` process list as the
 co-resident GPU row and skips when another GPU process is observed.
+
+The system Python probe runs on each host as its own shell command, apart
+from the heredoc, so its row still appears when the Worker venv is broken.
 
 The kernel probe is doctor's only CUDA workload. Doctor checks CUDA
 availability and imports SageAttention without allocating tensors, then runs
@@ -12,7 +15,13 @@ crash therefore terminates the subprocess rather than doctor.
 from __future__ import annotations
 
 import os
+import re
+import shlex
+import subprocess
+from collections.abc import Callable
 
+from ..config import ClusterConfig, HostConfig
+from .lifecycle_generation import SYSTEM_PYTHON, SYSTEM_PYTHON_MIN
 from .probe_certainty import FAIL, OK, WARN
 
 SAGE_NAME = "sageattention"
@@ -55,6 +64,15 @@ for _sl in _swap_lines:
         except ValueError:
             pass
 print(f"swap_kib={_swap_kib} swap_paths={','.join(_swap_paths) or 'none'}")"""
+
+# Prints the interpreter's version, then exits 1 when it is older than the
+# helpers need. It holds no single quote, so shlex.join quotes it as one word.
+SYSTEM_PYTHON_PROBE_SOURCE = (
+    'import sys; print("%d.%d.%d" % sys.version_info[:3]); '
+    f"raise SystemExit(sys.version_info < {SYSTEM_PYTHON_MIN!r})")
+SYSTEM_PYTHON_PROBE = shlex.join((SYSTEM_PYTHON, "-I", "-S", "-c", SYSTEM_PYTHON_PROBE_SOURCE))
+SYSTEM_PYTHON_PROBE_TIMEOUT_S = 15
+_VERSION_LINE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 DEFAULT_FALLBACK_LOG = "~/comfyui-monarch.log"
 _FALLBACK_ERROR_LINE = "Error running sage attention"
@@ -118,6 +136,43 @@ def remote_swap_row(host_name: str, line: str) -> tuple[str, str, str]:
     if not paths or kib <= 0:
         return (OK, name, "off")
     return (WARN, name, _swap_warn_detail(kib / (1024 * 1024), paths))
+
+
+def system_python_row(
+    config: ClusterConfig, host: HostConfig,
+    runner: Callable[..., subprocess.CompletedProcess[str]],
+) -> tuple[str, str, str]:
+    """`(status, name, detail)` for one host's system interpreter.
+
+    The Worker generation and installation helpers run on ``SYSTEM_PYTHON``,
+    not on the configured venv (see ``lifecycle_generation``), and need
+    ``SYSTEM_PYTHON_MIN`` or newer. Doctor runs the probe through the caller's
+    lifecycle runner. A transport loss reads as unobserved, never as FAIL: ssh
+    exits 255 when the connection fails.
+    """
+    name = f"{host.name} system python"
+    try:
+        result = runner(config, host, SYSTEM_PYTHON_PROBE, timeout=SYSTEM_PYTHON_PROBE_TIMEOUT_S)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return (WARN, name, f"unobserved: the probe did not answer ({type(exc).__name__})")
+    except Exception as exc:
+        return (FAIL, name, f"probe failed: {exc!r}")
+    # The interpreter prints its version last, after anything a login shell adds.
+    printed = (result.stdout or "").strip().splitlines()
+    match = _VERSION_LINE.fullmatch(printed[-1].strip()) if printed else None
+    if result.returncode == 0:
+        return (OK, name, f"{SYSTEM_PYTHON} is Python {match.group(0)}" if match
+                else f"{SYSTEM_PYTHON} ran")
+    if result.returncode == 255:
+        return (WARN, name, "unobserved: the host transport exited 255")
+    if match and tuple(int(part) for part in match.groups()) < SYSTEM_PYTHON_MIN:
+        floor = ".".join(str(part) for part in SYSTEM_PYTHON_MIN)
+        return (FAIL, name, f"{SYSTEM_PYTHON} is Python {match.group(0)}. The Worker lifecycle "
+                            f"helpers need Python {floor} or newer; see docs/CLUSTER.md")
+    tail = (result.stderr or result.stdout or "").strip().splitlines()
+    reason = tail[-1] if tail else "no output"
+    return (FAIL, name, f"{SYSTEM_PYTHON} exited {result.returncode}: {reason}. "
+                        f"The Worker lifecycle helpers need {SYSTEM_PYTHON}; see docs/CLUSTER.md")
 
 
 def gpu_busy() -> bool | None:

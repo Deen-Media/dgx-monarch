@@ -63,6 +63,12 @@ def test_browser_actions_are_bounded_and_recycle_outcome_remains_visible():
     assert "actionState.recycle.busy = false" in recycle_handler
     assert "recycleBtn.disabled = false" in recycle_handler
     assert "setTimeout" not in recycle_handler
+    # A poll during the POST replaces the button, so the handler redraws once
+    # after the outcome lands. It does not wait on a timer, and the outcome
+    # label stays until the next click.
+    assert "refresh(root)" in recycle_handler
+    assert (recycle_handler.index("refresh(root)")
+            > recycle_handler.index("actionState.recycle.busy = false"))
 
 
 def test_panel_labels_comfyui_as_telemetry_not_a_lifecycle_service():

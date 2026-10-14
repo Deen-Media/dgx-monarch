@@ -240,7 +240,7 @@ class LensAdapter(Adapter):
             if self.multi_layer_encoder_feature:
                 L = len(self.selected_layer_index)
                 enc_dim = context.shape[-1] // L
-                encoder_hidden_states = list(context.reshape(B, -1, L, enc_dim).unbind(dim=2))
+                encoder_hidden_states: Any = list(context.reshape(B, -1, L, enc_dim).unbind(dim=2))
                 text_seq_len = encoder_hidden_states[0].shape[1]
             else:
                 encoder_hidden_states = context

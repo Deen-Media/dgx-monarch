@@ -8,6 +8,7 @@ trimmed after gathering.
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import torch
 
@@ -57,7 +58,7 @@ class WanAdapter(Adapter):
         )
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
-        attn = ctx.usp_attention
+        attn: Any = ctx.usp_attention
 
         def usp_self_attention(self, x, freqs, transformer_options={}):
             # q/k use already-sharded RoPE; the USP call owns the collective.

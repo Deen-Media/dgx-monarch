@@ -157,3 +157,15 @@ def test_an_active_row_names_the_narrow_context_it_was_granted_for():
     model = MODEL.read_text()
     assert "function contextLabel(" in model
     assert "context: contextLabel(row.context)" in model
+
+
+def test_a_revoke_forgets_the_local_allowed_row_for_its_key():
+    """A revoked grant leaves no card behind its local "Allowed" row, and the
+    driver may raise a new card for the key at once. The revoke's onDone, the
+    third argument to answer(), drops the row instead of waiting out its TTL."""
+    source = CONSENT.read_text()
+    start = source.index("revoke.onclick = () => answer(")
+    handler = source[start:source.index("line.appendChild(revoke)", start)]
+    first, done = handler.split("}, () => {", 1)
+    assert 'action: "revoke"' in first
+    assert "delete justAccepted[row.key]" in done

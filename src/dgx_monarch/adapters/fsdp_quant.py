@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import dataclasses
 import math
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import torch
 
@@ -108,12 +108,17 @@ def _make(cls, qdata: torch.Tensor, layout_cls: str, params: Any,
     return obj
 
 
-class ShardedQuantWeight:  # sharded_quant_class() replaces this on first use
-    pass
+if TYPE_CHECKING:
+    # The type checker sees a variable here, so sharded_quant_class() can rebind it.
+    ShardedQuantWeight: Any
+else:
+    class ShardedQuantWeight:  # sharded_quant_class() replaces this on first use
+        pass
 
 
 def _build_class():
-    QuantizedTensor = _quantized_tensor_class()
+    # The base class only exists at run time, so it is Any to the type checker.
+    QuantizedTensor: Any = _quantized_tensor_class()
     aten = torch.ops.aten
 
     class _ShardedQuantWeight(QuantizedTensor):
@@ -121,7 +126,7 @@ def _build_class():
 
         # Names of the params that run along the rows, recorded once at full
         # size. They stay whole on every shard, like every other layout param.
-        _row_fields = ()
+        _row_fields: tuple[str, ...] = ()
 
         @classmethod
         def from_quantized(cls, qt):

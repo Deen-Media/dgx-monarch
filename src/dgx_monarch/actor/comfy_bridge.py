@@ -397,25 +397,14 @@ def _record_gpu_load_profile(profiler: Any, t0: float) -> None:
     profiler.disable()
     if took < 2.0:
         return
-    import io
-    import pstats
-    import tempfile
+    from .load_profile_file import write_load_profile
 
-    buf = io.StringIO()
-    pstats.Stats(profiler, stream=buf).sort_stats("cumulative").print_stats(30)
     try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            prefix=f"dgxm-load-profile.{os.getpid()}.{int(t0)}.",
-            suffix=".txt",
-            delete=False,
-        ) as output_file:
-            output_path = output_file.name
-            output_file.write(f"load_models_gpu took {took:.1f}s\n")
-            output_file.write(buf.getvalue())
-        log.info("gpu-load profile (%.1fs) written to %s", took, output_path)
-    except OSError:
-        pass
+        output_path = write_load_profile(profiler, took, t0)
+    except OSError as exc:
+        log.debug("gpu-load profile (%.1fs) not written: %r", took, exc)
+        return
+    log.info("gpu-load profile (%.1fs) written to %s", took, output_path)
 
 
 def _instrument_gpu_load() -> None:

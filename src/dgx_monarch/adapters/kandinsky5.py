@@ -19,6 +19,8 @@ patchify and sequence sharding.
 """
 from __future__ import annotations
 
+from typing import Any
+
 from ..log import get_logger
 from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather
 from .krea2 import _trim_trailing_pad
@@ -73,7 +75,7 @@ class Kandinsky5Adapter(Adapter):
         )
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
-        attn = ctx.usp_attention
+        attn: Any = ctx.usp_attention
 
         def usp_self_attention(self, x, freqs, transformer_options={}):
             # q/k use already-sharded per-token RoPE frequencies.
