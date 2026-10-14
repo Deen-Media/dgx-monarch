@@ -7,11 +7,15 @@ from typing import Any
 import torch
 
 from ..refusal import RefusalClass, refusal
+from .attention_inputs import note_preferred_attention
 from .attention_patches import (
     assert_no_foreign_attention_override,
     assert_usp_attention_patches_safe,
 )
 from .base import Adapter, InjectionContext, UnsupportedModelError, sp_rank, sp_world
+
+# The site gets one debug line from note_preferred_attention.
+_ATTENTION_SITE = "wan_animate2 attention"
 
 
 def is_wan_animate2_metadata(header: dict) -> bool:
@@ -99,11 +103,19 @@ class WanAnimate2Adapter(Adapter):
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         def stock_attention(q, k, v, heads, transformer_options, preferred_attention):
+            # Note the block's kernel preference once and drop it: the Init
+            # attention widget picks the kernel, and this path admits only
+            # TORCH_FLASH. In a worker that cannot import xformers, comfy's
+            # default backend is torch's scaled dot product attention, which
+            # tries flash first. A checkpoint that pins comfy-kitchen Sol
+            # would otherwise run it under a TORCH_FLASH stamp, and the pack
+            # would ask for no Sol-Attn waiver (docs/ADAPTERS.md).
             from comfy.ldm.modules.attention import AttentionTensorContainer, optimized_attention
 
+            note_preferred_attention(_ATTENTION_SITE, preferred_attention)
             return optimized_attention(
                 AttentionTensorContainer(q), AttentionTensorContainer(k), AttentionTensorContainer(v),
-                heads=heads, preferred_attention=preferred_attention, transformer_options=transformer_options)
+                heads=heads, preferred_attention=None, transformer_options=transformer_options)
 
         def pose_attn(self, x, freqs, transformer_options={}):
             b, s = x.shape[:2]

@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+- Stop a checkpoint's per-block kernel pin from bypassing the Sol-Attn
+  waiver in the attention the pack runs on Qwen Image 2.1 and in Wan-Animate 2
+  self-attention (issue #30). Their sequence-parallel forwards call ComfyUI's
+  native attention themselves and handed it the block's preferred kernel, so
+  a checkpoint that pinned comfy-kitchen Sol ran it under a TORCH_FLASH stamp
+  and the pack asked for no class-K card. Both now do what Anima's op does:
+  they log the pin once at debug level and hand ComfyUI none, so ComfyUI's
+  default backend runs. In a worker that cannot import xformers, that is
+  torch's scaled dot product attention, which tries flash first and picks
+  another exact backend where flash cannot take the call, so no approximate
+  kernel runs under the stamp. The pack asks for the Sol-Attn waiver only
+  when the widget selects Sol. Qwen's cache-miss prefix fill, which runs
+  ComfyUI's own callback, drops the pin too, and a CPU test now drives that
+  branch. The daily canary's attention keyword handoff seam checks the Qwen
+  Image 2.1 attention and the Wan-Animate 2 self-attention against the real
+  ComfyUI tree. Under sequence parallelism, stock
+  attention that the pack leaves in place still honors a pin: cross-attention
+  in the Wan models, LTX, Kandinsky 5 and Anima, and the self-attention that
+  several families run whole before the sharded block loop. Topologies
+  without sequence parallelism honor it everywhere, as stock ComfyUI does
+  ([ADAPTERS](docs/ADAPTERS.md) lists each site).
 - Close the small follow-ups from the 2026-10-12 review (issue #23).
   `dgxm doctor` now names a failed source probe as `dgxm restart` and a
   syncing `dgxm up` do: a missing or non-executable Worker interpreter reads

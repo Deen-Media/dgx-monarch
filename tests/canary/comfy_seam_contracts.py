@@ -100,11 +100,13 @@ The seams, in run order:
  39. attention keyword handoff  a pack op installed on a cosmos Attention
                               the way Anima installs its attn_op takes the
                               q/k/v containers and preferred_attention comfy
-                              hands it and matches stock output, and a real
+                              hands it and matches stock output, a real
                               comfy CrossAttention hands an
                               optimized_attention_override exactly func, q, k,
                               v, heads, attn_precision, transformer_options and
-                              _inside_attn_wrapper
+                              _inside_attn_wrapper, and the Qwen Image 2.1
+                              attention and Wan-Animate 2 self-attention never
+                              run a kernel a block pins, which stock runs
  40. cfg++ uncond pass        every sampler the auto table's cfg++ rule names
                               sets disable_cfg1_optimization before its first
                               model call, the CFG 1.0 shortcut still reads
@@ -3556,6 +3558,15 @@ def _assert_attention_keyword_handoff_seam() -> None:
     ``usp_options``' override, and pins the exact arguments ``wrap_attn``
     hands an override: a keyword that starts reaching the overrides fails here
     before it reaches a ring kernel's surface check on hardware.
+
+    Half three covers the two families whose sequence-parallel forwards call
+    comfy's native attention themselves, Qwen Image 2.1 and Wan-Animate 2. It
+    pins each self-attention block to a stand-in kernel through a real
+    ComfyAttention and checks that stock runs it, then that the injected
+    forward on one rank never does and matches the unpinned stock forward bit
+    for bit, with Qwen's cache-miss prefix fill included. A pin ran there
+    under a TORCH_FLASH stamp, and the pack asked for no Sol-Attn waiver
+    (issue #30).
     """
     import comfy.ldm.modules.attention as attention_module
     import comfy.ops
@@ -3719,6 +3730,132 @@ def _assert_attention_keyword_handoff_seam() -> None:
     assert torch.equal(stock, pack), (
         "attention keyword handoff: CrossAttention through usp_options' override "
         "no longer matches the stock call"
+    )
+
+    # Half three: Qwen Image 2.1 and Wan-Animate 2 call comfy's native
+    # attention themselves (issue #30). A block pinned to a kernel must not run
+    # it there, so the output equals an unpinned stock forward.
+    import types
+
+    from comfy.ldm.qwen_image21.model import QwenImage21Transformer2DModel
+    from comfy.ldm.wan.model_animate2 import WanAnimate2Model
+
+    from dgx_monarch.adapters import base as adapter_base
+    from dgx_monarch.adapters import qwen_image21 as qwen21_adapter
+    from dgx_monarch.adapters import wan_animate2 as animate2_adapter
+    from dgx_monarch.adapters.base import InjectionContext
+
+    pinned_runs = []
+
+    def pinned_kernel(q, k, v, heads, **_kwargs):
+        # Stands in for comfy-kitchen Sol, which needs a GPU, and is told apart
+        # from real attention by its zero output.
+        pinned_runs.append(1)
+        return torch.zeros_like(q)
+
+    def pin(module):
+        assert isinstance(module, attention_module.ComfyAttention), (
+            "attention keyword handoff: a native-attention block no longer "
+            "carries a ComfyAttention, so the per-block preference has moved"
+        )
+        module.config = {"attention": "comfy_kitchen_sol", "tau": 1.0}
+        module.function = attention_module.wrap_attn(pinned_kernel)
+
+    flash = types.SimpleNamespace(effective_kernel="TORCH_FLASH")
+
+    generator = torch.Generator().manual_seed(45)
+    qwen = QwenImage21Transformer2DModel(
+        in_channels=64, out_channels=64, num_layers=1, attention_head_dim=64,
+        num_attention_heads=1, context_in_dim=4, mlp_ratio=1,
+        axes_dims_rope=(16, 16, 32), operations=operations)
+    with torch.no_grad():
+        for parameter in qwen.parameters():
+            parameter.normal_(mean=0.0, std=0.02, generator=generator)
+    q_x = torch.randn(2, 64, 1, 5, generator=generator)
+    q_t = torch.tensor([0.25, 0.75])
+    q_context = torch.randn(2, 3, 4, generator=generator)
+    q_refs = [torch.randn(2, 64, 1, 2, generator=generator)]
+    unpinned = qwen._forward(q_x, q_t, q_context, ref_latents=q_refs, image_slots=[1])
+    for block in qwen.transformer_blocks:
+        pin(block.attn.comfy_attention)
+    pinned = qwen._forward(q_x, q_t, q_context, ref_latents=q_refs, image_slots=[1])
+    assert pinned_runs and not torch.equal(pinned, unpinned), (
+        "attention keyword handoff: stock Qwen Image 2.1 no longer runs a block's "
+        "pinned kernel, so dropping the preference may no longer be needed"
+    )
+
+    saved_qwen = (adapter_base.sp_world, adapter_base.sp_rank, qwen21_adapter.sp_gather)
+    adapter_base.sp_world = lambda: 1
+    adapter_base.sp_rank = lambda: 0
+    qwen21_adapter.sp_gather = lambda tensor, orig, dim=1: tensor.narrow(dim, 0, orig)
+    try:
+        qwen21_adapter.QwenImage21Adapter().inject_usp(
+            qwen, InjectionContext(topology_sp=1, usp_attention=flash))
+        pinned_runs.clear()
+        uncached = qwen._forward(q_x, q_t, q_context, ref_latents=q_refs, image_slots=[1])
+        # A cache miss fills the prefix through comfy's own block_causal_attention.
+        qwen.current_patcher = types.SimpleNamespace(get_free_memory=lambda _device: 1 << 60)
+        qwen.reset_prefix_cache(True)
+        filled = qwen._forward(
+            q_x, q_t, q_context, ref_latents=q_refs, image_slots=[1],
+            transformer_options={"qwen_image21_cache": {"device": "gpu", "dtype": "default"}})
+    finally:
+        adapter_base.sp_world, adapter_base.sp_rank, qwen21_adapter.sp_gather = saved_qwen
+    assert not pinned_runs, (
+        "attention keyword handoff: the Qwen Image 2.1 sequence-parallel forward "
+        "ran a block's pinned kernel under the widget's TORCH_FLASH stamp"
+    )
+    assert torch.equal(uncached, unpinned) and torch.equal(filled, unpinned), (
+        "attention keyword handoff: the Qwen Image 2.1 sequence-parallel forward "
+        "with a pinned block no longer matches the unpinned stock forward"
+    )
+
+    generator = torch.Generator().manual_seed(91)
+    wan = WanAnimate2Model(
+        patch_size=(1, 2, 2), text_len=4, in_dim=36, dim=8, ffn_dim=16,
+        freq_dim=2, text_dim=4, out_dim=1, num_heads=1, num_layers=1,
+        device="cpu", dtype=torch.float32, operations=operations).eval()
+    with torch.no_grad():
+        for parameter in wan.parameters():
+            parameter.uniform_(-0.1, 0.1, generator=generator)
+    w_x = torch.randn(1, 36, 3, 2, 4, generator=generator)
+    w_pose = torch.randn(1, 16, 2, 2, 4, generator=generator)
+    w_context = torch.randn(1, 4, 4, generator=generator)
+    w_t = torch.tensor([0.7])
+    with torch.no_grad():
+        unpinned = wan._forward(w_x, w_t, w_context, pose_latents=w_pose)
+        # Only self-attention: the pack leaves Wan's stock cross-attention in
+        # place, and that still honors a pin (docs/ADAPTERS.md).
+        for block in wan.blocks:
+            pin(block.self_attn.comfy_attention)
+        pinned_runs.clear()
+        pinned = wan._forward(w_x, w_t, w_context, pose_latents=w_pose)
+    assert pinned_runs and not torch.equal(pinned, unpinned), (
+        "attention keyword handoff: stock Wan-Animate 2 self-attention no longer "
+        "runs a block's pinned kernel, so dropping the preference may no longer be needed"
+    )
+
+    adapter_cls = animate2_adapter.WanAnimate2Adapter
+    saved_wan = (animate2_adapter.sp_world, animate2_adapter.sp_rank,
+                 adapter_cls.__dict__["_gather_spatial"])
+    animate2_adapter.sp_world = lambda: 1
+    animate2_adapter.sp_rank = lambda: 0
+    adapter_cls._gather_spatial = staticmethod(lambda tensor, _frames, _pixels: tensor)
+    try:
+        adapter_cls().inject_usp(wan, InjectionContext(topology_sp=1, usp_attention=flash))
+        pinned_runs.clear()
+        with torch.no_grad():
+            injected = wan._forward(w_x, w_t, w_context, pose_latents=w_pose)
+    finally:
+        animate2_adapter.sp_world, animate2_adapter.sp_rank = saved_wan[:2]
+        adapter_cls._gather_spatial = saved_wan[2]
+    assert not pinned_runs, (
+        "attention keyword handoff: the Wan-Animate 2 sequence-parallel forward "
+        "ran a self-attention block's pinned kernel under the widget's TORCH_FLASH stamp"
+    )
+    assert torch.equal(injected, unpinned), (
+        "attention keyword handoff: the Wan-Animate 2 sequence-parallel forward "
+        "with pinned self-attention no longer matches the unpinned stock forward"
     )
 
 
