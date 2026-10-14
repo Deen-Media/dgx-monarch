@@ -1,6 +1,7 @@
 """Exact installation migration and recovery without live systemd operations."""
 from __future__ import annotations
 
+import ast
 import base64
 import hashlib
 from pathlib import Path
@@ -157,7 +158,7 @@ def test_legacy_rollback_start_records_real_generation_identity(layout, monkeypa
     import sys
     import time
 
-    from dgx_monarch.cli.lifecycle_generation import _GENERATION_HELPER, generation_prestart_argv
+    from dgx_monarch.cli.lifecycle_generation import _GENERATION_LIBRARY, generation_prestart_argv
     from dgx_monarch.cli.update_installation_start import start_restored
     from dgx_monarch.cli.worker_health import _proc_listener_target
 
@@ -174,7 +175,7 @@ def test_legacy_rollback_start_records_real_generation_identity(layout, monkeypa
         path.mkdir(exist_ok=True)
         path.chmod(0o700)
     generation = {}
-    exec(_GENERATION_HELPER.split("operation=sys.argv[1]", 1)[0], generation)  # noqa: S102
+    exec(_GENERATION_LIBRARY, generation)  # noqa: S102
     socket_reservation = socket.socket()
     socket_reservation.bind(("127.0.0.1", 0))
     port = socket_reservation.getsockname()[1]
@@ -332,3 +333,110 @@ def test_hardened_remote_legacy_home_specifier_is_recognized(monkeypatch):
     unit = unit.replace("KillMode=control-group", "KillMode=process")
     row.update(unit=base64.b64encode(unit.encode()).decode(), sha256=hashlib.sha256(unit.encode()).hexdigest())
     assert not install.recognized_unit(config, host, row)
+
+
+def _system_python_literals(module) -> int:
+    """String constants that hold the path, alone or inside a longer string."""
+    tree = ast.parse(Path(module.__file__).read_text(encoding="utf-8"))
+    return sum(isinstance(node, ast.Constant) and isinstance(node.value, str)
+               and "/usr/bin/python3" in node.value for node in ast.walk(tree))
+
+
+def _system_python_renders(generation) -> dict[str, str]:
+    """The six system-Python commands, rendered at call time."""
+    host = HostConfig(name="peer", address="tcp://192.0.2.10:26600")
+    config = ClusterConfig(hosts=[host], python_bin="~/venv/bin/python")
+    scripts: list[str] = []
+
+    def run(_config, _host, script, _timeout):
+        scripts.append(script)
+        raise OSError("transport stand-in")
+
+    assert install.start_prior_installation(config, host, TOKEN, {}, run, "", TOKEN) is install.Certainty.UNKNOWN
+    return {
+        "prestart": " ".join(generation.generation_prestart_argv()),
+        "quarantine": " ".join(generation.generation_quarantine_argv(TOKEN, "pattern", "systemd", "dgxm-worker.service")),
+        "invalidate command": generation.invalidate_generation_command_shell(),
+        "invalidate shell": generation.invalidate_generation_shell(),
+        "installation": install.installation_script({"operation": "snapshot"}),
+        "prior start": scripts[0],
+    }
+
+
+def test_every_system_python_site_uses_the_one_constant():
+    """The six system-Python commands take their interpreter from SYSTEM_PYTHON."""
+    from dgx_monarch.cli import lifecycle_generation as generation
+
+    python = generation.SYSTEM_PYTHON
+    assert python == "/usr/bin/python3"
+    # The only string literal left is the constant itself; comments do not count.
+    assert _system_python_literals(generation) == 1
+    assert _system_python_literals(install) == 0
+    assert generation.generation_prestart_argv()[0] == python
+    assert generation.generation_quarantine_argv(TOKEN, "pattern", "systemd", "dgxm-worker.service")[0] == python
+    assert generation.invalidate_generation_command_shell().startswith(python + " -I -S -B -c ")
+    assert f"\n{python} -I -S -B -c " in generation.invalidate_generation_shell()
+    assert f"\n{python} -I -S -B - <<'DGXM_INSTALLATION'\n" in install.installation_script({"operation": "snapshot"})
+    host = HostConfig(name="peer", address="tcp://192.0.2.10:26600")
+    config = ClusterConfig(hosts=[host], python_bin="~/venv/bin/python")
+    scripts: list[str] = []
+
+    def run(_config, _host, script, _timeout):
+        scripts.append(script)
+        raise OSError("transport stand-in")
+
+    assert install.start_prior_installation(config, host, TOKEN, {}, run, "", TOKEN) is install.Certainty.UNKNOWN
+    assert f"\n{python} -I -S -B - <<'DGXM_PRIOR_START'\n" in scripts[0]
+
+
+def test_every_system_python_site_reads_the_constant_when_it_renders(monkeypatch):
+    """A site that spells the path inside a longer string renders the same
+    bytes as one that reads the constant, so the rendered checks above cannot
+    tell them apart. A stand-in value can: each of the six commands must carry
+    it and no copy of the real path."""
+    from dgx_monarch.cli import lifecycle_generation as generation
+
+    sentinel = "/opt/sentinel/python3"
+    monkeypatch.setattr(generation, "SYSTEM_PYTHON", sentinel)
+    monkeypatch.setattr(install, "SYSTEM_PYTHON", sentinel)
+    rendered = _system_python_renders(generation)
+    assert rendered["prestart"].startswith(sentinel + " -I -S -B -c ")
+    assert rendered["quarantine"].startswith(sentinel + " -I -S -B -c ")
+    assert rendered["invalidate command"].startswith(sentinel + " -I -S -B -c ")
+    assert f"\n{sentinel} -I -S -B -c " in rendered["invalidate shell"]
+    assert f"\n{sentinel} -I -S -B - <<'DGXM_INSTALLATION'\n" in rendered["installation"]
+    assert f"\n{sentinel} -I -S -B - <<'DGXM_PRIOR_START'\n" in rendered["prior start"]
+    assert [site for site, text in rendered.items() if "/usr/bin/python3" in text] == []
+
+
+def test_generation_prestart_line_keeps_its_installed_bytes():
+    """Installed Worker units carry this exact ExecStartPre= line, and update
+    recognizes an installed unit only by its exact bytes (recognized_unit). A
+    change to the interpreter or the helper source needs a reviewed migration."""
+    from dgx_monarch.cli.lifecycle_generation import systemd_generation_invalidator
+
+    line = systemd_generation_invalidator()
+    assert line.startswith('ExecStartPre="/usr/bin/python3" "-I" "-S" "-B" "-c" ')
+    assert hashlib.sha256(line.encode()).hexdigest() == (
+        "c9f3ffe04811ad4450b116f1aec8c49445580b8877215be085553397799bc077")
+
+
+def test_prior_start_payload_runs_the_generation_library_without_its_dispatch():
+    from dgx_monarch.cli import lifecycle_generation as generation
+
+    assert generation._GENERATION_HELPER == generation._GENERATION_LIBRARY + generation._GENERATION_DISPATCH
+    assert generation._GENERATION_DISPATCH.startswith("operation=sys.argv[1]\n")
+    assert "sys.argv" not in generation._GENERATION_LIBRARY
+    host = HostConfig(name="peer", address="tcp://192.0.2.10:26600")
+    config = ClusterConfig(hosts=[host], python_bin="~/venv/bin/python")
+    scripts: list[str] = []
+
+    def run(_config, _host, script, _timeout):
+        scripts.append(script)
+        raise OSError("transport stand-in")
+
+    install.start_prior_installation(config, host, TOKEN, {}, run, "", TOKEN)
+    payload = scripts[0].split("<<'DGXM_PRIOR_START'\n", 1)[1].rsplit("DGXM_PRIOR_START\n", 1)[0]
+    compile(payload, "prior-start", "exec")
+    assert "exec(" + repr(generation._GENERATION_LIBRARY) + ", generation_api)" in payload
+    assert "operation=sys.argv[1]" not in payload

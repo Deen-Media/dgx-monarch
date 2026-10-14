@@ -57,29 +57,33 @@ export function activeTopology(workers) {
 // Per-rail RX and TX GB/s between two readings, with the math of _rail_rates
 // in src/dgx_monarch/tui/data.py: the byte delta over the elapsed seconds, the
 // elapsed time floored at 1 ms, and a negative or non-finite rate read as 0.
-// `stamp` is the reading's payload stamp (stats.t) and `readAt` the box's own
-// stamp of when it read the counters (stats.rails_t), both in seconds. When
-// this reading and the last one both carry a readAt, and it moved forward, the
-// elapsed time is the interval between them, so a reading that waited in the
-// driver's cache is timed by when it was read. Otherwise the elapsed time is
-// the caller's monotonic clock (the panel passes performance.now(), in
-// milliseconds), as for an older driver. Two departures, both for the panel: a
-// rail's first sample reads null, which the panel prints as a dash, because 0
-// would read as an idle rail. And a host whose reading carries the same stamp
-// as the last one (a cached worker row while a render keeps the worker busy)
-// keeps its last rates and its baseline, so the gap never reads as 0 followed
-// by a burst.
+// `stamp` is the reading's payload stamp (stats.t), `readAt` the box's
+// wall-clock stamp of when it read the counters (stats.rails_t) and `readMono`
+// its monotonic stamp taken at the same instant (stats.rails_m), all in
+// seconds. When this reading and the last one both carry a readMono, and it
+// moved forward, the elapsed time is the interval between them, so a reading
+// that waited in the driver's cache is timed by when it was read. Otherwise the
+// elapsed time is the caller's monotonic clock (the panel passes
+// performance.now(), in milliseconds), as for an older driver. readAt never
+// times a rate, because NTP can step the wall clock between two readings. Two
+// departures, both for the panel: a rail's first sample reads null, which the
+// panel prints as a dash, because 0 would read as an idle rail. And a host
+// whose reading repeats any of the last reading's three stamps (a cached
+// worker row while a render keeps the worker busy) keeps its last rates and
+// its baseline, so the gap never reads as 0 followed by a burst.
 export function createRailRateTracker() {
     const hosts = new Map();  // host name -> last reading; replaced per poll
     return {
-        update(host, rails, stamp, nowMs, readAt) {
+        update(host, rails, stamp, nowMs, readAt, readMono) {
             const previous = hosts.get(host);
             const at = finite(stamp);
             const read = finite(readAt);
+            const mono = finite(readMono);
             if (previous && ((at !== null && at === previous.stamp)
-                || (read !== null && read === previous.read))) return previous.rates;
-            const span = previous && read !== null && previous.read !== null && read > previous.read
-                ? read - previous.read : null;
+                || (read !== null && read === previous.read)
+                || (mono !== null && mono === previous.mono))) return previous.rates;
+            const span = previous && mono !== null && previous.mono !== null && mono > previous.mono
+                ? mono - previous.mono : null;
             const counters = new Map();
             const rates = {};
             for (const [dev, row] of Object.entries(isRecord(rails) ? rails : {})) {
@@ -100,7 +104,7 @@ export function createRailRateTracker() {
                 };
                 rates[dev] = { rx_gbs: rate(rx - before.rx), tx_gbs: rate(tx - before.tx) };
             }
-            hosts.set(host, { t: nowMs, stamp: at, read, counters, rates });
+            hosts.set(host, { t: nowMs, stamp: at, read, mono, counters, rates });
             return rates;
         },
     };
@@ -120,7 +124,7 @@ export function hostRailRates(tracker, cards, nowMs) {
     }
     const rates = new Map();
     for (const [host, stats] of readings) {
-        rates.set(host, tracker.update(host, stats.rails, stats.t, nowMs, stats.rails_t));
+        rates.set(host, tracker.update(host, stats.rails, stats.t, nowMs, stats.rails_t, stats.rails_m));
     }
     return rates;
 }

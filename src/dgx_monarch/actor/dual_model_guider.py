@@ -27,6 +27,8 @@ ComfyUI's patcher cleanup is idempotent and its finally blocks still run.
 """
 from __future__ import annotations
 
+from typing import Any
+
 _DUAL_KEY = "dgxm_dual_uncond"
 _DUAL_COND_KEY = "dgxm_dual_cond"
 _HANDOFF_KEY = "dgx_monarch_dual_model_handoff"
@@ -40,7 +42,7 @@ def handoff(executor, *args, **kwargs):
     staged and passes through.
     """
     result = executor(*args, **kwargs)
-    uncond = args[0] if args else kwargs.get("model")
+    uncond: Any = args[0] if args else kwargs.get("model")
     staged = getattr(uncond, "get_additional_models_with_key", None)
     pending = list(staged(_DUAL_COND_KEY)) if staged is not None else []
     if pending:

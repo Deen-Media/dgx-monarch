@@ -26,6 +26,8 @@ the rope and, at batch 2, the strided shard and gather views. docs/ADAPTERS.md
 """
 from __future__ import annotations
 
+from typing import Any
+
 import torch
 
 from ..log import get_logger
@@ -139,7 +141,7 @@ class ErnieAdapter(Adapter):
         )
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
-        attn = ctx.usp_attention
+        attn: Any = ctx.usp_attention
         # The joint stream's pad rows for the forward now running. The stock
         # block calls attention with no options, so the forward that owns the
         # layer loop leaves them here for the bound attention to read.

@@ -104,7 +104,7 @@ def test_replay_navigation_and_narrow_header(tmp_path, monkeypatch):
             app.frame += 2
             assert app.draw_header(app.current()) == before
             await pilot.press("a")
-            assert not app.animate
+            assert not app.motion
             await pilot.press("t", "t")
             assert app.theme_name == "mono"
             await pilot.resize_terminal(44, 32)

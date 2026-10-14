@@ -617,6 +617,9 @@ automatic. These are topology-specific results, so cfg2 NVFP4 success does
 not establish accuracy for NVFP4 Ulysses. Sharded attention uses TORCH_FLASH because head
 dimension 256 exceeds the other supported kernels. `sync_ulysses=off` was
 the faster measured setting, 24 versus 26 seconds, with unchanged output.
+Those two times are one 2-second polling interval apart, and the setting
+has no effect on the pinned xfuser 0.7.0, whose Ulysses all-to-all never
+receives it (see [Adapters](ADAPTERS.md#what-an-adapter-provides)).
 
 <a id="evidence-flux-1-dev"></a>
 

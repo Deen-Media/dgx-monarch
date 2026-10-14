@@ -1,6 +1,8 @@
 """DGXMonarchInit: cluster attach + topology policy. Outputs MESH."""
 from __future__ import annotations
 
+from typing import Any
+
 from .. import family_select, first_render
 from ..adapters import SELECTABLE_FAMILIES
 from ..config import find_config_path
@@ -106,7 +108,9 @@ class DGXMonarchInit:
                                  "tooltip": "Diagnostic. Profile each load_models_gpu call in "
                                  "the workers with cProfile and, for a call slower than 2 s, write "
                                  "the top 30 entries by cumulative time to "
-                                 "/tmp/dgxm-load-profile.<pid>.<t>.<random>.txt. "
+                                 "~/.cache/dgx-monarch/profiles/"
+                                 "dgxm-load-profile.<pid>.<t>.<random>.txt "
+                                 "(the newest 20 reports are kept). "
                                  "Leave off for normal use."}),
                 "swap_verify": ("INT", {"default": 2, "min": -1, "max": 64, "advanced": True,
                                 "tooltip": "Keys per lazy swap to bit-check against comfy's own "
@@ -222,7 +226,7 @@ class DGXMonarchInit:
                 handle, site="the Init node", respawn=lambda _old: get_mesh(
                     config_path=config_path, mode=mode, gpus_per_host=gpus_per_host))
 
-        worker_args = {"mmap_fallback": bool(mmap_fallback)}
+        worker_args: dict[str, Any] = {"mmap_fallback": bool(mmap_fallback)}
         # Omit automatic policy so workers resolve it from hardware. Keep
         # boolean spellings compatible with saved workflows.
         explicit = {"on": True, "true": True, "off": False, "false": False}.get(

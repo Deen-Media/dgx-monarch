@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from typing import Any
 
 import torch
 
@@ -196,11 +197,11 @@ class WanAnimate2Adapter(Adapter):
                 raise UnsupportedModelError(refusal(RefusalClass.PHYSICS,
                     f"Wan-Animate-2 pose branch has {pose_latents.shape[2]} latent frames, expected {f_gen - 1}. "
                     "Use the native conditioner shape or topology 'single'."))
-            cache = transformer_options.get("animate2_cache") if apply_pose else None
+            cache: Any = transformer_options.get("animate2_cache") if apply_pose else None
             if cache is not None:
                 cache.select(pose_latents[:1])
             cached = cache is not None and cache.filled(len(self.blocks))
-            x_pose = None
+            x_pose: Any = None
             if apply_pose and not cached:
                 pose = self.patch_embedding(torch.cat(
                     [pose_latents, torch.ones_like(pose_latents[:, :4]), pose_latents], 1).float()).to(x.dtype)

@@ -111,7 +111,7 @@ class DgxmTopApp:
                 # cursor. Replay starts paused.
                 self.story = StoryTrack()
                 self.cursor = -1          # ring index (negative, -1 == newest)
-                self.animate = True
+                self.motion = True
                 self.theme_name = poller_args.get("theme", "spark")
                 self.frame = 0
                 self._polling = False
@@ -224,7 +224,7 @@ class DgxmTopApp:
 
             def brand_header(self, text, tick):
                 return header_layout(
-                    text, width=self.size.width, frame=self.frame, animate=self.animate,
+                    text, width=self.size.width, frame=self.frame, animate=self.motion,
                     paused=self.paused, replay=bool(self.replay),
                     active=measured_activity(tick, now=time.time(), interval=self.interval),
                     mono=self.theme_name == "mono", unicode=supports_unicode(),
@@ -445,7 +445,7 @@ class DgxmTopApp:
                 self.cursor = min(-1, self.cursor)
 
             def action_anim(self):
-                self.animate = not self.animate
+                self.motion = not self.motion
 
             def action_theme(self):
                 names = list(THEMES)

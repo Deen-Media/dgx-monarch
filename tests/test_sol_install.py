@@ -1,7 +1,12 @@
 """Package maintenance is plan bound, no-deps, explicit and fail closed."""
 from __future__ import annotations
 
+import builtins
 import json
+import os
+import subprocess
+import symtable
+import sys
 import zipfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -119,6 +124,83 @@ def test_remote_source_is_self_contained_and_nonblocking():
     assert "acquire_lifecycle_lock(Path.home(), True)" in source
     assert "from ." not in source
     assert '"--no-index", "--no-deps"' in source
+
+
+_GLOBALS_MARKER = "DGXM_TEST_GLOBALS="
+
+
+def _global_reads(table: symtable.SymbolTable) -> set[str]:
+    """Names any scope of the source reads from module globals or builtins."""
+    names = set()
+    for symbol in table.get_symbols():
+        if not symbol.is_referenced():
+            continue
+        if table.get_type() == "module":
+            if not (symbol.is_assigned() or symbol.is_imported()):
+                names.add(symbol.get_name())
+        elif symbol.is_global():
+            names.add(symbol.get_name())
+    for child in table.get_children():
+        names |= _global_reads(child)
+    return names
+
+
+def test_assembled_remote_source_runs_and_defines_every_name_it_reads(tmp_path, monkeypatch):
+    """Run the shipped shell and payload on this box with a temporary HOME.
+
+    The read action executes every definition in the joined sources and
+    reaches the result line. Afterwards the payload's globals must hold
+    every name that any function reads, so a stripped import whose name the
+    joined sources stop defining fails here, not as a NameError on a host.
+    """
+    token = "a" * 32
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    root = payload.private_plan(token, True)
+    plan = {"token": token, "allowed": [], "changes": []}
+    plan["digest"] = payload.digest(plan)
+    (root / "plan.json").write_text(json.dumps(plan))
+    (root / "plan.json").chmod(0o600)
+    cfg = config()
+    cfg.python_bin = sys.executable
+    script = command.host_script(cfg, "read", token, set())
+    source = script.split("<<'DGXM_SOL_PAYLOAD'\n", 1)[1].rsplit("\nDGXM_SOL_PAYLOAD", 1)[0]
+    dump = f"print({_GLOBALS_MARKER!r} + json.dumps(sorted(globals())))"
+    probe = script.replace("\nDGXM_SOL_PAYLOAD\n", "\n" + dump + "\nDGXM_SOL_PAYLOAD\n")
+    assert probe != script
+    result = subprocess.run(["bash", "-s"], input=probe, capture_output=True, text=True, timeout=60,
+                            env={"HOME": str(tmp_path), "PATH": os.environ.get("PATH", "/usr/bin:/bin")})
+    assert result.returncode == 0, result.stderr
+    assert "NameError" not in result.stderr
+    rows = [line[len(command.MARKER):] for line in result.stdout.splitlines() if line.startswith(command.MARKER)]
+    assert [json.loads(row) for row in rows] == [
+        {"status": "ok", "plan": {"digest": plan["digest"], "allowed": [], "changes": []}}]
+    defined = json.loads(next(line[len(_GLOBALS_MARKER):] for line in result.stdout.splitlines()
+                              if line.startswith(_GLOBALS_MARKER)))
+    reads = _global_reads(symtable.symtable(source, "remote-sol", "exec"))
+    assert {"require_idle", "distribution_inventory", "protected_leaf_fingerprint",
+            "validate_wheel_requirements"} <= reads
+    assert sorted(reads - set(defined) - set(dir(builtins))) == []
+
+
+def test_assembly_refuses_a_relative_import_it_did_not_strip(monkeypatch):
+    """A reformatted import line survives the exact-text strip; the call fails here, before any host."""
+    read_text = Path.read_text
+    exact = "from .sol_install_guard import require_idle\n"
+
+    def drifted(self, *args, **kwargs):
+        text = read_text(self, *args, **kwargs)
+        if self.name == "sol_install_payload.py":
+            assert exact in text
+            text = text.replace(exact, "from .sol_install_guard import (\n    require_idle,\n)\n")
+        return text
+
+    monkeypatch.setattr(Path, "read_text", drifted)
+    monkeypatch.setattr(command.lifecycle, "run_on_host", lambda *a, **k: pytest.fail("remote work after drift"))
+    with pytest.raises(RuntimeError, match="relative import"):
+        command.host_script(config(), "plan", "a" * 32, set())
+    # _host must not fold the defect into an unknown readback.
+    with pytest.raises(RuntimeError, match="relative import"):
+        command._host(config(), config().hosts[0], "plan", "a" * 32, set())
 
 
 def test_apply_rechecks_environment_before_pip(monkeypatch):

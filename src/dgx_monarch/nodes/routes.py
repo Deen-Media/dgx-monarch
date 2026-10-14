@@ -43,6 +43,10 @@ log = get_logger(__name__)
 # past _CACHE_TTL_S and holding last-observed facts meanwhile. A failed
 # telemetry refresh marks readiness unknown. A failed worker poll serves the
 # last good rows, or a status_error row (read as unknown) when there are none.
+# Each slot's "t" is a time.monotonic() stamp, so a wall-clock step cannot
+# stretch or cut the TTL. The 0.0 start and reset value reads as expired,
+# because the Linux monotonic clock counts from boot. The "t" inside a
+# telemetry payload stays wall clock.
 _CACHE: dict = {
     "t": 0.0, "workers": [], "inflight": False, "busy_note": None,
     "generation": 0, "fresh": False,
@@ -171,7 +175,7 @@ def _workers() -> list:
     from ..mesh import _MESHES  # driver-local registry; read-only peek
 
     with _CACHE_LOCK:
-        if time.time() - _CACHE["t"] < _CACHE_TTL_S or _CACHE["inflight"]:
+        if time.monotonic() - _CACHE["t"] < _CACHE_TTL_S or _CACHE["inflight"]:
             return _CACHE["workers"]
         generation = int(_CACHE.get("generation", 0))
         _CACHE["inflight"] = True
@@ -190,7 +194,7 @@ def _workers() -> list:
         _CACHE["inflight"] = False
         if generation != int(_CACHE.get("generation", 0)):
             return _CACHE["workers"]
-        _CACHE["t"] = time.time()
+        _CACHE["t"] = time.monotonic()
         _CACHE["fresh"] = ok
         if ok or not _CACHE["workers"]:
             _CACHE["workers"] = results
@@ -201,7 +205,7 @@ def _worker_snapshot() -> tuple[list, dict]:
     rows = _workers()
     with _CACHE_LOCK:
         fresh = (rows is _CACHE["workers"] and _CACHE.get("fresh") is True
-                 and not _CACHE["inflight"] and time.time() - _CACHE["t"] < _CACHE_TTL_S)
+                 and not _CACHE["inflight"] and time.monotonic() - _CACHE["t"] < _CACHE_TTL_S)
     return rows, {"fresh": fresh}
 
 
@@ -294,7 +298,7 @@ def _telemetry() -> dict:
     nvidia-smi run once per refresh, not once per request. A failed refresh
     keeps the last payload, marked with telemetry_error.
     """
-    now = time.time()
+    now = time.monotonic()
     with _TELEMETRY_CACHE_LOCK:
         cached = _TELEMETRY_CACHE["data"]
         if now - _TELEMETRY_CACHE["t"] < _CACHE_TTL_S:
@@ -315,7 +319,7 @@ def _telemetry() -> dict:
             if generation != int(_TELEMETRY_CACHE.get("generation", 0)):
                 return _stale_snapshot(
                     _TELEMETRY_CACHE["data"], "CacheInvalidated")
-            _TELEMETRY_CACHE["t"] = time.time()
+            _TELEMETRY_CACHE["t"] = time.monotonic()
             stale = _stale_snapshot(_TELEMETRY_CACHE["data"], type(exc).__name__)
             _TELEMETRY_CACHE["data"] = stale
             return stale
@@ -323,7 +327,7 @@ def _telemetry() -> dict:
         if generation != int(_TELEMETRY_CACHE.get("generation", 0)):
             _TELEMETRY_CACHE["inflight"] = False
             return _stale_snapshot(_TELEMETRY_CACHE["data"], "CacheInvalidated")
-        _TELEMETRY_CACHE.update(t=time.time(), data=fresh, inflight=False)
+        _TELEMETRY_CACHE.update(t=time.monotonic(), data=fresh, inflight=False)
         return fresh
 
 

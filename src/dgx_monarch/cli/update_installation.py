@@ -11,7 +11,12 @@ from typing import Any
 
 from ..config import ClusterConfig, HostConfig
 from . import lifecycle, update_installation_remote, update_installation_start
-from .lifecycle_generation import _GENERATION_HELPER, systemd_generation_invalidator, validate_generation
+from .lifecycle_generation import (
+    _GENERATION_LIBRARY,
+    SYSTEM_PYTHON,
+    systemd_generation_invalidator,
+    validate_generation,
+)
 from .lifecycle_lock import locked_script
 from .lifecycle_systemd import hardened_worker_unit, systemd_worker_unit
 from .systemd_unit import quote
@@ -23,7 +28,7 @@ from .worker_health import _proc_listener_target
 def installation_script(request: dict[str, Any]) -> str:
     source = Path(update_installation_remote.__file__).read_text(encoding="utf-8")
     encoded = base64.b64encode(json.dumps(request).encode()).decode()
-    return "# DGXM_INSTALLATION_OPERATION=" + str(request["operation"]) + "\n/usr/bin/python3 -I -S -B - <<'DGXM_INSTALLATION'\n" + source + "\nmain(json.loads(base64.b64decode(" + repr(encoded) + ")))\nDGXM_INSTALLATION\n"
+    return "# DGXM_INSTALLATION_OPERATION=" + str(request["operation"]) + "\n" + SYSTEM_PYTHON + " -I -S -B - <<'DGXM_INSTALLATION'\n" + source + "\nmain(json.loads(base64.b64decode(" + repr(encoded) + ")))\nDGXM_INSTALLATION\n"
 
 
 def recognized_unit(config: ClusterConfig, host: HostConfig, snapshot: dict[str, Any]) -> bool:
@@ -132,10 +137,10 @@ def start_prior_installation(config: ClusterConfig, host: HostConfig, token: str
     request = {"token": token, "prior": snapshot, "python_bin": config.python_bin, "address": host.address, "generation": generation, "pattern": lifecycle._loop_regex(host), "proc_table": proc_table, "endpoint": endpoint}
     source = Path(update_installation_remote.__file__).read_text(encoding="utf-8")
     starter = Path(update_installation_start.__file__).read_text(encoding="utf-8")
-    generation_source = _GENERATION_HELPER.split("operation=sys.argv[1]", 1)[0]
+    generation_source = _GENERATION_LIBRARY
     payload = base64.b64encode(json.dumps(request).encode()).decode()
     script = source + "\ninstallation_api = dict(globals())\ngeneration_api = {}\nexec(" + repr(generation_source) + ", generation_api)\nexec(" + repr(starter) + ", globals())\nstart_restored(json.loads(base64.b64decode(" + repr(payload) + ")), installation_api, generation_api)\n"
-    shell = preflight_script + "\n# DGXM_INSTALLATION_OPERATION=start_prior\n/usr/bin/python3 -I -S -B - <<'DGXM_PRIOR_START'\n" + script + "DGXM_PRIOR_START\n"
+    shell = preflight_script + "\n# DGXM_INSTALLATION_OPERATION=start_prior\n" + SYSTEM_PYTHON + " -I -S -B - <<'DGXM_PRIOR_START'\n" + script + "DGXM_PRIOR_START\n"
     try:
         result = run(config, host, locked_script(config.python_bin, shell), 90)
     except (OSError, subprocess.TimeoutExpired):

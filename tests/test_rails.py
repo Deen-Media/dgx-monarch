@@ -131,20 +131,28 @@ def test_two_cabled_ports_on_one_device_are_keyed_by_device_and_port(sysfs):
 
 
 def test_the_stamp_is_taken_when_the_counters_are_read(sysfs, monkeypatch):
-    # A reader times a rate by the interval between two stamps, so the stamp
-    # must follow the counter reads, not the slower readings around them.
+    # A reader times a rate by the interval between two monotonic stamps, so
+    # both stamps must follow the counter reads, not the slower readings
+    # around them.
     _port(sysfs, "rail0", rx="1", tx="1")
     _port(sysfs, "rail1", rx="2", tx="2")
     seen = []
     counters, link = rails._counters, rails._link
-    monkeypatch.setattr(rails, "_counters", lambda port: (seen.append(("c", time.time())), counters(port))[1])
-    monkeypatch.setattr(rails, "_link", lambda port: (seen.append(("l", time.time())), link(port))[1])
 
-    stamp = rails.rail_readings()["rails_t"]
+    def mark(kind):
+        seen.append((kind, time.time(), time.monotonic()))
 
-    assert isinstance(stamp, float)
-    assert [kind for kind, _ in seen] == ["c", "c", "l", "l"]
-    assert max(at for kind, at in seen if kind == "c") <= stamp <= min(at for kind, at in seen if kind == "l")
+    monkeypatch.setattr(rails, "_counters", lambda port: (mark("c"), counters(port))[1])
+    monkeypatch.setattr(rails, "_link", lambda port: (mark("l"), link(port))[1])
+
+    readings = rails.rail_readings()
+
+    assert [kind for kind, _, _ in seen] == ["c", "c", "l", "l"]
+    for key, clock in (("rails_t", 1), ("rails_m", 2)):
+        stamp = readings[key]
+        assert isinstance(stamp, float)
+        assert (max(row[clock] for row in seen if row[0] == "c") <= stamp
+                <= min(row[clock] for row in seen if row[0] == "l"))
 
 
 def test_no_rdma_devices_reads_empty(sysfs):
@@ -161,7 +169,7 @@ def test_host_stats_publishes_link_state_beside_the_counters(sysfs, monkeypatch)
     _port(sysfs, "rail1", state="1: DOWN", phys="5: LinkUp", rx="0", tx="0")
     _port(sysfs, "rail2", state="1: DOWN", phys="3: Disabled", rx="0", tx="0")  # uncabled
 
-    before = time.time()
+    before, before_mono = time.time(), time.monotonic()
     stats = telemetry.host_stats()
 
     assert stats["rails"] == {"rail0": {"rx_bytes": 4, "tx_bytes": 8}}
@@ -170,6 +178,7 @@ def test_host_stats_publishes_link_state_beside_the_counters(sysfs, monkeypatch)
         "rail1": {"state": "1: DOWN", "phys_state": "5: LinkUp"},
     }
     assert before <= stats["rails_t"] <= time.time()
+    assert before_mono <= stats["rails_m"] <= time.monotonic()
 
 
 def test_the_rails_module_is_a_stdlib_leaf():
@@ -201,13 +210,13 @@ def test_dgxm_top_reads_the_counters_and_ignores_the_link_state(monkeypatch):
 
 
 def test_dgxm_top_times_a_rate_by_the_reading_stamps():
-    # The poller's clock says when it saw a reading; rails_t says when the box
+    # The poller's clock says when it saw a reading; rails_m says when the box
     # read its counters. With both stamps the rate uses the box's interval.
     from dgx_monarch.tui.data import Poller
 
     poller = Poller(loops=())
     rates = []
-    for at, read_at, rx in [
+    for at, read_mono, rx in [
         (100.0, 50.0, 0),        # first sample: no interval yet
         (104.0, 52.5, 5e9),      # waited in the cache: 2.5 s by the box, 4 s by the poller
         (106.0, None, 7e9),      # an older driver: the poller's clock
@@ -216,7 +225,7 @@ def test_dgxm_top_times_a_rate_by_the_reading_stamps():
         (110.0, 62.0, 12e9),     # timed from the last stamp that moved, 2 s
     ]:
         sample = poller._rail_rates("box", {"mlx5_0/1": {"rx_bytes": rx, "tx_bytes": 0}},
-                                    at, read_at=read_at)
+                                    at, read_mono=read_mono)
         rates.append(sample["mlx5_0/1"]["rx_gbs"])
 
     assert rates == [0.0, 2.0, 1.0, 1.0, 0.0, 2.0]
@@ -228,8 +237,10 @@ def test_dgxm_top_reads_the_stamp_from_the_payload(monkeypatch):
 
     poller = Poller(loops=())
     payloads = iter([
-        (10.0, {"host": "box", "rails_t": 1000.0, "rails": {"r0": {"rx_bytes": 0, "tx_bytes": 0}}}),
-        (13.0, {"host": "box", "rails_t": 1001.0, "rails": {"r0": {"rx_bytes": 3e9, "tx_bytes": 0}}}),
+        (10.0, {"host": "box", "rails_t": 1000.0, "rails_m": 500.0,
+                "rails": {"r0": {"rx_bytes": 0, "tx_bytes": 0}}}),
+        (13.0, {"host": "box", "rails_t": 1001.0, "rails_m": 501.0,
+                "rails": {"r0": {"rx_bytes": 3e9, "tx_bytes": 0}}}),
     ])
     clock = {"now": 0.0}
 
@@ -238,7 +249,9 @@ def test_dgxm_top_reads_the_stamp_from_the_payload(monkeypatch):
         return {"workers": [{"host": stats}]}
 
     monkeypatch.setattr(poller, "_driver_telemetry", telemetry)
-    monkeypatch.setattr(data, "time", type("Clock", (), {"time": staticmethod(lambda: clock["now"])}))
+    monkeypatch.setattr(data, "time", type("Clock", (), {
+        "time": staticmethod(lambda: clock["now"]),
+        "monotonic": staticmethod(lambda: clock["now"])}))
     poller.tick()
 
     # 3e9 bytes over the box's 1 s, not over the poller's 3 s.

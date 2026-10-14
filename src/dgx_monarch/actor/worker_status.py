@@ -329,10 +329,11 @@ def check_uma_reserve(worker) -> None:
         return
     try:
         avail = None
-        for line in open("/proc/meminfo"):
-            if line.startswith("MemAvailable"):
-                avail = int(line.split()[1]) / 2**20
-                break
+        with open("/proc/meminfo") as meminfo:
+            for line in meminfo:
+                if line.startswith("MemAvailable"):
+                    avail = int(line.split()[1]) / 2**20
+                    break
         if avail is not None and avail < reserve:
             log.warning(
                 "UMA reserve breached: %.1f GiB available, under the %.1f GiB reserved "

@@ -578,7 +578,9 @@ def test_cached_telemetry_rechecks_service_expiry_without_renewing_observation(m
     from dgx_monarch.nodes import routes
 
     now = [100.0]
+    # One clock for both: the TTL reads monotonic, the service expiry reads wall.
     monkeypatch.setattr(routes.time, "time", lambda: now[0])
+    monkeypatch.setattr(routes.time, "monotonic", lambda: now[0])
     snapshot = routes._with_readiness({
         "t": 100.0, "workers": [{"rank": 0, "world": 1}],
         "worker_services": {"state": "fresh", "expected": 1, "expires_at": 100.2,
@@ -601,3 +603,101 @@ def test_cached_telemetry_rechecks_service_expiry_without_renewing_observation(m
     assert result["worker_services"]["expires_at"] == 100.2
     assert snapshot["readiness"]["overall"] == "ready"
     assert routes._TELEMETRY_CACHE["t"] == 100.0
+
+
+def _stepped_clocks(monkeypatch, routes, wall: float, mono: float) -> list[float]:
+    """Drive the wall and monotonic clocks apart; returns [wall, mono] to edit.
+
+    Patching time.monotonic is process wide, so callers stay single threaded
+    and run no event loop.
+    """
+    clocks = [wall, mono]
+    monkeypatch.setattr(routes.time, "time", lambda: clocks[0])
+    monkeypatch.setattr(routes.time, "monotonic", lambda: clocks[1])
+    return clocks
+
+
+def test_telemetry_cache_ttl_ignores_wall_clock_steps(monkeypatch):
+    """The whole-payload TTL runs on time.monotonic(). A wall-clock step back
+    must not keep a payload past its TTL, and a step forward must not expire
+    it early."""
+    from dgx_monarch.nodes import routes
+
+    monkeypatch.setattr(
+        routes, "_TELEMETRY_CACHE",
+        {"t": 0.0, "data": None, "inflight": False, "generation": 0},
+    )
+    refreshes: list[int] = []
+    fail_next = [False]
+
+    def refresh():
+        refreshes.append(1)
+        if fail_next[0]:
+            fail_next[0] = False
+            raise OSError("refresh stand-in")
+        return {"workers": [len(refreshes)]}
+
+    monkeypatch.setattr(routes, "_telemetry_uncached", refresh)
+    clocks = _stepped_clocks(monkeypatch, routes, wall=5000.0, mono=200.0)
+
+    first = routes._telemetry()
+    assert first == {"workers": [1]}
+    assert routes._TELEMETRY_CACHE["t"] == 200.0
+
+    clocks[:] = [1400.0, 200.5]  # wall back one hour, 0.5 s passed: cached
+    assert routes._telemetry() is first
+    assert len(refreshes) == 1
+
+    clocks[:] = [1400.0, 201.5]  # wall still back, one TTL passed: refresh
+    second = routes._telemetry()
+    assert second == {"workers": [2]}
+    assert routes._TELEMETRY_CACHE["t"] == 201.5
+
+    clocks[:] = [8600.0, 201.9]  # wall forward two hours, 0.4 s passed: cached
+    assert routes._telemetry() is second
+    assert len(refreshes) == 2
+
+    # A failed refresh stamps the monotonic clock too. A wall stamp here would
+    # sit far ahead of the monotonic clock, so the error payload would keep
+    # reading as fresh.
+    fail_next[0] = True
+    clocks[:] = [1400.0, 203.0]  # wall back again, one TTL passed: refresh fails
+    failed = routes._telemetry()
+    assert len(refreshes) == 3
+    assert failed["telemetry_error"] == "OSError"
+    assert failed["workers"] == [2]
+    assert routes._TELEMETRY_CACHE["t"] == 203.0
+
+    clocks[:] = [1400.0, 204.1]  # one TTL after the failure: refresh again
+    assert routes._telemetry() == {"workers": [4]}
+    assert len(refreshes) == 4
+    assert routes._TELEMETRY_CACHE["t"] == 204.1
+
+
+def test_worker_status_ttl_ignores_wall_clock_steps(monkeypatch):
+    """The worker status TTL and its fresh flag run on time.monotonic() too."""
+    calls: list[int] = []
+
+    def call_all(_endpoint, timeout_s=None):
+        calls.append(1)
+        return [{"host": "h", "poll": len(calls)}]
+
+    routes = _fresh_routes(monkeypatch, call_all)
+    clocks = _stepped_clocks(monkeypatch, routes, wall=5000.0, mono=200.0)
+
+    first = ([{"host": "h", "poll": 1}], {"fresh": True})
+    assert routes._worker_snapshot() == first
+    assert routes._CACHE["t"] == 200.0
+
+    clocks[:] = [1400.0, 200.5]  # wall back one hour, 0.5 s passed: cached
+    assert routes._worker_snapshot() == first
+    assert len(calls) == 1
+
+    second = ([{"host": "h", "poll": 2}], {"fresh": True})
+    clocks[:] = [1400.0, 201.5]  # wall still back, one TTL passed: refresh
+    assert routes._worker_snapshot() == second
+    assert routes._CACHE["t"] == 201.5
+
+    clocks[:] = [8600.0, 201.9]  # wall forward two hours, 0.4 s passed: cached
+    assert routes._worker_snapshot() == second
+    assert len(calls) == 2

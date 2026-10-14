@@ -13,6 +13,18 @@ _GENERATION = re.compile(r"(?:u-[0-9a-f]{12}-[0-9a-f]{16}|s-[0-9a-f]{16})")
 GENERATION_MARKER_REL = ".local/state/dgx-monarch/worker-generation"
 GENERATION_LOCK_REL = ".local/state/dgx-monarch/worker-generation.lock"
 GENERATION_FORMAT = "DGXM_WORKER_GENERATION_V1"
+# The generation and installation helpers run on the host's system interpreter,
+# not on config.python_bin. The generation helper becomes the Worker unit's
+# ExecStartPre= line, and systemd needs an absolute path with no "~", while
+# python_bin may start with one. The quarantine and invalidate helpers must
+# still run while the Worker venv is broken or being replaced. The payloads
+# use only the standard library and parse under the Python 3.8 grammar; they
+# call str.removeprefix, so they need Python 3.9 or newer to run. The rendered
+# commands are part of the Worker unit bytes that update compares exactly
+# across releases (update_installation.recognized_unit), so keep this value.
+SYSTEM_PYTHON = "/usr/bin/python3"
+# The oldest SYSTEM_PYTHON the helpers run on. dgxm doctor checks it per host.
+SYSTEM_PYTHON_MIN = (3, 9)
 
 
 def validate_generation(value: str) -> str:
@@ -22,7 +34,10 @@ def validate_generation(value: str) -> str:
     return value
 
 
-_GENERATION_HELPER = lifecycle_lock_source() + f'''\
+# The library defines the helper's functions and takes the generation lock;
+# the dispatch reads argv and acts. The prior-start payload in
+# update_installation runs the library alone, with no dispatch.
+_GENERATION_LIBRARY = lifecycle_lock_source() + f'''\
 import os,pathlib,re,stat,subprocess,sys,time
 home=pathlib.Path.home(); marker=home/{GENERATION_MARKER_REL!r}; marker_format={GENERATION_FORMAT!r}
 try: fencefd=acquire_generation_lock(home,True)
@@ -123,6 +138,8 @@ def quiesce(mode,pattern,unit,expected):
  if expected=='-' and not remove_marker(): return False
  time.sleep(.1)
  return matching(pattern)==[] and (mode!='systemd' or inactive_unit(unit))
+'''
+_GENERATION_DISPATCH = '''\
 operation=sys.argv[1]
 if operation in ('invalidate','prestart'):
  if not remove_marker(): print('FAILED_GENERATION_INVALIDATION'); raise SystemExit(1)
@@ -148,6 +165,7 @@ if operation=='active':
  raise SystemExit(0)
 raise SystemExit(64)
 '''
+_GENERATION_HELPER = _GENERATION_LIBRARY + _GENERATION_DISPATCH
 _GENERATION_RUNNER = (
     "import base64;exec(compile(base64.b64decode("
     + repr(base64.b64encode(_GENERATION_HELPER.encode("utf-8")).decode("ascii"))
@@ -161,13 +179,13 @@ _DURABLE_DIR_RUNNER = (
 
 
 def _helper_command(*args: str) -> str:
-    values = ("/usr/bin/python3", "-I", "-S", "-B", "-c", _GENERATION_RUNNER, *args)
+    values = (SYSTEM_PYTHON, "-I", "-S", "-B", "-c", _GENERATION_RUNNER, *args)
     return " ".join(shlex.quote(value) for value in values)
 
 
 def generation_prestart_argv() -> tuple[str, ...]:
     """Return an isolated command that clears the prestart marker without waiting for a lock."""
-    return ("/usr/bin/python3", "-I", "-S", "-B", "-c", _GENERATION_RUNNER, "prestart")
+    return (SYSTEM_PYTHON, "-I", "-S", "-B", "-c", _GENERATION_RUNNER, "prestart")
 
 
 def generation_quarantine_argv(
@@ -178,7 +196,7 @@ def generation_quarantine_argv(
         raise ValueError("worker start mode is invalid")
     token = "-" if generation is None else validate_generation(generation)
     return (
-        "/usr/bin/python3", "-I", "-S", "-B", "-c", _GENERATION_RUNNER,
+        SYSTEM_PYTHON, "-I", "-S", "-B", "-c", _GENERATION_RUNNER,
         "quarantine", token, pattern, mode, unit_name,
     )
 
@@ -203,7 +221,7 @@ if ! rm -f -- "$DGXM_GENERATION_FILE"; then
   echo FAILED_GENERATION_INVALIDATION
   exit 1
 fi
-/usr/bin/python3 -I -S -B -c {shlex.quote(_DURABLE_DIR_RUNNER)} || {{
+{SYSTEM_PYTHON} -I -S -B -c {shlex.quote(_DURABLE_DIR_RUNNER)} || {{
   echo FAILED_GENERATION_INVALIDATION
   exit 1
 }}

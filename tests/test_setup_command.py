@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import errno
 import hashlib
 import json
 import os
@@ -226,7 +227,7 @@ def test_config_parent_fd_handoff_preserves_primary_and_closes_children(tmp_path
         setup_config_parent.prepare_config_parent(tmp_path / "one" / "two")
 
     assert raised.value is primary
-    assert len(set(closed)) == 2
+    assert len(closed) == 2
     for descriptor in set(closed):
         with pytest.raises(OSError):
             os.fstat(descriptor)
@@ -253,6 +254,83 @@ def test_config_parent_final_close_cancellation_preserves_identity_and_closes_fd
     assert raised.value is primary
     with pytest.raises(OSError):
         os.fstat(interrupted_descriptor)
+
+
+class _CloseLedger:
+    """Track the descriptors prepare_config_parent opens, and fail one close on request."""
+
+    def __init__(self, position: int = 0, failure: BaseException | None = None, after_syscall: bool = True):
+        self.real_open = setup_config_parent.os.open
+        self.real_close = setup_config_parent.os.close
+        self.position = position
+        self.failure = failure
+        self.after_syscall = after_syscall
+        self.live: set[int] = set()
+        self.closes: list[int] = []
+        self.foreign: list[int] = []
+
+    def open(self, *args, **kwargs) -> int:
+        descriptor = self.real_open(*args, **kwargs)
+        self.live.add(descriptor)
+        return descriptor
+
+    def close(self, descriptor: int) -> None:
+        self.closes.append(descriptor)
+        if descriptor not in self.live:
+            # A released number. In a threaded process it may already name another file.
+            self.foreign.append(descriptor)
+            raise OSError(errno.EBADF, "close of a descriptor that is not open")
+        failure = self.failure if len(self.closes) == self.position else None
+        if failure is not None and not self.after_syscall:
+            raise failure
+        # Linux releases the number even when close(2) then reports an error.
+        self.live.remove(descriptor)
+        self.real_close(descriptor)
+        if failure is not None:
+            raise failure
+
+
+@pytest.mark.parametrize("after_syscall", [True, False], ids=["after-syscall", "before-syscall"])
+@pytest.mark.parametrize("existing", [False, True], ids=["create", "reuse"])
+@pytest.mark.parametrize("failure_type", [KeyboardInterrupt, OSError], ids=["interrupt", "eio"])
+def test_config_parent_never_closes_a_released_descriptor_at_any_close_position(
+    tmp_path: Path, monkeypatch, failure_type, existing: bool, after_syscall: bool
+):
+    counted = _CloseLedger()
+    with monkeypatch.context() as patch:
+        patch.setattr(setup_config_parent.os, "open", counted.open)
+        patch.setattr(setup_config_parent.os, "close", counted.close)
+        setup_config_parent.prepare_config_parent(tmp_path / "count" / "one" / "two")
+    assert counted.foreign == []
+    assert counted.live == set()
+    total = len(counted.closes)
+    assert total >= 3
+
+    problems = []
+    for position in range(1, total + 1):
+        target = tmp_path / f"position{position}" / "one" / "two"
+        if existing:
+            setup_config_parent.prepare_config_parent(target)
+        failure = KeyboardInterrupt() if failure_type is KeyboardInterrupt else OSError(errno.EIO, "close failed")
+        ledger = _CloseLedger(position, failure, after_syscall)
+        try:
+            with monkeypatch.context() as patch:
+                patch.setattr(setup_config_parent.os, "open", ledger.open)
+                patch.setattr(setup_config_parent.os, "close", ledger.close)
+                with pytest.raises(failure_type) as raised:
+                    setup_config_parent.prepare_config_parent(target)
+        finally:
+            leaked = set(ledger.live)
+            for descriptor in leaked:
+                ledger.real_close(descriptor)
+
+        assert raised.value is failure, position
+        # An interrupt before the syscall may leak the one number it held. Nothing else may stay open.
+        allowed = set() if after_syscall else {ledger.closes[position - 1]}
+        if ledger.foreign or not leaked <= allowed:
+            problems.append((position, ledger.closes, ledger.foreign, sorted(leaked)))
+
+    assert problems == []
 
 
 def test_config_lock_refuses_contention_and_normalizes_dotdot_aliases(tmp_path: Path):

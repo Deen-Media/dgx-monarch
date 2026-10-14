@@ -73,6 +73,12 @@ except Exception as exc:
     print({MARKER!r} + json.dumps({{'status': 'failed', 'reason': reason}}))
     raise SystemExit(1)
 '''
+    if "from ." in source:
+        # The remote host has no package to resolve a relative import against.
+        # Fail here, before any host runs the source; _host would report a
+        # ValueError as an unknown readback, so this is a RuntimeError.
+        raise RuntimeError("Sol payload assembly left a relative import in the remote source; "
+                           "update the stripped import lines in sol_install.host_script")
     shell = f"set -eu\n{lifecycle._pybin_shell(config.python_bin)}\n\"$PYBIN\" -I -B - <<'DGXM_SOL_PAYLOAD'\n{source}\nDGXM_SOL_PAYLOAD\n"
     return shell
 

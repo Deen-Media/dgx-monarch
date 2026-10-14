@@ -251,10 +251,14 @@ shape for all of them.
      patch: local q against full/replicated k/v is already correct.
 
    The callable behind `ctx.usp_attention` comes from
-   `make_usp_attention(kernel, sync_ulysses)`: the Init `sync_ulysses` widget
-   (default True) sets xfuser's `use_sync` on the Ulysses all-to-all, and the
-   kernel name picks the inner attention (TORCH_FLASH validated on GB10,
-   re-selectable per render for the fp8 sage gate).
+   `make_usp_attention(kernel, sync_ulysses)`. The kernel name picks the
+   inner attention (TORCH_FLASH validated on GB10, re-selectable per render
+   for the fp8 sage gate). The Init `sync_ulysses` widget (default True)
+   reaches `xFuserLongContextAttention.__init__` as `use_sync`, but the
+   pinned xfuser 0.7.0 overrides `forward` and never passes `use_sync` to
+   `SeqAllToAll4D.apply`, so the widget has no effect on the Ulysses
+   all-to-all. The widget stays, because removing a node key needs a major
+   release.
 
    Qwen Image 2.1 is an exception: its block-causal prefix path gathers
    target K/V and calls native Comfy attention, so its Ulysses forward

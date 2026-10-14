@@ -520,7 +520,8 @@ and ComfyUI nightly found flat int8 swap times (10.9/9.7/9.7 s), with only the
 initial bake still slow. If the first-swap slowdown returns, enable Init's
 `load_profile`: it profiles each `load_models_gpu` call lasting at least 2 s
 into a private, exclusively created
-`/tmp/dgxm-load-profile.<pid>.<t>.<random>.txt`.
+`~/.cache/dgx-monarch/profiles/dgxm-load-profile.<pid>.<t>.<random>.txt`; the
+newest 20 reports are kept.
 
 A large `gpu_load` on *every* render indicates eviction instead. Check
 `uma_reserve_gb` pressure and co-resident workloads.

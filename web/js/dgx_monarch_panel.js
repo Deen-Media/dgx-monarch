@@ -470,6 +470,9 @@ async function refreshOnce(root, zones) {
         actionState.recycle.busy = false;
         recycleBtn.disabled = false;
         recycleBtn.textContent = actionState.recycle.label;
+        // A poll during the POST may have replaced this button with a disabled
+        // copy. Redraw once now so the visible button shows the outcome.
+        refresh(root);
     };
     actions.appendChild(recycleBtn);
     frag.appendChild(actions);

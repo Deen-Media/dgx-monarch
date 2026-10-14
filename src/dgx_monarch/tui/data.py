@@ -282,19 +282,22 @@ class Poller:
         except Exception:
             return None
 
-    def _rail_rates(self, host: str, rails: object, t: float, read_at: object = None) -> dict:
+    def _rail_rates(self, host: str, rails: object, mono: float, read_mono: object = None) -> dict:
         """GB/s from cumulative byte counters and the previous sample; a first sample reads 0.
 
-        ``t`` is this poller's clock. ``read_at`` is the box's own stamp of when
-        it read the counters (``rails_t``). When this sample and the previous
-        one both carry a stamp, and it moved forward, the rate uses the interval
-        between the two stamps, so a reading that waited in the driver's cache
-        is timed by when it was read. Otherwise it uses this poller's clock."""
+        ``mono`` is this poller's ``time.monotonic()`` stamp, so a wall-clock step
+        between two polls cannot distort the interval. ``read_mono`` is the box's
+        own monotonic stamp of when it read the counters (``rails_m``). When this
+        sample and the previous one both carry a stamp, and it moved forward, the
+        rate uses the interval between the two stamps, so a reading that waited in
+        the driver's cache is timed by when it was read. Otherwise it uses this
+        poller's clock. The box's wall-clock stamp (``rails_t``) never times a
+        rate, because NTP can step it between two readings."""
         rates: dict[str, dict[str, float]] = {}
         if not isinstance(rails, dict):
             return rates
-        stamp = (float(read_at) if isinstance(read_at, (int, float)) and not isinstance(read_at, bool)
-                 and math.isfinite(read_at) else None)
+        stamp = (float(read_mono) if isinstance(read_mono, (int, float)) and not isinstance(read_mono, bool)
+                 and math.isfinite(read_mono) else None)
         for dev, c in rails.items():
             if not isinstance(dev, str) or not isinstance(c, dict):
                 continue
@@ -307,9 +310,9 @@ class Poller:
             name = RAIL_ALIASES.get(dev, dev)
             prev = self._prev_rails.get((host, dev))
             if prev:
-                before = prev.get("read_at")
+                before = prev.get("read_mono")
                 span = stamp - before if stamp is not None and before is not None and stamp > before else None
-                dt = max(1e-3, t - prev["t"] if span is None else span)
+                dt = max(1e-3, mono - prev["m"] if span is None else span)
                 rx_gbs = (rx - prev["rx"]) / dt / 1e9
                 tx_gbs = (tx - prev["tx"]) / dt / 1e9
                 rates[name] = {
@@ -318,7 +321,7 @@ class Poller:
                 }
             else:
                 rates[name] = {"rx_gbs": 0.0, "tx_gbs": 0.0}
-            self._prev_rails[(host, dev)] = {"t": t, "read_at": stamp, "rx": rx, "tx": tx}
+            self._prev_rails[(host, dev)] = {"m": mono, "read_mono": stamp, "rx": rx, "tx": tx}
         return rates
 
     @staticmethod
@@ -349,7 +352,10 @@ class Poller:
     def _tick(self) -> dict:
         from .diagnostics_view import diagnostics_view
 
+        # Wall clock for the tick stamp (shown and recorded), monotonic for
+        # rail rate intervals.
         now = time.time()
+        mono = time.monotonic()
         tele = self._driver_telemetry()
         hosts: dict = {}
         events: list = []
@@ -397,7 +403,7 @@ class Poller:
 
         for name, entry in hosts.items():
             entry["rails"] = self._rail_rates(
-                name, entry["stats"].get("rails"), now, entry["stats"].get("rails_t"))
+                name, entry["stats"].get("rails"), mono, entry["stats"].get("rails_m"))
 
         return {
             "t": now,

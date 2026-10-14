@@ -123,7 +123,7 @@ def test_non_numeric_event_times_do_not_erase_known_blocked_readiness(monkeypatc
 def test_nonfinite_rail_rates_are_zeroed_before_labels_and_braille(monkeypatch):
     poller = Poller(loops=())
     poller._prev_rails[("driver", "rail0")] = {
-        "t": 0.0, "rx": -float.fromhex("0x1.fffffffffffffp+1023"), "tx": 0.0,
+        "m": 0.0, "rx": -float.fromhex("0x1.fffffffffffffp+1023"), "tx": 0.0,
     }
     rates = poller._rail_rates(
         "driver",
@@ -133,6 +133,80 @@ def test_nonfinite_rail_rates_are_zeroed_before_labels_and_braille(monkeypatch):
 
     assert rates == {"rail0": {"rx_gbs": 0.0, "tx_gbs": 1e-09}}
     assert braille_rows([float("nan"), float("inf"), -float("inf"), 1.0], 2, 1)
+
+
+def test_rail_rate_interval_is_monotonic_across_wall_clock_steps(monkeypatch):
+    """NTP can step the wall clock between two polls. The rail rate divides by
+    the monotonic interval, so it reads the true 10 GB/s, and the tick stamp
+    that the header shows and recordings store stays wall clock."""
+    from dgx_monarch.tui import data
+
+    counters = {"rx_bytes": 0, "tx_bytes": 0}
+    poller = _poller_with_telemetry(monkeypatch, {
+        "driver_host": {"host": "driver", "rails": {"rail0": counters}},
+    })
+    wall, mono = [1001.0], [50.0]
+    monkeypatch.setattr(data.time, "time", lambda: wall[0])
+    monkeypatch.setattr(data.time, "monotonic", lambda: mono[0])
+
+    first = poller.tick()
+    assert first["hosts"]["driver"]["rails"] == {"rail0": {"rx_gbs": 0.0, "tx_gbs": 0.0}}
+
+    # The wall clock steps back 2 s while 1 s really passes.
+    wall[0], mono[0] = 999.0, 51.0
+    counters["rx_bytes"] = 10 * 10**9
+    back = poller.tick()
+    assert "telemetry_error" not in back
+    assert back["t"] == 999.0
+    assert back["hosts"]["driver"]["rails"] == {"rail0": {"rx_gbs": 10.0, "tx_gbs": 0.0}}
+
+    # The wall clock steps forward 11 s while 1 s really passes.
+    wall[0], mono[0] = 1010.0, 52.0
+    counters["rx_bytes"] = 20 * 10**9
+    forward = poller.tick()
+    assert forward["t"] == 1010.0
+    assert forward["hosts"]["driver"]["rails"] == {"rail0": {"rx_gbs": 10.0, "tx_gbs": 0.0}}
+
+
+def test_rail_rate_uses_the_boxs_monotonic_stamp_across_its_wall_clock_steps(monkeypatch):
+    """A normal reading carries both of the box's stamps. Its wall clock jumps
+    forward an hour, then back two, between readings one second apart, and each
+    reading waits 3 s in the driver's cache. Timed by the wall-clock stamps, a
+    true 10 GB/s would read about 0.003 GB/s. Timed by the box's monotonic
+    stamps it reads 10 GB/s, not the 3.3 GB/s the poller's own clock gives."""
+    from dgx_monarch.tui import data
+
+    stats = {"host": "driver", "rails_t": 1000.0, "rails_m": 50.0,
+             "rails": {"rail0": {"rx_bytes": 0, "tx_bytes": 0}}}
+    poller = _poller_with_telemetry(monkeypatch, {"driver_host": stats})
+    mono = [10.0]
+    monkeypatch.setattr(data.time, "monotonic", lambda: mono[0])
+    assert poller.tick()["hosts"]["driver"]["rails"] == {"rail0": {"rx_gbs": 0.0, "tx_gbs": 0.0}}
+
+    for wall in (4601.0, -2598.0):
+        mono[0] += 3.0
+        stats["rails_t"], stats["rails_m"] = wall, stats["rails_m"] + 1.0
+        stats["rails"]["rail0"]["rx_bytes"] += 10 * 10**9
+        assert poller.tick()["hosts"]["driver"]["rails"] == {"rail0": {"rx_gbs": 10.0, "tx_gbs": 0.0}}
+
+
+def test_rail_rate_ignores_a_wall_clock_stamp_without_a_monotonic_one(monkeypatch):
+    """A driver that publishes only the wall-clock stamp is timed by the
+    poller's monotonic clock, so an hour's jump in that stamp between two
+    readings one second apart still reads the true 10 GB/s."""
+    from dgx_monarch.tui import data
+
+    stats = {"host": "driver", "rails_t": 1000.0,
+             "rails": {"rail0": {"rx_bytes": 0, "tx_bytes": 0}}}
+    poller = _poller_with_telemetry(monkeypatch, {"driver_host": stats})
+    mono = [10.0]
+    monkeypatch.setattr(data.time, "monotonic", lambda: mono[0])
+    poller.tick()
+
+    mono[0] = 11.0
+    stats["rails_t"] = 4601.0
+    stats["rails"]["rail0"]["rx_bytes"] = 10 * 10**9
+    assert poller.tick()["hosts"]["driver"]["rails"] == {"rail0": {"rx_gbs": 10.0, "tx_gbs": 0.0}}
 
 
 def test_retained_pool_scan_keeps_last_complete_value_when_budget_expires(monkeypatch):
