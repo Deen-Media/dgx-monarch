@@ -2,6 +2,24 @@
 
 ## [Unreleased]
 
+- Remove the temporary files that killed actor ledger writers leave in
+  `~/.local/state/dgx-monarch` (issue #36, which counted 164 of them on one
+  host). The Worker service's tracker thread writes a temporary file and then
+  renames it over the ledger. A writer killed between the two steps, for
+  example when a stop kills the Worker service, runs no cleanup and leaves
+  the file. The file is now named
+  `actor-procs.json.<pid>.<starttime>.<thread id>.tmp`, and each ledger write
+  removes the files whose writer no longer runs with that pid and start time.
+  The start time makes the check exact within a boot: a live writer's file
+  always stays, a later process that took a dead writer's pid no longer
+  keeps its file, and the sweep reads no clock or file time. Files in the
+  older `actor-procs.json.<pid>.<thread id>.tmp` shape go once no process
+  holds their pid, so one whose pid a later process took stays until that
+  process exits. A failed rename now removes its own file too. Before, the
+  next write from the same thread reused the name and failed, so one refused
+  rename blocked every later ledger write from that loop. The write stays
+  atomic, and a debug line counts the files each sweep removed
+  ([TROUBLESHOOTING #51](docs/TROUBLESHOOTING.md#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)).
 - Drop a checkpoint's per-block kernel pin at every stock attention call the
   pack leaves in place under sequence parallelism (issue #30). ComfyUI runs a
   block's pinned kernel unless the call's transformer options carry an
