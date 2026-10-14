@@ -44,6 +44,7 @@ def _finish_render(
     expected_adoption_request_sha256: str | None = None,
     expected_adoption_render_id_sha256: str | None = None,
     expected_adoption_setup_generation: int | None = None,
+    telemetry_token: object | None = None,
 ) -> dict:
     """Cross-rank identity gate plus leader latent materialization."""
     verify_cross_rank_signatures(results, topo)
@@ -80,7 +81,7 @@ def _finish_render(
     if walls:  # observed only: the finish record's sampler wall is the slowest rank's
         from ..telemetry import render_progress
 
-        render_progress.note_sample(max(walls))
+        render_progress.note_sample(max(walls), token=telemetry_token)
 
     native_failed: list[bool] = []  # this render's lifetime: did a native read fail?
 

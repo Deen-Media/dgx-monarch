@@ -47,13 +47,46 @@ def retired(state: dict, *keys: object) -> dict:
     return {key: mark for key, mark in marks.items() if all(key is not gone for gone in keys)}
 
 
-def sampled(state: dict, sample_s: float) -> dict:
-    """The tracker's state with a render's sampler wall and its mean step.
+def steps_kept(previous: dict, key: object, steps: int) -> dict:
+    """The per-render step counts a start publishes: running renders keep theirs."""
+    kept = dict(previous.get("_render_steps", {})) if previous.get("active") else {}
+    kept[key] = int(steps)
+    return kept
+
+
+def sample_owner(state: dict, token: object | None, legacy_token: object) -> object | None:
+    """The render an incoming sampler wall belongs to, or None when no single render owns it.
+
+    A keyed wall belongs to its render while that render is live. An unkeyed
+    wall belongs to the only render in flight; with several in flight, or
+    none, it has no owner and is dropped rather than published under another
+    render's settings.
+    """
+    tokens = set(state.get("_tokens", ()))
+    legacy_count = int(state.get("_legacy_count", 0))
+    if token is not None and token is not legacy_token:
+        return token if token in tokens else None
+    if len(tokens) + legacy_count != 1:
+        return None
+    return next(iter(tokens)) if tokens else legacy_token
+
+
+def sampled(state: dict, key: object, sample_s: float) -> dict:
+    """The tracker's state with one render's sampler wall and mean step, keyed by render.
 
     ``sample_s`` is the slowest rank's sampler wall from the render's results,
     so ``mean_step_s`` excludes the load and Gate time a cold ``wall_s`` holds.
+    The mean divides by that render's own step count, never the latest
+    start's, and the finish record publishes a sample only for the render
+    whose facts it carries (``sample_for``), so two renders in flight cannot
+    lend each other a time.
     """
-    steps = state.get("steps") or 0
+    steps = state.get("_render_steps", {}).get(key) or 0
     wall = round(float(sample_s), 3)
-    return {**state, "sample_s": wall,
-            "mean_step_s": round(float(sample_s) / steps, 3) if steps else None}
+    mean = round(float(sample_s) / steps, 3) if steps else None
+    return {**state, "_samples": {**state.get("_samples", {}), key: (wall, mean)}}
+
+
+def sample_for(state: dict, key: object) -> tuple[float | None, float | None]:
+    """The sampler wall and mean step noted for one render, or unknown."""
+    return state.get("_samples", {}).get(key, (None, None))

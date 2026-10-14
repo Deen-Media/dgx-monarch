@@ -29,7 +29,7 @@ import time
 from collections import deque
 from typing import Any, cast
 
-from . import telemetry_steps
+from . import telemetry_ceremony, telemetry_steps
 from .capacity_memory import read_meminfo, shmem_credited
 from .rails import rail_counters, rail_readings, rail_state  # noqa: F401  # re-exported names
 from .telemetry_events import public_event_tail
@@ -45,9 +45,10 @@ _LEGACY_PROGRESS_TOKEN = object()
 # claim expires rather than label an unrelated later render a first render.
 _CEREMONY_CLAIM_S = 300.0
 # Keys a finished render's summary copies from the tracker: render_submit's start() meta (a preset
-# leaves the auto facts None), the last step time, and note_sample's sampler wall and mean step.
+# leaves the auto facts None) and the last step time. The sampler wall and mean step join them
+# from note_sample, keyed by render so they describe the same render as the facts.
 _RENDER_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step", "family", "cfg",
-                 "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch", "sample_s", "mean_step_s")
+                 "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch")
 
 
 def emit(kind: str, **fields) -> None:
@@ -160,6 +161,11 @@ class RenderProgress:
                 "started": started,
                 "last_step_t": now,
                 "_step_marks": telemetry_steps.seeded(previous, token, now),
+                # The facts below are this start's; the record publishes a sampler wall only
+                # when note_sample keyed it to this same render.
+                "_facts_key": token,
+                "_render_steps": telemetry_steps.steps_kept(previous, token, steps),
+                "_samples": dict(previous.get("_samples", {})) if previous.get("active") else {},
                 **(meta or {}),
                 "ceremony": bool(ceremony_tokens) or ceremony_legacy > 0,
                 "_tokens": frozenset(active_tokens),
@@ -208,10 +214,12 @@ class RenderProgress:
                 state.update(sec_per_step=rate, last_step_t=now, _step_marks=marks)
             self._state = state
 
-    def note_sample(self, sample_s: float) -> None:
-        """The slowest rank's sampler wall, for the render that finishes next."""
+    def note_sample(self, sample_s: float, *, token: object | None = None) -> None:
+        """One render's slowest-rank sampler wall; dropped unless one live render owns it."""
         with self._lock:
-            self._state = telemetry_steps.sampled(self._state, sample_s)
+            key = telemetry_steps.sample_owner(self._state, token, _LEGACY_PROGRESS_TOKEN)
+            if key is not None:
+                self._state = telemetry_steps.sampled(self._state, key, sample_s)
 
     def finish(self, token: object | None = None) -> None:
         with self._lock:
@@ -252,6 +260,10 @@ class RenderProgress:
                     # The summary of the render that just ended, for an idle
                     # panel. A start with no stamp cannot describe one, so the
                     # previous summary stays.
+                    # The sampler wall only when it was noted for the render
+                    # whose facts follow; an overlapping render's wall stays out.
+                    sample_s, mean_step_s = telemetry_steps.sample_for(
+                        self._state, self._state.get("_facts_key"))
                     last = {
                         "model": self._state.get("model"),
                         "steps": self._state.get("steps"),
@@ -265,6 +277,8 @@ class RenderProgress:
                         # can see where the auto table's choice is slow: the
                         # last start's facts and the last step time (telemetry_steps).
                         **{key: self._state.get(key) for key in _RENDER_FACTS},
+                        "sample_s": sample_s,
+                        "mean_step_s": mean_step_s,
                     }
                 else:
                     wall_s = self._state.get("last_wall_s")
@@ -283,50 +297,21 @@ class RenderProgress:
             self._state = state
 
     def note_ceremony(self) -> None:
-        """Open an identity-gate ceremony window for the calling thread.
-
-        Windows are counted per thread, as first_render keeps its ceremony
-        thread-local: a Fleet or pipeline render on another thread is no proof
-        leg. The count is a depth, so an inner close never ends an outer window.
-        """
-        ident = threading.get_ident()
+        """Open an identity-gate ceremony window for the calling thread (telemetry_ceremony)."""
         with self._lock:
-            state = dict(self._state)
-            windows = dict(state.get("_ceremony_windows", {}))
-            windows[ident] = windows.get(ident, 0) + 1
-            state["_ceremony_windows"] = windows
-            self._state = state
+            self._state = telemetry_ceremony.window_opened(self._state, threading.get_ident())
 
     def close_ceremony(self) -> None:
         """Close one window; the outermost close leaves the claim behind."""
-        ident = threading.get_ident()
-        now = time.time()
+        ident, now = threading.get_ident(), time.time()
         with self._lock:
-            state = dict(self._state)
-            windows = dict(state.get("_ceremony_windows", {}))
-            depth = int(windows.get(ident, 0))
-            if depth > 1:
-                windows[ident] = depth - 1
-            else:
-                windows.pop(ident, None)
-                if depth == 1:
-                    claims = {
-                        thread: at
-                        for thread, at in state.get("_ceremony_claim", {}).items()
-                        if now - at < _CEREMONY_CLAIM_S
-                    }
-                    claims[ident] = now
-                    state["_ceremony_claim"] = claims
-            state["_ceremony_windows"] = windows
-            self._state = state
+            self._state = telemetry_ceremony.window_closed(
+                self._state, ident, now, _CEREMONY_CLAIM_S)
 
     def forget_ceremony(self) -> None:
         """Drop every window and claim on every thread (tests and reset)."""
         with self._lock:
-            state = dict(self._state)
-            state["_ceremony_windows"] = {}
-            state["_ceremony_claim"] = {}
-            self._state = state
+            self._state = telemetry_ceremony.forgotten(self._state)
 
     def snapshot(self) -> dict:
         with self._lock:

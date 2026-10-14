@@ -69,7 +69,8 @@ def _stub_direct_submit(monkeypatch, handle, submit_sample):
     monkeypatch.setattr(
         mesh_setup, "ensure_request_setup", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(mesh_setup, "submit_sample", submit_sample)
-    monkeypatch.setattr(submit_mod, "_finish_render", lambda *_args: {"samples": "done"})
+    monkeypatch.setattr(submit_mod, "_finish_render",
+                        lambda *_args, **_kwargs: {"samples": "done"})
     monkeypatch.setattr(pending_mod, "_throw_if_comfy_interrupted", lambda: None)
     monkeypatch.setattr(
         telemetry.render_progress, "start", lambda *_args, **_kwargs: None)

@@ -12,7 +12,9 @@
   ([BENCHMARKS](docs/BENCHMARKS.md#campaign-k-cfg2-against-uly2-2026-10-14-head-capped)).
   A cfg++ sampler at CFG 1 keeps its uncond pass, so `auto` no longer skips a
   cfg2 row when a DGX Monarch KSampler node names it, and the render finish
-  record now carries the fields the table audit needs.
+  record now carries the fields the table audit needs, with the sampler wall
+  and mean step keyed to their own render so a pipelined render in flight
+  beside it cannot lend them.
 - Price the FSDP clean-reload proof against what the proof frees. The initial
   preflight and the post-baseline reprice now credit each rank's resident shard
   pool, read from the worker's reserved figure and capped at one share, because
