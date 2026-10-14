@@ -303,7 +303,8 @@ shape for all of them.
    keyword but the preference.
    Under sequence parallelism the Init `attention` widget and the dispatcher
    choose the kernel, so the pack logs the preference at debug level once
-   per call site and otherwise ignores it. Qwen Image 2.1 and Wan-Animate 2, whose
+   per call site where the pack runs the attention and otherwise ignores it.
+   Qwen Image 2.1 and Wan-Animate 2, whose
    distributed paths call native Comfy attention themselves, follow the same
    rule: they log the preference once and pass `preferred_attention=None`,
    so comfy's default backend runs, and these paths admit no widget value
@@ -325,11 +326,11 @@ shape for all of them.
    use the pinned one. The pack asks for the class-K Sol-Attn waiver only
    when the widget selects Sol.
 
-   Under sequence parallelism one gap remains. Stock attention that the pack
-   leaves in place gets the original `transformer_options`, with no
-   `usp_options` override, so comfy's `wrap_attn` still runs a block's pin
-   there under the widget's stamp, and no class-K card appears. A read of
-   every adapter against ComfyUI e8665ca8 on 2026-10-14 found these sites:
+   Under sequence parallelism no attention call honors a block's pin. The
+   pack also leaves some stock attention in place, and those calls run
+   comfy's default backend, as stock runs them for a checkpoint with no pin;
+   the widget picks only the sharded attention's kernel. A read of every
+   adapter against ComfyUI e8665ca8 on 2026-10-14 found these sites:
 
    * cross-attention: every block's `cross_attn` in Wan 2.1 and 2.2, Wan
      SCAIL, WanDancer and Wan-Animate 2; `attn2` in LTX, and `audio_attn2`
@@ -340,20 +341,57 @@ shape for all of them.
      loop: the context and noise refiners in Z-Image; the context, noise and
      reference-image refiners in OmniGen2; Boogu's context refiner; the
      token refiner (`txt_in`) in HunyuanImage 2.1 and HunyuanVideo 1.5;
-     MiniMax H3's token refiner; Kandinsky 5's text transformer blocks; and
-     the text fusion blocks in Krea2 and Kroma (all of them under pure
-     Ulysses, the layerwise blocks under ring or hybrid).
+     Kandinsky 5's text transformer blocks; the text fusion blocks in Krea2
+     and Kroma (all of them under pure Ulysses, the layerwise blocks under
+     ring or hybrid); and WanDancer's music encoder;
+   * text refiners that comfy runs from `extra_conds` on every rank, before
+     the forward: MiniMax H3's token refiner, which also runs inside the
+     forward when the text arrives unrefined, and the video and audio text
+     connectors in LTX audio-video.
 
-   The other families leave no such call: their sharded forwards call the
-   pack's kernel directly, install an override that `wrap_attn` checks
-   before the preference, or, as in Qwen Image 2.1, hand comfy no
-   preference. Topologies without
-   sequence parallelism (cfg2, dp and single) leave every stock attention
-   call in place, so a pin runs there as it does in stock ComfyUI, and the
-   render record still names the widget's kernel. The "attention keyword
-   handoff" seam in `tests/canary/comfy_seam_contracts.py` holds the Anima
-   op, the `usp_options` override, the Qwen Image 2.1 attention and the
-   Wan-Animate 2 self-attention against the real ComfyUI tree.
+   The forward hands each such module a copy of `transformer_options` that
+   carries an override (`adapters/stock_attention.py`). Comfy's `wrap_attn`
+   checks the override before the preference, and the override hands the
+   call, with its arguments unchanged, to the backend function `wrap_attn`
+   would run itself with no pin. An unpinned checkpoint therefore renders
+   exactly as before, and a pinned one renders as stock does unpinned.
+   `wrap_attn` removes the preference before it calls the override, so
+   these sites cannot log the pin. Where comfy hands a module no options, as
+   for the `extra_conds` refiners, the pack binds the module's forward to add
+   the override itself; that bound forward sees the module and logs its
+   preference once per site at debug level. WanDancer's music encoder passes
+   attention no options at all, so the pack binds a copy of its forward that
+   passes `preferred_attention=None` and logs the preference, as the Qwen
+   Image 2.1 and Wan-Animate 2 paths do. These bound forwards log that
+   comfy's default backend runs the call. The copy keeps an override the
+   graph installed already, such as an attention backend node's, and
+   `wrap_attn` runs it ahead of the pin, as stock does, where the forward
+   admits one: LTX and Wan-Animate 2 refuse a foreign override before they
+   build the copy, as Qwen Image 2.1 does
+   ([docs/TROUBLESHOOTING.md #72](TROUBLESHOOTING.md#72-a-distributed-render-refuses-a-comfy-attention-patch-or-nag-style-hook)),
+   and in the families that admit one the pack's sharded attention never
+   runs it, so it runs only at these stock sites. One default backend would
+   differ: with `--use-ck-attention` comfy runs the comfy-kitchen int8
+   kernel, whose own path for boxed q, k and v the override would skip. A
+   worker never passes that flag.
+
+   The other families leave no stock attention call under sequence
+   parallelism: their sharded forwards call the pack's kernel directly,
+   install an override that `wrap_attn` checks before the preference, or,
+   as in Qwen Image 2.1, hand comfy no preference.
+   Topologies without sequence parallelism (cfg2, dp and single) leave
+   every stock attention call in place, so a pin runs there as it does in
+   stock ComfyUI, with no class-K card, and the render record still names
+   the widget's kernel. The "attention keyword handoff" seam in
+   `tests/canary/comfy_seam_contracts.py` holds the Anima op, the
+   `usp_options` override, the Qwen Image 2.1 attention and the Wan-Animate 2
+   attention against the real ComfyUI tree, and with tiny real models the
+   stock sites in the Wan 2.1, LTX, Kandinsky 5, Anima (on its cosmos DiT),
+   Z-Image and Krea2 forwards, WanDancer's music encoder, MiniMax H3's token
+   refiner and the LTX audio-video text connectors. The other sites (SCAIL,
+   WanDancer cross-attention, LTX audio-video `attn2` and `audio_attn2`,
+   OmniGen2, Boogu and the Hunyuan token refiner) have CPU tests with
+   stand-in models (`tests/test_stock_attention_pins.py`).
 
    **Lens joint order, key bias and text rows.** Each Lens block joins
    `[image, text]`, so Ulysses' head all-to-all gathers `[image0, text0,

@@ -165,7 +165,7 @@
       "test_current_detect_never_mislabels_boogu": "ed960851b020c4df",
       "test_declared_contract": "556883493f30d5c9",
       "test_double_to_single_reshard_round_trips": "a462c022aba73986",
-      "test_four_stage_wiring_and_negation": "a0d53e4d1e7daae8",
+      "test_four_stage_wiring_and_negation": "6f822dfd0c45e670",
       "test_gqa_head_mismatch_requires_explicit_flag": "50ec57c50df8fec8",
       "test_keep_mask_rejects_gapped_and_foreign_conventions": "18d34bd6876713b1",
       "test_matches_ignores_omnigen2_parent": "d8bb0fee048bf340",

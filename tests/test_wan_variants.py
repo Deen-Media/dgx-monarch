@@ -576,7 +576,7 @@ def test_wandancer_rejects_reference_latent_typed():
     # prepend full_ref and misalign the injector's pre-captured seq_len, so the
     # adapter refuses it with a typed error.
     model = types.SimpleNamespace(
-        blocks=[], ref_conv=object(),
+        blocks=[], ref_conv=object(), music_encoder=[],
         music_injector=types.SimpleNamespace(injector=[], injected_block_id={}))
     WanDancerAdapter().inject_usp(model, InjectionContext(topology_sp=2, usp_attention=object()))
     with pytest.raises(UnsupportedModelError, match="reference_latent"):

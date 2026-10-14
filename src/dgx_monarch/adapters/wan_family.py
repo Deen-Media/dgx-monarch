@@ -20,6 +20,7 @@ from .base import (
     shard_seq,
     sp_gather,
 )
+from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
 
@@ -80,7 +81,11 @@ class WanAdapter(Adapter):
                              transformer_options={}, **kwargs):
             # Cross-attention uses local q with replicated context k/v. Only x,
             # freqs, and per-token e0 shard; the head requires a gathered stream.
+            # The blocks keep stock cross-attention, which must not run a
+            # block's pinned kernel (adapters/stock_attention.py).
             from comfy.ldm.wan.model import sinusoidal_embedding_1d
+
+            transformer_options = stock_attention_options(transformer_options)
 
             x = self.patch_embedding(x.float()).to(x.dtype)
             grid_sizes = x.shape[2:]

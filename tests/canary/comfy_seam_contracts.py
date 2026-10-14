@@ -104,9 +104,12 @@ The seams, in run order:
                               comfy CrossAttention hands an
                               optimized_attention_override exactly func, q, k,
                               v, heads, attn_precision, transformer_options and
-                              _inside_attn_wrapper, and the Qwen Image 2.1
-                              attention and Wan-Animate 2 self-attention never
-                              run a kernel a block pins, which stock runs
+                              _inside_attn_wrapper, the Qwen Image 2.1
+                              attention and Wan-Animate 2 attention never run
+                              a kernel a block pins, which stock runs, and
+                              neither does the stock cross-attention and
+                              refiner attention the sequence-parallel
+                              forwards leave in place
  40. cfg++ uncond pass        every sampler the auto table's cfg++ rule names
                               sets disable_cfg1_optimization before its first
                               model call, the CFG 1.0 shortcut still reads
@@ -3561,12 +3564,14 @@ def _assert_attention_keyword_handoff_seam() -> None:
 
     Half three covers the two families whose sequence-parallel forwards call
     comfy's native attention themselves, Qwen Image 2.1 and Wan-Animate 2. It
-    pins each self-attention block to a stand-in kernel through a real
+    pins each attention block to a stand-in kernel through a real
     ComfyAttention and checks that stock runs it, then that the injected
     forward on one rank never does and matches the unpinned stock forward bit
     for bit, with Qwen's cache-miss prefix fill included. A pin ran there
     under a TORCH_FLASH stamp, and the pack asked for no Sol-Attn waiver
-    (issue #30).
+    (issue #30). Half four (``_assert_stock_attention_sites_drop_pins``)
+    holds the same contract for the stock attention the other forwards leave
+    in place.
     """
     import comfy.ldm.modules.attention as attention_module
     import comfy.ops
@@ -3747,10 +3752,16 @@ def _assert_attention_keyword_handoff_seam() -> None:
 
     pinned_runs = []
 
-    def pinned_kernel(q, k, v, heads, **_kwargs):
+    def pinned_kernel(q, k, v, heads, *_args, skip_reshape=False,
+                      skip_output_reshape=False, **_kwargs):
         # Stands in for comfy-kitchen Sol, which needs a GPU, and is told apart
         # from real attention by its zero output.
         pinned_runs.append(1)
+        if isinstance(q, attention_module.AttentionTensorContainer):
+            q, _k, _v = q.take(), k.take(), v.take()
+        if skip_reshape and not skip_output_reshape:
+            b, h, rows, d = q.shape
+            return torch.zeros(b, rows, h * d, dtype=q.dtype)
         return torch.zeros_like(q)
 
     def pin(module):
@@ -3824,14 +3835,15 @@ def _assert_attention_keyword_handoff_seam() -> None:
     w_t = torch.tensor([0.7])
     with torch.no_grad():
         unpinned = wan._forward(w_x, w_t, w_context, pose_latents=w_pose)
-        # Only self-attention: the pack leaves Wan's stock cross-attention in
-        # place, and that still honors a pin (docs/ADAPTERS.md).
+        # Self-attention through the pack's native call, cross-attention
+        # through the override the forward hands the stock module.
         for block in wan.blocks:
             pin(block.self_attn.comfy_attention)
+            pin(block.cross_attn.comfy_attention)
         pinned_runs.clear()
         pinned = wan._forward(w_x, w_t, w_context, pose_latents=w_pose)
     assert pinned_runs and not torch.equal(pinned, unpinned), (
-        "attention keyword handoff: stock Wan-Animate 2 self-attention no longer "
+        "attention keyword handoff: stock Wan-Animate 2 attention no longer "
         "runs a block's pinned kernel, so dropping the preference may no longer be needed"
     )
 
@@ -3851,12 +3863,242 @@ def _assert_attention_keyword_handoff_seam() -> None:
         adapter_cls._gather_spatial = saved_wan[2]
     assert not pinned_runs, (
         "attention keyword handoff: the Wan-Animate 2 sequence-parallel forward "
-        "ran a self-attention block's pinned kernel under the widget's TORCH_FLASH stamp"
+        "ran a block's pinned kernel under the widget's TORCH_FLASH stamp"
     )
     assert torch.equal(injected, unpinned), (
         "attention keyword handoff: the Wan-Animate 2 sequence-parallel forward "
-        "with pinned self-attention no longer matches the unpinned stock forward"
+        "with pinned attention no longer matches the unpinned stock forward"
     )
+
+    _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations)
+
+
+class _OneSpRank:
+    """Stand in for xFuser's process groups as one sequence-parallel rank.
+
+    The injected forwards shard, gather and read the Ulysses and ring degrees
+    through ``xfuser.core.distributed``. On one rank a shard is the whole
+    sequence and a gather is the identity, so the forward reaches comfy's
+    modules exactly as stock does. The previous modules come back on exit.
+    """
+
+    _NAMES = ("xfuser", "xfuser.core", "xfuser.core.distributed")
+
+    def __enter__(self):
+        import types
+
+        self.saved = {name: sys.modules.get(name) for name in self._NAMES}
+        group = types.SimpleNamespace(all_gather=lambda tensor, dim: tensor)
+        distributed = types.ModuleType("xfuser.core.distributed")
+        distributed.get_sequence_parallel_world_size = lambda: 1
+        distributed.get_sequence_parallel_rank = lambda: 0
+        distributed.get_ulysses_parallel_world_size = lambda: 1
+        distributed.get_ring_parallel_world_size = lambda: 1
+        distributed.get_sp_group = lambda: group
+        sys.modules["xfuser"] = types.ModuleType("xfuser")
+        sys.modules["xfuser.core"] = types.ModuleType("xfuser.core")
+        sys.modules["xfuser.core.distributed"] = distributed
+        return self
+
+    def __exit__(self, *_exc):
+        for name, module in self.saved.items():
+            if module is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = module
+
+
+def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> None:
+    """Half four of the attention keyword handoff seam (issue #30).
+
+    Under sequence parallelism the pack leaves some of comfy's attention in
+    place: cross-attention against the replicated text, the refiners every
+    rank runs whole, and the text refiners comfy runs from ``extra_conds``.
+    The forwards hand those modules an override that ``wrap_attn`` checks
+    before the block's preference (adapters/stock_attention.py). Tiny real
+    models of Wan 2.1 (t2v and i2v), LTX, Kandinsky 5, Anima's cosmos DiT,
+    Z-Image and Krea2 (pure Ulysses and ring) pin every such site: stock must
+    run each pin, and the injected forward on one rank must run none and
+    match the unpinned stock forward bit for bit. The three sites the
+    forward's options copy cannot reach get the same check through the
+    adapter's own binding: WanDancer's music encoder, MiniMax H3's token
+    refiner and the LTX audio-video text connector. Comfy's own attention
+    takes the dispatcher's place.
+    """
+    import types
+
+    import comfy.ldm.modules.attention as attention_module
+    import torch
+    from comfy.ldm.cosmos.predict2 import MiniTrainDIT
+    from comfy.ldm.flux.layers import EmbedND
+    from comfy.ldm.kandinsky5.model import Kandinsky5
+    from comfy.ldm.krea2.model import SingleStreamDiT
+    from comfy.ldm.lightricks.embeddings_connector import Embeddings1DConnector
+    from comfy.ldm.lightricks.model import LTXVModel
+    from comfy.ldm.lumina.model import NextDiT
+    from comfy.ldm.minimax.model import TokenRefiner
+    from comfy.ldm.wan.model import WanModel
+    from comfy.ldm.wan.model_wandancer import MusicEncoderLayer
+
+    from dgx_monarch.adapters.anima import AnimaAdapter
+    from dgx_monarch.adapters.base import InjectionContext
+    from dgx_monarch.adapters.kandinsky5 import Kandinsky5Adapter
+    from dgx_monarch.adapters.krea2 import Krea2Adapter
+    from dgx_monarch.adapters.ltx import LTXAdapter
+    from dgx_monarch.adapters.minimax_h3 import MiniMaxH3Adapter
+    from dgx_monarch.adapters.wan_family import WanAdapter
+    from dgx_monarch.adapters.wan_variants import WanDancerAdapter
+    from dgx_monarch.adapters.zimage import ZImageAdapter
+
+    def one_rank_attention(q, k, v, heads, *args, drop_rows=None, kv_drop_rows=None,
+                           sequence_order=None, query_bias_groups=None, **kwargs):
+        # The sharded dispatcher's place on one rank: no pad rows, no reorder.
+        assert not drop_rows and not kv_drop_rows and query_bias_groups is None
+        return attention_module.optimized_attention(q, k, v, heads, *args, **kwargs)
+
+    def check(name, model, sites, run, adapter, pure_ulysses=False):
+        with torch.no_grad():
+            unpinned = run()
+            for module in sites:
+                pin(module.comfy_attention)
+            pinned_runs.clear()
+            pinned = run()
+            assert len(pinned_runs) >= len(sites) and not torch.equal(pinned, unpinned), (
+                f"attention keyword handoff: stock {name} no longer runs a pinned "
+                "kernel at every site, so the site list has moved")
+            with _OneSpRank():
+                adapter.inject_usp(model, InjectionContext(
+                    topology_sp=1, usp_attention=one_rank_attention,
+                    pure_ulysses=pure_ulysses))
+                pinned_runs.clear()
+                injected = run()
+        assert not pinned_runs, (
+            f"attention keyword handoff: the {name} sequence-parallel forward ran "
+            "a pinned kernel in the stock attention it leaves in place")
+        assert torch.equal(injected, unpinned), (
+            f"attention keyword handoff: the {name} sequence-parallel forward with "
+            "pinned stock attention no longer matches the unpinned stock forward")
+
+    generator = torch.Generator().manual_seed(93)
+    t = torch.tensor([0.6])
+
+    def randn(*shape):
+        return torch.randn(*shape, generator=generator)
+
+    for kind in ("t2v", "i2v"):
+        wan = _seeded(WanModel(
+            model_type=kind, patch_size=(1, 2, 2), text_len=4, in_dim=4, dim=16,
+            ffn_dim=32, freq_dim=2, text_dim=4, out_dim=4, num_heads=2, num_layers=2,
+            device="cpu", dtype=torch.float32, operations=operations).eval(), 3)
+        x, context = randn(1, 4, 2, 2, 4), randn(1, 4, 4)
+        clip = randn(1, 3, 1280) if kind == "i2v" else None
+        check(f"Wan 2.1 {kind}", wan, [block.cross_attn for block in wan.blocks],
+              lambda wan=wan, x=x, context=context, clip=clip: wan._forward(
+                  x, t, context, clip_fea=clip), WanAdapter())
+
+    ltxv = _seeded(LTXVModel(
+        in_channels=4, cross_attention_dim=16, attention_head_dim=8,
+        num_attention_heads=2, caption_channels=8, num_layers=2, device="cpu",
+        dtype=torch.float32, operations=operations).eval(), 11)
+    x, context = randn(1, 4, 2, 2, 2), randn(1, 5, 8)
+    check("LTX", ltxv, [block.attn2 for block in ltxv.transformer_blocks],
+          lambda: ltxv._forward(x, t, context, None), LTXAdapter())
+
+    kandinsky = _seeded(Kandinsky5(
+        in_visual_dim=4, out_visual_dim=4, in_text_dim=8, in_text_dim2=8, time_dim=8,
+        model_dim=16, ff_dim=32, visual_embed_dim=16, patch_size=(1, 2, 2),
+        num_text_blocks=2, num_visual_blocks=2, axes_dims=(4, 2, 2), device="cpu",
+        dtype=torch.float32, operations=operations).eval(), 5)
+    x, context, pooled = randn(1, 4, 1, 4, 4), randn(1, 3, 8), randn(1, 8)
+    check("Kandinsky 5", kandinsky,
+          [block.self_attention for block in kandinsky.text_transformer_blocks]
+          + [block.cross_attention for block in kandinsky.visual_transformer_blocks],
+          lambda: kandinsky._forward(x, t, context, pooled), Kandinsky5Adapter())
+
+    # Anima's own class adds only the llm_adapter, which runs before this
+    # forward and holds no ComfyAttention; the adapter binds the DiT's forward.
+    cosmos = _seeded(MiniTrainDIT(
+        max_img_h=8, max_img_w=8, max_frames=1, in_channels=4, out_channels=4,
+        patch_spatial=2, patch_temporal=1, concat_padding_mask=False,
+        model_channels=24, num_blocks=2, num_heads=2, crossattn_emb_channels=8,
+        pos_emb_cls="rope3d", use_adaln_lora=True, adaln_lora_dim=4, device="cpu",
+        dtype=torch.float32, operations=operations).eval(), 6)
+    x, context = randn(1, 4, 1, 8, 8), randn(1, 5, 8)
+    check("Anima", cosmos, [block.cross_attn for block in cosmos.blocks],
+          lambda: cosmos._forward(x, t, context), AnimaAdapter())
+
+    zimage = _seeded(NextDiT(
+        patch_size=2, in_channels=4, dim=24, n_layers=2, n_refiner_layers=1,
+        n_heads=2, n_kv_heads=2, multiple_of=8, ffn_dim_multiplier=1.0, qk_norm=True,
+        cap_feat_dim=8, axes_dims=(4, 4, 4), axes_lens=(64, 16, 16),
+        time_scale=1000.0, pad_tokens_multiple=32, device="cpu", dtype=torch.float32,
+        operations=operations).eval(), 8)
+    x, context = randn(1, 4, 8, 8), randn(1, 5, 8)
+    check("Z-Image", zimage,
+          [layer.attention for layer in [*zimage.context_refiner, *zimage.noise_refiner]],
+          lambda: zimage._forward(x, t, context, 5), ZImageAdapter())
+
+    for pure in (True, False):
+        krea = _seeded(SingleStreamDiT(
+            features=32, tdim=8, txtdim=8, heads=2, kvheads=2, multiplier=1, layers=2,
+            patch=1, channels=4, txtlayers=3, txtheads=2, txtkvheads=2, device="cpu",
+            dtype=torch.float32, operations=operations).eval(), 9)
+        x, context = randn(1, 4, 4, 4), randn(1, 5, 24)
+        fusion = krea.txtfusion
+        # Under ring or hybrid the refiner blocks carry the sharded override.
+        blocks = [*fusion.layerwise_blocks, *(fusion.refiner_blocks if pure else ())]
+        check(f"Krea2 ({'pure Ulysses' if pure else 'ring'})", krea,
+              [block.attn for block in blocks],
+              lambda krea=krea, x=x, context=context: krea._forward(x, t, context),
+              Krea2Adapter(), pure_ulysses=pure)
+
+    # Sites the forward's options copy cannot reach. Each host carries only the
+    # stock modules the adapter binds, and the adapter's own inject_usp binds them.
+    music = [_seeded(MusicEncoderLayer(dim=16, num_heads=2, ffn_dim=32, device="cpu",
+                                       dtype=torch.float32, operations=operations), 21 + i)
+             for i in range(2)]
+    ids = torch.arange(5, dtype=torch.float32).reshape(1, -1, 1)
+    freqs = EmbedND(dim=8, theta=10000.0, axes_dim=[8])(ids).movedim(1, 2)
+    feature = randn(1, 5, 16)
+
+    def run_music():
+        out = feature
+        for layer in music:
+            out = layer(out, freqs)
+        return out
+
+    check("WanDancer music encoder", types.SimpleNamespace(
+        blocks=[], music_encoder=music,
+        music_injector=types.SimpleNamespace(injector=[])),
+        [layer.self_attn for layer in music], run_music, WanDancerAdapter())
+
+    refiner = _seeded(TokenRefiner(2, 16, 2, 8, 32, 1e-6, 1e-6, 1e-6, device="cpu",
+                                   dtype=torch.float32, operations=operations), 31)
+    text = randn(5, 16)
+    check("MiniMax H3 token refiner", types.SimpleNamespace(blocks=[], token_refiner=refiner),
+          [block.attn for block in refiner.blocks], lambda: refiner(text),
+          MiniMaxH3Adapter())
+
+    class _ConnectorHost:
+        # What LTXAdapter's audio-video branch reads; the block loop is not run.
+        transformer_blocks = ()
+        audio_inner_dim = 16
+
+        def _process_transformer_blocks(self, *_args, **_kwargs):
+            raise AssertionError("not run")
+
+    host = _ConnectorHost()
+    for name, seed in (("video_embeddings_connector", 41), ("audio_embeddings_connector", 42)):
+        setattr(host, name, _seeded(Embeddings1DConnector(
+            attention_head_dim=8, num_attention_heads=2, num_layers=2,
+            num_learnable_registers=None, split_rope=True, double_precision_rope=True,
+            device="cpu", dtype=torch.float32, operations=operations), seed))
+    hidden = randn(1, 5, 16)
+    connectors = (host.video_embeddings_connector, host.audio_embeddings_connector)
+    check("LTX audio-video text connector", host,
+          [block.attn1 for connector in connectors for block in connector.transformer_1d_blocks],
+          lambda: torch.cat([connector(hidden)[0] for connector in connectors], dim=-1),
+          LTXAdapter())
 
 
 def _assert_cfg_pp_uncond_pass_seam() -> None:

@@ -280,6 +280,10 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         4, variadic_keyword="kwargs",
     ),
     _rebound(
+        "comfy.ldm.wan.model_wandancer", "MusicSelfAttention.forward", ("wan_dancer",),
+        ("usp:music-encoder",), "self x freqs", 3,
+    ),
+    _rebound(
         "comfy.ldm.wan.model_animate2", "WanAnimate2Model.forward_orig", ("wan_animate2",),
         ("spatial-frame-gather",),
         "self x t context clip_fea freqs freqs_pose pose_latents clip_fea_pose context_pose pose_strength reference_strength transformer_options",
