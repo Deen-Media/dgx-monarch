@@ -1295,6 +1295,45 @@ step. Ring controls retained nonzero differences because these changes
 apply only to pure Ulysses. Krea2 FP8 SAGE, Hunyuan refiner/SR and unlisted
 formats have no new result from this matrix.
 
+<a id="padded-ulysses-index-cache"></a>
+
+### Padded Ulysses index cache (2026-10-14)
+
+**October 14, 2026:** a back-to-back A/B timed the change that builds the
+padded Ulysses path's index tensors once per layout and reuses them from a
+small cache ([ADAPTERS.md](ADAPTERS.md#what-an-adapter-provides)). Before it,
+the path read the device once per dropped row in the pad-row remap and once
+more in each keep index's `nonzero`: about six host waits per attention call,
+roughly six thousand in a 20-step Chroma render. `index_select` and the
+scatter receive the same integers after the change, so the bar was speed with
+identical pixels: the padded cell had to gain at least 1 percent beyond
+noise, and the unpadded cell had to stay within noise.
+
+Leg A ran the installed dev head `e436b53`, and leg B the candidate `0bfc6f0`
+deployed through the verified update. The legs ran back to back in fresh
+driver sessions, with both Sparks on ComfyUI `e8665ca8` and torchmonarch
+0.7.0 and the first Spark capped at 2100 MHz. Both legs rendered Chroma1-HD
+FP8-mixed on uly2 with Torch Flash, 20 steps and CFG 3.5, at 1152 square,
+where the Ulysses path pads no rows, and at 1176 square, where it pads and
+drops rows. Each cell took two warm-up renders, then seeds 101 to 105, then
+one repeat render as an identity control. The sampler wall is the mean of the
+five seeds, and the spread is the largest minus the smallest. The
+whole-prompt wall adds text encoding and VAE decode.
+
+| Cell | Sampler wall, A (spread) | Sampler wall, B (spread) | B against A | Last step, A / B (s per step) | Whole prompt, A / B |
+|---|--:|--:|--:|--:|--:|
+| 1152 square, no pad rows | 23.16 s (0.10) | 23.26 s (0.10) | +0.43% | 1.158 / 1.163 | 24.73 / 24.81 s |
+| 1176 square, padded | 25.00 s (0.20) | 24.44 s (0.10) | -2.24% | 1.250 / 1.222 | 26.54 / 25.98 s |
+
+Leg A and leg B decoded identical PNGs for all ten seed pairs under numpy
+equality, and each leg's repeat render equaled its first. Neither leg logged
+a driver ERROR line. The padded cell gained 0.56 s against spreads of 0.20 s
+and 0.10 s, which clears the bar, and the unpadded cell moved 0.10 s, inside
+its spreads, so the change ships. An earlier run with the legs two hours
+apart read -1.07% on the padded cell and +1.15% on the unpadded one; this
+back-to-back run supersedes it. Other families that take the padded path,
+and other kernels, have no timing.
+
 <a id="auto-latent-ratio"></a>
 
 ## Latent ratios and automatic topology

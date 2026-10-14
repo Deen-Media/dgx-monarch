@@ -237,6 +237,18 @@ shape for all of them.
    measured Chroma fp8_scaled/int8_convrot failures.
    Query and key pad coordinates are remapped independently, and the inverse
    permutation restores the original rank layout before the return all-to-all.
+   The permutation, its inverse and the pad exclusion's keep index depend
+   only on integer row counts, so the order and the pad exclusion build them
+   on the device once per layout and keep them in a small cache keyed by
+   shape and device, which drops its least recently used entry past the
+   bound (`adapters/index_cache.py`). The pad-row remap reads a host copy
+   of the inverse, computed by the same arithmetic on the CPU, and the keep
+   index comes from `arange` runs rather than a `nonzero`, so no attention
+   call waits on the device
+   ([VALIDATION.md](VALIDATION.md#padded-ulysses-index-cache)). A
+   self-attention that names one row set for both sides remaps it once and
+   shares one keep index between queries and keys, and the output restore
+   reuses the cached inverse.
    The single-block stream is already canonical. Ring and hybrid topologies
    retain their existing order. With the order restored,
    every Flux 1 Dev, Flux2 fp8mixed and LongCat pad-matrix leg matches
@@ -345,10 +357,10 @@ shape for all of them.
    module selection.
 
    Performance cost (not timed), pure Ulysses only. Per block per model call: the order
-   treatment copies q, k, v and the output once each and reads one device
-   value per pad row for each of the query and key sets; even streams take
-   the full-axis call too. The text treatment adds three `all_gather`
-   calls with their copies and a joint-stride buffer, beside the four
+   treatment copies q, k, v and the output once each and reads nothing back
+   from the device; even streams take the full-axis call too. The text
+   treatment adds three `all_gather` calls with their copies and a
+   joint-stride buffer, beside the four
    all-to-alls each block already makes. The bias adds one small tensor cast
    per call, as stock casts its own, and one output copy, and the masked
    backend's speed against flash is unknown. The shipped graph makes 40
@@ -407,19 +419,14 @@ shape for all of them.
    stream with a pad row adds a row selection of q, k and v plus a zero-filled
    output and a scatter, which the default 1328 canvas triggers because 83 by
    83 is odd. That makes nine full-length copies per padded call. Pad rows
-   also cost device to host syncs. `RankMajorJointOrder` remaps the query and
-   key pad sets separately and reads each remapped row back from the device,
-   two syncs per pad row, and the pad exclusion builds each side's keep index
-   with a host to device copy and a `nonzero`, two syncs per side. That is 8
-   syncs per block for a 1328 call with odd text (480 per call), 6 for 1328
-   with even text or 1024 with odd text, and none for 1024 with even text.
-   None of these copies, gathers or syncs has a timing yet. Time a warm 1328
-   render before and after on hardware. Candidate reductions meant to keep
-   every bit, none applied or tested: host arithmetic for the pad remap and
-   the keep index, which needs no sync; one row selection that folds the
-   order permutation into the keep index, five full-length copies instead of
-   nine; and one gather of the q, k, v input with `txt_mlp` run whole on full
-   rows, three gathers instead of six.
+   cost no device to host sync: the order and keep indices come from the
+   per-layout cache, and the pad-row remap reads its host copy of the
+   inverse. None of these copies or gathers has a timing yet. Time a warm
+   1328 render before and after on hardware. Candidate reductions meant to
+   keep every bit, neither applied nor tested: one row selection that folds
+   the order permutation into the keep index, five full-length copies instead
+   of nine; and one gather of the q, k, v input with `txt_mlp` run whole on
+   full rows, three gathers instead of six.
 
    **Ideogram4 pad row.** Ideogram4 packs `[text, image]` into one stream and
    shards it in contiguous chunks, so Ulysses' head all-to-all already hands
@@ -461,15 +468,14 @@ shape for all of them.
    show neither changes a bit at those shapes.
 
    Performance cost (not timed), pure Ulysses with an odd packed total. Per block per
-   model call: `keep_index` runs for the query side and the key side, and each
-   run copies the drop list to the device and reads a `nonzero` result back,
-   both of which wait on the stream, so four waits per block; then a row
-   selection of q, k and v, a zero-filled output and a scatter, about 100 MB
-   of extra writes per block at the template's 4380 by 9 by 256 bf16 rows. The
-   all-to-all count is unchanged. Over the template's 34 blocks that is 136
-   waits and about 3.4 GB per conditional call, and a render makes 20
-   conditional calls; its unconditional calls are even at 1024 and pay
-   nothing. Neither this path nor xfuser 0.7's own forward passes `use_sync`
+   model call: a row selection of q, k and v, a zero-filled output and a
+   scatter, about 100 MB of extra writes per block at the template's 4380 by
+   9 by 256 bf16 rows. The query and key sides share one keep index from the
+   per-layout cache, so the block waits on no device read. The all-to-all
+   count is unchanged. Over the template's 34 blocks that is about 3.4 GB per
+   conditional call, and a render makes 20 conditional calls; its
+   unconditional calls are even at 1024 and pay nothing. Neither this path
+   nor xfuser 0.7's own forward passes `use_sync`
    to the all-to-all. Time a warm template render before and after on
    hardware.
 
@@ -507,11 +513,10 @@ shape for all of them.
    measured latents show they keep stock's bits at those row counts.
 
    Performance cost (not timed), pure Ulysses only. Per joint block per model call, the
-   order treatment copies q, k, v and the output once each and builds the
-   permutation once and its inverse twice, and every joint call takes the
-   full-axis path even with no pad row. A padded call already pays two
-   `nonzero` host syncs; the remap adds one device read per pad row for each
-   row set. With `compile_dit` on, the full-axis call is compiler-disabled, so
+   order treatment copies q, k, v and the output once each, with its
+   permutation and inverse from the per-layout cache, and every joint call
+   takes the full-axis path even with no pad row. A padded call reads nothing
+   back from the device. With `compile_dit` on, the full-axis call is compiler-disabled, so
    every joint attention breaks the compiled block there, padded or not. The text
    path costs each rank the whole text compute once per call instead of half,
    adds no gather, and drops the refiner's eight all-to-alls and their pad
@@ -582,20 +587,16 @@ shape for all of them.
    single blocks. Per double block per model call: four text `all_gather`
    calls, each with a contiguous copy and a re-shard copy, plus a joint-stride
    buffer for `txt_attn.proj`; the four text GEMMs run on every text row on
-   both ranks; the order treatment builds a permutation once and its inverse
-   twice, and indexes q, k, v and the output once each. A padded stream adds,
-   in each block of the loop it pads, a row selection of q, k and v, a
-   zero-filled output, a scatter, two host-to-device copies of the pad-row
-   list and two device syncs, one for each kept-row index (query side and key
-   side). In the double loop the order remap also reads two device values per
-   drop row, since it remaps the query and key row sets apart. The template's
-   canvas and prompt pad both loops, which comes to 160 host syncs per model
-   call and 3200 per 20-step render. Time a warm 2048 render before and after
-   on hardware. The HunyuanVideo 1.5 720p checkpoint has 54 double blocks and
-   no single blocks. Its template's prompt is 77 text rows (counted with
-   comfy's tokenizer) and its empty negative 6, so only the
-   cond call's text stream pads: 216 host syncs per step and 4320 per 20-step
-   render.
+   both ranks; the order treatment takes its permutation and inverse from the
+   per-layout cache and indexes q, k, v and the output once each. A padded
+   stream adds, in each block of the loop it pads, a row selection of q, k
+   and v, a zero-filled output and a scatter; neither the keep index nor the
+   order remap reads the device. The template's canvas and prompt pad both
+   loops. Time a warm 2048 render before and after on hardware. The
+   HunyuanVideo 1.5 720p checkpoint has 54 double blocks and no single
+   blocks. Its template's prompt is 77 text rows (counted with comfy's
+   tokenizer) and its empty negative 6, so only the cond call's text stream
+   pads.
 
    **Boogu joint order, pad rows and instruct rows.** Boogu shards five
    streams. The noise and reference refiners each shard their own stream, the
@@ -646,16 +647,15 @@ shape for all of them.
    uncond never batch, and each call runs 8 double, 32 single and 2 + 2
    refiner blocks. In every call each double block's joint attention takes the
    full-axis path, copies q, k, v and the output once each for the order, and
-   builds the permutation and its inverse on the device; `restore` builds that
-   inverse a second time. Every padded call selects the real rows of q, k and
-   v, fills a zeroed output, scatters into it, and makes two device-to-host
-   reads in `nonzero`; the joint call adds two more per pad row, where the
-   order remaps the query and key pad sets. At 1024 the cond call pads the
-   instruct stream, so each double block's joint call makes four reads and
-   each of the 32 single blocks two over the 4205-row stream; the uncond call
-   pads nothing. At 1040 the template prompt pads both double streams: each
-   joint call makes six reads, each image self-attention and each noise
-   refiner block two, and the 4334-row single stream pads nothing. For
+   reads the permutation and its inverse from the per-layout cache, which
+   `restore` reuses. Every padded call selects the real rows of q, k and v,
+   fills a zeroed output and scatters into it, and reads nothing back from
+   the device. At 1024 the cond call pads the instruct stream, so each double
+   block's joint call and each of the 32 single blocks over the 4205-row
+   stream pay that; the uncond call pads nothing. At 1040 the template prompt
+   pads both double streams, so each joint call, each image self-attention
+   and each noise refiner block pay it, and the 4334-row single stream pads
+   nothing. For
    selected Linears, including the shipped fp8_scaled checkpoint, the instruct
    wrapper adds seven `all_gather` calls per double block and runs those GEMMs
    on every row on both ranks. Three gathers duplicate earlier work because
@@ -709,10 +709,11 @@ shape for all of them.
    Performance cost (not timed), pure Ulysses only. An even joint stream
    adds nothing per
    block. An odd one adds, per block per call, a row selection of q, k and v,
-   a zero-filled output and a scatter, and two kept-row index builds, each a
-   device to host sync. The fused branch runs one kernel where the unfused
-   one ran three. The rotary and token-shard copies happen once per forward
-   and the final-norm copy once per odd forward, all at batch 2 only.
+   a zero-filled output and a scatter; its keep index comes from the
+   per-layout cache and reads nothing back from the device. The fused branch
+   runs one kernel where the unfused one ran three. The rotary and
+   token-shard copies happen once per forward and the final-norm copy once
+   per odd forward, all at batch 2 only.
 
    **Mage Flow joint order, pad rows and text rows.** Mage Flow runs
    Qwen-Image's double block, so the same three departures apply. Under pure
