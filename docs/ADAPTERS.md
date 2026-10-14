@@ -267,6 +267,29 @@ shape for all of them.
    embedding or collectives; other selected kernels and a foreign
    `optimized_attention_override` refuse there too.
 
+   **Per-block attention preference and q/k/v containers.** ComfyUI lets a
+   model file pin an attention kernel for each block. Models pass
+   `preferred_attention=self.comfy_attention` to their attention call and box
+   q, k and v in `AttentionTensorContainer`. Comfy's `wrap_attn` drops the
+   keyword and takes the tensors out of their boxes before it calls
+   `optimized_attention_override`, so the `usp_options` overrides see
+   neither. An op the pack installs on the model itself runs before
+   `wrap_attn` and sees both. Anima's `attn_op` is the one such op: it takes
+   the boxes once and ignores the keyword (`adapters/attention_inputs.py`).
+   It accepts no other keyword. The dispatcher drops an unknown keyword for
+   an ordinary kernel, so the op refuses one with a class P refusal that
+   names it (docs/TROUBLESHOOTING.md #116) rather than let it pass unapplied.
+   Under sequence parallelism the Init `attention` widget and the dispatcher
+   choose the kernel, so the preference is logged at debug level once per
+   call site and otherwise ignored. A checkpoint that pins a kernel per block
+   (the comfy-kitchen int8 kernel, or the comfy-kitchen Sol kernel,
+   `comfy_kitchen_sol`, with its tau) therefore renders with the widget's
+   kernel where stock ComfyUI on one GPU would use the pinned one. Qwen Image
+   2.1 and Wan-Animate 2, whose distributed paths call native Comfy
+   attention, hand the preference on to that call as stock does. The
+   "attention keyword handoff" seam in `tests/canary/comfy_seam_contracts.py`
+   holds both halves against the real ComfyUI tree.
+
    **Lens joint order, key bias and text rows.** Each Lens block joins
    `[image, text]`, so Ulysses' head all-to-all gathers `[image0, text0,
    image1, text1]` while stock attends `[image0, image1, text0, text1]`. Under

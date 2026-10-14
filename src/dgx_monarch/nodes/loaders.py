@@ -196,23 +196,42 @@ class DGXMonarchUNETLoader:
         # Above the footprint card, which would otherwise offer slab residency
         # where slab is not a lever (see preflight_comfy_managed_topology).
         loader_preflight.preflight_comfy_managed_topology(mesh)
+
+        def price_load():
+            rescue = loader_preflight.preflight_loader_footprint(
+                mesh, unet_name, options, prompt)
+            if rescue is None:
+                # Always project consent: worker capacity checks may offer rescue
+                # even when this family-scoped driver estimator made no claim.
+                # Otherwise an accepted card would never affect the load.
+                rescue = consent_projection.project_for_loader(
+                    mesh, unet_name, options,
+                    covered=loader_graph.unet_names(prompt))
+            return rescue
+
         # Above ensure_live: a capacity refusal must land before any mesh, gate
         # or session side effect, so before the fleet is healed or spawned and
         # before mutation_render_session pushes topology and worker args to
         # every rank. Inside that session it would still be typed and caught,
         # but only after a full bring-up. run_render and the pipeline keep the
         # same placement.
-        rescue_load = loader_preflight.preflight_loader_footprint(
-            mesh, unet_name, options, prompt)
-        if rescue_load is None:
-            # Always project consent: worker capacity checks may offer rescue even
-            # when this family-scoped driver estimator made no claim. Otherwise an
-            # accepted card would never affect the load.
-            rescue_load = consent_projection.project_for_loader(
-                mesh, unet_name, options,
-                covered=loader_graph.unet_names(prompt))
+        rescue_load = price_load()
         handle = ensure_live(mesh.handle, mesh_preflight=mesh_preflight)
         if mesh.topology_preset != "auto":
+            from .abandoned_heal import heal_before_eager_setup
+
+            def reprice_then_respawn(old):
+                # The heal dropped the memos the price above wrote, and the
+                # fresh fleet holds none of the old one's weights. Price again
+                # before the spawn, as for any load onto a fleet ensure_live
+                # replaces: a refusal still lands first, and an admitted load
+                # records the credit a second loader of this checkpoint reads.
+                nonlocal rescue_load
+                rescue_load = price_load()
+                return ensure_live(old, mesh_preflight=mesh_preflight)
+
+            handle = heal_before_eager_setup(
+                handle, site="the UNET Loader", respawn=reprice_then_respawn)
             topo = topology_from_preset(mesh.topology_preset, handle.world)
             from .. import capacity_agreement, mesh_setup
             from . import render_preflight

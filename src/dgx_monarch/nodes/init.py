@@ -213,6 +213,14 @@ class DGXMonarchInit:
     ):
         """Initialize with an explicit custom-node bootstrap policy."""
         handle = get_mesh(config_path=config_path, mode=mode, gpus_per_host=gpus_per_host)
+        if topology != "auto":
+            # An explicit preset sets the fleet up below, which an abandoned
+            # lease refuses; heal it first so the spec carries the new fleet.
+            from .abandoned_heal import heal_before_eager_setup
+
+            handle = heal_before_eager_setup(
+                handle, site="the Init node", respawn=lambda _old: get_mesh(
+                    config_path=config_path, mode=mode, gpus_per_host=gpus_per_host))
 
         worker_args = {"mmap_fallback": bool(mmap_fallback)}
         # Omit automatic policy so workers resolve it from hardware. Keep

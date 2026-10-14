@@ -16,6 +16,11 @@ from __future__ import annotations
 import torch
 
 from ..log import get_logger
+from .attention_inputs import (
+    note_preferred_attention,
+    refuse_unadopted_keywords,
+    take_qkv,
+)
 from .base import Adapter, InjectionContext, UnsupportedModelError, shard_seq, sp_gather
 
 log = get_logger(__name__)
@@ -38,10 +43,22 @@ def _make_usp_attn_op(attn):
     """Adapt `(B, S, H, D)` q/k/v to USP and return `(B, S, H*D)`.
 
     The returned plain function is assigned to an instance attribute directly;
-    method binding would add an invalid `self` argument.
+    method binding would add an invalid `self` argument. Comfy's cosmos
+    `Attention.compute_attention` calls it outside `wrap_attn`, with q/k/v in
+    `AttentionTensorContainer` and a `preferred_attention` keyword. The op
+    takes the containers once and ignores the preference, because the Init
+    `attention` widget and the dispatcher choose the kernel
+    (adapters/attention_inputs.py). Any other keyword refuses with a typed
+    class P refusal before a container is taken: the dispatcher drops an
+    unknown keyword for an ordinary kernel, so forwarding it would let a
+    ComfyUI change pass unapplied.
     """
 
-    def usp_attn_op(q, k, v, transformer_options={}):
+    def usp_attn_op(q, k, v, transformer_options={}, preferred_attention=None,
+                    **unadopted):
+        refuse_unadopted_keywords("anima self-attention", unadopted)
+        note_preferred_attention("anima self-attention", preferred_attention)
+        q, k, v = take_qkv(q, k, v)
         heads = q.shape[-2]
         q = q.transpose(1, 2)  # (B, S, H, D) -> (B, H, S, D)
         k = k.transpose(1, 2)

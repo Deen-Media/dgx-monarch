@@ -10,10 +10,13 @@ runs it once per queue on its live handle, before the render session binds.
 Neither reads the Init node's cached handle, which keeps its count after a
 recycle. A failed stop can leave Fleet's handle retired, so after a recycle
 that is not ok Fleet raises the abandoned-sample refusal itself instead of
-binding.
+binding. The nodes that set the fleet up before any render (Init with an
+explicit preset, the UNET Loader, the BasicScheduler) run the same heal
+through ``heal_before_eager_setup``.
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from enum import Enum
 from typing import Any
 
@@ -73,3 +76,27 @@ def heal_abandoned_wedge_once(
 
     recycle_drain.drop_residency_memos()
     return HealOutcome.HEALED
+
+
+def heal_before_eager_setup(
+        handle: Any, *, site: str, respawn: Callable[[Any], Any]) -> Any:
+    """Heal an abandoned-only wedge before a node sets up the fleet eagerly.
+
+    Init with an explicit preset, the UNET Loader and the BasicScheduler set
+    up topology and worker arguments before any render, and that setup
+    refuses while an abandoned lease is held (mesh_setup.require_no_sample_leases).
+    A changed checkpoint, topology or lever after an untagged crash would
+    otherwise need a manual Reset. Fleet's rule applies: a heal answers the
+    fresh fleet from ``respawn``, a recycle that is not ok raises the
+    abandoned-sample refusal, and anything else returns ``handle`` unchanged.
+    """
+    heal = heal_abandoned_wedge_once(
+        handle, blocker=f"{site} would refuse its setup change",
+        then=f"setting up {site} on the new fleet")
+    if heal is HealOutcome.HEALED:
+        return respawn(handle)
+    if heal is HealOutcome.RECYCLE_FAILED:
+        from .. import mesh_setup
+
+        mesh_setup.require_no_abandoned_samples(handle, f"set up {site}")
+    return handle

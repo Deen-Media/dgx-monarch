@@ -279,6 +279,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/attention_inputs.py::refuse_unadopted_keywords::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/attention_patches.py::assert_cfg_attention_output_patches_safe::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
