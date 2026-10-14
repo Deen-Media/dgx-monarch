@@ -11,8 +11,10 @@ from types import SimpleNamespace
 import pytest
 
 from dgx_monarch.cli import doctor
-from dgx_monarch.cli.doctor_worker_context import worker_context
+from dgx_monarch.cli.doctor_worker_context import env_failure_row, worker_context
 from dgx_monarch.cli.lifecycle import _pybin_shell
+from dgx_monarch.cli.lifecycle_lock import locked_script
+from dgx_monarch.cli.lifecycle_managed import managed_source_probe, probe_kind, probe_refusal
 from dgx_monarch.cli.lifecycle_systemd import systemd_worker_unit
 from dgx_monarch.cli.systemd_unit import quote
 from dgx_monarch.config import ClusterConfig, HostConfig
@@ -152,22 +154,90 @@ def test_unverified_source_never_falls_back_to_base_or_staging(context, damage):
         (dropin / 'override.conf').write_text('[Service]\n')
     result = run(config, host, dict(os.environ, PYTHONPATH=str(staging)))
     assert result.returncode != 0
-    assert result.stdout.strip() == 'FAILED_SOURCE_LAYOUT'
+    assert result.stdout.splitlines() == ['FAILED_SOURCE_LAYOUT', 'dgxm_worker_probe_exit=1']
+    status, name, detail = env_failure_row('worker', result)
+    assert (status, name) == ('FAIL', 'worker env')
+    assert detail.startswith('FAILED_SOURCE_LAYOUT: its managed source link or Worker unit is not one')
+    assert '(exit' not in detail
 
 
-
-@pytest.mark.parametrize('verdict', [
-    "printf 'MANAGED\\nPLAIN\\n'", "echo MANAGED; exit 1", "echo UNKNOWN",
-    "echo POLICY_STALE", "echo MANAGED; exit 3", "echo POLICY_STALE; exit 1",
+# Doctor runs the probe without the lifecycle lock, so an exit with no verdict
+# it accepts names FAILED_SOURCE_PROBE, never FAILED_LIFECYCLE_LOCK.
+@pytest.mark.parametrize(('verdict', 'kind', 'code'), [
+    ("printf 'MANAGED\\nPLAIN\\n'", 'FAILED_SOURCE_PROBE', 0),
+    ("echo MANAGED; exit 1", 'FAILED_SOURCE_PROBE', 1),
+    ("echo UNKNOWN", 'FAILED_SOURCE_PROBE', 0),
+    ("echo POLICY_STALE", 'FAILED_SOURCE_PROBE', 0),
+    ("echo MANAGED; exit 3", 'FAILED_SOURCE_PROBE', 3),
+    ("echo POLICY_STALE; exit 1", 'FAILED_SOURCE_PROBE', 1),
+    ("echo dgxm_worker_policy=MANAGED; exit 4", 'FAILED_SOURCE_PROBE', 4),
+    ("echo FAILED_SOURCE_LAYOUT; exit 1", 'FAILED_SOURCE_LAYOUT', 1),
+    ("exit 126", 'FAILED_WORKER_INTERPRETER', 126),
+    ("exit 127", 'FAILED_WORKER_INTERPRETER', 127),
 ])
-def test_failed_or_ambiguous_guard_never_runs_environment_probe(context, monkeypatch, verdict):
+def test_failed_or_ambiguous_guard_never_runs_environment_probe(context, monkeypatch, verdict, kind, code):
     from dgx_monarch.cli import doctor_worker_context
 
     config, host, _base, _managed, _unit, _site, _staging = context
     monkeypatch.setattr(doctor_worker_context, 'managed_source_probe', lambda *_args: verdict)
     result = run(config, host, dict(os.environ))
-    assert result.returncode != 0
-    assert result.stdout.strip() == 'FAILED_SOURCE_LAYOUT'
+    assert result.returncode == 1
+    lines = result.stdout.splitlines()
+    # The environment probe never ran: no version line and no policy verdict.
+    assert lines[-1] == f'dgxm_worker_probe_exit={code}'
+    assert not any(line.startswith('dgxm_worker_policy=') and line != 'dgxm_worker_policy=MANAGED'
+                   for line in lines)
+    assert not any(line[:1].isdigit() for line in lines)
+    _status, _name, detail = env_failure_row('worker', result)
+    assert detail.startswith(f'{kind}: ')
+    # As in the lifecycle refusal, a layout verdict carries no exit code.
+    assert ('(exit' not in detail) if kind == 'FAILED_SOURCE_LAYOUT' else (f'(exit {code})' in detail)
+    assert 'FAILED_LIFECYCLE_LOCK' not in detail
+
+
+def _lifecycle_probe(config, host, env):
+    """The probe exactly as ``dgxm restart`` and ``dgxm up`` run it, under the lock."""
+    result = subprocess.run(['bash', '-c', locked_script(config.python_bin, managed_source_probe(config, host))],
+                            capture_output=True, text=True, timeout=15, env=env)
+    return probe_kind(result), result
+
+
+@pytest.mark.parametrize(('interpreter', 'code'), [('missing', 127), ('not-executable', 126)])
+def test_doctor_names_an_unusable_interpreter_as_restart_and_up_do(context, tmp_path, interpreter, code):
+    """A Worker interpreter the shell cannot run reads the same cause and exit code
+    in Doctor's env row as in the lifecycle refusal, not FAILED_SOURCE_LAYOUT."""
+    from dataclasses import replace
+
+    config, host, *_rest = context
+    python = tmp_path / 'worker-python'
+    if interpreter == 'not-executable':
+        python.write_text('#!/bin/sh\nexit 0\n')
+        python.chmod(0o600)
+    config = replace(config, python_bin=str(python))
+    env = dict(os.environ)
+    env.pop('PYTHONPATH', None)
+    lifecycle_kind, lifecycle = _lifecycle_probe(config, host, env)
+    assert (lifecycle_kind, lifecycle.returncode) == ('FAILED_WORKER_INTERPRETER', code)
+    result = run(config, host, env)
+    assert result.returncode == 1
+    assert result.stdout.splitlines()[-1] == f'dgxm_worker_probe_exit={code}'
+    _status, _name, detail = env_failure_row('worker', result)
+    cause = probe_refusal('worker', lifecycle_kind, lifecycle).split(';')[0].removeprefix('worker: ')
+    assert detail.startswith(cause + '; the environment check did not run; stderr: ')
+    assert cause == ('FAILED_WORKER_INTERPRETER: the shell could not run cluster.python there '
+                     f'(missing or not executable), so the source check never ran (exit {code})')
+    assert 'FAILED_SOURCE_LAYOUT' not in detail and str(tmp_path) not in detail
+
+
+def test_a_failure_after_the_probe_keeps_the_generic_env_row():
+    """An environment probe that fails after the source probe passed is not a
+    source verdict: the row keeps the last output line and the exit code."""
+    result = subprocess.CompletedProcess(
+        [], 1, 'dgxm_worker_policy=MANAGED\n', 'Traceback\nImportError: no torch\n')
+    assert env_failure_row('worker', result) == (
+        'FAIL', 'worker env', 'remote check exited 1: ImportError: no torch')
+    exited = subprocess.CompletedProcess([], 23, '', '')
+    assert env_failure_row('worker', exited) == ('FAIL', 'worker env', 'remote check exited 23: no output')
 
 
 def test_wrong_managed_pin_does_not_fall_back_to_matching_base(context):

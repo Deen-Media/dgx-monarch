@@ -106,7 +106,7 @@ def test_one_abandoned_sample_is_dirty_and_names_the_count():
     health = mesh_health.health_of([_handle(abandoned_sample_leases={0: 1})])
     assert health.state == "dirty"
     assert health.abandoned_samples == 1
-    assert "1 abandoned sample may still be running" in health.reason
+    assert "1 abandoned sample may still own worker-side latent backing" in health.reason
     # The panel button clears this one, so the row must not send the operator
     # to a ComfyUI restart for it.
     assert "Reset attached mesh" in health.remedy
@@ -116,7 +116,7 @@ def test_one_abandoned_sample_is_dirty_and_names_the_count():
 def test_the_abandoned_count_is_summed_across_ranks_and_pluralized():
     health = mesh_health.health_of([_handle(abandoned_sample_leases={0: 1, 1: 1})])
     assert health.abandoned_samples == 2
-    assert "2 abandoned samples may still be running" in health.reason
+    assert "2 abandoned samples may still own worker-side latent backing" in health.reason
 
 
 def test_a_blocked_replacement_is_dirty_and_asks_for_a_restart():
@@ -171,7 +171,7 @@ def test_an_abandoned_sample_outranks_a_busy_driver():
     health = mesh_health.health_of([_handle(
         setup_cleanup_state=_in_flight(), abandoned_sample_leases={0: 1})])
     assert health.state == "dirty"
-    assert health.reason == "1 abandoned sample may still be running"
+    assert health.reason == "1 abandoned sample may still own worker-side latent backing"
     assert "Reset attached mesh" in health.remedy
 
 
@@ -520,7 +520,7 @@ def test_the_status_row_names_the_abandoned_count_and_the_remedy(monkeypatch, ca
     )
     mesh_health_row.status_with_mesh(ClusterConfig())
     line = capsys.readouterr().out
-    assert line.startswith("  mesh: DIRTY (1 abandoned sample may still be running")
+    assert line.startswith("  mesh: DIRTY (1 abandoned sample may still own worker-side latent backing")
     assert "Reset attached mesh" in line
     assert "dgxm restart" in line
     assert "docs/TROUBLESHOOTING.md #65" in line
@@ -758,7 +758,7 @@ def test_a_dirty_mesh_fails_a_doctor_run_that_is_otherwise_green(monkeypatch, ca
     assert not doctor.run_doctor(config)
     output = capsys.readouterr().out
     assert "[ ok ] worker worker service" in output
-    assert "[FAIL] mesh health: 1 abandoned sample may still be running" in output
+    assert "[FAIL] mesh health: 1 abandoned sample may still own worker-side latent backing" in output
     assert "1 failures" in output
 
 

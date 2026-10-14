@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+- Close the small follow-ups from the 2026-10-12 review (issue #23).
+  `dgxm doctor` now names a failed source probe as `dgxm restart` and a
+  syncing `dgxm up` do: a missing or non-executable Worker interpreter reads
+  `FAILED_WORKER_INTERPRETER` with its exit code instead of
+  `FAILED_SOURCE_LAYOUT`, and any other exit without a verdict reads
+  `FAILED_SOURCE_PROBE`, since Doctor runs the probe without the lifecycle
+  lock. Plain `dgxm update` from a linked git worktree now refuses with a
+  message that names it, where it used to skip the fetch; a copy without Git
+  still skips it ([INSTALL](docs/INSTALL.md#updating)). The mesh row and
+  `SampleResultBusyError` now say an abandoned sample may still own
+  worker-side latent backing, and `LifecycleBusyError` that it may still own a
+  result or RDMA descriptor of its setup generation; neither says it may still
+  be running. A Monarch 0.7.0 collective call returns an actor error only after
+  every rank has replied, so a sample whose rank raised has stopped, though a
+  rank that raised after packing its latent can still own the backing. After a
+  timeout, an interrupt or a worker death the sample may still be running
+  ([TROUBLESHOOTING #87](docs/TROUBLESHOOTING.md#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)).
+  [TROUBLESHOOTING #115](docs/TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)
+  records why latents held by failed native reads get no cap and no operator
+  release: one fault holds at most one Fleet wave or one pipeline window of
+  them, and one restart frees them all. The worker-policy broadcast and
+  process-group setup behind `MeshHandle` moved from `mesh.py` to
+  `mesh_setup_transition.py` with no change in behavior, which lowers the
+  `mesh.py` line ceiling from 898 to 690; the `cli/doctor.py` ceiling drops
+  from 774 to 770 to match that file.
 - Stop the padded Ulysses path from waiting on the device. The keep index
   for pad exclusion, the rank-major joint-order permutation and its inverse
   depend only on integer row counts, so the path now builds each once per

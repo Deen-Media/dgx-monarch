@@ -316,17 +316,62 @@ def test_plain_update_refuses_a_diverged_checkout_before_admission(
     assert "diverged from its fetched upstream" in capsys.readouterr().err
 
 
-def test_plain_update_from_a_linked_worktree_skips_the_fetch(monkeypatch, tmp_path, capsys):
+def _run_plain_update(repo: Path, tmp_path: Path, driver_probe) -> int:
+    """The whole plain update entry, with its lock kept under ``tmp_path``."""
+    from dgx_monarch.cli.update_lock import UpdateLock
+
+    return legacy_update.run(
+        SimpleNamespace(host=None), load_config=lambda _args: None,
+        driver_probe=driver_probe, repo=repo,
+        lock_factory=lambda checkout: UpdateLock(checkout, state_root=tmp_path / "update-locks"))
+
+
+def test_plain_update_refuses_a_linked_worktree_before_any_fetch(monkeypatch, tmp_path, capsys):
     _origin, local = _checkout_behind_its_upstream(tmp_path)
     tracking = _git(local, "rev-parse", "origin/main")
     worktree = tmp_path / "worktree"
     _git(local, "worktree", "add", "-q", str(worktree))
     assert (worktree / ".git").is_file()
+    before = _git(worktree, "rev-parse", "HEAD")
+    monkeypatch.setattr(legacy_update, "dependency_preflight",
+                        lambda *_args: pytest.fail("admission ran for a linked worktree"))
+    monkeypatch.setattr(legacy_update.subprocess, "run",
+                        lambda *_args, **_kwargs: pytest.fail("git or pip ran for a linked worktree"))
+
+    # The driver guard still comes first, as for every other refusal after it.
+    assert _run_plain_update(worktree, tmp_path, lambda _host: (None, True)) == 1
+    monkeypatch.undo()
+    assert _git(local, "rev-parse", "origin/main") == tracking
+    assert _git(worktree, "rev-parse", "HEAD") == before
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert f"{worktree} is a linked git worktree" in output.err
+    # The remedy names what plain update acts on, since cd'ing elsewhere changes nothing.
+    assert "the checkout this dgxm was installed from" in output.err
+    assert "only a main checkout" in output.err
+    assert "`dgxm update --verify`" in output.err
+    assert "reinstall dgx-monarch from the main checkout" in output.err
+
+
+@pytest.mark.parametrize("layout", ["no-git", "gitdir-file-without-commondir"])
+def test_plain_update_without_a_git_directory_still_checks_the_working_tree(
+        monkeypatch, tmp_path, capsys, layout):
+    """A copy without Git, and a .git file that is not a linked worktree (a
+    submodule's, say), keep the old path: no fetch, the working tree's pin."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / "pyproject.toml").write_text('[project]\ndependencies=["torchmonarch==0.6.0"]\n')
+    if layout == "gitdir-file-without-commondir":
+        (tmp_path / "modules" / "repo").mkdir(parents=True)
+        (repo / ".git").write_text("gitdir: ../modules/repo\n")
     admitted = []
     monkeypatch.setattr(legacy_update, "dependency_preflight",
                         lambda pin, _roots, _config: admitted.append(pin) or False)
+    monkeypatch.setattr(legacy_update.subprocess, "run",
+                        lambda *_args, **_kwargs: pytest.fail("git or pip ran without a git directory"))
 
-    assert _plain_update(worktree) == 1
-    assert admitted == ["0.6.0"]  # the working tree's pin: nothing was fetched
-    assert _git(local, "rev-parse", "origin/main") == tracking
-    assert "not a plain git checkout" in capsys.readouterr().out
+    assert _run_plain_update(repo, tmp_path, lambda _host: (None, True)) == 1
+    assert admitted == ["0.6.0"]
+    output = capsys.readouterr()
+    assert "not a plain git checkout (no .git directory); skipping the fetch" in output.out
+    assert "linked git worktree" not in output.err
