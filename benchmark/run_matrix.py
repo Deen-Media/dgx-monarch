@@ -677,6 +677,7 @@ def run_case(
     )
     from dgx_monarch.nodes.loaders import DGXMonarchUNETLoader
     from dgx_monarch.nodes.samplers import DGXMonarchKSampler
+    from dgx_monarch.topology import sampler_keeps_uncond_at_cfg1
 
     name = merged["name"]
     print(f"\n=== {name} ===", flush=True)
@@ -697,11 +698,15 @@ def run_case(
         metadata_key=LATENT_DOWNSCALE_METADATA_KEY,
     )
     sampling_cfg = float(merged["cfg"]) if sampling_path == "ksampler" else 1.0
+    # The KSampler node tags its latent the same way, so the provenance label
+    # names the topology the render resolves (a cfg++ sampler at cfg 1.0).
     effective_topology, sage, topology_reason = resolve_topology(
         model,
         latent["samples"],
         sampling_cfg,
         latent_downscale=latent_downscale,
+        keeps_uncond=(sampling_path == "ksampler"
+                      and sampler_keeps_uncond_at_cfg1(merged["sampler"])),
     )
 
     def sample_ksampler():

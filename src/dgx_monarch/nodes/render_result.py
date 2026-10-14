@@ -70,10 +70,17 @@ def _finish_render(
             "incomplete or duplicate DP leader results: expected dp ranks "
             f"{expected_dp_ranks}, got {leader_dp_ranks}"
         )
+    walls = []
     for r in results:
         phases = (f" gpu_load {r['gpu_load_s']:.1f}s" if r.get("gpu_load_s", 0) > 1 else "")
         log.info("rank %s/%s: sample %.2fs (%s%s) stats=%s", r.get("rank"), r.get("host"),
                  r.get("sample_s", -1), r.get("transition"), phases, r.get("latent_stats"))
+        if isinstance(r.get("sample_s"), (int, float)):
+            walls.append(float(r["sample_s"]))
+    if walls:  # observed only: the finish record's sampler wall is the slowest rank's
+        from ..telemetry import render_progress
+
+        render_progress.note_sample(max(walls))
 
     native_failed: list[bool] = []  # this render's lifetime: did a native read fail?
 

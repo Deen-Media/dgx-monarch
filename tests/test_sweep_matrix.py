@@ -825,10 +825,12 @@ def test_kernels_that_resolve_to_one_collapse_to_one_cell(tmp_path):
     config = _rig(tmp_path)
     _checkpoint(config["model_dir"], "krea2_raw_fp8_scaled.safetensors", "krea2",
                 torch.float8_e4m3fn)
+    # 1600 square is above the krea2 cfg2 band (row 15 ends at 2.36 MP), so
+    # auto lands on row 11, the one with sage on.
     (config["out_dir"] / "graphs" / "big.json").write_text(json.dumps(
         _graph("krea2_raw_fp8_scaled.safetensors") | {"3": {
             "class_type": "EmptySD3LatentImage",
-            "inputs": {"width": 1536, "height": 1536, "batch_size": 1}}}))
+            "inputs": {"width": 1600, "height": 1600, "batch_size": 1}}}))
     config["image_attention"] = ["TORCH_FLASH", "TORCH_CUDNN", "SAGE_AUTO"]
     config["sol_families"] = []
     cells, pruned, _unmatched = matrix.build_cells(config)
@@ -845,6 +847,95 @@ def test_kernels_that_resolve_to_one_collapse_to_one_cell(tmp_path):
     # A reference never points at a cell the collapse removed.
     ids = {cell["id"] for cell in cells}
     assert all(cell["reference"].get("cell", next(iter(ids))) in ids for cell in cells)
+
+
+def _krea2_fp8_square(config: dict, stem: str, graph: dict, side: int = 1536) -> None:
+    """Write ``graph`` at ``side`` square beside a krea2 FP8 checkpoint."""
+    _checkpoint(config["model_dir"], "krea2_raw_fp8_scaled.safetensors", "krea2",
+                torch.float8_e4m3fn)
+    graph["3"] = {"class_type": "EmptySD3LatentImage",
+                  "inputs": {"width": side, "height": side, "batch_size": 1}}
+    (config["out_dir"] / "graphs" / f"{stem}.json").write_text(json.dumps(graph))
+
+
+def _auto_fp8(cells: list[dict], stem: str) -> list[tuple[int, str]]:
+    return sorted((int(cell["resolved_cfg"]), cell["resolved_attention"])
+                  for cell in cells if cell["template"] == stem
+                  and cell["preset"] == "auto" and cell["session"] == "cluster"
+                  and not cell["levers"] and "fp8" in cell["artifact_quant"]
+                  and cell["label"] == "render")
+
+
+def test_a_cfg_pp_auto_cell_resolves_the_cfg_row_the_tagged_render_takes(tmp_path):
+    # The sampler node tags a cfg++ latent, so at CFG 1 auto keeps krea2 FP8
+    # at 1536 square on row 15 (cfg2, sage off). The sweep's three auto sites
+    # forward that answer; dropping it labels these cells row 11 (uly2 with
+    # SAGE), a render the runtime no longer picks for the shipped template.
+    config = _rig(tmp_path)
+    _krea2_fp8_square(config, "pp", _graph("krea2_raw_fp8_scaled.safetensors", cfg=1.0,
+                                           sampler="euler_cfg_pp"))
+    _krea2_fp8_square(config, "plain", _graph("krea2_raw_fp8_scaled.safetensors",
+                                              cfg=1.0))
+    config["image_attention"] = ["TORCH_FLASH", "SAGE_AUTO"]
+    config["sol_families"] = []
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    # cfg2 keeps stock per-rank attention, so both kernels stay distinct cells.
+    assert _auto_fp8(cells, "pp") == [(2, "SAGE_AUTO"), (2, "TORCH_FLASH")]
+    # A plain sampler drops the pass, row 15 is skipped, and row 11's sage
+    # rewrite collapses both kernels onto one cell.
+    assert _auto_fp8(cells, "plain") == [(1, "SAGE_AUTO")]
+
+
+def test_a_sampler_custom_cfg_pp_graph_keeps_the_cfg_one_skip_under_auto(tmp_path):
+    # Sampler Custom (DGX Monarch) takes a SAMPLER object with no name, so its
+    # latent stays untagged and auto keeps the CFG-1 skip, even when the stock
+    # KSamplerSelect feeding it names a cfg++ sampler. The sweep reads the name
+    # off KSamplerSelect, so its auto label must not take that name as the tag.
+    config = _rig(tmp_path)
+    unet = "krea2_raw_fp8_scaled.safetensors"
+    graph = {
+        "1": {"class_type": "DGXMonarchInit", "inputs": {"topology": "auto", "mode": "auto"}},
+        "2": {"class_type": "DGXMonarchUNETLoader",
+              "inputs": {"unet_name": unet, "mesh": ["1", 0]}},
+        "4": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler_cfg_pp"}},
+        "5": {"class_type": "DGXMonarchCFGGuider",
+              "inputs": {"model": ["2", 0], "cfg": 1.0}},
+        "6": {"class_type": "ManualSigmas", "inputs": {"sigmas": "1.0, 0.5, 0.0"}},
+        "7": {"class_type": "RandomNoise", "inputs": {"noise_seed": 1}},
+        "8": {"class_type": "DGXMonarchSamplerCustom",
+              "inputs": {"noise": ["7", 0], "guider": ["5", 0], "sampler": ["4", 0],
+                         "sigmas": ["6", 0], "latent_image": ["3", 0]}},
+        "9": {"class_type": "SaveImage",
+              "inputs": {"filename_prefix": "t", "images": ["8", 0]}},
+    }
+    _krea2_fp8_square(config, "custom", graph)
+    facts = matrix.graph_facts(json.loads(
+        (config["out_dir"] / "graphs" / "custom.json").read_text()))
+    assert (facts["sampler"], facts["cfg"]) == ("euler_cfg_pp", 1.0)
+    assert facts["sampler_keeps_uncond"] and not facts["auto_keeps_uncond"]
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    # Row 11, as the untagged render resolves: uly2 with SAGE, not row 15.
+    assert _auto_fp8(cells, "custom") == [(1, "SAGE_AUTO")]
+    # comfy still keeps the pass under Sampler Custom, so an explicit cfg2
+    # cell renders rather than refusing class P.
+    assert _pick(cells, "custom", "cfg2", artifact_quant="fp8")["label"] == "render"
+
+
+def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
+    # The sweep's set must name exactly the node classes whose sample call
+    # hands sampler_latent a sampler name. Sampler Custom passes None.
+    tagging, untagged = set(), set()
+    for path in sorted((REPO / "src" / "dgx_monarch" / "nodes").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for klass in (node for node in tree.body if isinstance(node, ast.ClassDef)):
+            for call in ast.walk(klass):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) \
+                        and call.func.id == "sampler_latent" and len(call.args) == 2:
+                    named = not (isinstance(call.args[1], ast.Constant)
+                                 and call.args[1].value is None)
+                    (tagging if named else untagged).add(klass.name)
+    assert tagging == set(matrix.UNCOND_TAGGING_SAMPLERS)
+    assert untagged == {"DGXMonarchSamplerCustom"}
 
 
 def test_an_artifact_groups_array_names_the_base_loaders_extras(tmp_path):

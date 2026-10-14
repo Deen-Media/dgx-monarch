@@ -45,3 +45,15 @@ def retired(state: dict, *keys: object) -> dict:
     """The tracker's marks without those of renders that finished."""
     marks = state.get("_step_marks", {})
     return {key: mark for key, mark in marks.items() if all(key is not gone for gone in keys)}
+
+
+def sampled(state: dict, sample_s: float) -> dict:
+    """The tracker's state with a render's sampler wall and its mean step.
+
+    ``sample_s`` is the slowest rank's sampler wall from the render's results,
+    so ``mean_step_s`` excludes the load and Gate time a cold ``wall_s`` holds.
+    """
+    steps = state.get("steps") or 0
+    wall = round(float(sample_s), 3)
+    return {**state, "sample_s": wall,
+            "mean_step_s": round(float(sample_s) / steps, 3) if steps else None}

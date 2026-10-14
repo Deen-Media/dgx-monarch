@@ -21,7 +21,7 @@ from .common import (
 )
 from .consent_waiver import validate_inherited_stamps
 from .latent_outputs import clone_latent_samples, is_direct_nested_tensor
-from .render_preflight import krea2_ref_preflight_summary
+from .render_preflight import krea2_ref_preflight_summary, sampler_latent
 from .sampler_wire import (  # noqa: F401  # Public samplers API.
     _aggregate_render_outputs,
     _canonical_noise_for_wire,
@@ -101,7 +101,8 @@ class DGXMonarchKSampler:
             "denoise": float(denoise),
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
         }
-        out = run_render(model, request, dict(latent_image), cfg_value=float(cfg), steps_hint=int(steps))
+        out = run_render(model, request, sampler_latent(latent_image, sampler_name),
+                         cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
 
@@ -172,6 +173,9 @@ class DGXMonarchKSamplerPipeline:
     def sample(self, model: ModelSpec, seeds, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, denoise=1.0, unique_id=None):
         validate_inherited_stamps(latent_image)
+        # Tag once: the first-use check, the first render and every pushed
+        # render resolve the same topology from it.
+        latent_image = sampler_latent(latent_image, sampler_name)
         from .. import adoption_evidence
 
         adoption_evidence.require_inactive_context("DGXMonarchKSamplerPipeline")
@@ -300,7 +304,8 @@ class DGXMonarchKSamplerAdvanced:
             },
             "_dgxm_krea2_ref_preflight": krea2_ref_preflight_summary(positive, negative),
         }
-        out = run_render(model, request, dict(latent_image), cfg_value=float(cfg), steps_hint=int(steps))
+        out = run_render(model, request, sampler_latent(latent_image, sampler_name),
+                         cfg_value=float(cfg), steps_hint=int(steps))
         out.pop("_dgxm_denoised", None)
         return _sampler_result(out)
 
@@ -390,7 +395,9 @@ class DGXMonarchSamplerCustom:
 
     def sample(self, noise, guider, sampler, sigmas, latent_image, unique_id=None):
         model: ModelSpec = guider["model"]
-        latent = dict(latent_image)
+        # A SAMPLER object carries no name, so the render stays untagged and
+        # auto keeps the CFG-1 skip; any inherited tag is dropped.
+        latent = sampler_latent(latent_image, None)
         wire_noise = _canonical_noise_for_wire(noise)
         schedule_steps = custom_schedule_steps(sigmas)
 

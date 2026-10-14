@@ -351,7 +351,8 @@ See [Campaign results](CAMPAIGN_RESULTS.md) for retained measurements.
 Pure-Ulysses tests on TORCH_FLASH matched DP2 latents exactly:
 RAW BF16 at 1536 and 1448 with odd/even text and image rows, batch 2 and the
 template; RAW INT8 ConvRot and Turbo FP8-scaled on the template. This does
-not cover the SAGE route auto chooses for FP8 above 1.2 MP. The unchanged
+not cover the SAGE route (row 11), which auto chooses for FP8 above 2.36 MP,
+and from 1.2 MP at CFG 1 under a plain sampler. The unchanged
 ring2 control read NRMS 0.012292.
 
 Resident-versus-FSDP comparisons passed with identical outputs for RAW
@@ -823,7 +824,8 @@ resident output with 118 auxiliary `llm_adapter` parameters replicated.
 Explicit BF16 cfg2 at 1024, with 102/36-token prompts, matched
 one-GPU probes on Flash, cuDNN and SAGE_AUTO: 12.0 seconds warm versus 20.0
 single. Three cfg2+FSDP and twelve Ulysses+FSDP records matched their
-resident legs. Auto still chooses Ulysses.
+resident legs. Since 2026-10-14 auto takes cfg2 for BF16 below 1.2 MP
+(row 47, [Campaign K](#campaign-k-cfg2)) and Ulysses elsewhere.
 
 <a id="evidence-boogu"></a>
 
@@ -1329,6 +1331,55 @@ to SAGE. The model entry also records the newer Flash comparisons.
 The LoRA graph failed these comparisons: its probes read SAGE auto 0.311584,
 Flash Ulysses 0.150059 and cuDNN Ulysses 0.146393, all CHECK. CFG2 read 0.0
 on all kernels and ring2 refused for capacity. Explicit SAGE remains selectable.
+
+<a id="campaign-k-cfg2"></a>
+
+## cfg2 crossover rows (Campaign K, 2026-10-14)
+
+Campaign K compared cfg2 and uly2 with one GPU on 25 cells. Nine ran at
+template sizes: the Krea2 template on four checkpoints plus a CFG 4.5
+control, and the Qwen-Image, Kandinsky5, Boogu and Anima templates. Fifteen
+ran at 1152, 1216 and 1280 square: Chroma BF16 and FP8-mixed, LongCat, Krea2
+Turbo FP8 and Qwen-Image. One more ran Krea2 Turbo FP8 at 1408. The cells ran
+dgx-monarch `d549f10d` (Anima: `65d14333`) and ComfyUI `e8665ca8`, with the
+first Spark capped at 2100 MHz. The reference is batch
+row 0 of a same-build dp2 render of batch 2, which carries one-GPU math.
+[Benchmarks](BENCHMARKS.md#campaign-k-cfg2-against-uly2-2026-10-14-head-capped)
+lists every cell's walls, speedups and fidelity.
+
+- **Bit-identical.** cfg2's full-schedule latent and its one-step latent
+  equaled the reference exactly for Krea2 RAW BF16, Turbo BF16 and RAW INT8
+  ConvRot at 1536, Krea2 Turbo FP8-scaled at 1152, 1216, 1280, 1408 and 1536
+  (CFG 1 under `euler_cfg_pp`) and at 1536 under CFG 4.5 Euler, Chroma1-HD
+  BF16 and FP8-mixed at 1152 to 1280, Qwen-Image 2512 FP8 at 1152 to 1328,
+  and Kandinsky5 Lite image, Boogu FP8 and Anima BF16 at 1024. uly2 on Torch
+  Flash was bit-identical in every cell.
+- **LongCat.** cfg2 read 1-step NRMS 0.006 to 0.007 at 1152 to 1280, and its
+  full-schedule latent differed from the reference (largest absolute
+  difference 2.65 to 7.62). That is under the 0.10 one-step floor, but uly2
+  read bit-identical on the same cells, so no LongCat cfg2 row covers 1.2 MP
+  and up. Row 28 keeps its 2026-09-06 record below 1.2 MP.
+- **SAGE on Ulysses.** The route auto took for Krea2 Turbo FP8 (row 11) and
+  Chroma FP8-mixed (row 21) above 1.2 MP read 1-step NRMS 0.030 to 0.058 and
+  0.057 to 0.078 against one GPU. Both are under the floor, and neither full
+  schedule equaled the reference.
+- **Rows.** The bit-identical bands that beat uly2 at every measured size
+  became automatic rows 15, 19, 68, 79 and 47. Each record grants only the
+  precisions measured at every measured size in its band.
+
+Not measured: Krea2 RAW BF16 and INT8 below 1536, Chroma INT8 above 1.2 MP,
+MXFP8 and NVFP4 Krea2 files, Chroma FP8-scaled and Radiance above 1024,
+Qwen-Image Edit-2511, equal prompt pairs on Boogu and Anima, which fold onto
+the slice path, and world 4. The first two take Ulysses rows. The rest can
+still reach a cfg2 row through a shared family and precision class: MXFP8 and
+NVFP4 Krea2 files reach row 15 (in September, RAW NVFP4 cfg2 read 1-step NRMS
+0.0113), Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
+would reach row 68, and an equal pair takes the slice path on rows 79 and 47.
+At world 4 a batch-1 render on a cfg row refuses class K. An evidence record
+has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
+under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength
+of the two regimes measured. A Sampler Custom graph names no sampler, so at
+CFG 1 it keeps Ulysses.
 
 ## Memory calibration
 

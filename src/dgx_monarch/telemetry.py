@@ -14,11 +14,10 @@ Three small pieces, importable on the driver and on every worker:
   fallback, neither required), and the RDMA rail byte counters, their read
   time and link state from sysfs (read in rails.py).
 
-The event ring and the progress tracker only take a lock and copy in memory.
-host_stats() costs more: every call runs nvidia-smi (3 s timeout; twice when
-pynvml is missing or fails), and at most every 10 s the pool reading runs it
-once more and walks /proc smaps for up to 0.5 s. Through the telemetry route,
-which caches its payload for 1 s, host_stats() runs at most about once a second;
+The event ring and the progress tracker only take a lock and copy in memory. host_stats() costs
+more: every call runs nvidia-smi (3 s timeout; twice when pynvml is missing or fails), and at most
+every 10 s the pool reading runs it once more and walks /proc smaps for up to 0.5 s. Through the
+telemetry route, which caches its payload for 1 s, host_stats() runs at most about once a second;
 with the driver down, `dgxm top` calls it directly every 1 s by default.
 """
 from __future__ import annotations
@@ -35,21 +34,20 @@ from .capacity_memory import read_meminfo, shmem_credited
 from .rails import rail_counters, rail_readings, rail_state  # noqa: F401  # re-exported names
 from .telemetry_events import public_event_tail
 
-# Process lifetime, unkeyed, self-evicting: the ring drops its oldest event at
-# 256 and the monotonic sequence beside it never resets, so a reader can tell a
-# dropped event from a quiet one.
+# Process lifetime, unkeyed, self-evicting: the ring drops its oldest event at 256 and the monotonic
+# sequence beside it never resets, so a reader can tell a dropped event from a quiet one.
 _EVENTS: deque = deque(maxlen=256)
 _EVENTS_LOCK = threading.Lock()
 _EVENT_SEQ = 0  # process lifetime, monotonic: the ring's drop watermark
 _LEGACY_PROGRESS_TOKEN = object()
-# The render a ceremony gates starts inside the same call, right after the
-# window closes. A gate that refuses that render instead (the FSDP proof path)
-# leaves a claim nothing will spend, so the claim expires rather than label an
-# unrelated later render a first render.
+# The render a ceremony gates starts inside the same call, right after the window closes. A gate
+# that refuses that render instead (the FSDP proof path) leaves a claim nothing will spend, so the
+# claim expires rather than label an unrelated later render a first render.
 _CEREMONY_CLAIM_S = 300.0
-# Keys a finished render's summary copies from the tracker. render_submit
-# passes the first five to start(); a preset leaves the auto facts None.
-_RENDER_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step")
+# Keys a finished render's summary copies from the tracker: render_submit's start() meta (a preset
+# leaves the auto facts None), the last step time, and note_sample's sampler wall and mean step.
+_RENDER_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step", "family", "cfg",
+                 "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch", "sample_s", "mean_step_s")
 
 
 def emit(kind: str, **fields) -> None:
@@ -90,9 +88,8 @@ class RenderProgress:
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
-        # Tokens and presentation fields commit in this one attribute store, so
-        # async interruption can expose the whole old or new snapshot, never a
-        # torn token/count/state combination.
+        # Tokens and presentation fields commit in this one attribute store, so async interruption
+        # can expose the whole old or new snapshot, never a torn token/count/state combination.
         #
         # Two key spaces run through it. Render tokens, with render lifetime:
         # `_tokens` holds every active render and `_ceremony_tokens` the ceremony
@@ -210,6 +207,11 @@ class RenderProgress:
             if rate is not None:
                 state.update(sec_per_step=rate, last_step_t=now, _step_marks=marks)
             self._state = state
+
+    def note_sample(self, sample_s: float) -> None:
+        """The slowest rank's sampler wall, for the render that finishes next."""
+        with self._lock:
+            self._state = telemetry_steps.sampled(self._state, sample_s)
 
     def finish(self, token: object | None = None) -> None:
         with self._lock:

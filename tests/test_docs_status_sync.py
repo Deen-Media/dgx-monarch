@@ -691,11 +691,13 @@ _CONSTRAINED_MARK = "🔒"
 # selects Ulysses above it.
 _MP_PROBES = (0.26, 0.79, 1.05, 1.19, 1.5, 2.36, 8.0)
 
-# Rows whose canonical checkpoint is guidance distilled and renders at CFG 1.0.
-# choose_auto_topology drops every cfg-parallel row at that CFG, so auto cannot
-# reach cfg2 for them. This is a fact about the checkpoint, not a glyph: the
-# stars below derive from it.
-_DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2"})
+# Rows whose canonical checkpoint is guidance distilled and renders at CFG 1.0
+# under a plain sampler. choose_auto_topology drops every cfg-parallel row
+# there, because a plain sampler drops the uncond pass, so auto cannot reach
+# cfg2 for them. This is a fact about the checkpoint, not a glyph: the stars
+# below derive from it. Kroma is a Krea2 fine-tune whose template runs Euler at
+# CFG 1, so Krea2's cfg2 row never reaches it.
+_DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2", "Kroma"})
 _REAL_CFG = 3.5
 
 # What the dated hardware evidence behind an **HW** row covers, per starred
@@ -713,9 +715,13 @@ _REAL_CFG = 3.5
 # imply it.
 _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Kroma", "uly"): ("scoped", "BF16 and local INT8, pure Ulysses"),
+    ("Krea2 (RAW+Turbo)", "cfg2"): (
+        "scoped", "Auto cfg2 covers FP8 from 1.2 to 2.36 MP"),
     ("Krea2 (RAW+Turbo)", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; detail table fp8 uly2; VALIDATION 2026-07-10 turbo fp8 uly2 vs dp2"),
-    ("Chroma", "cfg2"): ("granted", "2026-08-11 FP8 cfg2 1024x1024, exact cross-rank"),
+    ("Chroma", "cfg2"): (
+        "granted", "2026-08-11 FP8 cfg2 1024x1024, exact cross-rank; 2026-10-14 BF16 and "
+        "FP8-mixed cfg2 bit-identical to one GPU at 1152 to 1280"),
     ("Chroma", "uly"): ("granted", "2026-08-21 requalification: fp8 NRMS 0.023 / bf16 0.010 at 1536"),
     ("Ideogram4", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 fp8 dual-model pair, DP2 NRMS 0.000"),
@@ -725,6 +731,8 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("LongCat-Image", "uly"): ("granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 DP2 NRMS 0.097"),
     ("HunyuanImage 2.1 (+refiner)", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; AUTO_TABLE row 46: uly2 vouched for Image 2.1 and refiner 2026-07-15"),
+    ("Qwen-Image", "cfg2"): (
+        "scoped", "Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP"),
     ("Qwen-Image", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 base 2512 FP8, DP2 NRMS 0.049; 2026-09-14 uly2 TORCH_FLASH, "
         "one-GPU NRMS 0.082 (c2b9258ffce7); auto keeps the declared kernel, SAGE read 0.162 (#377)"),
@@ -739,7 +747,10 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Z-Image latent", "uly"): ("granted", "2026-08-11 DP2 NRMS 0.000, fresh 1536x1536"),
     ("Lens", "uly"): ("granted", "2026-10-06 bit-identical to one GPU; 2026-07-28 DP2 NRMS 0.060-0.061 after the pad-row fix"),
     ("Omnigen2", "ring"): ("granted", "certified DP2 NRMS 0.002; fresh run 2026-08-11"),
+    ("Anima", "cfg2"): (
+        "scoped", "Auto cfg2 covers BF16 below 1.2 MP on the shipped unequal prompt pair"),
     ("Anima", "uly"): ("granted", "byte-identical to true single GPU 2026-08-11"),
+    ("Boogu", "cfg2"): ("scoped", "Unequal prompts use per-conditioning cfg2 dispatch"),
     ("Boogu", "uly"): ("granted", "2026-10-06 bit-identical to dp2; 2026-08-11 DP2 NRMS 0.022"),
     ("PixelDiT / PiD", "uly"): ("granted", "world-2 bf16: uly2 matched dp2 exactly 2026-08-11"),
     ("Kandinsky5-Image", "uly"): (

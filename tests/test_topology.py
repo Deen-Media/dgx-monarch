@@ -85,6 +85,64 @@ def test_cfg_parallel_skipped_at_cfg_one():
     assert decision.topology.sequence_parallel == 2
 
 
+def test_a_cfg_pp_sampler_keeps_the_cfg_row_at_cfg_one():
+    """The Krea2 template runs CFG 1 under euler_cfg_pp, which keeps the
+    uncond pass, so row 15 stays eligible there; without the flag the same
+    render keeps the uly2 row the CFG-1 skip leaves it."""
+    kept = choose_auto_topology("krea2", "fp8", 1.5, 2, cfg_value=1.0, keeps_uncond=True)
+    assert kept.topology.describe() == "cfg2" and kept.rule.row == 15
+    assert "table row 15" in kept.reason
+    assert "cfg++ sampler keeps the uncond pass" in kept.reason
+    dropped = choose_auto_topology("krea2", "fp8", 1.5, 2, cfg_value=1.0)
+    assert dropped.topology.describe() == "uly2" and dropped.rule.row == 11
+    assert "cfg++" not in dropped.reason
+    chroma = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=1.0, keeps_uncond=True)
+    assert chroma.topology.cfg == 2 and chroma.rule.row == 20
+
+
+def test_the_cfg_one_note_still_fires_for_a_plain_sampler():
+    """Chroma at 1.05 MP has only cfg row 20, so a plain CFG-1 render matches
+    nothing and the note names the skip; a cfg++ render takes the row."""
+    plain = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=1.0)
+    assert plain.topology.describe() == "uly2" and plain.rule.row == 99
+    assert "chroma at cfg 1.0 skips cfg-parallel rows" in plain.reason
+    kept = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=1.0, keeps_uncond=True)
+    assert "skips cfg-parallel rows" not in kept.reason
+
+
+# Every KSampler.SAMPLERS name at ComfyUI e8665ca8 that names cfg++; the seam
+# canary checks the live list and that each one sets disable_cfg1_optimization.
+_CFG_PP_SAMPLERS = (
+    "euler_cfg_pp", "euler_ancestral_cfg_pp", "dpmpp_2s_ancestral_cfg_pp",
+    "dpmpp_2m_cfg_pp", "res_multistep_cfg_pp", "res_multistep_ancestral_cfg_pp",
+    "gradient_estimation_cfg_pp")
+
+
+@pytest.mark.parametrize("name", _CFG_PP_SAMPLERS)
+def test_every_cfg_pp_sampler_keeps_the_uncond_pass(name):
+    from dgx_monarch.topology import sampler_keeps_uncond_at_cfg1
+
+    assert sampler_keeps_uncond_at_cfg1(name)
+
+
+@pytest.mark.parametrize("name", [
+    "euler", "euler_ancestral", "dpmpp_2m", "res_multistep", "gradient_estimation",
+    # A cfg++-style history sampler that never sets disable_cfg1_optimization,
+    # so comfy drops its uncond pass at CFG 1.
+    "cfgpp_ud10_ab", "", None, 3])
+def test_a_plain_or_unknown_sampler_drops_it(name):
+    from dgx_monarch.topology import sampler_keeps_uncond_at_cfg1
+
+    assert not sampler_keeps_uncond_at_cfg1(name)
+
+
+@pytest.mark.parametrize("megapixels", [1.2, 1.5, 1.76])
+def test_qwen_image_fp8_band_takes_row_68(megapixels):
+    decision = choose_auto_topology("qwen_image", "fp8", megapixels, 2, cfg_value=4.0)
+    assert decision.rule.row == 68 and decision.topology.describe() == "cfg2"
+    assert decision.sage is False
+
+
 def test_sage_gate_fp8_only_high_res():
     fp8_high = choose_auto_topology("krea2", "fp8", 2.4, 2, cfg_value=4.0)
     assert fp8_high.sage is True
@@ -94,12 +152,12 @@ def test_sage_gate_fp8_only_high_res():
     assert fp8_low.sage is False
 
 
-@pytest.mark.parametrize("megapixels", [1.2, 1.76, 2.4, 8.0])
+@pytest.mark.parametrize("megapixels", [1.77, 2.4, 8.0])
 def test_qwen_image_fp8_auto_keeps_the_declared_kernel(megapixels):
     """In the 2026-09 campaign SAGE at Ulysses read 1-step NRMS 0.162 on the
     shipped graph (docs/VALIDATION.md, 2026-10-05 record),
     over the 0.10 floor, while TORCH_FLASH read 0.082. Row 71 keeps uly2 and
-    leaves the Init node's kernel in place."""
+    leaves the Init node's kernel in place. Below 1.77 MP row 68 takes cfg2."""
     decision = choose_auto_topology(
         "qwen_image", "fp8", megapixels, 2, cfg_value=4.0)
     assert decision.rule.row == 71
@@ -147,7 +205,7 @@ def test_lens_bf16_auto_reason_records_repaired_hardware_result():
         ("flux", "bf16", 2.4, "2026-10-06 standard Flux 1 Dev uly2 bit-identical"),
         ("longcat", "bf16", 1.0, "NRMS 0.009"),
         ("longcat", "bf16", 2.4, "2026-10-06 LongCat BF16 uly2 bit-identical"),
-        ("boogu", "fp8", 1.0, "2026-10-06 fp8 uly2 bit-identical"),
+        ("boogu", "fp8", 2.4, "2026-10-06 fp8 uly2 bit-identical"),
         ("qwen_image", "fp8", 2.4, "2026-10-06 base 2512 FP8 uly2 bit-identical"),
         ("krea2", "fp8", 2.4, "2026-10-06 Turbo fp8 uly2 on TORCH_FLASH bit-identical"),
         ("krea2", "bf16", 2.4, "2026-10-06 RAW BF16 and INT8 uly2 bit-identical"),
@@ -397,7 +455,7 @@ def test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy():
     megapixels, cfg and batch value in the _auto_rows grid, so a policy change
     is a reviewed digest edit."""
     digest = hashlib.sha256("\n".join(_auto_rows(2)).encode()).hexdigest()
-    assert digest == "d0f532280e70f030e7bc63eb5eb7fbde31fc765f221633ee223b3454b0fcee83"
+    assert digest == "c8e1a4d4fe0ab9312ceb7f68695e40a30251709ce160d2de7a808b36eb0fb583"
 
 
 def test_auto_never_resolves_cfg_plus_sequence():

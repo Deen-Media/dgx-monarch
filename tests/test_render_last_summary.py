@@ -47,7 +47,9 @@ def test_a_finished_render_retains_model_steps_wall_and_end_stamp():
     assert last["ceremony"] is False
 
 
-_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step")
+_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step",
+          "family", "cfg", "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch",
+          "sample_s", "mean_step_s")
 
 
 def test_the_summary_keeps_where_the_render_ran_and_its_last_step_rate():
@@ -69,6 +71,45 @@ def test_the_summary_keeps_where_the_render_ran_and_its_last_step_rate():
     assert {key: last[key] for key in meta} == meta
     assert last["sec_per_step"] == final_rate
     assert set(last) == {"model", "steps", "wall_s", "ended_at", "ceremony", *_FACTS}
+
+
+def test_the_summary_keeps_the_slowest_rank_sampler_wall_and_its_mean_step():
+    # render_result notes the slowest rank's sample_s before the finish, so
+    # the record carries a mean step comparable to BENCHMARKS, free of the
+    # load and Gate time a cold wall_s holds.
+    progress = RenderProgress()
+    token = progress.start(8, {"model": "krea2.safetensors", "topology": "cfg2",
+                               "auto_row": 15, "evidence_row": 15, "cfg": 1.0,
+                               "keeps_uncond": True, "family": "krea2", "batch": 1},
+                           token=object())
+    for step in range(1, 9):
+        progress.step(step, 8)
+    progress.note_sample(31.39)
+    progress.finish(token)
+    last = progress.snapshot()["last"]
+    assert (last["sample_s"], last["mean_step_s"]) == (31.39, 3.924)
+    assert (last["auto_row"], last["evidence_row"], last["keeps_uncond"]) == (15, 15, True)
+    _run(progress, "next.safetensors", 2)
+    assert progress.snapshot()["last"]["sample_s"] is None  # never inherited
+
+
+def test_the_rank_results_hand_the_tracker_their_slowest_sampler_wall(monkeypatch):
+    from dgx_monarch.nodes import render_result
+
+    tracker = RenderProgress()
+    monkeypatch.setattr(telemetry, "render_progress", tracker)
+    monkeypatch.setattr(render_result, "verify_cross_rank_signatures", lambda *_args: None)
+    monkeypatch.setattr(render_result, "read_latent_result", lambda value: value)
+    token = tracker.start(4, {"model": "m"}, token=object())
+    import torch
+
+    render_result._finish_render(
+        [{"dp_rank": 0, "rank": 0, "latent": torch.zeros(1, 4, 8, 8), "sample_s": 12.0},
+         {"rank": 1, "sample_s": 12.5}],
+        SimpleNamespace(dp=1), {"samples": torch.zeros(1, 4, 8, 8)})
+    tracker.finish(token)
+    assert tracker.snapshot()["last"]["sample_s"] == 12.5
+    assert tracker.snapshot()["last"]["mean_step_s"] == 3.125
 
 
 def test_a_start_without_facts_records_each_as_unknown():

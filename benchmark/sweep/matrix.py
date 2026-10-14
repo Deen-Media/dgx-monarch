@@ -69,7 +69,11 @@ from dgx_monarch.nodes.render_validation import (  # noqa: E402
 )
 from dgx_monarch.refusal import parse_refusal_tag  # noqa: E402
 from dgx_monarch.safetensors_header import read_safetensors_header  # noqa: E402
-from dgx_monarch.topology import choose_auto_topology, topology_from_preset  # noqa: E402
+from dgx_monarch.topology import (  # noqa: E402
+    choose_auto_topology,
+    sampler_keeps_uncond_at_cfg1,
+    topology_from_preset,
+)
 
 from .convert import probe_support  # noqa: E402
 
@@ -78,6 +82,14 @@ LORA_CLASS, INIT_CLASS = "DGXMonarchLoraLoader", "DGXMonarchInit"
 PACKED_CLASSES = frozenset({"LTXVConcatAVLatent", "EmptyMiniMaxH3LatentAV",
                             "MiniMaxH3ImageToVideo", "MiniMaxH3AddGuide"})
 LENGTH_WIDGETS = ("length", "video_frames", "frames_number")
+# The nodes that tag the latent with the sampler's cfg++ answer at runtime
+# (nodes/render_preflight.sampler_latent, called with the sampler name). Auto
+# reads only that tag, so a cfg++ name on any other node, such as the stock
+# KSamplerSelect feeding Sampler Custom (DGX Monarch), leaves the CFG-1 skip
+# on. test_the_auto_tagging_samplers_match_the_nodes_that_tag pins the set.
+UNCOND_TAGGING_SAMPLERS = frozenset({
+    "DGXMonarchKSampler", "DGXMonarchKSamplerAdvanced",
+    "DGXMonarchKSamplerPipeline", "DGXMonarchIdentityGate"})
 RESIDENCY_TOGGLES = frozenset({"slab_weights", "lora_low_rss", "comfy_managed"})
 # The stock CLIP loaders and the widgets on each that name a text-encoder file.
 # test_text_encoder_loader_classes_pin_against_the_artifact_manifest_widgets
@@ -339,14 +351,13 @@ def split_quant(stem: str) -> tuple[str, str]:
 def sampler_keeps_uncond(sampler_name: str) -> bool:
     """Whether this sampler still runs the unconditional pass at CFG 1.0.
 
-    comfy drops that pass at CFG 1.0 unless ``disable_cfg1_optimization`` is
-    set (comfy/samplers.py), and at comfy a7169322 every sampler that sets it
-    is a cfg++ sampler, named with a ``cfg_pp`` suffix
-    (comfy/k_diffusion/sampling.py). Keeping the pass means comfy folds cond
-    and uncond into one call of batch 2, which a cfg topology splits across
-    its two ranks (krea2 at cfg2, 2026-09-02).
+    The runtime's rule (topology.sampler_keeps_uncond_at_cfg1) is the one
+    home, so a sweep label and the render it predicts read the same sampler
+    the same way. Keeping the pass means comfy folds cond and uncond into one
+    call of batch 2, which a cfg topology splits across its two ranks (krea2
+    at cfg2, 2026-09-02).
     """
-    return isinstance(sampler_name, str) and sampler_name.endswith("cfg_pp")
+    return sampler_keeps_uncond_at_cfg1(sampler_name)
 
 
 def _prompt_behind(graph: dict, link: object, seen: frozenset = frozenset()) -> str | None:
@@ -441,11 +452,11 @@ def graph_facts(graph: dict) -> dict:
     classes = {node["class_type"] for node in graph.values()}
     width = height = 0
     cfg, batch, video = None, 1, False
-    batch_node, sampler = "", ""
+    batch_node, sampler, sampler_class = "", "", ""
     for node_id, node in graph.items():
         inputs = node["inputs"]
         if isinstance(inputs.get("sampler_name"), str):
-            sampler = inputs["sampler_name"]
+            sampler, sampler_class = inputs["sampler_name"], node["class_type"]
         if isinstance(inputs.get("width"), int) and isinstance(inputs.get("height"), int) \
                 and inputs["width"] * inputs["height"] > width * height:
             width, height = inputs["width"], inputs["height"]
@@ -468,6 +479,11 @@ def graph_facts(graph: dict) -> dict:
         "packed": bool(classes & PACKED_CLASSES), "audio": "SaveAudioAdvanced" in classes,
         "cfg": cfg, "batch": batch, "probe": probe, "probe_reason": probe_reason,
         "sampler": sampler, "sampler_keeps_uncond": sampler_keeps_uncond(sampler),
+        # What auto reads: the runtime tags the latent only from a sampler
+        # node that names the sampler (UNCOND_TAGGING_SAMPLERS). The refuse:P
+        # rule keeps the raw fact, since comfy keeps the pass on every path.
+        "auto_keeps_uncond": (sampler_keeps_uncond(sampler)
+                              and sampler_class in UNCOND_TAGGING_SAMPLERS),
         "batch_node": batch_node, "batch_widget": bool(batch_node),
         "klass": "video" if video else "image",
         "prompts": prompt_texts(graph),
@@ -621,7 +637,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     try:
         topo = (choose_auto_topology(family, quant, facts["megapixels"], world,
                                      cfg_value=facts["cfg"],
-                                     batch_size=cell["batch"]).topology
+                                     batch_size=cell["batch"],
+                                     keeps_uncond=bool(facts.get("auto_keeps_uncond"))).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception as exc:
         return _label_from(exc), "guard", False, []
@@ -884,7 +901,8 @@ def resolved_kernel(cell: dict, facts: dict, world: int) -> str:
         if cell["preset"] == "auto":
             row = choose_auto_topology(cell["family"], cell["quant"], facts["megapixels"],
                                        world, cfg_value=facts["cfg"],
-                                       batch_size=cell["batch"])
+                                       batch_size=cell["batch"],
+                                       keeps_uncond=bool(facts.get("auto_keeps_uncond")))
             sage, topo = row.sage, row.topology
         else:
             topo = topology_from_preset(cell["preset"], world)
@@ -908,7 +926,8 @@ def resolved_cfg_degree(cell: dict, facts: dict, world: int) -> int:
     try:
         topo = (choose_auto_topology(cell["family"], cell["quant"], facts["megapixels"],
                                      world, cfg_value=facts["cfg"],
-                                     batch_size=cell["batch"]).topology
+                                     batch_size=cell["batch"],
+                                     keeps_uncond=bool(facts.get("auto_keeps_uncond"))).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception:
         return 1
