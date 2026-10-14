@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+- Stop the padded Ulysses path from waiting on the device. The keep index
+  for pad exclusion, the rank-major joint-order permutation and its inverse
+  depend only on integer row counts, so the path now builds each once per
+  layout on the device and reuses it from a small cache keyed by shape and
+  device, which drops its least recently used entry past the bound. The
+  pad-row remap reads a host copy of the inverse, computed on the CPU,
+  instead of reading the device once per dropped row, and the keep index no
+  longer calls `nonzero`. Each padded attention call used to wait on the
+  device about six times, roughly six thousand times in a 20-step Chroma
+  render. `index_select` and the scatter receive the same integers as
+  before, so the output does not change. On Chroma1-HD FP8-mixed at uly2
+  with 20 steps, the 1176 square render, which pads, ran 2.2 percent faster,
+  the 1152 square render, which does not, stayed within noise, and every
+  seed's pixels matched the previous build's
+  ([VALIDATION](docs/VALIDATION.md#padded-ulysses-index-cache)).
 - Let `auto` take cfg2 where Campaign K (2026-10-14, head capped at 2100 MHz)
   measured it bit-identical to one GPU and faster than the route it replaced:
   Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15), Chroma BF16, FP8 and INT8
