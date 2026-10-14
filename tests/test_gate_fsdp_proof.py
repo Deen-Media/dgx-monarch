@@ -625,6 +625,58 @@ def test_a_no_claim_price_runs_the_whole_ceremony_unchanged(monkeypatch, tmp_pat
     assert all(method != "status" for method, _args in handle.calls)
 
 
+def _pooled_flux2(monkeypatch, available_gib: float) -> list[dict]:
+    """The 2026-10-13 Flux2 probe's rows: a 60.02 GiB bf16 file at world 2,
+    each Worker holding its 30.0 GiB share in its torch pool."""
+    monkeypatch.setattr(mesh_safety_mod, "gpu_is_integrated", lambda: True)
+    monkeypatch.setattr(price_mod, "checkpoint_bytes", lambda _name: 64_446_596_128)
+    monkeypatch.setattr(price_mod, "checkpoint_kind", lambda _name: "bf16")
+    return [
+        {"rank": rank, "host": {"mem_gib": {"MemAvailable": available_gib}},
+         "vram": {"reserved_gib": 30.0}}
+        for rank in range(2)
+    ]
+
+
+def test_a_preflight_that_fits_only_with_its_credit_runs_the_whole_ceremony(
+    monkeypatch, tmp_path,
+):
+    """39.1 GiB available refused before the credit; the baseline unload then
+    returns the share, so the ceremony runs and both prices pass."""
+    rows = _pooled_flux2(monkeypatch, 39.1)
+    handle, ledger, model, published = _ceremony(
+        monkeypatch, tmp_path, status_rows=rows)
+
+    result = _run(model)
+
+    assert result["verdict"] == "PASS"
+    assert handle.unload_calls == 1
+    assert [method for method, _args in handle.calls].count("status") == 2
+    assert len(ledger.retests) == 1
+    assert published and published[-1][1] == "PASS"
+
+
+def test_a_preflight_short_after_its_credit_still_unloads_nothing(
+    monkeypatch, tmp_path,
+):
+    """The credit never weakens the preservation promise: a refusal at the
+    preflight unloads nothing and names the credit it applied."""
+    rows = _pooled_flux2(monkeypatch, 5.0)
+    handle, ledger, model, published = _ceremony(
+        monkeypatch, tmp_path, status_rows=rows)
+
+    with pytest.raises(FsdpGateProofError) as raised:
+        _run(model)
+
+    assert handle.unload_calls == 0
+    assert [method for method, _args in handle.calls] == ["status"]
+    assert ledger.retests == [] and published == []
+    assert "plus 29.9 GiB of resident shards the proof drops first" in str(raised.value)
+    measured = ledger.records[0][4]["measured"]
+    assert measured["credit_bytes"] == int((30.0 - 0.05) * GIB)
+    assert measured["headroom_bytes"] < 0
+
+
 def test_cleanup_skips_the_unload_when_the_fleet_is_already_evicted():
     """An evicted fleet's residency is released when its procs stop, so a
     cleanup unload could only latch DIRTY."""

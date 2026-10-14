@@ -656,7 +656,10 @@ Three campaign BF16 LoRA/FSDP cold and warm renders completed, but their
 resident references refused for capacity. No LoRA/FSDP fidelity result
 follows. Comfy-kitchen quantized-shard LoRA and incompatible FP32 island
 bakes refuse. The FP8-mixed first-use FSDP proof was inconclusive because its
-quantized wrapping transient did not fit beside the driver.
+quantized wrapping transient did not fit beside the driver. On 2026-10-13 the
+BF16 first-use FSDP proof refused at its initial price with the text encoder
+resident; [FSDP calibration](#fsdp-calibration) has the figures. The credit
+that followed has not been rerun on this file.
 
 The 60.02 GiB BF16 artifact needs a stock-load price of about 131.0 GiB
 (2.1 times the file plus 5 GiB), beyond one Spark in this test pair. Use
@@ -1479,11 +1482,37 @@ share); the checked LTX 2.5 file has 258 connector tensors totaling 3.755 GiB
 (1.878 GiB extra). Anima's auxiliary module is also replicated. H3's repaired
 render proves execution only, as described in its model entry.
 
-The no-LoRA first-use check must complete every clean reload and comparison. It rechecks
-capacity after the reference render, when the driver stack is resident, and
-can finish INCONCLUSIVE if a second load cannot fit. `auto` does not select
-FSDP. Explicitly disabling the gate does not establish fidelity. A successful
-shard build or resident-memory ledger update cannot substitute for comparison.
+The no-LoRA first-use check must complete every clean reload and comparison. It prices
+each load before it starts and again after the reference render, when the
+driver stack is resident. Each price credits the shard pool the next unload
+drops, and the check can finish INCONCLUSIVE if a load still cannot fit.
+`auto` does not select FSDP. Explicitly disabling the gate does not establish
+fidelity. A successful shard build or resident-memory ledger update cannot
+substitute for comparison.
+
+**Clean-reload memory probe, 2026-10-13.** Two first-use proofs ran at world 2
+under `uly2+fsdp` on the tested pair, on code without the credit. The driver
+host carried its 2100 MHz GPU clock cap.
+
+- The proof on a 60.02 GiB BF16 Flux2 file refused at the initial price, with
+  its 33.14 GiB text encoder resident on the driver host. That host read 39.1 GiB available,
+  with its 30.0 GiB share resident, against a 39.8 GiB price. The worker-only
+  host read 82.6 GiB. The ledger row was INCONCLUSIVE with
+  `cross_mode: CAPACITY`. The Worker guard had admitted the first load at
+  70.1 GiB available.
+- The proof on a 24.48 GiB BF16 Krea2 Turbo file passed: two proof renders
+  were bit-identical. One load was priced at 19.2 GiB. Both unloads returned the
+  whole share to the host. On the driver host the baseline unload went from
+  81.8 to 94.0 GiB available, 12.2 GiB back for 11.9 GiB of shards, and the
+  cycle unload from 66.6 to 84.8 GiB, 18.2 GiB back with sampling reservations
+  included. The worker-only host matched. The next build's first wrap read
+  0.0 GiB of torch reserved, so the pool was not retained. The reload trough
+  sat 17.6 GiB below the post-unload level, and render A's trough 18.8 GiB
+  below it, both inside the price.
+
+These figures support crediting the resident shard pool, capped at one share.
+With the credit, the Flux2 preflight reads 39.1 plus 29.9 GiB against
+39.8 GiB. The Flux2 proof has not been rerun on hardware with the credit.
 
 ## LTX calibration
 
