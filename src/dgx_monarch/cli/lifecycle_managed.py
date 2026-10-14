@@ -258,23 +258,30 @@ esac
 
 
 def probe_kind(result: subprocess.CompletedProcess[str]) -> str | None:
-    """MANAGED, PLAIN, POLICY_STALE or a FAILED_* verdict; None when unanswered.
-
-    Only the probe prints FAILED_SOURCE_LAYOUT. Exit 126 or 127 means the shell
-    could not run the Worker interpreter, and exit 1 without that marker means
-    the lock wrapper (or the probe's interpreter) failed before any verdict.
-    """
+    """MANAGED, PLAIN, POLICY_STALE or a FAILED_* verdict; None when unanswered."""
     if result.returncode == 255:
         return None
     if result.returncode == 0:
         return "MANAGED" if result.stdout.strip() == "MANAGED" else "PLAIN"
     if result.returncode == POLICY_STALE_EXIT and result.stdout.strip() == POLICY_STALE:
         return POLICY_STALE
+    return probe_failure(result)
+
+
+def probe_failure(result: subprocess.CompletedProcess[str], *, locked: bool = True) -> str:
+    """Name a probe run that gave no verdict its caller accepts.
+
+    Only the probe prints FAILED_SOURCE_LAYOUT. Exit 126 or 127 means the shell
+    could not run the Worker interpreter. Under ``locked_script``, exit 1
+    without that marker means the lock wrapper (or the probe's interpreter)
+    failed before any verdict. Doctor runs the probe without the lock and
+    passes ``locked=False``, so there every other exit is FAILED_SOURCE_PROBE.
+    """
     if "FAILED_SOURCE_LAYOUT" in result.stdout.split():
         return "FAILED_SOURCE_LAYOUT"
     if result.returncode in (126, 127):
         return "FAILED_WORKER_INTERPRETER"
-    return "FAILED_LIFECYCLE_LOCK" if result.returncode == 1 else "FAILED_SOURCE_PROBE"
+    return "FAILED_LIFECYCLE_LOCK" if locked and result.returncode == 1 else "FAILED_SOURCE_PROBE"
 
 
 _PROBE_FAILURES = {
@@ -311,16 +318,21 @@ def policy_stale_detail() -> str:
     )
 
 
+def probe_cause(kind: str, result: subprocess.CompletedProcess[str] | None = None) -> str:
+    """A FAILED_* verdict, what it means and, except for a layout verdict, the exit code."""
+    detail = _PROBE_FAILURES.get(kind, _PROBE_FAILURES["FAILED_SOURCE_PROBE"])
+    code = "" if result is None or kind == "FAILED_SOURCE_LAYOUT" else f" (exit {result.returncode})"
+    return f"{kind}: {detail}{code}"
+
+
 def probe_refusal(host_name: str, kind: str | None, result: subprocess.CompletedProcess[str] | None = None) -> str:
     """Name the probe's verdict so the operator reads a cause, not a bare code."""
     if kind == POLICY_STALE:
         return f"{host_name}: {POLICY_STALE}: {policy_stale_detail()}. Its Worker service was left as it was"
     if kind is None:
         return f"{host_name}: the managed source probe was not observed (transport exited 255)"
-    detail = _PROBE_FAILURES.get(str(kind), _PROBE_FAILURES["FAILED_SOURCE_PROBE"])
-    code = "" if result is None or kind == "FAILED_SOURCE_LAYOUT" else f" (exit {result.returncode})"
     tail = stderr_tail(result.stderr) if result is not None else ""
-    return (f"{host_name}: {kind}: {detail}{code}; nothing was synced or started there"
+    return (f"{host_name}: {probe_cause(kind, result)}; nothing was synced or started there"
             + (f"; stderr: {tail}" if tail else ""))
 
 

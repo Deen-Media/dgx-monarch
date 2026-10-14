@@ -1232,16 +1232,17 @@ def recoverable_crash(record: dict) -> bool:
 
     These types name a mesh the previous cell left dirty rather than anything
     this cell asked for: the cached mesh cannot be used or replaced, an
-    abandoned sample may still be running, or, on an FSDP cell, the
-    clean-reload proof ran on such a mesh and raised FsdpGateProofError in
-    place of the fault that stopped it. Since 2026-09-03 driver.py labels that
-    abort refuse:untyped by its opening, so FsdpGateProofError reaches this
-    check only when no untagged prefix matches its message. In the first W0
-    wave (2026-09-01) two MeshAttachError crashes and two SampleResultBusyError
-    crashes ran again the same day on a replaced fleet, and each answered the
-    untyped refusal its label predicted. The one FsdpGateProofError crash that
-    ran again answered the driver's process-local INCONCLUSIVE denial, which
-    the fleet replacement before it did not clear.
+    abandoned sample may still own worker-side latent backing, or, on an FSDP
+    cell, the clean-reload proof ran on such a mesh and raised
+    FsdpGateProofError in place of the fault that stopped it. Since 2026-09-03
+    driver.py labels that abort refuse:untyped by its opening, so
+    FsdpGateProofError reaches this check only when no untagged prefix matches
+    its message. In the first W0 wave (2026-09-01) two MeshAttachError crashes
+    and two SampleResultBusyError crashes ran again the same day on a replaced
+    fleet, and each answered the untyped refusal its label predicted. The one
+    FsdpGateProofError crash that ran again answered the driver's
+    process-local INCONCLUSIVE denial, which the fleet replacement before it
+    did not clear.
     """
     cold = (record.get("legs") or {}).get("cold") or {}
     if cold.get("outcome") != "crash":

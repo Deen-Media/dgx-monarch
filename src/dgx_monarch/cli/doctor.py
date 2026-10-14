@@ -22,7 +22,7 @@ from .advertised_address import hostname_row, unresolved_row
 from .comfy_ports import find_comfy_ports as _find_comfy_ports
 from .doctor_nccl import normalize_proto as _normalize_nccl_proto
 from .doctor_nccl import uses_ll as _uses_nccl_ll
-from .doctor_worker_context import worker_context, worker_policy_row
+from .doctor_worker_context import env_failure_row, worker_context, worker_policy_row
 from .hwmon import board_hotspot_verdict
 from .lifecycle import _pybin_shell, _tcp_probe, run_on_host
 from .probe_certainty import probe_row as _row
@@ -475,10 +475,7 @@ EOF
         try:
             result = run_on_host(config, host, script, timeout=60)
             if result.returncode != 0:
-                detail = (result.stderr or result.stdout or "no output").strip().splitlines()[-1]
-                rows.append(_row(
-                    _FAIL, f"{host.name} env",
-                    f"remote check exited {result.returncode}: {detail}"))
+                rows.append(_row(*env_failure_row(host.name, result)))
                 # Report unknown listener generation even when the host check fails.
                 rows.append(_row(*listener_generation.unobserved_row(
                     host.name, f"remote check exited {result.returncode}")))

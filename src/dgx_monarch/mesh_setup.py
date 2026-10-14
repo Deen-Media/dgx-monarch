@@ -177,8 +177,8 @@ def require_no_sample_leases(
             handle, "abandoned_sample_leases", {}).values())
     if abandoned and not allow_abandoned:
         raise SampleResultBusyError(
-            f"cannot {operation}: {abandoned} abandoned sample(s) may still be "
-            "running; reset the Attached mesh before changing setup"
+            f"cannot {operation}: {abandoned} abandoned sample(s) may still own "
+            "worker-side latent backing; reset the Attached mesh before changing setup"
         )
 
 
@@ -189,9 +189,9 @@ def require_no_abandoned_samples(handle: Any, operation: str) -> None:
             handle, "abandoned_sample_leases", {}).values())
     if abandoned:
         raise LifecycleBusyError(
-            f"cannot {operation}: {abandoned} abandoned sample(s) may still be "
-            "running or still own a result or RDMA descriptor of their "
-            "setup generation; reset the Attached mesh first"
+            f"cannot {operation}: {abandoned} abandoned sample(s) may still own "
+            "a result or RDMA descriptor of their setup generation; reset the "
+            "Attached mesh first"
         )
 
 

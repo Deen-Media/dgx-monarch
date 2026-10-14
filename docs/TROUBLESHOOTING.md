@@ -1250,9 +1250,10 @@ through a pipeline sampler.
 **Symptom:** after a ComfyUI update, a rewritten forward raises an argument
 count `TypeError`, such as
 `Krea2Adapter.inject_usp.<locals>.usp_forward() takes from 4 to 6 positional arguments but 7 were given`.
-Gate may then abort and stock fallback may report
-`LifecycleBusyError: 1 abandoned sample(s) may still be running`. Diagnose the
-original `TypeError`; the lease refusal is a consequence.
+Gate may then abort and stock fallback may report a `LifecycleBusyError`
+saying
+`1 abandoned sample(s) may still own a result or RDMA descriptor of their setup generation`.
+Diagnose the original `TypeError`; the lease refusal is a consequence.
 
 **What to do:** update dgx-monarch to match ComfyUI. Doctor checks
 infrastructure and may remain green. Until a compatible release is available,
@@ -2646,7 +2647,7 @@ Neither touches the Worker services, so no per-host probe can see them.
 and print what it says:
 
     mesh: ok (cached, 0 active leases)
-    mesh: DIRTY (1 abandoned sample may still be running); reset the attached mesh...
+    mesh: DIRTY (1 abandoned sample may still own worker-side latent backing); reset the attached mesh...
     mesh: POISONED (the driver's Monarch transport cannot be reused...); restart ComfyUI...
     mesh: idle (no attached mesh; the next render session creates one)
     mesh: busy (load_model RPC completion in flight); wait for it, nothing to fix
@@ -3882,6 +3883,20 @@ cold model load.
 **What to do:** diagnose the original crash in the failed worker's journal.
 The automatic reset addresses abandoned state, not the underlying defect. If
 the retry also fails, follow the reported recovery; it does not loop.
+
+**Why the lease stays abandoned:** a sample whose rank raised an error has
+stopped. A collective call in Monarch 0.7.0 gathers a reply from every rank
+before it returns, so the driver sees an actor error only after every rank has
+replied (traced in the 0.7.0 source on 2026-10-14). A rank that raised after
+packing its latent can still own the RDMA backing for it, so the driver keeps
+the lease abandoned rather than released. The mesh row and
+`SampleResultBusyError` say the sample may still own worker-side latent
+backing, and `LifecycleBusyError` says it may still own a result or RDMA
+descriptor of its setup generation. In three other cases the sample may still
+be running: the driver stopped waiting after a collection timeout, an
+interrupt abandoned the render, or a worker died. Monarch reports a worker
+death at once, while the other ranks may still be inside the sample, for
+example blocked in NCCL (DESIGN.md section 5.2).
 
 **Automatic reset is limited:** it runs at most once per submit, only when
 abandonment is the sole obstruction, with no active sample lease or pending
@@ -5192,6 +5207,20 @@ not show that the fault went away. Fix the fault, then restart ComfyUI; the
 next setup requests native return again. To stay on messaging across restarts,
 set `rdma_latent_return = false`; on a managed installation, follow
 [#113](#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit).
+
+**Held latents:** each native read that failed after it started holds its
+destination latent in the driver process until ComfyUI exits. The latch changes
+only what the next setup requests, so work already dispatched on the native
+fleet when the fault hit still reads its latents natively: the rest of a Fleet
+wave, or the other renders in flight under `pipeline_depth`. Each of those
+reads that fails after it starts holds one more. Fleet keeps at most one job
+per GPU in flight and stops after the failed wave, and the pipeline sampler
+keeps at most `pipeline_depth` renders in flight and stops after a failure, so
+one fault holds at most one wave or one pipeline window of latents. There is
+deliberately no per-process cap and no operator release for them. Native
+return is opt-in (`rdma_latent_return` defaults to false), the latch sends
+every later render to messaging, and the count is bounded, so one ComfyUI
+restart frees them all.
 
 ## 116. An Anima render refuses because ComfyUI passed an argument to the attention op
 

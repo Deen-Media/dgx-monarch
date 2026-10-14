@@ -126,8 +126,15 @@ class MeshHealth:
                 "the driver's Monarch transport cannot be reused "
                 f"({self.poison})")
         if self.abandoned_samples:
+            # A sample whose rank raised an error has stopped: a Monarch 0.7.0
+            # collective call returns an actor error only after every rank has
+            # replied. A rank that raised after packing its latent can still own
+            # the backing, which is why the lease stays abandoned rather than
+            # released. After a collection timeout, an interrupt or a worker
+            # death the sample may still be running (docs/TROUBLESHOOTING.md #87).
             parts.append(
-                f"{_plural(self.abandoned_samples, 'abandoned sample')} may still be running")
+                f"{_plural(self.abandoned_samples, 'abandoned sample')} may still "
+                "own worker-side latent backing")
         if self.pending:
             parts.append(
                 "a worker fleet was created but was never published to the attached-mesh cache"

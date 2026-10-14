@@ -1586,6 +1586,8 @@ dgx-monarch/
 │   ├── mesh_session.py        # driver-side exclusion for logical render sessions
 │   ├── mesh_setup.py          # setup generations, budgets, acks + dispatch tokens
 │   ├── mesh_setup_state.py    # typed same-handle process-group transition state
+│   ├── mesh_setup_transition.py # worker-policy broadcast and process-group
+│   │                          #   setup behind MeshHandle's methods
 │   ├── mesh_safety.py         # lifecycle classification + pure safety policy
 │   ├── mesh_teardown.py       # stop authority and supervision reconciliation
 │   ├── monarch_semantics.py   # stdlib-only torchmonarch behavior probes
@@ -1764,8 +1766,8 @@ an enforced requirement. The current exceptions are:
 
 | module | ceiling | cohesive reason |
 |---|---:|---|
-| `mesh.py` | 898 | driver mesh lifecycle, actor dispatch, teardown, and recovery orchestration; deliberate-recycle outcomes live in `mesh_recycle.py`, creation publication in `mesh_creation.py`, behavior probes in `monarch_semantics.py`, and diagnostic composition in `error_utils.py` |
-| `cli/doctor.py` | 774 | user-facing preflight plus the hardware failure catalogue |
+| `mesh.py` | 690 | driver mesh lifecycle, actor dispatch, teardown, and recovery orchestration; deliberate-recycle outcomes live in `mesh_recycle.py`, creation publication in `mesh_creation.py`, worker-policy broadcast and process-group setup in `mesh_setup_transition.py`, behavior probes in `monarch_semantics.py`, and diagnostic composition in `error_utils.py` |
+| `cli/doctor.py` | 770 | user-facing preflight plus the hardware failure catalogue |
 | `cli/actor_reaper.py` | 603 | procfs actor identity, orphan provenance, the termination sequence, the doctor report, and the read-only liveness answer the driver asks after a stop times out |
 | `adoption_evidence.py` | 732 | opt-in, request-bound resident-adoption authority, full-file identity/cache, and strict worker/result validation; the render path retains only narrow integration hooks |
 | `actor/unbake.py` | 692 | byte-verified checkpoint capture/restore engine |

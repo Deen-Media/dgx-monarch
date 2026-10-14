@@ -53,6 +53,23 @@ def run(
         return 2
 
 
+def _linked_worktree(repo: Path) -> bool:
+    """Whether ``repo`` is a linked worktree, as `git worktree add` makes one.
+
+    Its .git is a file naming a private git directory that holds a
+    ``commondir`` file. A submodule or a separate git directory also has a
+    .git file, but no ``commondir``, so it keeps the plain path's old behavior.
+    """
+    try:
+        text = (repo / ".git").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    if not text.startswith("gitdir: "):
+        return False
+    # The join keeps an absolute gitdir as it is and reads a relative one from ``repo``.
+    return (repo / text.removeprefix("gitdir: ").strip() / "commondir").is_file()
+
+
 # The file admission reads, and the one `pip install -e` builds metadata from.
 _CONTRACT_FILES = ("pyproject.toml",)
 
@@ -166,6 +183,17 @@ def _run_locked(
         if fetched is None:
             return 1
         candidate, merge = fetched
+    elif _linked_worktree(repo):
+        print(
+            f"{repo} is a linked git worktree: its .git is a file, not a directory. Plain "
+            "`dgxm update` updates the checkout this dgxm was installed from, and it fetches "
+            "and fast-forwards only a main checkout, so it refuses here rather than skip the "
+            "fetch. Run `dgxm update --verify`, which fetches origin itself and fast-forwards "
+            "this checkout to a verified release, or reinstall dgx-monarch from the main "
+            "checkout and run plain `dgxm update` from that install (docs/INSTALL.md).",
+            file=sys.stderr,
+        )
+        return 1
     else:
         print(f"{repo} is not a plain git checkout (no .git directory); skipping the fetch "
               "and checking the working tree's pyproject.toml")

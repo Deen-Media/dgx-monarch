@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 from pathlib import Path
 
 import pytest
 
 from dgx_monarch.cli import main
 from dgx_monarch.cli.update_command import SystemUpdateOps
-from dgx_monarch.cli.update_types import DEFAULT_TARGET
+from dgx_monarch.cli.update_types import DEFAULT_TARGET, Certainty
+from dgx_monarch.cli.update_worktree import remove_worktree
 from dgx_monarch.config import ClusterConfig
 
 
@@ -76,3 +78,41 @@ def test_default_rejects_remote_branch_change_during_fetch(tmp_path: Path):
 def test_plain_update_default_keeps_legacy_path(monkeypatch):
     monkeypatch.setattr(main.legacy_update, "run", lambda *args, **kwargs: 17)
     assert main.main(["update"]) == 17
+
+
+def test_verified_update_git_steps_work_from_a_linked_worktree(tmp_path: Path):
+    """Plain update refuses a linked worktree and names `dgxm update --verify`
+    as the way on. The git steps the verified path runs there work: it resolves
+    and fetches origin's default branch, adds and removes the detached staging
+    worktree as ``stage`` and its cleanup do, and fast-forwards the linked
+    worktree, not the main checkout, as ``commit_driver`` does."""
+    identity = ("-c", "user.name=Test", "-c", "user.email=test@example.test")
+    remote = tmp_path / "origin"
+    remote.mkdir()
+    git(remote, "init", "-b", "main")
+    git(remote, *identity, "commit", "--allow-empty", "-m", "base")
+    local = tmp_path / "local"
+    subprocess.run(["git", "clone", str(remote), str(local)], check=True, capture_output=True)
+    linked = tmp_path / "linked"
+    git(local, "worktree", "add", "-q", "-b", "linked", str(linked), "origin/main")
+    assert (linked / ".git").is_file()
+    base = git(linked, "rev-parse", "HEAD")
+    git(remote, *identity, "commit", "--allow-empty", "-m", "target")
+    target = git(remote, "rev-parse", "HEAD")
+
+    ops = SystemUpdateOps(linked, ClusterConfig())
+    assert ops.resolve_target(DEFAULT_TARGET) == target
+
+    root = tmp_path / "update-worktrees"
+    root.mkdir()
+    staged = Path(tempfile.mkdtemp(prefix="update-", dir=root))
+    added = ops._git("worktree", "add", "--detach", str(staged), target)
+    assert added.returncode == 0, added.stderr
+    assert git(staged, "rev-parse", "HEAD") == target
+    assert remove_worktree(staged, root, ops._git).certainty == Certainty.SUCCEEDED
+    assert not staged.exists()
+
+    merged = ops._git("merge", "--ff-only", target)
+    assert merged.returncode == 0, merged.stderr
+    assert git(linked, "rev-parse", "HEAD") == target
+    assert git(local, "rev-parse", "HEAD") == base
