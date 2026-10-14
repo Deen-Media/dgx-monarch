@@ -47,7 +47,9 @@ def test_a_finished_render_retains_model_steps_wall_and_end_stamp():
     assert last["ceremony"] is False
 
 
-_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step")
+_FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step",
+          "family", "cfg", "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch",
+          "sample_s", "mean_step_s")
 
 
 def test_the_summary_keeps_where_the_render_ran_and_its_last_step_rate():
@@ -69,6 +71,103 @@ def test_the_summary_keeps_where_the_render_ran_and_its_last_step_rate():
     assert {key: last[key] for key in meta} == meta
     assert last["sec_per_step"] == final_rate
     assert set(last) == {"model", "steps", "wall_s", "ended_at", "ceremony", *_FACTS}
+
+
+def test_the_summary_keeps_the_slowest_rank_sampler_wall_and_its_mean_step():
+    # render_result notes the slowest rank's sample_s before the finish, so
+    # the record carries a mean step comparable to BENCHMARKS, free of the
+    # load and Gate time a cold wall_s holds.
+    progress = RenderProgress()
+    token = progress.start(8, {"model": "krea2.safetensors", "topology": "cfg2",
+                               "auto_row": 15, "evidence_row": 15, "cfg": 1.0,
+                               "keeps_uncond": True, "family": "krea2", "batch": 1},
+                           token=object())
+    for step in range(1, 9):
+        progress.step(step, 8)
+    progress.note_sample(31.39, token=token)
+    progress.finish(token)
+    last = progress.snapshot()["last"]
+    assert (last["sample_s"], last["mean_step_s"]) == (31.39, 3.924)
+    assert (last["auto_row"], last["evidence_row"], last["keeps_uncond"]) == (15, 15, True)
+    _run(progress, "next.safetensors", 2)
+    assert progress.snapshot()["last"]["sample_s"] is None  # never inherited
+
+
+def test_an_unkeyed_sampler_wall_belongs_to_the_only_render_in_flight():
+    progress = RenderProgress()
+    token = progress.start(4, {"model": "m"}, token=object())
+    progress.note_sample(10.0)
+    progress.finish(token)
+    assert progress.snapshot()["last"]["mean_step_s"] == 2.5
+
+    # With two in flight an unkeyed wall has no owner, so it is dropped.
+    first = progress.start(4, {"model": "a"}, token=object())
+    second = progress.start(4, {"model": "b"}, token=object())
+    progress.note_sample(10.0)
+    progress.finish(first)
+    progress.finish(second)
+    assert progress.snapshot()["last"]["sample_s"] is None
+
+
+def test_an_overlapping_render_never_publishes_another_renders_sampler_wall():
+    # Pipelined submissions overlap. Render a reports its wall and finishes;
+    # render b, whose facts the record carries, is cancelled before its result
+    # is collected. The record must not show a's wall under b's settings, nor
+    # a's wall over b's step count.
+    progress = RenderProgress()
+    first = progress.start(8, {"model": "a", "topology": "cfg2", "auto_row": 15},
+                           token=object())
+    second = progress.start(20, {"model": "b", "topology": "uly2", "auto_row": 11},
+                            token=object())
+    progress.note_sample(31.39, token=first)
+    progress.finish(first)
+    progress.finish(second)
+    last = progress.snapshot()["last"]
+    assert (last["model"], last["auto_row"], last["steps"]) == ("b", 11, 20)
+    assert (last["sample_s"], last["mean_step_s"]) == (None, None)
+
+
+def test_a_sampler_wall_keeps_its_own_renders_step_count():
+    # Render b's mean divides by b's 20 steps even though a later start, whose
+    # facts the record carries, ran 8.
+    progress = RenderProgress()
+    first = progress.start(20, {"model": "a"}, token=object())
+    second = progress.start(8, {"model": "b"}, token=object())
+    progress.note_sample(40.0, token=first)
+    progress.note_sample(16.0, token=second)
+    progress.finish(second)
+    progress.finish(first)
+    last = progress.snapshot()["last"]
+    assert (last["model"], last["steps"]) == ("b", 8)
+    assert (last["sample_s"], last["mean_step_s"]) == (16.0, 2.0)
+
+
+def test_a_late_sampler_wall_for_a_finished_render_is_dropped():
+    progress = RenderProgress()
+    first = progress.start(4, {"model": "a"}, token=object())
+    progress.finish(first)
+    progress.note_sample(10.0, token=first)
+    _run(progress, "b", 2)
+    assert progress.snapshot()["last"]["sample_s"] is None
+
+
+def test_the_rank_results_hand_the_tracker_their_slowest_sampler_wall(monkeypatch):
+    from dgx_monarch.nodes import render_result
+
+    tracker = RenderProgress()
+    monkeypatch.setattr(telemetry, "render_progress", tracker)
+    monkeypatch.setattr(render_result, "verify_cross_rank_signatures", lambda *_args: None)
+    monkeypatch.setattr(render_result, "read_latent_result", lambda value: value)
+    token = tracker.start(4, {"model": "m"}, token=object())
+    import torch
+
+    render_result._finish_render(
+        [{"dp_rank": 0, "rank": 0, "latent": torch.zeros(1, 4, 8, 8), "sample_s": 12.0},
+         {"rank": 1, "sample_s": 12.5}],
+        SimpleNamespace(dp=1), {"samples": torch.zeros(1, 4, 8, 8)}, telemetry_token=token)
+    tracker.finish(token)
+    assert tracker.snapshot()["last"]["sample_s"] == 12.5
+    assert tracker.snapshot()["last"]["mean_step_s"] == 3.125
 
 
 def test_a_start_without_facts_records_each_as_unknown():

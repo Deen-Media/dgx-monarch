@@ -312,7 +312,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Two Sparks, one render: with cluster.toml configured (two IPs), topology=auto picks the split from the auto table by resolution and CFG. This graph renders Flux 1 Dev at 1536x1536 and cfg 1.0, because the checkpoint is guidance distilled, so auto picks sequence-parallel (Ulysses). cfg-parallel needs a CFG above 1.0, and auto picks it only below 1.2 MP on a family whose table has a cfg2 row (Chroma, LongCat). Nothing else changes from the one-box workflow. dgxm top shows one burst of rail traffic per denoise step."
+    "Two Sparks, one render: with cluster.toml configured (two IPs), topology=auto picks the split from the auto table by resolution and CFG. This graph renders Flux 1 Dev at 1536x1536 and cfg 1.0, because the checkpoint is guidance distilled, so auto picks sequence-parallel (Ulysses). Auto picks cfg-parallel only where the auto table has a measured cfg2 row for the family, size and precision, such as Chroma BF16 below 1.64 MP; Flux 1 has none. It also needs a CFG above 1.0, or a cfg_pp sampler, which keeps the unconditional pass at cfg 1.0. Nothing else changes from the one-box workflow. dgxm top shows one burst of rail traffic per denoise step."
    ],
    "title": "DGX Monarch | Dual Spark: one render split across the pair"
   },

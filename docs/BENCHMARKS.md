@@ -101,8 +101,12 @@ family once the Ideogram4 offload churn is gone (re-timed 2026-08-25: 39.2 GiB a
 
 ## Stills: cfg2 warm render time
 
-Below 1.2 MP, automatic selection offers cfg2 for Chroma BF16/FP8/INT8
-and LongCat BF16 when CFG is not 1. These October 1, 2026 measurements used
+On October 1, 2026, below 1.2 MP, automatic selection offered cfg2 for
+Chroma BF16/FP8/INT8 and LongCat BF16 when CFG was not 1. Campaign K
+(2026-10-14) later added Boogu FP8 and Anima BF16 below 1.2 MP, and cfg2 at
+CFG 1 under a CFG++ sampler
+([Campaign K](#campaign-k-cfg2-against-uly2-2026-10-14-head-capped)). These
+October 1, 2026 measurements used
 ComfyUI `a7169322` and torch 2.12.0+cu132. The first Spark was capped at 2100 MHz (2086 MHz median
 SM clock); the second was uncapped. Compare within this table.
 
@@ -150,6 +154,102 @@ Reading the table:
   These are the harness's warm legs (one render after a cold one), not this
   file's two-queue method, so read them against each other, not against the
   table above.
+
+<a id="campaign-k-cfg2-against-uly2-2026-10-14-head-capped"></a>
+
+## Campaign K: cfg2 against uly2
+
+Campaign K timed cfg2 and uly2 against one GPU on 2026-10-14, so the
+automatic table could gain cfg2 rows above 1.2 MP. Every cell ran dgx-monarch
+`d549f10d` except a09-anima-1024, which ran `65d14333`. Both Sparks ran
+ComfyUI `e8665ca8`. The first Spark was capped at 2100 MHz, with a highest
+sampled SM clock of 2093 MHz; the second was uncapped.
+
+Method:
+
+- **Instrument.** `benchmark/run_matrix.py` in cluster mode, one process per
+  cell. Each leg ran one cold render and two warm renders, and the table gives
+  the mean of the two warm sampler walls in seconds. A sampler wall leaves out
+  text encoding and VAE decode, so these numbers read lower than the
+  whole-prompt walls in the tables above. Compare within this table.
+- **One GPU.** At world 2 the reference is a dp2 render of batch 2. Each rank
+  renders one image alone, so batch row 0 carries one-GPU math and its wall is
+  the capped first Spark's one-GPU wall.
+- **uly2** ran on Torch Flash. **Auto SAGE uly2** is the route auto took
+  before this campaign for Krea2 and Chroma FP8 above 1.2 MP, measured where
+  it applies.
+- **Fidelity.** Bit-identical means batch row 0 of the full-schedule latent
+  and of a one-step latent both equal the one-GPU reference exactly.
+  Otherwise the table gives the one-step NRMS and the full schedule's largest
+  absolute latent difference.
+- **Recipes.** Prompts, steps, CFG, sampler, scheduler and text encoders come
+  from each family's shipped template. The one exception is the Krea2
+  control, which runs CFG 4.5 under plain Euler. The Krea2 template runs CFG 1
+  under `euler_cfg_pp` with an empty negative prompt; a CFG++ sampler keeps
+  the unconditional pass, so cfg2 still splits the step.
+
+| Cell | Checkpoint | Size | MP | Steps, CFG, sampler | One GPU | uly2 | cfg2 | cfg2 vs one GPU | cfg2 vs uly2 | Auto SAGE uly2 | cfg2 against one GPU |
+|---|---|--:|--:|---|--:|--:|--:|--:|--:|--:|---|
+| a09-anima-1024 | Anima BF16 | 1024 | 1.05 | 30, 4, `euler` | 19.6 | 12.7 | 10.0 | 1.96x | 1.27x | not run | bit-identical |
+| a08-boogu-fp8-1024 | Boogu FP8-scaled | 1024 | 1.05 | 25, 4, `euler` | 48.1 | 34.0 | 24.3 | 1.98x | 1.40x | not run | bit-identical |
+| b-chroma-bf16-1152 | Chroma1-HD BF16 | 1152 | 1.33 | 26, 3.5, `euler` | 77.3 | 51.6 | 39.3 | 1.97x | 1.31x | not run | bit-identical |
+| b-chroma-fp8mixed-1152 | Chroma1-HD FP8-mixed | 1152 | 1.33 | 26, 3.5, `euler` | 58.2 | 39.2 | 29.1 | 2.00x | 1.34x | 38.0 (1-step NRMS 0.078) | bit-identical |
+| b-chroma-bf16-1216 | Chroma1-HD BF16 | 1216 | 1.48 | 26, 3.5, `euler` | 87.2 | 56.6 | 43.6 | 2.00x | 1.30x | not run | bit-identical |
+| b-chroma-fp8mixed-1216 | Chroma1-HD FP8-mixed | 1216 | 1.48 | 26, 3.5, `euler` | 65.0 | 43.8 | 32.6 | 1.99x | 1.34x | 42.0 (1-step NRMS 0.065) | bit-identical |
+| b-chroma-bf16-1280 | Chroma1-HD BF16 | 1280 | 1.64 | 26, 3.5, `euler` | 97.9 | 64.6 | 49.2 | 1.99x | 1.31x | not run | bit-identical |
+| b-chroma-fp8mixed-1280 | Chroma1-HD FP8-mixed | 1280 | 1.64 | 26, 3.5, `euler` | 75.4 | 49.8 | 37.8 | 2.00x | 1.32x | 47.5 (1-step NRMS 0.057) | bit-identical |
+| c-chroma-int8-1152 | Chroma1-HD INT8 ConvRot | 1152 | 1.33 | 26, 3.5, `euler` | 61.2 | 40.3 | 30.6 | 2.00x | 1.32x | not run | bit-identical |
+| c-chroma-int8-1216 | Chroma1-HD INT8 ConvRot | 1216 | 1.48 | 26, 3.5, `euler` | 70.7 | 46.9 | 35.1 | 2.01x | 1.33x | not run | bit-identical |
+| c-chroma-int8-1280 | Chroma1-HD INT8 ConvRot | 1280 | 1.64 | 26, 3.5, `euler` | 87.8 | 51.7 | 44.0 | 2.00x | 1.17x | not run | bit-identical |
+| a07-kandinsky5-1024 | Kandinsky5 Lite image BF16 | 1024 | 1.05 | 50, 3.5, `euler` | 81.0 | 49.4 | 40.5 | 2.00x | 1.22x | not run | bit-identical |
+| b-krea2-turbo-fp8-1152 | Krea2 Turbo FP8-scaled | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 34.7 | 22.5 | 17.3 | 2.00x | 1.30x | 22.3 (1-step NRMS 0.030) | bit-identical |
+| b-krea2-turbo-fp8-1216 | Krea2 Turbo FP8-scaled | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 39.1 | 25.3 | 19.5 | 2.01x | 1.30x | 24.9 (1-step NRMS 0.033) | bit-identical |
+| b-krea2-turbo-fp8-1280 | Krea2 Turbo FP8-scaled | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 43.7 | 27.7 | 21.7 | 2.01x | 1.27x | 27.1 (1-step NRMS 0.058) | bit-identical |
+| c-krea2-turbo-fp8-1408 | Krea2 Turbo FP8-scaled | 1408 | 1.98 | 8, 1, `euler_cfg_pp` | 53.5 | 33.8 | 26.9 | 1.99x | 1.25x | 32.8 (1-step NRMS 0.030) | bit-identical |
+| c-krea2-raw-bf16-1152 | Krea2 RAW BF16 | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 40.4 | 25.3 | 20.1 | 2.01x | 1.26x | not run | bit-identical |
+| c-krea2-raw-bf16-1216 | Krea2 RAW BF16 | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 45.5 | 27.9 | 22.6 | 2.02x | 1.24x | not run | bit-identical |
+| c-krea2-raw-bf16-1280 | Krea2 RAW BF16 | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 51.0 | 31.1 | 25.2 | 2.02x | 1.23x | not run | bit-identical |
+| a01-krea2-raw-bf16-1536 | Krea2 RAW BF16 | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 72.9 | 44.8 | 36.3 | 2.01x | 1.23x | not run | bit-identical |
+| a02-krea2-turbo-bf16-1536 | Krea2 Turbo BF16 | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 72.6 | 46.3 | 36.1 | 2.01x | 1.28x | not run | bit-identical |
+| a03-krea2-turbo-fp8-1536 | Krea2 Turbo FP8-scaled | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 62.9 | 39.8 | 31.4 | 2.00x | 1.27x | 38.9 (1-step NRMS 0.042) | bit-identical |
+| c-krea2-raw-int8-1152 | Krea2 RAW INT8 ConvRot | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 40.6 | 19.6 | 20.2 | 2.01x | 0.97x | not run | bit-identical |
+| c-krea2-raw-int8-1216 | Krea2 RAW INT8 ConvRot | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 47.8 | 23.4 | 23.8 | 2.01x | 0.98x | not run | bit-identical |
+| c-krea2-raw-int8-1280 | Krea2 RAW INT8 ConvRot | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 52.5 | 27.2 | 26.3 | 1.99x | 1.03x | not run | bit-identical |
+| a04-krea2-raw-int8-1536 | Krea2 RAW INT8 ConvRot | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 82.0 | 44.8 | 41.4 | 1.98x | 1.08x | not run | bit-identical |
+| a05-krea2-turbo-fp8-1536-cfg45-euler | Krea2 Turbo FP8-scaled, control | 1536 | 2.36 | 8, 4.5, `euler` | 64.9 | 40.7 | 32.4 | 2.00x | 1.26x | 39.1 (1-step NRMS 0.041) | bit-identical |
+| b-longcat-bf16-1152 | LongCat-Image BF16 | 1152 | 1.33 | 20, 4, `euler` | 37.8 | 23.5 | 18.6 | 2.03x | 1.26x | not run | 1-step NRMS 0.007; full schedule max abs 7.62 |
+| b-longcat-bf16-1216 | LongCat-Image BF16 | 1216 | 1.48 | 20, 4, `euler` | 42.1 | 25.9 | 20.4 | 2.06x | 1.27x | not run | 1-step NRMS 0.007; full schedule max abs 2.65 |
+| b-longcat-bf16-1280 | LongCat-Image BF16 | 1280 | 1.64 | 20, 4, `euler` | 46.1 | 28.6 | 22.5 | 2.05x | 1.27x | not run | 1-step NRMS 0.006; full schedule max abs 4.54 |
+| b-qwen-fp8-1152 | Qwen-Image 2512 FP8 | 1152 | 1.33 | 50, 4, `euler` | 214.4 | 169.8 | 102.3 | 2.10x | 1.66x | not run | bit-identical |
+| b-qwen-fp8-1216 | Qwen-Image 2512 FP8 | 1216 | 1.48 | 50, 4, `euler` | 235.4 | 179.9 | 113.8 | 2.07x | 1.58x | not run | bit-identical |
+| b-qwen-fp8-1280 | Qwen-Image 2512 FP8 | 1280 | 1.64 | 50, 4, `euler` | 253.1 | 196.3 | 122.7 | 2.06x | 1.60x | not run | bit-identical |
+| a06-qwen-fp8-1328 | Qwen-Image 2512 FP8 | 1328 | 1.76 | 50, 4, `euler` | 271.2 | 211.2 | 132.1 | 2.05x | 1.60x | not run | bit-identical |
+
+Reading the table:
+
+- **cfg2 beat uly2 in every cell but Krea2 RAW INT8 below 1536.** Elsewhere
+  it ran 1.17x (Chroma INT8 at 1280) to 1.66x (Qwen-Image at 1152) faster
+  than uly2 and 1.96x to 2.10x faster than one GPU, and its slowest warm leg
+  beat uly2's fastest. Krea2 RAW INT8 read 0.97x, 0.98x and 1.03x against
+  uly2 at 1152, 1216 and 1280, and 1.08x at 1536: its uly2 leg ran 1.93x to
+  2.07x faster than one GPU, against 1.59x to 1.64x on BF16, so the split had
+  less to gain.
+- **cfg2 was bit-identical to one GPU in every cell but LongCat.** LongCat
+  read 1-step NRMS 0.006 to 0.007, and its full-schedule latent differed,
+  while uly2 read bit-identical on the same cells. LongCat keeps Ulysses above
+  1.2 MP.
+- **The SAGE route bought little.** It ran 1 to 5 percent faster than Torch
+  Flash uly2 and read 1-step NRMS 0.030 to 0.078 against one GPU, while Torch
+  Flash uly2 read bit-identical.
+- **New automatic rows.** Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15),
+  Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from
+  1.2 to 1.77 MP (row 68), Boogu FP8 below 1.2 MP (row 79) and Anima BF16
+  below 1.2 MP (row 47). Each upper band ends at the largest size measured.
+  The two lower bands follow rows 20 and 28 and rest on one size, 1.05 MP.
+  Each grant covers only the precisions that read bit-identical and beat uly2
+  at every measured size in its band, so Krea2 RAW INT8 keeps Ulysses (row
+  12). Kandinsky5's image and video checkpoints share one family, so it has
+  no row.
 
 <a id="campaign-render-times-stills-2026-09-12-to-2026-09-28-head-capped"></a>
 

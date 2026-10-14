@@ -399,7 +399,7 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   end and USP at the high end, with per-model thresholds stored as data; other
   families have explicit full-range ring or Ulysses rows. Mage Flow and Qwen
   Image 2.1 have no row, and Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image
-  have rows only from 1.2 MP up; those cases take the generic uly2 fallback
+  have no row below 1.2 MP; those cases take the generic uly2 fallback
   (row 99). Data parallelism is never a table row: `with_derived_dp` derives it
   from the ranks a row leaves spare, and a batch that cannot split across them
   folds them into sequence parallelism, or on a cfg row refuses (class K);
@@ -411,13 +411,25 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   not preserve a legacy cfg choice: auto selects its Ulysses fallback and logs
   why. Tests hold every predicate, including the fallback, so a new cfg row
   cannot inherit another family's result;
+- a cfg row is skipped at CFG 1.0 unless the sampler keeps the uncond pass
+  there (`topology.sampler_keeps_uncond_at_cfg1`: the cfg++ samplers). The
+  KSampler, KSampler Advanced and KSampler Pipeline nodes and the Identity
+  Gate tag the latent with that answer, so every site that resolves a
+  render's topology, the Gate capability context included, reads the same
+  one. Sampler Custom takes a SAMPLER object with no name, so its latent
+  stays untagged and keeps the skip;
+- a cfg row's `world_min` is 2, so it also matches at world 4. A batch-1
+  render there leaves a spare data-parallel rank, and auto refuses it
+  (class K) rather than fold the rank into a cfg-plus-sequence composite.
+  Every cfg row's evidence was measured at world 2;
 - ideogram4: auto takes Ulysses2, never cfg2; explicit Ring2 stays for
   diagnosis, and explicit cfg2 runs the dual-model split (MODELS.md);
 - sage auto-on only for fp8 + USP at high res;
 - FSDP only when the model does not fit resident (capacity mode), never for speed;
 - every auto decision logs its row and reason, for example
-  `auto: uly2; krea2 fp8 at 1.0 MP, world 2, table row 99 (...)`. Krea 2 lost
-  its cfg2 row below 1.2 MP (crossover table row 10).
+  `auto: uly2; krea2 fp8 at 1.05 MP, world 2, table row 99 (...)`. Krea 2 lost
+  its cfg2 row below 1.2 MP (crossover table row 10) and gained one for FP8
+  and BF16 from 1.2 to 2.36 MP (row 15, Campaign K, 2026-10-14).
 
 Users can always override; auto is the default widget value.
 
@@ -1521,7 +1533,7 @@ dgx-monarch/
 │   │   ├── pipeline.py        # bounded FIFO submission/abort orchestration
 │   │   ├── recycle_guard.py   # reset single-flight/rate ownership past HTTP timeout
 │   │   ├── render_session.py  # node-side names for the mesh_session.py API
-│   │   ├── resolved_topology.py # auto's row, quant and megapixels for telemetry
+│   │   ├── resolved_topology.py # what auto read and chose, for telemetry
 │   │   ├── sampler_wire.py    # sampler output merge and stock noise rebuild
 │   │   ├── strict_json.py     # non-finite-safe public JSON normalization
 │   │   └── setup_binding.py   # follow-up RPC topology/token reassertion
@@ -1555,7 +1567,9 @@ dgx-monarch/
 │   ├── comfy_rebound_signatures.py # exact stock rebound-method contracts
 │   ├── comfy_rebound_sites.py # declared static self.bind/Adapter.bind inventory
 │   ├── comfy_rebound_validation.py # exact signature/requiredness comparator
-│   ├── topology.py            # dataclasses + auto-mode table (data-driven)
+│   ├── topology.py            # dataclasses + auto-mode resolution
+│   ├── topology_table.py      # the auto-mode table rows (data)
+│   ├── topology_cfg_evidence.py # dated evidence each cfg row needs
 │   ├── error_utils.py         # total diagnostics + cancellation-first composition
 │   ├── retry_policy.py        # bounded retry outcomes without stale diagnostics
 │   ├── actor_lifetime.py      # actor-side reaper (stdlib leaf; watcher installed
@@ -1879,8 +1893,12 @@ Every milestone must satisfy this checklist:
 ## Appendix A: empirical design inputs
 
 - cfg-parallel won at or below about 1 MP and USP above about 1.5 MP (Krea2
-  and Chroma); the `topology.py` auto table rows that split
-  by resolution switch at 1.2 MP.
+  and Chroma); the `topology_table.py` auto table rows that split
+  by resolution switch at 1.2 MP. On 2026-10-14, after the 2026-10 sequence
+  parallel fixes, Campaign K measured cfg2 faster than uly2 up to 1.64 MP on
+  Chroma and up to 2.36 MP on Krea2 FP8 and BF16, so those families gained
+  cfg2 rows above 1.2 MP; Krea2 INT8 cfg2 was exact but no faster than uly2
+  below 1536, so it kept Ulysses (BENCHMARKS.md).
 - Ideogram4 head_dim 256, FP8 pair at 1024x1024: Ulysses2 matched
   DP2 at NRMS 0.000; Ring2 measured 0.102 against the 0.100 limit.
 - Sage attention helps only fp8 with USP at high resolution (about 5-8% at

@@ -4427,8 +4427,15 @@ dispatch one seam further out instead.
 
 **Fix:** the card names it. Raise CFG above 1.0, or pick a `cfg_pp` sampler.
 Where neither fits the workflow, use a ulysses or ring topology, as the card
-says. Topology `auto` also avoids it at CFG 1.0, because it skips cfg-parallel
-rows there.
+says. Topology `auto` skips cfg-parallel rows at CFG 1.0 only when the sampler
+drops the unconditional pass: any sampler without the `cfg_pp` suffix, and
+every Sampler Custom (DGX Monarch) render, whose SAMPLER input carries no name.
+Under a `cfg_pp` sampler set on a DGX Monarch KSampler node, auto can still
+take a cfg row at CFG 1.0, because ComfyUI then folds both passes into one
+call of batch 2. If such a render meets this refusal, ComfyUI ran the pair as
+separate calls, for example because a conditioning carries an area, a mask, a
+hook or a timestep range. Pick an explicit ulysses or ring topology for that
+render.
 
 **Unequal prompts render through the dispatch.** The per-cond
 dispatch at the sampler's `CALC_COND_BATCH` seam installs for every family on a

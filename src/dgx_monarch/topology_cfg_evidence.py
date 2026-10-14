@@ -49,6 +49,9 @@ class CfgEvidence:
                 f"band; {self.basis}")
 
 
+_BIT_IDENTICAL = ("bit-identical to one GPU on the shipped prompt pair, full schedule and "
+                  "one-step probe")
+
 # Keyed by immutable table-row number rather than family. One family may hold
 # more than one quant or resolution row, and a record grants only the quants it
 # measured.
@@ -83,6 +86,103 @@ CFG2_EVIDENCE: dict[int, CfgEvidence] = {
         exact=True,
         in_band=True,
         basis="measured 2026-09-06 at 1.05 MP",
+    ),
+    # Campaign K, 2026-10-14. One GPU means batch row 0 of a dp2 batch-2 run on
+    # the same build; walls are run_matrix warm sampler walls with no text
+    # encode or VAE decode, so they do not compare with row 20's API walls.
+    15: CfgEvidence(
+        row=15,
+        family="krea2",
+        quants=("fp8", "bf16"),
+        min_mp=1.2,
+        max_mp=2.36,
+        min_world=2,
+        speedup="1.99x to 2.02x faster than one GPU; on FP8 1.21x to 1.29x faster than uly2 "
+                "with SAGE_AUTO (1.25x to 1.30x faster than uly2 on TORCH_FLASH) and on BF16 "
+                "1.23x to 1.28x faster than uly2",
+        fidelity=_BIT_IDENTICAL,
+        faster=True,
+        exact=True,
+        in_band=True,
+        basis="Campaign K 2026-10-14, dgx-monarch d549f10d, ComfyUI e8665ca8, head capped at "
+              "2100 MHz, run_matrix warm sampler walls on the template prompt pair at CFG 1 under "
+              "euler_cfg_pp: the Turbo fp8_scaled file at 1152, 1216, 1280, 1408 and 1536 square "
+              "plus a CFG 4.5 euler control at 1536, the RAW BF16 file at 1152, 1216, 1280 and "
+              "1536 square and the Turbo BF16 file at 1536; mxfp8 and nvfp4 files share the fp8 "
+              "kind and were not measured (September RAW nvfp4 cfg2 read 1-step NRMS 0.0113); "
+              "RAW INT8 ConvRot read bit-identical at the same four sizes but 0.97x, 0.98x, "
+              "1.03x and 1.08x against uly2, so this record does not grant it",
+    ),
+    19: CfgEvidence(
+        row=19,
+        family="chroma",
+        quants=("bf16", "fp8", "int8"),
+        min_mp=1.2,
+        max_mp=1.64,
+        min_world=2,
+        speedup="1.97x to 2.01x faster than one GPU, 1.30x to 1.31x faster than uly2 on BF16, "
+                "1.26x to 1.30x faster than uly2 with SAGE_AUTO on FP8 and 1.17x to 1.33x faster "
+                "than uly2 on INT8",
+        fidelity=_BIT_IDENTICAL,
+        faster=True,
+        exact=True,
+        in_band=True,
+        basis="Campaign K 2026-10-14, dgx-monarch d549f10d, ComfyUI e8665ca8, head capped at "
+              "2100 MHz, run_matrix warm sampler walls on Chroma1-HD BF16, FP8-mixed and INT8 "
+              "ConvRot at 1152, 1216 and 1280 square on the template prompt pair; fp8_scaled and "
+              "mxfp8 files were not measured in this band, nvfp4 shares the fp8 kind and stays "
+              "class K, and Radiance shares the bf16 kind and was not measured in this band",
+    ),
+    68: CfgEvidence(
+        row=68,
+        family="qwen_image",
+        quants=("fp8",),
+        min_mp=1.2,
+        max_mp=1.77,
+        min_world=2,
+        speedup="2.05x to 2.10x faster than one GPU and 1.58x to 1.66x faster than uly2",
+        fidelity=_BIT_IDENTICAL,
+        faster=True,
+        exact=True,
+        in_band=True,
+        basis="Campaign K 2026-10-14, dgx-monarch d549f10d, ComfyUI e8665ca8, head capped at "
+              "2100 MHz, run_matrix warm sampler walls on the base 2512 fp8_e4m3fn file at "
+              "1152, 1216, 1280 and 1328 square on the template prompt pair; Edit-2511 and "
+              "other fp8-kind files were not measured",
+    ),
+    79: CfgEvidence(
+        row=79,
+        family="boogu",
+        quants=("fp8",),
+        min_mp=0.0,
+        max_mp=1.2,
+        min_world=2,
+        speedup="1.98x faster than one GPU and 1.40x faster than uly2",
+        fidelity=_BIT_IDENTICAL,
+        faster=True,
+        exact=True,
+        in_band=True,
+        basis="Campaign K 2026-10-14, dgx-monarch d549f10d, ComfyUI e8665ca8, head capped at "
+              "2100 MHz, run_matrix warm sampler walls on the fp8_scaled file at 1024 square; "
+              "the template's unequal prompt pair takes the per-cond dispatch path, and an "
+              "equal pair, which folds onto the slice path, was not measured",
+    ),
+    47: CfgEvidence(
+        row=47,
+        family="anima",
+        quants=("bf16",),
+        min_mp=0.0,
+        max_mp=1.2,
+        min_world=2,
+        speedup="1.96x faster than one GPU and 1.27x faster than uly2",
+        fidelity=_BIT_IDENTICAL,
+        faster=True,
+        exact=True,
+        in_band=True,
+        basis="Campaign K 2026-10-14, dgx-monarch 65d14333, ComfyUI e8665ca8, head capped at "
+              "2100 MHz, run_matrix warm sampler walls on anima-base-v1.0 at 1024 square; the "
+              "template's unequal prompt pair takes the per-cond dispatch path, and an equal "
+              "pair, which folds onto the slice path, was not measured",
     ),
 }
 

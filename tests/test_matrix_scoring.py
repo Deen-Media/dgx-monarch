@@ -101,3 +101,23 @@ def test_run_case_reduces_a_cfg_pair_before_it_attests_the_latent(reader: str):
     # names, so a cfg pair cannot reach the statistics or the hash unreduced.
     body = _run_case_body()
     assert _first_call_line(body, "scored_latent") < _first_call_line(body, reader)
+
+
+def test_run_case_labels_the_topology_the_tagged_ksampler_render_resolves():
+    # DGXMonarchKSampler tags a cfg++ latent, so its render may keep a cfg row
+    # at CFG 1. The provenance label must ask resolve_topology the same
+    # question, and only on the KSampler path: a dropped or inverted keyword
+    # would label an a03-style Krea2 leg uly2 while the render resolves cfg2.
+    calls = [
+        node
+        for statement in _run_case_body()
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "resolve_topology"
+    ]
+    assert len(calls) == 1, "run_case resolves its provenance topology once"
+    keyword = next((kw for kw in calls[0].keywords if kw.arg == "keeps_uncond"), None)
+    assert keyword is not None, "run_case never passes keeps_uncond"
+    assert ast.unparse(keyword.value) == (
+        "sampling_path == 'ksampler' and sampler_keeps_uncond_at_cfg1(merged['sampler'])")

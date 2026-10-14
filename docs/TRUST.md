@@ -778,7 +778,7 @@ copied from historical evidence.
    the automatic path is
    [`auto_gate.py:137-142`](../src/dgx_monarch/nodes/auto_gate.py#L137-L142 "anchor:auto_gate_context"),
    and the node's NOT RUN branch is
-   [`gate_node.py:108-119`](../src/dgx_monarch/nodes/gate_node.py#L108-L119 "anchor:gate"),
+   [`gate_node.py:109-120`](../src/dgx_monarch/nodes/gate_node.py#L109-L120 "anchor:gate"),
    covered by `tests/test_accuracy_waivers.py` and `tests/test_sol_attention.py`.
 
 ## Grant paths
@@ -903,7 +903,7 @@ copied from historical evidence.
   same transaction get no skip
   ([`gate_inconclusive.py:210-210`](../src/dgx_monarch/nodes/gate_inconclusive.py#L210-L210 "anchor:remember_kind")).
   This is enforced at
-  [`common.py:293-371`](../src/dgx_monarch/nodes/common.py#L293-L371 "anchor:run_render"),
+  [`common.py:300-378`](../src/dgx_monarch/nodes/common.py#L300-L378 "anchor:run_render"),
   [`auto_gate.py:200-267`](../src/dgx_monarch/nodes/auto_gate.py#L200-L267 "anchor:auto_gate_required"),
   [`auto_gate.py:270-469`](../src/dgx_monarch/nodes/auto_gate.py#L270-L469 "anchor:maybe_auto_gate"), and
   [`pipeline.py:282-367`](../src/dgx_monarch/nodes/pipeline.py#L282-L367 "anchor:_push_bound"), with

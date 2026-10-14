@@ -56,11 +56,12 @@ from .render_quarantine import (
     _apply_persisted_quarantine as _apply_persisted_quarantine,
 )
 from .render_submit import submit_render
-from .resolved_topology import ResolvedTopology, TopologyFacts
+from .resolved_topology import ResolvedTopology, auto_facts
 
 log = get_logger(__name__)
 
 LATENT_DOWNSCALE_METADATA_KEY = render_preflight.LATENT_DOWNSCALE_METADATA_KEY
+CFG_KEEPS_UNCOND_METADATA_KEY = render_preflight.CFG_KEEPS_UNCOND_METADATA_KEY
 
 
 @dataclass(frozen=True)
@@ -171,7 +172,8 @@ def _warn_nearest_signature(path: str) -> None:
 
 def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
                      world: int | None = None, *, latent_downscale: int | None = None,
-                     size_tags: tuple = (None, None)) -> tuple[Topology, bool, str]:
+                     size_tags: tuple = (None, None),
+                     keeps_uncond: bool = False) -> tuple[Topology, bool, str]:
     """Resolve the mesh's topology preset for this render.
 
     Returns (topology, sage, reason). Explicit presets pass through; "auto"
@@ -179,6 +181,8 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     ``latent_downscale`` (private benchmark metadata) overrides the ratio
     comfy's latent format declares for the checkpoint. ``size_tags`` are the
     latent's own, so auto reads the grid the workers will sample.
+    ``keeps_uncond`` says the sampler keeps the uncond pass at CFG 1.0, so a
+    cfg row stays eligible there (topology.sampler_keeps_uncond_at_cfg1).
     """
     scale_override = (
         None if latent_downscale is None
@@ -243,13 +247,14 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     # driver prices its own host through the loader preflight; nothing on the
     # driver prices a remote worker's pool, which needs worker-side facts.
     # Capacity runs use the explicit *+fsdp presets (docs/MODELS.md).
+    # The cfg++ flag rides only when set, so an untagged call keeps its shape.
     decision = choose_auto_topology(
         family, quant, megapixels, world, cfg_value=cfg_value,
-        batch_size=shape[0])
-    # Observed by telemetry only. World 1 consults no table row, whatever the
-    # decision's rule field holds, so the row stays None there.
-    row = getattr(getattr(decision, "rule", None), "row", None) if world > 1 else None
-    facts = TopologyFacts(row=row, quant=quant, megapixels=megapixels)
+        batch_size=shape[0], **({"keeps_uncond": True} if keeps_uncond else {}))
+    # Observed by telemetry only.
+    facts = auto_facts(decision, world=world, quant=quant, megapixels=megapixels,
+                       family=family, cfg=cfg_value, keeps_uncond=keeps_uncond,
+                       batch=shape[0])
     return ResolvedTopology(decision.topology, decision.sage, decision.reason, facts)
 
 
@@ -266,6 +271,8 @@ def _resolve_topology_for_latent(
             latent[LATENT_DOWNSCALE_METADATA_KEY])
     if latent_size_tags(latent) != (None, None):
         extra["size_tags"] = latent_size_tags(latent)
+    if latent.get(CFG_KEEPS_UNCOND_METADATA_KEY):  # set by the sampler nodes
+        extra["keeps_uncond"] = True
     return resolve_topology(model, latent["samples"], cfg_value, world, **extra)
 
 

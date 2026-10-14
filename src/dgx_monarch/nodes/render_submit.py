@@ -377,7 +377,9 @@ def _submit_render_guarded(
         elif submitted is not future:
             raise RuntimeError("sample dispatch replaced its prepared authority")
 
-    finish_render = _finish_render
+    # The collector notes the sampler wall under this render's token, so a
+    # pipelined render in flight beside it cannot publish the wall as its own.
+    finish_render = partial(_finish_render, telemetry_token=guard.telemetry_token)
     if adoption_context is not None:
         if (
             expected_adoption_context_sha256 is None
@@ -386,7 +388,7 @@ def _submit_render_guarded(
             raise RuntimeError(
                 "resident-adoption driver expectations are unavailable")
         finish_render = partial(
-            _finish_render,
+            finish_render,
             expected_adoption_context_sha256=expected_adoption_context_sha256,
             expected_adoption_request_sha256=_adoption_request_sha256(
                 request,

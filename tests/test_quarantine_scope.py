@@ -939,7 +939,7 @@ def _mixed_pipeline(monkeypatch, tmp_path, gating, *, interrupt=None):
     monkeypatch.setattr(mesh_setup, "ensure_request_setup", real_setup)
     monkeypatch.setattr(
         submit_mod, "_finish_render",
-        lambda _results, _topo, latent, _future: {"samples": latent["samples"]})
+        lambda _results, _topo, latent, _future, **_kwargs: {"samples": latent["samples"]})
     monkeypatch.setattr(
         render_preflight, "activation_footprint_preflight_for_request",
         lambda *_args: None)

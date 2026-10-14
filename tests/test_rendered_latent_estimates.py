@@ -75,11 +75,11 @@ def test_auto_reads_a_rescaled_empty_latent_at_its_rendered_size(monkeypatch, _c
     # worker samples 1024x1024 pixels, not a 128x128 grid at one pixel each.
     reason = _auto_reason(monkeypatch, _comfy_config, CHROMA_RADIANCE, "chroma", "bf16",
                           _with({SPATIAL: 8}, torch.zeros(1, 4, 128, 128)))
-    assert "chroma bf16 at 1.0 MP" in reason
+    assert "chroma bf16 at 1.05 MP" in reason
     # An LTX latent (32x tag) on an 8x video model renders 4x wider and taller.
     reason = _auto_reason(monkeypatch, _comfy_config, WAN21, "wan", "fp8",
                           _with({SPATIAL: 32, TEMPORAL: 8}, torch.zeros(1, 128, 5, 32, 32)))
-    assert "wan fp8 at 1.0 MP" in reason
+    assert "wan fp8 at 1.05 MP" in reason
 
 
 @pytest.mark.parametrize("tags", [{}, {SPATIAL: 8, TEMPORAL: 4}, "populated"],
@@ -90,7 +90,7 @@ def test_auto_megapixels_are_unchanged_without_a_rescale(monkeypatch, _comfy_con
     else:
         latent = _with(tags, torch.zeros(1, 16, 5, 64, 64))
     reason = _auto_reason(monkeypatch, _comfy_config, WAN21, "wan", "fp8", latent)
-    assert "wan fp8 at 0.3 MP" in reason   # 512x512, the grid as built at 8x
+    assert "wan fp8 at 0.26 MP" in reason   # 512x512, the grid as built at 8x
 
 
 def _arm_preflight(monkeypatch, config, latent_format, family):

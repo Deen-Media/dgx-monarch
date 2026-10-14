@@ -22,7 +22,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 
 | Model | Workflows | Before you start |
 |---|---|---|
-| [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Ulysses is the automatic choice. Explicit cfg2 can split the two calls made by a CFG++ sampler, even at CFG 1. Reference images require `single`. |
+| [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Auto picks cfg2 for FP8 from 1.2 to 2.36 MP, including the template's CFG++ sampler at CFG 1, and Ulysses elsewhere. Reference images require `single`. |
 | [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. BF16, local INT8 and BF16 refinement matched their own stock references. See the [tested configurations](VALIDATION.md#evidence-kroma). |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
@@ -55,12 +55,18 @@ because it has not been tested or because a previous result no longer applies.
 The row's Notes explain which. The table is checked against runtime choices
 and reviewed against the linked test results.
 
-Chroma (Radiance included) and LongCat have cfg2 rows below 1.2 MP, taken at
-any CFG other than 1 when the row supports that precision, and
-Ulysses rows from 1.2 MP up. Mage Flow and Qwen Image 2.1 have no row, and
-Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image have rows only from 1.2 MP
-up; those cases take the generic uly2 fallback (row 99). Every other family
-has one full-range Ulysses or ring row.
+Chroma (Radiance included) and LongCat have cfg2 rows below 1.2 MP, and
+Chroma has a second one from 1.2 to 1.64 MP. Krea 2 has a cfg2 row from 1.2
+to 2.36 MP and Qwen-Image one from 1.2 to 1.77 MP. Anima and Boogu have cfg2
+rows below 1.2 MP. Each family's Ulysses rows cover the rest. Auto takes a
+cfg2 row at any CFG other than 1, and at CFG 1 under a CFG++ sampler chosen
+on a DGX Monarch KSampler, KSampler Advanced or KSampler Pipeline node, when
+its evidence covers the checkpoint's precision; otherwise the Ulysses row
+applies. A Sampler Custom graph hands over a SAMPLER object with no name, so
+at CFG 1 auto keeps Ulysses there. Mage Flow and Qwen Image 2.1 have no row, and Flux, Flux 2, Krea 2,
+Lens, Qwen-Image and Z-Image have no row below 1.2 MP; those cases take the
+generic uly2 fallback (row 99). Every other family has one full-range Ulysses
+or ring row.
 
 On more than one rank, the first `auto` render of each family in a process
 logs a reminder that identifying a model from its file header does not verify
@@ -78,7 +84,7 @@ that match the tested configurations in its model details. See
 
 | Model | single | cfg2 | Ulysses | ring | FSDP | Status | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
-| Krea2 (RAW+Turbo) | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
+| Krea2 (RAW+Turbo) | ✓ | ★ | ★ | 🔒 | ✓ | **HW** | Auto cfg2 covers FP8 from 1.2 to 2.36 MP; padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
 | Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. Plain Euler at CFG 1 leaves cfg2 nothing to split; padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
 | Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
@@ -88,7 +94,7 @@ that match the tested configurations in its model details. See
 | Flux2 | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | FP8-mixed Ulysses and BF16 `uly2+fsdp` were compared with references. LoRA/FSDP rendered, but its reference ran out of memory. [Details](#model-flux2) · [Workflow](../example_workflows/dgx-monarch-flux2-t2i.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
-| Qwen-Image | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
+| Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
 | Mage-Flow (T2I/Edit, quality + Turbo) | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | T2I/Edit/Turbo Ulysses tested; FSDP tested only on Base BF16 without LoRA. [Details](#model-mage-flow-t2i-edit-quality-turbo) · [Workflow](../example_workflows/dgx-monarch-mage-flow-t2i.json) |
 | Qwen Image 2.1 | ✓ | 🔒 | ★ | 🔒 | 🔒 | **HW** | Torch Flash only; Compressed caches were compared with the same cache settings in native ComfyUI, not with cache off. [Details](#model-qwen-image-2-1) · [Workflow](../example_workflows/dgx-monarch-qwen-image21-t2i.json) |
 | Ernie-Image | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | cfg2 comparisons used equal-shaped prompts; unequal-prompt cfg2 has no reference comparison. [Details](#model-ernie-image) · [Workflow](../example_workflows/dgx-monarch-ernie-t2i.json) |
@@ -96,8 +102,8 @@ that match the tested configurations in its model details. See
 | Z-Image DCT PixelSpace | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | L2P is unsupported; DCT and latent checkpoints need different workflows. [Details](#model-z-image-dct-pixelspace) · [Workflow](../example_workflows/dgx-monarch-zimage-dct-t2i.json) |
 | Lens | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Asymmetric cfg2 is measured; padded ring remains guarded. [Details](#model-lens) · [Workflow](../example_workflows/dgx-monarch-lens-t2i.json) |
 | Omnigen2 | ✓ | 🔒 | ✗ | ★ | ✓ | **HW** | Ulysses is unsupported; ring+FSDP refuses. [Details](#model-omnigen2) · [Workflow](../example_workflows/dgx-monarch-omnigen2-t2i.json) |
-| Anima | ✓ | ✓ | ★ | ✓ | 🔒 | **HW** | Use the supplied graph for cross-attention and masks. Explicit cfg2 was compared; auto selects Ulysses. [Details](#model-anima) · [Workflow](../example_workflows/dgx-monarch-anima-t2i.json) |
-| Boogu | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Unequal prompts use per-conditioning cfg2 dispatch. [Details](#model-boogu) · [Workflow](../example_workflows/dgx-monarch-boogu-t2i.json) |
+| Anima | ✓ | ★ | ★ | ✓ | 🔒 | **HW** | Use the supplied graph for cross-attention and masks. Auto cfg2 covers BF16 below 1.2 MP on the shipped unequal prompt pair. [Details](#model-anima) · [Workflow](../example_workflows/dgx-monarch-anima-t2i.json) |
+| Boogu | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers FP8 below 1.2 MP. Unequal prompts use per-conditioning cfg2 dispatch. [Details](#model-boogu) · [Workflow](../example_workflows/dgx-monarch-boogu-t2i.json) |
 | PixelDiT / PiD | ✓ | n/a | ★ | ✓ | ✓ | **HW** | Only BF16 was compared; quantized sequence sharding and cfg2 refuse. [Details](#model-pixeldit-pid) · [Workflow](../example_workflows/dgx-monarch-pixeldit-t2i.json) |
 | Kandinsky5-Image | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Use SD3 shift 3; preserve the native 16-channel latent. [Details](#model-kandinsky5-image) · [Workflow](../example_workflows/dgx-monarch-kandinsky5-image.json) |
 
@@ -138,7 +144,7 @@ Detail status (`Krea2 (RAW+Turbo)`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-krea2-t2i.json).
 
-**Tested configurations.** RAW/Turbo resident Ulysses, cfg2, and named BF16/FP8/INT8 paths, including blank-negative cfg2 and the FSDP comparisons linked below. Pure-Ulysses one-step renders on Torch Flash produced identical tensors to one GPU: RAW BF16 at 1536 and 1448 with odd and even text and image streams, at batch 2 and on the template, and the template on RAW INT8 ConvRot and Turbo FP8-scaled; the SAGE route that auto picks for FP8 was not part of that reading.
+**Tested configurations.** RAW/Turbo resident Ulysses, cfg2, and named BF16/FP8/INT8 paths, including blank-negative cfg2 and the FSDP comparisons linked below. Pure-Ulysses one-step renders on Torch Flash produced identical tensors to one GPU: RAW BF16 at 1536 and 1448 with odd and even text and image streams, at batch 2 and on the template, and the template on RAW INT8 ConvRot and Turbo FP8-scaled. Campaign K (2026-10-14) timed cfg2 on the template against one GPU and uly2: Turbo FP8-scaled at 1152, 1216, 1280, 1408 and 1536 square, plus a CFG 4.5 Euler control at 1536, RAW BF16 and RAW INT8 ConvRot at 1152, 1216, 1280 and 1536, and Turbo BF16 at 1536. Every cfg2 render read bit-identical to one GPU over the full schedule. The same campaign read the SAGE route at 1-step NRMS 0.030 to 0.058 against one GPU at 1152 to 1536. Auto now picks that route for FP8 above 2.36 MP, and from 1.2 MP at CFG 1 under a plain sampler.
 
 **Known limitations.** Reference latents refuse cfg2 and sequence parallelism;
 run reference-image renders on `single`. Padded ring needs a waiver and has no passing
@@ -153,13 +159,22 @@ LoRAs on a resident topology.
 
 **Workflow guidance.**
 
-Auto never selects cfg2 for Krea2. Below 1.2 MP no Krea2 row matches, so it
-takes the generic uly2 fallback; from 1.2 MP up it selects Ulysses, with SAGE
-on an FP8 checkpoint, which needs sageattention on each worker. At CFG 1 a
-plain sampler drops the unconditional pass, so cfg2 has nothing to split; a
-CFG++ sampler keeps that pass and can use explicit cfg2. On cfg2, asymmetric
-prompts are padded automatically; combined Ulysses+cfg has no such padding and
-refuses them. A zeroed negative is real conditioning and stays unmasked.
+From 1.2 to 2.36 MP auto selects cfg2 for an FP8 or BF16 checkpoint at any
+CFG other than 1, and at CFG 1 under a CFG++ sampler such as the template's
+`euler_cfg_pp`, which keeps the unconditional pass, when a DGX Monarch
+KSampler node names it. Only FP8-scaled was measured among the FP8 files;
+MXFP8 and NVFP4 share its precision class. INT8 renders keep Ulysses: their
+cfg2 read bit-identical but no faster than Ulysses below 1536 (0.97x to
+1.03x) and 1.08x faster at 1536, so choose cfg2 explicitly only where a size
+favours it. Below 1.2 MP no Krea2 row matches, so auto takes the
+generic uly2 fallback; above 2.36 MP it selects Ulysses, with SAGE on an FP8
+checkpoint, which needs sageattention on each worker. At CFG 1 a plain sampler
+drops the unconditional pass, so cfg2 has nothing to split, and auto selects
+Ulysses, with SAGE on FP8 from 1.2 MP. A Sampler Custom graph names no
+sampler, so auto treats it the same way at CFG 1. On cfg2,
+asymmetric prompts are padded automatically; combined Ulysses+cfg has no such
+padding and refuses them. A zeroed negative is real conditioning and stays
+unmasked.
 
 <a id="model-kroma"></a>
 
@@ -265,7 +280,7 @@ Detail status (`Chroma`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-chroma-t2i.json).
 
-**Tested configurations.** BF16 pure Ulysses at 1024 and 1536 and named multi-step controls; cfg2 through the mask-trim path; named FP8 and INT8 controls. FSDP support is separate from these resident comparisons.
+**Tested configurations.** BF16 pure Ulysses at 1024 and 1536 and named multi-step controls; cfg2 through the mask-trim path; named FP8 and INT8 controls. Campaign K (2026-10-14) timed cfg2 on BF16, FP8-mixed and INT8 ConvRot at 1152, 1216 and 1280 square, bit-identical to one GPU. FSDP support is separate from these resident comparisons.
 
 **Known limitations.** These comparisons do not cover ring, hybrid, effective masks, other precisions or NVFP4. NVFP4 needs its waiver even though one uneven cfg2 pair reads exact under it.
 
@@ -273,9 +288,11 @@ Detail status (`Chroma`): **HW**.
 
 **Workflow guidance.**
 
-Below 1.2 MP at any CFG other than 1, auto selects cfg2 for BF16, FP8 and
-INT8 checkpoints; from 1.2 MP up it selects Ulysses, with SAGE on FP8, which
-needs sageattention on each worker. The mask and NVFP4 guards still apply.
+Below 1.64 MP auto selects cfg2 for BF16, FP8 and INT8 checkpoints, at any
+CFG other than 1 and at CFG 1 under a CFG++ sampler that a DGX Monarch
+KSampler node names. Above 1.64 MP it selects Ulysses, with SAGE on FP8,
+which needs sageattention on each worker. The mask and NVFP4
+guards still apply.
 
 <a id="model-radiance"></a>
 
@@ -287,7 +304,7 @@ Detail status (`Radiance`): **HW**.
 
 **Tested configurations.** FP32 at 1024x1024 on Ulysses, ring2 and cfg2, including a 30-step render; Ulysses with odd-length text; FSDP against ordinary residency with the BF16 core and two replicated FP32 parameters.
 
-**Known limitations.** Unequal cfg2 prompts refuse before dispatch, because the pad mask has no latent grid in pixel space. Chroma's fixes and controls cover Radiance only on the paths tested on Radiance.
+**Known limitations.** Unequal cfg2 prompts refuse before dispatch, because the pad mask has no latent grid in pixel space. Chroma's fixes and controls cover Radiance only on the paths tested on Radiance. Radiance shares Chroma's rows, so auto picks cfg2 for it below 1.64 MP; Radiance cfg2 was compared at 1024 only.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-radiance).
 
@@ -377,7 +394,7 @@ Detail status (`LongCat-Image`): **HW**.
 
 **Tested configurations.** BF16 Ulysses at 1024 and padded 1448 square; cfg2 with unequal-prompt padding and masks; BF16 FSDP against ordinary residency.
 
-**Known limitations.** Padded ring and hybrid renders are guarded; no claim covers unlisted artifacts, LoRAs or topologies. Below 1.2 MP auto selects cfg2 only for BF16 at any CFG other than 1, because only BF16 cfg2 has been compared; other quantizations take uly2 there.
+**Known limitations.** Padded ring and hybrid renders are guarded; no claim covers unlisted artifacts, LoRAs or topologies. Below 1.2 MP auto selects cfg2 only for BF16, at any CFG other than 1 and at CFG 1 under a CFG++ sampler, because only BF16 cfg2 has been compared; other quantizations take uly2 there. From 1.2 MP auto keeps Ulysses: in Campaign K (2026-10-14) BF16 cfg2 at 1152 to 1280 ran 1.26x to 1.27x faster than uly2 but read 1-step NRMS 0.006 to 0.007 against one GPU, where uly2 read bit-identical.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-longcat-image).
 
@@ -407,9 +424,9 @@ Detail status (`Qwen-Image`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json).
 
-**Tested configurations.** Base 2512 FP8 Ulysses/cfg2 and the named FSDP presets; Edit-2511 FP8-mixed DP2/cfg2. The base-model FSDP tests do not cover Edit FSDP. Pure-Ulysses one-step renders of the base 2512 FP8 file produced identical tensors to one GPU at 1328 and 1024 with odd and even image and text streams, and at batch 2.
+**Tested configurations.** Base 2512 FP8 Ulysses/cfg2 and the named FSDP presets; Edit-2511 FP8-mixed DP2/cfg2. The base-model FSDP tests do not cover Edit FSDP. Pure-Ulysses one-step renders of the base 2512 FP8 file produced identical tensors to one GPU at 1328 and 1024 with odd and even image and text streams, and at batch 2. Campaign K (2026-10-14) timed base 2512 FP8 cfg2 at 1152, 1216, 1280 and 1328 square, bit-identical to one GPU.
 
-**Known limitations.** Default Edit `index_timestep_zero` refuses sequence sharding. Batch-one DP FSDP is refused; base-model results do not establish accuracy for Edit or other reference methods. On Ulysses, auto keeps the Init node's attention kernel and does not switch base FP8 to SAGE, because SAGE on Ulysses or ring measured over the fidelity limit; an explicit SAGE choice still runs as selected. The LoRA test graph also exceeded the limit on Ulysses with Torch Flash and cuDNN.
+**Known limitations.** Default Edit `index_timestep_zero` refuses sequence sharding. Batch-one DP FSDP is refused; base-model results do not establish accuracy for Edit or other reference methods. On Ulysses, auto keeps the Init node's attention kernel and does not switch base FP8 to SAGE, because SAGE on Ulysses or ring measured over the fidelity limit; an explicit SAGE choice still runs as selected. The LoRA test graph also exceeded the limit on Ulysses with Torch Flash and cuDNN. From 1.2 to 1.77 MP auto selects cfg2 for an FP8 checkpoint; only base 2512 was timed, and an Edit-2511 FP8 file with the same header would take that row too.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-qwen-image).
 
@@ -548,9 +565,9 @@ Detail status (`Anima`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-anima-t2i.json).
 
-**Tested configurations.** Ulysses against one GPU, DP2, and BF16 FSDP with the auxiliary adapter replicated. Explicit cfg2 on the shipped template's prompt pair read one-step NRMS 0.0 against one GPU in three records, and three `cfg2+fsdp` records matched their resident legs exactly (BF16, 1024 square).
+**Tested configurations.** Ulysses against one GPU, DP2, and BF16 FSDP with the auxiliary adapter replicated. Explicit cfg2 on the shipped template's prompt pair read one-step NRMS 0.0 against one GPU in three records, and three `cfg2+fsdp` records matched their resident legs exactly (BF16, 1024 square). Campaign K (2026-10-14) timed cfg2 on that pair at 1024 square, bit-identical to one GPU over the full schedule.
 
-**Known limitations.** Unlisted FSDP artifacts and LoRA behavior are not covered. Auto has no cfg2 row: comfy's 512-row pad lands inside the forward, so an unequal pair splits the model call at any length. The cfg2 comparison covers that one prompt pair.
+**Known limitations.** Unlisted FSDP artifacts and LoRA behavior are not covered. Below 1.2 MP auto selects cfg2 for BF16. comfy's 512-row pad lands inside the forward, so an unequal pair splits the model call at any length and cfg2 dispatches one conditioning per rank; an equal pair folds onto the slice path, whose speed is unmeasured. The cfg2 comparisons cover the shipped prompt pair.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-anima).
 
@@ -562,9 +579,9 @@ Detail status (`Boogu`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-boogu-t2i.json).
 
-**Tested configurations.** FP8 Ulysses, FSDP without changing stored precision, and cfg2 with unequal prompts. Pure-Ulysses one-step renders of the fp8 file produced identical tensors to the dp2 reference at 1024 and 1040, odd and even streams.
+**Tested configurations.** FP8 Ulysses, FSDP without changing stored precision, and cfg2 with unequal prompts. Pure-Ulysses one-step renders of the fp8 file produced identical tensors to the dp2 reference at 1024 and 1040, odd and even streams. Campaign K (2026-10-14) timed cfg2 on the shipped unequal pair at 1024 square, bit-identical to one GPU.
 
-**Known limitations.** Equal-prompt cfg2 performance has not been measured after the batching change. Do not pad a dispatching conditioning pair.
+**Known limitations.** Below 1.2 MP auto selects cfg2 for FP8. Equal-prompt cfg2 performance has not been measured after the batching change. Do not pad a dispatching conditioning pair.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-boogu).
 
@@ -590,9 +607,9 @@ Detail status (`Kandinsky5-Image`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-kandinsky5-image.json).
 
-**Tested configurations.** Ulysses and cfg2 against DP2, BF16 FSDP against ordinary residency, and the 50-step image recipe.
+**Tested configurations.** Ulysses and cfg2 against DP2, BF16 FSDP against ordinary residency, and the 50-step image recipe. Campaign K (2026-10-14) timed explicit cfg2 at 1024 square, bit-identical to one GPU.
 
-**Known limitations.** Do not apply the image shift to video variants. LoRA and unlisted variants are not covered.
+**Known limitations.** Do not apply the image shift to video variants. LoRA and unlisted variants are not covered. Auto keeps Ulysses: the image and video checkpoints share one family and precision, so a cfg2 row would move video renders too. Choose cfg2 explicitly for images.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-kandinsky5-image).
 

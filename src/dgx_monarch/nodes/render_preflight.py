@@ -21,6 +21,9 @@ from .latent_outputs import is_direct_nested_tensor
 from .render_validation import validate_render_topology
 
 LATENT_DOWNSCALE_METADATA_KEY = "_dgxm_latent_downscale"
+# Set by the sampler nodes when the sampler keeps the uncond pass at CFG 1.0,
+# so every site that resolves the topology from this latent reads the same.
+CFG_KEEPS_UNCOND_METADATA_KEY = "_dgxm_cfg_keeps_uncond"
 RESIDENT_ADOPTION_EVIDENCE_KEY = "_dgxm_adoption_evidence"
 
 
@@ -32,6 +35,24 @@ def validate_latent_downscale(value: object) -> int:
     return value
 
 
+def sampler_latent(latent: dict, sampler_name: object) -> dict:
+    """A copy of a sampler node's input latent, tagged for its sampler.
+
+    The tag marks a sampler that keeps the uncond pass at CFG 1.0
+    (topology.sampler_keeps_uncond_at_cfg1). Every site that resolves this
+    render's topology reads it off the latent, so the Gate token and the
+    render agree; an inherited tag is dropped first, so a plain sampler never
+    keeps one. latent_without_topology_metadata strips it before the wire.
+    """
+    from ..topology import sampler_keeps_uncond_at_cfg1
+
+    tagged = dict(latent)
+    tagged.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
+    if sampler_keeps_uncond_at_cfg1(sampler_name):
+        tagged[CFG_KEEPS_UNCOND_METADATA_KEY] = True
+    return tagged
+
+
 def latent_without_topology_metadata(latent: dict) -> dict:
     """Remove private input metadata before building the next result.
 
@@ -41,6 +62,7 @@ def latent_without_topology_metadata(latent: dict) -> dict:
     """
     clean = dict(latent)
     clean.pop(LATENT_DOWNSCALE_METADATA_KEY, None)
+    clean.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
     clean.pop(RESIDENT_ADOPTION_EVIDENCE_KEY, None)
     clean.pop(accuracy_waiver.STAMPED_RESULT_KEY, None)
     return clean

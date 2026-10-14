@@ -105,6 +105,10 @@ The seams, in run order:
                               optimized_attention_override exactly func, q, k,
                               v, heads, attn_precision, transformer_options and
                               _inside_attn_wrapper
+ 40. cfg++ uncond pass        every sampler the auto table's cfg++ rule names
+                              sets disable_cfg1_optimization before its first
+                              model call, the CFG 1.0 shortcut still reads
+                              that flag, and a plain sampler does not set it
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -3718,6 +3722,65 @@ def _assert_attention_keyword_handoff_seam() -> None:
     )
 
 
+def _assert_cfg_pp_uncond_pass_seam() -> None:
+    """Which samplers keep the uncond pass at CFG 1.0, and the flag that says so.
+
+    Auto may take a cfg-parallel row at CFG 1.0 only under a sampler that
+    keeps the uncond pass (topology.sampler_keeps_uncond_at_cfg1, a cfg_pp
+    suffix). comfy keeps that pass only when the sampler sets
+    disable_cfg1_optimization. A named sampler that stopped setting it would
+    hand cfg-parallel a batch of one at CFG 1.0, and every such render would
+    refuse; a sampler that sets it without the suffix only costs speed.
+    """
+    import inspect
+    import types
+
+    import comfy.k_diffusion.sampling as k_sampling
+    import comfy.samplers
+    import torch
+
+    from dgx_monarch.topology import sampler_keeps_uncond_at_cfg1
+
+    class FirstCall(Exception):
+        pass
+
+    def flag_at_first_call(name: str) -> bool:
+        seen: dict[str, bool] = {}
+
+        def model(x, sigma, **extra_args):
+            options = extra_args.get("model_options", {})
+            seen["flag"] = bool(options.get("disable_cfg1_optimization", False))
+            raise FirstCall
+
+        model_sampling = types.SimpleNamespace(noise_scale=1.0)
+        model.inner_model = types.SimpleNamespace(  # type: ignore[attr-defined]
+            model_patcher=types.SimpleNamespace(get_model_object=lambda _name: model_sampling))
+        sampler = getattr(k_sampling, f"sample_{name}")
+        try:
+            sampler(model, torch.zeros(1, 4, 8, 8), torch.tensor([1.0, 0.5, 0.0]),
+                    extra_args={"model_options": {}, "seed": 0}, disable=True)
+        except FirstCall:
+            return seen["flag"]
+        raise AssertionError(f"cfg++ seam: {name} returned without calling the model")
+
+    shortcut = inspect.getsource(comfy.samplers.sampling_function)
+    assert "disable_cfg1_optimization" in shortcut, (
+        "cfg++ seam: sampling_function's CFG 1.0 shortcut no longer reads "
+        "disable_cfg1_optimization, so the flag no longer decides the uncond pass")
+    names = [name for name in comfy.samplers.KSampler.SAMPLERS
+             if sampler_keeps_uncond_at_cfg1(name)]
+    assert names == [name for name in comfy.samplers.KSampler.SAMPLERS
+                     if name.endswith("cfg_pp")] and names, (
+        "cfg++ seam: the rule no longer names exactly the cfg_pp samplers")
+    dropped = [name for name in names if not flag_at_first_call(name)]
+    assert not dropped, (
+        f"cfg++ seam: {dropped} no longer set disable_cfg1_optimization, so auto "
+        "would take a cfg row at CFG 1.0 for a sampler that drops the uncond pass")
+    assert not flag_at_first_call("euler"), (
+        "cfg++ seam: plain euler now sets disable_cfg1_optimization, so the rule "
+        "under-reads it; widen sampler_keeps_uncond_at_cfg1")
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -3758,6 +3821,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("waiver history", _assert_waiver_history_seam),
     ("lumina attention container", _assert_lumina_attention_container_seam),
     ("attention keyword handoff", _assert_attention_keyword_handoff_seam),
+    ("cfg++ uncond pass", _assert_cfg_pp_uncond_pass_seam),
 )
 
 
