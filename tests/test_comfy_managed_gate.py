@@ -304,8 +304,9 @@ def _quarantine(worker_args, entry=None):
     mesh = MeshSpec(handle=None, topology_preset="single", attention="TORCH_FLASH",
                     sync_ulysses=True, worker_args=dict(worker_args))
     model = ModelSpec(mesh=mesh, unet_name="model.safetensors")
-    levers = _apply_persisted_quarantine(model, entry or {})
-    return model.mesh.worker_args, levers
+    # Per-combination scope: the quarantine lands on the dispatch clone, not the shared graph dict.
+    quarantined, levers = _apply_persisted_quarantine(model, entry or {})
+    return quarantined.mesh.worker_args, levers
 
 
 def test_a_quarantine_turns_the_rung_off_when_the_graph_asked_for_it():

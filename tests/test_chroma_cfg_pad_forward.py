@@ -39,6 +39,7 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from dgx_monarch.adapters import flux_family
 from dgx_monarch.adapters.base import UnsupportedModelError
 from dgx_monarch.adapters.flux_family import ChromaAdapter, _chroma_cfg_pad_trim
 
@@ -217,9 +218,15 @@ def _render_inputs(batch: int = 1, h: int = 6, w: int = 6):
     return (torch.randn(batch, RAW_CHANNELS, h, w), torch.rand(batch), torch.rand(batch))
 
 
-def _install_spy(model):
-    """Replace `model._forward` with one that records what it was called
-    with, then delegates to the forward captured right before the swap.
+def _install_spy(model, monkeypatch):
+    """Replace the class's `_forward` with one that records what it was
+    called with, then delegates to the stock class function.
+
+    The hook calls the class method, not the instance attribute, so the spy
+    sits on the class. monkeypatch puts the stock method back after the test,
+    because the module-scoped fixture shares the class with every other test
+    here. Install the spy before the hook: the hook reads the class method
+    when it is installed, not when it is called.
 
     Output equality alone cannot catch a hook that let the padded, masked
     call through unchanged: on CPU both sides reach the same attention
@@ -228,14 +235,15 @@ def _install_spy(model):
     stock's own forward receives, which is the claim: zero pad rows and no
     mask, not only a matching output.
     """
-    real_forward = model._forward
+    real_forward = type(model)._forward
     calls: list[tuple[int, object]] = []
 
-    def spy(x, timestep, context, guidance, control=None, transformer_options=None, **kwargs):
+    def spy(self, x, timestep, context, guidance, control=None, transformer_options=None, **kwargs):
         calls.append((int(context.shape[1]), kwargs.get("attention_mask")))
-        return real_forward(x, timestep, context, guidance, control, transformer_options, **kwargs)
+        return real_forward(self, x, timestep, context, guidance, control, transformer_options,
+                            **kwargs)
 
-    model._forward = spy
+    monkeypatch.setattr(type(model), "_forward", spy)
     return calls
 
 
@@ -261,7 +269,9 @@ def test_the_padded_masked_short_prompt_matches_stock_on_the_unpadded_short_prom
     assert torch.equal(trimmed, reference)
 
 
-def test_stock_actually_receives_the_trimmed_short_prompt_with_no_mask(comfy_chroma_classes):
+def test_stock_actually_receives_the_trimmed_short_prompt_with_no_mask(
+    comfy_chroma_classes, monkeypatch,
+):
     """The mechanism, not only the output (see `_install_spy`)."""
     model = _tiny_chroma(comfy_chroma_classes)
     x, timesteps, guidance = _render_inputs()
@@ -272,7 +282,7 @@ def test_stock_actually_receives_the_trimmed_short_prompt_with_no_mask(comfy_chr
     longest = -(-(long_rows + image_keys) // 8) * 8 - image_keys
     padded_short, mask_short = _equalizer_pad_and_mask(short_txt, short_rows, longest, image_keys)
 
-    calls = _install_spy(model)
+    calls = _install_spy(model, monkeypatch)
     ChromaAdapter().inject_cfg_pad_forward(model)
     model._forward(x, timesteps, padded_short, guidance, None, {}, attention_mask=mask_short)
 
@@ -280,6 +290,45 @@ def test_stock_actually_receives_the_trimmed_short_prompt_with_no_mask(comfy_chr
     rows, mask = calls[0]
     assert rows == short_rows
     assert mask is None
+
+
+def test_cfg_pad_bind_is_idempotent(comfy_chroma_classes, monkeypatch):
+    """A second install replaces the first instead of wrapping it.
+
+    The hook calls the class method, so a repeat install binds a fresh
+    wrapper over stock rather than over the first wrapper. One trim runs and
+    stock receives the trimmed prompt with no mask. Capturing the instance
+    attribute instead would nest the wrappers and trim twice.
+    """
+    model = _tiny_chroma(comfy_chroma_classes)
+    x, timesteps, guidance = _render_inputs()
+    image_keys = _image_keys(6, 6)
+    long_rows, short_rows = 5, 3
+    base_txt = torch.randn(1, long_rows, CONTEXT_DIM)
+    short_txt = base_txt[:, :short_rows].clone()
+    longest = -(-(long_rows + image_keys) // 8) * 8 - image_keys
+    padded_short, mask_short = _equalizer_pad_and_mask(short_txt, short_rows, longest, image_keys)
+
+    reference = model._forward(x, timesteps, short_txt, guidance, None, {})
+
+    trims: list[int] = []
+    real_trim = flux_family._chroma_cfg_pad_trim
+
+    def counting_trim(context, attention_mask):
+        trims.append(int(context.shape[1]))
+        return real_trim(context, attention_mask)
+
+    monkeypatch.setattr(flux_family, "_chroma_cfg_pad_trim", counting_trim)
+    calls = _install_spy(model, monkeypatch)
+    adapter = ChromaAdapter()
+    adapter.inject_cfg_pad_forward(model)
+    adapter.inject_cfg_pad_forward(model)
+    out = model._forward(x, timesteps, padded_short, guidance, None, {},
+                         attention_mask=mask_short)
+
+    assert trims == [longest]
+    assert calls == [(short_rows, None)]
+    assert torch.equal(out, reference)
 
 
 def test_the_padded_masked_long_prompt_also_matches_stock(comfy_chroma_classes):
@@ -303,7 +352,9 @@ def test_the_padded_masked_long_prompt_also_matches_stock(comfy_chroma_classes):
     assert torch.equal(trimmed, reference)
 
 
-def test_stock_actually_receives_the_trimmed_long_prompt_with_no_mask(comfy_chroma_classes):
+def test_stock_actually_receives_the_trimmed_long_prompt_with_no_mask(
+    comfy_chroma_classes, monkeypatch,
+):
     """The mechanism for the long leg, same reason as the short one above."""
     model = _tiny_chroma(comfy_chroma_classes)
     x, timesteps, guidance = _render_inputs()
@@ -313,7 +364,7 @@ def test_stock_actually_receives_the_trimmed_long_prompt_with_no_mask(comfy_chro
     longest = -(-(long_rows + image_keys) // 8) * 8 - image_keys
     padded_long, mask_long = _equalizer_pad_and_mask(long_txt, long_rows, longest, image_keys)
 
-    calls = _install_spy(model)
+    calls = _install_spy(model, monkeypatch)
     ChromaAdapter().inject_cfg_pad_forward(model)
     model._forward(x, timesteps, padded_long, guidance, None, {}, attention_mask=mask_long)
 

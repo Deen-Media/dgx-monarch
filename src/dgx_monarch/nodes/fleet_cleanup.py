@@ -115,6 +115,7 @@ def _drain_fleet_collections(
                 target=collect,
                 args=(key, item, completed),
                 name=f"dgxm-fleet-drain-{item.job_index}",
+                daemon=True,
             )
             collectors[key] = (item, thread, completed)
             thread.start()

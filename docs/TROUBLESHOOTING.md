@@ -2741,9 +2741,12 @@ aborted keeps its residency settings off, and its own next check re-decides
 them. The one exemption to the write itself is a live capacity-rescue consent
 ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
 `NO_QUARANTINE_VERDICTS` in `src/dgx_monarch/nodes/gate_inconclusive.py` lists
-the outcomes that disable no residency setting, and
+the outcomes that write no residency setting into the graph, and
 `src/dgx_monarch/nodes/gate_quarantine_scope.py` decides which combination the
-write lands on.
+write lands on. A FAIL is on that list because it never writes `lora_low_rss`
+or `slab_weights` into the graph: each render of the failed combination turns
+both settings off for itself
+([#67](#67-what-auto_gateoff-costs-and-what-it-does-not), item 2).
 
 **A check that a class-K guard stopped disables no residency setting.** A check
 renders without accuracy waivers deliberately, so a measured guard such as
@@ -2821,9 +2824,13 @@ gets under `first_use`. So, with `auto_gate=off` on a single-model render:
    the combination once with the Identity Gate node or `dgxm gate` and Fleet
    takes that exact PASS.
 2. **A FAILED check still quarantines.** `off` skips a missing proof, never
-   a measured one. A persisted FAIL for this exact combination and capability
-   context turns both residency settings off before setup whatever the widget
-   says. [#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass) is the way back.
+   a measured one. A FAIL for this exact combination and capability context,
+   persisted or measured earlier in the session, turns both residency
+   settings off for that combination's renders before setup, whatever the
+   widget says. Other checkpoints on the same Init node keep their
+   `lora_low_rss` and `slab_weights`; `comfy_managed`, if the graph sets it,
+   goes off for the whole Init node (DESIGN.md, "What a FAIL takes, and from
+   whom"). [#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass) is the way back.
 3. **`comfy_managed=on` refuses LoRA stacks.** That widget sits in the same
    Init advanced block, so its refusal is easy to blame on `auto_gate`.
    Different lever, different reason ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)), and `auto_gate` neither causes

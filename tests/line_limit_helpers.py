@@ -6,7 +6,7 @@ DEFAULT_CAP = 500
 
 CEILINGS = {
     # Lifecycle and operator coordinators retain their transaction spines here.
-    "nodes/auto_gate.py": 506, "mesh.py": 898, "cli/doctor.py": 774,
+    "mesh.py": 898, "cli/doctor.py": 774,
     "cli/actor_reaper.py": 603, "adoption_evidence.py": 732,
     # Loader, worker, and Comfy integration seams stay with the state they bind.
     "actor/unbake.py": 692, "config.py": 658, "actor/sampling.py": 620,

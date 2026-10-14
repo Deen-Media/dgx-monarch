@@ -284,7 +284,13 @@ class RenderPipeline:
         # Import lazily so common can re-export this compatibility surface
         # without a module-import cycle.
         from .. import adoption_evidence
-        from . import common, consent_waiver, gate_inconclusive, render_preflight
+        from . import (
+            common,
+            consent_waiver,
+            gate_inconclusive,
+            render_preflight,
+            render_submit,
+        )
 
         consent_waiver.validate_inherited_stamps(latent)
         adoption_evidence.require_inactive_context("RenderPipeline")
@@ -319,7 +325,12 @@ class RenderPipeline:
         self._seq += 1
         handoff = PendingRenderHandoff()
         try:
-            with self._session.activate():
+            # A dispatch whose setup differs from the live one (a FAIL's stock
+            # clone after another checkpoint's risky render, or the reverse)
+            # collects the renders still in flight first: their result leases
+            # would refuse the change.
+            with (self._session.activate(),
+                  render_submit.collect_before_setup_change(self._collect_inflight)):
                 pending = common.submit_render(
                     common.model_for_request(model, request), request, latent,
                     cfg_value, steps_hint, seq=seq, depth=self.depth,
@@ -354,6 +365,11 @@ class RenderPipeline:
                 if winner is not primary:
                     raise_with_distinct_cause(winner, cause)
             raise
+
+    def _collect_inflight(self) -> None:
+        """Collect every earlier render in FIFO order, aborting as a collection does."""
+        while self._inflight:
+            self._collect_oldest()
 
     def drain(self) -> list:
         primary: BaseException | None = None

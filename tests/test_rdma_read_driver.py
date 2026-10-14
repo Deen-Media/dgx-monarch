@@ -11,6 +11,7 @@ import torch
 import dgx_monarch.rdma_read_driver as rdma_read_driver
 import dgx_monarch.rdma_read_job as rdma_read_job
 import dgx_monarch.transfer as transfer
+from actor_lifetime_helpers import _Recorder
 from dgx_monarch.mesh_lease import SetupBoundFuture
 from dgx_monarch.rdma_ownership import HandoffRegistry
 from dgx_monarch.transfer import read_latent_result
@@ -48,6 +49,66 @@ def test_read_latent_result_rdma_works_from_a_running_event_loop():
     out = asyncio.run(_on_loop())
     assert torch.equal(out, src)
     assert buffer.dropped == 1
+
+
+def test_a_read_job_runner_is_built_as_a_daemon_thread(monkeypatch):
+    """A runner sets its own daemon flag rather than copying the flag of the
+    thread that builds it. Ownership does not change: the job stays rooted
+    until the driver exits either way."""
+    recorder = _Recorder()
+    monkeypatch.setattr(threading, "Thread", recorder)
+    job = rdma_read_job.LatentReadJob(object(), lambda *_args: None, [], [])
+
+    claim, runner, evidence = job.new_runner("dgxm-latent-read")
+
+    assert evidence is None
+    assert len(recorder.created) == 1
+    assert recorder.created[0]["daemon"] is True
+    assert recorder.created[0]["name"] == "dgxm-latent-read"
+    assert "started" not in recorder.created[0]
+    assert job.runners[-1] is runner
+    assert job.claims[-1] is claim
+
+
+def test_an_on_loop_read_runner_is_a_daemon_under_a_non_daemon_caller(monkeypatch):
+    """The runner an on-loop read starts is a daemon even when the thread that
+    owns the loop is not. The recorder passes through to a real thread, because
+    the read must run and the driver joins it."""
+    import asyncio
+
+    recorder = _Recorder()
+    runners: list[threading.Thread] = []
+    real_thread = threading.Thread
+
+    def recording_thread(*args, **kwargs):
+        thread = real_thread(*args, **kwargs)
+        if kwargs.get("name") == "dgxm-latent-read":
+            recorder(**kwargs)
+            runners.append(thread)
+        return thread
+
+    monkeypatch.setattr(threading, "Thread", recording_thread)
+    src = torch.arange(16, dtype=torch.uint8)
+    buffer = _LoopRefusingBuffer(src)
+    desc = {
+        "kind": "rdma",
+        "dtype": "uint8",
+        "shape": [16],
+        "parts": [{"buffer": buffer, "offset": 0, "length": 16}],
+    }
+
+    async def _on_loop():
+        return threading.current_thread().daemon, read_latent_result(desc)
+
+    caller_is_daemon, out = asyncio.run(_on_loop())
+    assert caller_is_daemon is False
+    assert torch.equal(out, src)
+    assert buffer.dropped == 1
+    assert len(recorder.created) == 1
+    assert recorder.created[0]["daemon"] is True
+    assert len(runners) == 1
+    assert runners[0].daemon is True
+    assert runners[0].ident is not None
 
 
 def test_on_loop_rdma_full_failure_envelope_preserves_read_error(monkeypatch):

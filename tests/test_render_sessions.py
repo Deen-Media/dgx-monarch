@@ -608,6 +608,51 @@ def test_auto_gate_quarantines_before_releasing_ceremony_owner(monkeypatch):
     contender.close()
 
 
+def test_auto_gate_fail_leaves_the_graph_policy_to_the_verdict(monkeypatch):
+    """The FAIL twin of the test above. A measured FAIL quarantines only its
+    own combination: the verdict step has already pushed that combination's
+    levers off from a per-dispatch clone, so the session pushes nothing more
+    and the policy dict every checkpoint on the Init node shares is unchanged.
+    """
+    handle = _real_handle()
+    handle.setup_key = ("ready",)
+    asked = {"lora_low_rss": True, "slab_weights": True}
+    spec = ModelSpec(
+        mesh=MeshSpec(
+            handle=handle,
+            topology_preset="uly1",
+            attention="TORCH_FLASH",
+            sync_ulysses=False,
+            worker_args=dict(asked),
+        ),
+        unet_name="model.safetensors",
+    )
+    graph_policy = spec.mesh.worker_args
+    pushed = []
+    monkeypatch.setattr(gate_mod, "ensure_live", lambda value: value)
+    monkeypatch.setattr(
+        gate_mod,
+        "_run_identity_ceremony_bound",
+        lambda *_args, **_kwargs: {"verdict": "FAIL"},
+    )
+    monkeypatch.setattr(
+        gate_identity_mod,
+        "apply_worker_policy",
+        lambda _handle, worker_args, timeout_s=600: pushed.append(dict(worker_args)) or [],
+    )
+
+    result = gate_mod.run_identity_ceremony(
+        spec, {}, {}, 1.0, 1, "auto_first_use")
+
+    assert result["verdict"] == "FAIL"
+    assert pushed == []
+    assert spec.mesh.worker_args is graph_policy
+    assert graph_policy == asked
+    contender = RenderSession(timeout_s=0)
+    contender.bind(handle)
+    contender.close()
+
+
 def test_auto_gate_retries_interrupted_atomic_quarantine_before_owner_release(
     monkeypatch,
 ):

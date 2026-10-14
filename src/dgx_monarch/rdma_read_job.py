@@ -65,7 +65,8 @@ class LatentReadJob:
         """Root a claim and its unstarted Thread before read-token publication."""
         claim = _Claim(primary)
         runner = threading.Thread(
-            target=self.run_thread, args=(claim,), name=thread_name)
+            target=self.run_thread, args=(claim,), name=thread_name,
+            daemon=True)
         evidence: BaseException | None = None
         try:
             self.claims.append(claim)

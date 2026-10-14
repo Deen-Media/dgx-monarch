@@ -16,6 +16,9 @@ from __future__ import annotations
 
 import os
 import uuid
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
@@ -58,13 +61,62 @@ from .submit_guard import SubmitRenderGuard as _SubmitRenderGuard
 from .submit_guard import run_guarded_submit
 
 if TYPE_CHECKING:
-    from .common import ModelSpec
+    from ..topology import Topology
+    from .common import MeshSpec, ModelSpec
 
 log = get_logger(__name__)
 
 _SAMPLE_TIMEOUT_S = float(os.environ.get("DGXM_SAMPLE_TIMEOUT", "3600"))
 _latent_without_topology_metadata = render_preflight.latent_without_topology_metadata
 _UNCLAIMED_ADOPTION_CONTEXT = object()
+# Render lifetime: set only while a RenderPipeline submit runs, and reset when
+# that submit returns. It collects the pipeline's earlier results, whose sample
+# leases would otherwise refuse this dispatch's setup change.
+_COLLECT_BEFORE_SETUP_CHANGE: ContextVar[Callable[[], None] | None] = ContextVar(
+    "dgxm_collect_before_setup_change", default=None)
+
+
+@contextmanager
+def collect_before_setup_change(collect: Callable[[], None]) -> Iterator[None]:
+    """Let the submits inside this block collect the caller's earlier results
+    when their dispatch needs a different setup from the live one."""
+    token = _COLLECT_BEFORE_SETUP_CHANGE.set(collect)
+    try:
+        yield
+    finally:
+        _COLLECT_BEFORE_SETUP_CHANGE.reset(token)
+
+
+def _setup_changes(handle: object, topo: Topology, spec: MeshSpec) -> bool:
+    """Whether ``ensure_setup`` for this dispatch changes the live setup.
+
+    The same two comparisons ``MeshHandle.ensure_setup`` makes: the process
+    group shape, then the worker settings with the cluster base layer merged
+    in. Either change refuses while any sample lease is live. A key that a
+    failed policy push cleared reads as a change, as it does there.
+    """
+    if not isinstance(handle, MeshHandle):
+        return False
+    shape = mesh_setup.nccl_setup_key(topo, spec.attention, spec.sync_ulysses)
+    wanted = handle._worker_args_key(handle.effective_worker_args(spec.worker_args))
+    with handle.lock:
+        return handle.setup_key != shape or handle.worker_args_key != wanted
+
+
+def _collect_earlier_results_before_setup_change(
+    handle: object, topo: Topology, spec: MeshSpec,
+) -> None:
+    """Collect a pipeline's in-flight results before this dispatch changes setup.
+
+    A per-combination quarantine gives a failed checkpoint stock settings
+    while another checkpoint on the same Init node keeps the risky ones, so
+    two dispatches in one pipeline can need different worker settings. The
+    earlier render's result lease would make the change refuse, so the
+    pipeline collects it first, the way it does before a ceremony.
+    """
+    collect = _COLLECT_BEFORE_SETUP_CHANGE.get()
+    if collect is not None and _setup_changes(handle, topo, spec):
+        collect()
 
 
 def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: float | None,
@@ -206,12 +258,15 @@ def _submit_render_guarded(
         sample_attention = resolve_sample_attention(spec.attention, sage)
         render_preflight.preflight_sol_attention(
             model, topo, sample_attention, handle)
-        _enforce_persisted_quarantine(
+        # A known FAIL quarantines this combination's dispatch only: the clone
+        # carries its levers off, and the graph's shared policy dict keeps what
+        # other checkpoints on the same Init node asked for.
+        model = _enforce_persisted_quarantine(
             model,
             handle,
             resolved_topology=topo,
             resolved_attention=sample_attention,
-        )
+        ) or model
         authorization = authorize_normal_render(
             model, handle, uncond_model_request=request.get("uncond_model"),
             gate_active=bool(getattr(_AUTO_GATE_ACTIVE, "on", False)),
@@ -232,6 +287,7 @@ def _submit_render_guarded(
         spec = model.mesh
         validate_render_topology(model, topo, latent["samples"])
         log.info("render topology: %s (%s)", topo.describe(), reason)
+        _collect_earlier_results_before_setup_change(handle, topo, spec)
         setup_token = mesh_setup.ensure_request_setup(
             handle, topo, spec.attention, spec.sync_ulysses, spec.worker_args)
         expected_adoption_context_sha256 = None

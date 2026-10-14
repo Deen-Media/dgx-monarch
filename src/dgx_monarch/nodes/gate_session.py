@@ -96,14 +96,19 @@ def run_identity_ceremony(
                     })
                 if (
                     origin == "auto_first_use"
-                    and result.get("verdict") != "PASS"
+                    and result.get("verdict") not in ("PASS", "FAIL")
                     and result.get("proof_kind") != FSDP_PROOF_KIND
                     and not is_no_material(result)
                 ):
                     # Keep quarantine inside this ceremony capability: another
                     # queue must not dispatch under the rejected risky policy.
                     # A ceremony that had nothing to prove rejected nothing, so
-                    # it takes no lever from the queues behind it.
+                    # it takes no lever from the queues behind it. A measured
+                    # FAIL is left out: it quarantines only its own
+                    # combination, the verdict step has already pushed that
+                    # combination's levers off from a per-dispatch clone, and
+                    # writing them into the graph would take them from every
+                    # other checkpoint on the same Init node.
                     runtime["_force_stock_quarantine"](
                         model, handle, timeout_s=600)
                 return result

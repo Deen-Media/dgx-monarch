@@ -267,13 +267,14 @@ class ChromaAdapter(Adapter):
     def inject_cfg_pad_forward(self, diffusion_model) -> None:
         """Remove the CFG equalizer's padding and mask before stock attention.
 
-        At cfg2 with sp == 1, each rank runs the captured stock ``_forward`` on its
-        own batch. Capturing the existing method covers both Chroma and
-        ChromaRadiance without copying their block loops. Keeping the mask would
-        select a different SDPA kernel than the unmasked single-GPU reference;
-        trimming restores the reference's inputs and kernel choice.
+        At cfg2 with sp == 1, each rank runs the stock class ``_forward`` on its
+        own batch. Chroma and ChromaRadiance each define ``_forward``, so the
+        class method covers both without copying their block loops, and a repeat
+        install replaces the bound wrapper instead of wrapping it. Keeping the
+        mask would select a different SDPA kernel than the unmasked single-GPU
+        reference; trimming restores the reference's inputs and kernel choice.
         """
-        stock_forward = diffusion_model._forward
+        stock_forward = type(diffusion_model)._forward  # class fn: idempotent, never the bind
 
         def cfg_pad_forward(self, x, timestep, context, guidance, control=None,
                             transformer_options={}, **kwargs):
@@ -283,7 +284,7 @@ class ChromaAdapter(Adapter):
                 kwargs.pop("attention_mask", None)
             else:
                 kwargs["attention_mask"] = mask
-            return stock_forward(x, timestep, context, guidance, control,
+            return stock_forward(self, x, timestep, context, guidance, control,
                                  transformer_options, **kwargs)
 
         self.bind(diffusion_model, "_forward", cfg_pad_forward)

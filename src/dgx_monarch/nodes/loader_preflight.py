@@ -37,6 +37,7 @@ from . import consent_projection, consent_rescue
 from .loader_graph import (
     DriverStackTerms,
     activation_sp_degree,
+    clear_memos,
     credited_terms,
     driver_stack_terms,
     note_stack_charged,
@@ -60,9 +61,10 @@ WINDOW_SETTLED = "resident"
 # Session lifetime, keyed by the artifact and the world it was priced under,
 # FIFO-evicted at loader_graph._MEMO_LIMIT. A stale entry can omit a charge but
 # cannot create a false refusal. recycle_drain clears this and the render-site
-# memos together. A shard build and a whole-file load are two prices for one
-# name: keyed on the name alone, a load admitted at a shard price would credit
-# a later whole-file load with weights it never held.
+# memos together. Write it only through loader_graph's `remember` and
+# `clear_memos`, which hold the memo lock. A shard build and a whole-file load
+# are two prices for one name: keyed on the name alone, a load admitted at a
+# shard price would credit a later whole-file load with weights it never held.
 _CLEARED_UNETS: dict[str, None] = {}
 
 
@@ -94,7 +96,7 @@ record_rescue_row = consent_rescue.record_rescue_row
 
 def reset_memos() -> None:
     """Drop every residency memo; `_UNPRICED_STACK_WARNED` is not one (see its comment)."""
-    _CLEARED_UNETS.clear()
+    clear_memos(_CLEARED_UNETS)
     reset_charged_artifacts()
     consent_projection.reset_grant_audit()
 

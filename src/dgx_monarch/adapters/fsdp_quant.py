@@ -9,16 +9,25 @@ layouts). Those gaps, not the scale tensors, are what keep a plain
 QuantizedTensor out of FSDP2.
 
 ``ShardedQuantWeight`` is a ``QuantizedTensor`` subclass that adds those
-structural ops, applied to the quantized bytes and to every layout
-parameter aligned with the rows (a per-row scale chunks with its rows, a
-per-tensor scale stays whole), and the two FSDP2 all-gather extension hooks:
+structural ops, applied to the quantized bytes only, and the two FSDP2
+all-gather extension hooks. Every layout parameter stays whole on every rank.
+A per-tensor scale is one value. A per-row fp32 scale is 4 bytes per row
+(144 KiB for a 36864-row weight), so each rank keeps all of it rather than
+gathering it. The wrapper records which params run along the rows once, at
+full size, and never infers that again from a shard: a shard's row count says
+nothing about its params, and inferring it there made ranks disagree on what
+to gather.
 
-* ``fsdp_pre_all_gather`` hands FSDP this rank's quantized bytes (viewed as
-  uint8, padded to FSDP2's chunk size on the ranks that need it) plus any
-  row-aligned scale, and the layout and per-tensor parameters as metadata;
+* ``fsdp_pre_all_gather`` hands FSDP exactly one input on every rank: this
+  rank's quantized bytes, viewed as uint8 and padded to FSDP2's chunk size on
+  the ranks that need it. The whole layout parameters travel as metadata;
 * ``fsdp_post_all_gather`` rebuilds the full-size wrapper around the gathered
-  bytes, so the module sees the same ``QuantizedTensor`` type it sees resident
-  and comfy's registered kernels run unchanged.
+  bytes and those whole parameters, so the module sees the same
+  ``QuantizedTensor`` type it sees resident and comfy's registered kernels run
+  unchanged.
+
+A shard's params therefore describe the full weight, not its own rows, so
+only the rebuilt wrapper may be dequantized or used in compute.
 
 Everything the class does not handle falls through to comfy_kitchen's own
 dispatch, which is what keeps the compute path the resident one. Admitted
@@ -75,7 +84,11 @@ def shard_layout_refusal(layout_cls: str, params: Any) -> str | None:
 
 
 def _row_aligned(params: Any, rows: int) -> list[str]:
-    """Names of tensor params whose first dim runs along the weight's rows."""
+    """Names of tensor params whose first dim runs along the weight's rows.
+
+    Call it only on a full-size weight (``from_quantized``). On a shard the
+    row count no longer matches the params, which stay whole.
+    """
     names = []
     for field in dataclasses.fields(params):
         value = getattr(params, field.name)
@@ -84,12 +97,14 @@ def _row_aligned(params: Any, rows: int) -> list[str]:
     return names
 
 
-def _make(cls, qdata: torch.Tensor, layout_cls: str, params: Any):
+def _make(cls, qdata: torch.Tensor, layout_cls: str, params: Any,
+          row_fields: tuple[str, ...] = ()):
     """A wrapper whose logical shape follows the (possibly chunked) qdata rows."""
     shape = tuple(qdata.shape)
     params = dataclasses.replace(params, orig_shape=shape)
     obj = cls.__new__(cls, qdata, layout_cls, params)
     cls.__init__(obj, qdata, layout_cls, params)
+    obj._row_fields = tuple(row_fields)
     return obj
 
 
@@ -104,6 +119,10 @@ def _build_class():
     class _ShardedQuantWeight(QuantizedTensor):
         """A QuantizedTensor that FSDP2 can chunk, pad, gather, and rebuild."""
 
+        # Names of the params that run along the rows, recorded once at full
+        # size. They stay whole on every shard, like every other layout param.
+        _row_fields = ()
+
         @classmethod
         def from_quantized(cls, qt):
             reason = shard_layout_refusal(qt._layout_cls, qt._params)
@@ -112,23 +131,20 @@ def _build_class():
                     RefusalClass.PHYSICS,
                     f"FSDP quantized shard: {reason}. Use a resident topology for "
                     "this checkpoint, or a per-tensor fp8 or tensorwise int8 file."))
-            return _make(cls, qt._qdata, qt._layout_cls, qt._params)
+            rows = int(qt._qdata.shape[0]) if qt._qdata.ndim else 1
+            return _make(cls, qt._qdata, qt._layout_cls, qt._params,
+                         tuple(_row_aligned(qt._params, rows)))
 
         def _rows(self) -> int:
             return int(self._qdata.shape[0]) if self._qdata.ndim else 1
 
         def _with(self, qdata: torch.Tensor, params: Any = None):
             return _make(type(self), qdata, self._layout_cls,
-                         self._params if params is None else params)
+                         self._params if params is None else params, self._row_fields)
 
         def _slice_rows(self, start: int, stop: int):
-            """Rows [start, stop) of the bytes and of every row-aligned param."""
-            rows = self._rows()
-            params = self._params
-            for name in _row_aligned(params, rows):
-                params = dataclasses.replace(
-                    params, **{name: getattr(params, name)[start:stop]})
-            return self._with(self._qdata[start:stop], params)
+            """Rows [start, stop) of the bytes; every layout param stays whole."""
+            return self._with(self._qdata[start:stop])
 
         @classmethod
         def __torch_dispatch__(cls, func, types, args=(), kwargs=None):
@@ -215,12 +231,9 @@ def _build_class():
                 raise UnsupportedModelError(
                     "FSDP quantized shard: a new buffer must keep the column shape")
             maker = self._qdata.new_zeros if zeros else self._qdata.new_empty
-            params = self._params
-            for name in _row_aligned(params, self._rows()):
-                value = getattr(params, name)
-                params = dataclasses.replace(
-                    params, **{name: value.new_zeros((size[0], *value.shape[1:]))})
-            return self._with(maker(size), params)
+            # The params are not zeroed: FSDP2 skips the copy into an empty
+            # rank's buffer, which must still carry the weight's whole scale.
+            return self._with(maker(size))
 
         def _view(self, shape):
             shape = tuple(int(s) for s in shape)
@@ -260,11 +273,11 @@ def _build_class():
                 raise TypeError(f"layout mismatch: {self._layout_cls} vs {src._layout_cls}")
             non_blocking = bool(kwargs.get("non_blocking", False))
             self._qdata.copy_(src._qdata, non_blocking=non_blocking)
-            for name in _row_aligned(self._params, self._rows()):
-                getattr(self._params, name).copy_(getattr(src._params, name), non_blocking=non_blocking)
+            # Row-aligned params are whole and shared by every wrapper cut
+            # from one weight, so a row copy never writes them.
             for field in dataclasses.fields(self._params):
                 value = getattr(src._params, field.name)
-                if isinstance(value, torch.Tensor) and field.name not in _row_aligned(self._params, self._rows()):
+                if isinstance(value, torch.Tensor) and field.name not in self._row_fields:
                     getattr(self._params, field.name).copy_(value, non_blocking=non_blocking)
             return self
 
@@ -272,46 +285,39 @@ def _build_class():
             world = mesh.size()
             rows_total = int(outer_size[0])
             padded_rows = math.ceil(rows_total / world)
+            for name in self._row_fields:
+                # Every rank holds the same whole param, so this refuses on
+                # every rank at once rather than leaving one in the gather.
+                if getattr(self._params, name).shape[0] != rows_total:
+                    raise RuntimeError(
+                        f"FSDP quantized shard: row-aligned param {name} does not "
+                        f"hold the weight's {rows_total} rows")
             qdata = self._qdata
-            row_names = _row_aligned(self._params, self._rows()) if self._rows() > 1 else []
-            # Row-aligned params on a shard have exactly the shard's rows; on a
-            # padded rank the qdata and those params both pad with zeros.
-            inputs = []
             if qdata.shape[0] != padded_rows:
                 pad = padded_rows - qdata.shape[0]
                 qdata = torch.cat([qdata, qdata.new_zeros((pad, *qdata.shape[1:]))], dim=0)
-            inputs.append(qdata.view(torch.uint8))
-            row_params = {}
-            for name in row_names:
-                value = getattr(self._params, name)
-                if value.shape[0] != padded_rows:
-                    pad = padded_rows - value.shape[0]
-                    value = torch.cat([value, value.new_zeros((pad, *value.shape[1:]))], dim=0)
-                inputs.append(value)
-                row_params[name] = value.dtype
+            # One input on every rank. Both admitted layouts store one byte per
+            # element, so the uint8 view has the padded sharded size torch
+            # requires of every input.
             metadata = {
                 "layout_cls": self._layout_cls,
                 "qdtype": self._qdata.dtype,
                 "rows": rows_total,
-                "row_params": list(row_params),
-                "params": dataclasses.replace(
-                    self._params, **dict.fromkeys(row_params, None)),
+                "params": self._params,
             }
-            return tuple(inputs), metadata
+            return (qdata.view(torch.uint8),), metadata
 
         def fsdp_post_all_gather(self, all_gather_outputs, metadata, param_dtype, *, out=None):
-            data = all_gather_outputs[0]
+            (data,) = all_gather_outputs
             rows = int(metadata["rows"])
             qdata = data.view(metadata["qdtype"])[:rows]
-            params = metadata["params"]
-            for name, gathered in zip(metadata["row_params"], all_gather_outputs[1:], strict=True):
-                params = dataclasses.replace(params, **{name: gathered[:rows]})
-            params = dataclasses.replace(params, orig_shape=tuple(qdata.shape))
+            params = dataclasses.replace(metadata["params"], orig_shape=tuple(qdata.shape))
             if out is not None:
                 out._qdata = qdata
                 out._params = params
                 return None
-            return _make(type(self), qdata, metadata["layout_cls"], params), tuple(all_gather_outputs)
+            rebuilt = _make(type(self), qdata, metadata["layout_cls"], params, self._row_fields)
+            return rebuilt, tuple(all_gather_outputs)
 
     _ShardedQuantWeight.__name__ = "ShardedQuantWeight"
     _ShardedQuantWeight.__qualname__ = "ShardedQuantWeight"

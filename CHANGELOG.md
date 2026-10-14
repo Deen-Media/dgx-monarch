@@ -2,6 +2,32 @@
 
 ## [Unreleased]
 
+- Fix five defects an external review of the dev branch confirmed. A
+  measured or persisted identity-gate FAIL now quarantines only its own
+  checkpoint combination, applied on each dispatch through a per-dispatch
+  policy clone, so other checkpoints on the same Init node keep the residency
+  levers the graph asked for and run their own first-use Gate; `comfy_managed`
+  still turns off for the whole Init node, and an unreadable ledger still
+  fails closed for the graph
+  ([TROUBLESHOOTING #67](docs/TROUBLESHOOTING.md#67-what-auto_gateoff-costs-and-what-it-does-not)).
+  Because two checkpoints on one Init node can now need different worker
+  settings, a pipelined render whose setup differs from the live one first
+  collects the renders still in flight, whose result leases would otherwise
+  refuse the change. The three verdict helpers that `auto_gate.py` held moved unchanged to
+  `nodes/gate_process_verdicts.py`. Quantized FSDP shards keep every
+  row-aligned layout parameter, such as an int8 per-row scale, whole on every
+  rank and gather only the weight bytes, so a weight whose shard holds a
+  single row, or whose rows do not split evenly across ranks, no longer hangs
+  the all-gather or rebuilds with the wrong scale; no supported checkpoint
+  reaches either case today. The Chroma cfg-pad forward hook calls the class
+  `_forward`, as the other adapters do, so installing it twice replaces the
+  wrapper instead of nesting it. The driver's scratch threads for off-loop
+  waits, RDMA read jobs and Fleet drains are daemon threads regardless of the
+  thread that created them. The loader residency memos and the consent audit
+  set are cleared and written under locks, so a **Reset attached mesh** that
+  lands during a loader preflight can no longer raise out of a memo eviction or
+  carry an audit token into the next generation, and an audit whose write
+  failed releases only its own claim, never a newer one on the same token.
 - Run the abandoned-lease reset before a Fleet queue too. When abandoned
   samples are the only obstruction, Fleet recycles the attached mesh once
   before its first dispatch, drops the driver's residency memos and dispatches

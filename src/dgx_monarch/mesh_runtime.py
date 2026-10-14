@@ -249,7 +249,7 @@ def run_blocking_off_loop(fn, timeout_s: float, thread_name: str):
         except BaseException as exc:  # re-raised on the calling thread
             holder.append((None, exc))
 
-    worker = threading.Thread(target=_capture, name=thread_name)
+    worker = threading.Thread(target=_capture, name=thread_name, daemon=True)
     worker.start()
     worker.join(timeout=timeout_s)
     if worker.is_alive() or not holder:

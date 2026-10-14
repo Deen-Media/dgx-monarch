@@ -2,9 +2,10 @@
 
 comfy_kitchen's QuantizedTensor cannot be chunked by FSDP2's init; the
 ShardedQuantWeight subclass adds the structural ops and the two all-gather
-hooks. Pinned here on CPU: chunking with row-aligned scales, the hook round
-trip for even and uneven shards, the launch admission, and a one-rank gloo
-FSDP2 forward whose module weight is the wrapper during compute.
+hooks. Pinned here on CPU: chunking that keeps every scale whole, the hook
+round trip through FSDP2's own init ops for every row count from 1 to 8 at
+world 2 and 4, the launch admission, and a one-rank gloo FSDP2 forward whose
+module weight is the wrapper during compute.
 """
 from __future__ import annotations
 
@@ -43,6 +44,44 @@ def _int8_rowwise(rows=6, cols=4):
     return QuantizedTensor.from_float(w, "TensorWiseINT8Layout", per_channel=True)
 
 
+def _int8_convrot(rows=6, cols=16):
+    w = torch.randn(rows, cols, dtype=torch.bfloat16)
+    return QuantizedTensor.from_float(w, "TensorWiseINT8Layout", per_channel=True,
+                                      convrot=True, convrot_groupsize=16)
+
+
+_LAYOUTS = {"fp8": _fp8, "int8_rowwise": _int8_rowwise, "int8_convrot": _int8_convrot}
+
+
+def _fsdp2_local_shard(full, world, rank):
+    """This rank's local shard, built with FSDP2's own init ops.
+
+    Follows torch 2.12 ``FSDPParam._init_sharded_param`` step for step (chunk
+    with empty chunks, ``new_zeros``, ``narrow``, ``copy_``, the flat view),
+    then the lazy-init re-pad in ``reset_sharded_param``, which a tensor
+    subclass always takes because it never matches the same-storage check.
+    """
+    # The chunking FSDP2's own init runs. It is private to torch, so the
+    # import stays here, where a moved symbol fails only the tests that use it.
+    from torch.distributed.fsdp._fully_shard._fsdp_common import _chunk_with_empty
+
+    chunks = _chunk_with_empty(full, world, dim=0)
+    sharded = chunks[rank]
+    padded_size = chunks[0].size()
+    padded = full.new_zeros(padded_size)
+    if sharded.numel() > 0:
+        padded.narrow(dim=0, start=0, length=sharded.size(0)).copy_(sharded)
+    assert tuple(padded.view(-1).shape) == (padded.numel(),)
+    length = sharded.size(0) if sharded.numel() > 0 else 0
+    local = padded.narrow(dim=0, start=0, length=length)
+    assert local.is_contiguous()
+    if local.size() != padded_size:
+        repad = local.new_zeros(padded_size)
+        repad.narrow(dim=0, start=0, length=length).copy_(local)
+        local = repad.narrow(dim=0, start=0, length=length)
+    return local, padded_size
+
+
 def test_admitted_kinds_and_profiles():
     assert {"fp8", "int8"} <= FSDP_ADMITTED_CHECKPOINT_KINDS
     validate_fsdp_launch_quant("fp8")
@@ -78,14 +117,19 @@ def test_chunk_pad_copy_view_keep_bytes_and_row_scales():
     qi = _int8_rowwise(7, 4)
     s = cls.from_quantized(qi)
     assert isinstance(s, QuantizedTensor) and tuple(s.shape) == (7, 4)
+    assert s._row_fields == ("scale",)
     chunks = torch.chunk(s, 2, dim=0)
     assert [tuple(c.shape) for c in chunks] == [(4, 4), (3, 4)]
-    assert [tuple(c._params.scale.shape) for c in chunks] == [(4, 1), (3, 1)]
+    # The per-row scale stays whole and shared on every chunk; a shard never
+    # infers its params from its own row count.
+    assert all(c._params.scale is qi._params.scale for c in chunks)
+    assert all(c._row_fields == ("scale",) for c in chunks)
     padded = chunks[1].new_zeros((4, 4))
-    assert tuple(padded._params.scale.shape) == (4, 1)
+    assert padded._params.scale is qi._params.scale
     padded.narrow(0, 0, 3).copy_(chunks[1])
     assert torch.equal(padded._qdata[:3], qi._qdata[4:7])
-    assert torch.equal(padded._params.scale[:3], qi._params.scale[4:7])
+    assert not padded._qdata[3:].any()
+    assert torch.equal(padded._params.scale, qi._params.scale)
     flat = padded.view(-1)
     assert tuple(flat.shape) == (16,)
     again = torch.as_strided(s, s.shape, s.stride())
@@ -95,31 +139,73 @@ def test_chunk_pad_copy_view_keep_bytes_and_row_scales():
         torch.chunk(s, 2, dim=1)
 
 
-@pytest.mark.parametrize(("make", "rows"), [(_fp8, 6), (_fp8, 7), (_int8_rowwise, 6), (_int8_rowwise, 7)])
-def test_hook_round_trip_rebuilds_the_full_wrapper(make, rows):
+@pytest.mark.parametrize("world", [2, 4])
+@pytest.mark.parametrize("rows", range(1, 9))
+@pytest.mark.parametrize("kind", sorted(_LAYOUTS))
+def test_hook_round_trip_rebuilds_the_full_wrapper(kind, rows, world):
+    """Every rank hands FSDP2 the same input count at the padded size, and
+    every rank rebuilds the original weight from its own metadata.
+
+    Before the row-aligned params stayed whole, a per-row int8 scale at world
+    2 rebuilt wrong at 2 rows, sent one input on one rank and two on the
+    other at 3 rows, and failed torch's padded-size check on rank 1 alone at
+    every odd row count from 5 up.
+    """
+    import dataclasses
+
     cls = fsdp_quant.sharded_quant_class()
-    qt = make(rows, 4)
-    s = cls.from_quantized(qt)
-    world = 2
-    chunks = torch.chunk(s, world, dim=0)
-    gathered_inputs = [c.fsdp_pre_all_gather(_Mesh(world), s.shape, s.stride(), None, None)
-                       for c in chunks]
-    sizes = {tuple(inp.shape) for inputs, _ in gathered_inputs for inp in inputs[:1]}
-    assert len(sizes) == 1  # every rank hands FSDP the padded chunk size
-    outputs = tuple(torch.cat([inputs[i] for inputs, _ in gathered_inputs], dim=0)
-                    for i in range(len(gathered_inputs[0][0])))
-    metadata = gathered_inputs[0][1]
-    full, keep = chunks[0].fsdp_post_all_gather(outputs, metadata, torch.bfloat16)
-    assert type(full) is cls and tuple(full.shape) == (rows, 4)
-    assert torch.equal(full._qdata, qt._qdata)
-    assert torch.equal(full._params.scale, qt._params.scale)
-    assert keep == outputs
-    x = torch.ones(2, 4, dtype=torch.bfloat16)
-    assert torch.allclose(torch.nn.functional.linear(x, full).float(),
+    torch.manual_seed(10 * rows + world)
+    cols = 16
+    qt = _LAYOUTS[kind](rows, cols)
+    full = cls.from_quantized(qt)
+    ranks = []
+    for rank in range(world):
+        local, padded_size = _fsdp2_local_shard(full, world, rank)
+        assert local._row_fields == full._row_fields
+        for field in dataclasses.fields(qt._params):
+            value = getattr(qt._params, field.name)
+            if isinstance(value, torch.Tensor):
+                assert torch.equal(getattr(local._params, field.name), value)  # whole on every rank
+        inputs, metadata = local.fsdp_pre_all_gather(
+            _Mesh(world), full.shape, full.stride(), None, None)
+        # torch's rule (_fsdp_param.py all_gather_inputs) holds every input
+        # of a padded rank to the padded sharded size; here every input on
+        # every rank has it.
+        assert [t.size() for t in inputs] == [padded_size]
+        ranks.append((local, inputs, metadata))
+    assert {len(inputs) for _, inputs, _ in ranks} == {1}
+    outputs = tuple(torch.cat([inputs[i] for _, inputs, _ in ranks], dim=0)
+                    for i in range(len(ranks[0][1])))
+    expected = qt._qdata.float() * qt._params.scale.float()
+    for local, _, metadata in ranks:
+        rebuilt, keep = local.fsdp_post_all_gather(outputs, metadata, torch.bfloat16)
+        assert type(rebuilt) is cls and tuple(rebuilt.shape) == (rows, cols)
+        assert rebuilt._row_fields == full._row_fields
+        assert torch.equal(rebuilt._qdata, qt._qdata)
+        assert torch.equal(rebuilt._params.scale, qt._params.scale)
+        assert torch.equal(rebuilt._qdata.float() * rebuilt._params.scale.float(), expected)
+        assert keep == outputs
+    x = torch.ones(2, cols, dtype=torch.bfloat16)
+    assert torch.allclose(torch.nn.functional.linear(x, rebuilt).float(),
                           torch.nn.functional.linear(x, qt).float())
     # The out= path rebinds the views onto the (re-allocated) gather buffers.
-    assert chunks[0].fsdp_post_all_gather(outputs, metadata, torch.bfloat16, out=full) is None
-    assert torch.equal(full._qdata, qt._qdata)
+    assert local.fsdp_post_all_gather(outputs, metadata, torch.bfloat16, out=rebuilt) is None
+    assert torch.equal(rebuilt._qdata, qt._qdata)
+    assert torch.equal(rebuilt._params.scale, qt._params.scale)
+
+
+def test_a_shard_whose_row_param_lost_its_rows_refuses_before_the_gather():
+    """The whole-param invariant is checked where FSDP2 asks for the gather
+    inputs. Every rank holds the same param, so every rank refuses together."""
+    import dataclasses
+
+    cls = fsdp_quant.sharded_quant_class()
+    full = cls.from_quantized(_int8_rowwise(6, 4))
+    local, _ = _fsdp2_local_shard(full, 2, 1)
+    sliced = local._with(local._qdata, dataclasses.replace(
+        local._params, scale=local._params.scale[:3]))
+    with pytest.raises(RuntimeError, match="does not hold the weight's 6 rows"):
+        sliced.fsdp_pre_all_gather(_Mesh(2), full.shape, full.stride(), None, None)
 
 
 def test_wrap_quantized_parameters_replaces_only_quantized_params():
@@ -133,7 +219,8 @@ def test_wrap_quantized_parameters_replaces_only_quantized_params():
     assert fsdp_quant.local_nbytes(lin.weight) == 24  # 6x4 fp8 bytes, not 2-byte bf16
 
 
-def test_fsdp2_forward_computes_on_the_wrapper(tmp_path):
+@pytest.mark.parametrize("make", [_fp8, _int8_rowwise])
+def test_fsdp2_forward_computes_on_the_wrapper(tmp_path, make):
     import torch.distributed.fsdp
     from torch.distributed.device_mesh import init_device_mesh
 
@@ -162,7 +249,7 @@ def test_fsdp2_forward_computes_on_the_wrapper(tmp_path):
             return x
 
     model = _Root()
-    qt = _fp8(4, 4)
+    qt = make(4, 4)
     model.blocks[0].lin.weight = torch.nn.Parameter(qt, requires_grad=False)
     x = torch.ones(2, 4, dtype=torch.bfloat16)
     reference = torch.nn.functional.linear(x, qt)
@@ -183,6 +270,9 @@ def test_fsdp2_forward_computes_on_the_wrapper(tmp_path):
             sharded = model.blocks[0].lin.weight
             assert type(sharded).__name__ == "DTensor"
             assert type(sharded._local_tensor) is cls
+            # The recorded row-aligned names survive Parameter and DTensor wrapping.
+            row_fields = ("scale",) if make is _int8_rowwise else ()
+            assert sharded._local_tensor._row_fields == row_fields
             with torch.no_grad():
                 out = model(x)
                 out2 = model(x)
