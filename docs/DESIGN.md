@@ -429,7 +429,7 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
 - every auto decision logs its row and reason, for example
   `auto: uly2; krea2 fp8 at 1.05 MP, world 2, table row 99 (...)`. Krea 2 lost
   its cfg2 row below 1.2 MP (crossover table row 10) and gained one for FP8
-  from 1.2 to 2.36 MP (row 15, Campaign K, 2026-10-14).
+  and BF16 from 1.2 to 2.36 MP (row 15, Campaign K, 2026-10-14).
 
 Users can always override; auto is the default widget value.
 
@@ -1896,8 +1896,9 @@ Every milestone must satisfy this checklist:
   and Chroma); the `topology_table.py` auto table rows that split
   by resolution switch at 1.2 MP. On 2026-10-14, after the 2026-10 sequence
   parallel fixes, Campaign K measured cfg2 faster than uly2 up to 1.64 MP on
-  Chroma and up to 2.36 MP on Krea2 FP8, so those families gained cfg2 rows
-  above 1.2 MP (BENCHMARKS.md).
+  Chroma and up to 2.36 MP on Krea2 FP8 and BF16, so those families gained
+  cfg2 rows above 1.2 MP; Krea2 INT8 cfg2 was exact but no faster than uly2
+  below 1536, so it kept Ulysses (BENCHMARKS.md).
 - Ideogram4 head_dim 256, FP8 pair at 1024x1024: Ulysses2 matched
   DP2 at NRMS 0.000; Ring2 measured 0.102 against the 0.100 limit.
 - Sage attention helps only fp8 with USP at high resolution (about 5-8% at

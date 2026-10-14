@@ -1801,7 +1801,7 @@
       "test_the_auto_refusal_names_presets_that_tile_the_world": "8300ba04a9f29c62",
       "test_the_cfg_one_note_still_fires_for_a_plain_sampler": "bf2600da5471655c",
       "test_the_escape_list_keeps_the_cfg_composite_and_says_who_owns_it": "f367365de9f8d230",
-      "test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy": "48e92ac53043651a",
+      "test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy": "37b1b0d630fb99a1",
       "test_validate_divisibility": "7b99ad180c061c0a",
       "test_validate_rejects_undersubscribed_dp": "c311109a5125bd9d",
       "test_video_families_usp": "ddf35fb71c828535",

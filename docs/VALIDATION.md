@@ -1336,11 +1336,12 @@ on all kernels and ring2 refused for capacity. Explicit SAGE remains selectable.
 
 ## cfg2 crossover rows (Campaign K, 2026-10-14)
 
-Campaign K compared cfg2 and uly2 with one GPU on 25 cells. Nine ran at
+Campaign K compared cfg2 and uly2 with one GPU on 34 cells. Nine ran at
 template sizes: the Krea2 template on four checkpoints plus a CFG 4.5
-control, and the Qwen-Image, Kandinsky5, Boogu and Anima templates. Fifteen
-ran at 1152, 1216 and 1280 square: Chroma BF16 and FP8-mixed, LongCat, Krea2
-Turbo FP8 and Qwen-Image. One more ran Krea2 Turbo FP8 at 1408. The cells ran
+control, and the Qwen-Image, Kandinsky5, Boogu and Anima templates.
+Twenty-four ran at 1152, 1216 and 1280 square: Chroma BF16, FP8-mixed and
+INT8 ConvRot, LongCat, Krea2 Turbo FP8, RAW BF16 and RAW INT8 ConvRot, and
+Qwen-Image. One more ran Krea2 Turbo FP8 at 1408. The cells ran
 dgx-monarch `d549f10d` (Anima: `65d14333`) and ComfyUI `e8665ca8`, with the
 first Spark capped at 2100 MHz. The reference is batch
 row 0 of a same-build dp2 render of batch 2, which carries one-GPU math.
@@ -1348,12 +1349,17 @@ row 0 of a same-build dp2 render of batch 2, which carries one-GPU math.
 lists every cell's walls, speedups and fidelity.
 
 - **Bit-identical.** cfg2's full-schedule latent and its one-step latent
-  equaled the reference exactly for Krea2 RAW BF16, Turbo BF16 and RAW INT8
-  ConvRot at 1536, Krea2 Turbo FP8-scaled at 1152, 1216, 1280, 1408 and 1536
-  (CFG 1 under `euler_cfg_pp`) and at 1536 under CFG 4.5 Euler, Chroma1-HD
-  BF16 and FP8-mixed at 1152 to 1280, Qwen-Image 2512 FP8 at 1152 to 1328,
-  and Kandinsky5 Lite image, Boogu FP8 and Anima BF16 at 1024. uly2 on Torch
-  Flash was bit-identical in every cell.
+  equaled the reference exactly for Krea2 RAW BF16 and RAW INT8 ConvRot at
+  1152, 1216, 1280 and 1536, Turbo BF16 at 1536, Krea2 Turbo FP8-scaled at
+  1152, 1216, 1280, 1408 and 1536 (CFG 1 under `euler_cfg_pp`) and at 1536
+  under CFG 4.5 Euler, Chroma1-HD BF16, FP8-mixed and INT8 ConvRot at 1152 to
+  1280, Qwen-Image 2512 FP8 at 1152 to 1328, and Kandinsky5 Lite image, Boogu
+  FP8 and Anima BF16 at 1024. uly2 on Torch Flash was bit-identical in every
+  cell.
+- **Krea2 RAW INT8.** cfg2 was exact at every size but no faster than uly2
+  below 1536: 0.97x at 1152, 0.98x at 1216, 1.03x at 1280 and 1.08x at 1536.
+  Exact is not enough for a row, so row 15 grants FP8 and BF16 only and INT8
+  keeps row 12.
 - **LongCat.** cfg2 read 1-step NRMS 0.006 to 0.007 at 1152 to 1280, and its
   full-schedule latent differed from the reference (largest absolute
   difference 2.65 to 7.62). That is under the 0.10 one-step floor, but uly2
@@ -1365,13 +1371,13 @@ lists every cell's walls, speedups and fidelity.
   schedule equaled the reference.
 - **Rows.** The bit-identical bands that beat uly2 at every measured size
   became automatic rows 15, 19, 68, 79 and 47. Each record grants only the
-  precisions measured at every measured size in its band.
+  precisions that read bit-identical and beat uly2 at every measured size in
+  its band.
 
-Not measured: Krea2 RAW BF16 and INT8 below 1536, Chroma INT8 above 1.2 MP,
-MXFP8 and NVFP4 Krea2 files, Chroma FP8-scaled and Radiance above 1024,
-Qwen-Image Edit-2511, equal prompt pairs on Boogu and Anima, which fold onto
-the slice path, and world 4. The first two take Ulysses rows. The rest can
-still reach a cfg2 row through a shared family and precision class: MXFP8 and
+Not measured: MXFP8 and NVFP4 Krea2 files, Chroma FP8-scaled and Radiance
+above 1024, Qwen-Image Edit-2511, equal prompt pairs on Boogu and Anima,
+which fold onto the slice path, and world 4. Each can still reach a cfg2 row
+through a shared family and precision class: MXFP8 and
 NVFP4 Krea2 files reach row 15 (in September, RAW NVFP4 cfg2 read 1-step NRMS
 0.0113), Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
 would reach row 68, and an equal pair takes the slice path on rows 79 and 47.

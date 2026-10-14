@@ -32,11 +32,12 @@ _INF = float("inf")
 AUTO_TABLE: tuple[AutoRule, ...] = (
     # --- krea2 (wan-family DiT, image) -----------------------------------
     AutoRule(15, "krea2", (), 1.2, 2.36, 2, {"cfg": 2}, False,
-             "cfg2 from 1.2 to 2.36 MP on FP8: Campaign K (2026-10-14, ComfyUI e8665ca8, "
-             "head capped at 2100 MHz) read Turbo fp8_scaled bit-identical to one GPU and "
-             "1.21x to 1.29x faster than uly2 with SAGE_AUTO at 1152 to 1536 square, at "
-             "CFG 1 under euler_cfg_pp and at CFG 4.5 under euler; RAW BF16 and INT8 were "
-             "measured at 1536 only and take row 12"),
+             "cfg2 from 1.2 to 2.36 MP on FP8 and BF16: Campaign K (2026-10-14, ComfyUI "
+             "e8665ca8, head capped at 2100 MHz) read Turbo fp8_scaled bit-identical to one "
+             "GPU and 1.21x to 1.29x faster than uly2 with SAGE_AUTO at 1152 to 1536 square, "
+             "at CFG 1 under euler_cfg_pp and at CFG 4.5 under euler, and RAW BF16 "
+             "bit-identical and 1.23x to 1.26x faster than uly2 at 1152 to 1536; RAW INT8 "
+             "read bit-identical but 0.97x to 1.08x against uly2 and takes row 12"),
     AutoRule(11, "krea2", ("fp8",), 1.2, _INF, 2, {"ulysses": 2}, True,
              "USP wins >= 1.5 MP; sage speeds up fp8 USP at high res (about 5-8% at 1536 in the "
              "2026-06 campaign, fp8 only; int8 was never benchmarked with sage); 2026-10-06 Turbo "
@@ -49,17 +50,19 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "USP wins >= 1.5 MP; sage is slower on bf16; 2026-10-06 RAW BF16 "
              "and INT8 uly2 bit-identical to dp2 and one GPU (BF16 at 1536 and "
              "1448, INT8 at 1536; was 1-step NRMS 0.010 BF16 and 0.016 INT8 that "
-             "day before the fix)"),
+             "day before the fix); Campaign K (2026-10-14) read RAW INT8 cfg2 "
+             "bit-identical but 0.97x to 1.08x against uly2 at 1152 to 1536, so "
+             "INT8 keeps this row where row 15 takes BF16"),
     # --- chroma (flux-family DiT) -----------------------------------------
     AutoRule(20, "chroma", (), 0.0, 1.2, 2, {"cfg": 2}, False,
              "cfg2 below 1.2 MP; on the shipped graph at 1024 square on 2026-10-01 it read "
              "bit-identical to one GPU and ran faster than uly2 on bf16, fp8 and int8"),
     AutoRule(19, "chroma", (), 1.2, 1.64, 2, {"cfg": 2}, False,
-             "cfg2 from 1.2 to 1.64 MP on BF16 and FP8: Campaign K (2026-10-14, ComfyUI "
-             "e8665ca8, head capped at 2100 MHz) read Chroma1-HD BF16 and FP8-mixed "
-             "bit-identical to one GPU at 1152, 1216 and 1280 square, 1.30x to 1.31x "
-             "faster than uly2 on BF16 and 1.26x to 1.30x faster than uly2 with SAGE_AUTO "
-             "on FP8; INT8 was not measured in this band and takes row 22"),
+             "cfg2 from 1.2 to 1.64 MP on BF16, FP8 and INT8: Campaign K (2026-10-14, "
+             "ComfyUI e8665ca8, head capped at 2100 MHz) read Chroma1-HD BF16, FP8-mixed "
+             "and INT8 ConvRot bit-identical to one GPU at 1152, 1216 and 1280 square, "
+             "1.30x to 1.31x faster than uly2 on BF16, 1.26x to 1.30x faster than uly2 "
+             "with SAGE_AUTO on FP8 and 1.17x to 1.33x faster than uly2 on INT8"),
     AutoRule(21, "chroma", ("fp8",), 1.2, _INF, 2, {"ulysses": 2}, True,
              "uly2 >= 1.5 MP; sage on for fp8 USP at high res; Campaign K (2026-10-14, "
              "head capped at 2100 MHz) read this sage route on FP8-mixed at 1152 to 1280 "

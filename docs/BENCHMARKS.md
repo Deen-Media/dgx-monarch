@@ -198,14 +198,23 @@ Method:
 | b-chroma-fp8mixed-1216 | Chroma1-HD FP8-mixed | 1216 | 1.48 | 26, 3.5, `euler` | 65.0 | 43.8 | 32.6 | 1.99x | 1.34x | 42.0 (1-step NRMS 0.065) | bit-identical |
 | b-chroma-bf16-1280 | Chroma1-HD BF16 | 1280 | 1.64 | 26, 3.5, `euler` | 97.9 | 64.6 | 49.2 | 1.99x | 1.31x | not run | bit-identical |
 | b-chroma-fp8mixed-1280 | Chroma1-HD FP8-mixed | 1280 | 1.64 | 26, 3.5, `euler` | 75.4 | 49.8 | 37.8 | 2.00x | 1.32x | 47.5 (1-step NRMS 0.057) | bit-identical |
+| c-chroma-int8-1152 | Chroma1-HD INT8 ConvRot | 1152 | 1.33 | 26, 3.5, `euler` | 61.2 | 40.3 | 30.6 | 2.00x | 1.32x | not run | bit-identical |
+| c-chroma-int8-1216 | Chroma1-HD INT8 ConvRot | 1216 | 1.48 | 26, 3.5, `euler` | 70.7 | 46.9 | 35.1 | 2.01x | 1.33x | not run | bit-identical |
+| c-chroma-int8-1280 | Chroma1-HD INT8 ConvRot | 1280 | 1.64 | 26, 3.5, `euler` | 87.8 | 51.7 | 44.0 | 2.00x | 1.17x | not run | bit-identical |
 | a07-kandinsky5-1024 | Kandinsky5 Lite image BF16 | 1024 | 1.05 | 50, 3.5, `euler` | 81.0 | 49.4 | 40.5 | 2.00x | 1.22x | not run | bit-identical |
 | b-krea2-turbo-fp8-1152 | Krea2 Turbo FP8-scaled | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 34.7 | 22.5 | 17.3 | 2.00x | 1.30x | 22.3 (1-step NRMS 0.030) | bit-identical |
 | b-krea2-turbo-fp8-1216 | Krea2 Turbo FP8-scaled | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 39.1 | 25.3 | 19.5 | 2.01x | 1.30x | 24.9 (1-step NRMS 0.033) | bit-identical |
 | b-krea2-turbo-fp8-1280 | Krea2 Turbo FP8-scaled | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 43.7 | 27.7 | 21.7 | 2.01x | 1.27x | 27.1 (1-step NRMS 0.058) | bit-identical |
 | c-krea2-turbo-fp8-1408 | Krea2 Turbo FP8-scaled | 1408 | 1.98 | 8, 1, `euler_cfg_pp` | 53.5 | 33.8 | 26.9 | 1.99x | 1.25x | 32.8 (1-step NRMS 0.030) | bit-identical |
+| c-krea2-raw-bf16-1152 | Krea2 RAW BF16 | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 40.4 | 25.3 | 20.1 | 2.01x | 1.26x | not run | bit-identical |
+| c-krea2-raw-bf16-1216 | Krea2 RAW BF16 | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 45.5 | 27.9 | 22.6 | 2.02x | 1.24x | not run | bit-identical |
+| c-krea2-raw-bf16-1280 | Krea2 RAW BF16 | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 51.0 | 31.1 | 25.2 | 2.02x | 1.23x | not run | bit-identical |
 | a01-krea2-raw-bf16-1536 | Krea2 RAW BF16 | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 72.9 | 44.8 | 36.3 | 2.01x | 1.23x | not run | bit-identical |
 | a02-krea2-turbo-bf16-1536 | Krea2 Turbo BF16 | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 72.6 | 46.3 | 36.1 | 2.01x | 1.28x | not run | bit-identical |
 | a03-krea2-turbo-fp8-1536 | Krea2 Turbo FP8-scaled | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 62.9 | 39.8 | 31.4 | 2.00x | 1.27x | 38.9 (1-step NRMS 0.042) | bit-identical |
+| c-krea2-raw-int8-1152 | Krea2 RAW INT8 ConvRot | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 40.6 | 19.6 | 20.2 | 2.01x | 0.97x | not run | bit-identical |
+| c-krea2-raw-int8-1216 | Krea2 RAW INT8 ConvRot | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 47.8 | 23.4 | 23.8 | 2.01x | 0.98x | not run | bit-identical |
+| c-krea2-raw-int8-1280 | Krea2 RAW INT8 ConvRot | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 52.5 | 27.2 | 26.3 | 1.99x | 1.03x | not run | bit-identical |
 | a04-krea2-raw-int8-1536 | Krea2 RAW INT8 ConvRot | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 82.0 | 44.8 | 41.4 | 1.98x | 1.08x | not run | bit-identical |
 | a05-krea2-turbo-fp8-1536-cfg45-euler | Krea2 Turbo FP8-scaled, control | 1536 | 2.36 | 8, 4.5, `euler` | 64.9 | 40.7 | 32.4 | 2.00x | 1.26x | 39.1 (1-step NRMS 0.041) | bit-identical |
 | b-longcat-bf16-1152 | LongCat-Image BF16 | 1152 | 1.33 | 20, 4, `euler` | 37.8 | 23.5 | 18.6 | 2.03x | 1.26x | not run | 1-step NRMS 0.007; full schedule max abs 7.62 |
@@ -218,9 +227,13 @@ Method:
 
 Reading the table:
 
-- **cfg2 beat uly2 in every cell.** It ran 1.08x (Krea2 RAW INT8 at 1536) to
-  1.66x (Qwen-Image at 1152) faster than uly2 and 1.96x to 2.10x faster than
-  one GPU. Its slowest warm leg beat uly2's fastest in every cell.
+- **cfg2 beat uly2 in every cell but Krea2 RAW INT8 below 1536.** Elsewhere
+  it ran 1.17x (Chroma INT8 at 1280) to 1.66x (Qwen-Image at 1152) faster
+  than uly2 and 1.96x to 2.10x faster than one GPU, and its slowest warm leg
+  beat uly2's fastest. Krea2 RAW INT8 read 0.97x, 0.98x and 1.03x against
+  uly2 at 1152, 1216 and 1280, and 1.08x at 1536: its uly2 leg ran 1.93x to
+  2.07x faster than one GPU, against 1.59x to 1.64x on BF16, so the split had
+  less to gain.
 - **cfg2 was bit-identical to one GPU in every cell but LongCat.** LongCat
   read 1-step NRMS 0.006 to 0.007, and its full-schedule latent differed,
   while uly2 read bit-identical on the same cells. LongCat keeps Ulysses above
@@ -228,14 +241,15 @@ Reading the table:
 - **The SAGE route bought little.** It ran 1 to 5 percent faster than Torch
   Flash uly2 and read 1-step NRMS 0.030 to 0.078 against one GPU, while Torch
   Flash uly2 read bit-identical.
-- **New automatic rows.** Krea2 FP8 from 1.2 to 2.36 MP (row 15), Chroma BF16
-  and FP8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from 1.2 to 1.77 MP
-  (row 68), Boogu FP8 below 1.2 MP (row 79) and Anima BF16 below 1.2 MP
-  (row 47). Each upper band ends at the largest size measured. The two lower
-  bands follow rows 20 and 28 and rest on one size, 1.05 MP. Each grant
-  covers only the precisions measured at every measured size in its band.
-  Krea2 RAW BF16 and INT8 were measured at 1536 only, and Kandinsky5's image
-  and video checkpoints share one family, so neither has a row.
+- **New automatic rows.** Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15),
+  Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from
+  1.2 to 1.77 MP (row 68), Boogu FP8 below 1.2 MP (row 79) and Anima BF16
+  below 1.2 MP (row 47). Each upper band ends at the largest size measured.
+  The two lower bands follow rows 20 and 28 and rest on one size, 1.05 MP.
+  Each grant covers only the precisions that read bit-identical and beat uly2
+  at every measured size in its band, so Krea2 RAW INT8 keeps Ulysses (row
+  12). Kandinsky5's image and video checkpoints share one family, so it has
+  no row.
 
 <a id="campaign-render-times-stills-2026-09-12-to-2026-09-28-head-capped"></a>
 

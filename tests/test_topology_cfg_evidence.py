@@ -116,8 +116,10 @@ def test_longcat_still_uses_its_in_band_bf16_cfg_evidence() -> None:
     [
         ("krea2", "fp8", 1.2, 4.5, 15),
         ("krea2", "fp8", 2.359, 4.5, 15),
+        ("krea2", "bf16", 1.5, 4.5, 15),
         ("chroma", "bf16", 1.5, 3.5, 19),
         ("chroma", "fp8", 1.63, 3.5, 19),
+        ("chroma", "int8", 1.5, 3.5, 19),
         ("qwen_image", "fp8", 1.76, 4.0, 68),
         ("boogu", "fp8", 1.05, 4.0, 79),
         ("anima", "bf16", 1.05, 4.0, 47),
@@ -136,15 +138,13 @@ def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, c
 @pytest.mark.parametrize(
     ("family", "quant", "megapixels", "skipped", "fallback"),
     [
-        ("krea2", "bf16", 1.5, 15, 12),
         ("krea2", "int8", 2.359, 15, 12),
-        ("chroma", "int8", 1.5, 19, 22),
         ("qwen_image", "bf16", 1.5, 68, 72),
         ("boogu", "bf16", 1.05, 79, 78),
         ("anima", "fp8", 1.05, 47, 48),
     ],
 )
-def test_campaign_k_unmeasured_kinds_fall_through_to_their_ulysses_row(
+def test_campaign_k_ungranted_kinds_fall_through_to_their_ulysses_row(
         family, quant, megapixels, skipped, fallback) -> None:
     decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=4.0)
     assert decision.topology.describe() == "uly2"
@@ -152,12 +152,26 @@ def test_campaign_k_unmeasured_kinds_fall_through_to_their_ulysses_row(
     assert decision.skipped_cfg is not None and decision.skipped_cfg.row == skipped
 
 
+def test_krea2_int8_measured_exact_but_no_faster_keeps_ulysses() -> None:
+    # Group c measured RAW INT8 cfg2 bit-identical at 1152, 1216 and 1280, but
+    # at 0.97x, 0.98x and 1.03x against uly2 (1.08x at 1536): exact is not
+    # enough, the record also needs a win at every size, so INT8 keeps row 12.
+    for megapixels in (1.33, 1.48, 1.64, 2.359):
+        decision = choose_auto_topology("krea2", "int8", megapixels, 2, cfg_value=4.0)
+        assert decision.topology.describe() == "uly2"
+        assert decision.rule.row == 12
+        assert decision.skipped_cfg is not None and decision.skipped_cfg.row == 15
+        assert "0.97x to 1.08x" in decision.reason
+
+
 @pytest.mark.parametrize(
     ("family", "quant", "edge", "row"),
     [
         ("krea2", "fp8", 2.36, 11),
+        ("krea2", "bf16", 2.36, 12),
         ("chroma", "fp8", 1.64, 21),
         ("chroma", "bf16", 1.64, 22),
+        ("chroma", "int8", 1.64, 22),
         ("qwen_image", "fp8", 1.77, 71),
         ("boogu", "fp8", 1.2, 78),
         ("anima", "bf16", 1.2, 48),

@@ -4,11 +4,13 @@
 
 - Let `auto` take cfg2 where Campaign K (2026-10-14, head capped at 2100 MHz)
   measured it bit-identical to one GPU and faster than the route it replaced:
-  Krea2 FP8 from 1.2 to 2.36 MP (row 15), Chroma BF16 and FP8 from 1.2 to
-  1.64 MP (row 19), Qwen-Image FP8 from 1.2 to 1.77 MP (row 68), and Boogu FP8
-  (row 79) and Anima BF16 (row 47) below 1.2 MP. Each row's dated evidence
-  record grants only the precisions measured at every measured size in its
-  band, and cfg2 ran 1.21x to 1.66x faster than the incumbent
+  Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15), Chroma BF16, FP8 and INT8
+  from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from 1.2 to 1.77 MP (row 68),
+  and Boogu FP8 (row 79) and Anima BF16 (row 47) below 1.2 MP. Each row's
+  dated evidence record grants only the precisions that read bit-identical and
+  beat the incumbent at every measured size in its band (Krea2 INT8 was exact
+  but no faster, so it keeps Ulysses), and the granted cfg2 ran 1.17x to 1.66x
+  faster than the incumbent
   ([BENCHMARKS](docs/BENCHMARKS.md#campaign-k-cfg2-against-uly2-2026-10-14-head-capped)).
   A cfg++ sampler at CFG 1 keeps its uncond pass, so `auto` no longer skips a
   cfg2 row when a DGX Monarch KSampler node names it, and the render finish

@@ -144,7 +144,7 @@ Detail status (`Krea2 (RAW+Turbo)`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-krea2-t2i.json).
 
-**Tested configurations.** RAW/Turbo resident Ulysses, cfg2, and named BF16/FP8/INT8 paths, including blank-negative cfg2 and the FSDP comparisons linked below. Pure-Ulysses one-step renders on Torch Flash produced identical tensors to one GPU: RAW BF16 at 1536 and 1448 with odd and even text and image streams, at batch 2 and on the template, and the template on RAW INT8 ConvRot and Turbo FP8-scaled. Campaign K (2026-10-14) timed cfg2 on the template against one GPU and uly2: Turbo FP8-scaled at 1152, 1216, 1280, 1408 and 1536 square, plus a CFG 4.5 Euler control at 1536, and RAW BF16, Turbo BF16 and RAW INT8 ConvRot at 1536. Every cfg2 render read bit-identical to one GPU over the full schedule. The same campaign read the SAGE route at 1-step NRMS 0.030 to 0.058 against one GPU at 1152 to 1536. Auto now picks that route for FP8 above 2.36 MP, and from 1.2 MP at CFG 1 under a plain sampler.
+**Tested configurations.** RAW/Turbo resident Ulysses, cfg2, and named BF16/FP8/INT8 paths, including blank-negative cfg2 and the FSDP comparisons linked below. Pure-Ulysses one-step renders on Torch Flash produced identical tensors to one GPU: RAW BF16 at 1536 and 1448 with odd and even text and image streams, at batch 2 and on the template, and the template on RAW INT8 ConvRot and Turbo FP8-scaled. Campaign K (2026-10-14) timed cfg2 on the template against one GPU and uly2: Turbo FP8-scaled at 1152, 1216, 1280, 1408 and 1536 square, plus a CFG 4.5 Euler control at 1536, RAW BF16 and RAW INT8 ConvRot at 1152, 1216, 1280 and 1536, and Turbo BF16 at 1536. Every cfg2 render read bit-identical to one GPU over the full schedule. The same campaign read the SAGE route at 1-step NRMS 0.030 to 0.058 against one GPU at 1152 to 1536. Auto now picks that route for FP8 above 2.36 MP, and from 1.2 MP at CFG 1 under a plain sampler.
 
 **Known limitations.** Reference latents refuse cfg2 and sequence parallelism;
 run reference-image renders on `single`. Padded ring needs a waiver and has no passing
@@ -159,13 +159,14 @@ LoRAs on a resident topology.
 
 **Workflow guidance.**
 
-From 1.2 to 2.36 MP auto selects cfg2 for an FP8 checkpoint at any CFG other
-than 1, and at CFG 1 under a CFG++ sampler such as the template's
+From 1.2 to 2.36 MP auto selects cfg2 for an FP8 or BF16 checkpoint at any
+CFG other than 1, and at CFG 1 under a CFG++ sampler such as the template's
 `euler_cfg_pp`, which keeps the unconditional pass, when a DGX Monarch
-KSampler node names it. Only FP8-scaled was
-measured; MXFP8 and NVFP4 files share its precision class. BF16 and INT8
-renders keep Ulysses: their cfg2 was measured at 1536 only, so choose cfg2
-explicitly for them. Below 1.2 MP no Krea2 row matches, so auto takes the
+KSampler node names it. Only FP8-scaled was measured among the FP8 files;
+MXFP8 and NVFP4 share its precision class. INT8 renders keep Ulysses: their
+cfg2 read bit-identical but no faster than Ulysses below 1536 (0.97x to
+1.03x) and 1.08x faster at 1536, so choose cfg2 explicitly only where a size
+favours it. Below 1.2 MP no Krea2 row matches, so auto takes the
 generic uly2 fallback; above 2.36 MP it selects Ulysses, with SAGE on an FP8
 checkpoint, which needs sageattention on each worker. At CFG 1 a plain sampler
 drops the unconditional pass, so cfg2 has nothing to split, and auto selects
@@ -279,7 +280,7 @@ Detail status (`Chroma`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-chroma-t2i.json).
 
-**Tested configurations.** BF16 pure Ulysses at 1024 and 1536 and named multi-step controls; cfg2 through the mask-trim path; named FP8 and INT8 controls. Campaign K (2026-10-14) timed cfg2 on BF16 and FP8-mixed at 1152, 1216 and 1280 square, bit-identical to one GPU. FSDP support is separate from these resident comparisons.
+**Tested configurations.** BF16 pure Ulysses at 1024 and 1536 and named multi-step controls; cfg2 through the mask-trim path; named FP8 and INT8 controls. Campaign K (2026-10-14) timed cfg2 on BF16, FP8-mixed and INT8 ConvRot at 1152, 1216 and 1280 square, bit-identical to one GPU. FSDP support is separate from these resident comparisons.
 
 **Known limitations.** These comparisons do not cover ring, hybrid, effective masks, other precisions or NVFP4. NVFP4 needs its waiver even though one uneven cfg2 pair reads exact under it.
 
@@ -287,10 +288,10 @@ Detail status (`Chroma`): **HW**.
 
 **Workflow guidance.**
 
-Below 1.2 MP auto selects cfg2 for BF16, FP8 and INT8 checkpoints, and from
-1.2 to 1.64 MP for BF16 and FP8, at any CFG other than 1 and at CFG 1 under a
-CFG++ sampler that a DGX Monarch KSampler node names. Above 1.64 MP, and for INT8 from 1.2 MP, it selects Ulysses,
-with SAGE on FP8, which needs sageattention on each worker. The mask and NVFP4
+Below 1.64 MP auto selects cfg2 for BF16, FP8 and INT8 checkpoints, at any
+CFG other than 1 and at CFG 1 under a CFG++ sampler that a DGX Monarch
+KSampler node names. Above 1.64 MP it selects Ulysses, with SAGE on FP8,
+which needs sageattention on each worker. The mask and NVFP4
 guards still apply.
 
 <a id="model-radiance"></a>

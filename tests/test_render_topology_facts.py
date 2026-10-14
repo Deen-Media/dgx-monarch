@@ -107,15 +107,16 @@ def test_a_cfg_pp_latent_records_the_flag_and_the_evidence_row(monkeypatch):
         "krea2", 1.0, True, 1)
 
 
-def test_an_unmeasured_kind_records_the_cfg_row_it_skipped(monkeypatch):
-    # Chroma INT8 inside row 19's band: the record grants BF16 and FP8 only,
-    # so the walk skips 19 and lands on row 22; the record names both.
-    _header_stubs(monkeypatch, "chroma", "int8", 8)
+def test_an_ungranted_kind_records_the_cfg_row_it_skipped(monkeypatch):
+    # Krea2 INT8 inside row 15's band: the record grants FP8 and BF16 only
+    # (INT8 cfg2 was exact but no faster), so the walk skips 15 and lands on
+    # row 12; the record names both.
+    _header_stubs(monkeypatch, "krea2", "int8", 8)
     resolved = common.resolve_topology(
         _model(), torch.zeros(2, 16, 152, 152), cfg_value=3.5)
     assert resolved[0].describe() == "uly2"
     facts = telemetry_facts(resolved)
-    assert (facts["auto_row"], facts["evidence_row"], facts["skipped_cfg_row"]) == (22, None, 19)
+    assert (facts["auto_row"], facts["evidence_row"], facts["skipped_cfg_row"]) == (12, None, 15)
     assert facts["batch"] == 2 and facts["keeps_uncond"] is False
 
 
