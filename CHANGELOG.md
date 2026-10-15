@@ -2,6 +2,63 @@
 
 ## [Unreleased]
 
+**Upgrading from 1.1.0.** The first update from 1.1.0 runs the 1.1.0 updater,
+so the update checks this release adds apply from the next update on. If any host's
+`~/.local/share/dgx-monarch/src` resolves into a release slot, as on the remote
+hosts of every guided multi-node setup and on every host after a verified
+update, update only with `dgxm update --verify`: plain update leaves those
+Workers on 1.1.0, and
+[TROUBLESHOOTING #118](docs/TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)
+is the repair. Turn `rdma_latent_return` off before updating, add the
+`[monarch.rdma]` target afterwards, then turn it back on. Do not add a
+`[monarch]` table before updating, because the 1.1.0 loader rejects it. Clear
+`DGXM_RDMA_QP_SPLIT` from the Worker environments before updating, and the
+other ambient variables
+[TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)
+names before the first render. The 1.1.0 updater does not install torchmonarch 0.7.0's own
+requirements (`xxhash`, `pyarrow>=17`, `numpy>=1.26`). Install `xxhash`, and
+any of the others that `pip check` names, on the driver and every Worker host.
+Until you do, `pip check` reports it and the next update in either mode
+refuses. After a verified update, rerun the editable install once so its
+metadata reads the new version
+([INSTALL](docs/INSTALL.md#upgrading-from-110)).
+
+- Add a Doctor row, `<host> worker release version`, that reads the package
+  version inside each host's release slot (`s-` from guided setup, `u-` from a
+  verified update) and fails, naming the host, both versions and
+  TROUBLESHOOTING #118, when it differs from the driver's. It parses the
+  slot's `dgx_monarch/__init__.py` and needs no config key, so it also runs
+  when the 1.1.0 updater starts this release's Doctor. A plain source
+  directory, or guided setup's link to a colocated checkout, reads OK. The
+  existing env row keeps its torchmonarch skew check.
+- Plain `dgxm update` now reads every host's source link before it fetches and
+  refuses with `release_slot_worker`, naming the host, when one resolves into a
+  release slot, because plain update cannot refresh a slot. The message gives
+  `dgxm update --verify --target <ref>` and TROUBLESHOOTING #118. A host whose
+  link cannot be read (no SSH answer, or its configured Python failed) refuses
+  with `release_slot_unknown`. Guided setup's link to a colocated checkout
+  follows the pull and does not refuse.
+- The torchmonarch skew warning for a Worker in a release slot now sends you
+  to `dgxm update --verify`, not plain update, and names TROUBLESHOOTING #118.
+  A plain host, or guided setup's link to a colocated checkout, keeps the
+  plain-update advice, which now names cluster.toml's `[cluster]` `python`
+  key.
+- Document the ambient environment refusals that already stop a mesh build or
+  a Worker start: `OTEL_EXPORTER_OTLP_ENDPOINT` while export is off, a
+  `MONARCH_RDMA_*` name the policy does not set, and a policy variable such as
+  `DGXM_RDMA_QP_SPLIT` set to another value. Each message now names its
+  remedy and TROUBLESHOOTING #119, and CLUSTER names the three variables.
+- `scripts/setup_env.sh --comfy` no longer fails on a ComfyUI that does not
+  need torchaudio. It runs the donor step only when ComfyUI's
+  `requirements.txt` lists torchaudio or its version is below 0.38.0, and
+  otherwise prints a warning and continues.
+- Correct the Kroma scope: a BF16 Kroma file reads as family krea2, so at CFG
+  other than 1 (or under a CFG++ sampler) from 1.2 to 2.36 MP auto takes Krea2
+  cfg2 row 15, which no Kroma run has tested. MODELS marks the Kroma cfg2 cell
+  as selected and untested, the Krea2 rows say row 15 covers BF16 as well as
+  FP8, and VALIDATION lists Kroma BF16 among the untested files that reach a
+  cfg2 row. `uly2` keeps the tested path.
+
 - Fill every pending row of `example_workflows/artifacts.toml`. 71 rows now
   carry a url pinned to a Hugging Face commit, with the file's size and
   sha256, and CI runs `tools/check_artifacts.py --strict`, so a row added

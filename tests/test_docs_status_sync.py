@@ -695,9 +695,10 @@ _MP_PROBES = (0.26, 0.79, 1.05, 1.19, 1.5, 2.36, 8.0)
 # under a plain sampler. choose_auto_topology drops every cfg-parallel row
 # there, because a plain sampler drops the uncond pass, so auto cannot reach
 # cfg2 for them. This is a fact about the checkpoint, not a glyph: the stars
-# below derive from it. Kroma is a Krea2 fine-tune whose template runs Euler at
-# CFG 1, so Krea2's cfg2 row never reaches it.
-_DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2", "Kroma"})
+# below derive from it. Kroma is not one: its shipped graphs run Euler at CFG 1,
+# but its model card allows CFG up to 1.5, where a BF16 file takes Krea2's cfg2
+# row (Kroma's cfg2 grant below).
+_DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2"})
 _REAL_CFG = 3.5
 
 # What the dated hardware evidence behind an **HW** row covers, per starred
@@ -714,9 +715,10 @@ _REAL_CFG = 3.5
 # entry here fails CI: the state is a review decision, and a glyph cannot
 # imply it.
 _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
+    ("Kroma", "cfg2"): ("unrun", "takes the Krea2 cfg2 row, untested on Kroma"),
     ("Kroma", "uly"): ("scoped", "BF16 and local INT8, pure Ulysses"),
     ("Krea2 (RAW+Turbo)", "cfg2"): (
-        "scoped", "Auto cfg2 covers FP8 from 1.2 to 2.36 MP"),
+        "scoped", "Auto cfg2 covers FP8 and BF16 from 1.2 to 2.36 MP"),
     ("Krea2 (RAW+Turbo)", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; detail table fp8 uly2; VALIDATION 2026-07-10 turbo fp8 uly2 vs dp2"),
     ("Chroma", "cfg2"): (

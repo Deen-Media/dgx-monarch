@@ -455,3 +455,56 @@ def test_transport_identity_is_the_rdma_block_only(isolated_policy):
 def test_policy_token_is_bounded_and_strict(token):
     with pytest.raises(ClusterConfigError):
         policy.policy_from_token(token)
+
+
+# Each ambient refusal names its cause, a remedy and TROUBLESHOOTING #119.
+_AMBIENT_REFUSALS = {
+    "otel": ("OTEL_EXPORTER_OTLP_ENDPOINT", "http://dgxm-test-endpoint.invalid:4318",
+             "ambient OTLP endpoint conflicts with disabled diagnostic export; unset "
+             "OTEL_EXPORTER_OTLP_ENDPOINT in the environment that starts this process, or set "
+             "[monarch.diagnostics] otlp_endpoint to the same URL with otlp_logs = true"),
+    "unmanaged": ("MONARCH_RDMA_DGXM_TEST_UNKNOWN", "dgxm-test-value",
+                  "unmanaged MONARCH_RDMA_ environment setting (MONARCH_RDMA_DGXM_TEST_UNKNOWN); use the "
+                  "typed policy: unset it in the environment that starts this process"),
+    "qp_split": ("DGXM_RDMA_QP_SPLIT", "2",
+                 "DGXM_RDMA_QP_SPLIT conflicts with the validated Monarch policy; unset it in the "
+                 "environment that starts this process, since the validated policy, from "
+                 "cluster.toml's [monarch] table or this release's defaults, sets it"),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_AMBIENT_REFUSALS))
+def test_each_ambient_refusal_names_its_remedy_and_troubleshooting_119(isolated_policy, monkeypatch, case):
+    name, value, text = _AMBIENT_REFUSALS[case]
+    monkeypatch.setenv(name, value)
+    with pytest.raises(ClusterConfigError) as caught:
+        policy.apply_policy(policy.MonarchPolicy())
+    message = str(caught.value)
+    assert message.startswith(text)
+    assert message.endswith("(docs/TROUBLESHOOTING.md #119)")
+    if case != "qp_split":
+        assert value not in message  # names the variable, never its value
+    assert policy.POLICY_ENV not in os.environ
+
+
+def test_worker_start_refuses_with_the_driver_text(isolated_policy, monkeypatch, tmp_path):
+    """The Worker loop applies the same policy before Monarch loads, so its
+    service log shows the text the driver raises. Of the three variables only
+    DGXM_RDMA_QP_SPLIT passes the Worker's environment filter."""
+    import subprocess
+    from pathlib import Path
+
+    monkeypatch.setenv("DGXM_RDMA_QP_SPLIT", "2")
+    with pytest.raises(ClusterConfigError) as caught:
+        policy.apply_policy(policy.MonarchPolicy(), role="driver")
+    home = tmp_path / "home"
+    home.mkdir()
+    src = Path(policy.__file__).resolve().parents[1]
+    result = subprocess.run(
+        [sys.executable, "-m", "dgx_monarch.cli.worker_loop", "--address", "tcp://127.0.0.1:26651"],
+        env={"HOME": str(home), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+             "PYTHONPATH": str(src), "DGXM_RDMA_QP_SPLIT": "2"},
+        capture_output=True, text=True, timeout=60, check=False)
+    assert result.returncode != 0
+    assert result.stderr.splitlines()[-1] == f"dgx_monarch.config_schema.ClusterConfigError: {caught.value}"
+    assert "monarch._rust_bindings" not in result.stderr

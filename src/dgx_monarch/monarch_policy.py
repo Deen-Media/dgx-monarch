@@ -23,6 +23,8 @@ from .config_schema import ClusterConfigError
 
 _DEVICE = re.compile(r"[A-Za-z0-9_.-]{1,64}\Z")
 POLICY_ENV = "DGXM_MONARCH_POLICY"
+# Every ambient-environment refusal in apply_policy names the same remedy entry.
+AMBIENT_TROUBLESHOOTING = "docs/TROUBLESHOOTING.md #119"
 _LOCK = threading.RLock()
 _ACTIVE: dict[str, Any] | None = None
 # Fixed release defaults outside the supported tuning surface. Include them
@@ -262,14 +264,26 @@ def apply_policy(policy: MonarchPolicy, host: str = "", *, role: str = "driver",
             raise RuntimeError("Monarch transport policy changed; restart this process before attaching")
         if (os.environ.get("OTEL_EXPORTER_OTLP_ENDPOINT")
                 and not policy.diagnostics.otlp_endpoint):
-            raise ClusterConfigError("ambient OTLP endpoint conflicts with disabled diagnostic export")
-        if any(key.startswith("MONARCH_RDMA_") and key not in environment for key in os.environ):
-            raise ClusterConfigError("unmanaged MONARCH_RDMA_ environment setting; use the typed policy")
+            raise ClusterConfigError(
+                "ambient OTLP endpoint conflicts with disabled diagnostic export; unset "
+                "OTEL_EXPORTER_OTLP_ENDPOINT in the environment that starts this process, or set "
+                "[monarch.diagnostics] otlp_endpoint to the same URL with otlp_logs = true "
+                f"({AMBIENT_TROUBLESHOOTING})")
+        unmanaged = sorted(key for key in os.environ if key.startswith("MONARCH_RDMA_") and key not in environment)
+        if unmanaged:
+            raise ClusterConfigError(
+                f"unmanaged MONARCH_RDMA_ environment setting ({', '.join(unmanaged[:3])}); use the "
+                "typed policy: unset it in the environment that starts this process, since "
+                f"[monarch.rdma] sets every RDMA option this release supports ({AMBIENT_TROUBLESHOOTING})")
         for key, value in environment.items():
             if key == POLICY_ENV:
                 continue
             if key in os.environ and os.environ[key] != value:
-                raise ClusterConfigError(f"{key} conflicts with the validated Monarch policy")
+                raise ClusterConfigError(
+                    f"{key} conflicts with the validated Monarch policy; unset it in the "
+                    "environment that starts this process, since the validated policy, from "
+                    "cluster.toml's [monarch] table or this release's defaults, sets it "
+                    f"({AMBIENT_TROUBLESHOOTING})")
         # The exporter is initialized at native import. configure_policy must
         # see the original environment to detect an already imported runtime.
         os.environ.update({key: value for key, value in environment.items()

@@ -13,6 +13,8 @@ from typing import Protocol
 from ..config import ClusterConfig
 from . import lifecycle, probe_certainty
 from .legacy_update_dependencies import preflight as dependency_preflight
+from .release_slot import TROUBLESHOOTING as SLOT_TROUBLESHOOTING
+from .release_slot import release_slot_hosts
 from .update_lock import UpdateLock, UpdateLockUnavailable
 
 DriverProbe = Callable[[str | None], tuple[str | None, bool]]
@@ -143,6 +145,37 @@ def _fetch_candidate(repo: Path) -> tuple[str, bool] | None:
     return heads[0], True
 
 
+def _release_slot_refusal(config: ClusterConfig) -> int | None:
+    """Refuse before the fetch when any Worker runs from a release slot, or when one went unread.
+
+    Plain update pulls the driver forward and leaves every slot where it was,
+    so it would split the cluster. A source link that resolves outside
+    releases/, as guided setup's link to a colocated checkout does, follows
+    the pull and does not refuse.
+    """
+    slots, unobserved = release_slot_hosts(config)
+    for host, token in slots:
+        print(
+            f"refusing to update: {host.name} runs its Worker from release slot {token} "
+            "(release_slot_worker). Its ~/.local/share/dgx-monarch/src links into releases/, and "
+            "plain `dgxm update` cannot refresh a release slot: the driver would move while that "
+            "Worker stays on its old release. Run `dgxm update --verify --target <ref>` instead "
+            f"({SLOT_TROUBLESHOOTING}). Nothing was fetched or changed.",
+            file=sys.stderr,
+        )
+    if slots:
+        return 2
+    for host in unobserved:
+        print(
+            f"refusing to update: the source link on {host.name} could not be read "
+            "(release_slot_unknown), so whether its Worker runs from a release slot, which plain "
+            "`dgxm update` cannot refresh, is unknown. Rerun once that host answers "
+            f"({SLOT_TROUBLESHOOTING}). Nothing was fetched or changed.",
+            file=sys.stderr,
+        )
+    return probe_certainty.UNKNOWN_EXIT if unobserved else None
+
+
 def _run_locked(
     args: _Args,
     *,
@@ -174,6 +207,11 @@ def _run_locked(
             file=sys.stderr,
         )
         return probe_certainty.UNKNOWN_EXIT
+    config = load_config(args)
+    if config is not None and config.hosts:
+        refused = _release_slot_refusal(config)
+        if refused is not None:
+            return refused
     candidate: str | None = None
     merge = False
     if (repo / ".git").is_dir():
@@ -215,7 +253,6 @@ def _run_locked(
         print(f"cannot determine the exact torchmonarch pin: {exc}", file=sys.stderr)
         return 1
 
-    config = load_config(args)
     if not dependency_preflight(pin, dependencies, config):
         unmoved = (" The checkout stays at its current commit; the fetch moved only "
                    "remote-tracking refs." if candidate is not None else "")

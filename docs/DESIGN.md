@@ -1711,6 +1711,7 @@ dgx-monarch/
 │       ├── comfy_top_signal.py # owned foreground signal observation and startup gate
 │       ├── legacy_init.py      # compatibility interactive config writer
 │       ├── legacy_update.py    # compatibility pull/sync/restart update
+│       ├── release_slot.py     # read-only release-slot probe for Doctor and plain update
 │       ├── lifecycle.py        # Worker service lifecycle and package/pin effects
 │       ├── lifecycle_generation.py # Worker generation marker/fence capabilities
 │       ├── lifecycle_host.py   # host certainty, locality, and listener proofs
@@ -1976,6 +1977,7 @@ Every milestone must satisfy this checklist:
 - On unified memory the page cache competes with GPU allocations and the
   ComfyUI planner reads free memory, so doctor warns and suggests drop_caches.
 - Monarch bring-up failures map to preflight checks and troubleshooting entries.
-- `scripts/setup_env.sh` documents the torchaudio constraint on aarch64.
+- `scripts/setup_env.sh` documents the aarch64 torchaudio constraint, which
+  applies only to ComfyUI before v0.38.0.
 
 Measurement scope and limitations are recorded in [VALIDATION.md](VALIDATION.md).

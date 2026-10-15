@@ -22,7 +22,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 
 | Model | Workflows | Before you start |
 |---|---|---|
-| [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Auto picks cfg2 for FP8 from 1.2 to 2.36 MP, including the template's CFG++ sampler at CFG 1, and Ulysses elsewhere. Reference images require `single`. |
+| [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Auto picks cfg2 for FP8 and BF16 from 1.2 to 2.36 MP, including the template's CFG++ sampler at CFG 1, and Ulysses elsewhere. Reference images require `single`. |
 | [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. BF16, local INT8 and BF16 refinement matched their own stock references. See the [tested configurations](VALIDATION.md#evidence-kroma). |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
@@ -84,8 +84,8 @@ that match the tested configurations in its model details. See
 
 | Model | single | cfg2 | Ulysses | ring | FSDP | Status | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
-| Krea2 (RAW+Turbo) | ✓ | ★ | ★ | 🔒 | ✓ | **HW** | Auto cfg2 covers FP8 from 1.2 to 2.36 MP; padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
-| Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. Plain Euler at CFG 1 leaves cfg2 nothing to split; padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
+| Krea2 (RAW+Turbo) | ✓ | ★ | ★ | 🔒 | ✓ | **HW** | Auto cfg2 covers FP8 and BF16 from 1.2 to 2.36 MP; padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
+| Kroma | ✓ | ★⏳ | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. At CFG other than 1, or at CFG 1 under a CFG++ sampler, a BF16 file from 1.2 to 2.36 MP takes the Krea2 cfg2 row, untested on Kroma; `uly2` keeps the tested path. Padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
 | Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
@@ -232,9 +232,14 @@ Euler/simple and CFG 1. This reproduces the sample's processing stages;
 it costs another sampling pass and can change details.
 
 **Parallel modes and validation.** `auto` uses the Krea2 topology policy:
-one local device without a cluster, or Ulysses on a configured pair. BF16 and
-INT8 use Torch Flash. Plain Euler at CFG 1 has no unconditional pass for cfg2
-to split. Reference-image conditioning requires `single`; padded ring retains
+one local device without a cluster, or Ulysses on a configured pair for the
+shipped graphs. BF16 and INT8 use Torch Flash. Plain Euler at CFG 1 has no
+unconditional pass for cfg2 to split. At CFG other than 1, or at CFG 1 under a
+CFG++ sampler that a DGX Monarch KSampler node names, a BF16 Kroma file from
+1.2 to 2.36 MP takes Krea2 cfg2 row 15. That row was measured on Krea2 files
+only, and no Kroma run has tested cfg2; select `uly2` to keep the tested path.
+INT8 files keep Ulysses, and the shipped 1024×1024 graphs and the 2048×2048
+refinement fall outside that band. Reference-image conditioning requires `single`; padded ring retains
 the Krea2 waiver boundary. LoRA remains untested and retains the
 [Krea2 restrictions](#model-krea2-raw-turbo). The full 8-step BF16 and local
 INT8 graphs at 1024×1024 matched

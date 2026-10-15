@@ -141,7 +141,13 @@ equals the `client_bind` IP, the rule the qualifier also applies; when none
 matches, as on a driver box without a Worker, it uses `target` and logs one
 WARNING. With native return on, the driver checks every host's resolved target
 before it starts any process. Conflicting ambient
-environment variables are refused. A transport-policy change requires a fresh
+environment variables are refused on every mesh build, in local mode too:
+`OTEL_EXPORTER_OTLP_ENDPOINT` while export is off, a `MONARCH_RDMA_*` name the
+policy does not set, and `DGXM_RDMA_QP_SPLIT` or another policy variable set to
+a value other than the policy's. A Worker refuses to start on a mismatched
+`DGXM_RDMA_QP_SPLIT`, the only one of these its environment filter keeps
+([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+A transport-policy change requires a fresh
 process; it cannot change an already initialized RDMA manager safely. Preserve
 Worker ownership and follow the reviewed update/restart procedure in
 [Changing policy after install](#changing-policy-after-install). A failed native
@@ -174,8 +180,10 @@ refuses with a typed error that names the reason, before any process starts.
 happens when you add or change the endpoint after a mesh was built: restart
 ComfyUI. `ambient_otlp_endpoint_conflict` means `OTEL_EXPORTER_OTLP_ENDPOINT` in
 the ComfyUI environment names another endpoint: make `otlp_endpoint` match it,
-or unset the variable and restart ComfyUI. Removing a configured endpoint also
-needs a restart. An actor or Worker that cannot start a requested export logs
+or unset the variable and restart ComfyUI. With export off, the same variable
+refuses every mesh build
+([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+Removing a configured endpoint also needs a restart. An actor or Worker that cannot start a requested export logs
 an ERROR with the reason and keeps running. A refused edit leaves the driver's
 running export alone. When the driver accepts an edit but cannot stop the old
 workers, for example because a render still holds them, it puts back that
