@@ -135,6 +135,11 @@ def test_the_synthetic_vae_entry_takes_no_row():
 def test_placeholder_rows_are_the_names_a_reader_supplies():
     placeholders = {ref for ref, row in _rows().items() if row.get("placeholder")}
     assert placeholders == {
+        # The tested CogVideoX files were local ComfyUI-layout conversions of
+        # the diffusers-layout download, and no public copy matches them; a
+        # reader converts their own and stages it under the same name.
+        "diffusion_models/CogVideoX_1_5_5b_I2V_bf16.safetensors",
+        "diffusion_models/CogVideoX_1_5_5b_T2V_bf16.safetensors",
         # The tested INT8 conversion's hash lives in docs/VALIDATION.md; a
         # reader stages their own conversion under this name.
         "diffusion_models/kromaKrea2_opd.safetensors",
@@ -148,16 +153,12 @@ def test_placeholder_rows_are_the_names_a_reader_supplies():
         assert row["note"], f"{ref}: a placeholder row says who supplies the file"
 
 
-def test_a_pending_row_reports_but_does_not_fail(capsys):
-    assert check_artifacts.main([]) == 0
-    output = capsys.readouterr().out
-    assert "pending" in output
-    pending = check_artifacts.report_pending(_manifest()["artifact"])
-    assert pending, "the set is fully filled; drop this check and turn on --strict"
-
-
-def test_strict_fails_while_any_row_is_pending():
-    assert check_artifacts.main(["--strict"]) == 1
+def test_every_row_is_filled_or_a_placeholder(capsys):
+    # CI runs the check with --strict, so a row added without its url, size
+    # and sha256 fails there; this names the row in the local suite too.
+    assert check_artifacts.report_pending(_manifest()["artifact"]) == []
+    assert check_artifacts.main(["--strict"]) == 0
+    assert "pending" not in capsys.readouterr().out
 
 
 def test_sync_writes_the_committed_manifest_back(tmp_path):
@@ -167,6 +168,17 @@ def test_sync_writes_the_committed_manifest_back(tmp_path):
     assert copy.read_text(encoding="utf-8") == MANIFEST.read_text(encoding="utf-8")
 
 
+# Every ordinary row is filled, so the cases below that need a blank
+# url, size and sha256 turn the last placeholder row into an ordinary row
+# and break one field of it.
+_SLOT = 'note = "the second slot of the same example stack"\n'
+_LAST_PLACEHOLDER = 'placeholder = true\n' + _SLOT + 'url = ""\nsize = 0\nsha256 = ""'
+
+
+def _ordinary(url: str = '""', size: str = "0", sha256: str = '""') -> str:
+    return f"{_SLOT}url = {url}\nsize = {size}\nsha256 = {sha256}"
+
+
 @pytest.mark.parametrize(("old", "new", "says"), [
     # A rename on one side: the file a template names has no row.
     ('file = "ae.safetensors"', 'file = "ae_v2.safetensors"', "has no row"),
@@ -174,23 +186,17 @@ def test_sync_writes_the_committed_manifest_back(tmp_path):
     ('file = "ae.safetensors"', 'file = "../ae.safetensors"', "bare filename"),
     ('file = "ae.safetensors"', 'file = "sub/ae.safetensors"', "bare filename"),
     # https only, and only a real hash.
-    ('url = ""\nsize = 0\nsha256 = ""\n\n[templates]',
-     'url = "http://example.test/a"\nsize = 0\nsha256 = ""\n\n[templates]',
+    (_LAST_PLACEHOLDER, _ordinary(url='"http://example.test/a"'),
      "url must be https"),
-    ('url = ""\nsize = 0\nsha256 = ""\n\n[templates]',
-     'url = ""\nsize = 0\nsha256 = "abc"\n\n[templates]',
-     "64 lowercase hex"),
-    ('url = ""\nsize = 0\nsha256 = ""\n\n[templates]',
-     'url = ""\nsize = -1\nsha256 = ""\n\n[templates]',
-     "size must be a byte count"),
+    (_LAST_PLACEHOLDER, _ordinary(sha256='"abc"'), "64 lowercase hex"),
+    (_LAST_PLACEHOLDER, _ordinary(size="-1"), "size must be a byte count"),
     # A typo in a field name would read as pending for ever.
     ('dest = "clip_vision"', 'dest = "clip_vision"\nsha265 = ""', "unknown keys"),
     ('dest = "clip_vision"', 'dest = "clipvision"', "is not one of"),
     # render() is the only writer and the check compares its output against
     # the committed file, so a value it cannot write back is a bad row, not a
     # traceback. An operator fills urls by hand, which is where one arrives.
-    ('url = ""\nsize = 0\nsha256 = ""\n\n[templates]',
-     'url = "https://example.test/a\\"b"\nsize = 0\nsha256 = ""\n\n[templates]',
+    (_LAST_PLACEHOLDER, _ordinary(url='"https://example.test/a\\"b"'),
      "quote or a backslash"),
     # A placeholder row filled in every field, with a size that is not a
     # number, reads its size like any other row: it reports rather than
@@ -265,9 +271,19 @@ def _chroma_manifest(*, url: str, size: int, sha256: str) -> str:
     return check_artifacts.render(rows, manifest["templates"])
 
 
-def test_a_filled_row_passes_and_stops_being_pending(tmp_path):
+def test_a_filled_row_passes_and_stops_being_pending(tmp_path, capsys):
     pending = _chroma_manifest(url="", size=0, sha256="")
     assert _run(tmp_path, pending) == 0
+    report = capsys.readouterr()
+    assert "pending: 1 rows" in report.out
+    assert "--pending names them" in report.out
+    assert not report.err
+    assert _run(tmp_path, pending, "--pending") == 0
+    assert "Chroma1-HD-fp8mixed.safetensors" in capsys.readouterr().out
+    assert _run(tmp_path, pending, "--strict") == 1
+    report = capsys.readouterr()
+    assert "pending: 1 rows" in report.out
+    assert "--strict: a pending row is a failure" in report.err
     pending_rows = check_artifacts.report_pending(tomllib.loads(pending)["artifact"])
     assert any("Chroma1-HD-fp8mixed.safetensors" in row for row in pending_rows)
 
@@ -276,7 +292,7 @@ def test_a_filled_row_passes_and_stops_being_pending(tmp_path):
         size=1264219396,
         sha256="a1" * 32,
     )
-    assert _run(tmp_path, filled) == 0
+    assert _run(tmp_path, filled, "--strict") == 0
     still = check_artifacts.report_pending(tomllib.loads(filled)["artifact"])
     assert len(still) == len(pending_rows) - 1
     assert not any("Chroma1-HD-fp8mixed.safetensors" in row for row in still)

@@ -86,8 +86,9 @@ jobs:
           python tools/gen_brand_assets.py --check
           python tools/gen_template_cards.py --check
           # Offline check: read templates and their manifest, without network or model
-          # access. Unfilled operator rows remain pending and do not fail CI.
-          python tools/check_artifacts.py
+          # access. Every row carries a url, size and sha256 or is a placeholder,
+          # so --strict fails a row added without them.
+          python tools/check_artifacts.py --strict
           for script in scripts/*.sh; do bash -n "$script"; done
           shellcheck scripts/*.sh
           # Check all browser assets: a syntax error in any imported sibling can

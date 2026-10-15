@@ -2,6 +2,28 @@
 
 ## [Unreleased]
 
+- Fill every pending row of `example_workflows/artifacts.toml`. 71 rows now
+  carry a url pinned to a Hugging Face commit, with the file's size and
+  sha256, and CI runs `tools/check_artifacts.py --strict`, so a row added
+  without them fails. For 69 of them the vendor's sha256 at that commit
+  matches the copy staged on the test host. The LTX 2.5 Gemma 4 encoder row
+  pins the vendor's current revision: the vendor replaced the file in August
+  2026 to align it with the LTX-2.5 checkpoints after the August ladders ran,
+  so the four LTX 2.5 template shapes were rendered again with the current
+  file at one denoise step against a stock single-GPU reference and passed
+  the same gate ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-5-t2v-av-packed)).
+  The two HunyuanImage 2.1 refiner files were downloaded again from the
+  pinned commit and hash to their rows, which also match the full-file hashes
+  a July 2026 acceptance run took of the earlier staged copies on both test
+  hosts. The two CogVideoX 1.5 checkpoints become
+  placeholder rows: the tested files were local ComfyUI-layout conversions of
+  the diffusers-layout download, and no public copy matches them. Each row's
+  note and template note name the source download and the layout to convert
+  it to, and the troubleshooting entry now gives the full key rename. The LTX
+  2.5 template note also says that a download needs a Hugging Face token from
+  the account that accepted the license
+  ([INSTALL](docs/INSTALL.md#model-files-required-by-each-template),
+  [TROUBLESHOOTING #102](docs/TROUBLESHOOTING.md#102-a-cogvideox-checkpoint-reads-family-unknown-or-comfyui-will-not-load-it)).
 - Detect, record and waive a per-module attention kernel pin where it runs,
   on topologies without sequence parallelism (closes issue #30). ComfyUI lets
   a checkpoint, or a LoRA with `.comfy_attention.config` keys, pin

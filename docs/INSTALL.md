@@ -331,12 +331,13 @@ mesh even when every per-host process and listener row is healthy.
 
 `example_workflows/artifacts.toml` lists model files for the public examples
 and generated test fixtures under `tests/fixtures/workflows/generated/`.
-For installation, use the files listed for your selected public workflow.
-Test placeholders are for contributors and are not downloads. Each file has
-a models subfolder, source URL, size and sha256; each workflow lists the files
-it needs. Shared files,
-such as the Flux VAE and UMT5 text encoder, have one row each. Demo image,
-video and audio inputs are excluded.
+For installation, use the files listed for your selected public workflow;
+rows that only test fixtures name are for contributors. Each file has a
+models subfolder, and each workflow lists the files it needs. Each file you
+download also has a source URL, size and sha256. Placeholder rows, described
+below, name files you supply yourself. Shared files, such as the Flux VAE and
+UMT5 text encoder, have one row each. Demo image, video and audio inputs are
+excluded.
 
 Check which files are already installed:
 
@@ -352,17 +353,29 @@ reading each in full, and treats a hash mismatch the same way.
 Without `--models-dir`, it performs CI's repository checks: valid rows, a row
 for every template model file, and a template reference for every row.
 
+Each `url` names a fixed Hugging Face commit, so it serves the bytes the
+row's `sha256` describes even after the vendor replaces the file on its main
+branch. The LTX 2.5 files are in a gated repo: accept its license on Hugging
+Face, then download them with a Hugging Face token from that account.
+
 A row with a blank `url` or `sha256`, or a `size` of 0, is pending. The check
 reports pending rows and passes; `--pending` names them, and `--strict` fails
-on them once the set is filled. `--capture` with the same `--models-dir` first
-syncs, then sets `size` and `sha256` from each staged file, replacing any value
-already there, and writes the manifest back; it never fills `url`. Rows
-marked `placeholder = true` name example LoRAs to replace with your own files;
-they remain placeholders and do not count as pending.
+on them. Every committed row is filled or a placeholder, and CI runs the check
+with `--strict`. `--capture` with the same `--models-dir` first syncs, then
+sets `size` and `sha256` from each staged file, replacing any value already
+there, and writes the manifest back; it never fills `url`. Rows marked
+`placeholder = true` name files you supply yourself: the example and sweep
+LoRA names, and local conversions with no public download, such as the
+ComfyUI-layout CogVideoX checkpoints and the Kroma INT8 file. Each such row's
+`note` says who supplies the file. They carry no url, size or sha256 and do
+not count as pending.
 
 After a template changes which files it loads, rebuild the rows and
-per-template lists with `python tools/check_artifacts.py --sync` and commit
-the result.
+per-template lists with `python tools/check_artifacts.py --sync`. Before you
+commit the result, fill each new row's `url`, `size` and `sha256` from a
+public file that matches the tested file byte for byte, or mark the row
+`placeholder = true` with a `note`. CI runs the check with `--strict`, so a
+new row left pending fails it.
 
 ## Multi-node source installation
 

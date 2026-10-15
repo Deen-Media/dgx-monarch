@@ -2480,9 +2480,15 @@ TEMPLATES = {
              "official template asks for 1280x720 and lands on this same latent, "
              "because Empty LTXV Latent Video builds height//32 rows and the model "
              "card wants both dimensions divisible by 32. Needs ComfyUI at "
-             "bd34f338 or newer. The LTX 2.5 files sit behind a gated Hugging Face "
-             "repo, so accept the license on Lightricks/LTX-2.5 first or the "
-             "downloads fail. " + FRAMES + " " + GATE + " Expects "
+             "bd34f338 or newer. The LTX 2.5 files are in a gated Hugging Face "
+             "repo: accept the license on Lightricks/LTX-2.5, then download with a "
+             "Hugging Face token from that account, or the downloads fail. The "
+             "Gemma 4 encoder row in example_workflows/artifacts.toml pins the current "
+             "vendor revision of that file, the one these templates were last "
+             "tested with. The vendor replaced the earlier revision in August 2026 "
+             "to align it with the LTX-2.5 checkpoints, so a copy downloaded "
+             "before then has a different sha256 and gives different output. "
+             + FRAMES + " " + GATE + " Expects "
              "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors in "
              "models/diffusion_models, "
              "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors in "
@@ -3242,7 +3248,10 @@ TEMPLATES = {
              "raises no error. " + FRAMES + " " + GATE +
              " Expects CogVideoX_1_5_5b_T2V_bf16.safetensors in "
              "models/diffusion_models, t5xxl_fp16.safetensors in "
-             "models/text_encoders, and cogvideox_vae_bf16.safetensors in models/vae. " +
+             "models/text_encoders, and cogvideox_vae_bf16.safetensors in models/vae. "
+             "The checkpoint must be in the ComfyUI layout: the diffusers-layout file "
+             "of the same name on Kijai/CogVideoX-comfy does not load, and "
+             "docs/TROUBLESHOOTING.md #102 gives the key rename that converts it. " +
              DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name": "CogVideoX_1_5_5b_T2V_bf16.safetensors"},
@@ -3304,7 +3313,10 @@ TEMPLATES = {
              "covered. " + FRAMES +
              " " + GATE + " Expects CogVideoX_1_5_5b_I2V_bf16.safetensors in "
              "models/diffusion_models, t5xxl_fp16.safetensors in "
-             "models/text_encoders, and cogvideox_vae_bf16.safetensors in models/vae. " +
+             "models/text_encoders, and cogvideox_vae_bf16.safetensors in models/vae. "
+             "The checkpoint must be in the ComfyUI layout: the diffusers-layout file "
+             "of the same name on Kijai/CogVideoX-comfy does not load, and "
+             "docs/TROUBLESHOOTING.md #102 gives the key rename that converts it. " +
              DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name": "CogVideoX_1_5_5b_I2V_bf16.safetensors"},
