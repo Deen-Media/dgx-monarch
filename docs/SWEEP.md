@@ -38,6 +38,15 @@ that cell, such as a cold load, warm render, or short comparison probe:
 
 The basis records the prediction's source; it does not affect the verdict.
 
+A checkpoint the loader's header gate refuses reads `refuse:P`, basis
+`guard`, ahead of every topology rule. The gate refuses two shapes: the
+Z-Image L2P layout
+([TROUBLESHOOTING #91](TROUBLESHOOTING.md#91-a-z-image-render-refuses-with-an-upstream-gate-or-takes-the-host-down))
+and a checkpoint whose weight scales ComfyUI would drop
+([#120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+The matrix calls the gate itself (`upstream_gate.refusal_for`), so the label
+and the runtime read the same header rule.
+
 Class C never appears as a label. A capacity check compares the required bytes with available
 memory, which the matrix cannot predict, so a cell that may meet one is flagged
 `capacity_risk`, and on it a class C answer or a message from either memory

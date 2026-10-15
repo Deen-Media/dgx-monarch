@@ -4176,6 +4176,9 @@ Comfy-Org/ComfyUI#14055) and this release carries the L2P forward. The driver
 log carries one INFO line per file, opening `upstream gate:`, that names the
 matched key paths, so a record can confirm which spelling the gate read.
 
+The same gate refuses a checkpoint whose weight scales ComfyUI would drop; see
+[#120](#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales).
+
 ## 92. A render refuses with `FsdpGateProofError`, and the retry says the same thing
 
 **What happened.** `auto_gate=first_use` on an fsdp topology runs a clean-reload
@@ -5642,3 +5645,43 @@ environment that starts ComfyUI.
   Worker, look in the systemd user manager's environment
   (`systemctl --user show-environment`), in any hand edit to its unit, and in
   the shell environment `dgxm up` starts a `nohup` Worker from.
+
+## 120. A render refuses because ComfyUI would drop the checkpoint's weight scales
+
+**Symptom:** a render stops before any load with a class P refusal saying the
+checkpoint stores quantized layers whose weight scale ComfyUI does not read.
+The message gives the number of such layers and the first one. It names no
+guard and offers no card and no waiver. The driver log carries one INFO line
+per file, opening `upstream gate:`, that names up to four of the layers.
+Stock ComfyUI loads an fp8 or int8 file of this kind and logs a
+`unet unexpected:` warning that lists the dropped `weight_scale` or
+`scale_weight` keys.
+
+**Cause:** ComfyUI learns how a layer is quantized from a
+`<layer>.comfy_quant` record. The record is a tensor in the file, an entry in
+the `layers` table of the header's `_quantization_metadata`, or one that
+ComfyUI's legacy conversion writes: in a file with a `scaled_fp8` tensor and
+no `_quantization_metadata`, it renames each `<layer>.scale_weight` to
+`weight_scale` and records that layer, and no other. ComfyUI's
+diffusion-model load also strips one key prefix, such as
+`model.diffusion_model.`, and drops every key outside it. So a `comfy_quant`
+tensor must sit under the same prefix as its weight, and a
+`_quantization_metadata` entry must name the layer with no prefix or with
+exactly that one. A layer that stores an fp8, fp4, int8 or packed 4-bit
+(`U8`) weight beside a scale with no record loads into a plain Linear, and
+ComfyUI drops the scale as an unexpected key. That includes a `weight_scale`
+in a `scaled_fp8` file, and a `scale_weight` in a file that has
+`_quantization_metadata`. An fp8 or int8 file then loads without an error and
+computes with its scales ignored, so the image is wrong. A packed 4-bit file
+fails at load or at the first step. The gate refuses an fp4 layer by the same
+header rule. The known case is `variants/fp8r/model.safetensors` in Black
+Forest Labs' FLUX.3 Image Klein diffusers repositories, which stores per-row
+fp32 scales and names its format only in header fields ComfyUI does not read.
+The gate reads the header alone, on the driver before capacity or mesh work
+and again at every Worker's load entry point, and replays ComfyUI's load
+steps on the key names.
+
+**Fix:** use an export of the same model in ComfyUI's quantized layout, whose
+quantized layers carry `comfy_quant` keys or a `_quantization_metadata` table,
+or the model's bf16 file. There is no waiver and no env var: no setting can
+make ComfyUI read these scales.

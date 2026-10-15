@@ -7,7 +7,6 @@ accuracy refusals to the checkpoint and dispatch that triggered them.
 from __future__ import annotations
 
 from .. import residency_mode, upstream_gate
-from ..adapters.base import UnsupportedModelError
 from ..refusal import RefusalClass, refusal
 from ..residency_mode import ComfyManagedResidencyError
 
@@ -17,14 +16,15 @@ def active(worker) -> bool:
 
 
 def _assert_artifact_runnable(args, kwargs) -> None:
-    """Refuse an artifact this release carries no forward for, before any load.
+    """Refuse an artifact this release carries no forward for, or whose weight
+    scales ComfyUI would drop, before any load.
 
     The check lives in this funnel, not in ``store_load.fresh_load``: there
     ``store._drop(slot)`` has already evicted the resident model by the time a
     refusal could fire, and the baked hot-swap arm never reaches it at all
     (``tests/test_comfy_managed_residency.py::test_the_regression_that_made_the_yield_move``).
     The raise is rank symmetric because the predicate is a pure function of the
-    file every rank opens.
+    file every rank opens. ``upstream_gate.raise_refusal`` builds the refusal.
     """
     unet_name = args[0] if args else kwargs.get("unet_name", "")
     try:
@@ -33,11 +33,7 @@ def _assert_artifact_runnable(args, kwargs) -> None:
         path = resolve_model_path("diffusion_models", unet_name)
     except Exception:  # unresolvable here: the load path's own error stands
         return
-    if not upstream_gate.refuses(path):
-        return
-    raise UnsupportedModelError(refusal(
-        RefusalClass.PHYSICS, upstream_gate.ZIMAGE_L2P_REFUSAL,
-        troubleshooting=upstream_gate.TROUBLESHOOTING))
+    upstream_gate.raise_refusal(path)
 
 
 def _assert_comfy_managed_supported(worker, args, kwargs) -> None:

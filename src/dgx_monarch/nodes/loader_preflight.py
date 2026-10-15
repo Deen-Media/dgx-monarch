@@ -133,15 +133,17 @@ def effective_worker_args(mesh: Any) -> dict[str, Any]:
 
 
 def preflight_upstream_gated_artifact(unet_name: str) -> None:
-    """Refuse an artifact this release carries no forward for, before anything else.
+    """Refuse an artifact this release carries no forward for, or whose weight
+    scales ComfyUI would drop, before anything else.
 
     No topology, world, budget or latent shape changes this answer, so it runs
     above the comfy-managed policy card, the footprint card and ``ensure_live``.
     The worker owns the same refusal at its load funnel
     (``actor/store_fsdp._assert_artifact_runnable``) for the headless case
-    (docs/TROUBLESHOOTING.md #85). The sentence is built at the raise, never at
-    import (the comment above ``actor/partial_load_guard.REFUSAL_TEXT`` says
-    why). No mesh fact enters the decision, so ``mesh`` is not a parameter.
+    (docs/TROUBLESHOOTING.md #85); both raise through
+    ``upstream_gate.raise_refusal``, which builds the sentence at the raise,
+    never at import (the comment above ``actor/partial_load_guard.REFUSAL_TEXT``
+    says why). No mesh fact enters the decision, so ``mesh`` is not a parameter.
     """
     try:
         import folder_paths
@@ -149,11 +151,8 @@ def preflight_upstream_gated_artifact(unet_name: str) -> None:
         path = folder_paths.get_full_path("diffusion_models", unet_name)
     except Exception:  # headless or unreadable models tree: never a refusal
         return
-    if path is None or not upstream_gate.refuses(str(path)):
-        return
-    raise UnsupportedModelError(refusal(
-        RefusalClass.PHYSICS, upstream_gate.ZIMAGE_L2P_REFUSAL,
-        troubleshooting=upstream_gate.TROUBLESHOOTING))
+    if path is not None:
+        upstream_gate.raise_refusal(str(path))
 
 
 def preflight_comfy_managed_topology(mesh: Any) -> None:

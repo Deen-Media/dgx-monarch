@@ -31,6 +31,8 @@ on:
       - "tests/test_auto_latent_downscale.py"
       - "tests/test_chroma_cfg_pad_forward.py"
       - "tests/test_chroma_text_projections.py"
+      - "tests/test_dropped_scale_gate.py"
+      - "tests/test_fsdp_lora_replicated.py"
       - "tests/test_ideogram4_stock_equivalence.py"
 
       - "tests/test_hunyuan_stock_equivalence.py"
@@ -47,8 +49,10 @@ on:
       # pad-exclusion file holds the Ernie, Hunyuan, Ideogram4 and Lens
       # two-rank harness. tests/test_canary_path_filter.py checks that every
       # repo file the steps import by name is listed here.
+      - "tests/comfy_managed_helpers.py"
       - "tests/fake_model_base_helpers.py"
       - "tests/module_location_helpers.py"
+      - "tests/test_fsdp_lora.py"
       - "tests/test_flux_pad_exclusion.py"
       - "tests/test_lens_order.py"
       - "tests/test_qwen_image_order.py"
@@ -162,6 +166,21 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_chroma_text_projections.py
+      # The dropped-scale gate replays ComfyUI's diffusion-model load on key
+      # names; this checks the replay against ComfyUI's own load, key for key,
+      # and that ComfyUI still drops an unrecorded fp8, int8 or packed scale.
+      - name: Dropped-scale header gate vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_dropped_scale_gate.py
+      # A LoRA key on a parameter the FSDP wrap replicates bakes to ComfyUI's
+      # own patch_weight_to_device bits on a one-rank gloo group.
+      - name: FSDP LoRA replicated-parameter bake vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_fsdp_lora_replicated.py
       # Compare Ideogram4's sharded forward with ComfyUI operand by operand.
       # Ordinary CI lacks ComfyUI and skips this file. Equality also requires
       # row-count-independent CPU GEMM results; otherwise that check skips
@@ -253,6 +272,8 @@ jobs:
           tests/test_chroma_cfg_pad_forward.py
           tests/test_auto_latent_downscale.py
           tests/test_chroma_text_projections.py
+          tests/test_dropped_scale_gate.py
+          tests/test_fsdp_lora_replicated.py
           tests/test_ideogram4_stock_equivalence.py
           tests/test_qwen_text_projections.py
           tests/test_worker_latent_size_tags.py

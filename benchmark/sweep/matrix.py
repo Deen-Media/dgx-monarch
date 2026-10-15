@@ -617,7 +617,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     if cell.get("upstream_refusal"):
         # This is the loader's actual header predicate, ahead of every
         # topology and capacity question. A Z-Image family word does not
-        # decide it: only the L2P layout (local_decoder and no dec_net) does.
+        # decide it: only the L2P layout (local_decoder and no dec_net), or a
+        # weight scale ComfyUI would drop, does.
         return "refuse:P", "guard", False, []
     if cell.get("upstream_gated"):
         # The adapter cannot run this artifact and the current comfy admits it
@@ -1209,7 +1210,7 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
                 # Read the exact header predicate the loader calls. Retain
                 # only its boolean answer in the journal: local model paths
                 # do not belong in sweep records.
-                "upstream_refusal": upstream_gate.refuses(str(cond)),
+                "upstream_refusal": upstream_gate.refusal_for(str(cond)) is not None,
                 "upstream_gated": gated,
             }
             base_local = [_make(template, row, names, kernels[0], "single", "local",
