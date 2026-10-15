@@ -4785,9 +4785,33 @@ is a name only: ComfyUI detects CogVideoX from
 family, so no loader can build that file.
 
 **Fix:** read the header keys of the file the template names. Dotted embedding
-names mean the diffusers layout: convert it with a rename pass over the state
-dict, or fetch an export already in the ComfyUI layout, then point the template
-at that file. A converted file usually carries `converted_from` in its header
+names mean the diffusers layout. Convert the file by renaming its keys, then
+point the template at the converted file. The rename is the whole conversion:
+every tensor keeps its dtype, shape and bytes, and the key count stays the
+same (1028 keys in the 1.5 image-to-video file, 1024 in text-to-video).
+Rename each diffusers key by the first prefix below that matches it, where `N`
+is the block index and does not change:
+
+| Diffusers prefix | ComfyUI prefix |
+|---|---|
+| `transformer_blocks.N.attn1.to_q.` | `blocks.N.q.` |
+| `transformer_blocks.N.attn1.to_k.` | `blocks.N.k.` |
+| `transformer_blocks.N.attn1.to_v.` | `blocks.N.v.` |
+| `transformer_blocks.N.attn1.to_out.0.` | `blocks.N.attn_out.` |
+| `transformer_blocks.N.attn1.norm_q.` | `blocks.N.norm_q.` |
+| `transformer_blocks.N.attn1.norm_k.` | `blocks.N.norm_k.` |
+| `transformer_blocks.N.ff.net.0.proj.` | `blocks.N.ff_proj.` |
+| `transformer_blocks.N.ff.net.2.` | `blocks.N.ff_out.` |
+| `transformer_blocks.N.` (only the `norm1.` and `norm2.` keys remain) | `blocks.N.` |
+| `time_embedding.linear_` | `time_embedding_linear_` |
+| `ofs_embedding.linear_` | `ofs_embedding_linear_` |
+
+Keys under `patch_embed.`, `norm_final.`, `norm_out.` and `proj_out.` keep
+their names. Rename every key the table covers: a partial rename loads without
+an error. ComfyUI detects CogVideoX from `blocks.0.norm1.linear.weight` alone
+and loads the state dict with `strict=False`, so a weight left under its
+diffusers name is never loaded, and only an `unet missing` warning in the log
+says so. A converted file usually carries `converted_from` in its header
 metadata, which is a quick way to tell two staged copies apart when both sit
 under nearly the same name. A missing OFS pair is not a fault: it says the file
 is text-to-video, since only the image-to-video and inpaint surfaces carry the

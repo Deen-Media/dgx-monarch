@@ -41,7 +41,7 @@ Choose additional checks based on the files and behavior you changed:
 |---|---|
 | Documentation or comments | Run the affected documentation tests, check links and examples, and verify any source citations. No hardware run is needed for wording alone. |
 | Nodes or browser UI | Run the node contracts and relevant UI tests; preserve saved-workflow compatibility. Check JavaScript syntax and segment mappings. |
-| Workflow templates or model-file lists | Regenerate changed templates, then run the template and artifact checks. Do not invent model hashes or treat a pending artifact as verified. |
+| Workflow templates or model-file lists | Regenerate changed templates, then run the template checks and `python tools/check_artifacts.py --strict`. Fill each new manifest row from a public file that matches the tested file byte for byte, or mark it a placeholder with a note. Never invent a model hash. |
 | Logos or workflow cards | Run the brand-asset and template-card generators' checks. |
 | Runtime or distributed behavior | Run the CPU suite and relevant regression tests. A render-path change also needs an authorized hardware run before claiming it works on hardware. |
 | Model adapters or topology | Run the required cross-rank and reference comparisons described below. CPU success does not establish model accuracy. |
@@ -56,7 +56,7 @@ python tools/check_protected_tests.py --check
 python tools/gen_templates.py --check
 python tools/gen_brand_assets.py --check
 python tools/gen_template_cards.py --check
-python tools/check_artifacts.py
+python tools/check_artifacts.py --strict
 python -m compileall -q __init__.py src benchmark tests tools
 for script in scripts/*.sh; do bash -n "$script"; done
 shellcheck scripts/*.sh

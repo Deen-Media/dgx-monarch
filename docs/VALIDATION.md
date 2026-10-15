@@ -912,6 +912,16 @@ two BF16 image-conditioning attempts refused after partial loading.
 Duration-head and other workflows have no passing reference comparison. Stock MODEL-only guidance nodes cannot
 be connected to DGXM_MODEL. LTX 2.3 results do not cover LTX 2.5.
 
+On 2026-10-14 the four template shapes were rendered again at release 659f2bf
+on ComfyUI e8665ca8 with the vendor's current Gemma 4 int8 encoder (revision
+49b093a3, which replaced the encoder the August runs used). One-step Ulysses
+video/audio NRMS against a stock single-GPU reference of the same graph: text
+to video 0.062/0.019, image to video 0.097/0.047, frame-zero guide
+0.095/0.021, first and last frame 0.069/0.028, the same bands as the August
+readings. The null pair was bit identical. Stock against stock, the encoder
+change alone moved the first step by 0.25 video and 0.10 audio NRMS, so
+renders made with the two encoders are not comparable.
+
 <a id="evidence-wan-2-1-t2v"></a>
 
 ### Wan 2.1 T2V
