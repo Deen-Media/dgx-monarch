@@ -1,6 +1,6 @@
 """LoRA on FSDP-sharded weights: the full-then-slice bake.
 
-Under FSDP every parameter is a DTensor whose local tensor is this rank's
+Under FSDP every sharded parameter is a DTensor whose local tensor is this rank's
 dim-0 chunk, a view of the buffer FSDP2 all-gathers from
 (``torch/distributed/fsdp/_fully_shard/_fsdp_param.py`` ``_init_sharded_param``).
 Comfy's LoRA merge wants a whole weight: ``calculate_weight`` runs on the full
@@ -27,6 +27,15 @@ The ambient verify runs comfy's own ``patch_weight_to_device(return_weight=True)
 against the pristine full weight by parking it on the module for the call and
 restoring the identical DTensor parameter object afterwards, so FSDP's
 bookkeeping (which holds that object) sees nothing change.
+
+A census module, one a family runs outside its diffusion forward
+(``adapters/fsdp_islands.auxiliary_module_parameters``), is not sharded: the
+wrap passes its parameters to ``fully_shard`` as ``ignored_params`` and they
+stay plain tensors. A LoRA key on one bakes as a world-1 shard: the same
+pristine read, the same comfy merge and key-seeded rounding, written whole on
+every rank, which is the resident bake on each rank. The replicated set comes
+from the call the wrap makes, once per stack, so the two cannot drift. Any
+other plain tensor still raises.
 
 LoRA on quantized shards is not admitted: a quantized key refuses before any
 write.
@@ -64,12 +73,44 @@ def shard_rows(rows: int, world: int, rank: int) -> tuple[int, int]:
     return start, stop
 
 
-def local_shard(param: torch.Tensor) -> torch.Tensor:
-    """The rank's unpadded local chunk of a sharded parameter."""
+def replicated_parameter_ids(model: Any) -> frozenset[int]:
+    """Ids of the census parameters the FSDP wrap left whole, for this model.
+
+    ``model`` is the comfy ``model_base`` the patcher holds; the wrap reads
+    the same ``auxiliary_module_parameters(diffusion_model, model)``
+    (``adapters/fsdp.py``). Ids, because a tensor's ``==`` is elementwise.
+    """
+    from ..adapters.fsdp_islands import auxiliary_module_parameters
+
+    diffusion_model = getattr(model, "diffusion_model", None)
+    if diffusion_model is None:
+        return frozenset()
+    return frozenset(id(p) for p in auxiliary_module_parameters(diffusion_model, model))
+
+
+def _whole(param: torch.Tensor, replicated: frozenset[int]) -> bool:
+    return getattr(param, "_local_tensor", None) is None and id(param) in replicated
+
+
+def local_shard(param: torch.Tensor, replicated: frozenset[int] = frozenset()) -> torch.Tensor:
+    """The rank's unpadded local chunk of a sharded parameter.
+
+    A census-replicated parameter is its own whole local view; any other
+    parameter with no local tensor raises.
+    """
     local = getattr(param, "_local_tensor", None)
-    if local is None:
-        raise UnbakeError("parameter is not FSDP-sharded (no local tensor)")
-    return local
+    if local is not None:
+        return local
+    if id(param) in replicated:
+        return param
+    raise UnbakeError("parameter is not FSDP-sharded (no local tensor)")
+
+
+def shard_geometry(
+    param: torch.Tensor, replicated: frozenset[int], rank: int, world: int,
+) -> tuple[int, int]:
+    """(rank, world) for this parameter's rows: a replicated one is a world-1 shard."""
+    return (0, 1) if _whole(param, replicated) else (rank, world)
 
 
 def mesh_rank_world() -> tuple[int, int]:
@@ -80,9 +121,14 @@ def mesh_rank_world() -> tuple[int, int]:
     return dist.get_rank(), dist.get_world_size()
 
 
-def write_shard(param: torch.Tensor, full: torch.Tensor, rank: int, world: int) -> None:
-    """Copy this rank's dim-0 chunk of ``full`` into the sharded parameter."""
-    local = local_shard(param)
+def write_shard(
+    param: torch.Tensor, full: torch.Tensor, rank: int, world: int,
+    replicated: frozenset[int] = frozenset(),
+) -> None:
+    """Copy this rank's dim-0 chunk of ``full`` into the sharded parameter,
+    or, for a census-replicated parameter, the whole tensor."""
+    local = local_shard(param, replicated)
+    rank, world = shard_geometry(param, replicated, rank, world)
     start, stop = shard_rows(int(full.shape[0]) if full.ndim else 0, world, rank)
     chunk = full[start:stop]
     if tuple(chunk.shape) != tuple(local.shape):
@@ -146,9 +192,13 @@ def read_rows(fd: int, ft: _FileTensor, start: int, stop: int) -> torch.Tensor:
     return torch.frombuffer(bytearray(raw), dtype=dtype).reshape((stop - start, *tail))
 
 
-def _shard_bytes_match(fd: int, ft: _FileTensor, param: torch.Tensor, rank: int, world: int) -> bool:
+def _shard_bytes_match(
+    fd: int, ft: _FileTensor, param: torch.Tensor, rank: int, world: int,
+    replicated: frozenset[int] = frozenset(),
+) -> bool:
     """Sampled byte equality between this rank's rows on disk and its shard."""
-    local = local_shard(param)
+    local = local_shard(param, replicated)
+    rank, world = shard_geometry(param, replicated, rank, world)
     rows = ft.shape[0] if ft.shape else 1
     start, stop = shard_rows(rows, world, rank)
     row_bytes = ft.nbytes // max(rows, 1)
@@ -169,7 +219,10 @@ def _shard_bytes_match(fd: int, ft: _FileTensor, param: torch.Tensor, rank: int,
     return True
 
 
-def capture_record(model: Any, keys, base_path: str, rank: int, world: int) -> UnbakeRecord:
+def capture_record(
+    model: Any, keys, base_path: str, rank: int, world: int,
+    replicated: frozenset[int] = frozenset(),
+) -> UnbakeRecord:
     """An UnbakeRecord whose mapped keys are byte-verified against this rank's rows."""
     header, _metadata, parsed = read_safetensors_header(
         base_path, want_metadata=True, want_identity=True)
@@ -191,7 +244,7 @@ def capture_record(model: Any, keys, base_path: str, rank: int, world: int) -> U
                     "not admitted. Use a resident topology for this file, or a "
                     "bf16, fp16, or plain-dtype fp8 checkpoint under FSDP."))
             ft = _file_tensor(header, key, param)
-            if not _shard_bytes_match(fd, ft, param, rank, world):
+            if not _shard_bytes_match(fd, ft, param, rank, world, replicated):
                 raise UnbakeError(
                     f"live shard of {key} does not match the checkpoint bytes on rank "
                     f"{rank}; the model is not pristine, reload contract applies")
@@ -199,7 +252,10 @@ def capture_record(model: Any, keys, base_path: str, rank: int, world: int) -> U
     return record
 
 
-def bake_key(active, key: str, pristine_full: torch.Tensor, rank: int, world: int) -> None:
+def bake_key(
+    active, key: str, pristine_full: torch.Tensor, rank: int, world: int,
+    replicated: frozenset[int] = frozenset(),
+) -> None:
     """comfy's merge on the pristine full weight, sliced into this rank's shard."""
     import comfy.float
     import comfy.lora
@@ -217,17 +273,20 @@ def bake_key(active, key: str, pristine_full: torch.Tensor, rank: int, world: in
             f"key {key} carries a quantized setter; LoRA on quantized shards is "
             "not admitted. Use a resident topology for this file, or a bf16, "
             "fp16, or plain-dtype fp8 checkpoint under FSDP."))
-    bake_device = getattr(active, "load_device", None) or local_shard(weight).device
+    bake_device = getattr(active, "load_device", None) or local_shard(weight, replicated).device
     temp = mm.cast_to_device(
         pristine_full, bake_device, mm.lora_compute_dtype(bake_device), copy=True)
     out = comfy.lora.calculate_weight(patches, temp, key)
     out = comfy.float.stochastic_rounding(
         out, weight.dtype, seed=comfy.utils.string_to_seed(key))
-    write_shard(weight, out, rank, world)
+    write_shard(weight, out, rank, world, replicated)
     del temp, out
 
 
-def verify_key(active, key: str, pristine_full: torch.Tensor, rank: int, world: int) -> None:
+def verify_key(
+    active, key: str, pristine_full: torch.Tensor, rank: int, world: int,
+    replicated: frozenset[int] = frozenset(),
+) -> None:
     """comfy's own reference bake, sliced, must bit-match the written shard."""
     import comfy.utils
 
@@ -236,7 +295,7 @@ def verify_key(active, key: str, pristine_full: torch.Tensor, rank: int, world: 
     sharded = getattr(module, attr)
     if not isinstance(sharded, torch.nn.Parameter):
         raise UnbakeError(f"key {key} is not a parameter")
-    device = getattr(active, "load_device", None) or local_shard(sharded).device
+    device = getattr(active, "load_device", None) or local_shard(sharded, replicated).device
     reference_param = torch.nn.Parameter(
         pristine_full.to(device=device), requires_grad=False)
     # Park the pristine full weight on the module for comfy's reference
@@ -248,8 +307,9 @@ def verify_key(active, key: str, pristine_full: torch.Tensor, rank: int, world: 
         module._parameters[attr] = sharded
     if _is_quantized(ref):
         raise UnbakeError(f"comfy's reference for {key} is quantized; LoRA on quantized shards is not admitted")
+    rank, world = shard_geometry(sharded, replicated, rank, world)
     start, stop = shard_rows(int(ref.shape[0]) if ref.ndim else 0, world, rank)
-    ours = local_shard(sharded)
+    ours = local_shard(sharded, replicated)
     ref_chunk = ref[start:stop].to(device=ours.device)
     if ref.dtype != ours.dtype or not torch.equal(ref_chunk, ours):
         raise UnbakeError(
@@ -279,6 +339,7 @@ def apply_stack(store, active, base_path: str, previous: UnbakeRecord | None) ->
     import random
 
     rank, world = mesh_rank_world()
+    replicated = replicated_parameter_ids(active.model)
     patch_keys = list(active.patches)
     _header, _metadata, parsed = read_safetensors_header(
         base_path, want_metadata=True, want_identity=True)
@@ -287,7 +348,8 @@ def apply_stack(store, active, base_path: str, previous: UnbakeRecord | None) ->
     # Keys the new stack does not touch must go back to pristine first.
     leaving = sorted(_touched_keys(previous) - set(patch_keys))
     novel = [k for k in patch_keys if previous is None or k not in previous.mapped]
-    fresh = capture_record(active.model, novel, base_path, rank, world) if novel else None
+    fresh = (capture_record(active.model, novel, base_path, rank, world, replicated)
+             if novel else None)
     record = UnbakeRecord(
         path=base_path, file_size=parsed.file_size, file_mtime_ns=parsed.file_mtime_ns,
         file_dev=parsed.file_dev, file_ino=parsed.file_ino, file_ctime_ns=parsed.file_ctime_ns)
@@ -307,17 +369,20 @@ def apply_stack(store, active, base_path: str, previous: UnbakeRecord | None) ->
             ft = previous.mapped[key]  # type: ignore[union-attr]
             param = live_tensor(active.model, key)
             rows = ft.shape[0] if ft.shape else 1
-            start, stop = shard_rows(rows, world, rank)
+            key_rank, key_world = shard_geometry(param, replicated, rank, world)
+            start, stop = shard_rows(rows, key_world, key_rank)
             chunk = read_rows(fd, ft, start, stop)
-            local = local_shard(param)
+            local = local_shard(param, replicated)
             with torch.no_grad():
                 local.copy_(chunk.to(device=local.device, dtype=local.dtype))
+        whole = 0
         for key in patch_keys:
             ft = record.mapped[key]
             pristine = read_full(fd, ft)
-            bake_key(active, key, pristine, rank, world)
+            whole += _whole(live_tensor(active.model, key), replicated)
+            bake_key(active, key, pristine, rank, world, replicated)
             if key in verify_keys:
-                verify_key(active, key, pristine, rank, world)
+                verify_key(active, key, pristine, rank, world, replicated)
             del pristine
     if verify_keys:
         log.info("ambient verify (FSDP shards): %d/%d keys bit-matched comfy's own bake (%s)",
@@ -325,8 +390,9 @@ def apply_stack(store, active, base_path: str, previous: UnbakeRecord | None) ->
     active.patches.clear()
     active.backup.clear()
     active.backup_buffers.clear()
-    log.info("LoRA on FSDP shards: baked %d key(s), restored %d, rank %d/%d",
-             len(patch_keys), len(leaving), rank, world)
+    log.info("LoRA on FSDP shards: baked %d key(s) (%d whole on a replicated census "
+             "module), restored %d, rank %d/%d",
+             len(patch_keys), whole, len(leaving), rank, world)
     return record
 
 

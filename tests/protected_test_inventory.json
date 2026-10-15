@@ -697,6 +697,19 @@
       "test_the_weights_note_names_the_share_and_the_world": "4c5169ad387c9863",
       "test_unregistered_family_is_a_hard_no_op": "07eea90bb9dd03ff"
     },
+    "tests/test_dropped_scale_gate.py": {
+      "test_a_file_comfy_reads_whole_passes": "9e84d408dc03b9da",
+      "test_a_scale_comfy_would_drop_refuses_and_names_its_layers": "b5a9fab0a8bc4c17",
+      "test_an_unreadable_or_foreign_path_answers_none": "12a0ee2a0dd0db8f",
+      "test_both_funnels_pass_a_file_comfy_reads_whole": "d1532fcb92f4e99d",
+      "test_both_funnels_refuse_the_same_class_p_text_before_anything_loads": "5837f29f0d05bd38",
+      "test_comfy_drops_a_packed_scale_with_no_record_under_dynamic_vram": "5da8162e593dbc10",
+      "test_comfy_loads_an_unrecorded_layer_without_error_and_drops_its_scale": "65dbc4e512894ed4",
+      "test_the_l2p_gate_keeps_its_own_text_and_number": "5b2641e104e5ddbe",
+      "test_the_replay_names_the_keys_comfys_own_load_hands_the_model": "b1454aa9fb4da2d8",
+      "test_the_replay_strips_the_prefix_comfy_picks": "679960d5b85dc316",
+      "test_the_staged_flux3_files_pass_and_the_fp8r_variant_refuses": "f1aac97face85059"
+    },
     "tests/test_family_adapter_select.py": {
       "test_a_child_model_still_binds_its_own_family": "610d4a577af029b3",
       "test_a_configless_ltx_file_refuses_under_a_forced_ltx_family": "168c1c1abd5086fe",
@@ -876,6 +889,14 @@
       "test_refuse_fsdp_lora_checkpoint_property_names_the_cause": "3a0e2e21ccc14716",
       "test_refuse_fsdp_lora_checkpoint_property_rejects_an_unknown_property": "d040ed39ba98633e",
       "test_refuse_unless_fsdp_lora_admits_is_a_noop_when_admitted": "1056a13daabb82bc"
+    },
+    "tests/test_fsdp_lora_replicated.py": {
+      "test_a_plain_tensor_outside_the_census_still_raises": "843bcfaf21efec10",
+      "test_a_quantized_key_on_a_census_module_still_refuses_class_p": "86fca3c2f858db56",
+      "test_a_replicated_key_captures_bakes_verifies_and_restores_whole": "662d22e0264e71bc",
+      "test_rank_one_of_two_writes_its_rows_and_the_replicated_key_whole": "aa5e6638849b6277",
+      "test_the_census_names_the_token_refiner_and_not_the_block": "2dc14224a71d15ca",
+      "test_the_replicated_bake_equals_comfys_own_merge": "ca21fd243e03588a"
     },
     "tests/test_fsdp_presets_and_dials.py": {
       "test_capacity_presets_need_the_launch_order_guard_only_when_they_share_ranks": "0deebbbf3da57ed2",
@@ -1852,7 +1873,7 @@
       "test_zimage_ulysses_auto_reason_records_hardware_result": "4b5f79d018fd3279"
     },
     "tests/test_upstream_gated_artifact.py": {
-      "test_263_still_reports_and_does_not_refuse": "41b203444684bcda",
+      "test_263_still_reports_and_does_not_refuse": "ff8a6a5e47dcca67",
       "test_a_forced_family_override_cannot_walk_past_the_gate": "dff454180338fc0f",
       "test_a_missing_or_unreadable_path_is_a_no_op_not_a_refusal": "16c3a4aac9b52c4e",
       "test_a_working_artifact_loads_untouched": "ea4d4533582837d8",

@@ -23,6 +23,41 @@ refuses. After a verified update, rerun the editable install once so its
 metadata reads the new version
 ([INSTALL](docs/INSTALL.md#upgrading-from-110)).
 
+- Refuse a checkpoint whose weight scales ComfyUI would drop, before anything
+  loads
+  ([TROUBLESHOOTING #120](docs/TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+  The upstream gate replays, on the header's key names, the conversions and
+  the one prefix strip of ComfyUI's diffusion-model load. It then reads, per
+  layer, whether a scale beside an fp8, fp4, int8 or packed 4-bit weight ends
+  with a record ComfyUI reads: a `comfy_quant` key, an entry in the header's
+  `_quantization_metadata`, or the record ComfyUI's legacy `scaled_fp8`
+  conversion writes for each `scale_weight` it renames. Without one, stock
+  ComfyUI drops the scale as an unexpected key, and an fp8 file such as
+  `variants/fp8r/model.safetensors` of FLUX.3 Image Klein loads without an
+  error and computes unscaled. The refusal is class P with no waiver, raised
+  at the driver's loader preflight and again at the Worker's load funnel,
+  both through `upstream_gate.raise_refusal`, from one header read per file
+  in each process. `upstream_gate.refuses` becomes `refusal_for`, which
+  returns the text and its TROUBLESHOOTING number, and the sweep matrix
+  labels such a cell `refuse:P` through it. The comfy canary job checks the
+  replay against ComfyUI's own load, key for key.
+- Bake a LoRA key on a module the FSDP wrap replicates. The wrap keeps every
+  module a family runs outside its diffusion forward whole on each rank (H3's
+  `condition_proj` and `token_refiner`, LTXAV's caption projections and
+  connectors, Anima's `llm_adapter`), and a LoRA key on one raised
+  `UnbakeError` on every `*+fsdp` topology. The shard-aware bake now treats
+  such a parameter as a world-1 shard: each rank reads the pristine weight,
+  runs ComfyUI's merge and key-seeded rounding, and writes the whole result,
+  which is the resident bake. The replicated set comes from the census call
+  the wrap makes, and any other unsharded parameter still raises. A CPU test
+  in the comfy canary job holds bit equality with ComfyUI's own merge; no
+  hardware run covers a LoRA under FSDP on H3, LTXAV or Anima yet, so MODELS
+  makes no claim for them.
+- Add a slice-tuple case to the bake-equivalence canary: LoRA units routed
+  into thirds of one fused qkv weight through `(key, (dim, offset, size))`
+  entries bake to the same bits through the store's per-key bake and
+  ComfyUI's `patch_weight_to_device`, in fp32 and bf16, and the rows outside
+  a patched third keep their bits.
 - Add a Doctor row, `<host> worker release version`, that reads the package
   version inside each host's release slot (`s-` from guided setup, `u-` from a
   verified update) and fails, naming the host, both versions and

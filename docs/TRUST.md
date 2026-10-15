@@ -423,7 +423,7 @@ copied from historical evidence.
    and compile preparation. The sole authoritative live-precision scan runs
    after that preparation and immediately before the first FSDP parameter
    mutation; direct calls use the same path. This is enforced by
-   [`store_fsdp.py:100-117`](../src/dgx_monarch/actor/store_fsdp.py#L100-L117 "anchor:validate_injection") and
+   [`store_fsdp.py:96-113`](../src/dgx_monarch/actor/store_fsdp.py#L96-L113 "anchor:validate_injection") and
    [`fsdp.py:377-435`](../src/dgx_monarch/adapters/fsdp.py#L377-L435 "anchor:apply_fsdp_capacity_mode"), with one-scan and same-patcher drift coverage in
    [`test_fsdp_capacity.py:1095-1095`](../tests/test_fsdp_capacity.py#L1095-L1095 "anchor:test_worker_runs_one_live_precision_scan_after_preparation"),
    [`test_fsdp_capacity.py:1125-1125`](../tests/test_fsdp_capacity.py#L1125-L1125 "anchor:test_worker_live_scan_observes_same_patcher_model_replacement"), and

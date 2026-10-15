@@ -473,7 +473,10 @@ sharded model needs `lora_low_rss` on (`actor/fsdp_lora.py`): every rank reads t
 comfy's own merge and key-seeded rounding on it, and copies its dim-0 chunk
 into the local shard, with no collective and no comfy backup, so the bake is
 the resident bake exactly; a key leaving the stack is restored with one
-contiguous pread of the rank's rows. With `lora_low_rss` off a sharded model
+contiguous pread of the rank's rows. A key on a module the wrap replicates
+(the outside-forward census below) bakes as a world-1 shard: every rank writes
+the whole merged tensor, which is the resident bake, and any other unsharded
+parameter still raises. With `lora_low_rss` off a sharded model
 refuses the stack, typed. The checkpoint itself must also be admitted for the
 bake, before any load, on every `lora_low_rss` or `auto_gate` setting
 (`adapters/fsdp_lora_admission.py`). Admitted: bf16, fp16, and a
@@ -484,14 +487,17 @@ wrapper that `actor/fsdp_lora.py` refuses outright; the header markers that
 name one are listed in `adapters/detect.py`. The lever's own card fires only
 when the effective `lora_low_rss` is off. The launch-time bake admission check
 does not cover fp32 islands: no header or coarse live signal distinguishes an
-island that Comfy's load keeps live at fp32 (safe to bake) from one it casts
+island that Comfy's load keeps live at fp32 from one it casts
 to the core's compute dtype (a live/file mismatch), so `actor/fsdp_lora.py`'s
 in-bake `_file_tensor` check, per LoRA-patched key, is the backstop for that
 shape. That check and the quantized-key check in `capture_record`/`bake_key`
 (a backstop for a checkpoint the header markers miss) raise the same class P
 tag as the launch-time refusal, not a bare `UnbakeError`: both are
 deterministic per checkpoint, so every rank raises the identical refusal,
-which is what makes tagging them rank symmetric and safe. Header and
+which is what makes tagging them rank symmetric and safe. A key on an island
+kept at fp32 passes the `_file_tensor` check and still raises a bare
+`UnbakeError`: islands stay whole, but outside the census the bake reads as
+replicated. Header and
 loaded-model detection both classify any full-precision mix containing F16 as
 `fp16`, while fp8/int8 storage markers take precedence; an fp16 core is
 admitted uniform only. fp32 parameters inside a bf16 core are islands
