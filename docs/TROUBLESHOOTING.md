@@ -1555,7 +1555,15 @@ without renewal by default, the actor logs `dgxm-reap:` and exits. Inspect
 `journalctl --user -u dgxm-worker` for that line.
 `dgxm down` sweeps after stopping the service, including its children;
 `dgxm up` sweeps only orphans. `dgxm restart` uses both. A host is not reported
-successful before its sweep finishes.
+successful before its sweep finishes. The Worker service records its actors in
+`~/.local/state/dgx-monarch/actor-procs.json`. A writer killed mid-write leaves
+an `actor-procs.json.<pid>.<starttime>.<thread id>.tmp` file beside it, and the
+next ledger write removes each such file once no process holds that pid with
+that start time. Earlier releases wrote `actor-procs.json.<pid>.<thread id>.tmp`.
+The sweep removes such a file once no process holds its pid, so a file whose pid
+a later process took stays until that process exits. `nostat` in place of the
+start time means the writer could not read its own `/proc` entry, and no sweep
+removes that file.
 
 Doctor's orphan row covers only its local host. It names PID, size, dwell, and
 remedy for marked actors holding at least 4 GiB with no live owner able to stop

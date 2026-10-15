@@ -10,8 +10,12 @@ signal.
 Each row identifies a process by ``(pid, starttime)`` to detect PID reuse.
 ``boot_id`` scopes the file because start times can repeat across boots.
 Writes use a unique temporary file and ``os.replace``, with a 0700 directory
-and 0600 file. Missing, corrupt, or foreign-boot ledgers read as empty, allowing
-``dgxm down`` to work on hosts without a usable ledger.
+and 0600 file. A writer killed after it creates its temporary file and before
+``os.replace`` leaves the file behind, so each write also removes temporary
+files whose writer has exited. The file name carries the writer's
+``(pid, starttime)``, so the sweep judges it by the same identity check as a
+row, with no clock. Missing, corrupt, or foreign-boot ledgers read as empty,
+allowing ``dgxm down`` to work on hosts without a usable ledger.
 
 ``orphan_since`` records when the owning loop first failed its identity check.
 It establishes provenance, not attachment state. Socket counts are read live
@@ -19,14 +23,19 @@ through ``cli/proc_identity.established_counts`` when needed.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
+import re
 import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
+from ..log import get_logger
 from . import proc_identity
+
+log = get_logger(__name__)
 
 LEDGER_VERSION = 1
 # Share the ledger path between tracker and sweep readers. Like the adjacent
@@ -39,6 +48,9 @@ HEARTBEAT_S = 60.0
 MAX_ROWS = 512
 _DIR_MODE = 0o700
 _FILE_MODE = 0o600
+# A temporary file name of either shape the sweep judges: ``<pid>.<starttime>``
+# or, from earlier releases, ``<pid>`` alone, then the thread ident.
+_TEMP_NAME = r"\.(\d+)(?:\.(\d+))?\.\d+\.tmp"
 
 
 def ledger_path(home: str | None = None) -> str:
@@ -130,12 +142,29 @@ def read_ledger(
 
 
 def write_ledger(
-    ledger: dict[str, Any], path: str | None = None, *, home: str | None = None
+    ledger: dict[str, Any],
+    path: str | None = None,
+    *,
+    home: str | None = None,
+    proc_root: str = proc_identity.PROC_ROOT,
 ) -> bool:
-    """Publish a ledger atomically. Returns False on OSError instead of raising."""
+    """Publish a ledger atomically. Returns False on OSError instead of raising.
+
+    The temporary file is ``<ledger>.<pid>.<starttime>.<thread ident>.tmp``,
+    with the writer's own start time read under ``proc_root``. A writer that
+    cannot read its own stat there, which happens only under a synthetic root
+    or an unusable ``/proc``, puts ``nostat`` in place of the start time. No
+    sweep matches that name, so no sweep under any root removes the file of
+    a live writer. Every call then removes the temporary files that dead
+    writers left beside the ledger (:func:`sweep_dead_temps`), whether its
+    own write lands, fails, or raises.
+    """
     target = ledger_path(home) if path is None else path
     directory = os.path.dirname(target)
-    temp = f"{target}.{os.getpid()}.{threading.get_ident()}.tmp"
+    pid = os.getpid()
+    own = proc_identity.read_stat(pid, proc_root)
+    identity = f"{pid}.nostat" if own is None else f"{pid}.{own[1]}"
+    temp = f"{target}.{identity}.{threading.get_ident()}.tmp"
     try:
         os.makedirs(directory, mode=_DIR_MODE, exist_ok=True)
         fd = os.open(temp, os.O_CREAT | os.O_EXCL | os.O_WRONLY, _FILE_MODE)
@@ -144,13 +173,81 @@ def write_ledger(
                 json.dump(ledger, handle)
                 handle.flush()
                 os.fsync(handle.fileno())
+            # A failed rename must not strand the file: the next write from
+            # this thread reuses the name, so O_EXCL would refuse every later
+            # write, and the sweep keeps the file while its writer lives.
+            os.replace(temp, target)
         except BaseException:
-            os.unlink(temp)
+            with contextlib.suppress(OSError):
+                os.unlink(temp)
             raise
-        os.replace(temp, target)
+        written = True
     except OSError:
-        return False
-    return True
+        written = False
+    finally:
+        sweep_dead_temps(target, proc_root=proc_root)
+    return written
+
+
+def _temp_writer(name: str, base: str) -> tuple[int, int | None] | None:
+    """The writer ``(pid, starttime)`` in a ledger temporary file name.
+
+    Two shapes count, each a whole name in ASCII digits:
+    ``<ledger>.<pid>.<starttime>.<thread ident>.tmp``, which ``write_ledger``
+    writes, and ``<ledger>.<pid>.<thread ident>.tmp``, which earlier releases
+    wrote and gives None for the start time. Any other name gives None.
+    """
+    match = re.fullmatch(re.escape(base) + _TEMP_NAME, name, re.ASCII)
+    if match is None:
+        return None
+    starttime = match.group(2)
+    return int(match.group(1)), None if starttime is None else int(starttime)
+
+
+def sweep_dead_temps(
+    target: str, *, proc_root: str = proc_identity.PROC_ROOT
+) -> int:
+    """Remove temporary files beside ``target`` whose writer has exited.
+
+    A writer killed between creating its file and renaming it leaves the file
+    behind, for example the tracker thread when a stop kills the Worker
+    service mid-write. The name carries the writer's identity, so identity
+    decides and the sweep reads no clock and no file time. The sweep removes
+    a name with a start time once ``proc_identity.alive`` rejects its
+    ``(pid, starttime)``: a live writer passes, and a later process that took
+    the pid fails, since its start time differs. That is exact within a
+    boot. A process on a later boot with the same pid and start tick keeps
+    the file until it exits. It removes a name in the older shape, with no
+    start time, only once its pid names no process, so if a later process
+    took that pid, the file stays until that process exits. Names of any
+    other shape stay, ``nostat`` names included. Only ``proc_root`` answers.
+    Returns the count removed and never raises.
+    """
+    directory, base = os.path.split(target)
+    try:
+        names = os.listdir(directory or ".")
+    except OSError:
+        return 0
+    removed = 0
+    for name in names:
+        writer = _temp_writer(name, base)
+        if writer is None:
+            continue
+        pid, starttime = writer
+        if starttime is None:
+            exited = proc_identity.read_stat(pid, proc_root) is None
+        else:
+            exited = not proc_identity.alive(pid, starttime, proc_root)
+        if not exited:
+            continue
+        try:
+            os.unlink(os.path.join(directory, name))
+        except OSError:
+            continue  # another sweep removed it first, or it will not go
+        removed += 1
+    log.debug("actor ledger: removed %d dead temporary file(s) beside %s",
+              removed, target)
+    return removed
 
 
 def prune_dead_rows(
@@ -167,7 +264,7 @@ def prune_dead_rows(
             if proc_identity.alive(row["pid"], row["starttime"], proc_root)]
     if len(rows) != len(ledger["actors"]):
         ledger["actors"] = rows
-        write_ledger(ledger, path)
+        write_ledger(ledger, path, proc_root=proc_root)
 
 
 def loop_identity(
@@ -319,7 +416,7 @@ def tick(
     }
     stale = moment - current["written_at"] >= HEARTBEAT_S
     if stale or _payload(merged) != _payload(current):
-        writer(merged, path, home=home)
+        writer(merged, path, home=home, proc_root=proc_root)
     return merged
 
 
