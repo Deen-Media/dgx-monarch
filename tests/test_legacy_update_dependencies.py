@@ -123,9 +123,12 @@ def test_plain_update_admission_precedes_pin_and_service_changes(monkeypatch, tm
         events.append("preflight")
         return admitted
     monkeypatch.setattr(legacy_update, "dependency_preflight", preflight)
+    # No host runs from a release slot; the slot probe runs before admission.
+    monkeypatch.setattr(legacy_update, "release_slot_hosts",
+                        lambda selected: events.append("slot_probe") or ([], []))
     monkeypatch.setattr(importlib.metadata, "version", lambda _name: "0.6.0")
     def run(argv, **kwargs):
-        assert events[0] == "preflight" and admitted
+        assert events[:2] == ["slot_probe", "preflight"] and admitted
         if "pip" in argv:
             assert "--no-deps" in argv
         events.append(tuple(argv))
@@ -137,7 +140,7 @@ def test_plain_update_admission_precedes_pin_and_service_changes(monkeypatch, tm
         load_config=lambda _args: config, driver_probe=lambda _host: (None, True))
     assert result == (0 if admitted else 1)
     if not admitted:
-        assert events == ["preflight"]
+        assert events == ["slot_probe", "preflight"]
         assert "before pin installation or Worker changes" in capsys.readouterr().err
     else:
         assert "worker_pin" in events

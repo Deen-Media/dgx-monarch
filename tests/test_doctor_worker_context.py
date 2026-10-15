@@ -21,6 +21,8 @@ from dgx_monarch.config import ClusterConfig, HostConfig
 from dgx_monarch.monarch_launch import worker_policy_args
 
 TOKEN = 'u-123456789abc-0123456789abcdef'  # noqa: S105 - fixture identifier
+# The release probe's line for the fixture's slot, whose package reads 1.1.0.
+SLOT_LINE = f'dgxm_worker_release=SLOT {TOKEN} 1.1.0'
 METADATA_PROBE = '''"$PYBIN" - <<'PYCODE'
 import importlib.metadata as md, sys
 print(md.version('torchmonarch'))
@@ -51,6 +53,8 @@ def context(tmp_path, monkeypatch):
     managed = base / 'releases' / TOKEN / 'site'
     managed.mkdir(parents=True)
     distribution(managed, '0.7.0')
+    (managed / 'dgx_monarch').mkdir()
+    (managed / 'dgx_monarch' / '__init__.py').write_text('__version__ = "1.1.0"\n')
     (base / 'src').symlink_to(managed)
     unit = home / '.config/systemd/user/dgxm-worker.service'
     unit.parent.mkdir(parents=True)
@@ -104,7 +108,7 @@ def test_generated_probe_uses_owned_release_not_base_or_driver_staging(context, 
         env.pop('PYTHONPATH', None)
     result = run(config, host, env)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ['dgxm_worker_policy=MANAGED', '0.7.0']
+    assert result.stdout.splitlines() == ['dgxm_worker_policy=MANAGED', SLOT_LINE, '0.7.0']
     assert (site / 'torchmonarch-0.6.0.dist-info/METADATA').is_file()
 
 
@@ -119,7 +123,7 @@ def test_pre_setup_and_plain_install_keep_base_environment(context, layout):
     env.pop('PYTHONPATH', None)
     result = run(config, host, env)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ['dgxm_worker_policy=PLAIN', '0.6.0']
+    assert result.stdout.splitlines() == ['dgxm_worker_policy=PLAIN', 'dgxm_worker_release=PLAIN', '0.6.0']
 
 
 @pytest.mark.parametrize('unit_kind', ['canonical', 'hardened', 'legacy'])
@@ -135,7 +139,7 @@ def test_stale_policy_still_inspects_owned_release_and_reports_the_verdict(conte
         unit.write_text(unit.read_text().replace(suffix + '\n', '\n'))
     result = run(replace(config, rdma_latent_return=True), host, dict(os.environ, PYTHONPATH=str(staging)))
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ['dgxm_worker_policy=POLICY_STALE', '0.7.0']
+    assert result.stdout.splitlines() == ['dgxm_worker_policy=POLICY_STALE', SLOT_LINE, '0.7.0']
 
 
 @pytest.mark.parametrize('damage', ['missing-unit', 'changed-unit', 'unknown-link', 'unit-dropin'])
@@ -250,5 +254,5 @@ def test_wrong_managed_pin_does_not_fall_back_to_matching_base(context):
     env.pop('PYTHONPATH', None)
     result = run(config, host, env)
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines()[0] == 'dgxm_worker_policy=MANAGED'
-    assert result.stdout.splitlines()[1:] == ['0.6.0'] != [TORCHMONARCH_PIN]
+    assert result.stdout.splitlines()[:2] == ['dgxm_worker_policy=MANAGED', SLOT_LINE]
+    assert result.stdout.splitlines()[2:] == ['0.6.0'] != [TORCHMONARCH_PIN]

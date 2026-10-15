@@ -33,6 +33,7 @@ _HOST_CHECKS = {
     "listener generation": "worker_listener_generation",
     "swap": "worker_swap",
     "worker policy": "worker_policy",
+    "worker release version": "worker_release_version",
 }
 _UNAVAILABLE = "doctor diagnostics: unavailable"
 

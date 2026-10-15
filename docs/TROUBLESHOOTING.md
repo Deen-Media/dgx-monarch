@@ -267,9 +267,15 @@ mid-attach.
 the driver and every worker environment; doctor treats the skew as a failure
 because serialized objects and distributed kernels cross that boundary.
 `dgxm update` uses `--no-deps`, so it does not replace torch.
-For torchmonarch skew, run `dgxm update` (synchronize the repo's exact pin with
-`--no-deps`, install/sync dgx-monarch with `--no-deps`, restart, then doctor).
-This does not resolve or replace torch, NCCL, xfuser, or optional extras.
+For torchmonarch skew on plain source directories, run `dgxm update`
+(synchronize the repo's exact pin with `--no-deps`, install/sync dgx-monarch
+with `--no-deps`, restart, then doctor). When a host's
+`~/.local/share/dgx-monarch/src` links into a release slot, as after guided
+setup or a verified update, run `dgxm update --verify` instead: plain update
+never changes a release slot. If the driver has already moved without those
+Workers, repair that first
+([#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
+Neither path resolves or replaces torch, NCCL, xfuser, or optional extras.
 torchmonarch is pinned; bump it on all hosts at once.
 
 ## 9. Worker host death mid-render
@@ -2328,10 +2334,11 @@ unverified does not measure stock for every cell after it. Three exceptions.
 The combination that failed keeps its residency settings off until its own next
 check. A measured FAIL is written to the ledger and carried into every later
 session for those bytes
-([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)), and
-that carry is written to the graph, not to one combination, so a persisted FAIL
-for one model costs the next model on the same graph its optimized residency
-until you reload the graph. And a check that a measured class-K guard stopped
+([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)), but
+only that combination's renders read it: other checkpoints on the same Init
+node keep the `lora_low_rss` and `slab_weights` settings the graph asked for.
+A FAIL does turn `comfy_managed` off for the whole Init node
+([#67](#67-what-auto_gateoff-costs-and-what-it-does-not)). And a check that a measured class-K guard stopped
 disables no residency setting;
 [#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora) has that line and
 what to do about it.
@@ -5406,3 +5413,232 @@ record reads "ran"; on uly2 expect no card and a record that reads "dropped
 (sequence parallelism)"; on cfg2+fsdp or dp2+fsdp under
 `auto_gate=first_use` expect the refusal above even after the grant. The file
 patches no weight, and slab residency prices it as no bake.
+
+## 118. Workers in release slots still run the previous version after a plain update
+
+**Symptom:** after a plain `dgxm update`, one of these appears:
+
+- `dgxm doctor` fails a host's `worker release version` row: the host "runs
+  dgx-monarch X from release slot ..., but the driver runs Y";
+- a host's `env` row ends in `version skew vs driver pin`;
+- `dgxm update --verify` refuses with `prior_worker_drift` ("worker hosts do
+  not exactly match the current driver release");
+- the first-use Gate refuses with "Gate pre provenance package source does not
+  match driver".
+
+From 1.2.0 on, plain update refuses this case before it fetches, with
+`release_slot_worker`, and names the host. It refuses with
+`release_slot_unknown` when it cannot read a host's source link: the host gave
+no SSH answer, or the Python that cluster.toml names failed there. Nothing was
+fetched; fix that host, then rerun the update.
+
+**Cause:** guided setup puts each remote Worker in a release slot, and a
+verified update puts every Worker in one: the host's
+`~/.local/share/dgx-monarch/src` is then a link into
+`~/.local/share/dgx-monarch/releases/`. Plain update pulls the driver's
+checkout, installs the new torchmonarch pin, and restarts the Workers, but it
+never changes a release slot, so those Workers keep the earlier package. A
+slot that a verified update wrote also carries its own torchmonarch, which
+the env row then reports as skew. A slot that guided setup wrote holds only
+the package, so its Worker runs the earlier package on the new torchmonarch
+and only the release version row and the Gate name it. The verified update
+then refuses, because it accepts only Workers that match the driver exactly.
+A guided-setup install that ever ran plain update has been in this state
+since that update.
+
+Check each host first. A link into `releases/` means a slot; `u-` slots come
+from a verified update and `s-` slots from guided setup:
+
+```bash
+readlink -f ~/.local/share/dgx-monarch/src
+```
+
+Both routes below use `REPO_DIR` and `COMFY_PYTHON`, the paths from
+[INSTALL.md](INSTALL.md#install-the-node-pack). To see which release the
+driver runs:
+
+```bash
+"$COMFY_PYTHON" -c 'import dgx_monarch; print(dgx_monarch.__version__)'
+```
+
+**Repair forward** (works for every slot): move the Workers onto plain source
+directories at the driver's version, then return them to release slots. It
+works with a driver on this release or still on 1.1.0; steps 5 and 6 say where
+the two differ.
+
+1. Stop ComfyUI.
+2. Remove the Worker units and keep the config. Answer `N` when uninstall asks
+   whether to remove the config file:
+
+   ```bash
+   dgxm uninstall
+   ```
+
+   Ignore its closing hint to remove the `custom_nodes/dgx-monarch` checkout;
+   the next steps run from it.
+3. On every configured host, the driver's own host included, remove the source
+   link. Uninstall leaves it in place, and both installers refuse a link
+   without its unit. The test leaves a plain directory alone:
+
+   ```bash
+   if [ -L ~/.local/share/dgx-monarch/src ]; then rm ~/.local/share/dgx-monarch/src; fi
+   ```
+
+4. Install the driver's torchmonarch pin on every configured host. A plain
+   Worker reads torchmonarch from the interpreter that cluster.toml names, and
+   a plain update that stopped early, as on "unsupported key(s): monarch",
+   never moved it. Read the pin from the driver's checkout:
+
+   ```bash
+   PIN=$(grep -o 'torchmonarch==[0-9A-Za-z.+-]*' "$REPO_DIR/pyproject.toml")
+   echo "$PIN"
+   ```
+
+   Then on each host install that pin, with the version `echo` printed after
+   `torchmonarch==` and the `python` path from cluster.toml's `[cluster]`
+   table. Where the pin is already installed, pip changes nothing:
+
+   ```bash
+   <python from cluster.toml> -m pip install --no-deps torchmonarch==<version>
+   ```
+
+5. Install plain Worker units. This syncs the driver's package to each remote
+   host and starts the services (the
+   [Worker services](INSTALL.md#worker-services) section covers lingering and
+   the alternative of rerunning guided setup):
+
+   ```bash
+   dgxm install-service
+   dgxm doctor
+   ```
+
+   Every `worker release version` row should now read "plain source directory".
+   A 1.1.0 doctor prints neither that row nor a `worker policy` row; check
+   instead that no host's `env` row ends in `version skew vs driver pin`.
+6. Put the Workers back in release slots. From now on, update this install
+   only with `dgxm update --verify`. On a driver that runs this release, verify
+   the commit it runs:
+
+   ```bash
+   dgxm update --verify --target HEAD
+   ```
+
+   On a driver still on 1.1.0, the Workers now match it, so skip
+   `--target HEAD`: read
+   [Upgrading from 1.1.0](INSTALL.md#upgrading-from-110), then run
+   `dgxm update --verify` to update to the new release in one step.
+
+   The usual [verified-update conditions](INSTALL.md#updating) apply: a clean
+   checkout, a reachable `origin`, and no ComfyUI, Render session or actor
+   running. Where protected process environments are unreadable, start the
+   [read-only process inspectors](INSTALL.md#protected-process-inspection) and
+   add `--privileged-process-inspection`. The 1.1.0 updater has no such flag;
+   where it refuses with `activity_unknown`, run the update with
+   [the recovery procedure in #110](#recover-an-installation-with-an-older-verifier)
+   and that flag, as step 5 of the rollback below says. If it refuses because
+   a candidate dependency such as `xxhash` is missing, install it as INSTALL
+   describes, then rerun it.
+
+**Roll back** (for `u-` slots, or an `s-` slot whose commit you know): return
+the driver to the commit its Workers run, then make the verified update from
+there.
+
+1. Stop ComfyUI. Remove any `[monarch]` table from cluster.toml: the earlier
+   release's config loader rejects it.
+2. Find the Workers' commit. A `u-` slot name carries its first 12 hex digits
+   (`u-<commit>-<random>`); an `s-` slot carries none, so use the commit guided
+   setup ran at. Reset the checkout's branch to it, which refuses rather than
+   drop local changes:
+
+   ```bash
+   git -C "$REPO_DIR" reset --keep <commit>
+   ```
+
+3. Reinstall that commit's torchmonarch pin on the driver, without
+   dependencies:
+
+   ```bash
+   PIN=$(grep -o 'torchmonarch==[0-9A-Za-z.+-]*' "$REPO_DIR/pyproject.toml")
+   echo "$PIN"
+   "$COMFY_PYTHON" -m pip install --no-deps "$PIN"
+   ```
+
+   Run the same install on each Worker host too, with the value `echo`
+   printed and the `python` path from cluster.toml's `[cluster]` table in
+   place of `COMFY_PYTHON`. The plain update moved that interpreter's
+   torchmonarch as well: an `s-` slot runs on it, and the earlier release's
+   Doctor reads it even for a `u-` slot, which carries its own copy.
+4. Reinstall the package from the reset checkout, restart the Workers and
+   check them:
+
+   ```bash
+   "$COMFY_PYTHON" -m pip install -e "$REPO_DIR" --no-deps
+   dgxm restart
+   dgxm doctor
+   ```
+
+5. Update with the verified path only, after reading
+   [Upgrading from 1.1.0](INSTALL.md#upgrading-from-110) when the Workers run
+   that release:
+
+   ```bash
+   dgxm update --verify
+   ```
+
+   The earlier release's updater runs this step. If it refuses with
+   `activity_unknown` because protected process environments are unreadable,
+   that updater has no `--privileged-process-inspection`; run the same update
+   from a checkout of the target release with
+   [the recovery procedure in #110](#recover-an-installation-with-an-older-verifier),
+   adding that flag to `tools/update_from_checkout.py`, with the inspectors
+   running.
+
+If that update still refuses with `prior_worker_drift`, the Workers run a
+different commit from the one you reset to, as after a guided setup followed
+by plain updates. Use the forward repair instead.
+
+## 119. A mesh build or Worker start refuses on an ambient environment variable
+
+**Symptom:** a render's mesh build, or a Worker service start, refuses with
+one of these messages, each ending in a pointer to this entry:
+
+- "ambient OTLP endpoint conflicts with disabled diagnostic export";
+- "unmanaged MONARCH_RDMA_ environment setting", followed by the names it
+  found;
+- "`NAME` conflicts with the validated Monarch policy", for example
+  `DGXM_RDMA_QP_SPLIT`.
+
+A Worker that refuses exits at start, and its systemd unit keeps restarting
+it; on that host, `journalctl --user -u dgxm-worker.service` shows the
+message.
+
+**Cause:** dgx-monarch sets Monarch's transport and diagnostic settings from
+cluster.toml's `[monarch]` table before Monarch loads, in the driver, each
+Worker and each actor. A variable already set in the environment would
+override those settings without any record, so the process refuses it
+instead. The driver checks on every mesh build, in local mode too; with no
+cluster.toml the default policy applies, so a single box with no cluster
+config can see this. The Worker loop drops
+every variable outside a short allowlist before it checks, so of these only
+`DGXM_RDMA_QP_SPLIT` can stop a Worker start; the other two come from the
+environment that starts ComfyUI.
+
+**Remedy**, per variable:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` with export off: unset it in the environment
+  that starts ComfyUI (the shell, its profile, or the launcher), then restart
+  ComfyUI. Setting `[monarch.diagnostics] otlp_endpoint` to the same URL with
+  `otlp_logs = true` also clears it, but that turns on export of Monarch's
+  upstream logs as well as metrics; choose it only on purpose
+  ([CLUSTER.md](CLUSTER.md#monarchdiagnostics)).
+- A `MONARCH_RDMA_*` name the policy does not set: unset it. `[monarch.rdma]`
+  sets every RDMA option this release supports
+  ([CLUSTER.md](CLUSTER.md#monarchrdma)). A managed `MONARCH_RDMA_*` name set
+  to the policy's own value is accepted; any other value refuses with the
+  conflict message below.
+- `DGXM_RDMA_QP_SPLIT`, or another variable named in the conflict message:
+  unset it where the process starts. The policy sets each of them;
+  `DGXM_RDMA_QP_SPLIT` follows `[monarch.rdma] application_chunks`. For a
+  Worker, look in the systemd user manager's environment
+  (`systemctl --user show-environment`), in any hand edit to its unit, and in
+  the shell environment `dgxm up` starts a `nohup` Worker from.

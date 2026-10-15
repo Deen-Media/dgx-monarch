@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import subprocess
 
+from .. import __version__
 from ..config import ClusterConfig, HostConfig
+from . import release_slot
 from .lifecycle_managed import (
     POLICY_STALE,
     POLICY_STALE_EXIT,
@@ -30,7 +32,8 @@ def worker_context(config: ClusterConfig, host: HostConfig) -> str:
     and reports the verdict on its own line. Any other result stops the check
     before the environment probe runs, after printing the probe's output and
     its exit code on a last line, so Doctor can name the cause as restart and
-    a syncing up do.
+    a syncing up do. The last line reports where the source link points and
+    the package version in a release slot (``release_slot``).
     """
     return f'''DGXM_DOCTOR_SOURCE_KIND=$(
 {managed_source_probe(config, host)})
@@ -41,6 +44,7 @@ case "$DGXM_DOCTOR_SOURCE_EXIT:$DGXM_DOCTOR_SOURCE_KIND" in
   *) printf '%s\\n' "$DGXM_DOCTOR_SOURCE_KIND"; echo "{PROBE_EXIT_LINE}$DGXM_DOCTOR_SOURCE_EXIT"; exit 1;;
 esac
 echo "{POLICY_LINE}$DGXM_DOCTOR_SOURCE_KIND"
+{release_slot.PROBE_COMMAND}
 '''
 
 
@@ -81,3 +85,33 @@ def worker_policy_row(host_name: str, lines: list[str]) -> tuple[str, str, str]:
     if kind == POLICY_STALE:
         return FAIL, name, f"STALE: {policy_stale_detail()}"
     return WARN, name, "unobserved: the source probe printed no policy verdict"
+
+
+def worker_release_row(host_name: str, lines: list[str]) -> tuple[str, str, str]:
+    """Compare the package version in a host's release slot with the driver's.
+
+    Plain ``dgxm update`` moves the driver and never a slot, so a slot left on
+    an earlier version fails here even when its torchmonarch matches the pin.
+    """
+    name = f"{host_name} worker release version"
+    verdict = release_slot.parse(lines)
+    if verdict is None:
+        return WARN, name, "unobserved: the release probe printed no verdict"
+    kind, token, version = verdict
+    if kind == "PLAIN":
+        return OK, name, "plain source directory, not a release slot; nothing to compare"
+    if kind == "OUTSIDE":
+        return OK, name, "the source link points outside releases/, so it is not a release slot"
+    if version == "UNREADABLE":
+        return WARN, name, f"unobserved: release slot {token} has no readable package version"
+    if version != __version__:
+        return FAIL, name, (
+            f"{host_name} runs dgx-monarch {version} from release slot {token}, but the driver "
+            f"runs {__version__}. Plain `dgxm update` never changes a release slot; repair the "
+            f"split with {release_slot.TROUBLESHOOTING}, then update only with `dgxm update --verify`")
+    return OK, name, f"release slot {token} carries dgx-monarch {version}, as the driver does"
+
+
+def worker_source_rows(host_name: str, lines: list[str]) -> list[tuple[str, str, str]]:
+    """The policy row and the release version row, both read from the source probe."""
+    return [worker_policy_row(host_name, lines), worker_release_row(host_name, lines)]

@@ -1423,12 +1423,13 @@ lists every cell's walls, speedups and fidelity.
   precisions that read bit-identical and beat uly2 at every measured size in
   its band.
 
-Not measured: MXFP8 and NVFP4 Krea2 files, Chroma FP8-scaled and Radiance
-above 1024, Qwen-Image Edit-2511, equal prompt pairs on Boogu and Anima,
+Not measured: MXFP8 and NVFP4 Krea2 files, Kroma BF16 files, Chroma
+FP8-scaled and Radiance above 1024, Qwen-Image Edit-2511, equal prompt pairs on Boogu and Anima,
 which fold onto the slice path, and world 4. Each can still reach a cfg2 row
 through a shared family and precision class: MXFP8 and
 NVFP4 Krea2 files reach row 15 (in September, RAW NVFP4 cfg2 read 1-step NRMS
-0.0113), Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
+0.0113), a Kroma BF16 file reads as family krea2 and reaches row 15 at CFG other
+than 1, Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
 would reach row 68, and an equal pair takes the slice path on rows 79 and 47.
 At world 4 a batch-1 render on a cfg row refuses class K. An evidence record
 has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
