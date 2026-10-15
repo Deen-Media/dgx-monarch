@@ -971,10 +971,67 @@ hidden `UNIQUE_ID`; no node reads its value, but it is part of that contract.
   verdict. An untyped abort keeps its denial and says what stopped the proof.
   Diagnostic status publishes its event watermark and tail from one locked
   snapshot, so the two values always describe one coherent event history.
-- For state the node surface does not show, use `dgxm top`, the sidebar panel
-  or a `dgxm diagnostics` capture. `monarch-tui` (shipped with torchmonarch)
-  needs `--addr` of a mesh admin server, which the integration never starts;
-  docs/TROUBLESHOOTING.md ("Power-user escape hatch") covers the prerequisite.
+- For state the node surface does not show, use `dgxm top`, the sidebar panel,
+  `/dgxm/metrics`, a `dgxm diagnostics` capture or, with
+  `[monarch.diagnostics] metrics = true` and an `otlp_endpoint`, the ownership
+  occupancy counters in your own collector (docs/CLUSTER.md). Monarch's own
+  observability services (`enable_telemetry`, `Job.profile`, `monarch query`,
+  the dashboard and the mesh admin agent that `monarch tui` reads) stay off,
+  and there is no inspector mode for them: no form of them in the pinned 0.7.0
+  wheel is both stoppable and confined to what the integration owns. The paths
+  below are inside that wheel.
+  - `enable_telemetry`, `Job.profile`, `monarch query` and the dashboard each
+    need a Job (`monarch/_src/job/job.py:502-597`; `monarch query` loads the
+    active Job at `monarch/tools/cli.py:601-606`). A Job over the persistent
+    Workers (`StoreJob`, `monarch/_src/job/spmd.py:405-482`) attaches to them
+    as a second client, and attach pushes that client's config to the
+    Workers' host agents (`monarch/_src/actor/bootstrap.py:258-265`;
+    `monarch/_rust_bindings/monarch_hyperactor/config.pyi:179-180`). The
+    driver is the single Monarch client (section 5.1).
+  - The mesh admin agent needs no Job. The private `_spawn_admin`
+    (`monarch/_src/actor/host_mesh.py:482-517`) starts it on any HostMesh the
+    caller holds, such as the driver's own, through the caller's actor
+    instance (509-515). It can bind loopback: `_spawn_admin` and
+    `MeshAdminConfig` (`monarch/_src/job/job_components.py:55-69`) take an
+    `admin_addr`, and the `mesh_admin_addr` config (environment variable
+    `HYPERACTOR_MESH_ADMIN_ADDR`) sets the fallback. That fallback defaults to
+    `[::]:1729` in the native binary, which is every interface; the stub
+    gives the same address only as an example (`config.pyi:177-178`). Its
+    handle has no methods
+    (`monarch/_rust_bindings/monarch_hyperactor/host_mesh.pyi:178-184`), and
+    upstream's own reset only drops the Python reference
+    (`job_components.py:317-319`). So, as far as the Python surface shows, it
+    ends only with the process that spawned it: started in the driver, it
+    would last as long as ComfyUI, and a separate inspector process that
+    attaches to the Workers to get a HostMesh makes the second-client attach
+    above.
+  - Telemetry, `monarch query` and `Job.profile` run in the job sidecar, a
+    daemon built to outlive its caller (`monarch/_src/job/once_daemon.py:82-84`)
+    that a shutdown call can stop (`monarch/_src/job/job_sidecar.py:102-113`).
+    Its query API binds 127.0.0.1
+    (`monarch/monarch_dashboard/server/app.py:89-104`).
+    `start_telemetry_servers` takes a `host` that defaults to `::`
+    (`app.py:107-113`), but `TelemetryConfig` has no bind host
+    (`monarch/_src/job/telemetry_config.py:98-101`) and the sidecar call
+    passes none (327-331), so the dashboard, when enabled, binds `::`, every
+    interface. The sidecar also spawns a telemetry proc mesh on every Worker
+    host (`monarch/_src/job/telemetry_actor.py:148`) whose stop is best effort
+    with a 5 s bound (`telemetry_actor.py:183-196`).
+  - The periodic snapshot actor has no stop handle. Upstream says proc
+    lifecycle owns it and that new config needs the job killed and applied
+    again (`job_components.py:362-375` and the TODO at 529-531), so it runs
+    until its procs stop. Only `snapshot_interval_secs = 0` keeps it off
+    (`job_components.py:400-402`).
+  - `monarch tui` needs `--addr` of a mesh admin server
+    (`monarch/tools/cli.py:85-161`, registered at 719). The wheel also ships a
+    separate `monarch-tui` binary; nobody has checked its arguments.
+
+  An inspector mode becomes possible once upstream gives the admin handle a
+  stop and periodic snapshots an abort handle, lets telemetry run without
+  spawning procs on the hosts, and lets a client attach without pushing its
+  config. A bind host in `TelemetryConfig` would also let it include the
+  dashboard. docs/TROUBLESHOOTING.md ("Power-user escape hatch") says what to
+  use until then.
 
 ### 5.9 Refusal taxonomy: what a typed refusal is allowed to do
 
@@ -1633,6 +1690,10 @@ dgx-monarch/
 │   ├── rdma_settlement.py     # durable local-drop publication helpers
 │   ├── native_return_latch.py # driver latch: messaging after a failed native
 │   │                          #   read, cleared only by a driver restart
+│   ├── occupancy_metrics.py   # opt-in occupancy up-down counters, sampled on
+│   │                          #   the existing metrics thread (stdlib leaf)
+│   ├── return_phases.py       # one native return's phase split for the result
+│   │                          #   row, the render log line and the qualifier
 │   ├── tui/readiness_view.py  # pure canonical readiness renderer for the TUI
 │   ├── tui/view_helpers.py    # dashboard rendering/recording helpers
 │   └── cli/                   # dgxm command adapters and lifecycle leaves

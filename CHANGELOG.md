@@ -2,6 +2,40 @@
 
 ## [Unreleased]
 
+- Export ownership occupancy as Monarch up-down counters when
+  `[monarch.diagnostics] metrics = true` (issue #35):
+  `dgxm.return.live_handoffs`, `dgxm.return.pending_read_jobs` (the read
+  leases), `dgxm.return.poison_owners`, `dgxm.mesh.active_leases`,
+  `dgxm.mesh.abandoned_samples` and `dgxm.native_return.latched`. Each reads the
+  source of the `/dgxm/metrics` series with the matching name. The thread that
+  already exports phase metrics samples the levels at most once a second and
+  adds the change since its last export, so no new thread, timer or service
+  starts, and the next sample resends a failed add. With metrics off the
+  counters make no instrument and read no source. A meter without up-down
+  counters logs one DEBUG line, and the phase metrics and renders go on
+  ([CLUSTER.md](docs/CLUSTER.md#monarchdiagnostics)).
+- Record the phases of each native latent return (issue #35). The Worker's
+  result row carries `return_phases`: the child-process preflight, timed as the
+  new `rdma_preflight` phase, the registration, any rollback drops
+  (`rdma_drop`) and the rest of the pack. A preflight child that runs past its
+  15 s bound records the phase as a timeout. For each completed native return
+  in a normal render, the driver logs one `native return:` line with that split
+  and its own read, drops, ACK and rest. Fleet jobs keep the Worker's split in
+  the result row only; no Fleet log line or ledger shows it. The qualifier's
+  `--timing` mode stores both splits with each native call and in its summary.
+  When a record reads complete, its phases add up to its total within half a
+  millisecond for each rounded value. Nothing about the return changes, and
+  native return stays opt-in. The split of the 2 s first native use is NOT RUN
+  until the next hardware leg ([VALIDATION.md](docs/VALIDATION.md#native-rdma)).
+- Decide against an inspector mode for Monarch's own observability services
+  for now (issue #35). In the 0.7.0 wheel, telemetry, `Job.profile`,
+  `monarch query` and the dashboard each need a Job, whose attach pushes a
+  second client's config to the Workers. Telemetry also spawns procs on every
+  Worker host, and the dashboard, when enabled, binds every interface. The mesh
+  admin agent needs no Job and can bind loopback, but its handle has no stop.
+  The snapshot actor has no stop handle and runs until its procs stop.
+  DESIGN.md section 5.8 cites each fact and the upstream changes that would
+  unblock it; the TROUBLESHOOTING escape hatch lists what to use today.
 - Remove the temporary files that killed actor ledger writers leave in
   `~/.local/state/dgx-monarch` (issue #36, which counted 164 of them on one
   host). The Worker service's tracker thread writes a temporary file and then

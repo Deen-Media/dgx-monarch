@@ -326,3 +326,28 @@ def test_the_summary_command_imports_no_native_runtime(monkeypatch, tmp_path, ca
     assert module.main(["--expect-sha", SHA, "--expect-manifest", MANIFEST,
                         "--timing-summary", *paths]) == 0
     assert len(json.loads(capsys.readouterr().out)["strata"]) == 8
+
+
+def test_the_first_use_phase_split_reaches_the_summary(tmp_path):
+    module = _bench()
+    split = {"worker": {"schema": 1, "total_s": 1.95, "resolution_s": 0.001, "complete": True,
+                        "phases_s": {"rdma_preflight": 1.8, "rdma_register": 0.1,
+                                     "unattributed": 0.05}},
+             "driver": {"schema": 1, "total_s": 0.04, "resolution_s": 0.001, "complete": True,
+                        "phases_s": {"rdma_read": 0.02, "rdma_drop": 0.005, "ack": 0.01,
+                                     "unattributed": 0.005}}}
+    calls = _calls(0, 2.0, {8: [0.03]}) + _calls(1, 2.0, {8: [0.03]})
+    for call in calls:
+        if call["phase"] == "first_use":
+            call["return_phases"] = split
+    strata = module.timing_summary([{"cycle": 0, "timing_calls": calls}])
+    assert [entry["first_use_phases"] for entry in strata] == [split, split]
+    # Reports from before the split carry no phases and still pair.
+    paths = _campaign(module, tmp_path)
+    native = json.loads(Path(paths[1]).read_text())
+    for entry in native["timing_summary"]:
+        entry["first_use_phases"] = split
+    Path(paths[1]).write_text(json.dumps(native))
+    result = module.compare_timing(module.load_timing_reports(paths, SHA, MANIFEST))
+    with_split = [row for row in result["strata"] if "native_first_use_phases" in row]
+    assert len(with_split) == 4 and with_split[0]["native_first_use_phases"] == split

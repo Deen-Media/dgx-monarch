@@ -1,9 +1,11 @@
 """Opt-in public Monarch metrics; no Jobs, servers, spans, or lifecycle IO.
 
 Configure once outside runtime ownership locks. Metrics use a bounded daemon
-queue so an exporter cannot block a render. OTLP destination and collection
-interval belong to Monarch's startup environment, not this adapter. Disabling
-stops new records; it does not claim to flush an external telemetry backend.
+queue so an exporter cannot block a render. The same thread samples ownership
+occupancy into up-down counters (occupancy_metrics). OTLP destination and
+collection interval belong to Monarch's startup environment, not this adapter.
+Disabling stops new records; it does not claim to flush an external telemetry
+backend.
 """
 from __future__ import annotations
 
@@ -11,9 +13,10 @@ import os
 import queue
 import sys
 import threading
+import time
 from typing import Any
 
-from . import runtime_diagnostics
+from . import occupancy_metrics, runtime_diagnostics
 
 _QUEUE_CAPACITY = 256
 _LOCK = threading.Lock()
@@ -109,6 +112,8 @@ class _MetricExporter:
         # custom histogram boundaries. Never request unsupported instruments.
         self._count = meter.create_counter("dgxm.phase.completed")
         self._duration = meter.create_histogram("dgxm.phase.duration.seconds")
+        # Occupancy levels ride this thread; a meter without them keeps phases.
+        self._levels = occupancy_metrics.level_counters(meter)
         self._queue: queue.Queue[dict[str, Any]] = queue.Queue(_QUEUE_CAPACITY)
         self._stopped = threading.Event()
         self.dropped = 0
@@ -127,7 +132,11 @@ class _MetricExporter:
             self.dropped += 1
 
     def _run(self) -> None:
+        next_levels = 0.0
         while not self._stopped.is_set():
+            if self._levels is not None and time.monotonic() >= next_levels:
+                next_levels = time.monotonic() + occupancy_metrics.SAMPLE_INTERVAL_S
+                self._levels.sample_safely()
             try:
                 event = self._queue.get(timeout=0.1)
             except queue.Empty:

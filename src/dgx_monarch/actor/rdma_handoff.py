@@ -6,6 +6,7 @@ from typing import Any
 
 from monarch.actor import endpoint
 
+from .. import occupancy_metrics, return_phases
 from ..rdma_ownership import HandoffRegistry
 from ..return_diagnostics import ReturnCounts, message_reason, record_descriptor
 from ..transfer import LatentReturn
@@ -23,6 +24,7 @@ class RDMAHandoffMixin:
     def _init_rdma_handoffs(self) -> None:
         self._latent_handoffs = HandoffRegistry()
         self._return_counts = ReturnCounts()
+        occupancy_metrics.track_worker(self)  # read only when metrics are on
 
     def _handoff_registry(self) -> HandoffRegistry:
         registry = getattr(self, "_latent_handoffs", None)
@@ -59,9 +61,11 @@ class RDMAHandoffMixin:
                 result["latent"] = self._message_descriptor(
                     "samples", leader_samples, seq, depth)
             else:
+                started = return_phases.mark()
                 descriptor = latent_return.pack(
                     "samples", leader_samples, seq=seq, depth=depth,
                     handoff=handoff)
+                return_phases.attach(result, started, descriptor)
                 if descriptor.get("kind") == "rdma":
                     descriptor["owner_token"] = handoff["token"]
                     descriptor["setup_generation"] = generation

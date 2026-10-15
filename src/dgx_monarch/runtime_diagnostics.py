@@ -16,8 +16,9 @@ from contextlib import contextmanager
 from typing import Any
 
 PHASES = frozenset({
-    "attach", "setup", "queue_wait", "compute", "collect", "rdma_register",
-    "rdma_read", "rdma_drop", "ack", "recycle", "spawn", "readiness", "cancel",
+    "attach", "setup", "queue_wait", "compute", "collect", "rdma_preflight",
+    "rdma_register", "rdma_read", "rdma_drop", "ack", "recycle", "spawn",
+    "readiness", "cancel",
 })
 OUTCOMES = frozenset({"ok", "error", "timeout", "cancelled", "unknown"})
 RETURN_MODES = frozenset({"none", "message", "rdma"})
@@ -130,6 +131,14 @@ def record_phase(phase_name: str, duration_s: float, *, outcome: str = "ok",
         # Includes interruptions in diagnostic code. The caller's operation
         # and any exception already escaping it retain their original result.
         pass
+
+
+def sequence() -> int:
+    """The last accepted record's number, read without the store lock.
+
+    A later ``events_since(sequence())`` returns the records accepted after it.
+    """
+    return _STORE._sequence
 
 
 def snapshot() -> dict[str, Any]:
