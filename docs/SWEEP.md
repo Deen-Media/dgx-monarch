@@ -96,13 +96,17 @@ runtime's own pin guard (`attention_pins.py`), so these labels read basis
   both.
 - **The label is waivable only where a grant lets the cell render.** A grant
   clears this guard and no other, so the cell carries the waiver only where
-  the same cell without the pins renders. Two cases carry none. On an FSDP
+  the same cell without the pins renders. Three cases carry none. On an FSDP
   preset at `auto_gate=first_use` the first-use ceremony that would earn the
   Gate PASS runs without the waiver and stops at this guard
   ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
   On cfg2 or cfg2+fsdp at CFG 1.0 with a sampler that drops the uncond pass,
   the pin guard answers first at load, and a granted leg would then meet the
-  cfg refusal. The runner dismisses the card such a refusal raises, so a
+  cfg refusal. On cfg2 a pinned nvfp4 file of a family the sharded nvfp4 bar
+  measures (Chroma today) meets that bar first, and it refuses class K under
+  its own card. The runner grants one card per cell and retries once, so a
+  granted leg would meet the pin guard, and that cell carries no waiver
+  either. The runner dismisses the card such a refusal raises, so a
   later cell's grant still finds exactly one card of its kind.
 - **Two refusals come before the pin guard.** A bf16 or fp16 file that pins
   never reaches the guard under FSDP: its uint8 config tensors leave the

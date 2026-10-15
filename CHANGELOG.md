@@ -194,6 +194,9 @@ metadata reads the new version
   render: not on an FSDP preset at `auto_gate=first_use`, where the Gate
   ceremony renders without the waiver, and not on cfg2 or cfg2+fsdp at CFG
   1.0 without a cfg++ sampler, where a granted leg meets the cfg refusal.
+  A pinned Chroma nvfp4 file on cfg2 meets the sharded nvfp4 bar first and
+  carries no waiver either, because the runner grants one card per cell and
+  the granted leg would meet the pin guard.
   The runner now dismisses the card such a refusal raises, so a later cell's
   grant still finds exactly one card of its kind. A bf16 or fp16 file that
   pins refuses class P at the FSDP launch check first, and a sol kernel

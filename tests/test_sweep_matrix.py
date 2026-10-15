@@ -2457,3 +2457,67 @@ def test_a_lora_that_pins_drops_its_lora_arm(tmp_path):
             and line.endswith("so the lora-on arm is dropped")]
     assert [cell for cell in cells if cell["template"] == "styled" and cell["loras"]]
     assert not [line for line in pruned if line.startswith("styled: ")]
+
+
+@pytest.mark.parametrize("method", [["comfy_kitchen_int8"], {"attention": "comfy_kitchen_int8"}, 5],
+                         ids=["list", "dict", "number"])
+def test_an_attention_value_that_is_not_a_string_names_no_kernel(tmp_path, method):
+    """ComfyUI compares the value with the two kernel names it binds, logs any
+    other value as an unknown method and reads the next entry, so a list, an
+    object or a number pins nothing and a known kernel after it still binds.
+    The runtime reader skips the value the same way, and the matrix build goes
+    on."""
+    path = tmp_path / "odd_int8.safetensors"
+    _pinned_checkpoint(path, {"blocks.0.attn": {"attention": method},
+                              "blocks.1.attn": [{"attention": method}, PIN_INT8]})
+    pins = matrix.checkpoint_pins([path])
+    assert {key: pin.label for key, pin in pins.items()} == {
+        "odd_int8.safetensors:blocks.1.attn.comfy_attention.config": "comfy_kitchen_int8"}
+    config = _pin_rig(tmp_path / "rig", {
+        "odd": ({"blocks.0.attn": {"attention": method}}, torch.int8),
+        "plain": ({}, torch.int8)})
+    cells, pruned, _unmatched = matrix.build_cells(config)
+    assert not [line for line in pruned if line.startswith("odd: ")]
+    odd = _local(cells, "odd")
+    assert (odd["label"], odd["checkpoint_pins"]) == ("render", {})
+    for preset in NON_SP_PRESETS:
+        assert _pick(cells, "odd", preset)["label"] == "render", preset
+
+
+def test_a_pinned_nvfp4_cell_on_cfg2_carries_no_shard_quant_waiver(tmp_path):
+    """On cfg2 the sharded nvfp4 bar of a measured family refuses class K, and
+    the pin guard reads right after it on the same sample path. The runner
+    grants one card and retries once, so a leg granted the shard-quant card
+    would meet the pin guard and file a finding: the cell carries no waiver.
+    Sequence parallelism drops the pins, so uly2 and ring2 keep the card."""
+    config = _rig(tmp_path)
+    models = config["model_dir"]
+    _prompt_template(config, "chromapin", "chroma", "chromapin_bf16.safetensors",
+                     "x" * 44, "y" * 44)
+    save_file({**{key: torch.zeros(2, 2) for key in FAMILY_KEYS["chroma"]},
+               "blocks.0.attn.comfy_attention.config": _config_tensor(PIN_INT8)},
+              str(models / "chromapin_nvfp4.safetensors"))
+    _prompt_template(config, "chromaplain", "chroma", "chromaplain_bf16.safetensors",
+                     "x" * 44, "y" * 44)
+    _checkpoint(models, "chromaplain_nvfp4.safetensors", "chroma")
+    cells, _pruned, _unmatched = matrix.build_cells(config, count_tokens=_characters)
+    shard, pin = "shard_quant_scale:chroma", "sol_attn:checkpoint_pin"
+    pinned = _pick(cells, "chromapin", "cfg2", artifact_quant="nvfp4")
+    assert pinned["checkpoint_pins"] == {"comfy_kitchen_int8": 1}
+    assert (pinned["label"], pinned["basis"], pinned["waiver"], pinned["waiver_guards"]) == (
+        "refuse:K", "guard", False, [])
+    for preset in ("uly2", "ring2"):
+        cell = _pick(cells, "chromapin", preset, artifact_quant="nvfp4")
+        assert (cell["label"], cell["waiver"]) == ("refuse:K", True), preset
+        assert shard in cell["waiver_guards"] and pin not in cell["waiver_guards"], preset
+    # One GPU runs no shard bar, so the pin guard answers there and its grant renders.
+    single = [cell for cell in cells if cell["template"] == "chromapin"
+              and cell["session"] == "local" and "nvfp4" in cell["artifact_quant"]]
+    assert [(cell["label"], cell["basis"], cell["waiver"], cell["waiver_guards"])
+            for cell in single] == [("refuse:K", "header", True, [pin])]
+    # The same cell without the pins keeps the shard-quant card, and the
+    # unpinned bf16 artifact of the pinned template renders.
+    plain = _pick(cells, "chromaplain", "cfg2", artifact_quant="nvfp4")
+    assert (plain["label"], plain["basis"], plain["waiver"], plain["waiver_guards"]) == (
+        "refuse:K", "guard", True, [shard])
+    assert _pick(cells, "chromapin", "cfg2", artifact_quant="bf16")["label"] == "render"

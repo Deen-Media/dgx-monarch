@@ -609,12 +609,16 @@ def _comfy_load_fails(config: object) -> bool:
     calls ``.get`` on each entry in order and stops at the first kernel it
     binds, and both kernels it knows bind on the pair this harness drives. An
     entry that is not an object before that point raises, and so does a config
-    that is not an object or a list at all.
+    that is not an object or a list at all. An ``attention`` value that is not
+    a string (a list, an object, a number) fails nothing: ComfyUI compares it
+    with the two kernel names, logs it as an unknown method and reads the next
+    entry, and the runtime reader (``attention_pins._declared``) skips it too.
     """
     for entry in config if isinstance(config, list) else [config]:
         if not isinstance(entry, dict):
             return True
-        if entry.get("attention") in attention_pins.KNOWN_KERNELS:
+        method = entry.get("attention")
+        if isinstance(method, str) and method in attention_pins.KNOWN_KERNELS:
             return False
     return False
 
@@ -904,13 +908,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     # shared scale reduces across, which is sp or cfg and never dp or dm-cfg2.
     # The guard name comes from the runtime's own table, so a second measured
     # family needs no edit here.
-    shard_quant_guard = quant_activation_scale.SHARD_QUANT_GUARDS.get(family)
-    if shard_quant_guard and "nvfp4" in cell["artifact_quant"] \
-            and quant_activation_scale.plan_for_topology(
-                {"ulysses": topo.ulysses, "ring": topo.ring, "cfg": topo.cfg},
-                dual_model_cfg=dual):
-        return "refuse:K", "guard", True, [*guards, shard_quant_guard]
-    # The checkpoint's attention pins, read right after that bar on the same
+    #
+    # The checkpoint's attention pins are read right after that bar on the same
     # sample path (actor/sample_protocol.py). The pins come from the header and
     # the verdict from the guard: an approximate pin that runs on this topology
     # refuses class K under the Sol-Attn waiver, and one that sequence
@@ -919,7 +918,22 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     # any load, and sol_attention.make_sol_usp_attention refuses class P there,
     # which the sol block below answers.
     sol_first = sol_attention.is_sol_kernel(cell["attention"]) and topo.ulysses * topo.ring < 2
-    if not sol_first and (exc := pin_refusal(facts.get("pins"), topo, family, world)):
+    exc = None if sol_first else pin_refusal(facts.get("pins"), topo, family, world)
+    shard_quant_guard = quant_activation_scale.SHARD_QUANT_GUARDS.get(family)
+    if shard_quant_guard and "nvfp4" in cell["artifact_quant"] \
+            and quant_activation_scale.plan_for_topology(
+                {"ulysses": topo.ulysses, "ring": topo.ring, "cfg": topo.cfg},
+                dual_model_cfg=dual):
+        if exc is not None:
+            # A grant clears this bar and no other, and the runner grants one
+            # card and retries once (benchmark/sweep/run.py), so the waived leg
+            # would meet the pin guard and file a finding: the cell carries no
+            # waiver. Only cfg2 reaches this return: sequence parallelism drops
+            # the pins, dp and dm-cfg2 take no bar, and the FSDP launch contract
+            # refuses an nvfp4 file first.
+            return "refuse:K", "guard", False, guards
+        return "refuse:K", "guard", True, [*guards, shard_quant_guard]
+    if exc is not None:
         tag = parse_refusal_tag(str(exc))
         if tag is None or not tag.waivable or tag.guard is None:
             return _label_from(exc), "header", False, guards
