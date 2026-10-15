@@ -39,6 +39,8 @@ on:
 
       # Check Ernie imports before running its forward-path harness.
       - "tests/test_ernie_stock_equivalence.py"
+      - "tests/test_flux3_comfy_exactness.py"
+      - "tests/test_flux3_cond_branch.py"
       - "tests/test_mage_flow_comfy_differential.py"
       - "tests/test_qwen_image21_adapter.py"
       - "tests/test_qwen_text_projections.py"
@@ -46,7 +48,7 @@ on:
       - "tests/test_wan_variants.py"
       - "tests/test_worker_latent_size_tags.py"
       # No step runs these files, but the files the steps run import them. The
-      # pad-exclusion file holds the Ernie, Hunyuan, Ideogram4 and Lens
+      # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4 and Lens
       # two-rank harness. tests/test_canary_path_filter.py checks that every
       # repo file the steps import by name is listed here.
       - "tests/comfy_managed_helpers.py"
@@ -220,6 +222,18 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_ernie_stock_equivalence.py
+      # FLUX.3's two-phase sharded forward against stock operand by operand,
+      # padded and unpadded, with references, the flow map and fused qkv, and
+      # the LoRA key map and bakes on a tiny real model. The cond-branch file
+      # holds the extra_conds bind and the inference-tensor persistence canary.
+      - name: FLUX.3 sharded forward and LoRA vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_flux3_comfy_exactness.py
+      - name: FLUX.3 cond branch and persistence canary vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_flux3_cond_branch.py
       # These two steps bind comfy's native Qwen Image 2.1 and Wan Animate 2
       # model classes from master and compare the injected sequence-parallel
       # forwards with stock on CPU. The ordinary CI job has no ComfyUI.
@@ -280,6 +294,8 @@ jobs:
           tests/test_mage_flow_comfy_differential.py
           tests/test_hunyuan_stock_equivalence.py
           tests/test_ernie_stock_equivalence.py
+          tests/test_flux3_comfy_exactness.py
+          tests/test_flux3_cond_branch.py
           tests/test_qwen_image21_adapter.py
           tests/test_wan_variants.py
           tests/test_int8_linear_layout.py

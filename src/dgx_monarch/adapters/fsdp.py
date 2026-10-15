@@ -58,6 +58,7 @@ from .fsdp_islands import (
     auxiliary_module_parameters,
     classify_fp32_islands,
     island_parameters,
+    resolve_module_path,
 )
 from .fsdp_wrap_trace import _allocator_pool_trim, _log_wrap_memory
 
@@ -96,6 +97,7 @@ _BLOCK_LIST_ATTRS = (
     # hits the sharded_lists == 0 refusal below, and PixelDiT's patch_blocks
     # fall through to the root fully_shard(dm) instead of a wrap per block.
     "visual_transformer_blocks", "text_transformer_blocks", "patch_blocks",
+    "content_mode_blocks.image",
 )
 
 
@@ -442,7 +444,7 @@ def apply_fsdp_capacity_mode(
     def wrap_blocks() -> None:
         nonlocal sharded_lists
         for attr in _BLOCK_LIST_ATTRS:
-            block_list = getattr(dm, attr, None)
+            block_list = resolve_module_path(dm, attr)
             if block_list is None:
                 continue
             for block in block_list:

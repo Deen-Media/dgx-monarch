@@ -17,6 +17,8 @@ EVIDENCE_ANCHORS = {
     "evidence-flux-1-dev",
     "evidence-flux-1-schnell",
     "evidence-flux2",
+    "evidence-flux-3-klein",
+    "evidence-flux-3-klein-base",
     "evidence-longcat-image",
     "evidence-hunyuanimage-2-1-refiner",
     "evidence-qwen-image",

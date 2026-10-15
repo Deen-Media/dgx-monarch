@@ -669,6 +669,47 @@ DP2 still place a full copy on each rank. FP8-mixed stock placement was
 measured after the placement repair: 77.0 seconds cold, 34.7 warm and a
 20.0 GiB available-memory minimum.
 
+<a id="evidence-flux-3-klein"></a>
+
+### FLUX.3 Klein
+
+Status impl: no hardware leg has run on the step-distilled checkpoint.
+Support follows ComfyUI 20b46065e ("Support Flux3-image"), first released in
+ComfyUI 0.41.0.
+
+The CPU evidence builds ComfyUI's own FLUX.3 model at toy size in float32 and
+runs the two-rank sharded forward against stock's: every kernel call gets
+stock's q, k and v for its heads in stock order with no pad row, and the
+output equals stock's. The cases cover an even grid, an odd 5 by 5 grid that
+pads both phases, one reference with the shard boundary inside it, two
+references, batch 2, the step-distilled flow map with a real two-row
+`sample_sigmas`, the fused q, k and v layout the INT8 files use, and cached
+against uncached text states. Seam 33 holds the class-scoped census of modules
+the base model runs outside its forward, seam 39 the attention pins and the
+stock attention of the early text and reference blocks, and seam 41 the branch
+that computes the base model's text and reference streams once per
+conditioning, each against the installed ComfyUI.
+
+On 2026-10-15 the pinned encoder and VAE were read against the vendor's
+copies. The Comfy-Org `qwen3vl_4b_bf16.safetensors` (SHA-256 `36f3ff44`) and
+the vendor's file of that name (`f0b24fc5`) hold the same 713 tensors with the
+same names, dtypes, shapes and bytes, and differ only in 24 bytes of header
+metadata. The pinned `flux2-vae.safetensors` (`d64f3a68`) and the vendor's
+`vae/flux2-vae.safetensors` (`868fe7b3`) hold the same 250 inference weights
+in two key layouts; each also carries a batch-norm step counter, with
+different values, which inference never reads. No decode has compared the two
+VAE files yet.
+
+<a id="evidence-flux-3-klein-base"></a>
+
+### FLUX.3 Klein Base
+
+Status impl: no hardware leg has run on the base checkpoint. The CPU evidence
+and the encoder and VAE readings under [FLUX.3 Klein](#evidence-flux-3-klein)
+cover it as well: separate q, k and v, no flow map, and seam 41's cached
+branch, which every Worker now takes as stock ComfyUI does. Support follows
+ComfyUI 20b46065e, first released in ComfyUI 0.41.0.
+
 <a id="evidence-longcat-image"></a>
 
 ### LongCat-Image
@@ -1356,10 +1397,12 @@ sampled spatial grid, not the compressed latent area.
 |---:|---|
 | 1 | Radiance, Z-Image DCT, PixelDiT |
 | 8 | Chroma, Flux 1, LongCat, Qwen-Image, Krea2, Z-Image latent, Kandinsky5 Image, Wan 2.2 14B |
-| 16 | Flux2, Lens, Ideogram4, Ernie, Mage Flow, Qwen Image 2.1, HunyuanVideo 1.5, H3 |
+| 16 | Flux2, Lens, Ideogram4, Ernie, Mage Flow, Qwen Image 2.1, HunyuanVideo 1.5, H3, FLUX.3 Klein |
 | 32 | HunyuanImage 2.1, LTX 2.3 |
 
-Lens 1344 square is 1.81 MP; Flux2 1024 square is 1.05 MP.
+Lens 1344 square is 1.81 MP; Flux2 1024 square is 1.05 MP. On 2026-10-15
+ComfyUI's own detection named all six FLUX.3 Klein vendor files `Flux3` with
+ratio 16 from their headers.
 These dimensions use the detected ratios; they do not imply new hardware tests.
 Lens FP8 auto keeps SAGE off: at the tested size SAGE/Flash/cuDNN all passed
 (NRMS 0.036869/0.026198/0.032733), with 20.3/20.0/20.1-second warm times,

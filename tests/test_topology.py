@@ -404,7 +404,7 @@ def test_an_unknown_family_note_names_the_miss_and_the_fix():
 
 
 def test_a_family_without_a_table_row_says_so():
-    """mage_flow and qwen_image21 have no auto table rows and reach this
+    """mage_flow, qwen_image21 and flux3 have no auto table rows and reach this
     branch. A family without a row must not borrow the unknown text,
     because a registered family still arms its preflights. The set is pinned
     so a new row-less family is a reviewed edit."""
@@ -412,7 +412,7 @@ def test_a_family_without_a_table_row_says_so():
 
     tabled = {rule.family for rule in AUTO_TABLE}
     rowless = set(SELECTABLE_FAMILIES) - tabled
-    assert rowless == {"mage_flow", "qwen_image21"}
+    assert rowless == {"mage_flow", "qwen_image21", "flux3"}
     for family in (*sorted(rowless), "not_a_registered_family"):
         assert family not in tabled
         decision = choose_auto_topology(family, "bf16", 1.0, 2)

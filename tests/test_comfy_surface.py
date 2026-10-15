@@ -52,6 +52,7 @@ EXPECTED_MODEL_BASE_TOUCHPOINTS = {
     "ErnieImage",
     "Flux",
     "Flux2",
+    "Flux3",
     "HunyuanImage21",
     "HunyuanImage21Refiner",
     "HunyuanVideo",
@@ -245,6 +246,10 @@ def _install(root: object, touchpoint: Touchpoint) -> None:
 
 def _fake_surface():
     modules = {name: _Namespace() for name in {entry.module for entry in TOUCHPOINTS}}
+    # Classes first: a rebound comfy.model_base method (Flux3.extra_conds)
+    # installs onto its class, which must stay a class for the isinstance gate.
+    for name in _canary_model_base_touchpoints():
+        setattr(modules["comfy.model_base"], name, type(name, (), {}))
     for touchpoint in sorted(TOUCHPOINTS, key=lambda entry: entry.attribute.count(".")):
         _install(modules[touchpoint.module], touchpoint)
 
@@ -654,8 +659,8 @@ def test_broad_adapter_subclass_branches_name_their_exact_rebound_targets():
 def test_adapter_bind_sites_and_rebound_contracts_are_a_bijection():
     actual_sites = _adapter_bind_site_keys()
     declared_sites = [site.ast_key for site in ADAPTER_BIND_SITES]
-    assert len(actual_sites) == len(set(actual_sites)) == 45
-    assert len(declared_sites) == len(set(declared_sites)) == 45
+    assert len(actual_sites) == len(set(actual_sites)) == 47
+    assert len(declared_sites) == len(set(declared_sites)) == 47
     assert set(actual_sites) == set(declared_sites), (
         "Adapter.bind/self.bind sites differ from ADAPTER_BIND_SITES: "
         f"undeclared={sorted(set(actual_sites) - set(declared_sites))}, "
@@ -663,7 +668,7 @@ def test_adapter_bind_sites_and_rebound_contracts_are_a_bijection():
     )
 
     contract_paths = [contract.path for contract in REBOUND_METHOD_CONTRACTS]
-    assert len(contract_paths) == len(set(contract_paths)) == 39
+    assert len(contract_paths) == len(set(contract_paths)) == 41
     referenced_targets = {
         target for site in ADAPTER_BIND_SITES for target in site.targets
     }
@@ -695,7 +700,7 @@ def test_adapter_bind_sites_and_rebound_contracts_are_a_bijection():
         touchpoint.path for touchpoint in REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS
     }
     assert rebound_paths == set(contract_paths)
-    assert (len(rebound_paths), len(caller_paths), len(callee_paths)) == (39, 2, 7)
+    assert (len(rebound_paths), len(caller_paths), len(callee_paths)) == (41, 2, 13)
     assert rebound_paths.isdisjoint(caller_paths | callee_paths)
 
 
@@ -741,7 +746,7 @@ def test_every_declared_replacement_accepts_its_target_stock_call_shapes():
                             f"shape for {target}: {exc}"
                         )
                 checked.append((key, replacement_name, target))
-    assert len(checked) == len(set(checked)) == 53
+    assert len(checked) == len(set(checked)) == 55
 
 
 def test_model_detection_source_anchors_are_executable_and_name_missing_assignment():
@@ -1281,11 +1286,42 @@ def test_zero_argument_call_rejects_a_new_required_parameter():
 def test_deleting_any_adapter_model_class_names_the_exact_touchpoint(class_name: str):
     modules, patcher, detection, quantized = _fake_surface()
     delattr(modules["comfy.model_base"], class_name)
-    path = f"comfy.model_base.{class_name}"
+    # A class that carries a rebound method fails first at that method, a
+    # path under the deleted class (comfy.model_base.Flux3.extra_conds).
+    under = [touchpoint.path for touchpoint in TOUCHPOINTS
+             if touchpoint.module == "comfy.model_base"
+             and touchpoint.attribute.split(".")[0] == class_name]
+    path = under[0] if under else f"comfy.model_base.{class_name}"
 
     with pytest.raises(RuntimeError) as error:
         _assert_fake_surface(modules, patcher, detection, quantized)
     assert str(error.value) == f"Comfy touchpoint missing: {path}"
+
+
+def test_a_rebound_model_base_method_resolves_through_its_class():
+    """The first comfy.model_base rebound target: FLUX.3's cond-branch bind
+    wraps ``Flux3.extra_conds`` on the BaseModel itself. The manifest holds
+    it like the comfy.ldm targets: by module and dotted attribute, with an
+    exact signature, while the class stays a class for the adapter's
+    exact-type gate."""
+    path = "comfy.model_base.Flux3.extra_conds"
+    contract = REBOUND_CONTRACTS_BY_PATH[path]
+    assert (contract.module, contract.attribute) == ("comfy.model_base", "Flux3.extra_conds")
+    assert contract.positional_or_keyword == ("self",) and contract.variadic_keyword == "kwargs"
+    assert [site.receiver for site in ADAPTER_BIND_SITES if path in site.targets] == ["base_model"]
+    modules, patcher, detection, quantized = _fake_surface()
+    model_base = modules["comfy.model_base"]
+    assert inspect.isclass(model_base.Flux3)
+    _assert_fake_surface(modules, patcher, detection, quantized)
+    model_base.Flux3.extra_conds.__signature__ = inspect.Signature([
+        inspect.Parameter("self", inspect.Parameter.POSITIONAL_OR_KEYWORD),
+        inspect.Parameter("device", inspect.Parameter.KEYWORD_ONLY, default=None),
+        inspect.Parameter("kwargs", inspect.Parameter.VAR_KEYWORD),
+    ])
+    with pytest.raises(RuntimeError) as error:
+        _assert_fake_surface(modules, patcher, detection, quantized)
+    assert str(error.value) == (
+        f"Comfy touchpoint incompatible: {path} (exact explicit parameter list changed)")
 
 
 def test_adapter_model_touchpoint_must_be_a_class_for_isinstance():

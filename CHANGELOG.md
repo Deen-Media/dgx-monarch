@@ -23,6 +23,26 @@ refuses. After a verified update, rerun the editable install once so its
 metadata reads the new version
 ([INSTALL](docs/INSTALL.md#upgrading-from-110)).
 
+- Support FLUX.3 Image Klein, the step-distilled and the base checkpoint, at
+  status `impl` with no hardware test yet
+  ([MODELS](docs/MODELS.md#model-flux-3-klein)). It needs ComfyUI 0.41.0 or
+  newer, the first release to carry ComfyUI's support commit 20b46065e of
+  2026-10-15
+  ([TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
+  The `flux3` adapter shards the five image blocks and then the joint
+  `[image, references, text]` stream in contiguous chunks, clips stock's
+  modulation spans to each rank's rows, names pad rows on every topology, and
+  keeps the text and reference blocks whole on every rank. Every Worker runs
+  the base model's text and reference streams once per conditioning, as stock
+  ComfyUI does. Four BF16 templates ship: text to image and reference editing
+  for each checkpoint, at the vendor's settings (16 Euler steps at CFG 1 for
+  the step-distilled model, 25 at CFG 3.5 for the base). The edit graphs
+  express the vendor's Set Reference Multi Latent node in stock nodes with the
+  same arithmetic. Six testing graphs cover the vendor's INT8 ConvRot and
+  NVFP4 files, an odd grid and a two-reference edit, whose two 4:3 synthetic
+  references `benchmark/sweep/media.py` now writes. The artifact manifest pins
+  the six DiT files and the INT8 encoder at the gated vendor repository's
+  commit; the BF16 encoder and the VAE reuse their pinned rows.
 - A ComfyUI that stays up attaches again after a Worker service restarts
   under it (`dgxm restart`, a crash that systemd restarts, or a hand restart)
   when the service comes back within Monarch's 30 s message delivery timeout

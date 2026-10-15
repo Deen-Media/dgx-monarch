@@ -188,7 +188,9 @@ exception to the rule. Mage Flow, Qwen
 Image 2.1 and Wan Animate 2 were tested with dedicated hardware scripts, and no
 matrix-derived sweep cell of the three has run. Their support in MODELS.md is limited to
 those tests, recorded in VALIDATION.md. Their templates still need scoped
-sweeps.
+sweeps. FLUX.3 Klein joins at `impl` before any of its sweep cells has run.
+Its scoped sweep runs after the family merges, and the family stays in this
+paragraph until a later PR carries that record.
 
 ## 3. Adding a template
 

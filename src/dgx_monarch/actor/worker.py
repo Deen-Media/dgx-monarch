@@ -188,6 +188,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
         partial_load_guard.install(base_patcher, getattr(self, "world", None))
         cfg_degree = int(self.topology.get("cfg", 1))
         adapter = adapter_for(base_patcher.model, override_for_worker(self))
+        getattr(adapter, "prepare_base_model", lambda _model: None)(base_patcher.model)
         sp = int(self.topology.get("ulysses", 1)) * int(self.topology.get("ring", 1))
         # dm-cfg2: a dual_model_cfg family (ig4) runs the split guider at
         # cfg2/sp1/world2, one model per rank, so grant cfg-parallel here and

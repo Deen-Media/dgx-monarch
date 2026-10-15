@@ -533,6 +533,118 @@ def test_a_family_that_owns_a_census_name_on_its_forward_path_keeps_it_sharded(
         assert fully_shard_recorder.calls == [*dm.transformer_blocks, dm], class_name
 
 
+def _flux3_shaped(image=5, single=28, early=5) -> torch.nn.Module:
+    """comfy's Flux3 module tree with Linear blocks: two ModuleDicts of block
+    lists, one of them per step, and the early streams beside them."""
+    def stack(count):
+        return torch.nn.ModuleList(torch.nn.Linear(2, 2) for _ in range(count))
+
+    dm = torch.nn.Module()
+    dm.content_mode_blocks = torch.nn.ModuleDict({"image": stack(image), "image_cond": stack(early)})
+    dm.txt_mode_blocks = stack(early)
+    dm.single_blocks = stack(single)
+    dm.txt_in = torch.nn.Linear(4, 2)
+    dm.time_in = torch.nn.Linear(4, 2)
+    dm.emb_in = torch.nn.ModuleDict({"image": torch.nn.Linear(4, 2),
+                                     "image_cond": torch.nn.Linear(4, 2)})
+    dm.early_stream_modulations = torch.nn.ModuleDict(
+        {mode: torch.nn.Linear(2, 6) for mode in ("image", "image_cond", "txt")})
+    dm.single_stream_modulations = torch.nn.ModuleDict(
+        {mode: torch.nn.Linear(2, 6) for mode in ("image", "image_cond", "txt")})
+    dm.final_layer = torch.nn.ModuleDict({"image": torch.nn.Linear(2, 4)})
+    return dm.to(torch.bfloat16)
+
+
+def test_flux3_wraps_its_image_and_single_blocks_and_replicates_its_early_streams(
+    fully_shard_recorder,
+):
+    """The five per-step image blocks sit in a ModuleDict, which yields keys
+    when iterated; the dotted block-list entry wraps them one by one rather
+    than leaving them to the root catch-all (the silent capacity loss
+    docs/ADAPTERS.md warns about). The early text and reference streams,
+    which Flux3.extra_conds runs, ride the ignored set through the
+    class-scoped census, and nothing else does."""
+    dm = _flux3_shaped()
+    patcher = _patcher_for_comfy_class("Flux3", dm)
+
+    apply_fsdp_capacity_mode(patcher, "bf16", None, _bf16_precision(patcher))
+
+    image = list(dm.content_mode_blocks["image"])
+    assert fully_shard_recorder.calls == [*dm.single_blocks, *image, dm]
+    assert len(fully_shard_recorder.calls) == 5 + 28 + 1
+    census = {p for module in (dm.txt_in, dm.time_in, dm.emb_in, dm.early_stream_modulations,
+                               dm.txt_mode_blocks, dm.content_mode_blocks["image_cond"])
+              for p in module.parameters()}
+    for kwargs in fully_shard_recorder.kwargs:
+        assert kwargs["ignored_params"] == census
+    # What the root wrap alone holds: the joint modulations and the head, no block.
+    wrapped = {p for block in fully_shard_recorder.calls[:-1] for p in block.parameters()}
+    root_only = set(dm.parameters()) - wrapped - census
+    assert root_only == {*dm.single_stream_modulations.parameters(),
+                         *dm.final_layer.parameters()}
+
+
+def test_the_flux3_census_is_class_scoped():
+    """A Flux model builds txt_in and time_in too and runs them in its forward:
+    the class-scoped table never replicates them for it, and its names never
+    enter the flat census."""
+    from dgx_monarch.adapters.fsdp_islands import (
+        AUXILIARY_MODULE_ATTRS,
+        CLASS_OUTSIDE_FORWARD_MODULE_PATHS,
+        class_outside_forward_module_paths,
+    )
+
+    assert set(CLASS_OUTSIDE_FORWARD_MODULE_PATHS) == {"Flux3"}
+    for paths in CLASS_OUTSIDE_FORWARD_MODULE_PATHS.values():
+        assert not set(paths) & set(AUXILIARY_MODULE_ATTRS)
+    flux = _fake_diffusion_model({"double_blocks": 2, "single_blocks": 2})
+    flux.txt_in = torch.nn.Linear(4, 2)
+    flux.time_in = torch.nn.Linear(4, 2)
+    for class_name in ("Flux", "Chroma", "HunyuanVideo"):
+        model = _patcher_for_comfy_class(class_name, flux).model
+        assert class_outside_forward_module_paths(model) == ()
+        assert auxiliary_module_parameters(flux, model) == set(), class_name
+    flux3 = _patcher_for_comfy_class("Flux3", _flux3_shaped(1, 1, 1)).model
+    subclass = type("Flux3Finetune", (type(flux3),), {})()
+    assert class_outside_forward_module_paths(subclass) == (
+        CLASS_OUTSIDE_FORWARD_MODULE_PATHS["Flux3"])
+
+
+def _segments(path: str) -> tuple[str, ...]:
+    return tuple(path.split("."))
+
+
+def test_no_class_scoped_path_is_or_covers_a_block_list():
+    """Paths compare on dotted segments: content_mode_blocks.image is a string
+    prefix of content_mode_blocks.image_cond, not a segment prefix. A path that
+    equals, holds or sits inside a block list would leave blocks unsharded."""
+    from dgx_monarch.adapters.fsdp_islands import CLASS_OUTSIDE_FORWARD_MODULE_PATHS
+
+    for paths in CLASS_OUTSIDE_FORWARD_MODULE_PATHS.values():
+        for path in paths:
+            for attr in _BLOCK_LIST_ATTRS:
+                one, other = _segments(path), _segments(attr)
+                shorter = min(len(one), len(other))
+                assert one[:shorter] != other[:shorter], (path, attr)
+
+
+def test_resolve_module_path_is_getattr_on_one_segment():
+    from dgx_monarch.adapters.fsdp_islands import resolve_module_path
+
+    dm = _fake_diffusion_model({name: 1 for name in _BLOCK_LIST_ATTRS if "." not in name})
+    for name in _BLOCK_LIST_ATTRS:
+        if "." not in name:
+            assert resolve_module_path(dm, name) is getattr(dm, name)
+    assert resolve_module_path(torch.nn.Module(), "blocks") is None
+    flux3 = _flux3_shaped(2, 1, 1)
+    assert resolve_module_path(flux3, "content_mode_blocks.image") is (
+        flux3.content_mode_blocks["image"])
+    assert resolve_module_path(flux3, "content_mode_blocks.image_cond") is (
+        flux3.content_mode_blocks["image_cond"])
+    assert resolve_module_path(flux3, "content_mode_blocks.video") is None
+    assert resolve_module_path(flux3, "missing.image") is None
+
+
 def test_a_declared_outside_forward_name_outranks_an_inherited_exclusion():
     """The exclusion is read down the whole class chain, so a family that
     subclasses an owner and does reach the module from ``extra_conds`` must

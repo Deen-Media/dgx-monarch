@@ -2,9 +2,9 @@
 from __future__ import annotations
 
 # The block compiler (actor/worker_compile.py) compiles only a `blocks` list,
-# and these Flux-family models name theirs differently, so compile does nothing
-# for them. Any other family, an unknown one included, is treated as compiled.
-KNOWN_COMPILE_NOOP_FAMILIES = frozenset({"chroma", "flux", "flux2", "longcat"})
+# and the Flux-family and FLUX.3 models name theirs differently, so compile does
+# nothing for them. Any other family, an unknown one included, is compiled.
+KNOWN_COMPILE_NOOP_FAMILIES = frozenset({"chroma", "flux", "flux2", "flux3", "longcat"})
 
 
 def compile_dit_is_known_noop(family: str | None) -> bool:

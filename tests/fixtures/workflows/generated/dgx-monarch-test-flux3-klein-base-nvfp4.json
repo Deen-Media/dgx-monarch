@@ -1,0 +1,552 @@
+{
+ "id": "flux.3-klein-base-nvfp4",
+ "revision": 0,
+ "last_node_id": 11,
+ "last_link_id": 10,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DGXMonarchInit",
+   "pos": [
+    80,
+    80
+   ],
+   "size": [
+    315,
+    448
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "slot_index": 0,
+     "links": [
+      1
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchInit"
+   },
+   "widgets_values": [
+    "auto",
+    "auto",
+    "TORCH_FLASH",
+    "",
+    0,
+    0.0,
+    true,
+    false,
+    1,
+    false,
+    "auto",
+    "auto",
+    "first_use",
+    false,
+    2,
+    0.0,
+    "off",
+    "auto"
+   ],
+   "dgxm_widgets": {
+    "topology": "auto",
+    "mode": "auto",
+    "attention": "TORCH_FLASH",
+    "config_path": "",
+    "gpus_per_host": 0,
+    "reserve_vram_gb": 0.0,
+    "sync_ulysses": true,
+    "compile_dit": false,
+    "pipeline_depth": 1,
+    "mmap_fallback": false,
+    "lora_low_rss": "auto",
+    "slab_weights": "auto",
+    "auto_gate": "first_use",
+    "load_profile": false,
+    "swap_verify": 2,
+    "uma_reserve_gb": 0.0,
+    "comfy_managed": "off",
+    "family_adapter": "auto"
+   }
+  },
+  {
+   "id": 2,
+   "type": "Note",
+   "pos": [
+    80,
+    270
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-flux3-klein-base-t2i, with only the changes needed for this test. The vendor's base NVFP4 DiT at CFG 3.5."
+   ],
+   "title": "DGX Monarch | FLUX.3 Klein Base NVFP4"
+  },
+  {
+   "id": 3,
+   "type": "DGXMonarchUNETLoader",
+   "pos": [
+    420,
+    80
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUNETLoader"
+   },
+   "widgets_values": [
+    "flux3_image_klein_nvfp4.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "flux3_image_klein_nvfp4.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 4,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      2,
+      3
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "qwen3vl_4b_bf16.safetensors",
+    "flux3",
+    "default"
+   ]
+  },
+  {
+   "id": 5,
+   "type": "VAELoader",
+   "pos": [
+    80,
+    650
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      9
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "flux2-vae.safetensors"
+   ]
+  },
+  {
+   "id": 6,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    460
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 2
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      5
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "A color photograph taken at eye level with a 50 mm lens. A small ceramics studio in late afternoon: sunlight falls through a tall window on the left and lights a scarred wooden workbench. On the bench sit three hand-thrown bowls with a speckled oatmeal glaze, a wire cutting tool and a folded grey cloth. A potter's wheel stands in soft shadow behind them, its tray streaked with dried clay. Shelves on the back wall hold rows of unglazed cups. Warm tones, gentle contrast, shallow depth of field, the bowls in sharp focus."
+   ]
+  },
+  {
+   "id": 7,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    650
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      6
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    ""
+   ]
+  },
+  {
+   "id": 8,
+   "type": "EmptyFlux2LatentImage",
+   "pos": [
+    760,
+    650
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      7
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "EmptyFlux2LatentImage"
+   },
+   "widgets_values": [
+    1024,
+    1024,
+    1
+   ]
+  },
+  {
+   "id": 9,
+   "type": "DGXMonarchKSampler",
+   "pos": [
+    1100,
+    270
+   ],
+   "size": [
+    315,
+    294
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 4
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 5
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 6
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 7
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      8
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchKSampler"
+   },
+   "widgets_values": [
+    42,
+    "randomize",
+    25,
+    3.5,
+    "euler",
+    "simple",
+    1.0
+   ],
+   "dgxm_widgets": {
+    "seed": 42,
+    "control_after_generate": "randomize",
+    "steps": 25,
+    "cfg": 3.5,
+    "sampler_name": "euler",
+    "scheduler": "simple",
+    "denoise": 1.0
+   }
+  },
+  {
+   "id": 10,
+   "type": "VAEDecode",
+   "pos": [
+    1440,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 8
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 9
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      10
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 11,
+   "type": "SaveImage",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 10
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "dgx_monarch_flux3_klein_base"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   3,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   2,
+   4,
+   0,
+   6,
+   0,
+   "CLIP"
+  ],
+  [
+   3,
+   4,
+   0,
+   7,
+   0,
+   "CLIP"
+  ],
+  [
+   4,
+   3,
+   0,
+   9,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   5,
+   6,
+   0,
+   9,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   6,
+   7,
+   0,
+   9,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   7,
+   8,
+   0,
+   9,
+   3,
+   "LATENT"
+  ],
+  [
+   8,
+   9,
+   0,
+   10,
+   0,
+   "LATENT"
+  ],
+  [
+   9,
+   5,
+   0,
+   10,
+   1,
+   "VAE"
+  ],
+  [
+   10,
+   10,
+   0,
+   11,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}
