@@ -24,6 +24,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 |---|---|---|
 | [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Auto picks cfg2 for FP8 and BF16 from 1.2 to 2.36 MP, including the template's CFG++ sampler at CFG 1, and Ulysses elsewhere. Reference images require `single`. |
 | [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. BF16, local INT8 and BF16 refinement matched their own stock references. See the [tested configurations](VALIDATION.md#evidence-kroma). |
+| [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Run edits on uly2 or single. No hardware test has run yet. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -63,7 +64,7 @@ cfg2 row at any CFG other than 1, and at CFG 1 under a CFG++ sampler chosen
 on a DGX Monarch KSampler, KSampler Advanced or KSampler Pipeline node, when
 its evidence covers the checkpoint's precision; otherwise the Ulysses row
 applies. A Sampler Custom graph hands over a SAMPLER object with no name, so
-at CFG 1 auto keeps Ulysses there. Mage Flow and Qwen Image 2.1 have no row, and Flux, Flux 2, Krea 2,
+at CFG 1 auto keeps Ulysses there. Mage Flow, Qwen Image 2.1 and FLUX.3 Klein have no row, and Flux, Flux 2, Krea 2,
 Lens, Qwen-Image and Z-Image have no row below 1.2 MP; those cases take the
 generic uly2 fallback (row 99). Every other family has one full-range Ulysses
 or ring row.
@@ -92,6 +93,8 @@ that match the tested configurations in its model details. See
 | Flux 1 Dev | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Padded ring is guarded; distilled checkpoints use CFG 1. Use converted LoRAs. [Details](#model-flux-1-dev) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux 1 Schnell | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | CFG 1; Schnell-specific padded inputs remain unmeasured. [Details](#model-flux-1-schnell) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux2 | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | FP8-mixed Ulysses and BF16 `uly2+fsdp` were compared with references. LoRA/FSDP rendered, but its reference ran out of memory. [Details](#model-flux2) · [Workflow](../example_workflows/dgx-monarch-flux2-t2i.json) |
+| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | Step-distilled; CFG 1, euler, 16 steps or fewer. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. Edits and padded grids use uly2 or single; padded ring needs a waiver. Edits scale each reference to 1 MP. LoRA untested. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
+| FLUX.3 Klein Base | ✓ | ✓ | ★ | 🔒 | ⚪ | impl | CFG 3.5, 25 steps, euler. Same INT8, edit and ring notes as FLUX.3 Klein. LoRA untested. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
 | Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
@@ -388,6 +391,119 @@ lever-free auto records. The store now places stock weights at load time and che
 full placement peak. A hardware test of that path admitted the load and rendered.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-flux2).
+
+<a id="model-flux-3-klein"></a>
+
+### FLUX.3 Klein
+
+Detail status (`FLUX.3 Klein`): impl.
+
+FLUX.3 Image Klein is Black Forest Labs' 5.6B-parameter image model with the
+Qwen3-VL-4B text encoder and the Flux 2 autoencoder. Two checkpoints share the
+`flux3` adapter: this step-distilled one, whose file names carry `_sd_`, and
+[FLUX.3 Klein Base](#model-flux-3-klein-base). ComfyUI supports both from
+0.41.0; dgx-monarch needs ComfyUI 0.41.0 or newer on the driver and on every
+Worker ([INSTALL](INSTALL.md#model-files-required-by-each-template)).
+
+**Recommended workflow.** [Text to image](../example_workflows/dgx-monarch-flux3-klein-t2i.json)
+and [image editing](../example_workflows/dgx-monarch-flux3-klein-edit.json):
+16 steps, CFG 1, `euler`, `simple`, the settings of the model card and the
+vendor's reference code, at 1024×1024 for text to image. The model was
+distilled for 4 to 16 steps; keep to that range and to Euler, because it reads
+its next sigma off the schedule. 16 divides the 10,000-row sigma table
+ComfyUI builds, so the `simple` scheduler lands on the vendor's schedule; the
+vendor's own ComfyUI template promotes 15, which does not. Plain Euler at
+CFG 1 never evaluates the negative.
+
+| File | ComfyUI directory | Purpose |
+|---|---|---|
+| `flux3_image_klein_sd_bf16.safetensors` | `models/diffusion_models` | Step-distilled BF16 DiT, 11.10 GB |
+| `qwen3vl_4b_bf16.safetensors` | `models/text_encoders` | Qwen3-VL-4B encoder; set CLIPLoader type to `flux3` |
+| `flux2-vae.safetensors` | `models/vae` | Flux 2 VAE |
+
+The [artifact manifest](../example_workflows/artifacts.toml) lists the
+download links, byte sizes and SHA-256 hashes, including the INT8 ConvRot and
+NVFP4 files the testing graphs name. The DiT files come from the gated
+`black-forest-labs/flux-3-image-klein-comfy` repository. The edit graphs scale
+each reference to about 1 MP with stock nodes before encoding it; the render
+takes its size from the first reference. Cite references in the prompt as
+`<ref_image_0>`, `<ref_image_1>` in the order they are chained.
+
+**Tested configurations.** No hardware test has run. CPU tests compare the
+two-rank sharded forward with stock ComfyUI's on tiny real models, for even
+and odd grids, one and two references, batch 2, the step-distilled flow map
+and the fused q, k and v layout the INT8 files use, and check the cond branch,
+the FSDP census and the LoRA key map against ComfyUI. The pinned encoder and
+VAE files were checked against the vendor's copies tensor by tensor
+([VALIDATION](VALIDATION.md#evidence-flux-3-klein)).
+
+**Known limitations.** The INT8 ConvRot files pin comfy-kitchen's INT8
+attention, an approximate kernel, on 33 blocks: single, cfg2 and dp2 ask for
+the Sol-Attn waiver ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)),
+and uly2 drops the pins and runs exact attention, so a uly2 INT8 render
+differs from stock INT8 on one GPU by construction. NVFP4 refuses FSDP. The
+diffusers-layout `variants/fp8r` file loads in stock ComfyUI with its scales
+dropped and is refused ([TROUBLESHOOTING #120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+No public LoRA existed at release, so LoRA is untested. The vendor's optional prompt
+upsampler is a separate 9.7 GB model on the driver that no shipped graph
+loads; its memory is outside the driver estimate and has not been measured
+here. The step-distilled model reruns the five reference blocks every step on
+every rank, so references cost more per step than on the base model. A grid
+with an odd row count pads: uly2 and single render it, and padded ring or
+hybrid refuses unless waived. An unscaled reference sets the render size from
+the source file with no limit, so keep the scale node. The step-distilled
+model reads the sampler's whole sigma schedule each step. Every stock
+sampler node hands it over. A custom sampling path that does not fails in
+stock ComfyUI with a `KeyError`, as it does on single, cfg2 and dp2; under
+sequence parallelism dgx-monarch refuses it before the first block instead.
+
+**Test results.** [Comparisons and limits](VALIDATION.md#evidence-flux-3-klein).
+
+**Upstream and license.** [Model card](https://huggingface.co/black-forest-labs/flux-3-image-klein)
+and [ComfyUI files](https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy),
+both gated. The weights are under the FLUX Kommunity License v1.0, which the
+repositories carry; read it before commercial use. The Qwen3-VL encoder is
+Apache-2.0.
+
+<a id="model-flux-3-klein-base"></a>
+
+### FLUX.3 Klein Base
+
+Detail status (`FLUX.3 Klein Base`): impl.
+
+The undistilled checkpoint of [FLUX.3 Klein](#model-flux-3-klein), on the
+same adapter, encoder and VAE.
+
+**Recommended workflow.** [Text to image](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json)
+and [image editing](../example_workflows/dgx-monarch-flux3-klein-base-edit.json):
+25 steps, CFG 3.5, `euler`, `simple`, the vendor's ComfyUI settings, at
+1024×1024 for text to image; the model card's default is 50 steps, for more
+detail. Both counts divide ComfyUI's sigma table. The negative is the encoding
+of an empty prompt, as the vendor's reference code uses; in the edit graph it
+carries the same references as the positive.
+
+| File | ComfyUI directory | Purpose |
+|---|---|---|
+| `flux3_image_klein_bf16.safetensors` | `models/diffusion_models` | Base BF16 DiT, 11.08 GB |
+| `qwen3vl_4b_bf16.safetensors` | `models/text_encoders` | Qwen3-VL-4B encoder; set CLIPLoader type to `flux3` |
+| `flux2-vae.safetensors` | `models/vae` | Flux 2 VAE |
+
+**Tested configurations.** No hardware test has run; the CPU tests listed for
+[FLUX.3 Klein](#model-flux-3-klein) cover this checkpoint too. On every
+Worker the base model computes its text and reference streams once per
+conditioning, as stock ComfyUI does.
+
+**Known limitations.** As [FLUX.3 Klein](#model-flux-3-klein), except the
+two step-distilled points: the base model computes its reference streams once
+per conditioning, and it does not read the sampler's sigma schedule. A prompt
+that encodes past one 80-token block does not batch with the empty negative,
+so ComfyUI runs the two as separate calls and cfg2 gives each rank one. Auto
+has no cfg2 row for FLUX.3; cfg2 is an explicit choice.
+
+**Test results.** [Comparisons and limits](VALIDATION.md#evidence-flux-3-klein-base).
+
+**Upstream and license.** [Model card](https://huggingface.co/black-forest-labs/flux-3-image-klein-base),
+gated, under the FLUX Kommunity License v1.0.
 
 <a id="model-longcat-image"></a>
 
@@ -1119,6 +1235,39 @@ it does not inherit the mixed-FP8 first/last preservation rule. Mage records
 Qwen Image 2.1 records 195 ConvRot linears plus the K=64 `img_in.weight` plain
 INT8 exception. Wan Animate 2 Base records 483 ConvRot linears and no plain
 exceptions.
+
+### FLUX.3 Image Klein vendor files
+
+Black Forest Labs publishes FLUX.3 Image Klein in ComfyUI layout at
+`black-forest-labs/flux-3-image-klein-comfy@3700a1012ec75ad50a54e92199f85ba7cba93c1e`,
+a gated repository. These are vendor files, not local conversions, and no
+hardware comparison covers any of them yet; the support matrix states what
+each topology asks of each kind.
+
+<details>
+<summary>FLUX.3 Image Klein files, layouts and checksums</summary>
+
+
+| File | Bytes | SHA-256 (first 12) | Header kind | Layout | Pinned attention |
+|---|--:|---|---|---|---|
+| `flux3_image_klein_sd_bf16.safetensors` | 11,097,404,512 | `c3e9813cdd04` | bf16 | separate q, k and v; `ref_time_in` (step-distilled) | none |
+| `flux3_image_klein_bf16.safetensors` | 11,076,957,072 | `5c921759dc03` | bf16 | separate q, k and v | none |
+| `flux3_image_klein_sd_int8_convrot.safetensors` | 5,827,874,779 | `847d8933548a` | int8 | fused `qkv`; 172 tensorwise INT8 Linears with ConvRot | comfy-kitchen INT8 on 33 blocks |
+| `flux3_image_klein_int8_convrot.safetensors` | 5,807,427,339 | `8949ecfc1bf3` | int8 | as above | as above |
+| `flux3_image_klein_sd_nvfp4.safetensors` | 5,277,685,632 | `15d421e25584` | fp8 | separate; 198 NVFP4 layers, each with a static input scale; BF16 on the text blocks, the first image block and the last four joint blocks | none |
+| `flux3_image_klein_nvfp4.safetensors` | 5,257,238,192 | `f99714a57ada` | fp8 | as above | none |
+
+</details>
+
+The diffusers repositories' root `model.safetensors` files hold the same
+bytes as the two BF16 files above. Their `variants/fp8r/model.safetensors`
+files carry per-row FP32 weight scales with no ComfyUI quantization record:
+stock ComfyUI loads them without an error, drops the scales and computes
+unscaled, so dgx-monarch refuses them and ships no template or manifest row
+for them ([TROUBLESHOOTING #120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+Their `variants/nvfp4/model.safetensors` files hold different bytes from the
+ComfyUI-layout NVFP4 files above. They have not been audited yet, so no
+template or manifest row names them.
 
 ## Shared topology and memory guidance
 

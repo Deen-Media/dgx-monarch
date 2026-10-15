@@ -1,0 +1,825 @@
+{
+ "id": "flux.3-klein-base-image-editing",
+ "revision": 0,
+ "last_node_id": 16,
+ "last_link_id": 18,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DGXMonarchInit",
+   "pos": [
+    80,
+    80
+   ],
+   "size": [
+    315,
+    448
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "slot_index": 0,
+     "links": [
+      1
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchInit"
+   },
+   "widgets_values": [
+    "auto",
+    "auto",
+    "TORCH_FLASH",
+    "",
+    0,
+    0.0,
+    true,
+    false,
+    1,
+    false,
+    "auto",
+    "auto",
+    "first_use",
+    false,
+    2,
+    0.0,
+    "off",
+    "auto"
+   ],
+   "dgxm_widgets": {
+    "topology": "auto",
+    "mode": "auto",
+    "attention": "TORCH_FLASH",
+    "config_path": "",
+    "gpus_per_host": 0,
+    "reserve_vram_gb": 0.0,
+    "sync_ulysses": true,
+    "compile_dit": false,
+    "pipeline_depth": 1,
+    "mmap_fallback": false,
+    "lora_low_rss": "auto",
+    "slab_weights": "auto",
+    "auto_gate": "first_use",
+    "load_profile": false,
+    "swap_verify": 2,
+    "uma_reserve_gb": 0.0,
+    "comfy_managed": "off",
+    "family_adapter": "auto"
+   }
+  },
+  {
+   "id": 2,
+   "type": "Note",
+   "pos": [
+    80,
+    270
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "FLUX.3 Klein Base image editing: about 1 MP, sized from the first reference, 25 steps, CFG 3.5, Euler and the simple scheduler, the vendor's ComfyUI settings. Try 50 steps for more detail, the model card's default; 25 and 50 both divide the sigma table ComfyUI builds, so the schedule stays on the vendor's. ComfyUI's native shift is the vendor's; add no shift node. Load your reference in Load Image. Scale Image to Total Pixels sizes it to about 1 MP, VAE Encode turns it into a latent, and Set Reference Latent adds it to both prompts; LatentMultiply at 0.0 hands the sampler an empty latent of the first reference's size, so the render takes its size from that reference, cropped to a multiple of 16. The vendor graph does the same with one Set Reference Multi Latent node in resize mode; these stock nodes carry the same arithmetic. Keep the scale node: an unscaled reference sizes the render from the source file with no limit. To add a reference, chain another Load Image, scale, encode and Set Reference Latent on both prompts. Cite references in the prompt as <ref_image_0>, <ref_image_1> and so on, in chain order, and describe the target as a full caption of the reference with the change folded in. The first reference's aspect decides the image grid, and an odd grid pads the image rows; a later reference can make the joint stream odd. Either pad renders on uly2 and single, and padded ring or hybrid refuses unless waived, so run edits on uly2 or single. The negative is an empty prompt carrying the same references, as the vendor's reference code builds it. The vendor's prompt guide asks for a full caption of about 100 to 350 words: medium and style first, then scene, lighting and camera, then each subject with its colors, materials and place in the frame. Describe what is there, not what is absent, and put any text to render in double quotes. The sample prompt is shorter than that guide asks; write a full caption for your own renders. The vendor's own graphs can run an optional prompt upsampler, qwen3.5_9b_flux3_prompt_upsampler_int8_convrot.safetensors, which rewrites a short request into such a caption on the driver; its 9.7 GB is outside dgx-monarch's driver memory estimate. The stock Flux3 Layout Prompt node turns bounding boxes into prompt text. Either can feed CLIP Text Encode with no change to this graph. The INT8 ConvRot files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. This graph uses the BF16 files, which ask nothing. Auto picks Ulysses on a configured pair. No hardware comparison has run for FLUX.3 yet; see docs/MODELS.md. Expects flux3_image_klein_bf16.safetensors in models/diffusion_models, qwen3vl_4b_bf16.safetensors in models/text_encoders (CLIP type flux3) and flux2-vae.safetensors in models/vae; the vendor's vae/flux2-vae.safetensors holds the same weights in another key layout. Needs ComfyUI 0.41.0 or newer on the driver and every Worker. The FLUX.3 Image Klein weights are under the FLUX Kommunity License v1.0; read its terms before commercial use. The Qwen3-VL encoder is Apache-2.0. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+   ],
+   "title": "DGX Monarch | FLUX.3 Klein Base image editing"
+  },
+  {
+   "id": 3,
+   "type": "DGXMonarchUNETLoader",
+   "pos": [
+    420,
+    80
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      12
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUNETLoader"
+   },
+   "widgets_values": [
+    "flux3_image_klein_bf16.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "flux3_image_klein_bf16.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 4,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      2,
+      3
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "qwen3vl_4b_bf16.safetensors",
+    "flux3",
+    "default"
+   ]
+  },
+  {
+   "id": 5,
+   "type": "VAELoader",
+   "pos": [
+    80,
+    650
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      6,
+      17
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "flux2-vae.safetensors"
+   ]
+  },
+  {
+   "id": 6,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    460
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 2
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      7
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "The same photograph as <ref_image_0>, with the background replaced by a sunlit garden of green hedges and white roses in soft morning light. The subject, pose, clothing and framing stay exactly as in <ref_image_0>."
+   ]
+  },
+  {
+   "id": 7,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    650
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      9
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    ""
+   ]
+  },
+  {
+   "id": 8,
+   "type": "LoadImage",
+   "pos": [
+    80,
+    840
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      4
+     ]
+    },
+    {
+     "name": "MASK",
+     "type": "MASK",
+     "slot_index": 1,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LoadImage"
+   },
+   "widgets_values": [
+    "reference.png",
+    "image"
+   ]
+  },
+  {
+   "id": 9,
+   "type": "ImageScaleToTotalPixels",
+   "pos": [
+    420,
+    840
+   ],
+   "size": [
+    315,
+    140
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "image",
+     "type": "IMAGE",
+     "link": 4
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      5
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ImageScaleToTotalPixels"
+   },
+   "widgets_values": [
+    "lanczos",
+    1.0,
+    1
+   ]
+  },
+  {
+   "id": 10,
+   "type": "VAEEncode",
+   "pos": [
+    760,
+    840
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "pixels",
+     "type": "IMAGE",
+     "link": 5
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 6
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      8,
+      10,
+      11
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEEncode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 11,
+   "type": "ReferenceLatent",
+   "pos": [
+    760,
+    460
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "conditioning",
+     "type": "CONDITIONING",
+     "link": 7
+    },
+    {
+     "name": "latent",
+     "type": "LATENT",
+     "link": 8
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      13
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ReferenceLatent"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 12,
+   "type": "ReferenceLatent",
+   "pos": [
+    760,
+    650
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "conditioning",
+     "type": "CONDITIONING",
+     "link": 9
+    },
+    {
+     "name": "latent",
+     "type": "LATENT",
+     "link": 10
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      14
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ReferenceLatent"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 13,
+   "type": "LatentMultiply",
+   "pos": [
+    760,
+    1030
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 11
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      15
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "LatentMultiply"
+   },
+   "widgets_values": [
+    0.0
+   ]
+  },
+  {
+   "id": 14,
+   "type": "DGXMonarchKSampler",
+   "pos": [
+    1100,
+    270
+   ],
+   "size": [
+    315,
+    294
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 12
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 13
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 14
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 15
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      16
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchKSampler"
+   },
+   "widgets_values": [
+    42,
+    "randomize",
+    25,
+    3.5,
+    "euler",
+    "simple",
+    1.0
+   ],
+   "dgxm_widgets": {
+    "seed": 42,
+    "control_after_generate": "randomize",
+    "steps": 25,
+    "cfg": 3.5,
+    "sampler_name": "euler",
+    "scheduler": "simple",
+    "denoise": 1.0
+   }
+  },
+  {
+   "id": 15,
+   "type": "VAEDecode",
+   "pos": [
+    1440,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 14,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 16
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 17
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      18
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 16,
+   "type": "SaveImage",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 15,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 18
+    }
+   ],
+   "outputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveImage"
+   },
+   "widgets_values": [
+    "dgx_monarch_flux3_klein_base_edit"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   3,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   2,
+   4,
+   0,
+   6,
+   0,
+   "CLIP"
+  ],
+  [
+   3,
+   4,
+   0,
+   7,
+   0,
+   "CLIP"
+  ],
+  [
+   4,
+   8,
+   0,
+   9,
+   0,
+   "IMAGE"
+  ],
+  [
+   5,
+   9,
+   0,
+   10,
+   0,
+   "IMAGE"
+  ],
+  [
+   6,
+   5,
+   0,
+   10,
+   1,
+   "VAE"
+  ],
+  [
+   7,
+   6,
+   0,
+   11,
+   0,
+   "CONDITIONING"
+  ],
+  [
+   8,
+   10,
+   0,
+   11,
+   1,
+   "LATENT"
+  ],
+  [
+   9,
+   7,
+   0,
+   12,
+   0,
+   "CONDITIONING"
+  ],
+  [
+   10,
+   10,
+   0,
+   12,
+   1,
+   "LATENT"
+  ],
+  [
+   11,
+   10,
+   0,
+   13,
+   0,
+   "LATENT"
+  ],
+  [
+   12,
+   3,
+   0,
+   14,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   13,
+   11,
+   0,
+   14,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   14,
+   12,
+   0,
+   14,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   15,
+   13,
+   0,
+   14,
+   3,
+   "LATENT"
+  ],
+  [
+   16,
+   14,
+   0,
+   15,
+   0,
+   "LATENT"
+  ],
+  [
+   17,
+   5,
+   0,
+   15,
+   1,
+   "VAE"
+  ],
+  [
+   18,
+   15,
+   0,
+   16,
+   0,
+   "IMAGE"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {},
+ "version": 0.4
+}

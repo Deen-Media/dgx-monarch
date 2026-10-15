@@ -143,6 +143,13 @@ auto_gate = ["uly2+fsdp"]
 # The table form below keys each loader by the checkpoint it ships, which is
 # what a dual-loader template needs. A key no loader carries is reported in the
 # pruned block.
+#
+# FLUX.3 Klein needs no entry: the stem match keeps its two checkpoints apart.
+# flux3_image_klein_{bf16,int8_convrot,nvfp4} share the stem flux3imageklein
+# and feed the base templates; the _sd_ files share flux3imagekleinsd and feed
+# the step-distilled ones. Name a local conversion with a quant token the
+# matrix knows (int8_convrot, nvfp4 and the like), or list it here under its
+# template; any other spelling lands in a pool of its own.
 [artifact_groups."dgx-monarch-ideogram4-t2i"]
 "ideogram4_fp8_scaled.safetensors" = []
 "ideogram4_unconditional_fp8_scaled.safetensors" = []

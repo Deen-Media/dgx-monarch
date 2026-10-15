@@ -117,6 +117,12 @@ The seams, in run order:
                               sets disable_cfg1_optimization before its first
                               model call, the CFG 1.0 shortcut still reads
                               that flag, and a plain sampler does not set it
+ 41. flux3 conds branch       stock FLUX.3 caches the early text and reference
+                              states from extra_conds only under inference mode,
+                              with no hooks, a cross_attn and no flow map; the
+                              forward takes both input sets alike, and the bound
+                              extra_conds takes the cache off inference mode and
+                              leaves no inference tensor in its output
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -3108,6 +3114,111 @@ def _assigns_on_self(model_class, attr: str) -> bool:
     return False
 
 
+def _self_module_paths(source: str) -> set:
+    """Dotted module paths a method reads off ``self``.
+
+    ``self.<attr>`` gives ``attr``; a constant subscript,
+    ``self.<attr>["<key>"]``, names the child ``attr.key``; a variable
+    subscript, ``self.<attr>[mode]``, names the whole container. Methods and
+    plain attributes come out too; the caller keeps the paths that resolve
+    to a module holding parameters.
+    """
+    import ast
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(source))
+    parents = {child: node for node in ast.walk(tree) for child in ast.iter_child_nodes(node)}
+    paths = set()
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
+                and node.value.id == "self"):
+            continue
+        parent = parents.get(node)
+        if (isinstance(parent, ast.Subscript) and parent.value is node
+                and isinstance(parent.slice, ast.Constant) and isinstance(parent.slice.value, str)):
+            paths.add(f"{node.attr}.{parent.slice.value}")
+        else:
+            paths.add(node.attr)
+    return paths
+
+
+def _covers(declared: str, touched: str) -> bool:
+    """Whether ``declared`` is a dotted-segment prefix of ``touched``."""
+    head = tuple(declared.split("."))
+    return tuple(touched.split("."))[:len(head)] == head
+
+
+def _flux3_outside_forward_call(model) -> None:
+    """What Flux3.extra_conds runs: preprocess_conds with text and references."""
+    import torch
+
+    generator = torch.Generator().manual_seed(33)
+    context = torch.randn(1, 80, 20480, generator=generator) * 0.1
+    refs = [torch.randn(1, 128, 2, 3, generator=generator)]
+    with torch.no_grad():
+        model.preprocess_conds(context, refs)
+
+
+# Class-scoped census rows (adapters/fsdp_islands.py) and the tiny real
+# diffusion model plus outside-forward call each is checked against.
+_CLASS_SCOPED_PROBES: dict = {
+    "Flux3": (lambda: _tiny_flux3(), _flux3_outside_forward_call),
+}
+
+
+def _assert_class_scoped_outside_forward_row(class_name, paths, methods, flat) -> None:
+    """One class-scoped row against its method source and a live call.
+
+    The reader collects the module paths the extra_conds methods read off
+    ``self`` and keeps those that own parameters on a tiny real model; the
+    live call puts a forward pre-hook on every descendant that owns
+    parameters and records the dotted paths that ran. Each set must be
+    covered by the row, and every row path must cover something in each,
+    under the segment prefix rule. The flat census never holds these names.
+    """
+    import torch
+
+    from dgx_monarch.adapters.fsdp_islands import resolve_module_path
+
+    assert class_name in _CLASS_SCOPED_PROBES, (
+        f"outside forward modules seam: no tiny real model probes the {class_name} row")
+    build, call = _CLASS_SCOPED_PROBES[class_name]
+    model = build()
+    read = set()
+    for method_name in methods:
+        method = getattr(type(model), method_name, None)
+        assert method is not None, (
+            f"outside forward modules seam: {type(model).__name__} has no {method_name}")
+        for path in _self_module_paths(inspect.getsource(method)):
+            module = resolve_module_path(model, path)
+            if isinstance(module, torch.nn.Module) and any(True for _ in module.parameters()):
+                read.add(path)
+    ran: set = set()
+    names = {module: name for name, module in model.named_modules()}
+    handles = [
+        module.register_forward_pre_hook(lambda m, _args: ran.add(names[m]))
+        for module in names
+        if any(True for _ in module.parameters(recurse=False))
+    ]
+    try:
+        call(model)
+    finally:
+        for handle in handles:
+            handle.remove()
+    for label, touched in (("reads", read), ("runs", ran)):
+        uncovered = sorted(t for t in touched if not any(_covers(p, t) for p in paths))
+        assert not uncovered, (
+            f"outside forward modules seam: {class_name}.extra_conds {label} "
+            f"{uncovered} outside its forward and the class-scoped row misses them")
+        stale = sorted(p for p in paths if not any(_covers(p, t) for t in touched))
+        assert not stale, (
+            f"outside forward modules seam: the {class_name} row names {stale}, which "
+            f"extra_conds no longer {label.rstrip('s')}s outside the forward")
+    assert not set(paths) & set(flat), (
+        f"outside forward modules seam: class-scoped {class_name} paths entered the "
+        "flat census, which replicates them for every family")
+
+
 def _assert_outside_forward_module_seam() -> None:
     """Hold the census of modules a family runs outside its denoise forward.
 
@@ -3130,6 +3241,7 @@ def _assert_outside_forward_module_seam() -> None:
     from dgx_monarch.adapters.detect import model_base_touchpoints
     from dgx_monarch.adapters.fsdp_islands import (
         AUXILIARY_MODULE_ATTRS,
+        CLASS_OUTSIDE_FORWARD_MODULE_PATHS,
         FORWARD_PATH_NAME_OWNERS,
         OUTSIDE_FORWARD_MODULE_ATTRS,
         outside_forward_module_attrs,
@@ -3148,10 +3260,11 @@ def _assert_outside_forward_module_seam() -> None:
             called = _calls_on_self(inspect.getsource(extra_conds), "diffusion_model")
             if called:
                 reaching.setdefault(klass.__name__, set()).update(called)
-    assert set(reaching) == set(OUTSIDE_FORWARD_MODULE_ATTRS), (
+    tabled = set(OUTSIDE_FORWARD_MODULE_ATTRS) | set(CLASS_OUTSIDE_FORWARD_MODULE_PATHS)
+    assert set(reaching) == tabled, (
         "outside forward modules seam: the supported families whose extra_conds "
-        f"calls a diffusion-model method are {sorted(reaching)}, and the table "
-        f"names {sorted(OUTSIDE_FORWARD_MODULE_ATTRS)}"
+        f"calls a diffusion-model method are {sorted(reaching)}, and the tables "
+        f"name {sorted(tabled)}"
     )
     for class_name, attrs in OUTSIDE_FORWARD_MODULE_ATTRS.items():
         unet_class = _unet_class_of(getattr(comfy.model_base, class_name))
@@ -3171,6 +3284,9 @@ def _assert_outside_forward_module_seam() -> None:
             f"outside forward modules seam: the census tuple the wrap reads "
             f"misses {sorted(set(attrs) - set(AUXILIARY_MODULE_ATTRS))}"
         )
+    for class_name, paths in CLASS_OUTSIDE_FORWARD_MODULE_PATHS.items():
+        _assert_class_scoped_outside_forward_row(
+            class_name, paths, reaching[class_name], AUXILIARY_MODULE_ATTRS)
     for class_name, owned in FORWARD_PATH_NAME_OWNERS.items():
         model_class = getattr(comfy.model_base, class_name, None)
         assert class_name in supported and model_class is not None, (
@@ -3925,11 +4041,13 @@ def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> Non
     models of Wan 2.1 (t2v and i2v), LTX, Kandinsky 5, Anima's cosmos DiT,
     Z-Image and Krea2 (pure Ulysses and ring) pin every such site: stock must
     run each pin, and the injected forward on one rank must run none and
-    match the unpinned stock forward bit for bit. The three sites the
-    forward's options copy cannot reach get the same check through the
-    adapter's own binding: WanDancer's music encoder, MiniMax H3's token
-    refiner and the LTX audio-video text connector. Comfy's own attention
-    takes the dispatcher's place.
+    match the unpinned stock forward bit for bit. The sites the forward's
+    options copy cannot reach get the same check through the adapter's own
+    binding: WanDancer's music encoder, MiniMax H3's token refiner, the LTX
+    audio-video text connector, and FLUX.3's early text and reference blocks,
+    which comfy runs from ``preprocess_conds`` with no options; a tiny real
+    FLUX.3 pins one of each beside an image block and a single block. Comfy's
+    own attention takes the dispatcher's place.
     """
     import types
 
@@ -3948,6 +4066,7 @@ def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> Non
 
     from dgx_monarch.adapters.anima import AnimaAdapter
     from dgx_monarch.adapters.base import InjectionContext
+    from dgx_monarch.adapters.flux3 import Flux3Adapter
     from dgx_monarch.adapters.kandinsky5 import Kandinsky5Adapter
     from dgx_monarch.adapters.krea2 import Krea2Adapter
     from dgx_monarch.adapters.ltx import LTXAdapter
@@ -4058,6 +4177,17 @@ def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> Non
               lambda krea=krea, x=x, context=context: krea._forward(x, t, context),
               Krea2Adapter(), pure_ulysses=pure)
 
+    # FLUX.3: the early text and reference blocks run from preprocess_conds,
+    # which hands them no options, so the adapter binds their attention; the
+    # image and single blocks take the forward's sharded override.
+    flux3 = _tiny_flux3(seed=12)
+    x, context = randn(1, 128, 3, 4), randn(1, 80, 20480) * 0.1
+    refs = [randn(1, 128, 2, 3)]
+    check("FLUX.3", flux3,
+          [flux3.txt_mode_blocks[0], flux3.content_mode_blocks["image_cond"][0],
+           flux3.content_mode_blocks["image"][0], flux3.single_blocks[1]],
+          lambda: flux3._forward(x, t, context, refs), Flux3Adapter(), pure_ulysses=True)
+
     # Sites the forward's options copy cannot reach. Each host carries only the
     # stock modules the adapter binds, and the adapter's own inject_usp binds them.
     music = [_seeded(MusicEncoderLayer(dim=16, num_heads=2, ffn_dim=32, device="cpu",
@@ -4136,7 +4266,10 @@ def _assert_attention_pins_detected(operations) -> None:
     patcher's object patches, which the detector reads, until ``patch_model``
     puts it in place. Last, the probe tool's key patterns must find exactly the
     pinnable attention modules of tiny real Krea2, Anima (cosmos DiT),
-    Kandinsky 5, Wan 2.1 and Qwen Image 2.1 models.
+    Kandinsky 5, Wan 2.1, Qwen Image 2.1 and FLUX.3 models (split and fused
+    projections), and FLUX.3's early pattern exactly its ten early blocks,
+    whose real config tensors the detector reads where the int8 files put
+    them, on the block itself.
     """
     import re
     import types
@@ -4262,6 +4395,8 @@ def _assert_attention_pins_detected(operations) -> None:
             in_channels=64, out_channels=64, num_layers=2, attention_head_dim=64,
             num_attention_heads=1, context_in_dim=4, mlp_ratio=1,
             axes_dims_rope=(16, 16, 32), operations=operations),
+        "flux3": _tiny_flux3(),
+        "flux3_fused": _tiny_flux3(fused=True),
     }
     for family, model in families.items():
         keys = list(model.state_dict())
@@ -4269,10 +4404,33 @@ def _assert_attention_pins_detected(operations) -> None:
             keys = ["net." + key for key in keys]  # the prefix Anima files carry
         owners = sorted(name.rpartition(".")[0] for name, module in model.named_modules()
                         if isinstance(module, attention_module.ComfyAttention))
-        matched = tool.attention_paths(family, keys, cross=True)
+        pattern = family.removesuffix("_fused")
+        matched = tool.attention_paths(pattern, keys, cross=True)
         assert sorted(matched) == owners, (
             f"attention keyword handoff: the probe tool's {family} pattern finds {matched}, "
             f"and the model's pinnable attention is {owners}")
+
+    # FLUX.3's early pattern: the ten blocks comfy runs from preprocess_conds,
+    # the stock sites a pin probe exercises. Each block owns its attention, so
+    # the config sits at <block>.comfy_attention.config, as in the int8 files.
+    flux3 = families["flux3"]
+    early = sorted(name for name, _module in flux3.named_modules()
+                   if (name.count(".") == 1 and name.startswith("txt_mode_blocks."))
+                   or (name.count(".") == 2 and name.startswith("content_mode_blocks.image_cond.")))
+    for model in (flux3, families["flux3_fused"]):
+        assert tool.attention_paths("flux3_early", list(model.state_dict())) == early, (
+            "attention keyword handoff: the probe tool's flux3_early pattern no longer "
+            "finds exactly the early text and reference blocks")
+    flux3_state = flux3.state_dict()
+    pinned_paths = (early[0], early[-1], "content_mode_blocks.image.0", "single_blocks.1")
+    for path in pinned_paths:
+        flux3_state[f"{path}.comfy_attention.config"] = encoded({"attention": "comfy_kitchen_int8"})
+    flux3_live = _tiny_flux3()
+    flux3_live.load_state_dict(flux3_state, strict=False)
+    found = attention_pins.scan_loaded(ModelPatcher(_Holder(flux3_live), cpu, cpu))
+    assert {path: pin.kernel for path, pin in found.items()} == {
+        f"diffusion_model.{path}.comfy_attention": "comfy_kitchen_int8" for path in pinned_paths
+    }, f"attention keyword handoff: the detector read {found} from a pinned FLUX.3 checkpoint"
 
 
 def _assert_cfg_pp_uncond_pass_seam() -> None:
@@ -4334,6 +4492,140 @@ def _assert_cfg_pp_uncond_pass_seam() -> None:
         "under-reads it; widen sampler_keeps_uncond_at_cfg1")
 
 
+def _tiny_flux3(*, flow_map: bool = False, fused: bool = False, seed: int = 0):
+    """A real comfy.ldm.flux3.model.Flux3 at toy width, CPU float32, seeded.
+
+    Hidden 256 over two heads keeps the head dimension at 128, which the
+    four 32-wide rotary axes need; one block per early and image stack and
+    two single blocks.
+    """
+    import comfy.ops
+    import torch
+    from comfy.ldm.flux3.model import Flux3
+
+    generator = torch.Generator().manual_seed(seed)
+    model = Flux3(hidden_size=256, num_heads=2, depth=1, depth_single_blocks=2,
+                  fused_qkv=fused, flow_map=flow_map, dtype=torch.float32, device="cpu",
+                  operations=comfy.ops.disable_weight_init)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn(parameter.shape, generator=generator) * 0.05)
+    return model
+
+
+def _tiny_flux3_base(*, flow_map: bool = False):
+    """A real model_base.Flux3 built by ComfyUI's own diffusion-model load.
+
+    The state dict carries the vendor files' ``*_norm.scale`` names, which
+    the Flux loader renames, so the load is the one a real file takes.
+    """
+    import comfy.sd
+
+    state = {key.replace("_norm.weight", "_norm.scale"): value
+             for key, value in _tiny_flux3(flow_map=flow_map).state_dict().items()}
+    return comfy.sd.load_diffusion_model_state_dict(state).model
+
+
+def _assert_flux3_conds_branch_seam() -> None:
+    """Which conditioning branch FLUX.3 takes, and the bind that fixes it.
+
+    ``Flux3.extra_conds`` runs the early text and reference blocks once per
+    conditioning and hands ``_forward`` their states, but only when inference
+    mode is on, no hooks are set, ``cross_attn`` is present and the model is
+    no flow map; otherwise ``_forward`` runs them every call. A Worker samples
+    on a thread where inference mode is off, so the adapter's
+    ``prepare_base_model`` runs stock ``extra_conds`` under inference mode
+    and clones every inference tensor out (adapters/flux3.py). Pinned here on
+    a tiny real model_base.Flux3: (a) the four conditions of stock's cache,
+    (b) the cached keys and their cond classes, (c) ``_forward`` taking both
+    input sets to equal outputs at batch 1, (d) the bound call from a thread
+    outside inference mode equal to stock's under inference mode, and (e) no
+    inference tensor in the bound output, base and flow-map model alike.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    import comfy.conds
+    import torch
+
+    from dgx_monarch.adapters.flux3 import Flux3Adapter
+
+    generator = torch.Generator().manual_seed(41)
+    context = torch.randn(1, 80, 20480, generator=generator) * 0.1
+    refs = [torch.randn(1, 128, 3, 4, generator=generator)]
+    cpu = torch.device("cpu")
+    base = _tiny_flux3_base()
+    flow = _tiny_flux3_base(flow_map=True)
+    assert base.diffusion_model.flow_map is False and flow.diffusion_model.flow_map is True, (
+        "flux3 conds branch: the step-distilled checkpoint no longer builds a flow map")
+
+    def conds(model, inference=True, **extra):
+        kwargs = {"cross_attn": context, "reference_latents": refs, "device": cpu, **extra}
+        if inference:
+            with torch.inference_mode():
+                return model.extra_conds(**kwargs)
+        return model.extra_conds(**kwargs)
+
+    cached = {"txt_states", "ref_states", "ref_shapes"}
+    assert set(conds(base)) >= cached and "c_crossattn" not in conds(base), (
+        "flux3 conds branch: stock no longer caches the early states under inference mode")
+    for label, out in (("outside inference mode", conds(base, inference=False)),
+                       ("with hooks", conds(base, hooks=object())),
+                       ("on the flow map", conds(flow))):
+        assert not cached & set(out) and {"c_crossattn", "ref_latents"} <= set(out), (
+            f"flux3 conds branch: stock now caches {label}, so the in-forward branch moved")
+    no_text = conds(base, cross_attn=None)
+    assert not cached & set(no_text), (
+        "flux3 conds branch: stock caches with no cross_attn")
+    stock = conds(base)
+    assert isinstance(stock["txt_states"], comfy.conds.CONDRegular) and isinstance(
+        stock["ref_states"], comfy.conds.CONDRegular) and type(
+        stock["ref_shapes"]) is comfy.conds.CONDConstant, (
+        "flux3 conds branch: the cached states changed cond class")
+    assert stock["ref_shapes"].cond == [tuple(ref.shape[-2:]) for ref in refs], (
+        "flux3 conds branch: ref_shapes no longer lists each reference grid")
+
+    x = torch.randn(1, 128, 4, 4, generator=generator)
+    timestep = torch.tensor([0.5])
+    dm = base.diffusion_model
+    with torch.no_grad():
+        given = dm._forward(x, timestep, transformer_options={},
+                            txt_states=stock["txt_states"].cond,
+                            ref_states=stock["ref_states"].cond,
+                            ref_shapes=stock["ref_shapes"].cond)
+        computed = dm._forward(x, timestep, context, refs, transformer_options={})
+    assert torch.equal(given, computed), (
+        "flux3 conds branch: _forward no longer gives equal outputs from cached and "
+        "computed early states at batch 1")
+
+    def walk(value):
+        if isinstance(value, list):
+            for item in value:
+                yield from walk(item)
+        elif torch.is_tensor(value):
+            yield value
+
+    for model in (base, flow):
+        Flux3Adapter().prepare_base_model(model)
+        with ThreadPoolExecutor(1) as pool:
+            assert not pool.submit(torch.is_inference_mode_enabled).result(), (
+                "flux3 conds branch: a fresh executor thread now inherits inference mode")
+            bound = pool.submit(conds, model, False).result()
+        reference = conds(model) if model is base else None
+        if reference is not None:
+            assert set(bound) == set(reference) and all(
+                torch.equal(bound[key].cond, reference[key].cond)
+                for key in ("txt_states", "ref_states")), (
+                "flux3 conds branch: the bound extra_conds off inference mode differs "
+                "from stock's under it")
+        else:
+            assert {"c_crossattn", "ref_latents"} <= set(bound), (
+                "flux3 conds branch: the bind moved the flow map off stock's in-forward branch")
+        leaked = [key for key, cond in bound.items()
+                  for tensor in walk(getattr(cond, "cond", None)) if tensor.is_inference()]
+        assert not leaked, (
+            f"flux3 conds branch: the bound output still holds inference tensors in {leaked}")
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -4375,6 +4667,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("lumina attention container", _assert_lumina_attention_container_seam),
     ("attention keyword handoff", _assert_attention_keyword_handoff_seam),
     ("cfg++ uncond pass", _assert_cfg_pp_uncond_pass_seam),
+    ("flux3 conds branch", _assert_flux3_conds_branch_seam),
 )
 
 

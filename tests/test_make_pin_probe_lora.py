@@ -38,7 +38,15 @@ HEADERS = {
               "model.diffusion_model.head.head.{n}.weight"],
     "qwen_image21": ["transformer_blocks.{n}.attn.to_q.weight",
                      "transformer_blocks.{n}.attn.to_k.weight"],
+    # FLUX.3: the int8 files fuse qkv, the bf16 and nvfp4 files split it; a
+    # header mixing both spellings, with the int8 scale and pin beside them.
+    "flux3": ["single_blocks.{n}.qkv.weight", "single_blocks.{n}.qkv.weight_scale",
+              "single_blocks.{n}.mlp_in.weight", "txt_mode_blocks.{n}.q_proj.weight",
+              "txt_mode_blocks.{n}.k_proj.weight", "content_mode_blocks.image.{n}.qkv.weight",
+              "content_mode_blocks.image.{n}.comfy_attention.config",
+              "content_mode_blocks.image_cond.{n}.q_proj.weight"],
 }
+HEADERS["flux3_early"] = HEADERS["flux3"]
 
 EXPECTED_SELF = {
     "krea2": ["blocks.{n}.attn", "txtfusion.layerwise_blocks.{n}.attn",
@@ -48,6 +56,9 @@ EXPECTED_SELF = {
                    "visual_transformer_blocks.{n}.self_attention"],
     "wan21": ["blocks.{n}.self_attn"],
     "qwen_image21": ["transformer_blocks.{n}.attn"],
+    "flux3": ["single_blocks.{n}", "txt_mode_blocks.{n}", "content_mode_blocks.image.{n}",
+              "content_mode_blocks.image_cond.{n}"],
+    "flux3_early": ["txt_mode_blocks.{n}", "content_mode_blocks.image_cond.{n}"],
 }
 
 
@@ -143,3 +154,21 @@ def test_the_tool_stays_small_and_needs_only_torch_and_safetensors():
                if line.strip().startswith(("import ", "from ")) and "__future__" not in line}
     assert imports <= {"argparse", "json", "re", "struct", "sys", "pathlib", "torch",
                        "safetensors"}
+
+
+def test_flux3_early_is_the_early_subset_and_a_fused_or_split_file_reads_alike(tmp_path):
+    """The early pattern is the ten stock sites comfy runs from preprocess_conds,
+    a subset of the family pattern, and the fused int8 spelling and the split
+    bf16 spelling name the same blocks."""
+    keys = probe.read_header_keys(_checkpoint(tmp_path, "flux3", blocks=2))
+    every, early = probe.attention_paths("flux3", keys), probe.attention_paths("flux3_early", keys)
+    assert set(early) < set(every)
+    assert not any(path.startswith(("single_blocks.", "content_mode_blocks.image."))
+                   for path in early)
+    fused = ["model.diffusion_model." + key for key in
+             ("single_blocks.0.qkv.weight", "txt_mode_blocks.0.qkv.weight")]
+    split = ["model.diffusion_model." + key for key in
+             ("single_blocks.0.q_proj.weight", "txt_mode_blocks.0.q_proj.weight")]
+    filler = [f"model.diffusion_model.single_blocks.0.x{i}" for i in range(6)]
+    assert probe.attention_paths("flux3", fused + filler) == probe.attention_paths(
+        "flux3", split + filler) == ["single_blocks.0", "txt_mode_blocks.0"]

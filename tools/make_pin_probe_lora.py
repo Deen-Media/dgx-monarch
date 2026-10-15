@@ -20,6 +20,12 @@ parent of the query projection is the attention module):
   kandinsky5    {text,visual}_transformer_blocks.N.{self,cross}_attention.to_query.weight
   wan21         blocks.N.{self,cross}_attn.q.weight
   qwen_image21  transformer_blocks.N.attn.to_q.weight
+  flux3         {txt_mode_blocks,single_blocks,content_mode_blocks.{image,image_cond}}.N.{qkv,q_proj}.weight
+                (the block owns its attention, so the module path is the block's;
+                the int8 files fuse qkv, the bf16 and nvfp4 files split it)
+  flux3_early   the same for the ten early blocks only (txt_mode_blocks and
+                content_mode_blocks.image_cond), the stock sites comfy runs from
+                preprocess_conds
 
 Only torch and safetensors are needed.
 """
@@ -43,6 +49,12 @@ FAMILY_PATTERNS: dict[str, re.Pattern[str]] = {
         r"\.to_query\.weight$"),
     "wan21": re.compile(r"^(?P<path>blocks\.\d+\.(?P<kind>self|cross)_attn)\.q\.weight$"),
     "qwen_image21": re.compile(r"^(?P<path>transformer_blocks\.\d+\.attn)\.to_q\.weight$"),
+    "flux3": re.compile(
+        r"^(?P<path>(?:txt_mode_blocks|single_blocks|content_mode_blocks\.(?:image|image_cond))"
+        r"\.\d+)\.(?:qkv|q_proj)\.weight$"),
+    "flux3_early": re.compile(
+        r"^(?P<path>(?:txt_mode_blocks|content_mode_blocks\.image_cond)\.\d+)"
+        r"\.(?:qkv|q_proj)\.weight$"),
 }
 # ComfyUI's checkpoint prefixes (comfy/model_detection.py unet_prefix_from_state_dict).
 PREFIXES = ("model.diffusion_model.", "model.model.", "net.")

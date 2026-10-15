@@ -34,6 +34,8 @@ _SIGNATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     # Order matters: Flux2 has unique modulation keys; Flux requires
     # `vector_in`; LongCat is the remaining shared block layout.
     ("flux2", ("double_stream_modulation_img.",)),
+    # FLUX.3 Klein: ComfyUI's own needle pair, which no other row carries.
+    ("flux3", ("content_mode_blocks.", "single_stream_modulations.")),
     ("flux", ("double_blocks.", "single_blocks.", "img_attn.qkv.", "vector_in.")),
     ("longcat", ("double_blocks.", "single_blocks.", "img_attn.qkv.")),
     # Lens precedes Qwen because they share common transformer/text/image paths.

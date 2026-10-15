@@ -383,7 +383,10 @@ normal node-pack practice) and xfuser public APIs:
    attention-mask preservation,
 4. is bound by the worker onto each freshly loaded base, once per load
    (`GPUWorker._inject_for_topology`); `Adapter.bind` replaces a method rather
-   than wrapping it, so repeated graph executions never stack.
+   than wrapping it, so repeated graph executions never stack. A family bind
+   may also target a `comfy.model_base` method on the base model, as FLUX.3's
+   `extra_conds` bind does; the same rebound inventory and bijection hold it
+   as they hold the `comfy.ldm` targets.
 
 The default for non-divisible sharded axes is aligned zero-pad plus gather-time
 trim. The Krea2 padding measurement found that an attended pad key at
@@ -411,8 +414,8 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
 
 - families with explicit resolution-crossover rows use cfg-parallel at the low
   end and USP at the high end, with per-model thresholds stored as data; other
-  families have explicit full-range ring or Ulysses rows. Mage Flow and Qwen
-  Image 2.1 have no row, and Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image
+  families have explicit full-range ring or Ulysses rows. Mage Flow, Qwen
+  Image 2.1 and FLUX.3 Klein have no row, and Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image
   have no row below 1.2 MP; those cases take the generic uly2 fallback
   (row 99). Data parallelism is never a table row: `with_derived_dp` derives it
   from the ranks a row leaves spare, and a batch that cannot split across them
@@ -526,9 +529,14 @@ path, which is what keeps them out of every collective. The rule: ComfyUI runs
 diffusion-model module reached from there runs before any FSDP2 pre-forward
 hook has gathered a weight. If sharded, its DTensor weight meets a plain text
 tensor and every rank fails on the first `addmm` (the
-first H3 FSDP render to reach a forward). Three supported families reach one:
-Anima's `llm_adapter`, H3's `condition_proj` and `token_refiner`, and LTXAV's
-two caption projections and two embedding connectors.
+first H3 FSDP render to reach a forward). Four supported families reach one:
+Anima's `llm_adapter`, H3's `condition_proj` and `token_refiner`, LTXAV's
+two caption projections and two embedding connectors, and FLUX.3's early
+streams (`txt_in`, `time_in`, `emb_in`, `early_stream_modulations`,
+`txt_mode_blocks` and `content_mode_blocks.image_cond`), which only the base
+model reaches from there. Flux and other families build `txt_in` and `time_in`
+and run them inside their forwards, so FLUX.3's dotted paths sit in a table
+keyed by its comfy class rather than in the flat name list.
 `adapters/fsdp_islands.py` declares them per family, under the comfy class
 whose `extra_conds` makes the call, and derives the one flat tuple the wrap
 reads by name off the live model. A name is not unique to the family that
@@ -541,7 +549,11 @@ the replicated bytes whole where a shard would have been 1/world of them:
 1.487 GiB on the 61.7 GiB H3 file, 3.755 GiB on the LTX 2.5 bf16 transformer.
 The shard-build price reads a file size and a world, not a module census, so
 `capacity_fit.py` records why that replication fits inside the flat transient
-fraction.
+fraction. FLUX.3's early streams do not fit: they are about 2.8 GB of its
+11.1 GB BF16 file, so a world-2 rank holds more than its half plus the flat
+transient fraction before any block is in flight. FSDP is a function test for
+that family, not a capacity need, and its price stays flat until a hardware
+run records the per-rank peak.
 
 Stock Comfy Wan's tiny FP32 `patch_embedding` convolution keeps its own
 profile, `wan_fp32_patch_embedding_v1`, reported only on an exact match of

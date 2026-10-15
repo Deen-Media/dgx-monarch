@@ -102,6 +102,54 @@ size = 35455599592
 sha256 = "863a82e4ff950a42a6b0e80bea824828f129eb1a8fbbdbd9e8cb29859127b486"
 
 [[artifact]]
+file = "flux3_image_klein_bf16.safetensors"
+dest = "diffusion_models"
+note = "black-forest-labs/flux-3-image-klein-comfy is a gated repo: accept the FLUX Kommunity License v1.0 on Hugging Face, then download with a Hugging Face token from that account."
+url = "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/3700a1012ec75ad50a54e92199f85ba7cba93c1e/diffusion_models/flux3_image_klein_bf16.safetensors"
+size = 11076957072
+sha256 = "5c921759dc03663dbb67df11d8e3d317d2d5b893b31b969c95dc77ebf861b19c"
+
+[[artifact]]
+file = "flux3_image_klein_int8_convrot.safetensors"
+dest = "diffusion_models"
+note = "black-forest-labs/flux-3-image-klein-comfy is a gated repo: accept the FLUX Kommunity License v1.0 on Hugging Face, then download with a Hugging Face token from that account."
+url = "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/3700a1012ec75ad50a54e92199f85ba7cba93c1e/diffusion_models/flux3_image_klein_int8_convrot.safetensors"
+size = 5807427339
+sha256 = "8949ecfc1bf3871b08be02cf43ec7276a4914e1a86eade6b5eb8f4204426bc92"
+
+[[artifact]]
+file = "flux3_image_klein_nvfp4.safetensors"
+dest = "diffusion_models"
+note = "black-forest-labs/flux-3-image-klein-comfy is a gated repo: accept the FLUX Kommunity License v1.0 on Hugging Face, then download with a Hugging Face token from that account."
+url = "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/3700a1012ec75ad50a54e92199f85ba7cba93c1e/diffusion_models/flux3_image_klein_nvfp4.safetensors"
+size = 5257238192
+sha256 = "f99714a57ada7b7f39ebb7d916a1b842324c8ec483943816f5b3ea5c062b08a9"
+
+[[artifact]]
+file = "flux3_image_klein_sd_bf16.safetensors"
+dest = "diffusion_models"
+note = "black-forest-labs/flux-3-image-klein-comfy is a gated repo: accept the FLUX Kommunity License v1.0 on Hugging Face, then download with a Hugging Face token from that account."
+url = "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/3700a1012ec75ad50a54e92199f85ba7cba93c1e/diffusion_models/flux3_image_klein_sd_bf16.safetensors"
+size = 11097404512
+sha256 = "c3e9813cdd049c831c836b2e9db61150e49a93fc1a4c63b256494642fee0bd7c"
+
+[[artifact]]
+file = "flux3_image_klein_sd_int8_convrot.safetensors"
+dest = "diffusion_models"
+note = "black-forest-labs/flux-3-image-klein-comfy is a gated repo: accept the FLUX Kommunity License v1.0 on Hugging Face, then download with a Hugging Face token from that account."
+url = "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/3700a1012ec75ad50a54e92199f85ba7cba93c1e/diffusion_models/flux3_image_klein_sd_int8_convrot.safetensors"
+size = 5827874779
+sha256 = "847d8933548afd93df4af2cac2498e70891bf28d9dae06d695f536992e168fe2"
+
+[[artifact]]
+file = "flux3_image_klein_sd_nvfp4.safetensors"
+dest = "diffusion_models"
+note = "black-forest-labs/flux-3-image-klein-comfy is a gated repo: accept the FLUX Kommunity License v1.0 on Hugging Face, then download with a Hugging Face token from that account."
+url = "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/3700a1012ec75ad50a54e92199f85ba7cba93c1e/diffusion_models/flux3_image_klein_sd_nvfp4.safetensors"
+size = 5277685632
+sha256 = "15d421e2558443fcf83ba46f3cd884d9d181c2c7a0a7bdcd2974af234a2d4f5c"
+
+[[artifact]]
 file = "hunyuanimage2.1_fp8_e4m3fn.safetensors"
 dest = "diffusion_models"
 url = "https://huggingface.co/Comfy-Org/HunyuanImage_2.1_ComfyUI/resolve/5b828e4126a1f79e54f54bb2618c0f4d303e1f7e/split_files/diffusion_models/hunyuanimage2.1_fp8_e4m3fn.safetensors"
@@ -540,6 +588,14 @@ size = 8875719384
 sha256 = "36f3ff447ef59201722e8f9ce6020c9819fdcfba6aa2608c4e09b1c0ce114e34"
 
 [[artifact]]
+file = "qwen3vl_4b_int8_convrot.safetensors"
+dest = "text_encoders"
+note = "black-forest-labs/flux-3-image-klein-comfy is a gated repo: accept the FLUX Kommunity License v1.0 on Hugging Face, then download with a Hugging Face token from that account."
+url = "https://huggingface.co/black-forest-labs/flux-3-image-klein-comfy/resolve/3700a1012ec75ad50a54e92199f85ba7cba93c1e/text_encoders/qwen3vl_4b_int8_convrot.safetensors"
+size = 4858559240
+sha256 = "32de113cbf8282b02cbff0794b637b9d6676da09314a1db5a30bcea9bf4ee01c"
+
+[[artifact]]
 file = "qwen3vl_8b_bf16.safetensors"
 dest = "text_encoders"
 url = "https://huggingface.co/Comfy-Org/Qwen-Image-2.1/resolve/cb504a4090723e43f17ad01cec0359490e2de613/text_encoders/qwen3vl_8b_bf16.safetensors"
@@ -787,6 +843,26 @@ sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
 "dgx-monarch-flux2-t2i" = [
     "diffusion_models/flux2_dev_fp8mixed.safetensors",
     "text_encoders/mistral_3_small_flux2_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"dgx-monarch-flux3-klein-base-edit" = [
+    "diffusion_models/flux3_image_klein_bf16.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"dgx-monarch-flux3-klein-base-t2i" = [
+    "diffusion_models/flux3_image_klein_bf16.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"dgx-monarch-flux3-klein-edit" = [
+    "diffusion_models/flux3_image_klein_sd_bf16.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"dgx-monarch-flux3-klein-t2i" = [
+    "diffusion_models/flux3_image_klein_sd_bf16.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
     "vae/flux2-vae.safetensors",
 ]
 "dgx-monarch-hunyuan-image" = [
@@ -1100,6 +1176,36 @@ sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
     "diffusion_models/flux2_dev_fp8mixed.safetensors",
     "loras/test_lora_placeholder.safetensors",
     "text_encoders/mistral_3_small_flux2_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-flux3-klein-base-int8" = [
+    "diffusion_models/flux3_image_klein_int8_convrot.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-flux3-klein-base-nvfp4" = [
+    "diffusion_models/flux3_image_klein_nvfp4.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-flux3-klein-edit-2ref" = [
+    "diffusion_models/flux3_image_klein_sd_bf16.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-flux3-klein-int8" = [
+    "diffusion_models/flux3_image_klein_sd_int8_convrot.safetensors",
+    "text_encoders/qwen3vl_4b_int8_convrot.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-flux3-klein-nvfp4" = [
+    "diffusion_models/flux3_image_klein_sd_nvfp4.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
+    "vae/flux2-vae.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-flux3-klein-odd" = [
+    "diffusion_models/flux3_image_klein_sd_bf16.safetensors",
+    "text_encoders/qwen3vl_4b_bf16.safetensors",
     "vae/flux2-vae.safetensors",
 ]
 "tests/fixtures/workflows/generated/dgx-monarch-test-hunyuan-image-refiner" = [

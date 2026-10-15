@@ -15,6 +15,8 @@ matching Python, torch, torchmonarch and ComfyUI versions; guided setup also
 requires clean Git ComfyUI checkouts except for the missing example files
 described below. Use the current requirements in
 `pyproject.toml` and `requirements.txt`, not a version copied from another rig.
+FLUX.3 Klein needs ComfyUI 0.41.0 or newer
+([model files](#model-files-required-by-each-template)).
 
 First discover the ComfyUI checkout and the interpreter that actually starts
 it. Inspect its launcher or service configuration without printing credentials
@@ -357,8 +359,21 @@ for every template model file, and a template reference for every row.
 
 Each `url` names a fixed Hugging Face commit, so it serves the bytes the
 row's `sha256` describes even after the vendor replaces the file on its main
-branch. The LTX 2.5 files are in a gated repo: accept its license on Hugging
-Face, then download them with a Hugging Face token from that account.
+branch. The LTX 2.5 files and the FLUX.3 Klein DiT and INT8 encoder files
+are in gated repos: accept each repo's license on Hugging Face, then download
+its files with a Hugging Face token from that account.
+
+FLUX.3 Klein needs ComfyUI 0.41.0 or newer on the driver and on every Worker.
+An older ComfyUI cannot build a FLUX.3 checkpoint: dgx-monarch names the
+family, and the load fails in ComfyUI's own loader
+([TROUBLESHOOTING #121](TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
+The FLUX.3 Klein templates name the pinned Flux 2 VAE and Qwen3-VL-4B encoder
+rows. The vendor's repository also ships `vae/flux2-vae.safetensors` and
+`text_encoders/qwen3vl_4b_bf16.safetensors`: the encoder holds the same
+tensors as the pinned file with different header metadata, and the VAE holds
+the same weights in another key layout. Their bytes differ from the pinned
+files, so `check_artifacts.py --models-dir` reports a vendor copy staged under
+either name as a mismatch. Stage the files the manifest pins.
 
 A row with a blank `url` or `sha256`, or a `size` of 0, is pending. The check
 reports pending rows and passes; `--pending` names them, and `--strict` fails

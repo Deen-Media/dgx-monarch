@@ -16,6 +16,7 @@ from .base import (
 from .boogu import BooguAdapter
 from .cogvideo import CogVideoXAdapter
 from .ernie import ErnieAdapter
+from .flux3 import Flux3Adapter
 from .flux_family import ChromaAdapter, Flux2Adapter, FluxAdapter, LongCatAdapter
 from .hunyuan import HunyuanAdapter
 from .kandinsky5 import Kandinsky5Adapter
@@ -39,11 +40,12 @@ from .zimage import ZImageAdapter
 # first. Chroma, Flux2 and LongCatImage subclass Flux and precede FluxAdapter,
 # which owns the typed reject for unclaimed Flux subclasses. MageFlow and
 # QwenImage21 subclass QwenImage, whose adapter raises on any subclass. Krea2,
-# Ideogram4 and MiniMaxH3 subclass BaseModel directly, and no adapter names
-# BaseModel, so their place is free.
+# Ideogram4, Flux3 and MiniMaxH3 subclass BaseModel directly, and no adapter
+# names BaseModel, so their place is free.
 ADAPTERS: tuple[Adapter, ...] = (
     Krea2Adapter(),
     Ideogram4Adapter(),
+    Flux3Adapter(),
     PixelDiTAdapter(),
     MageFlowAdapter(),
     QwenImage21Adapter(),
@@ -99,9 +101,10 @@ def get_adapter(base_model) -> Adapter:
             return adapter
     raise UnsupportedModelError(
         f"model class {type(base_model).__name__} has no dgx-monarch adapter. "
-        f"Supported families: krea2, mage_flow, qwen_image21, qwen_image, lens, chroma, flux, flux2, longcat, "
-        f"hunyuan, zimage, ideogram4, pixeldit_comfy, ltx, minimax_h3, boogu, omnigen2, "
-        f"wan_scail, wan_animate2, wan_dancer, wan, ernie, cogvideo, kandinsky5, anima "
+        f"Supported families: krea2, mage_flow, qwen_image21, qwen_image, lens, chroma, flux, "
+        f"flux2, longcat, hunyuan, zimage, ideogram4, pixeldit_comfy, ltx, flux3, minimax_h3, "
+        f"boogu, omnigen2, wan_scail, wan_animate2, wan_dancer, wan, ernie, cogvideo, "
+        f"kandinsky5, anima "
         "(docs/MODELS.md)."
     )
 

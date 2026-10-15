@@ -34,7 +34,8 @@ CORE_HEADER_DTYPES = {"BF16": "bf16", "F16": "fp16"}
 ISLAND_HEADER_DTYPE = "F32"
 # Modules a family runs outside its diffusion model's forward. ComfyUI calls
 # ``BaseModel.extra_conds`` once per sampling, before the denoise loop, and
-# three supported families reach into the diffusion model from there. No FSDP2
+# four supported families reach into the diffusion model from there (Flux3's
+# early text and reference streams through the class-scoped table below). No FSDP2
 # pre-forward hook has gathered anything at that point, so a sharded weight is
 # a DTensor meeting a plain text state, which fails at the first addmm. Key the
 # table by the ComfyUI model_base class whose extra_conds makes the call; the
@@ -72,6 +73,17 @@ AUXILIARY_MODULE_ATTRS = tuple(dict.fromkeys(
 # class this repository has not read.
 FORWARD_PATH_NAME_OWNERS: dict[str, tuple[str, ...]] = {
     "LTXV": ("caption_projection",),
+}
+# Outside-forward modules keyed by class and named by dotted path, read only
+# for a model whose class chain names the class and never merged into the
+# flat census above, so no other family that builds the same names (txt_in
+# and time_in among them) replicates them. Flux3.extra_conds ->
+# preprocess_conds runs the early text and reference streams (base model,
+# inference mode, no hooks); the step-distilled model runs them inside its
+# forward, where replicating them is still correct but not load-bearing.
+CLASS_OUTSIDE_FORWARD_MODULE_PATHS: dict[str, tuple[str, ...]] = {
+    "Flux3": ("txt_in", "time_in", "emb_in", "early_stream_modulations",
+              "txt_mode_blocks", "content_mode_blocks.image_cond"),
 }
 
 
@@ -167,11 +179,41 @@ def outside_forward_module_attrs(model=None) -> tuple[str, ...]:
     return tuple(attr for attr in AUXILIARY_MODULE_ATTRS if attr not in subtract)
 
 
+def resolve_module_path(root, path: str):
+    """The module at dotted ``path`` under ``root``, or None if a segment is missing.
+
+    Paths compare on dotted segments, never as strings, so
+    ``content_mode_blocks.image`` and ``content_mode_blocks.image_cond`` name
+    two children. A one-segment path is exactly ``getattr(root, path, None)``,
+    so every flat name and every plain block list resolves as before. The
+    FSDP wrap reads its block lists through this: an ``nn.ModuleDict`` yields
+    keys when iterated, so FLUX.3's per-step image blocks are named by the
+    dotted path of the one list inside it.
+    """
+    value = root
+    for segment in path.split("."):
+        value = getattr(value, segment, None)
+        if value is None:
+            return None
+    return value
+
+
+def class_outside_forward_module_paths(model=None) -> tuple[str, ...]:
+    """The class-scoped census paths for this comfy model, in table order."""
+    if model is None:
+        return ()
+    paths: dict[str, None] = {}
+    for klass in type(model).__mro__:
+        for path in CLASS_OUTSIDE_FORWARD_MODULE_PATHS.get(klass.__name__, ()):
+            paths.setdefault(path, None)
+    return tuple(paths)
+
+
 def auxiliary_module_parameters(diffusion_model, model=None) -> set:
     """Parameters of modules that run outside the denoise path."""
     ignored: set = set()
-    for attr in outside_forward_module_attrs(model):
-        module = getattr(diffusion_model, attr, None)
+    for path in (*outside_forward_module_attrs(model), *class_outside_forward_module_paths(model)):
+        module = resolve_module_path(diffusion_model, path)
         parameters = getattr(module, "parameters", None)
         if module is not None and callable(parameters):
             ignored.update(parameters())

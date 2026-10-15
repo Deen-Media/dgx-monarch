@@ -447,6 +447,24 @@
       "waivable": false
     },
     {
+      "site": "adapters/flux3.py::Flux3Adapter.matches::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux3.py::require_sample_sigmas::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux3_packing.py::refuse_indivisible_heads::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/flux_family.py::ChromaAdapter.inject_usp.usp_forward_orig::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

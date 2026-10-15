@@ -5477,6 +5477,14 @@ every `+fsdp` preset refuses it class P with "The detector could not prove the
 checkpoint's precision". Render that file on a topology without fsdp; uly2
 drops the pins.
 
+The FLUX.3 Image Klein INT8 ConvRot files are the first shipped checkpoints
+that pin a kernel: comfy-kitchen's INT8 attention on 33 attention modules, the
+five image blocks and the 28 single blocks. Their testing graphs ask for the
+waiver on single, cfg2 and dp2 and render without it on uly2, which drops the
+pins and runs exact attention, so a uly2 render differs from stock INT8 on one
+GPU by construction. The BF16 and NVFP4 files pin nothing, and the shipped
+FLUX.3 templates use BF16.
+
 **What to do:** either accept the card and queue the render again, or pick a
 sequence-parallel topology such as uly2, where dgx-monarch drops every pin and
 the Init widget's kernel runs (exact under TORCH_FLASH; the Sol card appears
@@ -5544,8 +5552,11 @@ python tools/make_pin_probe_lora.py \
   --family wan21 --kernel comfy_kitchen_sol --tau 0.7
 ```
 
-It knows krea2, anima, kandinsky5, wan21 and qwen_image21, and its docstring
-lists the key pattern for each. It pins self-attention by default. `--cross`
+It knows krea2, anima, kandinsky5, wan21, qwen_image21, flux3 and
+flux3_early, and its docstring lists the key pattern for each. `flux3` pins
+every FLUX.3 block; `flux3_early` pins only the five text and five reference
+blocks, which every rank runs whole before the sharded blocks. It pins
+self-attention by default. `--cross`
 adds cross-attention, for int8 only: Sol needs q, k and v of one shape with a
 head dimension of 128, and cross-attention gives its keys and values the
 text's length, not the image's. `--blocks N` pins only the first N modules.
@@ -5826,5 +5837,34 @@ steps on the key names.
 
 **Fix:** use an export of the same model in ComfyUI's quantized layout, whose
 quantized layers carry `comfy_quant` keys or a `_quantization_metadata` table,
-or the model's bf16 file. There is no waiver and no env var: no setting can
-make ComfyUI read these scales.
+or the model's bf16 file. For FLUX.3 Image Klein, use the files in the
+vendor's ComfyUI-layout repository, `black-forest-labs/flux-3-image-klein-comfy`,
+which the artifact manifest pins ([MODELS](MODELS.md#model-flux-3-klein)).
+There is no waiver and no env var: no setting can make ComfyUI read these
+scales.
+
+## 121. A FLUX.3 checkpoint fails to load on ComfyUI older than 0.41.0
+
+**Symptom:** a FLUX.3 Image Klein template is refused before it runs:
+ComfyUI's prompt check reports `Value not in list` for the CLIPLoader type
+`flux3`. A graph that loads a `flux3_image_klein_*` file another way stops at
+the model load, where ComfyUI's loader raises `Could not detect model type`,
+while dgx-monarch's own header read still names the family `flux3`. A ComfyUI
+that loads the file as some other model class leaves the render refused with
+`has no dgx-monarch adapter`.
+
+**Cause:** ComfyUI added the FLUX.3 model, its detection, the `flux3` text
+encoder type and the LoRA key map in one change, first released in
+ComfyUI 0.41.0. dgx-monarch reads the family from the checkpoint header
+without asking ComfyUI, so it names `flux3` on any ComfyUI, but only a
+ComfyUI that defines `comfy.model_base.Flux3` can build the model, and the
+adapter binds that exact class. The driver needs it for the `flux3`
+CLIPLoader type too.
+
+**Fix:** update ComfyUI to 0.41.0 or newer on the driver and on every Worker,
+through the procedure you use for ComfyUI, then restart the driver and the
+Workers. `dgxm update` moves dgx-monarch and torchmonarch only, never
+ComfyUI. Every other family keeps working on the older ComfyUI meanwhile.
+Every Gate PASS goes stale with the ComfyUI change, so each combination runs
+its first-use Gate again
+([#114](#114-every-combination-runs-its-first-use-gate-again-after-an-update)).

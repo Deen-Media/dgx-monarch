@@ -474,3 +474,58 @@ def test_an_aborted_ceremony_on_the_pin_guard_leaves_residency_alone():
     with pytest.raises(UnsupportedModelError) as caught:
         attention_pins.assert_waived(summary, {"cfg": 2})
     assert is_sol_waiver_refusal(caught.value)
+
+
+class _Flux3Block(torch.nn.Module):
+    """A FLUX.3 block owns its attention: the pin sits at <block>.comfy_attention."""
+
+    def __init__(self, attention):
+        super().__init__()
+        self.comfy_attention = attention
+        self.qkv = torch.nn.Linear(2, 6)
+
+
+def _flux3_patcher():
+    """The int8 files' layout: every image and single block pinned, the early
+    text and reference blocks not (comfy/ldm/flux3/model.py module names)."""
+    dm = torch.nn.Module()
+    dm.content_mode_blocks = torch.nn.ModuleDict({
+        "image": torch.nn.ModuleList([_Flux3Block(int8())]),
+        "image_cond": torch.nn.ModuleList([_Flux3Block(Attention())])})
+    dm.txt_mode_blocks = torch.nn.ModuleList([_Flux3Block(Attention())])
+    dm.single_blocks = torch.nn.ModuleList([_Flux3Block(int8()), _Flux3Block(int8())])
+    return types.SimpleNamespace(model=types.SimpleNamespace(diffusion_model=dm),
+                                 object_patches={})
+
+
+def test_a_flux3_int8_layout_reads_its_block_level_pins():
+    found = attention_pins.scan_loaded(_flux3_patcher())
+    assert sorted(found) == [
+        "diffusion_model.content_mode_blocks.image.0.comfy_attention",
+        "diffusion_model.single_blocks.0.comfy_attention",
+        "diffusion_model.single_blocks.1.comfy_attention",
+    ]
+
+
+@pytest.mark.parametrize("topology,label", [({"cfg": 2}, "cfg2"), ({"dp": 2}, "dp2"),
+                                            ({}, "single"),
+                                            ({"cfg": 2, "fsdp": True}, "cfg2+fsdp"),
+                                            ({"dp": 2, "fsdp": True}, "dp2+fsdp")])
+def test_a_flux3_int8_layout_off_sequence_parallelism_refuses_class_k(topology, label):
+    summary = attention_pins.render_summary(_worker(**topology), [_flux3_patcher()])
+    assert summary is not None and summary.ran
+    assert summary.kernels == {"comfy_kitchen_int8": 3}
+    with pytest.raises(UnsupportedModelError) as caught:
+        attention_pins.assert_waived(summary, _worker(**topology).topology, family="flux3")
+    tag = parse_leading_refusal_tag(str(caught.value))
+    assert tag is not None and tag.refusal_class is RefusalClass.KNOWN_WRONG
+    assert tag.guard == attention_pins.SOL_ATTN_PIN_GUARD and tag.waivable
+    assert f"Topology {label} runs no sequence parallelism" in str(caught.value)
+
+
+def test_a_flux3_int8_layout_under_ulysses_drops_its_pins_and_asks_nothing():
+    summary = attention_pins.render_summary(_worker(ulysses=2), [_flux3_patcher()])
+    assert summary is not None and not summary.ran
+    assert summary.public()["attention_pins_dropped"] == {
+        attention_pins.DROPPED_SEQUENCE_PARALLEL: 3}
+    attention_pins.assert_waived(summary, _worker(ulysses=2).topology, family="flux3")

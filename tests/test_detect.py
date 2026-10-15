@@ -504,12 +504,17 @@ _ORACLE_REFUSE = (
     "Chroma1-HD-int8_convrot.safetensors",
     "Krea2_Turbo_convrot_int8mixed.safetensors",
     "flux2_dev_fp8mixed.safetensors",
+    "flux3_image_klein_int8_convrot.safetensors",
+    "flux3_image_klein_sd_nvfp4.safetensors",
+    "flux3_image_klein_sd_fp8r_modelopt.safetensors",
     "krea2_raw_convrot_int8.safetensors",
     "krea2_raw_fp8_scaled.safetensors",
 )
 _ORACLE_ADMIT = (
     "Chroma1-HD.safetensors",
     "flux2-dev.safetensors",
+    "flux3_image_klein_bf16.safetensors",
+    "flux3_image_klein_sd_bf16.safetensors",
     "kandinsky5lite_t2i.safetensors",
     "qwen_image_2512_fp8_e4m3fn.safetensors",
     "z_image_turbo_bf16.safetensors",
@@ -1226,6 +1231,15 @@ _SNIFF_ORACLE = (
     ("mage_flow_edit_turbo_int8_convrot.safetensors", ("mage_flow", "int8")),
     ("qwen_image_2512_fp8_e4m3fn.safetensors", ("qwen_image", "fp8")),
     ("qwen_image_2.1_bf16.safetensors", ("qwen_image21", "bf16")),
+    # FLUX.3 Klein, both checkpoints in every vendor ComfyUI-layout quant, and
+    # the excluded fp8r variant, which still names its family.
+    ("flux3_image_klein_bf16.safetensors", ("flux3", "bf16")),
+    ("flux3_image_klein_sd_bf16.safetensors", ("flux3", "bf16")),
+    ("flux3_image_klein_int8_convrot.safetensors", ("flux3", "int8")),
+    ("flux3_image_klein_sd_int8_convrot.safetensors", ("flux3", "int8")),
+    ("flux3_image_klein_nvfp4.safetensors", ("flux3", "fp8")),
+    ("flux3_image_klein_sd_nvfp4.safetensors", ("flux3", "fp8")),
+    ("flux3_image_klein_sd_fp8r_modelopt.safetensors", ("flux3", "fp8")),
 )
 
 
@@ -1235,3 +1249,91 @@ def test_the_real_checkpoint_sniffs_its_own_family(name, expected):
     if not path.is_file():
         pytest.skip(f"{path} not present on this box")
     assert sniff_checkpoint(path) == expected
+
+
+# FLUX.3 Klein vendor key sets, one block of each stack with the real dtypes
+# (header reads of the six ComfyUI-layout files and the fp8r variant). The row
+# is ComfyUI's own needle pair (comfy/model_detection.py), so a file sniffs
+# flux3 whatever its quant, and the kind comes from the existing reader.
+_FLUX3_BLOCKS = ("content_mode_blocks.image.0", "content_mode_blocks.image_cond.0",
+                 "txt_mode_blocks.0", "single_blocks.0")
+_FLUX3_TOP = ("early_stream_modulations.image.lin", "early_stream_modulations.image_cond.lin",
+              "early_stream_modulations.txt.lin", "single_stream_modulations.image.lin",
+              "single_stream_modulations.image_cond.lin", "single_stream_modulations.txt.lin",
+              "emb_in.image", "emb_in.image_cond", "txt_in", "time_in.in_layer",
+              "time_in.out_layer", "final_layer.image.adaLN_modulation.1",
+              "final_layer.image.linear")
+_FLUX3_WIDTHS = {"BF16": 2, "F32": 4, "I8": 1, "U8": 1, "F8_E4M3": 1}
+
+
+def _flux3_header(kind: str, *, distilled: bool) -> tuple[dict[str, dict], dict[str, str]]:
+    """``(tensors, metadata)`` of one FLUX.3 vendor layout, shapes shrunk."""
+    tensors: dict[str, dict] = {}
+    metadata = {"format": "pt"}
+    top = (*_FLUX3_TOP, *(("ref_time_in.in_layer", "ref_time_in.out_layer") if distilled else ()))
+    for module in top:
+        tensors[f"{module}.weight"] = {"dtype": "BF16", "shape": [4, 4]}
+    layers: dict[str, dict] = {}
+    for block in _FLUX3_BLOCKS:
+        tensors[f"{block}.norm.query_norm.scale"] = {"dtype": "BF16", "shape": [4]}
+        tensors[f"{block}.norm.key_norm.scale"] = {"dtype": "BF16", "shape": [4]}
+        projections = (("qkv",) if kind == "int8" else ("q_proj", "k_proj", "v_proj"))
+        for linear in (*projections, "mlp_in", "attn_out", "mlp_out"):
+            name = f"{block}.{linear}"
+            if kind == "bf16" or (kind == "nvfp4" and block in (
+                    "txt_mode_blocks.0", "content_mode_blocks.image.0")):
+                tensors[f"{name}.weight"] = {"dtype": "BF16", "shape": [4, 4]}
+            elif kind == "int8":
+                tensors[f"{name}.weight"] = {"dtype": "I8", "shape": [4, 4]}
+                tensors[f"{name}.weight_scale"] = {"dtype": "F32", "shape": [4, 1]}
+                tensors[f"{name}.comfy_quant"] = {"dtype": "U8", "shape": [72]}
+            elif kind == "nvfp4":
+                tensors[f"{name}.weight"] = {"dtype": "U8", "shape": [4, 2]}
+                tensors[f"{name}.weight_scale"] = {"dtype": "F8_E4M3", "shape": [4, 1]}
+                tensors[f"{name}.weight_scale_2"] = {"dtype": "F32", "shape": []}
+                tensors[f"{name}.input_scale"] = {"dtype": "F32", "shape": []}
+                layers[name] = {"format": "nvfp4"}
+            else:  # fp8r: per-row F32 scales and no quantization record
+                tensors[f"{name}.weight"] = {"dtype": "F8_E4M3", "shape": [4, 4]}
+                tensors[f"{name}.weight_scale"] = {"dtype": "F32", "shape": [4]}
+        if kind == "int8" and block in ("content_mode_blocks.image.0", "single_blocks.0"):
+            tensors[f"{block}.comfy_attention.config"] = {"dtype": "U8", "shape": [35]}
+    if layers:
+        metadata["_quantization_metadata"] = json.dumps({"layers": layers})
+    if kind == "fp8r":
+        metadata.update({"quantization": "fp8r", "scale": "per_row_fp32"})
+    return tensors, metadata
+
+
+def _write_flux3(path: Path, kind: str, *, distilled: bool) -> Path:
+    tensors, metadata = _flux3_header(kind, distilled=distilled)
+    header: dict = {}
+    offset = 0
+    for key, info in tensors.items():
+        size = math.prod(info["shape"]) * _FLUX3_WIDTHS[info["dtype"]]
+        header[key] = {**info, "data_offsets": [offset, offset + size]}
+        offset += size
+    header["__metadata__"] = metadata
+    _write_safetensors_header(path, header)
+    return path
+
+
+@pytest.mark.parametrize("distilled", [True, False], ids=["step-distilled", "base"])
+@pytest.mark.parametrize(("kind", "expected"), [
+    ("bf16", "bf16"), ("int8", "int8"), ("nvfp4", "fp8"), ("fp8r", "fp8")])
+def test_every_flux3_vendor_layout_sniffs_flux3_with_its_kind(tmp_path: Path, kind, expected,
+                                                              distilled):
+    path = _write_flux3(tmp_path / f"flux3_{kind}.safetensors", kind, distilled=distilled)
+    assert sniff_checkpoint(path) == ("flux3", expected)
+    assert sniff_checkpoint_for_topology(path) == ("flux3", expected)
+
+
+def test_flux3_names_no_neighbour_and_misses_without_either_needle():
+    """Before the row every vendor file read unknown, with the near miss
+    ranking pointing at longcat and flux through `single_blocks.`. Neither
+    needle alone names the family."""
+    keys = list(_flux3_header("bf16", distilled=False)[0])
+    assert detect_family_from_keys(keys) == "flux3"
+    for needle in ("content_mode_blocks.", "single_stream_modulations."):
+        assert detect_family_from_keys([k for k in keys if not k.startswith(needle)]) == "unknown"
+    assert detect_family_from_keys(["model.diffusion_model." + k for k in keys]) == "flux3"

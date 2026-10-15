@@ -63,6 +63,8 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "Flux 1 Dev"): ("flux", "HW"),
     ("image", "Flux 1 Schnell"): ("flux", "HW"),
     ("image", "Flux2"): ("flux2", "HW"),
+    ("image", "FLUX.3 Klein"): ("flux3", "impl"),
+    ("image", "FLUX.3 Klein Base"): ("flux3", "impl"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),
@@ -691,14 +693,15 @@ _CONSTRAINED_MARK = "🔒"
 # selects Ulysses above it.
 _MP_PROBES = (0.26, 0.79, 1.05, 1.19, 1.5, 2.36, 8.0)
 
-# Rows whose canonical checkpoint is guidance distilled and renders at CFG 1.0
-# under a plain sampler. choose_auto_topology drops every cfg-parallel row
+# Rows whose canonical checkpoint is distilled to CFG 1.0 (guidance distilled,
+# or FLUX.3 Klein's step-distilled flow map) and renders there under a plain
+# sampler. choose_auto_topology drops every cfg-parallel row
 # there, because a plain sampler drops the uncond pass, so auto cannot reach
 # cfg2 for them. This is a fact about the checkpoint, not a glyph: the stars
 # below derive from it. Kroma is not one: its shipped graphs run Euler at CFG 1,
 # but its model card allows CFG up to 1.5, where a BF16 file takes Krea2's cfg2
 # row (Kroma's cfg2 grant below).
-_DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2"})
+_DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2", "FLUX.3 Klein"})
 _REAL_CFG = 3.5
 
 # What the dated hardware evidence behind an **HW** row covers, per starred

@@ -397,7 +397,7 @@ copied from historical evidence.
    load at [`gate_ceremony.py:234-256`](../src/dgx_monarch/nodes/gate_ceremony.py#L234-L256 "anchor:gather_ceremony_evidence").
    FSDP disables slab residency, and it takes a LoRA stack only with
    `lora_low_rss` on at
-   [`fsdp.py:353-365`](../src/dgx_monarch/adapters/fsdp.py#L353-L365 "anchor:validate_fsdp_launch_loras"),
+   [`fsdp.py:355-367`](../src/dgx_monarch/adapters/fsdp.py#L355-L367 "anchor:validate_fsdp_launch_loras"),
    so a no-LoRA FSDP ceremony has a separate exact proof rather than counting
    either risky lineage as run.
    Under a resolved FSDP capability only, every worker must hold the bound
@@ -417,17 +417,17 @@ copied from historical evidence.
    Audited family-specific mixed-live classification and public precision
    admission remain adapter-owned; actor and gate code consume only their
    generic evidence contract at
-   [`fsdp.py:166-166`](../src/dgx_monarch/adapters/fsdp.py#L166-L166 "anchor:classify_audited_live_precision") and
-   [`fsdp.py:188-188`](../src/dgx_monarch/adapters/fsdp.py#L188-L188 "anchor:fsdp_precision_profile_is_admitted").
+   [`fsdp.py:168-168`](../src/dgx_monarch/adapters/fsdp.py#L168-L168 "anchor:classify_audited_live_precision") and
+   [`fsdp.py:190-190`](../src/dgx_monarch/adapters/fsdp.py#L190-L190 "anchor:fsdp_precision_profile_is_admitted").
    Each FSDP injection runs only cheap quant and LoRA refusals before adapter
    and compile preparation. The sole authoritative live-precision scan runs
    after that preparation and immediately before the first FSDP parameter
    mutation; direct calls use the same path. This is enforced by
    [`store_fsdp.py:96-113`](../src/dgx_monarch/actor/store_fsdp.py#L96-L113 "anchor:validate_injection") and
-   [`fsdp.py:377-435`](../src/dgx_monarch/adapters/fsdp.py#L377-L435 "anchor:apply_fsdp_capacity_mode"), with one-scan and same-patcher drift coverage in
-   [`test_fsdp_capacity.py:1095-1095`](../tests/test_fsdp_capacity.py#L1095-L1095 "anchor:test_worker_runs_one_live_precision_scan_after_preparation"),
-   [`test_fsdp_capacity.py:1125-1125`](../tests/test_fsdp_capacity.py#L1125-L1125 "anchor:test_worker_live_scan_observes_same_patcher_model_replacement"), and
-   [`test_fsdp_capacity.py:1166-1166`](../tests/test_fsdp_capacity.py#L1166-L1166 "anchor:test_worker_live_scan_observes_dtype_mutation_during_compile_preparation").
+   [`fsdp.py:379-437`](../src/dgx_monarch/adapters/fsdp.py#L379-L437 "anchor:apply_fsdp_capacity_mode"), with one-scan and same-patcher drift coverage in
+   [`test_fsdp_capacity.py:1207-1207`](../tests/test_fsdp_capacity.py#L1207-L1207 "anchor:test_worker_runs_one_live_precision_scan_after_preparation"),
+   [`test_fsdp_capacity.py:1237-1237`](../tests/test_fsdp_capacity.py#L1237-L1237 "anchor:test_worker_live_scan_observes_same_patcher_model_replacement"), and
+   [`test_fsdp_capacity.py:1278-1278`](../tests/test_fsdp_capacity.py#L1278-L1278 "anchor:test_worker_live_scan_observes_dtype_mutation_during_compile_preparation").
    Normal stock/swap and slab/fresh comparisons route through the same
    fail-closed comparator at
    [`latent_identity.py:58-118`](../src/dgx_monarch/nodes/latent_identity.py#L58-L118 "anchor:compare_latents").
