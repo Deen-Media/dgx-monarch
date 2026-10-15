@@ -99,7 +99,15 @@ def qp_split() -> int:
 
 
 def native_rdma_preflight() -> bool:
-    """Probe native registration in a child so a native abort stays isolated."""
+    """Probe native registration in a child so a native abort stays isolated.
+
+    The child is a fresh interpreter that applies the policy, imports Torch and
+    Monarch, then registers and drops a 4 KiB buffer. This call times the
+    child's wall time as the ``rdma_preflight`` phase (return_phases); a child
+    that runs past its 15 s bound records the phase as a timeout.
+    """
+    from .runtime_diagnostics import phase
+
     code = (
         "import os\n"
         "from dgx_monarch.monarch_policy import POLICY_ENV, policy_from_token, apply_policy, verify_native_policy\n"
@@ -113,13 +121,21 @@ def native_rdma_preflight() -> bool:
         "buffer.drop().get(timeout=5)\n"
     )
     try:
-        result = subprocess.run(
-            [sys.executable, "-c", code], stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-            timeout=15, check=False)
+        with phase("rdma_preflight", return_mode="rdma"):
+            try:
+                result = subprocess.run(
+                    [sys.executable, "-c", code], stdin=subprocess.DEVNULL,
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    timeout=15, check=False)
+            except subprocess.TimeoutExpired as expired:
+                # TimeoutExpired is not a TimeoutError, which the phase records
+                # as a timeout. TimeoutError is an OSError, so it still returns False.
+                raise TimeoutError("native RDMA preflight timed out") from expired
+            if result.returncode != 0:
+                raise ChildProcessError  # an OSError: the phase records an error
     except (OSError, subprocess.SubprocessError):
         return False
-    return result.returncode == 0
+    return True
 
 
 def rdma_outer_timeout(

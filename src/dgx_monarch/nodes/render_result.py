@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import native_return_latch
+from .. import native_return_latch, return_phases
 from ..adoption_evidence import (
     RESULT_KEY as _ADOPTION_EVIDENCE_RESULT_KEY,
 )
@@ -86,14 +86,18 @@ def _finish_render(
     native_failed: list[bool] = []  # this render's lifetime: did a native read fail?
 
     def materialize(descriptor):
+        started = return_phases.mark()
         try:
             if hasattr(read_guard, "begin_read"):
-                return read_latent_result(descriptor, read_guard)
-            return read_latent_result(descriptor)
+                value = read_latent_result(descriptor, read_guard)
+            else:
+                value = read_latent_result(descriptor)
         except Exception:
             if isinstance(descriptor, dict) and descriptor.get("kind") == "rdma":
                 native_failed.append(True)
             raise
+        return_phases.log_read(log, descriptor, leaders, started)
+        return value
 
     try:
         samples, tensors = materialize_leader_samples(

@@ -3369,13 +3369,39 @@ Three shapes tell the cases apart:
 
 ## Power-user escape hatch
 
-When the node surface is not enough, start with `dgxm top` ([TUI.md](TUI.md)),
-the DGX Monarch sidebar panel and a bounded `dgxm diagnostics` capture
-([CLUSTER.md](CLUSTER.md#monarchdiagnostics)). `monarch-tui` (ships with
-torchmonarch) does not attach to a running mesh by itself: it needs `--addr`
-of a mesh admin server, and dgx-monarch never starts one. Using it needs an
-inspector session whose admin server you can stop, which the integration does
-not provide; [CLUSTER.md](CLUSTER.md#monarchdiagnostics) explains why.
+When the node surface is not enough, use what the integration owns and can
+stop:
+
+* `dgxm top` ([TUI.md](TUI.md)) and the DGX Monarch sidebar panel;
+* `/dgxm/telemetry` and `/dgxm/metrics` on the ComfyUI port, which include
+  the live handoffs, leases, poisoned owners and the native-return latch;
+* a bounded `dgxm diagnostics` capture
+  ([CLUSTER.md](CLUSTER.md#monarchdiagnostics));
+* with `[monarch.diagnostics] metrics = true` and an `otlp_endpoint`, the phase
+  metrics and the ownership occupancy counters in your own collector
+  ([CLUSTER.md](CLUSTER.md#monarchdiagnostics));
+* for each completed native return in a normal render, the `native return:`
+  log line, which splits the Worker's pack and the driver's read into phases.
+
+Monarch's own services stay blocked: `enable_telemetry`, `Job.profile`,
+`monarch query`, the Monarch dashboard and the mesh admin agent that
+`monarch tui --addr` reads. All but the admin agent need a Job around the
+persistent Workers, which would make a second Monarch client attach to them
+and push its config to their host agents. Telemetry also spawns a proc mesh on
+every Worker host and stops it only on a best-effort basis, and the dashboard,
+when enabled, binds every interface. The admin agent needs no Job and can bind
+loopback, but it has no stop handle and, as far as the 0.7.0 Python surface
+shows, ends only with the process that started it. The periodic snapshot actor
+has no stop handle and runs until its procs stop. So dgx-monarch has no
+inspector mode for them, and you should not start them by hand against a live
+fleet. [DESIGN.md section 5.8](DESIGN.md#58-progress-logging-observability)
+cites each fact in the 0.7.0 wheel.
+
+An inspector session that dgx-monarch can own needs four upstream changes: a
+stop on the admin agent's handle, an abort handle for periodic snapshots
+(upstream already marks it as a TODO), telemetry that does not spawn procs on
+the hosts, and an attach that does not push the client's config. A bind host
+for the dashboard would also let that session include it.
 
 ## Never disable DynamicVRAM in stock ComfyUI on a Spark
 

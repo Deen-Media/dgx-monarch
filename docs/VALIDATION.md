@@ -1947,6 +1947,27 @@ savings and ratios, and refuses a set that lacks either order. The mode has not
 yet run on hardware, so it has not reproduced these figures; a campaign that
 runs it gets its own dated record.
 
+**First-use phase split: recorded, NOT RUN.** The 1.989-2.139 s first native
+use above is one combined total. Each native return now records its phases. On
+the Worker actor, the result row carries `return_phases`: the child-process
+preflight (`rdma_preflight`: a fresh interpreter that applies the policy,
+imports Torch and Monarch, then registers and drops a 4 KiB buffer; it runs on
+the first native pack in each actor process only), the registration
+(`rdma_register`), any rollback drops (`rdma_drop`) and the rest of the pack
+as `unattributed`. On the driver, for each completed native return in a normal
+render, the `native return:` log line adds the read (`rdma_read`), the drops
+(`rdma_drop`), the ACK (`ack`) and the rest. The QP handshake runs inside the
+first read, so `rdma_read` includes it. When a record reads complete, its
+phases add up to its total within half a millisecond for each rounded value,
+the total included. The qualifier's `--timing` mode stores both splits with
+each native call, and its summary carries the first-use split per stratum. The
+phases come from each process's shared phase record, so the split is exact
+only while one native return runs at a time, which is how the qualifier runs;
+a return that overlaps it in the same process can add its phases. The split
+measurement itself is **NOT RUN**: the next hardware leg takes it. Until then,
+the view that the child-process preflight rather than the fabric makes up most
+of the first-use cost is a hypothesis. Native return stays opt-in.
+
 **October 13, 2026 UTC:** a separate RAW BF16 production-return experiment
 completed one positive denoising step at 2048×4096 without VAE decoding. It
 used the same model, prompt, seed and sampler in stock, messaging, selected-rail
