@@ -35,7 +35,7 @@
     "python": "3.12.3",
     "system": "Linux"
   },
-  "manifest_digest": "01102ec58aded737ac1631e37783d00fbe18247bdf4b727ec28bf0106450c1ef",
+  "manifest_digest": "617399c2c0534b137fd64d5f08437270925d5f36f32eeb92ec4ede0a5768a5db",
   "schema": 2,
   "semantics": {
     "actor_queue_dispatch_default": {
@@ -68,6 +68,72 @@
     }
   },
   "touchpoints": {
+    "monarch._rust_bindings.monarch_hyperactor.actor.PythonMessage": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "(kind, message, refs)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.actor.PythonMessageKind.Result": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "(rank)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.buffers.Buffer": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "()",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.buffers.Buffer.freeze": {
+      "detail": null,
+      "kind": "builtins.method_descriptor",
+      "signature": "(self, /)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.mailbox.PortId": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "(*, actor_id, port)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.mailbox.PortRef": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "(port)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.mailbox.PortRef.return_undeliverable": {
+      "detail": null,
+      "kind": "builtins.getset_descriptor",
+      "signature": null,
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.mailbox.PortRef.send": {
+      "detail": null,
+      "kind": "builtins.method_descriptor",
+      "signature": "(self, /, instance, message)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.proc.ActorAddr": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "(*, addr, proc_name, actor_name)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.proc.ProcId": {
+      "detail": null,
+      "kind": "builtins.type",
+      "signature": "(uid)",
+      "status": "ok"
+    },
+    "monarch._rust_bindings.monarch_hyperactor.proc.Uid.instance_from_value": {
+      "detail": null,
+      "kind": "builtins.builtin_function_or_method",
+      "signature": "(value, label=None)",
+      "status": "ok"
+    },
     "monarch._rust_bindings.monarch_hyperactor.pytokio.PythonTask": {
       "detail": null,
       "kind": "builtins.type",
@@ -108,6 +174,12 @@
       "detail": null,
       "kind": "builtins.function",
       "signature": "(self, **kwargs: Any) -> Self",
+      "status": "ok"
+    },
+    "monarch._src.actor.actor_mesh.context": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "() -> 'Context'",
       "status": "ok"
     },
     "monarch._src.actor.host_mesh.HostMesh": {
@@ -156,6 +228,12 @@
       "detail": null,
       "kind": "builtins.function",
       "signature": "(callback: Callable[[ForwardRef('ProcMesh')], NoneType]) -> None",
+      "status": "ok"
+    },
+    "monarch._src.job.service_identity.service_proc_addr": {
+      "detail": null,
+      "kind": "builtins.function",
+      "signature": "(address: str, proc_id: monarch._rust_bindings.monarch_hyperactor.proc.ProcId | None) -> str",
       "status": "ok"
     },
     "monarch.actor.Actor": {

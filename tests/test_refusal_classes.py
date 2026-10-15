@@ -96,6 +96,9 @@ NOT_REFUSAL_CLASSES = frozenset({
     "NativeReturnLatchedError",
     "ClusterConfigError",
     "ClusterSmokeError",
+    # The pre-dial attach refusal (worker_proc_id.py): a lifecycle fault the
+    # driver raises before anything dials, like MeshAttachError.
+    "WorkerProcIdError",
     "ConsentStoreError",
     "DriverPinError",
     "PayloadOwnershipError",

@@ -1,9 +1,10 @@
 """Check cluster attach traces and their parser contract.
 
 The format documented in docs/TROUBLESHOOTING.md #101 requires one prefix,
-one sequence per attempt, phase timings, listener generations before each
-attach, a distinct released-fleet failure stage, and one close line on every
-exit. These tests use injected runners and clocks; no SSH or Monarch runs.
+one sequence per attempt, phase timings, listener generations and ids before
+each attach, a distinct released-fleet failure stage, and one close line on
+every exit. These tests use injected runners and clocks; no SSH or Monarch
+runs.
 """
 from __future__ import annotations
 
@@ -12,7 +13,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from dgx_monarch import attach_trace, mesh_attach, mesh_teardown
+from dgx_monarch import attach_trace, mesh_attach, mesh_teardown, worker_proc_id
 from dgx_monarch.cli import listener_generation, worker_health
 
 ADDRESS_A = "tcp://10.0.0.1:26600"
@@ -74,16 +75,20 @@ def rig(monkeypatch):
     monkeypatch.setattr(attach_trace, "_LAST_SEEN", {})
     log = _Log()
     attempts: list[list[str]] = []
-    generations = {"gen": "aaaaaaaaaaaa"}
+    generations = {"gen": "aaaaaaaaaaaa", "proc_id": "aaaaaaaaaaaa0001"}
 
     def fleet(config, **_kwargs):
         return {host.address: {"gen": generations["gen"],
                                "loop_pid": "4242", "age_s": "31",
                                "listening": "true", "unit_restarts": "0",
-                               "marker": "match"}
+                               "marker": "match",
+                               "proc_id": generations["proc_id"]}
                 for host in config.hosts}
 
     monkeypatch.setattr(listener_generation, "fleet", fleet)
+    primed: list[list[str]] = []
+    monkeypatch.setattr(worker_proc_id, "prime",
+                        lambda addresses: primed.append(list(addresses)) or [])
 
     def build(results):
         def attach_once(addresses):
@@ -110,11 +115,11 @@ def rig(monkeypatch):
                            generations=generations)
 
 
-def _raise_attach(addresses, exc):
+def _raise_attach(addresses, exc, **_detail):
     raise RuntimeError(f"attach to workers {addresses} failed") from exc
 
 
-def _raise_released_attach(addresses, exc, *, auto_heal, restarted=None):
+def _raise_released_attach(addresses, exc, *, auto_heal, restarted=None, **_detail):
     raise RuntimeError(
         f"attach to workers {addresses} failed on a released fleet "
         f"(auto_heal={auto_heal})") from exc
@@ -319,10 +324,13 @@ def test_a_generation_that_moved_between_attempts_says_so(rig, monkeypatch):
     disagreement docs/TROUBLESHOOTING.md #101 suspects after a hand restart."""
     runtime = rig.build([RuntimeError("blip"), "HOSTS"])
     readings = iter(["aaaaaaaaaaaa", "bbbbbbbbbbbb"])
-    monkeypatch.setattr(
-        listener_generation, "fleet",
-        lambda config, **_kwargs: {host.address: {"gen": next(readings)}
-                                   for host in config.hosts})
+
+    def fleet(config, **_kwargs):
+        gen = next(readings)
+        return {host.address: {"gen": gen, "proc_id": gen + "0001"}
+                for host in config.hosts}
+
+    monkeypatch.setattr(listener_generation, "fleet", fleet)
     assert mesh_attach.attach_cluster(runtime, _config(ADDRESS_A), None) == "HOSTS"
     readings = rig.log.traced("loop_generation")
     assert [fields["phase"] for fields in readings] == ["before_attach_1",
@@ -330,15 +338,24 @@ def test_a_generation_that_moved_between_attempts_says_so(rig, monkeypatch):
     assert [fields["changed"] for fields in readings] == ["unknown", "true"]
 
 
-def test_an_unreadable_generation_costs_the_attach_a_line_and_nothing_else(
+def test_an_unreadable_generation_refuses_the_attach_before_anything_dials(
         rig, monkeypatch):
+    """The reading carries the id the attach dials, so a probe that raised
+    leaves nothing to dial: the attach refuses, writes the probe's error and
+    a `refused` close, and leaves the session usable (no poison)."""
     def refuse(_config, **_kwargs):
         raise OSError("no route")
 
     monkeypatch.setattr(listener_generation, "fleet", refuse)
     runtime = rig.build(["HOSTS"])
-    assert mesh_attach.attach_cluster(runtime, _config(ADDRESS_A), None) == "HOSTS"
+    with pytest.raises(worker_proc_id.WorkerProcIdError, match="did not read it"):
+        mesh_attach.attach_cluster(runtime, _config(ADDRESS_A), None)
     assert rig.log.traced("loop_generation")[0]["error"] == "OSError"
+    assert rig.attempts == []
+    close = rig.log.traced("close")[0]
+    assert (close["outcome"], close["stage"]) == ("refused", "proc_id")
+    assert runtime["_TRANSPORT_POISON"] is None
+    assert runtime["mesh_factory"].transport_failures == 1
 
 
 def test_the_two_attempts_of_a_failing_attach_are_numbered(rig):
@@ -353,12 +370,11 @@ def test_the_two_attempts_of_a_failing_attach_are_numbered(rig):
 
 
 def test_a_released_fleet_fails_fast_and_closes_on_its_own_stage(rig, monkeypatch):
-    """Once this driver's fleet changes under it, this driver process cannot
-    attach to the replacement fleet again (hardware, 2026-10-01, torchmonarch
-    0.6.0; the mesh_attach._attach_and_retry docstring lists the four
-    reproductions). A fleet whose replacement latch this driver released has
-    changed, so it spends exactly one attempt and closes on a stage of its
-    own, not the `attach_2_failed` stage a non-released failure uses."""
+    """A replacement for a fleet this driver released, whose loops read the
+    same id after the failed attempt, cannot win a second attempt with that
+    id (mesh_attach._attach_and_retry), so it spends exactly one attempt and
+    closes on a stage of its own, not the `attach_2_failed` stage a
+    non-released failure uses."""
     monkeypatch.setattr(mesh_teardown, "released_predecessor_recently",
                         lambda **_k: True)
     runtime = rig.build([RuntimeError("worker gone")])

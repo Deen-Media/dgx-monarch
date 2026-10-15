@@ -1040,6 +1040,12 @@ Read this before the first update from 1.1.0, in this order.
    reads the earlier version, so `pip show` and `pip check` report it, until
    the next `"$COMFY_PYTHON" -m pip install -e "$REPO_DIR" --no-deps`. Run that
    once after the update; the code that runs is already the new release.
+8. Run the driver and the Workers on the same release. A driver on this
+   release refuses Workers still on 1.1.0 before it dials, with an error that
+   starts `no attach ran`, and `dgxm doctor` fails each such host's
+   `listener generation` row. A ComfyUI started on 1.1.0 cannot attach to
+   Workers on this release; restart it
+   ([TROUBLESHOOTING #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 
 ### Update commands
 

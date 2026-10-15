@@ -134,6 +134,18 @@ def _monarch_policy_starts_unadmitted(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _attach_dial_history_starts_empty(monkeypatch):
+    """The ids a driver last dialed live as long as its process; each test starts fresh.
+
+    A test that dials a changed id meets ``worker_proc_id.prime``, which talks to
+    Monarch, so it must stand that function in itself.
+    """
+    from dgx_monarch import mesh_attach
+
+    monkeypatch.setattr(mesh_attach, "_LAST_DIALED", {})
+
+
+@pytest.fixture(autouse=True)
 def _native_return_latch_starts_clear(monkeypatch):
     """The latch lives as long as a driver process; each test starts as a fresh one."""
     from dgx_monarch import native_return_latch

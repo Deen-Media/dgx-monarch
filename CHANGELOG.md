@@ -23,6 +23,21 @@ refuses. After a verified update, rerun the editable install once so its
 metadata reads the new version
 ([INSTALL](docs/INSTALL.md#upgrading-from-110)).
 
+- A ComfyUI that stays up attaches again after a Worker service restarts
+  under it (`dgxm restart`, a crash that systemd restarts, or a hand restart)
+  when the service comes back within Monarch's 30 s message delivery timeout
+  (closes [#2](https://github.com/Deen-Media/dgx-monarch/issues/2)). Each
+  Worker start serves a new Monarch proc id, and the driver reads each host's
+  id before every attach and dials it. The first attach to a restarted Worker
+  waits about 2 s before it dials. After a longer outage the fallback is still
+  a ComfyUI restart. An id the driver cannot read refuses before anything dials and
+  names its remedy, and `dgxm doctor` fails the `listener generation` row of a
+  Worker that publishes none. The id read waits up to 10 s per host, up from
+  3 s. Upgrading: a driver on this release refuses Workers still on an older
+  one before dialing, and a ComfyUI started before the update needs a restart
+  once its Workers run this release. No unit, config or firewall change.
+  CPU-tested on 2026-10-15; the two-Spark recheck is pending
+  ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 - Refuse a checkpoint whose weight scales ComfyUI would drop, before anything
   loads
   ([TROUBLESHOOTING #120](docs/TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
@@ -621,7 +636,9 @@ metadata reads the new version
   retirement without clearing another render.
 - Record healthy no-model reattach and controlled fresh-driver recovery, while
   preserving the reproduced same-driver stop/start and restart failures;
-  [issue #2](https://github.com/Deen-Media/dgx-monarch/issues/2) remains open.
+  [issue #2](https://github.com/Deen-Media/dgx-monarch/issues/2) stayed open
+  after these checks. Per-start Worker ids (above) close it; the two-Spark
+  recheck is pending.
 - Add bounded phase timings and opt-in supported Monarch metrics. Advanced
   attached-cluster profiling, SQL and stack tools remain explicitly unavailable
   where the upstream API cannot provide an owned, stoppable session.

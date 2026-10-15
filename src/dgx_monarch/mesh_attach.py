@@ -3,17 +3,23 @@ from __future__ import annotations
 
 import os
 import time
-from typing import Any
+from typing import Any, NoReturn
 
-from . import attach_trace, mesh_teardown
+from . import attach_trace, mesh_teardown, worker_proc_id
 from .config import ClusterConfig
 from .error_utils import failure_summary
 from .mesh_runtime import ATTACH_INIT_WAIT_S
 
-# How long one loop's listener-generation reading may take before the attach
-# gives up on it. The reading is evidence, never a gate, so a host that will
-# not answer costs the attach this and nothing more.
-GENERATION_PROBE_S = 3.0
+# How long one loop's listener-generation reading may take. The reading
+# carries the id the attach dials, so a host that does not answer in time
+# refuses the attach before anything dials (worker_proc_id.py); the heal
+# probe has already reached every host when auto-heal is on.
+GENERATION_PROBE_S = 10.0
+
+# The id this process last dialed at each bare address. A loop whose id has
+# changed since then restarted under this driver, and the first message to it
+# must not be the config push (worker_proc_id.prime says why).
+_LAST_DIALED: dict[str, str] = {}
 
 
 def attach_cluster(runtime: dict[str, Any], config: ClusterConfig, handoff: Any):
@@ -105,15 +111,13 @@ def attach_cluster(runtime: dict[str, Any], config: ClusterConfig, handoff: Any)
 
 
 def snapshot_generations(config: ClusterConfig, trace: attach_trace.AttachTrace,
-                         *, phase: str) -> None:
-    """Record each loop's listener generation without raising.
+                         *, phase: str) -> dict[str, dict[str, str]]:
+    """Read and record each loop's listener generation and id; never raise.
 
-    Read immediately before attach to diagnose listener changes. Restarting one
-    loop under a live session can require restarting both loops together
-    (docs/TROUBLESHOOTING.md #2).
+    A probe that raised returns no readings, which the dial gate refuses.
     """
     if not config.hosts:
-        return
+        return {}
     try:
         from .cli import lifecycle, listener_generation
 
@@ -121,30 +125,87 @@ def snapshot_generations(config: ClusterConfig, trace: attach_trace.AttachTrace,
             config, runner=lifecycle.run_on_host, timeout=GENERATION_PROBE_S)
     except Exception as exc:
         trace.emit("loop_generation", phase=phase, error=type(exc).__name__)
-        return
+        return {}
     for address, fields in readings.items():
         trace.generation(address, fields, phase=phase)
+    return readings
+
+
+def read_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
+              *, attempt: int) -> list[str]:
+    """Each loop's id value, in host order, read just before this attempt.
+
+    Raises ``worker_proc_id.WorkerProcIdError`` before anything dials when a
+    loop's current id is unknown. Every bookkeeping key stays the bare
+    address; only the dial carries the id.
+    """
+    readings = snapshot_generations(config, trace, phase=f"before_attach_{attempt}")
+    return worker_proc_id.read_values(config.hosts, readings)
 
 
 def _traced_attach(runtime: dict[str, Any], config: ClusterConfig,
-                   trace: attach_trace.AttachTrace, addresses: list[str],
+                   trace: attach_trace.AttachTrace, values: list[str],
                    *, attempt: int):
-    """One attach attempt, with each loop's generation read just before it."""
-    snapshot_generations(config, trace, phase=f"before_attach_{attempt}")
+    """One attach attempt dialing ``<proc-id>@<address>`` for the ids just read.
+
+    A loop whose id changed since this process last dialed it gets the
+    throwaway message first, so the config push is not the message the
+    refused old session loses.
+    """
+    pairs = list(zip(config.hosts, values, strict=True))
+    moved = [host.address for host, value in pairs
+             if _LAST_DIALED.get(host.address, value) != value]
+    if moved:
+        unprimed = worker_proc_id.prime(moved)
+        trace.emit("proc_id_prime", attempt=attempt, addresses=moved,
+                   unprimed=unprimed)
+        if unprimed:
+            # Without the throwaway message the config push is the message the
+            # old session loses, and this attach to that loop times out.
+            runtime["log"].warning(
+                "could not send the throwaway message to restarted Worker loop(s) "
+                "%s before dialing their new id; the attach to them may time out (%s)",
+                unprimed, worker_proc_id.ENTRY)
+    dial = [worker_proc_id.proc_addr(host.address, value) for host, value in pairs]
+    _LAST_DIALED.update((host.address, value) for host, value in pairs)
     with trace.phase("attach", attempt=attempt):
-        return runtime["_attach_once"](addresses)
+        return runtime["_attach_once"](dial)
+
+
+def _read_retry_dial(config: ClusterConfig, trace: attach_trace.AttachTrace,
+                     dialed: list[str]
+                     ) -> tuple[list[str] | None, worker_proc_id.WorkerProcIdError | None]:
+    """Read the ids again after a failed attempt; name every loop that moved.
+
+    A loop serving a new id restarted between the read and the dial, so one
+    more attempt with the new id can win where the first could not.
+    """
+    try:
+        values = read_dial(config, trace, attempt=2)
+    except worker_proc_id.WorkerProcIdError as exc:
+        return None, exc
+    moved = [host.address
+             for host, old, new in zip(config.hosts, dialed, values, strict=True)
+             if old != new]
+    if moved:
+        trace.emit("proc_id_moved", addresses=moved)
+    return values, None
 
 
 def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: Any,
                       addresses: list[str], trace: attach_trace.AttachTrace,
                       *, released: bool):
-    """Heal and attach, with no second attempt after a liveness-based replacement.
+    """Heal, read each loop's id, and attach, at most twice.
 
-    Hardware checks found that a driver which released a dead fleet's
-    replacement latch could not attach its replacement in the same
-    process. Give it one attempt so an upstream fix remains observable. Ordinary
-    attaches retain two attempts. Recovery requires a fresh driver process; see
-    docs/TROUBLESHOOTING.md #2.
+    The first read refuses before anything dials when an id is unknown, and
+    leaves the session usable. A reading after a failed first attempt that
+    finds no id ends the attach there: the dial already ran, so the session is
+    poisoned. A replacement for a fleet this driver released gets one attempt
+    unless a loop came back with a new id since the dial: a loop that
+    restarted inside the delivery timeout re-attaches at once, and one that
+    stayed down longer leaves this driver's channel to it closed, so a retry
+    with the same id cannot win (docs/TROUBLESHOOTING.md #2). Ordinary
+    attaches keep two attempts.
     """
     factory = runtime["mesh_factory"]
     error_type = runtime["MeshAttachError"]
@@ -161,9 +222,17 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
             raise error_type(
                 f"pre-attach Worker-service auto-heal failed ({evidence}); no worker "
                 "attach was attempted, so fix the lifecycle/SSH error and retry") from exc
+    try:
+        dial = read_dial(config, trace, attempt=1)
+    except worker_proc_id.WorkerProcIdError as exc:
+        # Nothing dialed, so the transport carries no failed attach and the
+        # next render reads the ids again.
+        factory.safe_transport_failure(handoff)
+        trace.closed("refused", stage="proc_id", evidence=type(exc).__name__)
+        raise
     started = time.perf_counter()
     try:
-        hosts = _traced_attach(runtime, config, trace, addresses, attempt=1)
+        hosts = _traced_attach(runtime, config, trace, dial, attempt=1)
     except BaseException as first_exc:
         first_evidence = factory.safe_failure_evidence(first_exc)
         if not isinstance(first_exc, Exception):
@@ -171,25 +240,23 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
                 f"cluster attach failed: {first_evidence}")
             trace.closed("poisoned", stage="attach_1", evidence=first_evidence)
             raise
-        # A released fleet stops here rather than spending a second attempt
-        # it cannot win (see the docstring above). One attempt still runs, not
-        # zero: a torchmonarch release that fixes in-process re-attach then
-        # shows in the trace as attempt_1 succeeding, instead of hiding behind
-        # a fail-fast that never tries.
-        if released:
-            runtime["_TRANSPORT_POISON"] = (
-                f"cluster attach failed: {first_evidence}")
-            trace.closed("poisoned", stage="attach_1_released",
-                         evidence=first_evidence)
-            restarted = (restart_after_failed_attach(config, first_exc, runtime["log"])
-                         if config.auto_heal else None)
-            runtime["_raise_released_attach"](
-                addresses, first_exc, auto_heal=config.auto_heal, restarted=restarted)
-        runtime["log"].warning(
-            "first cluster attach failed (%s); retrying once in-process",
-            first_evidence)
+        retry_dial, refusal = _read_retry_dial(config, trace, dial)
+        # No second dial runs when the reading found no id, or when a released
+        # fleet's loops kept their ids (see the docstring above).
+        if retry_dial is None or (released and retry_dial == dial):
+            _stop_after_attempt_1(runtime, config, trace, addresses, first_exc,
+                                  first_evidence, released=released, refusal=refusal)
+        if retry_dial != dial:
+            runtime["log"].warning(
+                "a Worker loop serves a new id since the first attach dialed "
+                "(%s); retrying once with the new id (%s)", first_evidence,
+                worker_proc_id.ENTRY)
+        else:
+            runtime["log"].warning(
+                "first cluster attach failed (%s); retrying once in-process",
+                first_evidence)
         try:
-            hosts = _traced_attach(runtime, config, trace, addresses, attempt=2)
+            hosts = _traced_attach(runtime, config, trace, retry_dial, attempt=2)
         except BaseException as exc:
             evidence = factory.safe_failure_evidence(exc)
             if not isinstance(exc, Exception):
@@ -206,6 +273,30 @@ def _attach_and_retry(runtime: dict[str, Any], config: ClusterConfig, handoff: A
         time.perf_counter() - started)
     trace.closed("attached", hosts=len(addresses))
     return hosts
+
+
+def _stop_after_attempt_1(runtime: dict[str, Any], config: ClusterConfig,
+                          trace: attach_trace.AttachTrace, addresses: list[str],
+                          first_exc: BaseException, evidence: str, *, released: bool,
+                          refusal: worker_proc_id.WorkerProcIdError | None) -> NoReturn:
+    """Poison the session and raise after a first attempt no second may follow.
+
+    The dial already ran, so the session is poisoned whichever way it ended,
+    and the message names that failure. When the reading after it found no
+    id, the message names those loops without the pre-dial gate's claim that
+    nothing dialed.
+    """
+    runtime["_TRANSPORT_POISON"] = f"cluster attach failed: {evidence}"
+    stage = "attach_1_released" if released else "attach_1_reread_refused"
+    trace.closed("poisoned", stage=stage, evidence=evidence)
+    detail = {"reread": refusal.unknown} if refusal is not None and refusal.unknown else {}
+    restarted = (restart_after_failed_attach(config, first_exc, runtime["log"])
+                 if config.auto_heal else None)
+    if released:
+        runtime["_raise_released_attach"](
+            addresses, first_exc, auto_heal=config.auto_heal, restarted=restarted, **detail)
+    runtime["_raise_attach"](addresses, first_exc, **detail)
+    raise RuntimeError("the attach error hooks returned instead of raising") from first_exc
 
 
 def heal_dead_loops(config: ClusterConfig, addresses: list[str], logger: Any) -> None:
@@ -296,15 +387,19 @@ def restart_after_failed_attach(config: ClusterConfig, exc: BaseException, logge
         return False
 
 
-def raise_attach(error_type: type[RuntimeError], addresses: list[str], exc: BaseException) -> None:
-    """Raise the stable operator-facing error after both ordinary attempts fail.
+def raise_attach(error_type: type[RuntimeError], addresses: list[str], exc: BaseException,
+                 *, reread: str = "") -> None:
+    """Raise the stable operator-facing error after an ordinary attach fails for good.
 
-    Only the two-attempt path calls this; a released fleet fails fast through
-    ``raise_released_attach``, so the message needs no attempt count.
+    A released fleet fails fast through ``raise_released_attach`` instead.
+    ``reread`` names the loops the reading after a failed first attempt found
+    no id for; then no second attempt ran.
     """
+    stop = (f"no second attempt ran, because the id reading after it found none for {reread}"
+            if reread else "no further in-process retry runs")
     raise error_type(
-        f"attach to workers {addresses} failed ({failure_summary(exc)}); the "
-        "in-process retry already ran. Rule out version skew first "
+        f"attach to workers {addresses} failed ({failure_summary(exc)}); {stop}. "
+        "Rule out version skew first "
         "(`dgxm doctor`), then a wedged Worker service: run `dgxm restart` and "
         "restart ComfyUI before retrying (docs/TROUBLESHOOTING.md #1, #2)."
     ) from exc
@@ -312,12 +407,14 @@ def raise_attach(error_type: type[RuntimeError], addresses: list[str], exc: Base
 
 def raise_released_attach(error_type: type[RuntimeError], addresses: list[str],
                           exc: BaseException, *, auto_heal: bool,
-                          restarted: bool | None = None) -> None:
+                          restarted: bool | None = None, reread: str = "") -> None:
     """Explain a failed attach after liveness-based fleet replacement.
 
-    No second attempt ran. Name the supported recovery: restart both worker loops
-    together, then start a fresh driver. Include the manual route when auto-heal
-    is disabled.
+    No second attempt ran, because no loop came back with a new id, or
+    because the reading after the attempt found no id for the loops
+    ``reread`` names. Name the supported recovery: restart both worker loops
+    together, then start a fresh driver. Include the manual route when
+    auto-heal is disabled.
     """
     if not auto_heal:
         restart_sentence = "Run `dgxm restart` first."
@@ -326,11 +423,14 @@ def raise_released_attach(error_type: type[RuntimeError], addresses: list[str],
     else:
         restart_sentence = ("The worker-loop restart did not confirm (see the log line "
                             "above), so run `dgxm restart` first.")
+    why = (f"the id reading after it found none for {reread}" if reread
+           else "no loop came back with a new id")
     raise error_type(
         f"attach to workers {addresses} failed ({failure_summary(exc)}) on a "
-        "fleet this driver released after proving the old workers gone. A "
-        "driver cannot attach again in the same process once its fleet "
-        "changed under it (reproduced on hardware, 2026-10-01), so no in-process "
-        f"retry ran. {restart_sentence} Restart ComfyUI and the next render "
-        "attaches (docs/TROUBLESHOOTING.md #101)."
+        f"fleet this driver released after proving the old workers gone, and {why}, "
+        "so no in-process retry ran. A driver "
+        "attaches again in the same process only to a loop that came back within "
+        "the transport's delivery timeout; after a longer outage the driver's channel to "
+        f"that address stays closed. {restart_sentence} Restart ComfyUI and the "
+        "next render attaches (docs/TROUBLESHOOTING.md #2, #101)."
     ) from exc

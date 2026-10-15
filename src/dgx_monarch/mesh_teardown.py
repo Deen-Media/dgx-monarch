@@ -139,10 +139,12 @@ def released_predecessor_recently(now: float | None = None, addresses: Any = Non
     """Check whether fresh liveness evidence released the predecessor fleet.
 
     This read does not consume the note; ``publish_creation_block`` does that
-    when recording the replacement failure. The attach path uses it to limit
-    replacement to one attempt because Monarch cannot recover that
-    attach in the same driver process (docs/TROUBLESHOOTING.md #2). Other attach
-    failures retain a second attempt.
+    when recording the replacement failure. The attach path uses it to give
+    the replacement one attempt unless a loop moved to a new id during it: a
+    second dial with the same ids cannot win, and after an outage longer than
+    the delivery timeout the fallback is a ComfyUI restart
+    (``mesh_attach._attach_and_retry``, docs/TROUBLESHOOTING.md #2). Other
+    attach failures retain a second attempt.
     """
     stamp = _RELEASED_PREDECESSOR
     if stamp is None:

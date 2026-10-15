@@ -132,8 +132,12 @@ Torchmonarch also has environment-configured TLS support in its channel layer,
 but dgx-monarch does not use or manage it. The two call sites are
 [`mesh_runtime.py:168-169`](src/dgx_monarch/mesh_runtime.py#L168-L169 "anchor:attach_once")
 and
-[`worker_loop.py:15-60`](src/dgx_monarch/cli/worker_loop.py#L15-L60 "anchor:main").
+[`worker_loop.py:83-94`](src/dgx_monarch/cli/worker_loop.py#L83-L94 "anchor:main").
 `docs/VALIDATION.md` records the dependency versions tested for this limitation.
+Each Worker start serves a new Monarch proc id, which the driver reads and
+dials so it can find a restarted Worker. Doctor and the attach trace print it.
+It is not a secret and authenticates nothing, so the fabric boundary below is
+unchanged.
 
 A client that can reach those listeners can execute actor code on a worker.
 Bind the complete Monarch transport surface to a dedicated fabric and

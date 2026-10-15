@@ -85,9 +85,13 @@ Monarch worker endpoint (docs/VALIDATION.md). If an attach fails anyway, the
 driver retries once in-process (the current pin evicts the stale attach
 session, meta-pytorch/monarch#4067). When the retry also fails, it restarts the
 Worker services so the next attempt starts clean, and that ComfyUI session
-refuses further attaches: restart ComfyUI (the fleet is already healthy). One
-case skips the in-process retry: see
-[#2](#2-every-attach-times-out-after-one-failed-attach). Set `auto_heal = false` in cluster.toml to opt out.
+refuses further attaches: restart ComfyUI (the fleet is already healthy). The
+retry dials each loop's id as read again after the first failure. It does not
+run when that reading finds no id, or when the attach is a released fleet's
+replacement and no loop moved: see
+[#2](#2-every-attach-times-out-after-one-failed-attach). A refusal that starts `no attach ran`
+dialed nothing and leaves the session usable ([#2](#2-every-attach-times-out-after-one-failed-attach)).
+Set `auto_heal = false` in cluster.toml to opt out.
 
 ## 2. Every attach times out after one failed attach
 
@@ -107,18 +111,123 @@ listeners before the first attach. A failed attach retries once in-process; a
 second failure restarts the Worker services so the next attempt starts clean.
 `dgxm restart` remains the manual fallback. One residual case needs more: [#15](#15-attaches-still-time-out-after-dgxm-restart-driver-side-wedge).
 
+**A Worker service restarted under a live driver.** Each Worker loop start
+serves a new Monarch proc id: it listens on `<proc-id>@tcp://<ip>:<port>`,
+with an id derived from the boot id, its pid and its start time. The address
+in cluster.toml, the systemd unit and the firewall rules stay the bare URL.
+The loop writes the id into its actor ledger record before it listens, and
+the listener-generation probe, which the driver runs on every host before
+every attach, reads it back. The driver dials only that id. So after `dgxm
+restart`, a crash that systemd restarts, or a hand restart of the service, a
+ComfyUI that stayed up can attach again without a restart of its own. The
+first render after the restart fails on the old actors (a `SupervisionError`,
+[#4](#4-supervisionerror--process-exited-with-non-zero-code), or a call
+timeout). The driver retires the old fleet; when the stop of the old fleet
+does not confirm, the liveness proof in
+[#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)
+releases it. The next render or Recycle then attaches a replacement and reads
+the new id first; after a release the trace's `open` line carries
+`released_predecessor=true`. That replacement attach is the path the CPU test
+below covers. The two-Spark recheck is pending, so the rule at the end of this
+entry still holds. A loop that served the bare URL kept Monarch's singleton
+proc identity across restarts, and the driver's next attach stalled until its
+config push timed out.
+
+The Worker log prints the id in Monarch's own spelling and then in hex:
+`worker service listening on service<...>@tcp://<ip>:<port> (proc_id=<16 hex
+digits>)`. The probe, the attach trace and doctor print the same value as the
+16 hex digits.
+
+The first message this driver sends to a restarted loop's address is lost:
+it rides the channel session the old process accepted, the new process
+refuses that session, and only the next message opens a fresh one. A lost
+config push would leave the new host agent waiting for it forever. So before
+the first dial to a loop whose id changed since this driver last dialed it,
+the driver sends that address one throwaway message and waits 2 s; the trace
+writes a `proc_id_prime` line naming those loops. That first attach after a
+restart therefore takes about 2 s.
+
+That holds when the loop came back within Monarch's message delivery timeout
+(`HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT`, 30 s by default in the pinned release).
+After a longer outage, such as a stop, a crash loop or a reboot, the driver's
+channel to that address stays closed and its attach fails at the config-push
+budget: restart ComfyUI. dgx-monarch leaves the delivery timeout at its default.
+
+**The id gate.** When the first reading of an attach carries no id for a
+loop, the attach refuses before anything dials, and the ComfyUI session stays
+usable:
+
+```
+no attach ran: the id each Worker loop serves on this start is unknown for <host> (tcp://<ip>:26600): <reason>; <remedy>. This ComfyUI session stays usable (docs/TROUBLESHOOTING.md #2).
+```
+
+| reason | remedy |
+|---|---|
+| nothing holds its listener | start the Worker services (`dgxm up`), then render again |
+| its loop runs an older release that serves the bare address | run the Worker services on this driver's release (`dgxm update`, or `dgxm restart` on a plain install; for Workers in release slots see [#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)), then render again |
+| no loop record publishes the id of the process holding its listener (`unpublished` or `malformed`) | render again, which reads the id again; if it repeats, `dgxm restart` |
+| its actor ledger file would not read (`unreadable`) | check that `~/.local/state/dgx-monarch/actor-procs.json` on that host is a readable JSON file, then render again; if it repeats, `dgxm restart` |
+| the probe did not read it (`unknown`, or the probe's own error) | fix the host or ssh fault, then render again |
+
+`dgxm doctor` fails the `<host> listener generation` row for the second and
+third reasons and warns for the last two
+([#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)).
+
+A loop that cannot write its record says so in its log:
+
+```
+worker service could not publish its id in the actor ledger; driver attaches refuse until it can (docs/TROUBLESHOOTING.md #2)
+```
+
+Check that `~/.local/state/dgx-monarch/` on that host is writable by the
+user the Worker service runs as. The loop's tracker writes the record again
+every 5 s, so the next render after the fix attaches.
+
+A loop that restarts between the read and the dial costs one attempt: the
+host bounces the old id at once, but the attempt still waits out the config
+push. The driver then reads the ids again, and a loop that serves a new id
+gets one more attempt with it. When that reading after a failed first attempt
+finds no id, no second attempt runs. The first dial already ran, so the
+session is poisoned: the error names the first failure and the loops the
+reading found no id for (`no second attempt ran, because the id reading after
+it found none for <host> (...)`; a released fleet's error says `the id reading
+after it found none for`), and the trace closes `attach_1_reread_refused` (a
+released fleet closes `attach_1_released`;
+[#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)).
+
+**Upgrading.** A ComfyUI started before the update that brought per-start ids
+dials the bare address. `dgxm update` refuses in either mode while ComfyUI
+runs, so this case arises only when the Workers restart on the new code under
+a running ComfyUI: `dgxm restart` after a pull, or a hand restart of the
+service. Its next attach then fails at the config-push budget, retries once,
+and names `dgxm doctor` and a ComfyUI restart (older builds end that message
+`the in-process retry already ran`): restart ComfyUI. A new driver against
+Worker services still on an older release refuses before dialing, as the
+table above says; Workers left in release slots by a plain update from 1.1.0
+need [#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update).
+
 One case fails fast instead of retrying. When the driver has just retired a
 dead fleet's replacement latch on positive proof that its worker processes are
-gone, and the attach to the replacement then fails, that driver process cannot
-attach again in the tested configuration with the pinned Monarch runtime
-(see the hardware finding below). That attach therefore makes exactly one
-attempt, and its error says no
-in-process retry ran, names the recovery that works, and sends the operator to
-restart ComfyUI
+gone, its attach to the replacement makes one attempt, plus one more only when
+a loop came back with a new id after that attempt dialed. When it fails, the
+error says no in-process retry ran and names the restart fallback above
 ([#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)). Every
 other attach keeps two attempts, and its second failure poisons the session.
 
-**What the hardware tests showed.** With the pinned Monarch runtime, changing
+**What the CPU test shows (2026-10-15).**
+`tests/test_worker_proc_id_integration.py` starts two real Worker loops on one
+machine and attaches from a driver process. After the driver's traffic has
+been acknowledged, it restarts one loop, and the same process attaches again
+through the replacement path at once, with nothing else sent to that loop
+first: about 2.1 s, of which 2 s is the wait after the throwaway message. In
+mutation runs of that test, serving the bare URL, reusing an id, or skipping
+the throwaway message each made the same re-attach time out at its
+config-push budget. In review runs with the loop held down 15 s and 25 s, the
+re-attach still took about 2.1 s; held down 40 s, past the delivery timeout,
+it failed at its budget with the restart fallback. The two-Spark recheck of
+this change is pending.
+
+**What the hardware tests showed before per-start ids (2026-10-01).** Changing
 the fleet under a live driver left that driver unable to attach again. The
 tests covered four failure cases and a successful recovery:
 
@@ -130,10 +239,10 @@ tests covered four failure cases and a successful recovery:
 | `HostMesh.stop()` on the retired fleet | Timed out |
 | Both loops restarted together (`restart_after_failed_attach`, auto-heal on), then a fresh driver process (ComfyUI restart) | Attached in 0.75 s |
 
-The rule: **restart worker loops together (`dgxm restart`), never one loop
-alone while a ComfyUI session is attached.** Any restart with no driver alive
-is fine. Recovery is both loops restarting together, then a fresh driver
-process.
+The rule until the two-Spark recheck runs: **restart worker loops together
+(`dgxm restart`), not one loop alone while a ComfyUI session is attached.** Any
+restart with no driver alive is fine. When a re-attach still fails, recovery
+is both loops restarting together, then a fresh driver process.
 
 ## 3. Next render hangs at NCCL rendezvous after a crash
 
@@ -162,11 +271,12 @@ for nohup-started Worker services (`dgxm up`), `journalctl --user -u
 dgxm-worker` for systemd-managed Worker services. On UMA boxes the usual cause
 is OOM; see [#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc). The driver
 evicts the poisoned mesh automatically, and the next Init or render respawns
-the actors. That needs no ComfyUI restart, with two exceptions: the Worker
-service died, or the stop after the death timed out and the one attach to the
-replacement fleet then fails. Either way that driver process cannot attach
-again ([#2](#2-every-attach-times-out-after-one-failed-attach)):
-run `dgxm restart` so both Worker services restart together, unless the error
+the actors. That needs no ComfyUI restart. A Worker service that died and came
+back within the delivery timeout is attached again too, because it serves a
+new id (CPU-tested; the two-Spark recheck is pending,
+[#2](#2-every-attach-times-out-after-one-failed-attach)). When the
+attach to the replacement fleet fails anyway, after a longer outage, run
+`dgxm restart` so both Worker services restart together, unless the error
 says they already did, then restart ComfyUI.
 
 ## 5. Loads fail / OOM on UMA boxes (DGX Spark etc.)
@@ -286,7 +396,9 @@ result does not establish general same-driver recovery. The later 0.7.0
 single-Worker stop/start check on 2026-10-13 (UTC) reproduced a replacement-attach
 timeout and a poisoned driver transport; see [the dated lifecycle results](VALIDATION.md#lifecycle).
 A poisoned transport requires a fresh driver after confirmed owned cleanup;
-resetting its attached mesh does not clear that transport state.
+resetting its attached mesh does not clear that transport state. That check
+came before per-start Worker ids; see [#2](#2-every-attach-times-out-after-one-failed-attach) for
+re-attach after a Worker restart within the delivery timeout.
 
 ## 10. First RDMA latent return is slow
 
@@ -3987,10 +4099,12 @@ replacement. The check runs at Init attach, render liveness, and Reset:
 
 A fleet-wide gone result retires the cached handle and permits one fresh fleet;
 it never issues a second stop. If replacement setup fails, the new handle is
-blocked and the error identifies its liveness-proven predecessor. Hardware
-found that the pinned Monarch driver could not reattach after its fleet
-changed; that replacement attach therefore tries once and names the restart
-recovery in [#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out).
+blocked and the error identifies its liveness-proven predecessor. The
+replacement attach dials each loop's current id, so a loop that restarted
+within the delivery timeout attaches at once
+([#2](#2-every-attach-times-out-after-one-failed-attach)). It tries once, plus
+once more if a loop moved to a new id during that try, and otherwise names the
+restart recovery in [#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out).
 
 Logs show every result as `liveness probe host=... answer=...` and
 `liveness fold answer=...`. Release adds
@@ -4644,15 +4758,19 @@ the shard build), entry 92 (an FSDP gate proof that refuses).
 ## 101. Reading the attach trace after a cluster attach times out
 
 **Symptom:** a render refuses with `attach to workers [...] failed
-(TimeoutError()); the in-process retry already ran`, and every later render in
+(TimeoutError()); no further in-process retry runs` (older builds: `the
+in-process retry already ran`), and every later render in
 that ComfyUI process refuses at once with `this ComfyUI session's Monarch
 transport is not reusable after a partial bring-up failure`. Both worker loops
 are up, `dgxm doctor` reads clean, and a fresh driver attaches on its first
-try. Known triggers include a manual restart
-of one loop, `dgxm restart` followed immediately by a render, and
-dead-rank recovery releasing its latch. In the third case the attach
-stops after its first attempt, and its refusal says that no in-process retry
-ran; its trace reads differently (below).
+try. Known triggers include a Worker outage longer than the delivery timeout,
+`dgxm restart` followed immediately by a render, and dead-rank recovery
+releasing its latch. In the third case the attach stops after its first
+attempt, and its refusal says that no in-process retry ran; its trace reads
+differently (below). A refusal that starts `no attach ran` is the id gate in
+[#2](#2-every-attach-times-out-after-one-failed-attach): nothing dialed, the
+session stays usable, and its trace ends at `close outcome=refused
+stage=proc_id`.
 
 **What the driver writes.** Every cluster attach writes one line per phase
 into the driver log, all sharing a sequence number. Grep the ComfyUI log:
@@ -4682,10 +4800,12 @@ is an attach still running, or a driver process that died during one.
 | `heal_probe` | which loops the pre-attach probe read as down, and which ones it never observed |
 | `heal_restart` | the loops read as down, and the loops the restart touched (every configured loop) |
 | `heal_settled` | whether worker health settled after that restart, and how long it took |
-| `loop_generation` | one line per loop before every attach attempt: the generation `gen`, the process that holds the loop's LISTEN socket and how long that process has been up, the unit restart count, and `changed=true` when that process is not the one this driver read last time |
+| `loop_generation` | one line per loop before every attach attempt: the generation `gen`, the process that holds the loop's LISTEN socket and how long that process has been up, the unit restart count, `proc_id`, the id that process serves and the attempt dials (or why there is none: `bare`, `unpublished`, `malformed`, `unreadable`, `none`, `unknown`), and `changed=true` when that process is not the one this driver read last time. A failed first attempt is followed by one more reading, `phase=before_attach_2`, even when no second attempt runs |
+| `proc_id_moved` | the loops whose id changed between the dial of the first attempt and the reading after it failed: they restarted during that attempt, so the second attempt dials their new ids |
+| `proc_id_prime` | the loops whose id changed since this driver last dialed them, sent one throwaway message before this `attempt` dials ([#2](#2-every-attach-times-out-after-one-failed-attach)), and any of them the message could not reach (`unprimed`) |
 | `phase` | one timed step. `phase=transport_enable`, `phase=auto_heal`, or `phase=attach attempt=1..2`, each with `wall_s` and an `outcome` of `ok` or the exception class |
 | `attach_call` | the two halves of one monarch attach: `half=attach_to_workers` is the worker config push, `half=initialized_get` is the wait on the mesh, bounded by its `bound_s` (70 s under the shipped 60 s config-push budget) |
-| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, and `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to. `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
+| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, which leaves the session usable. `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
 | `post_fail_restart` | the loops the post-failure Worker restart touched and the failure class that prompted it. It is the one line that lands after the `close` |
 
 **Read the attach timings first.** Each `phase=attach` line follows the `attach_call`
@@ -4698,9 +4818,10 @@ about the driver's own transport.
 
 **Then read the generations.** Each reading is compared with the last one
 this driver process took of that loop, in this attach or an earlier one.
-`changed=true` before an attach that fails says the driver and the loop
-disagree about which listener is live, the suspected cause of the
-hand restart case. `changed=unknown` means there is nothing to compare: this
+`changed=true` says the process holding the loop's listener is not the one
+this driver read last time: the loop restarted. With per-start ids that is
+expected after a restart, and the reading's `proc_id` is the new id the
+attach dials ([#2](#2-every-attach-times-out-after-one-failed-attach)). `changed=unknown` means there is nothing to compare: this
 is the driver's first reading of that loop, or this reading did not come back.
 `gen=none` means nothing holds the loop's LISTEN socket; that is a reading, so
 a loop that goes from a generation to `none` reads `changed=true`.
@@ -4711,11 +4832,16 @@ that comes back is still compared against something.
 
 **What each of the three cases should look like.**
 
-*After a hand restart of one loop.* The failing attach is the first one after
-the restart, so read its first `loop_generation` line per loop. The restarted
-loop should read `changed=true previous=<the generation the last attach talked
-to>`. If the untouched loop also reads `changed=true`, something moved a loop
-without a recorded request. The `heal_probe` line names the loops the probe found
+*After a Worker outage longer than the delivery timeout.* The restarted loop's
+first `loop_generation` line reads `changed=true` with a new `proc_id`, and a
+`proc_id_prime` line names it. Attempt 1 spends its whole window in
+`half=attach_to_workers`: the config push never lands, because the driver's
+channel to that address closed during the outage. The `before_attach_2`
+reading shows the same `proc_id`. On a released fleet the `close` line names
+`stage=attach_1_released`; on an ordinary attach, attempt 2 fails the same way
+and the `close` names `stage=attach_2_failed`. Restart ComfyUI
+([#2](#2-every-attach-times-out-after-one-failed-attach)). If the untouched loop also reads
+`changed=true`, something moved a loop without a recorded request. The `heal_probe` line names the loops the probe found
 down, and the `heal_restart` line names every configured loop, because the
 restart is fleet-wide even when the probe found one loop down.
 
@@ -4726,11 +4852,13 @@ loop a few seconds old under an attach that spends its window in
 driver's attach window is absorbing a wait the start path should make.
 
 *After the dead-rank recovery released its latch.* The `open` line carries
-`released_predecessor=true`, there is only one `phase=attach attempt=1` line,
-and the `close` line names `stage=attach_1_released`. Hardware tests with the
-pinned Monarch runtime found that the existing driver could not attach to the
-replacement fleet. Neither a second attempt nor a 70 s wait changed the
-outcome, so neither runs.
+`released_predecessor=true`. With per-start ids the first attempt normally
+attaches. When it fails, there is only one `phase=attach attempt=1` line, the
+`before_attach_2` readings show the same `proc_id` per loop, and the `close`
+line names `stage=attach_1_released`: no loop moved, so a second attempt with
+the same ids cannot win, and the likely cause is an outage longer than the
+delivery timeout. A `proc_id_moved` line instead means a loop restarted during
+the attempt, and a second attempt runs with its new id.
 The recovery is the restart path: both worker loops restarting together, then
 a fresh driver process, which attached in 0.75 s in the recovery test
 ([docs/TROUBLESHOOTING.md #2](#2-every-attach-times-out-after-one-failed-attach)).
@@ -4739,7 +4867,7 @@ a fresh driver process, which attached in 0.75 s in the recovery test
 loop, among that host's rows after its Worker service row:
 
 ```
-  [ ok ] <host> listener generation: gen=<generation> pid=4242 age_s=612 restarts=0 started=<timestamp> marker=match
+  [ ok ] <host> listener generation: gen=<generation> pid=4242 age_s=612 restarts=0 started=<timestamp> marker=match proc_id=<16 hex digits>
 ```
 
 `gen` is a short digest of the boot id, the process holding the LISTEN socket,
@@ -4750,7 +4878,12 @@ unit's `NRestarts`, and `marker` compares the process with the generation
 marker that a start by `dgxm update` or `dgxm setup` writes. `marker=absent` is
 the normal reading after a plain `dgxm up` or a hand `systemctl --user
 restart`: neither writes the marker, and the unit clears it before every start.
-The row is advisory and never moves doctor's exit code.
+`proc_id` is the id that process serves on this start, which the driver dials;
+it normally starts with the 12 digits of `gen`. The row fails when a listening
+loop definitely publishes no id (`bare`, `unpublished` or `malformed`),
+because the driver refuses to attach to it, and names the remedy from
+[#2](#2-every-attach-times-out-after-one-failed-attach). An id the probe could
+not read (`unreadable`, `unknown`) warns as unobserved. Nothing else in the row moves doctor's exit code.
 
 A host doctor could not read still gets its row:
 
@@ -5427,7 +5560,11 @@ patches no weight, and slab residency prices it as no bake.
 - `dgxm update --verify` refuses with `prior_worker_drift` ("worker hosts do
   not exactly match the current driver release");
 - the first-use Gate refuses with "Gate pre provenance package source does not
-  match driver".
+  match driver";
+- with a driver on 1.2.0 or later and a slot on a release before 1.2.0, a
+  render refuses before dialing with `no attach ran: ... its loop runs an older
+  release that serves the bare address` ([#2](#2-every-attach-times-out-after-one-failed-attach)),
+  and `dgxm doctor` fails that host's `listener generation` row.
 
 From 1.2.0 on, plain update refuses this case before it fetches, with
 `release_slot_worker`, and names the host. It refuses with

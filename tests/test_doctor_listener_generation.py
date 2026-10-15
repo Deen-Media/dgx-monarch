@@ -1,9 +1,11 @@
-"""Check doctor's advisory listener-generation row for each worker loop.
+"""Check doctor's listener-generation row for each worker loop.
 
 A listening socket alone cannot distinguish an old loop from its replacement
-(docs/TROUBLESHOOTING.md #101). The row identifies the listening process and
-its age. Unobserved readings do not affect the exit code; the Worker service
-row already reports a missing listener.
+(docs/TROUBLESHOOTING.md #101). The row identifies the listening process, its
+age and the id it serves. Unobserved readings do not affect the exit code; the
+Worker service row already reports a missing listener. A listening loop whose
+record definitely publishes no id fails, since the driver refuses to attach to
+it (test_worker_proc_id.py covers that gate).
 
 The probe runs against a local test socket, never a worker protocol socket.
 """
@@ -30,6 +32,7 @@ def _reading(**overrides) -> dict[str, str]:
         "gen": "5c4ab03463a9", "loop_pid": "4242", "age_s": "612",
         "listening": "true", "unit_state": "active", "unit_restarts": "0",
         "unit_started": "Mon_2026-09-07_10:11:12_UTC", "marker": "match",
+        "proc_id": "5c4ab03463a91f07",
     }
     fields.update(overrides)
     return fields
@@ -54,6 +57,7 @@ def test_an_observed_loop_reads_ok_and_carries_every_field():
     assert "restarts=0" in detail
     assert "started=Mon_2026-09-07_10:11:12_UTC" in detail
     assert "marker=match" in detail
+    assert "proc_id=5c4ab03463a91f07" in detail
     assert (reason, critical) == ("", False)
 
 

@@ -673,13 +673,13 @@ def _heal_dead_loops(config: ClusterConfig, addresses: list[str]) -> None:
     mesh_attach.heal_dead_loops(config, addresses, log)
 
 
-def _raise_attach(addresses, exc):
-    mesh_attach.raise_attach(MeshAttachError, addresses, exc)
+def _raise_attach(addresses, exc, **detail: str):
+    mesh_attach.raise_attach(MeshAttachError, addresses, exc, **detail)
 
 
-def _raise_released_attach(addresses, exc, *, auto_heal: bool, restarted=None) -> None:
+def _raise_released_attach(addresses, exc, *, auto_heal: bool, restarted=None, **detail: str) -> None:
     mesh_attach.raise_released_attach(
-        MeshAttachError, addresses, exc, auto_heal=auto_heal, restarted=restarted)
+        MeshAttachError, addresses, exc, auto_heal=auto_heal, restarted=restarted, **detail)
 
 
 @atexit.register

@@ -412,7 +412,7 @@ def run(args, evidence, cfg, driver_facts):
         unregister_proc_mesh_spawn_callback,
     )
 
-    from dgx_monarch import return_phases, transfer
+    from dgx_monarch import return_phases, transfer, worker_proc_id
     from dgx_monarch.mesh_factory import (
         FleetHandoff,
         _isolated_spawn_host,
@@ -433,8 +433,9 @@ def run(args, evidence, cfg, driver_facts):
         evidence.data["stage"] = "attach"
         row = {"cycle": cycle, "cases": [], "owned_stop_confirmed": False}
         evidence.data["cycles"].append(row)
+        # Each Worker loop serves a per-start id; dial what the probe reads now.
         hosts = attach_to_workers(ca="trust_all_connections",
-            workers=[host.address for host in cfg.hosts], name=f"native-return-{cycle}")
+            workers=worker_proc_id.read_dial(cfg), name=f"native-return-{cycle}")
         OWNED.append(hosts)
         hosts.initialized.get(timeout=90)
         evidence.data["stage"] = "spawn_owned_procs"
