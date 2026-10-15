@@ -412,7 +412,14 @@ shape for all of them.
      gates again. The sidebar's last-render line and the
      `benchmark/run_matrix.py` console show them as, for example, "pinned:
      comfy_kitchen_sol tau=0.7 x 40 modules, ran"; run_matrix result rows
-     carry the three fields.
+     carry the three fields. Under dual-model cfg2 each cfg rank renders its
+     own checkpoint, so the fields add the two models' modules, as one rank
+     holding both does. When both models pin, `attention_pins_models` keeps
+     each model's own three fields under `cond` and `uncond`, run_matrix rows
+     carry it too, and the line gives one clause per model, for example
+     "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; uncond
+     model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped (kernel
+     unavailable on this host)".
    * **Waiver.** Both kernels ComfyUI binds are approximate by construction.
      `comfy_kitchen_sol` attends a routed subset of key blocks exactly and
      pools the rest, so it is not identity preserving. `comfy_kitchen_int8`

@@ -760,11 +760,13 @@ def run_case(
     latent_stats = _latent_statistics(samples)
     # The last repeat's finish record: the kernels the model pins per block
     # and whether they ran, beside the widget's attention (attention_pins.py).
-    from dgx_monarch.attention_pins import RECORD_FIELDS, describe
+    from dgx_monarch.attention_pins import MODELS_FIELD, RECORD_FIELDS, describe
     from dgx_monarch.telemetry import render_progress
 
     last = render_progress.snapshot().get("last") or {}
     pins = {field: last.get(field) for field in RECORD_FIELDS}
+    if last.get(MODELS_FIELD):  # dual-model cfg2: each model's own fields
+        pins[MODELS_FIELD] = last[MODELS_FIELD]
     if pins["attention_pins"]:
         print(f"  {describe(pins)}", flush=True)
     row = {

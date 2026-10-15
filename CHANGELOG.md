@@ -18,7 +18,9 @@
   `attention_pins_ran` and `attention_pins_dropped` beside the unchanged
   `attention` fact, so no combination gates again; the sidebar's last-render
   line, the driver log and the `benchmark/run_matrix.py` console show them,
-  and run_matrix rows carry them. Both kernels are approximate by
+  and run_matrix rows carry them. Under dual-model cfg2 the fields add both
+  models' modules; when both models pin, `attention_pins_models` keeps each
+  model's own fields and the line names each. Both kernels are approximate by
   construction (Sol pools the key blocks it does not route to; int8 rounds
   q, k, v and the attention weights to 8 bits), so a pinned one that would
   run refuses with class K under the new guard `sol_attn:checkpoint_pin`

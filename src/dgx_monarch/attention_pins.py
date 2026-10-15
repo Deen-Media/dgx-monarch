@@ -57,6 +57,10 @@ _SCAN_ATTR: Final = "_dgxm_attention_pin_scan"
 SOL_ATTN_PIN_GUARD = "sol_attn:checkpoint_pin"
 RESULT_KEY: Final = "attention_pins"
 RECORD_FIELDS: Final = ("attention_pins", "attention_pins_ran", "attention_pins_dropped")
+# Under dual-model cfg2 a rank's row names the slot it rendered (cond or
+# uncond), and the record keeps each model's own RECORD_FIELDS under MODELS_FIELD.
+MODEL_KEY: Final = "attention_pins_model"
+MODELS_FIELD: Final = "attention_pins_models"
 
 DROPPED_SEQUENCE_PARALLEL: Final = "sequence parallelism"
 DROPPED_FSDP: Final = "FSDP shard build"
@@ -266,9 +270,11 @@ class PinSummary:
     def approximate_live(self) -> dict[str, int]:
         return _approximate(self.running if self.live is None else self.live)
 
-    def public(self) -> dict[str, Any]:
-        return {"attention_pins": dict(self.kernels), "attention_pins_ran": self.ran,
-                "attention_pins_dropped": dict(self.dropped) or None}
+    def public(self, model: str | None = None) -> dict[str, Any]:
+        """The rank's record fields; ``model`` names its dual-model cfg2 slot."""
+        fields = {"attention_pins": dict(self.kernels), "attention_pins_ran": self.ran,
+                  "attention_pins_dropped": dict(self.dropped) or None}
+        return fields if model is None else {**fields, MODEL_KEY: model}
 
 
 def summarize(patchers: Iterable[Any], *, sequence_parallel: bool) -> PinSummary | None:
@@ -376,17 +382,28 @@ def assert_waived(summary: PinSummary | None, topology: Mapping[str, Any] | None
                                   detail=card_detail(approximate, label, pinned_by)))
 
 
+def _counts(value: Any) -> dict[str, int]:
+    items = value.items() if isinstance(value, Mapping) else ()
+    return {key: n for key, n in items if isinstance(key, str) and isinstance(n, int)}
+
+
+def _fields(kernels: dict[str, int], dropped: dict[str, int], ran: bool) -> dict[str, Any]:
+    return {"attention_pins": kernels, "attention_pins_ran": ran,
+            "attention_pins_dropped": dropped or None}
+
+
 def merge(rows: Iterable[Any]) -> dict[str, Any] | None:
     """Fold every rank's summary into the render record's fields, or None.
 
-    Ranks of one checkpoint report the same pins. Under dual-model cfg2 each
-    rank holds a different checkpoint, so the record keeps the larger count per
-    kernel and reads ran only when every rank that pins ran its pins.
+    Ranks that hold one model report the same pinned modules; only a host
+    that could not bind a kernel drops what its peer ran, so the model keeps
+    the row of the rank that dropped most. Under dual-model cfg2 each cfg rank
+    renders its own checkpoint and names its slot (``MODEL_KEY``), so the
+    record sums the two models, as one rank holding both does (``summarize``),
+    and keeps each model's own fields under ``MODELS_FIELD``. Ran holds only
+    when every rank ran every pin.
     """
-    kernels: dict[str, int] = {}
-    dropped: dict[str, int] = {}
-    ran = True
-    seen = False
+    models: dict[str | None, tuple[dict[str, int], dict[str, int], bool]] = {}
     for row in rows:
         pins = row.get(RESULT_KEY) if isinstance(row, Mapping) else None
         if not isinstance(pins, Mapping):
@@ -394,35 +411,62 @@ def merge(rows: Iterable[Any]) -> dict[str, Any] | None:
         counts = pins.get("attention_pins")
         if not isinstance(counts, Mapping) or not counts:
             continue
-        seen = True
-        for label, count in counts.items():
-            if isinstance(label, str) and isinstance(count, int):
-                kernels[label] = max(kernels.get(label, 0), count)
-        reasons = pins.get("attention_pins_dropped")
-        for reason, count in (reasons if isinstance(reasons, Mapping) else {}).items():
-            if isinstance(reason, str) and isinstance(count, int):
-                dropped[reason] = max(dropped.get(reason, 0), count)
-        ran = ran and pins.get("attention_pins_ran") is True
-    if not seen:
+        slot = pins.get(MODEL_KEY)
+        slot = slot if isinstance(slot, str) else None
+        reasons = _counts(pins.get("attention_pins_dropped"))
+        ran = pins.get("attention_pins_ran") is True
+        held = models.get(slot)
+        if held is not None and sum(reasons.values()) <= sum(held[1].values()):
+            models[slot] = (held[0], held[1], held[2] and ran)
+        else:
+            models[slot] = (_counts(counts), reasons, ran and (held is None or held[2]))
+    if not models:
         return None
-    return {"attention_pins": kernels, "attention_pins_ran": ran,
-            "attention_pins_dropped": dropped or None}
+    kernels: dict[str, int] = {}
+    dropped: dict[str, int] = {}
+    for model_kernels, model_reasons, _ in models.values():
+        for label, count in model_kernels.items():
+            kernels[label] = kernels.get(label, 0) + count
+        for reason, count in model_reasons.items():
+            dropped[reason] = dropped.get(reason, 0) + count
+    record = _fields(kernels, dropped, all(ran for _, _, ran in models.values()))
+    if len(models) > 1 and None not in models:
+        record[MODELS_FIELD] = {str(slot): _fields(*held) for slot, held in
+                                sorted(models.items(), key=lambda item: str(item[0]))}
+    return record
 
 
-def describe(record: Mapping[str, Any] | None) -> str:
-    """One line for a result row or a log: "pinned: comfy_kitchen_sol x 40 modules, ran"."""
+def _clause(record: Any) -> str:
+    """One model's pins and what ran: "comfy_kitchen_sol x 40 modules, ran"."""
     counts = record.get("attention_pins") if isinstance(record, Mapping) else None
     if not isinstance(record, Mapping) or not isinstance(counts, Mapping) or not counts:
         return ""
     pinned = ", ".join(f"{label} x {count} module{'s' if count != 1 else ''}"
                        for label, count in sorted(counts.items()))
     if record.get("attention_pins_ran") is True:
-        return f"pinned: {pinned}, ran"
+        return f"{pinned}, ran"
     reasons = record.get("attention_pins_dropped")
     reasons = reasons if isinstance(reasons, Mapping) else {}
     why = ", ".join(sorted(str(reason) for reason in reasons))
     dropped = sum(n for n in reasons.values() if isinstance(n, int))
     total = sum(n for n in counts.values() if isinstance(n, int))
     if not why or dropped >= total:
-        return f"pinned: {pinned}, dropped" + (f" ({why})" if why else "")
-    return f"pinned: {pinned}, ran on {total - dropped}, dropped on {dropped} ({why})"
+        return f"{pinned}, dropped" + (f" ({why})" if why else "")
+    return f"{pinned}, ran on {total - dropped}, dropped on {dropped} ({why})"
+
+
+def describe(record: Mapping[str, Any] | None) -> str:
+    """One line for a result row or a log: "pinned: comfy_kitchen_sol x 40 modules, ran".
+
+    Under dual-model cfg2, when both models pin, one clause per model:
+    "pinned: cond model: ..., ran; uncond model: ..., dropped (...)".
+    """
+    models = record.get(MODELS_FIELD) if isinstance(record, Mapping) else None
+    entries = (sorted(models.items(), key=lambda item: str(item[0]))
+               if isinstance(models, Mapping) else [])
+    clauses = [f"{slot} model: {text}"
+               for slot, text in ((slot, _clause(fields)) for slot, fields in entries) if text]
+    if len(clauses) > 1:
+        return "pinned: " + "; ".join(clauses)
+    clause = _clause(record)
+    return f"pinned: {clause}" if clause else ""

@@ -105,8 +105,15 @@ def pinned(state: dict, key: object, pins: dict) -> dict:
 
 
 def pins_for(state: dict, key: object) -> dict:
-    """The pin fields noted for one render; each None when it noted none."""
-    from .attention_pins import RECORD_FIELDS
+    """The pin fields noted for one render; each None when it noted none.
+
+    A dual-model cfg2 render whose two models both pin adds each model's own
+    fields (attention_pins.MODELS_FIELD); any other render's record is as before.
+    """
+    from .attention_pins import MODELS_FIELD, RECORD_FIELDS
 
     noted = state.get("_pins", {}).get(key, {})
-    return {name: noted.get(name) for name in RECORD_FIELDS}
+    fields = {name: noted.get(name) for name in RECORD_FIELDS}
+    if noted.get(MODELS_FIELD):
+        fields[MODELS_FIELD] = noted[MODELS_FIELD]
+    return fields

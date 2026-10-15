@@ -323,6 +323,74 @@ def test_ranks_merge_into_the_record_and_describe_reads_it():
     assert attention_pins.describe(None) == ""
 
 
+def test_dual_model_ranks_keep_each_models_counts_together():
+    """Under dual-model cfg2 each cfg rank renders its own checkpoint.
+
+    The cond rank ran 20 pins; the uncond rank pinned 10 that its host could
+    not bind. The record sums the two models, as one rank holding both does
+    (summarize), keeps each model's own fields, and the line names each.
+    """
+    sol_label = "comfy_kitchen_sol tau=0.7"
+    cond = {"rank": 0, "attention_pins": {
+        "attention_pins": {sol_label: 20}, "attention_pins_ran": True,
+        "attention_pins_dropped": None, "attention_pins_model": "cond"}}
+    uncond = {"rank": 1, "attention_pins": {
+        "attention_pins": {sol_label: 10}, "attention_pins_ran": False,
+        "attention_pins_dropped": {"kernel unavailable on this host": 10},
+        "attention_pins_model": "uncond"}}
+    record = attention_pins.merge([cond, uncond])
+    assert record == {
+        "attention_pins": {sol_label: 30}, "attention_pins_ran": False,
+        "attention_pins_dropped": {"kernel unavailable on this host": 10},
+        "attention_pins_models": {
+            "cond": {"attention_pins": {sol_label: 20}, "attention_pins_ran": True,
+                     "attention_pins_dropped": None},
+            "uncond": {"attention_pins": {sol_label: 10}, "attention_pins_ran": False,
+                       "attention_pins_dropped": {"kernel unavailable on this host": 10}}}}
+    assert attention_pins.describe(record) == (
+        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; "
+        "uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped "
+        "(kernel unavailable on this host)")
+    assert attention_pins.merge([uncond, cond]) == record
+    # Both ran: 30 modules ran, never the larger rank's 20.
+    both = attention_pins.merge([cond, {"attention_pins": {
+        "attention_pins": {"comfy_kitchen_int8": 10, sol_label: 4}, "attention_pins_ran": True,
+        "attention_pins_dropped": None, "attention_pins_model": "uncond"}}])
+    assert both["attention_pins"] == {sol_label: 24, "comfy_kitchen_int8": 10}
+    assert both["attention_pins_ran"] is True and both["attention_pins_dropped"] is None
+    assert attention_pins.describe(both) == (
+        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; uncond model: "
+        "comfy_kitchen_int8 x 10 modules, comfy_kitchen_sol tau=0.7 x 4 modules, ran")
+    # Only one model pins: the plain line, its own counts.
+    assert attention_pins.describe(attention_pins.merge([{"rank": 0}, uncond])) == (
+        "pinned: comfy_kitchen_sol tau=0.7 x 10 modules, dropped "
+        "(kernel unavailable on this host)")
+
+
+def test_ranks_of_one_model_still_write_one_line():
+    """cfg2 or dp2 on one checkpoint: every rank holds the same modules."""
+    ran = {"attention_pins": {"attention_pins": {"comfy_kitchen_sol tau=0.7": 20},
+                              "attention_pins_ran": True, "attention_pins_dropped": None}}
+    unbound = {"attention_pins": {"attention_pins": {"comfy_kitchen_sol tau=0.7": 20},
+                                  "attention_pins_ran": False,
+                                  "attention_pins_dropped": {"kernel unavailable on this host": 20}}}
+    assert attention_pins.describe(attention_pins.merge([ran, ran])) == \
+        "pinned: comfy_kitchen_sol tau=0.7 x 20 modules, ran"
+    # One host could not bind the kernel: the model's 20 modules, never 40,
+    # and ran stays false because a rank did not run them.
+    record = attention_pins.merge([ran, unbound])
+    assert record == {"attention_pins": {"comfy_kitchen_sol tau=0.7": 20},
+                      "attention_pins_ran": False,
+                      "attention_pins_dropped": {"kernel unavailable on this host": 20}}
+    assert attention_pins.merge([unbound, ran]) == record
+    assert attention_pins.describe(record) == ("pinned: comfy_kitchen_sol tau=0.7 x 20 modules, "
+                                               "dropped (kernel unavailable on this host)")
+    # cfg2+dp2 under dual-model cfg2: two ranks per slot fold within the slot.
+    cond = {"attention_pins": {**ran["attention_pins"], "attention_pins_model": "cond"}}
+    assert attention_pins.merge([cond, cond])["attention_pins"] == {"comfy_kitchen_sol tau=0.7": 20}
+    assert "attention_pins_models" not in attention_pins.merge([cond, cond])
+
+
 def test_the_finish_record_carries_the_pins_beside_the_attention_fact():
     from dgx_monarch.telemetry import RenderProgress
 

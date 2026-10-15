@@ -578,11 +578,30 @@ def test_the_last_render_line_names_pinned_attention_as_the_driver_describes_it(
         {"attention_pins": {"comfy_kitchen_int8": 30}, "attention_pins_ran": False,
          "attention_pins_dropped": {"FSDP shard build": 20}},
         {"attention_pins": None, "attention_pins_ran": None, "attention_pins_dropped": None},
+        # Dual-model cfg2, both models pinned: one clause per model.
+        {"attention_pins": {"comfy_kitchen_sol tau=0.7": 30}, "attention_pins_ran": False,
+         "attention_pins_dropped": {"kernel unavailable on this host": 10},
+         "attention_pins_models": {
+             "uncond": {"attention_pins": {"comfy_kitchen_sol tau=0.7": 10},
+                        "attention_pins_ran": False,
+                        "attention_pins_dropped": {"kernel unavailable on this host": 10}},
+             "cond": {"attention_pins": {"comfy_kitchen_sol tau=0.7": 20},
+                      "attention_pins_ran": True, "attention_pins_dropped": None}}},
+        # A breakdown with one model left reads as the plain line.
+        {"attention_pins": {"comfy_kitchen_int8": 3}, "attention_pins_ran": True,
+         "attention_pins_dropped": None,
+         "attention_pins_models": {"cond": {"attention_pins": {"comfy_kitchen_int8": 3},
+                                            "attention_pins_ran": True},
+                                   "uncond": {"attention_pins": {}}}},
     ]
     out = _run_fabric(f"out = {json.dumps(records)}.map(fabric.pinnedAttention);")
     assert out == [describe(record) for record in records]
     assert out[0] == "pinned: comfy_kitchen_sol tau=0.7 x 40 modules, ran"
     assert out[3] == ""
+    assert out[4] == ("pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; "
+                      "uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped "
+                      "(kernel unavailable on this host)")
+    assert out[5] == "pinned: comfy_kitchen_int8 x 3 modules, ran"
     line = _run_fabric(
         "out = fabric.lastRenderFacts({topology: 'cfg2', auto_row: 4, sec_per_step: 1.5, "
         f"...{json.dumps(records[0])}}});")

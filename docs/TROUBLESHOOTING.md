@@ -5338,7 +5338,13 @@ describes for Sol.
 modules per kernel), `attention_pins_ran` and `attention_pins_dropped`
 (modules per reason). The sidebar's last-render line, the run_matrix console
 and the driver log print one line, for example "render pinned:
-comfy_kitchen_sol tau=0.7 x 40 modules, ran". The count is per attention
+comfy_kitchen_sol tau=0.7 x 40 modules, ran". Under dual-model cfg2 each cfg
+rank renders its own checkpoint, so the three fields add the two models'
+modules. When both models pin, `attention_pins_models` carries each model's
+own fields under `cond` and `uncond`, and the line gives one clause per
+model, for example "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20
+modules, ran; uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped
+(kernel unavailable on this host)". The count is per attention
 module, so a block whose self- and cross-attention are both pinned counts
 twice. "ran" means ComfyUI dispatched each pinned module to its pinned kernel,
 as on one GPU; the kernel itself still runs exact attention on a masked call

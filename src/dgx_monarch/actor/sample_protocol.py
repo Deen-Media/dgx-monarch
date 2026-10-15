@@ -412,7 +412,9 @@ def run_sample(
     if resident_adoption_evidence is not None:
         result["resident_adoption_evidence"] = resident_adoption_evidence
     if pins is not None:
-        result[attention_pins.RESULT_KEY] = pins.public()
+        # Under dm-cfg2 the row names this rank's slot, so the driver keeps
+        # each model's counts together (attention_pins.merge).
+        result[attention_pins.RESULT_KEY] = pins.public(model=dm2_slot)
     if out is not None:
         return worker._pack_latent_result(result, out, request)
     return result

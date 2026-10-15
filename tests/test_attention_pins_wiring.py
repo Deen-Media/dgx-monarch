@@ -136,6 +136,22 @@ def test_under_dual_model_cfg2_the_uncond_rank_card_names_the_conditional_checkp
     assert crossed == [False]  # the dm-cfg2 exchange told the conditional rank
 
 
+@pytest.mark.parametrize("slot", ["cond", "uncond"])
+def test_under_dual_model_cfg2_each_rank_row_names_the_model_it_rendered(monkeypatch, slot):
+    """The driver keeps each model's counts together by this slot (attention_pins.merge)."""
+    accuracy_waiver._scope().grants[SOL_KIND] = {
+        "id": "c" * 32, "kind": SOL_KIND, "consent_source": "panel"}
+    monkeypatch.setattr(sample_protocol, "dual_model_cfg2_slot", lambda w, r: slot)
+    crossed: list[bool] = []
+    result, sampled = _run(monkeypatch, _worker(cfg=2), _pinned_patcher(Block(sol())),
+                           crossed=crossed,
+                           extra={"uncond_model": {"unet_name": "uncond.safetensors"}})
+    assert sampled == [1] and crossed == [True]
+    assert result[attention_pins.RESULT_KEY] == {
+        "attention_pins": {"comfy_kitchen_sol tau=0.7": 1}, "attention_pins_ran": True,
+        "attention_pins_dropped": None, attention_pins.MODEL_KEY: slot}
+
+
 def test_an_fp8_checkpoint_keeps_its_pins_through_the_fsdp_wrap(monkeypatch):
     """Only the bf16 and fp16 shard build reloads through load_state_dict.
 
@@ -264,3 +280,40 @@ def test_the_driver_folds_rank_rows_into_the_finish_record(monkeypatch):
     assert last["attention"] == "TORCH_FLASH"
     assert last["attention_pins"] == {"comfy_kitchen_int8": 2}
     assert last["attention_pins_ran"] is True
+
+
+def test_the_driver_keeps_each_dual_model_ranks_counts_in_the_finish_record(monkeypatch):
+    from dgx_monarch.nodes import render_result
+    from dgx_monarch.telemetry import RenderProgress
+
+    progress = RenderProgress()
+    monkeypatch.setattr("dgx_monarch.telemetry.render_progress", progress)
+    token = progress.start(2, {"attention": "TORCH_FLASH"}, token=object())
+    payloads = [
+        {"attention_pins": {"comfy_kitchen_sol tau=0.7": 20}, "attention_pins_ran": True,
+         "attention_pins_dropped": None, attention_pins.MODEL_KEY: "cond"},
+        {"attention_pins": {"comfy_kitchen_sol tau=0.7": 10}, "attention_pins_ran": False,
+         "attention_pins_dropped": {attention_pins.DROPPED_UNBOUND: 10},
+         attention_pins.MODEL_KEY: "uncond"},
+    ]
+    rows = [{"rank": rank, "dp_rank": 0, "latent": "descriptor" if rank == 0 else None,
+             "sample_s": 1.0, attention_pins.RESULT_KEY: payloads[rank]} for rank in (0, 1)]
+    monkeypatch.setattr(render_result, "verify_cross_rank_signatures", lambda r, t: None)
+    monkeypatch.setattr(render_result, "_validate_adoption_evidence", lambda *a, **k: None)
+    monkeypatch.setattr(render_result, "materialize_leader_samples",
+                        lambda leaders, ranks, dp, read: (torch.zeros(1), []))
+    monkeypatch.setattr(render_result, "collect_denoised_output", lambda *a: None)
+    monkeypatch.setattr(render_result.consent_waiver, "stamp_result",
+                        lambda out, results, latent: out)
+    render_result._finish_render(rows, types.SimpleNamespace(dp=1), {},
+                                 telemetry_token=token)
+    progress.finish(token)
+    last = progress.snapshot()["last"]
+    assert last["attention_pins"] == {"comfy_kitchen_sol tau=0.7": 30}
+    assert last["attention_pins_ran"] is False
+    assert last["attention_pins_dropped"] == {attention_pins.DROPPED_UNBOUND: 10}
+    assert set(last[attention_pins.MODELS_FIELD]) == {"cond", "uncond"}
+    assert attention_pins.describe(last) == (
+        "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; "
+        "uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped "
+        "(kernel unavailable on this host)")
