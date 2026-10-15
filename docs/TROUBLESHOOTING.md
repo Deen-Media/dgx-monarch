@@ -3840,10 +3840,11 @@ refiners and encoders every rank runs whole) uses ComfyUI's default exact
 backend ([ADAPTERS.md](ADAPTERS.md) lists each site). Under sequence
 parallelism the card appears only when the widget selects Sol. A topology
 without sequence parallelism keeps every stock attention call, so a pin runs
-there as it does in stock ComfyUI, unless the FSDP shard build of a bf16 or
-fp16 checkpoint cleared it, and the render refuses with this same card until
-the operator grants it
-([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+there as it does in stock ComfyUI, and the render refuses with this same card
+until the operator grants it
+([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel),
+which also covers the FSDP launch check a bf16 or fp16 checkpoint that pins
+meets first).
 
 **The kernel is optional and is not a dependency of this project.** The opt-in
 installer plans every configured Worker interpreter. First stop ComfyUI and
@@ -5467,10 +5468,14 @@ weights rounded to 8 bits), and both are approximate by construction. On a
 topology without sequence parallelism (on a two-rank pair: single, cfg2, dp2,
 cfg2+fsdp and dp2+fsdp) ComfyUI runs the pinned kernel as it does on one GPU,
 so dgx-monarch refuses before any sampling unless the operator has granted the
-waiver. The FSDP shard build of a bf16 or fp16 checkpoint clears that checkpoint's own
-pins, so there only a LoRA's pin asks; an fp8 or int8 checkpoint keeps its
-pins, and they ask too. The message names the kernels, the number of attention
-modules and the topology; [ADAPTERS.md](ADAPTERS.md) has the contract.
+waiver. The message names the kernels, the number of attention modules and
+the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. On cfg2+fsdp and
+dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask too. A bf16 or
+fp16 checkpoint whose own header pins never gets that far: its uint8 config
+tensors leave the FSDP launch check unable to prove the file's precision, so
+every `+fsdp` preset refuses it class P with "The detector could not prove the
+checkpoint's precision". Render that file on a topology without fsdp; uly2
+drops the pins.
 
 **What to do:** either accept the card and queue the render again, or pick a
 sequence-parallel topology such as uly2, where dgx-monarch drops every pin and
@@ -5517,9 +5522,10 @@ twice. "ran" means ComfyUI dispatched each pinned module to its pinned kernel,
 as on one GPU; the kernel itself still runs exact attention on a masked call
 (Sol) or on a float32 call with `low_precision_attention` off (int8). A pin
 does not run for one of three reasons: `sequence parallelism`; `FSDP shard
-build`, because under cfg2+fsdp and dp2+fsdp the shard build of a bf16 or fp16
-checkpoint clears that checkpoint's own pins; and `kernel unavailable on this
-host`, where ComfyUI could not bind the kernel and runs its default backend.
+build`, for a pin the shard build of a bf16 or fp16 checkpoint cleared, though
+no checkpoint whose own header pins reaches that build today, because the FSDP
+launch check refuses it class P first; and `kernel unavailable on this host`,
+where ComfyUI could not bind the kernel and runs its default backend.
 A render on more than one rank still refuses for an unbound pin, because every
 rank must reach the same verdict and a peer may bind the kernel; a render on
 one GPU asks nothing for it. The `attention` fact keeps naming the Init

@@ -1627,3 +1627,98 @@ def test_the_session_still_replaces_the_fleet_where_the_residue_could_answer(
     _first, second = _run_two_cells(monkeypatch, tmp_path, available=41.0, gib=16.2)
     assert second == {"recycle": "ok", "reason": "the fleet left 41.0 GiB available, "
                                                  "under the 60.0 GiB this cell needs"}
+
+
+def test_a_cell_scored_against_a_pinned_reference_names_the_reference(monkeypatch, tmp_path):
+    # A uly2 cell of a pinned checkpoint runs exact attention against a
+    # reference that renders the pinned kernel under the waiver
+    # (matrix.known_wrong_reference). Its line names that reference, not this
+    # cell's own kernel, which is no approximation.
+    monkeypatch.setattr(run, "compare_outputs", lambda *args, **kwargs: {
+        "nrms": 0.07, "max_abs": 12, "frames": 1, "identical": False,
+        "reference_file": "sweep_ref456_probe_00001_.png"})
+    cell = _fidelity_cell(probe=True, attention="TORCH_FLASH", waiver_guards=[],
+                          reference={"kind": "cell", "cell": "ref456",
+                                     "bar": matrix.WAIVED_BAR, "probe_steps": 1})
+    record = {"verdict": "PASS", "findings": [], "notes": []}
+    run._fidelity(record, cell, tmp_path, 0.10)
+    assert record["fidelity"]["bar"] == matrix.WAIVED_BAR
+    assert record["verdict"] == "PASS" and record["findings"] == []
+    line = record["waived_render"]
+    assert record["notes"] == [line] and line.startswith(f"{matrix.WAIVED_BAR} 0.07 ")
+    assert "sol_attn:checkpoint_pin" in line and "TORCH_FLASH" not in line
+    assert "this cell and its reference" not in line
+    # A cfg2 or dp2 cell of the same checkpoint runs the pins too, under its own grant.
+    held = _fidelity_cell(probe=True, attention="TORCH_FLASH",
+                          waiver_guards=["sol_attn:checkpoint_pin"],
+                          reference={"kind": "cell", "cell": "ref456",
+                                     "bar": matrix.WAIVED_BAR, "probe_steps": 1})
+    record = {"verdict": "PASS", "findings": [], "notes": []}
+    run._fidelity(record, held, tmp_path, 0.10)
+    assert record["verdict"] == "PASS" and "this cell and its reference both render" in \
+        record["waived_render"]
+
+
+def test_a_card_no_cell_grants_is_dismissed_so_the_next_grant_finds_one(monkeypatch, tmp_path):
+    # A pinned cfg2 cell at cfg 1.0 refuses class K and carries no waiver, but
+    # its refusal still raises a card. Left pending, the next pinned cell's own
+    # card would make two of the same kind, its grant would fail and the cell
+    # would file a finding for a label it met.
+    from benchmark.sweep import driver
+
+    from dgx_monarch.refusal import GUARDS
+
+    out = tmp_path / "out"
+    (out / "graphs").mkdir(parents=True)
+    (out / "graphs" / "t.json").write_text(json.dumps({}))
+    base = {"template": "t", "session": "cluster", "mode": "cluster",
+            "attention": "TORCH_FLASH", "label": "refuse:K", "levers": {}, "loras": [],
+            "unets": {}, "auto_gate": "first_use", "gpus_per_host": 0, "batch": 1,
+            "batch_toggled": False, "batch_node": "", "capacity_risk": False,
+            "probe": False, "audio": False, "timeout_s": 10,
+            "reference": {"kind": "none", "bar": "reference"}}
+    held = {**base, "id": "held01", "preset": "cfg2", "waiver": False, "waiver_guards": []}
+    waived = {**base, "id": "waive2", "preset": "dp2", "waiver": True,
+              "waiver_guards": ["sol_attn:checkpoint_pin"]}
+    kind = GUARDS["sol_attn:checkpoint_pin"].consent_kind
+    pending: list[dict] = [{"kind": "capacity", "class": "C", "key": "c0", "id": "pc"}]
+    posted: list[dict] = []
+
+    def refused(card: str):
+        # Each cold leg raises its own card, under a memo key of its own.
+        pending.append({"kind": kind, "class": "K", "key": card, "id": f"p-{card}"})
+        return 2.0, {"status": {"status_str": "error", "messages": [
+            ["execution_error", {"exception_message": "[dgxm:K] pinned kernel"}]]}}, "", "p"
+
+    crashed = (1.0, {"status": {"status_str": "error", "messages": [
+        ["execution_error", {"exception_message": "CUDA error: misaligned"}]]}}, "", "p")
+    answers = iter([lambda: refused("k-held"), lambda: refused("k-waive"), lambda: crashed])
+
+    def post(_url, body, *_args, **_kwargs):
+        posted.append(body)
+        pending[:] = [row for row in pending if row["key"] != body["key"]]
+        return {"ok": True}
+
+    monkeypatch.setattr(driver, "get", lambda *_args, **_kwargs: {"pending": list(pending)})
+    monkeypatch.setattr(driver, "post", post)
+    monkeypatch.setattr(run, "Sampler", _FakeSampler)
+    monkeypatch.setattr(run, "queue_and_wait", lambda *args, **kwargs: next(answers)())
+    monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
+    monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
+    monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
+    monkeypatch.setattr(run, "free_cache", lambda driver: "freed")
+    config = {"driver": "http://fake", "out_dir": out, "comfy_dir": tmp_path,
+              "sibling": "", "mem_floor_gib": 0.0, "reference": {"nrms_floor": 0.10}}
+    args = type("Args", (), {"timeout_s": 0.0})()
+
+    first = run.run_cell(held, config, {}, "client", args)
+    assert (first["observed"], first["verdict"]) == ("refuse:K", "PASS")
+    assert "consent" not in first and first["consent_dismissed"] == {"dismissed": [kind]}
+    # Only the class K card goes; a dismissal writes no consent.
+    assert posted == [{"action": "dismiss", "key": "k-held", "id": "p-k-held"}]
+    assert [row["key"] for row in pending] == ["c0"]
+
+    second = run.run_cell(waived, config, {}, "client", args)
+    assert second["consent"]["granted"] is True and second["consent"]["key"] == "k-waive"
+    assert posted[1:] == [{"action": "accept", "key": "k-waive", "id": "p-k-waive"}]
+    assert "consent_dismissed" not in second

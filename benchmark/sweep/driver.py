@@ -214,6 +214,22 @@ def recycle(driver: str, attempts: int = 3) -> str:
                         "next cell would run on the old fleet and its latched bootstrap")
 
 
+def _consent_action(driver: str, body: dict) -> dict:
+    """POST one consent action, retrying once after Retry-After when rate limited."""
+    for attempt in (0, 1):
+        try:
+            return {"ok": True, "response": post(f"{driver}/dgxm/consent", body,
+                                                 action_headers(driver, "consent"), timeout=60)}
+        except urllib.error.HTTPError as exc:
+            if exc.code == 429 and attempt == 0:
+                time.sleep(float(exc.headers.get("Retry-After") or 2))
+                continue
+            return {"ok": False, "detail": f"http {exc.code}: {exc.reason}"}
+        except (OSError, ValueError) as exc:
+            return {"ok": False, "detail": f"{type(exc).__name__}: {exc}"}
+    return {"ok": False, "detail": "the consent POST was still rate limited after one retry"}
+
+
 def grant_pending_consent(driver: str, cell: dict) -> dict:
     """Accept the card this cell's guard raised, by its key and its pending id.
 
@@ -235,19 +251,40 @@ def grant_pending_consent(driver: str, cell: dict) -> dict:
                 "detail": f"{len(cards)} of {len(pending)} pending cards carry "
                           f"{sorted(kinds)}; the grant needs exactly one"}
     body = {"action": "accept", "key": cards[0].get("key"), "id": cards[0].get("id")}
-    for attempt in (0, 1):
-        try:
-            return {"granted": True, "key": body["key"],
-                    "response": post(f"{driver}/dgxm/consent", body,
-                                     action_headers(driver, "consent"), timeout=60)}
-        except urllib.error.HTTPError as exc:
-            if exc.code == 429 and attempt == 0:
-                time.sleep(float(exc.headers.get("Retry-After") or 2))
-                continue
-            return {"granted": False, "detail": f"http {exc.code}: {exc.reason}"}
-        except (OSError, ValueError) as exc:
-            return {"granted": False, "detail": f"{type(exc).__name__}: {exc}"}
-    return {"granted": False, "detail": "the consent POST was still rate limited after one retry"}
+    sent = _consent_action(driver, body)
+    if not sent["ok"]:
+        return {"granted": False, "detail": sent["detail"]}
+    return {"granted": True, "key": body["key"], "response": sent["response"]}
+
+
+def dismiss_pending_consent(driver: str, refusal_class: str = "K") -> dict:
+    """Dismiss every pending card of this refusal class; a dismissal writes no consent.
+
+    The runner calls this after a leg refuses class K and the cell grants
+    nothing more: a cold leg on a cell whose label carries no waiver, or a
+    waived leg that still refuses. The card that refusal raised stays
+    pending for half an hour (consent_pending.PENDING_TTL_S), and
+    grant_pending_consent needs exactly one card of a kind, so a later cell
+    raising its own card of that kind inside the window would find two and file
+    a finding. The sweep runs one cell at a time, so every card of the class
+    pending here is one no cell will grant: this leg's, or one an earlier cell
+    left. A grant already live is not a card, and stays.
+    """
+    try:
+        pending = get(f"{driver}/dgxm/consents").get("pending") or []
+    except (OSError, ValueError) as exc:
+        return {"dismissed": [], "detail": f"{type(exc).__name__}: {exc}"}
+    dismissed, failed = [], []
+    for row in pending:
+        if str(row.get("class", "")) != refusal_class:
+            continue
+        sent = _consent_action(driver, {"action": "dismiss", "key": row.get("key"),
+                                        "id": row.get("id")})
+        if sent["ok"]:
+            dismissed.append(str(row.get("kind", "")))
+        else:
+            failed.append(f"{row.get('kind')}: {sent['detail']}")
+    return {"dismissed": dismissed, **({"failed": failed} if failed else {})}
 
 
 def queue_and_wait(driver: str, graph: dict, client_id: str,

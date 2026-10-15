@@ -27,7 +27,7 @@ that cell, such as a cold load, warm render, or short comparison probe:
 |---|---|
 | `disk` | the checkpoint is not on disk, or its header names no family |
 | `name-token` | a block-scaled layout, whose kind lives in the loaded model rather than the header |
-| `header` | a rule read from the checkpoint and LoRA headers (the fp32-weight LoRA rule below) |
+| `header` | a rule read from the checkpoint and LoRA headers: the fp32-weight LoRA rule, and the attention pin rule below, which reads checkpoint headers only |
 | `config` | a template the sweep config gates |
 | `token-count` | a rule that reads a prompt's encoded length |
 | `token-count-unavailable` | the same rule when no tokenizer file can count the prompt |
@@ -80,6 +80,55 @@ The matrix distinguishes these FSDP refusal rules:
   cannot show, so the rule applies only to `FSDP_LORA_LIVE_CAST_FAMILIES`,
   which contains Krea2. It reads after the low-RSS guard, so
   a cell with `lora_low_rss` off records that guard first.
+
+A checkpoint can pin an attention kernel on its attention modules through
+ComfyUI's `comfy_attention` config tensors. The matrix reads those tensors
+from the header of every checkpoint the graph loads and hands them to the
+runtime's own pin guard (`attention_pins.py`), so these labels read basis
+`header`:
+
+- **A pinned checkpoint refuses class K wherever its pins run.** Without
+  sequence parallelism ComfyUI runs each pinned kernel as it does on one GPU,
+  and both kernels it binds are approximate. On single, cfg2, dp2, cfg2+fsdp
+  and dp2+fsdp the cell reads `refuse:K` under the guard
+  `sol_attn:checkpoint_pin`. The single cell is included because a render on
+  one GPU checks whether the host can run the kernel, and the pair's GPUs run
+  both.
+- **The label is waivable only where a grant lets the cell render.** A grant
+  clears this guard and no other, so the cell carries the waiver only where
+  the same cell without the pins renders. Two cases carry none. On an FSDP
+  preset at `auto_gate=first_use` the first-use ceremony that would earn the
+  Gate PASS runs without the waiver and stops at this guard
+  ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+  On cfg2 or cfg2+fsdp at CFG 1.0 with a sampler that drops the uncond pass,
+  the pin guard answers first at load, and a granted leg would then meet the
+  cfg refusal. The runner dismisses the card such a refusal raises, so a
+  later cell's grant still finds exactly one card of its kind.
+- **Two refusals come before the pin guard.** A bf16 or fp16 file that pins
+  never reaches the guard under FSDP: its uint8 config tensors leave the
+  launch precision unproven, so the FSDP launch check refuses it class P on
+  every `+fsdp` preset. A sol kernel without sequence parallelism refuses
+  class P when the worker configures it, before any load.
+- **A pinned checkpoint under sequence parallelism is measured, not
+  scored.** uly2 and ring2 drop the pins and run the Init widget's kernel,
+  while their single-GPU reference refuses, or under the waiver runs the
+  pinned kernel. Every cell scored against that reference is scored at the
+  `waived-nrms` bar: the difference is recorded and no floor applies. On
+  uly2 and ring2 that is an exact cell against an approximate reference; on
+  cfg2 and dp2 both sides run the pinned kernel under the waiver. An auto
+  cell takes the label and bar of the preset it resolves to. uly2+fsdp and
+  ring2+fsdp drop the pins too and keep the `bit-identical` bar against
+  their resident twin. Exactness on uly2 and ring2 needs a reference rendered
+  from a copy of the checkpoint with the pins removed, which the sweep cannot
+  name because such a copy is local to one rig.
+- **What the rule does not read.** It reads checkpoint headers only. A LoRA
+  can pin or unpin a module through the same config keys, which the runtime
+  guard reads, so the matrix drops the lora-on arm of a template whose
+  configured LoRA carries one, with a pruned note. A checkpoint config whose
+  load the matrix cannot predict drops its artifact set with a note naming
+  the file and key: one that is not the uint8 JSON ComfyUI writes, one past
+  the read bound, and one ComfyUI's own load fails on (not JSON, or an entry
+  that is not an object ahead of every kernel it binds).
 
 **How a render is scored.** A two-rank cell is compared against the
 single-GPU render of the same graph and seed, at a one-step probe. Full
@@ -311,7 +360,7 @@ one rank's work.
 |---|---|---|
 | `step-nrms` | this cell's one-step probe against the reference's own | 0.10, over it reads CHECK |
 | `bit-identical` | an FSDP cell against its resident twin, or a residency or inert lever against its auto cell, on the full warm render | any difference is a FINDING |
-| `waived-nrms` | a render the runtime already knows to be wrong, against the reference: a kernel the matrix names as approximate, or any leg that rendered under a granted class K card, whether this cell granted it or an earlier cell of the same shape left it live | none, the number is the deliverable |
+| `waived-nrms` | a render the runtime already knows to be wrong, against the reference: a kernel the matrix names as approximate, a reference that runs a checkpoint's pinned approximate kernel, or any leg that rendered under a granted class K card, whether this cell granted it or an earlier cell of the same shape left it live | none, the number is the deliverable |
 | `full-render-nrms` | two full warm renders, where no probe leg is available | none; the number is reported, and the cell reads CHECK unless the two renders match to the pixel |
 
 The `step-nrms` limit was calibrated on one step and cannot be applied to a
