@@ -3718,10 +3718,13 @@ its blocks raises no card under sequence parallelism, because no attention
 call runs the pin there: the sharded attention uses the widget's kernel, and
 the stock attention the pack leaves in place (cross-attention, and the
 refiners and encoders every rank runs whole) uses ComfyUI's default exact
-backend ([ADAPTERS.md](ADAPTERS.md) lists each site). The card appears only
-when the widget selects Sol. A topology without sequence parallelism keeps
-every stock attention call, so a pin runs there as it does in stock
-ComfyUI, with no card.
+backend ([ADAPTERS.md](ADAPTERS.md) lists each site). Under sequence
+parallelism the card appears only when the widget selects Sol. A topology
+without sequence parallelism keeps every stock attention call, so a pin runs
+there as it does in stock ComfyUI, unless the FSDP shard build of a bf16 or
+fp16 checkpoint cleared it, and the render refuses with this same card until
+the operator grants it
+([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
 
 **The kernel is optional and is not a dependency of this project.** The opt-in
 installer plans every configured Worker interpreter. First stop ComfyUI and
@@ -5285,3 +5288,91 @@ gpus_per_host=1) for a stock one-GPU render, or run a ComfyUI build this
 release supports. Report the argument name: a dgx-monarch release has to
 adopt it, either applying it under sequence parallelism or refusing it for a
 stated reason. No consent or waiver bypasses this refusal.
+
+## 117. A render refuses because the checkpoint or a LoRA pins an attention kernel
+
+The refusal reads "this model pins an approximate kernel on its attention
+modules" and carries the Sol-Attn waiver card. ComfyUI lets a checkpoint, or a
+LoRA with `.comfy_attention.config` keys, pin an attention kernel on each
+attention module. It ships two such kernels, `comfy_kitchen_sol` (sparse
+attention, with a tau) and `comfy_kitchen_int8` (q, k, v and the attention
+weights rounded to 8 bits), and both are approximate by construction. On a
+topology without sequence parallelism (on a two-rank pair: single, cfg2, dp2,
+cfg2+fsdp and dp2+fsdp) ComfyUI runs the pinned kernel as it does on one GPU,
+so dgx-monarch refuses before any sampling unless the operator has granted the
+waiver. The FSDP shard build of a bf16 or fp16 checkpoint clears that checkpoint's own
+pins, so there only a LoRA's pin asks; an fp8 or int8 checkpoint keeps its
+pins, and they ask too. The message names the kernels, the number of attention
+modules and the topology; [ADAPTERS.md](ADAPTERS.md) has the contract.
+
+**What to do:** either accept the card and queue the render again, or pick a
+sequence-parallel topology such as uly2, where dgx-monarch drops every pin and
+the Init widget's kernel runs (exact under TORCH_FLASH; the Sol card appears
+there only if the widget selects Sol). The card grants the Sol-Attn waiver
+for this checkpoint, topology and world; headless, set
+`DGXM_WAIVE_KNOWN_WRONG=sol_attn` on the driver or follow the consent recipe
+in [#84](#84-a-sol-attn-render-refuses-with-a-waiver-card-or-stalls-on-its-first-call).
+Under the waiver each rank whose pins would run logs KNOWN-WRONG MATH
+PROCEEDING UNDER WAIVER, dgx-monarch stamps the output rendered-under-waiver,
+and the gate ledger gets a use row under the guard `sol_attn:checkpoint_pin`.
+Removing the LoRA that carries the pin also clears the refusal. Under
+dual-model cfg2 the card names the conditional checkpoint even when only the
+unconditional one pins, because the driver keys every grant of that render on
+the conditional checkpoint; the card's detail line names the checkpoint that
+pins.
+
+**On cfg2+fsdp and dp2+fsdp under `auto_gate=first_use` the grant is not
+enough.** FSDP has no stock residency to fall back to, so such a render needs
+a Gate PASS, and the first-use ceremony that would earn one renders without
+waivers and ends on this guard. A pin that runs there (a LoRA's, or an fp8 or
+int8 checkpoint's) therefore refuses even after the grant. Render it on
+uly2+fsdp, where dgx-monarch drops the pin, with `auto_gate=off`
+([#67](#67-what-auto_gateoff-costs-and-what-it-does-not)), or on a topology
+without fsdp. On a resident topology the ceremony ends on this guard too and
+changes no residency setting; a risky combination (a LoRA stack, or slab
+residency requested) then renders under stock residency, the limit #84
+describes for Sol.
+
+**Reading the record.** The `render.last` block of `/dgxm/telemetry` and
+`benchmark/run_matrix.py` result rows carry `attention_pins` (pinned attention
+modules per kernel), `attention_pins_ran` and `attention_pins_dropped`
+(modules per reason). The sidebar's last-render line, the run_matrix console
+and the driver log print one line, for example "render pinned:
+comfy_kitchen_sol tau=0.7 x 40 modules, ran". The count is per attention
+module, so a block whose self- and cross-attention are both pinned counts
+twice. "ran" means ComfyUI dispatched each pinned module to its pinned kernel,
+as on one GPU; the kernel itself still runs exact attention on a masked call
+(Sol) or on a float32 call with `low_precision_attention` off (int8). A pin
+does not run for one of three reasons: `sequence parallelism`; `FSDP shard
+build`, because under cfg2+fsdp and dp2+fsdp the shard build of a bf16 or fp16
+checkpoint clears that checkpoint's own pins; and `kernel unavailable on this
+host`, where ComfyUI could not bind the kernel and runs its default backend.
+A render on more than one rank still refuses for an unbound pin, because every
+rank must reach the same verdict and a peer may bind the kernel; a render on
+one GPU asks nothing for it. The `attention` fact keeps naming the Init
+widget's kernel.
+
+**Probing it on hardware without patching a checkpoint.**
+`tools/make_pin_probe_lora.py` reads a checkpoint's safetensors header, finds
+one family's attention modules from their query projection keys, and writes a
+small LoRA that holds only `diffusion_model.<module>.comfy_attention.config`
+tensors:
+
+```bash
+python tools/make_pin_probe_lora.py \
+  ComfyUI/models/diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors \
+  ComfyUI/models/loras/pin_probe_wan21_sol.safetensors \
+  --family wan21 --kernel comfy_kitchen_sol --tau 0.7
+```
+
+It knows krea2, anima, kandinsky5, wan21 and qwen_image21, and its docstring
+lists the key pattern for each. It pins self-attention by default. `--cross`
+adds cross-attention, for int8 only: Sol needs q, k and v of one shape with a
+head dimension of 128, and cross-attention gives its keys and values the
+text's length, not the image's. `--blocks N` pins only the first N modules.
+Load the file with a LoRA loader at strength 1.0, since strength 0 stages no
+pin. On cfg2 expect the card, then, after the grant, a stamped render whose
+record reads "ran"; on uly2 expect no card and a record that reads "dropped
+(sequence parallelism)"; on cfg2+fsdp or dp2+fsdp under
+`auto_gate=first_use` expect the refusal above even after the grant. The file
+patches no weight, and slab residency prices it as no bake.

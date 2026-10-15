@@ -565,6 +565,30 @@ def test_the_last_render_line_says_where_it_ran_and_its_step_rate():
     assert out == ["uly2 · auto row 11 · 1.92s/it", "uly2+fsdp · 0.5s/it", "", "", ""]
 
 
+def test_the_last_render_line_names_pinned_attention_as_the_driver_describes_it():
+    """The panel and attention_pins.describe write one line for one record (issue #30)."""
+    from dgx_monarch.attention_pins import describe
+
+    records = [
+        {"attention_pins": {"comfy_kitchen_sol tau=0.7": 40}, "attention_pins_ran": True,
+         "attention_pins_dropped": None},
+        {"attention_pins": {"comfy_kitchen_int8": 30, "comfy_kitchen_sol tau=1": 1},
+         "attention_pins_ran": False,
+         "attention_pins_dropped": {"sequence parallelism": 31}},
+        {"attention_pins": {"comfy_kitchen_int8": 30}, "attention_pins_ran": False,
+         "attention_pins_dropped": {"FSDP shard build": 20}},
+        {"attention_pins": None, "attention_pins_ran": None, "attention_pins_dropped": None},
+    ]
+    out = _run_fabric(f"out = {json.dumps(records)}.map(fabric.pinnedAttention);")
+    assert out == [describe(record) for record in records]
+    assert out[0] == "pinned: comfy_kitchen_sol tau=0.7 x 40 modules, ran"
+    assert out[3] == ""
+    line = _run_fabric(
+        "out = fabric.lastRenderFacts({topology: 'cfg2', auto_row: 4, sec_per_step: 1.5, "
+        f"...{json.dumps(records[0])}}});")
+    assert line == "cfg2 · auto row 4 · 1.5s/it · pinned: comfy_kitchen_sol tau=0.7 x 40 modules, ran"
+
+
 def test_the_panel_rates_equal_dgxm_tops_for_the_same_two_readings():
     from dgx_monarch.tui.data import Poller
 

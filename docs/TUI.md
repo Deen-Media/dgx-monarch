@@ -93,8 +93,10 @@ carries traffic, or when its link is physically up but its port is down. An
 unused or uncabled port stays off the line, and so does a rail that never
 trained at boot, because sysfs reads it the same as an uncabled port;
 `dgxm doctor` reports that rail. When the panel is idle, the last render's
-line also names the topology it ran, its auto table row, and its last seconds
-per step. Each render times a step against its own previous step, so the
+line also names the topology it ran, its auto table row, its last seconds per
+step, and any attention kernel the model pinned per attention module, with
+whether it ran
+([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). Each render times a step against its own previous step, so the
 second leader of a dp>1 render, or another render in the same Fleet wave,
 cannot shrink that number to the gap between two messages. `dgxm top` does not
 draw these facts yet; they are in the `render.last` block of

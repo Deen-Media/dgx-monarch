@@ -11,7 +11,9 @@ step is timed from its own render's mark, and only a step past that mark
 counts. A second leader that repeats a step changes nothing.
 
 Stdlib only and stateless. The marks live under `_step_marks` in the
-tracker's state dict, and the tracker calls these under its lock.
+tracker's state dict, and the tracker calls these under its lock. The same
+keying holds each render's attention pin fields under `_pins`
+(attention_pins.py), so an overlapping render cannot lend its pins to another.
 """
 from __future__ import annotations
 
@@ -90,3 +92,21 @@ def sampled(state: dict, key: object, sample_s: float) -> dict:
 def sample_for(state: dict, key: object) -> tuple[float | None, float | None]:
     """The sampler wall and mean step noted for one render, or unknown."""
     return state.get("_samples", {}).get(key, (None, None))
+
+
+def pins_kept(previous: dict) -> dict:
+    """The per-render pin records a start keeps: those of renders still running."""
+    return dict(previous.get("_pins", {})) if previous.get("active") else {}
+
+
+def pinned(state: dict, key: object, pins: dict) -> dict:
+    """The tracker's state with one render's attention pin fields, keyed by render."""
+    return {**state, "_pins": {**state.get("_pins", {}), key: dict(pins)}}
+
+
+def pins_for(state: dict, key: object) -> dict:
+    """The pin fields noted for one render; each None when it noted none."""
+    from .attention_pins import RECORD_FIELDS
+
+    noted = state.get("_pins", {}).get(key, {})
+    return {name: noted.get(name) for name in RECORD_FIELDS}

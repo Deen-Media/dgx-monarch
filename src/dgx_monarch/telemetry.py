@@ -166,6 +166,7 @@ class RenderProgress:
                 "_facts_key": token,
                 "_render_steps": telemetry_steps.steps_kept(previous, token, steps),
                 "_samples": dict(previous.get("_samples", {})) if previous.get("active") else {},
+                "_pins": telemetry_steps.pins_kept(previous),
                 **(meta or {}),
                 "ceremony": bool(ceremony_tokens) or ceremony_legacy > 0,
                 "_tokens": frozenset(active_tokens),
@@ -220,6 +221,13 @@ class RenderProgress:
             key = telemetry_steps.sample_owner(self._state, token, _LEGACY_PROGRESS_TOKEN)
             if key is not None:
                 self._state = telemetry_steps.sampled(self._state, key, sample_s)
+
+    def note_pins(self, pins: dict, *, token: object | None = None) -> None:
+        """One render's attention pin fields (attention_pins.merge), owned as note_sample's are."""
+        with self._lock:
+            key = telemetry_steps.sample_owner(self._state, token, _LEGACY_PROGRESS_TOKEN)
+            if key is not None:
+                self._state = telemetry_steps.pinned(self._state, key, pins)
 
     def finish(self, token: object | None = None) -> None:
         with self._lock:
@@ -279,6 +287,9 @@ class RenderProgress:
                         **{key: self._state.get(key) for key in _RENDER_FACTS},
                         "sample_s": sample_s,
                         "mean_step_s": mean_step_s,
+                        # Beside "attention", never in it: the kernels the model
+                        # pins per block and whether they ran.
+                        **telemetry_steps.pins_for(self._state, self._state.get("_facts_key")),
                     }
                 else:
                     wall_s = self._state.get("last_wall_s")

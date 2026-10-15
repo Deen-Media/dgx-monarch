@@ -183,7 +183,10 @@ def describe(source: object) -> ConsentDescriptor:
 
 
 def numbers_from_measured(measured: Mapping[str, Any] | None) -> str | None:
-    """Format the card's capacity numbers from structured refusal evidence.
+    """Format the card's figures from structured refusal evidence.
+
+    A class-K refusal can carry a ``detail`` line instead (the pinned kernel
+    and its module count, ``accuracy_waiver.card_tail``), shown in the same place.
 
     ``headroom_bytes`` is what is available minus the refusing site's price,
     so ``needs`` comes back as that price, not the file size. For a stock load
@@ -193,6 +196,9 @@ def numbers_from_measured(measured: Mapping[str, Any] | None) -> str | None:
     """
     if not isinstance(measured, Mapping):
         return None
+    detail = measured.get("detail")
+    if isinstance(detail, str) and detail:
+        return detail  # a class-K card's one line about this refusal
     needs = measured.get("checkpoint_bytes")
     available = measured.get("mem_available_bytes")
     if not isinstance(needs, int) or not isinstance(available, int):
@@ -270,7 +276,7 @@ def _card(entry: PendingConsent) -> dict[str, Any]:
         "risk": spec.risk,
         "evidence": spec.evidence,
         "numbers": entry.descriptor.numbers,
-        "measured": spec.measured,
+        "measured": spec.measured_for(entry.descriptor.target_guard),
         "primary": {"label": spec.primary_label, "action": "accept"},
         "dismissible": True,
         "auto_eligible": spec.auto_eligible,

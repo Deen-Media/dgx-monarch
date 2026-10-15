@@ -44,10 +44,17 @@ class KindSpec:
     context_fields: tuple[str, ...]
     wired: bool
     measured: str | None = None
+    # Scoped guards whose card states other evidence than ``measured``, as
+    # (guard, text) pairs. The text reads after "Measured: ".
+    guard_measured: tuple[tuple[str, str], ...] = ()
 
     @property
     def refusal_class(self) -> str:
         return KIND_CLASS[self.kind]
+
+    def measured_for(self, guard: str | None) -> str | None:
+        """The evidence a card for this guard states: its own text, or the kind's."""
+        return dict(self.guard_measured).get(guard or "", self.measured)
 
 
 _SPECS: tuple[KindSpec, ...] = (
@@ -127,13 +134,16 @@ _SPECS: tuple[KindSpec, ...] = (
     KindSpec(
         kind="waive-known-wrong:sol-attn",
         style="accuracy",
-        # The title names the kernel rather than a tau: the tau is part of the
-        # kernel name the operator picked, and one card per tau would be a card
-        # per widget value for the same measured wrongness.
-        title="Render {artifact} with the sol-attn sparse kernel",
+        # The title names no tau: the tau is part of the kernel name the
+        # operator picked, and one card per tau would be a card per widget
+        # value for the same measured wrongness. It names no kernel either,
+        # because a checkpoint or LoRA that pins comfy-kitchen's Sol or int8
+        # kernel per block raises this card too (attention_pins.py); that
+        # card's detail line names the pinned kernel and its module count.
+        title="Render {artifact} with an approximate attention kernel",
         risk=("This kernel is approximate by construction and is not identity "
-              "preserving: the same seed gives a different composition than it "
-              "does under exact attention."),
+              "preserving: under sol-attn the same seed gives a different "
+              "composition than it does under exact attention."),
         evidence=("Output is stamped rendered-under-waiver and the waiver is recorded "
                   "in the gate ledger."),
         primary_label="Render under waiver (output stamped)",
@@ -142,10 +152,17 @@ _SPECS: tuple[KindSpec, ...] = (
         default_guard="sol_attn",
         context_fields=("combo_key", "topology", "world"),
         # Wired: the kernel wrapper raises this card on every render that has
-        # no grant. Scoped to the resolved topology and world because routing
+        # no grant, and so does the sample path for a pinned kernel that would
+        # run. Scoped to the resolved topology and world because routing
         # density depends on the shape each rank sees.
         wired=True,
         measured="a different composition, measured 2026-08-15",
+        # A pinned kernel was never measured: its card rests on construction,
+        # not on the widget's Sol measurement (attention_pins.py).
+        guard_measured=(("sol_attn:checkpoint_pin",
+                         "no measurement of a pinned kernel; it is approximate by "
+                         "construction (Sol pools the key blocks it does not route to, "
+                         "int8 rounds q, k, v and the attention weights to 8 bits)"),),
     ),
     KindSpec(
         kind="waive-known-wrong:pixeldit-sp",

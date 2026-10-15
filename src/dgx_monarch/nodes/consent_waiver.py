@@ -84,7 +84,8 @@ def ceremony_abort_reason(exc: BaseException) -> str:
                     "clear it there and an fsdp topology cannot be proven for "
                     "this shape. Render it on a topology without fsdp, or, for ring_pad, at "
                     "token counts that need no divisibility padding, or, for sol_attn, with a "
-                    "SAGE_* or TORCH_FLASH kernel (docs/TROUBLESHOOTING.md #55).")
+                    "SAGE_* or TORCH_FLASH kernel, or, for a pinned attention kernel, on uly2+fsdp, "
+                    "where dgx-monarch drops the pin (docs/TROUBLESHOOTING.md #55).")
             seen = (
                 seen.__cause__
                 if seen.__cause__ is not None

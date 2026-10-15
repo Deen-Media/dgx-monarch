@@ -109,7 +109,10 @@ The seams, in run order:
                               a kernel a block pins, which stock runs, and
                               neither does the stock cross-attention and
                               refiner attention the sequence-parallel
-                              forwards leave in place
+                              forwards leave in place; the pin detector reads
+                              a real checkpoint's and a real LoRA's pins, and
+                              the probe tool's key patterns find each
+                              family's pinnable attention
  40. cfg++ uncond pass        every sampler the auto table's cfg++ rule names
                               sets disable_cfg1_optimization before its first
                               model call, the CFG 1.0 shortcut still reads
@@ -3571,7 +3574,9 @@ def _assert_attention_keyword_handoff_seam() -> None:
     under a TORCH_FLASH stamp, and the pack asked for no Sol-Attn waiver
     (issue #30). Half four (``_assert_stock_attention_sites_drop_pins``)
     holds the same contract for the stock attention the other forwards leave
-    in place.
+    in place. Half five (``_assert_attention_pins_detected``) holds the
+    detector the render record and the waiver read where no sequence
+    parallelism drops a pin.
     """
     import comfy.ldm.modules.attention as attention_module
     import comfy.ops
@@ -3871,6 +3876,7 @@ def _assert_attention_keyword_handoff_seam() -> None:
     )
 
     _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations)
+    _assert_attention_pins_detected(operations)
 
 
 class _OneSpRank:
@@ -4099,6 +4105,174 @@ def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> Non
           [block.attn1 for connector in connectors for block in connector.transformer_1d_blocks],
           lambda: torch.cat([connector(hidden)[0] for connector in connectors], dim=-1),
           LTXAdapter())
+
+
+def _probe_tool():
+    """tools/make_pin_probe_lora.py, loaded from the checkout (tools is no package)."""
+    import importlib.util
+
+    path = Path(__file__).resolve().parents[2] / "tools" / "make_pin_probe_lora.py"
+    spec = importlib.util.spec_from_file_location("make_pin_probe_lora", path)
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _assert_attention_pins_detected(operations) -> None:
+    """Half five of the attention keyword handoff seam (issue #30).
+
+    Without sequence parallelism every stock call runs a block's pin, so the
+    pack reads the pins to record them and to ask for the Sol-Attn waiver
+    (dgx_monarch/attention_pins.py). It reads ``ComfyAttention.config`` and
+    ``function``, names a bound kernel by its function's ``__name__`` and
+    ``tau`` keyword, and finds the module by its attribute name,
+    ``comfy_attention``; each is pinned here. A tiny real Wan 2.1 model loads
+    a state dict carrying two config tensors encoded by ComfyUI's own
+    ``_save_to_state_dict``, and the detector must report both. A partial
+    ``load_state_dict``, the shape of the bf16 and fp16 FSDP shard build,
+    clears them, and the detector must say so. A LoRA built by tools/make_pin_probe_lora.py then goes
+    through ComfyUI's own ``load_lora_for_models``: the pin must sit in the
+    patcher's object patches, which the detector reads, until ``patch_model``
+    puts it in place. Last, the probe tool's key patterns must find exactly the
+    pinnable attention modules of tiny real Krea2, Anima (cosmos DiT),
+    Kandinsky 5, Wan 2.1 and Qwen Image 2.1 models.
+    """
+    import re
+    import types
+
+    import comfy.ldm.modules.attention as attention_module
+    import comfy.sd
+    import torch
+    from comfy.ldm.cosmos.predict2 import MiniTrainDIT
+    from comfy.ldm.kandinsky5.model import Kandinsky5
+    from comfy.ldm.krea2.model import SingleStreamDiT
+    from comfy.ldm.qwen_image21.model import QwenImage21Transformer2DModel
+    from comfy.ldm.wan.model import WanModel
+    from comfy.model_patcher import ModelPatcher
+
+    from dgx_monarch import attention_pins
+
+    comfy_attention = attention_module.ComfyAttention()
+    assert (getattr(comfy_attention, attention_pins.CONFIG_ATTR, "absent") is None
+            and getattr(comfy_attention, attention_pins.FUNCTION_ATTR, "absent") is None), (
+        "attention keyword handoff: ComfyAttention no longer keeps config and function, "
+        "so the pin detector reads nothing")
+    for name, kernel in attention_pins.KERNEL_FUNCTIONS.items():
+        bound = getattr(attention_module, name, None)
+        assert bound is not None and bound.__name__ == name, (
+            f"attention keyword handoff: ComfyUI no longer binds {kernel} as {name}")
+    tau = inspect.signature(attention_module.attention_comfy_kitchen_sol).parameters.get("tau")
+    assert tau is not None and tau.kind is inspect.Parameter.KEYWORD_ONLY, (
+        "attention keyword handoff: the Sol binding no longer takes tau by keyword")
+    methods = set(re.findall(r'method == "([a-z0-9_]+)"',
+                             inspect.getsource(attention_module.ComfyAttention._load_from_state_dict)))
+    assert methods == set(attention_pins.KNOWN_KERNELS), (
+        f"attention keyword handoff: ComfyAttention now binds {sorted(methods)}; classify "
+        "each kernel in attention_pins (exact or approximate) before this passes")
+
+    def encoded(config):
+        # ComfyUI's own encoding: the config ComfyAttention saves.
+        module = attention_module.ComfyAttention()
+        module.config = config
+        return module.state_dict()["config"]
+
+    def wan():
+        return WanModel(
+            model_type="t2v", patch_size=(1, 2, 2), text_len=4, in_dim=4, dim=16,
+            ffn_dim=32, freq_dim=2, text_dim=4, out_dim=4, num_heads=2, num_layers=2,
+            device="cpu", dtype=torch.float32, operations=operations).eval()
+
+    class _Holder(torch.nn.Module):
+        """The BaseModel shape the patcher and comfy's LoRA key map read."""
+
+        def __init__(self, diffusion_model):
+            super().__init__()
+            self.diffusion_model = diffusion_model
+            self.model_config = types.SimpleNamespace(unet_config={})
+
+    state = wan().state_dict()
+    state["blocks.0.self_attn.comfy_attention.config"] = encoded(
+        {"attention": "comfy_kitchen_sol", "tau": 0.7})
+    state["blocks.1.cross_attn.comfy_attention.config"] = encoded(
+        {"attention": "comfy_kitchen_int8"})
+    dit = wan()
+    dit.load_state_dict(state, strict=False)  # BaseModel.load_model_weights' call
+    cpu = torch.device("cpu")
+    patcher = ModelPatcher(_Holder(dit), cpu, cpu)
+    found = attention_pins.scan_loaded(patcher)
+    assert {path: (pin.kernel, pin.tau) for path, pin in found.items()} == {
+        "diffusion_model.blocks.0.self_attn.comfy_attention": ("comfy_kitchen_sol", 0.7),
+        "diffusion_model.blocks.1.cross_attn.comfy_attention": ("comfy_kitchen_int8", None),
+    }, f"attention keyword handoff: the detector read {found} from a pinned checkpoint"
+    for path, pin in found.items():
+        module = attention_pins._resolve(patcher.model, path)
+        assert pin.bound is (module.function is not None), (
+            "attention keyword handoff: the detector misread whether ComfyUI bound the kernel")
+
+    # A LoRA's pin through ComfyUI's own patcher, with the probe tool's keys.
+    tool = _probe_tool()
+    paths = tool.attention_paths("wan21", list(state))
+    assert paths == ["blocks.0.self_attn", "blocks.1.self_attn"], paths
+    lora = tool.build_lora(paths, tool.pin_config("comfy_kitchen_int8", None))
+    patched, _clip = comfy.sd.load_lora_for_models(patcher, None, lora, 1.0, 0)
+    staged = sorted(key for key in patched.object_patches if key.endswith(".comfy_attention"))
+    assert staged == [f"diffusion_model.{path}.comfy_attention" for path in paths], (
+        f"attention keyword handoff: a LoRA .config key no longer stages an object patch "
+        f"(staged {staged})")
+    summary = attention_pins.summarize([patched], sequence_parallel=False)
+    assert summary is not None and summary.kernels == {"comfy_kitchen_int8": 3}, (
+        f"attention keyword handoff: the detector missed a LoRA's pin ({summary})")
+    live = dit.blocks[1].self_attn.comfy_attention
+    assert live.config is None, "a staged LoRA pin is live before patch_model"
+    patched.patch_model(load_weights=False)
+    assert dit.blocks[1].self_attn.comfy_attention.config == {"attention": "comfy_kitchen_int8"}, (
+        "attention keyword handoff: patch_model no longer puts a LoRA's pin in place")
+    patched.unpatch_model(unpatch_weights=False)
+    assert dit.blocks[1].self_attn.comfy_attention is live
+
+    # A partial load clears every pin, as the bf16 and fp16 FSDP shard build does.
+    dit.load_state_dict({"blocks.0.self_attn.q.weight": state["blocks.0.self_attn.q.weight"]},
+                        strict=False)
+    attention_pins.note_injected(patcher)
+    cleared = attention_pins.summarize([patcher], sequence_parallel=False)
+    assert cleared is not None and cleared.dropped == {attention_pins.DROPPED_FSDP: 2}, (
+        "attention keyword handoff: a partial load_state_dict no longer clears a block's "
+        "pin, so the FSDP record may be wrong")
+
+    # The probe tool's key patterns against real classes.
+    families = {
+        "wan21": wan(),
+        "krea2": SingleStreamDiT(
+            features=32, tdim=8, txtdim=8, heads=2, kvheads=2, multiplier=1, layers=2,
+            patch=1, channels=4, txtlayers=3, txtheads=2, txtkvheads=2, device="cpu",
+            dtype=torch.float32, operations=operations),
+        "anima": MiniTrainDIT(
+            max_img_h=8, max_img_w=8, max_frames=1, in_channels=4, out_channels=4,
+            patch_spatial=2, patch_temporal=1, concat_padding_mask=False,
+            model_channels=24, num_blocks=2, num_heads=2, crossattn_emb_channels=8,
+            pos_emb_cls="rope3d", use_adaln_lora=True, adaln_lora_dim=4, device="cpu",
+            dtype=torch.float32, operations=operations),
+        "kandinsky5": Kandinsky5(
+            in_visual_dim=4, out_visual_dim=4, in_text_dim=8, in_text_dim2=8, time_dim=8,
+            model_dim=16, ff_dim=32, visual_embed_dim=16, patch_size=(1, 2, 2),
+            num_text_blocks=2, num_visual_blocks=2, axes_dims=(4, 2, 2), device="cpu",
+            dtype=torch.float32, operations=operations),
+        "qwen_image21": QwenImage21Transformer2DModel(
+            in_channels=64, out_channels=64, num_layers=2, attention_head_dim=64,
+            num_attention_heads=1, context_in_dim=4, mlp_ratio=1,
+            axes_dims_rope=(16, 16, 32), operations=operations),
+    }
+    for family, model in families.items():
+        keys = list(model.state_dict())
+        if family == "anima":
+            keys = ["net." + key for key in keys]  # the prefix Anima files carry
+        owners = sorted(name.rpartition(".")[0] for name, module in model.named_modules()
+                        if isinstance(module, attention_module.ComfyAttention))
+        matched = tool.attention_paths(family, keys, cross=True)
+        assert sorted(matched) == owners, (
+            f"attention keyword handoff: the probe tool's {family} pattern finds {matched}, "
+            f"and the model's pinnable attention is {owners}")
 
 
 def _assert_cfg_pp_uncond_pass_seam() -> None:

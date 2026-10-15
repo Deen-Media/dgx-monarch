@@ -379,6 +379,38 @@ def test_text_encoder_only_keys_add_nothing(tmp_path):
     assert priced == 0
 
 
+def test_a_lora_of_attention_configs_alone_adds_nothing(tmp_path):
+    """A pin-only LoRA (tools/make_pin_probe_lora.py) bakes nothing.
+
+    ComfyUI stages each ``.comfy_attention.config`` key as an object patch, a
+    new ComfyAttention module with no weight. A config key beside an
+    unrecognized container still prices the whole checkpoint.
+    """
+    ckpt_path = tmp_path / "m.safetensors"
+    _write_safetensors(ckpt_path, {"blocks.0.self_attn.q.weight": ("BF16", [64, 64]),
+                                   "blocks.1.self_attn.q.weight": ("BF16", [64, 64])})
+    tensors = read_safetensors_header(str(ckpt_path)).tensors
+    pins_only = tmp_path / "pins.safetensors"
+    _write_safetensors(pins_only, {
+        f"diffusion_model.blocks.{n}.self_attn.comfy_attention.config": ("U8", [40])
+        for n in (0, 1)}, metadata={"family": "wan21"})
+    stack = [{"name": "pins.safetensors", "strength": 1.0}]
+
+    assert capacity_lora_bake.lora_bake_bytes(
+        str(ckpt_path), tensors, stack, _resolver({"pins.safetensors": str(pins_only)})) == 0
+    assert capacity_lora_bake.patched_base_keys(tensors, [str(pins_only)]) == set()
+
+    mixed = tmp_path / "mixed.safetensors"
+    _write_safetensors(mixed, {
+        "diffusion_model.blocks.0.self_attn.comfy_attention.config": ("U8", [40]),
+        "diffusion_model.blocks.0.self_attn.q.lokr_w1": ("BF16", [4, 4]),
+    })
+    stack = [{"name": "mixed.safetensors", "strength": 1.0}]
+    assert capacity_lora_bake.lora_bake_bytes(
+        str(ckpt_path), tensors, stack, _resolver({"mixed.safetensors": str(mixed)})
+    ) == os.path.getsize(ckpt_path)
+
+
 def test_an_unmapped_target_prices_the_whole_checkpoint(tmp_path):
     """A target this module cannot map never under-charges: it falls back to
     the checkpoint's own file size rather than the (smaller) mapped subset."""
