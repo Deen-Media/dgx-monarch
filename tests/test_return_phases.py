@@ -170,6 +170,39 @@ def test_overlapping_part_reads_count_once_and_a_later_drop_adds_its_own_time():
     _assert_sums_to_total(record)
 
 
+class _Clocks:
+    """A wall clock and a monotonic clock the test steps by hand."""
+
+    def __init__(self):
+        self.wall, self.mono = 1_000_000.0, 0.0
+
+    def time(self):
+        return self.wall
+
+    def monotonic(self):
+        return self.mono
+
+
+def test_a_wall_clock_step_between_part_reads_leaves_the_split_unchanged(monkeypatch):
+    clocks = _Clocks()
+    monkeypatch.setattr(return_phases, "time", clocks)
+    monkeypatch.setattr(runtime_diagnostics, "time", clocks)
+    started = return_phases.mark()
+    # Two parts of one read start together and end a second apart. The host
+    # clock steps back an hour between the two ends.
+    clocks.wall, clocks.mono = clocks.wall + 1.0, 1.0
+    runtime_diagnostics.record_phase("rdma_read", 1.0, return_mode="rdma")
+    clocks.wall, clocks.mono = clocks.wall + 1.0 - 3600.0, 2.0
+    runtime_diagnostics.record_phase("rdma_read", 2.0, return_mode="rdma")
+    clocks.mono = 2.5
+    record = return_phases.split(started, return_phases.DRIVER_PHASES)
+    assert record["phases_s"] == {"rdma_read": 2.0, "unattributed": 0.5}
+    assert record["total_s"] == 2.5 and record["complete"] is True
+    # The ring still stamps the wall time for display.
+    events = runtime_diagnostics.events_since(0)["events"]
+    assert [event["finished_at"] for event in events] == [1_000_001.0, 996_402.0]
+
+
 def _total_s(described):
     return float(described.split("s (", 1)[0])
 

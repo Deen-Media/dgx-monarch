@@ -80,9 +80,12 @@ class PhaseMeasurements:
             # expose a half-updated count/bucket pair to the next snapshot.
             self._series[key] = row
             self._sequence += 1
+            # finished_at is wall time for display. Spans built from
+            # duration_s end at finished_monotonic_s, which shares its clock.
             event = {"sequence": self._sequence, "phase": phase_name,
                      "outcome": outcome, "return_mode": return_mode,
-                     "duration_s": duration, "finished_at": time.time()}
+                     "duration_s": duration, "finished_at": time.time(),
+                     "finished_monotonic_s": time.monotonic()}
             self._recent.append(event)
             return dict(event)
         finally:

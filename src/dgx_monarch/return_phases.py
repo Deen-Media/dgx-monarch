@@ -11,9 +11,11 @@ read and the end of it. It reports each phase's duration, and the time no
 phase covered as ``unattributed``. When a record reads ``complete: true``, its
 phases add up to its total within half a millisecond for each rounded value,
 the total included. The parts of one read run at once, so a phase counts the
-time any of its parts ran. The ring is process-wide: another native pack or
-read in the same process during the window adds its phases here, so the split
-is exact when one native return runs at a time.
+time any of its parts ran. Each span ends at the ring's monotonic stamp, the
+clock its duration uses, so a step in the host's wall clock cannot move it.
+The ring is process-wide: another native pack or read in the same process
+during the window adds its phases here, so the split is exact when one native
+return runs at a time.
 
 Three cases make a record partial. A window the ring evicted, or phases that
 cover more than the total, read ``complete: false``. A ring copy that finds the
@@ -71,7 +73,7 @@ def split(started: Mark, phases: tuple[str, ...], *, always: bool = False) -> di
         for event in window.get("events", ()):
             name = event.get("phase")
             if event.get("return_mode") == "rdma" and name in phases:
-                end, length = float(event["finished_at"]), float(event["duration_s"])
+                end, length = float(event["finished_monotonic_s"]), float(event["duration_s"])
                 spans.setdefault(name, []).append((end - length, end))
     if not spans and not always:
         return None
