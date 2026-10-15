@@ -758,6 +758,17 @@ def run_case(
     # one form the row names.
     samples, latent_form = scored_latent(samples, batch, sampling_cfg)
     latent_stats = _latent_statistics(samples)
+    # The last repeat's finish record: the kernels the model pins per block
+    # and whether they ran, beside the widget's attention (attention_pins.py).
+    from dgx_monarch.attention_pins import MODELS_FIELD, RECORD_FIELDS, describe
+    from dgx_monarch.telemetry import render_progress
+
+    last = render_progress.snapshot().get("last") or {}
+    pins = {field: last.get(field) for field in RECORD_FIELDS}
+    if last.get(MODELS_FIELD):  # dual-model cfg2: each model's own fields
+        pins[MODELS_FIELD] = last[MODELS_FIELD]
+    if pins["attention_pins"]:
+        print(f"  {describe(pins)}", flush=True)
     row = {
         "name": name,
         "topology": merged["topology"],
@@ -778,6 +789,7 @@ def run_case(
             mesh.handle.active_worker_args
             or mesh.handle.effective_worker_args(mesh.worker_args)
         ),
+        **pins,
         "status": "ok",
     }
 

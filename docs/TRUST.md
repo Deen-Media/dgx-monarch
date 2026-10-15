@@ -521,7 +521,7 @@ copied from historical evidence.
    [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
    [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"),
    with production call order at
-   [`sample_protocol.py:150-395`](../src/dgx_monarch/actor/sample_protocol.py#L150-L395 "anchor:run_sample").
+   [`sample_protocol.py:150-414`](../src/dgx_monarch/actor/sample_protocol.py#L150-L414 "anchor:run_sample").
    Driver and worker failures are covered by
    [`test_fleet.py:677-711`](../tests/test_fleet.py#L677-L711 "anchor:test_fleet_forces_stock_policy_until_exact_context_pass"),
    [`test_fleet.py:752-820`](../tests/test_fleet.py#L752-L820 "anchor:test_fleet_preserves_requested_policy_only_for_exact_context_pass"),
@@ -678,9 +678,9 @@ copied from historical evidence.
     stays unwaived and the ordinary worker guard refuses if it fires;
     active records are never evicted, and waived output cannot return without
     the records required for its permanent use row. This boundary is
-    [`consent_waiver.py:275-318`](../src/dgx_monarch/nodes/consent_waiver.py#L275-L318 "anchor:stamp_request") and
-    [`consent_waiver.py:321-343`](../src/dgx_monarch/nodes/consent_waiver.py#L321-L343 "anchor:_remember_audit"), covered by
-    [`test_accuracy_waivers.py:675-688`](../tests/test_accuracy_waivers.py#L675-L688 "anchor:test_a_513th_outstanding_waived_dispatch_is_not_stamped").
+    [`consent_waiver.py:276-319`](../src/dgx_monarch/nodes/consent_waiver.py#L276-L319 "anchor:stamp_request") and
+    [`consent_waiver.py:322-344`](../src/dgx_monarch/nodes/consent_waiver.py#L322-L344 "anchor:_remember_audit"), covered by
+    [`test_accuracy_waivers.py:677-690`](../tests/test_accuracy_waivers.py#L677-L690 "anchor:test_a_513th_outstanding_waived_dispatch_is_not_stamped").
     The vocabulary, builders and namespace are
     [`gate_audit_vocab.py:20-20`](../src/dgx_monarch/gate_audit_vocab.py#L20-L20 "anchor:AUDIT_KEY_PREFIX") and
     [`gate_audit.py:218-226`](../src/dgx_monarch/gate_audit.py#L218-L226 "anchor:record_waiver"), and the
@@ -1037,10 +1037,10 @@ copied from historical evidence.
   [`slab.py:436-480`](../src/dgx_monarch/actor/slab.py#L436-L480 "anchor:close"),
   [`slab_lifetime.py:203-252`](../src/dgx_monarch/actor/slab_lifetime.py#L203-L252 "anchor:release_after_explicit_unload"),
   [`slab_lifetime.py:255-378`](../src/dgx_monarch/actor/slab_lifetime.py#L255-L378 "anchor:cleanup_failed_load"),
-  [`model_store.py:399-442`](../src/dgx_monarch/actor/model_store.py#L399-L442 "anchor:_drop"),
-  [`model_store.py:456-456`](../src/dgx_monarch/actor/model_store.py#L456-L456 "anchor:unload_all"),
-  [`model_store.py:464-467`](../src/dgx_monarch/actor/model_store.py#L464-L467 "anchor:release_retained_cleanup"), and
-  [`model_store.py:475-489`](../src/dgx_monarch/actor/model_store.py#L475-L489 "anchor:snapshot").
+  [`model_store.py:402-445`](../src/dgx_monarch/actor/model_store.py#L402-L445 "anchor:_drop"),
+  [`model_store.py:459-459`](../src/dgx_monarch/actor/model_store.py#L459-L459 "anchor:unload_all"),
+  [`model_store.py:467-470`](../src/dgx_monarch/actor/model_store.py#L467-L470 "anchor:release_retained_cleanup"), and
+  [`model_store.py:478-492`](../src/dgx_monarch/actor/model_store.py#L478-L492 "anchor:snapshot").
   Retention, refusal, and recovery are covered by
   [`test_slab.py:256-279`](../tests/test_slab.py#L256-L279 "anchor:test_close_attempts_annex_after_primary_arena_failure"),
   [`test_slab.py:670-681`](../tests/test_slab.py#L670-L681 "anchor:test_close_retains_live_export_until_retry"),

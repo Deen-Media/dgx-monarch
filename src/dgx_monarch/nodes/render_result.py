@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import native_return_latch, return_phases
+from .. import attention_pins, native_return_latch, return_phases
 from ..adoption_evidence import (
     RESULT_KEY as _ADOPTION_EVIDENCE_RESULT_KEY,
 )
@@ -78,10 +78,16 @@ def _finish_render(
                  r.get("sample_s", -1), r.get("transition"), phases, r.get("latent_stats"))
         if isinstance(r.get("sample_s"), (int, float)):
             walls.append(float(r["sample_s"]))
-    if walls:  # observed only: the finish record's sampler wall is the slowest rank's
-        from ..telemetry import render_progress
+    from ..telemetry import render_progress
 
+    if walls:  # observed only: the finish record's sampler wall is the slowest rank's
         render_progress.note_sample(max(walls), token=telemetry_token)
+    # Which kernels the model pins per block and whether they ran, beside the
+    # widget's "attention" fact, which stays as it was (attention_pins.py).
+    pins = attention_pins.merge(results)
+    if pins is not None:
+        log.info("render %s", attention_pins.describe(pins))
+        render_progress.note_pins(pins, token=telemetry_token)
 
     native_failed: list[bool] = []  # this render's lifetime: did a native read fail?
 

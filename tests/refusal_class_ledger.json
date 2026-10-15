@@ -8,7 +8,7 @@
     "first_load_stock_memo": "no card this release: a rescue grant subsumes it for that load",
     "shard_quant_scale": "the unscoped spelling the card and the headless env var use; every raise site is family scoped",
     "slab_vouched_families": "no card this release: an explicit slab request still loads unvouched",
-    "sol_attn": "the unscoped spelling the card and the headless env var use; every raise site is family scoped"
+    "sol_attn": "the unscoped spelling the card and the headless env var use; every raise site is scoped, to a family or to the checkpoint pin route"
   },
   "untagged_by_module": {
     "actor/fsdp_checkpoint_pin.py": 8,
@@ -943,6 +943,12 @@
       "class": "P",
       "guard": null,
       "waivable": false
+    },
+    {
+      "site": "attention_pins.py::assert_waived::UnsupportedModelError#0",
+      "class": "K",
+      "guard": "sol_attn:checkpoint_pin",
+      "waivable": true
     },
     {
       "site": "capacity_agreement.py::_offer_rescue::SlabResidencyRescueOffer#0",

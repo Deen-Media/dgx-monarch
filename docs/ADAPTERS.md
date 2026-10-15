@@ -323,8 +323,8 @@ shape for all of them.
    per block (the comfy-kitchen int8 kernel, or the comfy-kitchen Sol
    kernel, `comfy_kitchen_sol`, with its tau) therefore renders this
    attention with the widget's kernel where stock ComfyUI on one GPU would
-   use the pinned one. The pack asks for the class-K Sol-Attn waiver only
-   when the widget selects Sol.
+   use the pinned one. Under sequence parallelism the pack asks for the
+   class-K Sol-Attn waiver only when the widget selects Sol.
 
    Under sequence parallelism no attention call honors a block's pin. The
    pack also leaves some stock attention in place, and those calls run
@@ -379,10 +379,120 @@ shape for all of them.
    parallelism: their sharded forwards call the pack's kernel directly,
    install an override that `wrap_attn` checks before the preference, or,
    as in Qwen Image 2.1, hand comfy no preference.
-   Topologies without sequence parallelism (cfg2, dp and single) leave
-   every stock attention call in place, so a pin runs there as it does in
-   stock ComfyUI, with no class-K card, and the render record still names
-   the widget's kernel. The "attention keyword handoff" seam in
+   Every topology without sequence parallelism (its ulysses and ring
+   degrees are both 1; on a two-rank pair that is single, cfg2, dp2,
+   cfg2+fsdp and dp2+fsdp) leaves every stock attention call in place, so a
+   pin runs there as it does in stock ComfyUI on one GPU, unless the FSDP
+   shard build clears it (below). Dropping the pin there would break the cfg2
+   same-math gate, which compares against one GPU, so the pack detects,
+   records and waives it instead (`attention_pins.py`):
+
+   * **Detection.** Once per fresh load, before injection and before
+     ComfyUI stages any LoRA, the pack walks the loaded model and keeps every
+     `comfy_attention` module whose `config` names a kernel, with the kernel
+     ComfyUI bound in `function`. Injection, which includes the FSDP shard
+     build, runs after that walk, so the pack then rereads only the pinned
+     modules. Each render reads the cached walk and adds the pins a LoRA
+     stages: ComfyUI's patcher stages a LoRA's `.config` key as an object
+     patch at `diffusion_model.<module>.comfy_attention`, and `patch_model`
+     puts it in place before the render. A model with no pin costs that one
+     walk per load and a read of the patcher's few object patches per
+     render; nothing runs per step.
+   * **Record.** The render finish record carries `attention_pins` (pinned
+     attention modules per kernel; Sol's tau is part of the kernel's name),
+     `attention_pins_ran` and `attention_pins_dropped` (modules per reason a
+     pin does not run). `attention_pins_ran` is true when ComfyUI dispatches
+     every pinned module to its pinned kernel, as on one GPU; the kernel
+     itself still runs exact attention on a masked call (Sol) or on a float32
+     call with `low_precision_attention` off (int8). The count is per
+     attention module, so a block whose self- and cross-attention are both
+     pinned counts twice. The fields sit beside the `attention` fact, which
+     still names the widget's kernel. The widget's kernel, which also feeds
+     the gate ledger's capability context, is unchanged, so no combination
+     gates again. The sidebar's last-render line and the
+     `benchmark/run_matrix.py` console show them as, for example, "pinned:
+     comfy_kitchen_sol tau=0.7 x 40 modules, ran"; run_matrix result rows
+     carry the three fields. Under dual-model cfg2 each cfg rank renders its
+     own checkpoint, so the fields add the two models' modules, as one rank
+     holding both does. When both models pin, `attention_pins_models` keeps
+     each model's own three fields under `cond` and `uncond`, run_matrix rows
+     carry it too, and the line gives one clause per model, for example
+     "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; uncond
+     model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped (kernel
+     unavailable on this host)".
+   * **Waiver.** Both kernels ComfyUI binds are approximate by construction.
+     `comfy_kitchen_sol` attends a routed subset of key blocks exactly and
+     pools the rest, so it is not identity preserving. `comfy_kitchen_int8`
+     rounds q, k and v to signed 8-bit integers and the softmax weights to
+     unsigned ones (comfy-kitchen's `int8_attention`; the rotation it applies
+     first keeps q.k exact, and the rounding that follows does not). A SAGE
+     kernel runs because the operator picked it on the Init widget, or
+     because auto picked it on a measured combination. A pinned int8 kernel
+     is neither: the checkpoint or LoRA picked it, and it runs on both legs
+     of the cfg2 same-math gate, so that gate cannot see it. So it takes the
+     waiver too. A kernel this project has not classified counts as
+     approximate. When a pinned approximate kernel would run, the render
+     refuses with class K under the guard `sol_attn:checkpoint_pin` before
+     any sampling, and runs, stamped, once the operator grants the Sol-Attn
+     waiver for that checkpoint, topology and world
+     ([docs/TROUBLESHOOTING.md #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+     The card says the kernel is approximate by construction and claims no
+     measurement for it. The pack decides from the pins, the LoRA stack and the
+     topology, never from whether ComfyUI could bind the kernel on this host,
+     so every rank of a fleet reaches the same verdict. That matters under
+     cfg2+fsdp and dp2+fsdp, which run no readiness exchange: a rank that
+     refused alone there would leave its peer waiting at the first collective
+     until the group timeout. On the other multi-rank topologies the check
+     also sits inside the sample path's load guard, so a rank that refuses
+     for any reason still crosses the readiness flag and its peer refuses
+     with it. A render on one GPU has no peer, so it reads its own binding: a
+     pin whose kernel ComfyUI could not bind there runs ComfyUI's default
+     backend and asks nothing. A pinned exact kernel would only be recorded;
+     ComfyUI ships none today.
+
+   Under sequence parallelism the pack asks nothing and the record says it
+   dropped the pins. The record names two other cases where a pin does not
+   run. The FSDP shard build of a bf16 or fp16 checkpoint reloads the
+   sharded weights through `load_state_dict`, and `ComfyAttention` clears
+   its config on any load whose state dict lacks the key, so under cfg2+fsdp
+   and dp2+fsdp that checkpoint's own pins do not run. An fp8 or int8
+   checkpoint takes the direct wrap, which reloads nothing, so its pins stay,
+   run and ask for the waiver as on a resident topology. A LoRA's pin is
+   expected to run under either wrap, since `patch_model` puts it in place
+   after the wrap; no hardware run has checked that yet. A kernel ComfyUI
+   cannot bind on a host leaves ComfyUI's default backend running there, as
+   on one GPU.
+
+   ComfyUI decodes the config tensor with `Tensor.numpy()`, which a GPU
+   tensor refuses, so slab residency and the low-RSS LoRA staging keep these
+   uint8 tensors on the host. Without that, a pinned checkpoint under slab
+   residency and a pinned LoRA under low-RSS staging would each fail to load:
+   a CPU reproduction shows the decode error, though no hardware load has
+   checked either path yet. Slab residency prices a LoRA that holds only
+   these tensors as no bake, because it patches no weight.
+
+   Under dual-model cfg2 each rank checks the checkpoint it holds and its
+   LoRA stack, and the dm-cfg2 readiness exchange makes the other rank
+   refuse with it. The driver keys every grant of that render on the
+   conditional checkpoint, so the card names it even when only the
+   unconditional checkpoint pins, and the card's detail line names the
+   checkpoint that pins.
+
+   The first-use ceremony carries no waiver, so a ceremony on a pinned
+   combination ends on this guard, as it does for every class-K guard, and
+   changes no residency setting. On a resident topology a risky combination
+   (a LoRA stack, or slab residency requested) then renders under stock
+   residency, the limit TROUBLESHOOTING #84 describes for Sol. FSDP has no
+   stock residency to fall back to. Under `auto_gate=first_use`, a render on
+   cfg2+fsdp or dp2+fsdp needs a Gate PASS, and the ceremony that would earn
+   one ends on this guard, so a pin that runs there (a LoRA's, or an fp8 or
+   int8 checkpoint's) refuses even after the grant. Render it on uly2+fsdp,
+   where dgx-monarch drops the pin, with `auto_gate=off`, or on a topology
+   without fsdp. `tools/make_pin_probe_lora.py` writes a LoRA that pins a
+   kernel on one family's attention modules, for a hardware check without a
+   patched checkpoint.
+
+   The "attention keyword handoff" seam in
    `tests/canary/comfy_seam_contracts.py` holds the Anima op, the
    `usp_options` override, the Qwen Image 2.1 attention and the Wan-Animate 2
    attention against the real ComfyUI tree, and with tiny real models the
@@ -391,7 +501,13 @@ shape for all of them.
    refiner and the LTX audio-video text connectors. The other sites (SCAIL,
    WanDancer cross-attention, LTX audio-video `attn2` and `audio_attn2`,
    OmniGen2, Boogu and the Hunyuan token refiner) have CPU tests with
-   stand-in models (`tests/test_stock_attention_pins.py`).
+   stand-in models (`tests/test_stock_attention_pins.py`). The same seam
+   loads a tiny real Wan 2.1 model with two real config tensors and applies a
+   real LoRA pin through ComfyUI's own patcher, and the detector must report
+   both; it also checks the probe tool's key patterns against tiny real
+   Krea2, Anima, Kandinsky 5, Wan 2.1 and Qwen Image 2.1 models. The
+   detection, record and waiver have CPU tests with stand-in modules
+   (`tests/test_attention_pins.py`, `tests/test_attention_pins_wiring.py`).
 
    **Lens joint order, key bias and text rows.** Each Lens block joins
    `[image, text]`, so Ulysses' head all-to-all gathers `[image0, text0,

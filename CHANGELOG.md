@@ -2,6 +2,58 @@
 
 ## [Unreleased]
 
+- Detect, record and waive a per-module attention kernel pin where it runs,
+  on topologies without sequence parallelism (closes issue #30). ComfyUI lets
+  a checkpoint, or a LoRA with `.comfy_attention.config` keys, pin
+  comfy-kitchen's Sol or int8 attention kernel on each attention module.
+  Under sequence parallelism the pack already drops every pin; on single,
+  cfg2, dp2, cfg2+fsdp and dp2+fsdp every stock call runs it as on one GPU,
+  yet the render record named only the Init widget's kernel and the pack
+  asked for no waiver. The worker now walks each fresh load once, before
+  injection and before any LoRA is staged, keeps every `comfy_attention`
+  module whose config names a kernel, and adds the pins a LoRA stages (the
+  patcher's object patches) at each render; nothing runs per step
+  (`attention_pins.py`). The render finish record gains `attention_pins`
+  (pinned attention modules per kernel, Sol's tau in the name),
+  `attention_pins_ran` and `attention_pins_dropped` beside the unchanged
+  `attention` fact, so no combination gates again; the sidebar's last-render
+  line, the driver log and the `benchmark/run_matrix.py` console show them,
+  and run_matrix rows carry them. Under dual-model cfg2 the fields add both
+  models' modules; when both models pin, `attention_pins_models` keeps each
+  model's own fields and the line names each. Both kernels are approximate by
+  construction (Sol pools the key blocks it does not route to; int8 rounds
+  q, k, v and the attention weights to 8 bits), so a pinned one that would
+  run refuses with class K under the new guard `sol_attn:checkpoint_pin`
+  before any sampling, until the operator grants the existing Sol-Attn
+  waiver
+  ([TROUBLESHOOTING #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+  The card now says "an approximate attention kernel", names the pinned
+  kernel, its module count and that a sequence-parallel topology drops the
+  pin, and states no measurement for a pinned kernel. Every rank of a fleet
+  reaches the same verdict from the pins, the LoRA stack and the topology,
+  never from whether its host could bind the kernel, because cfg2+fsdp and
+  dp2+fsdp run no readiness exchange. The FSDP shard build of a bf16 or fp16
+  checkpoint clears that checkpoint's own pins, and the record says so; an
+  fp8 or int8 checkpoint takes the direct wrap and keeps them. Under
+  `auto_gate=first_use` a pin that runs on cfg2+fsdp or dp2+fsdp refuses even
+  after the grant, because the Gate ceremony renders without waivers and FSDP
+  has no stock residency to fall back to; uly2+fsdp, `auto_gate=off` or a
+  topology without fsdp renders it. Under dual-model cfg2 the card names the
+  conditional checkpoint, on which the driver keys every grant, and no
+  dispatch's card can name a checkpoint an earlier dispatch bound. ComfyUI
+  decodes the config with `Tensor.numpy()`, so slab residency and the
+  low-RSS LoRA staging now keep the config tensor on the host, and slab
+  residency prices a LoRA of configs alone as no bake.
+  `tools/make_pin_probe_lora.py` writes a LoRA that pins a kernel on one
+  family's attention modules (Krea2, Anima, Kandinsky 5, Wan 2.1 or Qwen
+  Image 2.1) from a checkpoint's header, for a hardware check without a
+  patched checkpoint. CPU tests cover detection on nested stand-in models, a
+  LoRA's pin, the record and the refusal under each topology, the fp8 FSDP
+  wrap, the dual-model cfg2 card and the cost; canary seam 39 loads a tiny
+  real Wan 2.1 model with real config tensors, applies a real LoRA pin
+  through ComfyUI's own patcher, pins the attribute and function names the
+  detector reads, and checks the probe tool's patterns against tiny real
+  models of all five families.
 - Export ownership occupancy as Monarch up-down counters when
   `[monarch.diagnostics] metrics = true` (issue #35):
   `dgxm.return.live_handoffs`, `dgxm.return.pending_read_jobs` (the read
