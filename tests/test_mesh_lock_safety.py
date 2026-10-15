@@ -790,6 +790,14 @@ def test_cluster_native_baseexception_preserves_identity_without_extra_work(
     # first attempt's ordinary failure into a released fail-fast here.
     monkeypatch.setattr(mesh_teardown, "released_predecessor_recently",
                         lambda **_k: False)
+    # Each loop's id reading, which the attach dials; no ssh runs.
+    from dgx_monarch.cli import listener_generation
+
+    monkeypatch.setattr(
+        listener_generation, "fleet",
+        lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
+                                                  "proc_id": "aaaaaaaaaaaa0001"}
+                                   for host in config.hosts})
 
     class NativeAbort(BaseException):
         def __str__(self):

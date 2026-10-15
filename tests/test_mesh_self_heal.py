@@ -11,7 +11,7 @@ def _stub(monkeypatch, probe_results, attach_results, restart_calls):
 
     from dgx_monarch import mesh as mesh_mod
     from dgx_monarch import mesh_attach
-    from dgx_monarch.cli import worker_health
+    from dgx_monarch.cli import listener_generation, worker_health
 
     fake_lifecycle = types.SimpleNamespace(
         restart=lambda config, sync=True: restart_calls.append(sync) or True,
@@ -34,6 +34,12 @@ def _stub(monkeypatch, probe_results, attach_results, restart_calls):
         return result
 
     monkeypatch.setattr(mesh_mod, "_attach_once", fake_attach_once)
+    # Each loop's id reading, which the attach dials; no ssh runs.
+    monkeypatch.setattr(
+        listener_generation, "fleet",
+        lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
+                                                  "proc_id": "aaaaaaaaaaaa0001"}
+                                   for host in config.hosts})
     monkeypatch.setattr(mesh_mod, "_TRANSPORT_POISON", None)
     monkeypatch.setattr(mesh_mod, "_TRANSPORT_BIND", None)
     monkeypatch.setattr(cli_pkg, "lifecycle", fake_lifecycle, raising=False)

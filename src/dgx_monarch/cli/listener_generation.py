@@ -1,11 +1,16 @@
-"""Identify the process holding a worker's listener and its generation.
+"""Identify the process holding a worker's listener, its generation and its id.
 
 A LISTEN row alone does not show whether a worker restarted. Hash the boot ID,
 owner PID and process start time into a short generation token that changes
 with listener ownership without disclosing host identity.
 
-Read procfs, the generation marker and ``systemctl --user show`` fields
-passively; never open the worker's protocol socket.
+The same line carries the id that process serves (``proc_id``), read from its
+actor ledger loop record. The driver runs this probe on every host before
+every attach and dials only that id, so the reading gates the attach
+(``worker_proc_id.py``); doctor fails a listening loop without one.
+
+Read procfs, the generation marker, the actor ledger and ``systemctl --user
+show`` fields passively; never open the worker's protocol socket.
 """
 from __future__ import annotations
 
@@ -13,9 +18,11 @@ import subprocess
 from collections.abc import Mapping
 from typing import Any
 
+from .. import worker_proc_id
 from ..config import ClusterConfig, HostConfig
+from .actor_ledger import LEDGER_REL, LEDGER_VERSION
 from .lifecycle_generation import GENERATION_FORMAT, GENERATION_MARKER_REL
-from .probe_certainty import OK, UNOBSERVED, WARN
+from .probe_certainty import FAIL, OK, UNOBSERVED, WARN
 from .worker_health import _UNIT_NAME, _proc_listener_target
 
 GEN_FIELD = "listener_gen"
@@ -24,7 +31,7 @@ ENTRY = "docs/TROUBLESHOOTING.md #101"
 NAME_SUFFIX = "listener generation"
 
 _BODY = '''
-import hashlib as _gh, os as _go, pathlib as _gp, subprocess as _gs
+import hashlib as _gh, json as _gj, os as _go, pathlib as _gp, re as _gr, subprocess as _gs
 
 def _gen_owner(proc_path, endpoint):
     inodes = set()
@@ -84,21 +91,43 @@ def _gen_marker(identity):
         return "malformed"
     return "match" if _lines[3] == identity else "stale"
 
+def _gen_proc_id(pid, born, boot):
+    try:
+        _raw = _gj.loads((_gp.Path.home() / _gen_ledger_rel).read_text())
+    except FileNotFoundError:
+        return "unpublished"
+    except (OSError, ValueError):
+        return "unreadable"
+    _loop = _raw.get("loop") if isinstance(_raw, dict) else None
+    if (not isinstance(_loop, dict) or _raw.get("version") != _gen_ledger_version
+            or str(_raw.get("boot_id", "")) != boot or str(_loop.get("pid")) != pid
+            or str(_loop.get("starttime")) != born):
+        return "unpublished"
+    _value = _loop.get("proc_id")
+    if _value is None:
+        return "bare"
+    if isinstance(_value, str) and _gr.fullmatch("[0-9a-f]{16}", _value):
+        return _value
+    return "malformed"
+
 def _gen_report():
     _pid = _gen_owner(_gen_proc, _gen_endpoint)
     _state, _restarts, _started = _gen_unit()
     _tail = f"unit_state={_state} unit_restarts={_restarts} unit_started={_started}"
     if _pid == "":
-        return f"{_gen_prefix}none loop_pid=none age_s=none listening=false {_tail} marker=none"
+        return (f"{_gen_prefix}none loop_pid=none age_s=none listening=false {_tail} "
+                "marker=none proc_id=none")
     if _pid is None:
-        return f"{_gen_prefix}unknown loop_pid=unknown age_s=unknown listening=true {_tail} marker=unknown"
+        return (f"{_gen_prefix}unknown loop_pid=unknown age_s=unknown listening=true {_tail} "
+                "marker=unknown proc_id=unknown")
     _born = (_gp.Path("/proc") / _pid / "stat").read_text().rsplit(") ", 1)[1].split()[19]
     _boot = _gp.Path("/proc/sys/kernel/random/boot_id").read_text().strip()
     _up = float(_gp.Path("/proc/uptime").read_text().split()[0])
     _age = _up - int(_born) / _go.sysconf("SC_CLK_TCK")
     _gen = _gh.sha256(f"{_boot}|{_pid}|{_born}".encode()).hexdigest()[:12]
     return (f"{_gen_prefix}{_gen} loop_pid={_pid} age_s={_age:.0f} listening=true "
-            f"{_tail} marker={_gen_marker(_pid + ':' + _born)}")
+            f"{_tail} marker={_gen_marker(_pid + ':' + _born)} "
+            f"proc_id={_gen_proc_id(_pid, _born, _boot)}")
 
 try:
     print(_gen_report())
@@ -117,6 +146,8 @@ def probe_source(address: str) -> str:
         f"_gen_unit_name = {_UNIT_NAME!r}\n"
         f"_gen_marker_rel = {GENERATION_MARKER_REL!r}\n"
         f"_gen_marker_format = {GENERATION_FORMAT!r}\n"
+        f"_gen_ledger_rel = {LEDGER_REL!r}\n"
+        f"_gen_ledger_version = {LEDGER_VERSION!r}\n"
     )
     return header + _BODY
 
@@ -193,8 +224,10 @@ def doctor_row(host_name: str,
                fields: Mapping[str, str]) -> tuple[str, str, str, str, bool]:
     """Return (status, name, detail, reason, critical) for listener generation.
 
-    This advisory row identifies the listener and its age. The Worker service row
-    already fails when the loop is not listening.
+    The row identifies the listener, its age and the id it serves. It fails a
+    listening loop whose record definitely publishes no id, because the
+    driver refuses to attach to it; an unread id stays an unobserved warning.
+    The Worker service row already fails when the loop is not listening.
     """
     name = f"{host_name} {NAME_SUFFIX}"
     generation = str(fields.get("gen", ""))
@@ -206,11 +239,19 @@ def doctor_row(host_name: str,
     if generation == "none":
         return (WARN, name,
                 f"no process holds the worker LISTEN socket ({ENTRY})", "", False)
+    proc_id = str(fields.get(worker_proc_id.FIELD, worker_proc_id.UNKNOWN))
     detail = (
         f"gen={generation} pid={fields.get('loop_pid', 'unknown')} "
         f"age_s={fields.get('age_s', 'unknown')} "
         f"restarts={fields.get('unit_restarts', 'unknown')} "
         f"started={fields.get('unit_started', 'unknown')} "
-        f"marker={fields.get('marker', 'unknown')}"
+        f"marker={fields.get('marker', 'unknown')} proc_id={proc_id}"
     )
-    return OK, name, detail, "", False
+    if worker_proc_id.is_value(proc_id):
+        return OK, name, detail, "", False
+    reason, remedy = worker_proc_id.problem(fields)
+    detail = (f"{detail}; {reason}, so the driver refuses to attach: {remedy} "
+              f"({worker_proc_id.ENTRY})")
+    if proc_id in worker_proc_id.DEFINITE:
+        return FAIL, name, detail, "", False
+    return WARN, name, detail, UNOBSERVED, False

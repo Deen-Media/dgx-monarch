@@ -173,6 +173,20 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
 
 - Worker services bind explicit `tcp://<fabric-ip>:<port>` addresses from
   config, never hostname-derived ones. Preflight rejects loopback advertisement.
+- Worker identity is per start. Each Worker loop start serves
+  `<proc-id>@tcp://<fabric-ip>:<port>` with a new Monarch proc id
+  (`worker_proc_id.py`) and records the id in its actor ledger loop record
+  before it listens. The driver dials only an id it read from that host's
+  listener-generation probe for the current attempt, and keeps every
+  bookkeeping key (the released check, the attach trace, errors) on the bare
+  address. When the first reading of an attach lacks a loop's id, the attach
+  refuses before anything dials, with its own type, `WorkerProcIdError`, and
+  the session stays usable. The first dial to a loop whose id changed since
+  this driver last dialed it is primed with one throwaway message. The driver
+  still enables one process transport, once, so it re-attaches to a restarted
+  loop only within Monarch's message delivery timeout; beyond it the recovery
+  is a fresh driver. Mechanism and evidence:
+  [TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach).
 - The ComfyUI process is the single Monarch client: when it dies its procs die,
   so no orphaned process holds a model. A supervision-class failure on a
   setup, load or render dispatch evicts the fleet, so the next Init or render
@@ -1639,6 +1653,9 @@ dgx-monarch/
 │   │                          #   at bootstrap, lease trigger armed by the client)
 │   ├── client_lease.py        # driver-side lease renewer for live fleets
 │   ├── mesh.py                # attach/spawn/shutdown, registry lock + callback
+│   ├── mesh_attach.py         # transport enable, the pre-dial id gate, heal
+│   │                          #   and the in-process retry
+│   ├── worker_proc_id.py      # per-start Worker proc id: derive, dial, refuse
 │   ├── mesh_capacity_consent.py # capacity-rescue consent constants + grant check
 │   ├── mesh_creation.py       # creation publication, claims, and recovery
 │   ├── mesh_lease.py          # setup-generation and raw-RDMA-read leases
@@ -1725,7 +1742,8 @@ dgx-monarch/
 │       ├── lifecycle_scripts.py # lock-held Worker start/stop payload builders
 │       ├── lifecycle_systemd.py # canonical legacy unit + ownership proof
 │       ├── listener_generation.py # which process holds a loop's LISTEN socket,
-│       │                       #   how long it has held it, and the doctor row
+│       │                       #   how long it has held it, the id it serves,
+│       │                       #   and the doctor row
 │       ├── operator_receipt.py # bounded disclosure-safe receipt schema/writer
 │       ├── receipt_sanitize.py # conservative receipt-note redaction leaf
 │       ├── sol_attn_prerequisites.py # passive optional dependency/header/cache evidence

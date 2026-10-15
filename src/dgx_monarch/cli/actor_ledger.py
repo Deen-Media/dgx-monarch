@@ -20,6 +20,13 @@ allowing ``dgxm down`` to work on hosts without a usable ledger.
 ``orphan_since`` records when the owning loop first failed its identity check.
 It establishes provenance, not attachment state. Socket counts are read live
 through ``cli/proc_identity.established_counts`` when needed.
+
+The loop record also carries the id the loop serves on this start
+(``worker_proc_id.py``). ``publish_loop`` writes it before the loop serves, so
+the listener-generation probe never finds a listener whose record names the
+previous loop. A sweep's ``prune_dead_rows`` writes back the loop record it
+read; when that read predates the loop's first write, the next tracker tick
+restores the record, because its payload then differs from the file.
 """
 from __future__ import annotations
 
@@ -268,16 +275,24 @@ def prune_dead_rows(
 
 
 def loop_identity(
-    address: str, *, pid: int | None = None, proc_root: str = proc_identity.PROC_ROOT
+    address: str, *, pid: int | None = None, proc_root: str = proc_identity.PROC_ROOT,
+    proc_id: str | None = None,
 ) -> dict[str, Any]:
-    """Return this loop's identity for actor ownership records."""
+    """Return this loop's identity for actor ownership records.
+
+    ``proc_id`` is the id value the loop serves; a record without one is a
+    loop that serves the bare address.
+    """
     loop_pid = os.getpid() if pid is None else int(pid)
     stat = proc_identity.read_stat(loop_pid, proc_root)
-    return {
+    identity: dict[str, Any] = {
         "pid": loop_pid,
         "starttime": 0 if stat is None else stat[1],
         "address": str(address),
     }
+    if proc_id is not None:
+        identity["proc_id"] = str(proc_id)
+    return identity
 
 
 def _children_index(proc_root: str) -> dict[int, list[int]]:
@@ -396,12 +411,13 @@ def tick(
     home: str | None = None,
     now: float | None = None,
     writer: Callable[..., bool] = write_ledger,
+    proc_id: str | None = None,
 ) -> dict[str, Any]:
     """One tracker observation: read, adopt, refresh, write when it changed."""
     moment = time.time() if now is None else float(now)
     boot = proc_identity.boot_id(proc_root)
     current = read_ledger(path, home=home, boot=boot, proc_root=proc_root)
-    loop = loop_identity(address, pid=loop_pid, proc_root=proc_root)
+    loop = loop_identity(address, pid=loop_pid, proc_root=proc_root, proc_id=proc_id)
     merged = {
         "version": LEDGER_VERSION,
         "boot_id": boot,
@@ -418,6 +434,32 @@ def tick(
     if stale or _payload(merged) != _payload(current):
         writer(merged, path, home=home, proc_root=proc_root)
     return merged
+
+
+def publish_loop(
+    address: str,
+    *,
+    proc_id: str,
+    loop_pid: int | None = None,
+    proc_root: str = proc_identity.PROC_ROOT,
+    path: str | None = None,
+    home: str | None = None,
+) -> bool:
+    """Write this loop's record, served id included, before the loop serves.
+
+    The tracker thread's first tick can land after the listener exists, and
+    the driver's probe would then read the previous loop's record. Returns
+    whether the file now names this loop with this id; never raises.
+    """
+    try:
+        tick(address, loop_pid=loop_pid, proc_root=proc_root, path=path,
+             home=home, proc_id=proc_id)
+        loop = read_ledger(path, home=home, proc_root=proc_root)["loop"]
+    except Exception:
+        return False
+    owner = os.getpid() if loop_pid is None else int(loop_pid)
+    return (isinstance(loop, dict) and loop.get("proc_id") == proc_id
+            and loop.get("pid") == owner)
 
 
 def _track(address: str, tick_s: float, sleeper: Callable[[float], None],

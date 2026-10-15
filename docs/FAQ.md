@@ -304,9 +304,10 @@ third-party code. [LICENSE-NOTES.md](../LICENSE-NOTES.md).
 **One Spark died mid-render.**
 Once the box is back, close ComfyUI, run `dgxm restart` so both Worker
 services restart together, and start ComfyUI again ([TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
-A ComfyUI process cannot attach again once its fleet changed under it: a box
-that died, a Worker service that restarted, or old workers the driver had to
-confirm had stopped. A dead actor process retires the
+A ComfyUI process attaches again on its own only to a Worker service that came
+back within Monarch's 30 s message delivery timeout, since each start serves a
+new id (CPU-tested; the two-Spark recheck is pending). A box that was down
+longer leaves the driver's channel to it closed. A dead actor process retires the
 whole attached mesh, and its error names the endpoint and host
 ([TROUBLESHOOTING.md #4](TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)). A worker exception is different: it comes back to the
 caller and leaves its actor alive.
@@ -314,8 +315,7 @@ caller and leaves its actor alive.
 **I hit Stop in ComfyUI.**
 It stops at a denoise-step boundary, not mid-kernel, and a pipeline abort
 cancels the whole queued window first. If a GPU kernel still has not come back
-after the abort deadline, close ComfyUI, then run `dgxm restart`: a Worker
-service restarted under a live session cannot be attached from it again
+after the abort deadline, close ComfyUI, then run `dgxm restart`
 ([TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 
 **It said it refused. Did it crash?**
