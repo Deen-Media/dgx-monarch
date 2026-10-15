@@ -161,9 +161,10 @@ metadata reads the new version
   pin, and states no measurement for a pinned kernel. Every rank of a fleet
   reaches the same verdict from the pins, the LoRA stack and the topology,
   never from whether its host could bind the kernel, because cfg2+fsdp and
-  dp2+fsdp run no readiness exchange. The FSDP shard build of a bf16 or fp16
-  checkpoint clears that checkpoint's own pins, and the record says so; an
-  fp8 or int8 checkpoint takes the direct wrap and keeps them. Under
+  dp2+fsdp run no readiness exchange. An fp8 or int8 checkpoint takes the
+  FSDP direct wrap and keeps its pins. A bf16 or fp16 checkpoint whose own
+  header pins refuses class P at the FSDP launch check before any shard
+  build, because its uint8 config tensors leave the precision unproven. Under
   `auto_gate=first_use` a pin that runs on cfg2+fsdp or dp2+fsdp refuses even
   after the grant, because the Gate ceremony renders without waivers and FSDP
   has no stock residency to fall back to; uly2+fsdp, `auto_gate=off` or a
@@ -183,6 +184,34 @@ metadata reads the new version
   through ComfyUI's own patcher, pins the attribute and function names the
   detector reads, and checks the probe tool's patterns against tiny real
   models of all five families.
+- Label the sweep cells of a checkpoint that pins an attention kernel. The
+  matrix had no rule for these pins, so it would have labelled every such
+  cell `render`. It now reads each `comfy_attention` config tensor from the
+  header of every checkpoint a graph loads and hands the pins to the
+  runtime's own guard (`attention_pins.assert_waived`), basis `header`. On
+  single, cfg2, dp2, cfg2+fsdp and dp2+fsdp the cell reads `refuse:K` under
+  `sol_attn:checkpoint_pin`. It is waivable only where a grant lets the cell
+  render: not on an FSDP preset at `auto_gate=first_use`, where the Gate
+  ceremony renders without the waiver, and not on cfg2 or cfg2+fsdp at CFG
+  1.0 without a cfg++ sampler, where a granted leg meets the cfg refusal.
+  A pinned Chroma nvfp4 file on cfg2 meets the sharded nvfp4 bar first and
+  carries no waiver either, because the runner grants one card per cell and
+  the granted leg would meet the pin guard.
+  The runner now dismisses the card such a refusal raises, so a later cell's
+  grant still finds exactly one card of its kind. A bf16 or fp16 file that
+  pins refuses class P at the FSDP launch check first, and a sol kernel
+  without sequence parallelism refuses class P before any load. uly2 and
+  ring2 drop the pins and render, but their single-GPU reference runs the
+  pinned kernel, so every cell scored against that reference, cfg2 and dp2
+  included, takes the `waived-nrms` bar: the difference is recorded and no
+  floor applies. The rule reads checkpoint headers only, so the matrix drops
+  the lora-on arm of a template whose LoRA carries a pin config, and the
+  artifact set of a checkpoint whose config it cannot predict, each with a
+  note. ADAPTERS, MODELS and TROUBLESHOOTING #117 no longer say the FSDP
+  shard build clears a bf16 or fp16 checkpoint's own pins: the launch check
+  refuses such a file first. No current template uses a pinned checkpoint,
+  so no existing cell's label or bar changes
+  ([SWEEP](docs/SWEEP.md#1-cells-and-expected-results)).
 - Export ownership occupancy as Monarch up-down counters when
   `[monarch.diagnostics] metrics = true` (issue #35):
   `dgxm.return.live_handoffs`, `dgxm.return.pending_read_jobs` (the read

@@ -382,8 +382,8 @@ shape for all of them.
    Every topology without sequence parallelism (its ulysses and ring
    degrees are both 1; on a two-rank pair that is single, cfg2, dp2,
    cfg2+fsdp and dp2+fsdp) leaves every stock attention call in place, so a
-   pin runs there as it does in stock ComfyUI on one GPU, unless the FSDP
-   shard build clears it (below). Dropping the pin there would break the cfg2
+   pin runs there as it does in stock ComfyUI on one GPU, with the FSDP
+   cases below. Dropping the pin there would break the cfg2
    same-math gate, which compares against one GPU, so the pack detects,
    records and waives it instead (`attention_pins.py`):
 
@@ -454,10 +454,15 @@ shape for all of them.
    dropped the pins. The record names two other cases where a pin does not
    run. The FSDP shard build of a bf16 or fp16 checkpoint reloads the
    sharded weights through `load_state_dict`, and `ComfyAttention` clears
-   its config on any load whose state dict lacks the key, so under cfg2+fsdp
-   and dp2+fsdp that checkpoint's own pins do not run. An fp8 or int8
-   checkpoint takes the direct wrap, which reloads nothing, so its pins stay,
-   run and ask for the waiver as on a resident topology. A LoRA's pin is
+   its config on any load whose state dict lacks the key, so a pin that
+   reached that build would not run, and the record would name it. No
+   safetensors checkpoint whose own header pins reaches it today: its uint8
+   config tensors leave the FSDP launch check unable to prove a bf16 or fp16
+   core (`fsdp_islands.header_core_kind`), so every `+fsdp` preset refuses
+   that file class P (`validate_fsdp_launch_quant`) before any shard build.
+   An fp8 or int8 checkpoint takes the direct wrap, which reloads nothing, so
+   its pins stay, run and ask for the waiver as on a resident topology. A
+   LoRA's pin is
    expected to run under either wrap, since `patch_model` puts it in place
    after the wrap; no hardware run has checked that yet. A kernel ComfyUI
    cannot bind on a host leaves ComfyUI's default backend running there, as
