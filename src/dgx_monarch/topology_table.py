@@ -37,7 +37,9 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "GPU and 1.21x to 1.29x faster than uly2 with SAGE_AUTO at 1152 to 1536 square, "
              "at CFG 1 under euler_cfg_pp and at CFG 4.5 under euler, and RAW BF16 "
              "bit-identical and 1.23x to 1.26x faster than uly2 at 1152 to 1536; RAW INT8 "
-             "read bit-identical but 0.97x to 1.08x against uly2 and takes row 12"),
+             "read bit-identical but 0.97x to 1.08x against uly2 and takes row 12, and so "
+             "does a Kroma file (2026-10-16: its shipped zeroed negative folds on one GPU "
+             "and cfg2 read 1-step NRMS 0.0087 to 0.0108)"),
     AutoRule(11, "krea2", ("fp8",), 1.2, _INF, 2, {"ulysses": 2}, True,
              "USP wins >= 1.5 MP; sage speeds up fp8 USP at high res (about 5-8% at 1536 in the "
              "2026-06 campaign, fp8 only; int8 was never benchmarked with sage); 2026-10-06 Turbo "
@@ -52,7 +54,8 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "1448, INT8 at 1536; was 1-step NRMS 0.010 BF16 and 0.016 INT8 that "
              "day before the fix); Campaign K (2026-10-14) read RAW INT8 cfg2 "
              "bit-identical but 0.97x to 1.08x against uly2 at 1152 to 1536, so "
-             "INT8 keeps this row where row 15 takes BF16"),
+             "INT8 keeps this row where row 15 takes BF16; a Kroma BF16 file keeps it "
+             "too, because row 15's record excludes Kroma (2026-10-16)"),
     # --- chroma (flux-family DiT) -----------------------------------------
     AutoRule(20, "chroma", (), 0.0, 1.2, 2, {"cfg": 2}, False,
              "cfg2 below 1.2 MP; on the shipped graph at 1024 square on 2026-10-01 it read "

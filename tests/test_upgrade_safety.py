@@ -278,23 +278,27 @@ def test_pin_warning_sends_only_a_release_slot_to_verify(monkeypatch, capsys, po
 # --- Kroma's cfg2 cell -------------------------------------------------------------------
 
 
-def test_kroma_bf16_reaches_the_krea2_cfg2_row_and_the_matrix_says_untested():
+def test_kroma_bf16_is_measured_off_the_krea2_cfg2_row_and_the_matrix_says_so():
     from dgx_monarch.topology import choose_auto_topology
     from test_docs_status_sync import (
         _AUTO_MARK,
+        _CONSTRAINED_MARK,
         _DISTILLED_CFG1_ROWS,
         _MODE_COLUMN,
-        _PENDING_MARK,
+        _ROW_VARIANT,
         _STARRED_MODE_GRANT,
         _support_matrix_rows,
     )
 
-    # The vendor card allows CFG up to 1.5; a BF16 Kroma file reads family krea2.
+    # The vendor card allows CFG up to 1.5. A Krea2 BF16 file takes row 15 there;
+    # the Kroma variant read off one GPU on 2026-10-16 and keeps row 12.
     assert choose_auto_topology("krea2", "bf16", 1.5, 2, cfg_value=1.5).topology.cfg == 2
-    assert choose_auto_topology("krea2", "bf16", 1.05, 2, cfg_value=1.5).topology.cfg == 1  # shipped 1024 graph
+    kroma = choose_auto_topology("krea2", "bf16", 1.5, 2, cfg_value=1.5,
+                                 variant=_ROW_VARIANT["Kroma"])
+    assert kroma.topology.describe() == "uly2" and kroma.rule.row == 12
     assert "Kroma" not in _DISTILLED_CFG1_ROWS
-    state, phrase = _STARRED_MODE_GRANT[("Kroma", "cfg2")]
+    assert ("Kroma", "cfg2") not in _STARRED_MODE_GRANT
     cells = _support_matrix_rows()["Kroma"]
     cell = cells[_MODE_COLUMN["cfg2"]]
-    assert state == "unrun" and _AUTO_MARK in cell and _PENDING_MARK in cell
-    assert phrase in cells[7] and "`uly2` keeps the tested path" in cells[7]
+    assert _AUTO_MARK not in cell and _CONSTRAINED_MARK in cell
+    assert "cfg2 is measured, not the same math" in cells[7]

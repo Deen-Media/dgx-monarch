@@ -188,13 +188,15 @@ def choose_auto_topology(
     fits_resident: bool = True,
     batch_size: int = 1,
     keeps_uncond: bool = False,
+    variant: str | None = None,
 ) -> AutoDecision:
     """Resolve ``auto`` and log the selected row and rationale.
 
     Auto skips a CFG-parallel row for a CFG-1 render unless ``keeps_uncond``
     says the sampler keeps the unconditional pass there
     (``sampler_keeps_uncond_at_cfg1``), and skips any cfg row with no passing
-    evidence (topology_cfg_evidence). ``fits_resident=False``
+    evidence (topology_cfg_evidence), including a row whose record excludes the
+    checkpoint ``variant`` (``checkpoint_variant``). ``fits_resident=False``
     adds FSDP for capacity. Spare ranks use data parallel only when the batch
     divides evenly; otherwise a pure sequence-parallel row folds them in, and
     a cfg row raises UnsupportedModelError.
@@ -217,7 +219,7 @@ def choose_auto_topology(
         if (rule.topology.get("cfg", 1) != 1 and cfg_value is not None
                 and abs(cfg_value - 1.0) < 1e-6 and not keeps_uncond):
             continue  # cfg-parallel has no uncond pass to parallelize at cfg 1.0
-        if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(rule, quant_kind):
+        if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(rule, quant_kind, variant):
             skipped_cfg = rule
             continue
         chosen = rule
@@ -239,6 +241,8 @@ def choose_auto_topology(
             record = cfg_evidence_for(skipped_cfg)
             if record is None:
                 detail = "has no exact-row evidence record"
+            elif variant is not None and variant in record.excludes:
+                detail = f"was measured on this {variant} checkpoint and does not grant it"
             elif record.quants and quant_kind not in record.quants:
                 detail = f"has no passing {quant_kind} result"
             else:
@@ -268,6 +272,10 @@ def choose_auto_topology(
                     "fallback applies; uly2 is the conservative default")
     if note is None:
         note = chosen.note
+        excluded = cfg_evidence_for(skipped_cfg) if skipped_cfg is not None else None
+        if excluded is not None and variant in excluded.excludes:
+            note = (f"{note}; cfg2 table row {excluded.row} was measured on this "
+                    f"{variant} checkpoint and does not grant it")
 
     topo_kwargs = dict(chosen.topology)
     if not fits_resident:

@@ -8,10 +8,14 @@ from __future__ import annotations
 import json
 import math
 import struct
+import sys
+import types
+from types import SimpleNamespace
 
 import pytest
 import torch
 
+from dgx_monarch import latent_scale
 from dgx_monarch.adapters.detect import (
     fsdp_lora_admission_property,
     read_safetensors_keys,
@@ -19,14 +23,16 @@ from dgx_monarch.adapters.detect import (
     sniff_checkpoint_for_topology,
     sniff_metadata_keys,
 )
-from dgx_monarch.nodes.common import resolve_sample_attention
+from dgx_monarch.nodes import common
+from dgx_monarch.nodes.common import MeshSpec, ModelSpec, resolve_sample_attention
 from dgx_monarch.topology import choose_auto_topology
+from dgx_monarch.topology_cfg_evidence import sniffed_checkpoint_variant
 from test_krea2_comfy_exactness import comfy_krea2 as comfy_krea2
 
 _CONVROT = {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256}
 
 
-def _checkpoint(path, quant):
+def _checkpoint(path, quant, merge_metadata=True):
     """Write bounded, valid tensor ranges with the publisher's native Krea2 keys."""
     layout = {
         "txtfusion.projector.weight": ("BF16", [8, 8]),
@@ -34,7 +40,12 @@ def _checkpoint(path, quant):
         "blocks.0.attn.wq.weight": ("BF16", [8, 8]),
         "blocks.0.attn.qknorm.qnorm.scale": ("F32", [2]),
     }
-    metadata = {"trim": "0.9", "copy_prefixes": "txtfusion.,txtmlp."}
+    # The merge record the published BF16 release's header carries; the auto
+    # table reads it to keep Kroma off Krea2's cfg2 row (checkpoint_variant).
+    metadata = {"trim": "0.9", "copy_prefixes": "txtfusion.,txtmlp.", "base": "raw.safetensors",
+                "scale": "1.0", "finetune": "kroma.safetensors", "target": "turbo.safetensors"}
+    if not merge_metadata:  # a Krea2 RAW or Turbo header carries no merge record
+        metadata = {}
     payloads = {}
     if quant == "int8":
         descriptor = json.dumps(_CONVROT).encode()
@@ -77,6 +88,37 @@ def test_kroma_headers_use_krea2_auto_route(tmp_path, filename, quant):
     assert decision.topology.cfg == decision.topology.ring == decision.topology.dp == 1
     assert not decision.topology.fsdp
     assert resolve_sample_attention("TORCH_FLASH", decision.sage) == "TORCH_FLASH"
+
+
+def _resolve_auto(monkeypatch, path, px, cfg_value):
+    folder_paths = types.ModuleType("folder_paths")
+    folder_paths.get_full_path = lambda _kind, _name: str(path)
+    monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+    monkeypatch.setattr(latent_scale, "comfy_spatial_downscale", lambda _path: 8)
+    model = ModelSpec(
+        mesh=MeshSpec(handle=SimpleNamespace(world=2), topology_preset="auto",
+                      attention="TORCH_FLASH", sync_ulysses=True),
+        unet_name=path.name, options={"weight_dtype": "default"})
+    return common.resolve_topology(model, torch.zeros(1, 4, px // 8, px // 8), cfg_value)
+
+
+@pytest.mark.parametrize("px", [1152, 1536])
+def test_a_kroma_header_keeps_ulysses_where_krea2_takes_cfg2(monkeypatch, tmp_path, px):
+    # 2026-10-16: Kroma's shipped zeroed negative folds on one GPU and cfg2 read
+    # off one GPU at 1152 and 1536, so the header, not the file name, keeps it
+    # off row 15 at CFG 1.5 (the card's top CFG) while a Krea2 header keeps cfg2.
+    kroma = _checkpoint(tmp_path / "renamed-checkpoint.safetensors", "bf16")
+    assert sniffed_checkpoint_variant(str(kroma), "krea2") == "kroma"
+    topology, sage, reason = _resolve_auto(monkeypatch, kroma, px, 1.5)
+    assert topology.describe() == "uly2" and not sage
+    assert "table row 12" in reason
+    assert "cfg2 table row 15 was measured on this kroma checkpoint" in reason
+
+    krea2 = _checkpoint(tmp_path / "kroma-v0.3.1-turbo-opd.safetensors", "bf16",
+                        merge_metadata=False)
+    assert sniffed_checkpoint_variant(str(krea2), "krea2") is None
+    topology, _sage, reason = _resolve_auto(monkeypatch, krea2, px, 1.5)
+    assert topology.describe() == "cfg2" and "table row 15" in reason
 
 
 def test_kroma_int8_keeps_convrot_metadata_and_fsdp_lora_refusal(tmp_path):

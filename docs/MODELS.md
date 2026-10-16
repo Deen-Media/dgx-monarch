@@ -86,7 +86,7 @@ that match the tested configurations in its model details. See
 | Model | single | cfg2 | Ulysses | ring | FSDP | Status | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | Krea2 (RAW+Turbo) | ✓ | ★ | ★ | 🔒 | ✓ | **HW** | Auto cfg2 covers FP8 and BF16 from 1.2 to 2.36 MP; padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
-| Kroma | ✓ | ★⏳ | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. At CFG other than 1, or at CFG 1 under a CFG++ sampler, a BF16 file from 1.2 to 2.36 MP takes the Krea2 cfg2 row, untested on Kroma; `uly2` keeps the tested path. Padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
+| Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. cfg2 is measured, not the same math: on the shipped zeroed negative it read one-step NRMS 0.009 to 0.011 against one GPU at 1152 and 1536 and full renders diverged (2026-10-16), so `auto` keeps Ulysses. Padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
 | Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
 | Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
@@ -237,12 +237,18 @@ it costs another sampling pass and can change details.
 **Parallel modes and validation.** `auto` uses the Krea2 topology policy:
 one local device without a cluster, or Ulysses on a configured pair for the
 shipped graphs. BF16 and INT8 use Torch Flash. Plain Euler at CFG 1 has no
-unconditional pass for cfg2 to split. At CFG other than 1, or at CFG 1 under a
-CFG++ sampler that a DGX Monarch KSampler node names, a BF16 Kroma file from
-1.2 to 2.36 MP takes Krea2 cfg2 row 15. That row was measured on Krea2 files
-only, and no Kroma run has tested cfg2; select `uly2` to keep the tested path.
-INT8 files keep Ulysses, and the shipped 1024×1024 graphs and the 2048×2048
-refinement fall outside that band. Reference-image conditioning requires `single`; padded ring retains
+unconditional pass for cfg2 to split. At other CFG values, or under a CFG++
+sampler, `auto` still keeps Ulysses: Krea2's cfg2 row 15 excludes Kroma. The
+shipped negative zeroes the positive conditioning, so both have the same shape,
+and one GPU evaluates them in one batch-2 call where cfg2 makes two batch-1
+calls. On 2026-10-16 at CFG 1.5, 1152 and 1536 square, cfg2 read one-step NRMS
+0.009 to 0.011 against one GPU and its full renders diverged. With an empty
+text negative it matched one GPU exactly and ran 1.24x to 1.31x faster than
+`uly2`, but the shipped graphs do not use that negative. `auto` recognizes
+Kroma by the merge record in the BF16 release's header; a Kroma file saved
+without that record reads as Krea2 and can take row 15, so select `uly2`
+there. Explicit `cfg2` still runs. [The cfg2 comparison](VALIDATION.md#kroma-cfg2)
+records the tested settings. Reference-image conditioning requires `single`; padded ring retains
 the Krea2 waiver boundary. LoRA remains untested and retains the
 [Krea2 restrictions](#model-krea2-raw-turbo). The full 8-step BF16 and local
 INT8 graphs at 1024×1024 matched

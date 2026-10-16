@@ -551,6 +551,38 @@ module-origin attestation was unavailable under the production policy; the
 managed runtime was separately verified and normal source/artifact/generation
 checks remained active. Native RDMA was not exercised.
 
+#### Kroma cfg2
+
+**2026-10-16, dgx-monarch `70fb8997e3ea7b4e771eb046a046a4c8e6d6fdf3`, ComfyUI
+`29e28e2b488e7739c351c331d73da25aa435da5c`.** Campaign K's method compared
+cfg2 and `uly2` with one GPU on two NVIDIA GB10 GPUs with TORCH_FLASH, the
+first Spark capped at 2100 MHz: `benchmark/run_matrix.py` in cluster mode, with
+the reference taken from batch row 0 of a same-build dp2 render of batch 2.
+The cells used the BF16 template's checkpoint, prompt, seed 42, 8 Euler/simple
+steps and native mu at CFG 1.5, not the template's CFG 1: plain Euler at CFG 1
+drops the unconditional pass, so cfg2 has nothing to split there, and 1.5 is
+the top of the model card's range. Each size ran two negatives. The template's
+ConditioningZeroOut copies the positive's 103 text rows, so one GPU evaluates
+both in one batch-2 call. An empty text negative has 5 rows, so one GPU makes
+two batch-1 calls. Walls are warm sampler walls without text encoding or decode.
+
+| Size | Negative | cfg2 against one GPU | cfg2 warm | `uly2` warm | One GPU warm |
+|---|---|---|---|---|---|
+| 1152×1152 | Zeroed (template) | One-step NRMS 0.0108; full schedule max abs 4.07 | 30.3, 22.3 s | 25.1, 25.1 s | 39.4, 39.0 s |
+| 1152×1152 | Empty text | Identical, full schedule and one step | 19.3, 19.4 s | 25.2, 25.4 s | 39.1, 39.0 s |
+| 1536×1536 | Zeroed (template) | One-step NRMS 0.0087; full schedule max abs 2.31 | 38.2, 38.4 s | 46.0, 46.2 s | 75.5, 75.8 s |
+| 1536×1536 | Empty text | Identical, full schedule and one step | 38.0, 37.9 s | 46.8, 46.9 s | 76.1, 76.1 s |
+
+`uly2` matched one GPU exactly for every pair, full schedule and one step.
+On the zeroed pair cfg2 makes two batch-1 calls where one GPU makes one batch-2
+call, the stock batch-shape difference the FSDP record above found. The
+[cfg2 row bar](DESIGN.md#54-topology--auto-mode) needs cfg2 bit-identical to
+one GPU at every measured size, so row 15's record excludes Kroma, which
+`auto` recognizes by the merge record in its header, and a Kroma BF16 file
+keeps row 12. The records are the cells `kroma-bf16-1152-cfg15-euler` and
+`kroma-bf16-1536-cfg15-euler`. A CFG++ sampler at CFG 1, the other route to
+row 15, was not run.
+
 <a id="evidence-chroma"></a>
 
 ### Chroma
@@ -1702,18 +1734,19 @@ lists every cell's walls, speedups and fidelity.
   precisions that read bit-identical and beat uly2 at every measured size in
   its band.
 
-Not measured: MXFP8 and NVFP4 Krea2 files, Kroma BF16 files, Chroma
-FP8-scaled and Radiance above 1024, Qwen-Image Edit-2511, equal prompt pairs on Boogu and Anima,
-which fold onto the slice path, and world 4. Each can still reach a cfg2 row
+Not measured: MXFP8 and NVFP4 Krea2 files, Chroma
+FP8-scaled and Radiance above 1024, Qwen-Image Edit-2511, equal prompt pairs on Krea2, Boogu
+and Anima, which fold onto the slice path, and world 4. Each can still reach a cfg2 row
 through a shared family and precision class: MXFP8 and
 NVFP4 Krea2 files reach row 15 (in September, RAW NVFP4 cfg2 read 1-step NRMS
-0.0113), a Kroma BF16 file reads as family krea2 and reaches row 15 at CFG other
-than 1, Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
-would reach row 68, and an equal pair takes the slice path on rows 79 and 47.
+0.0113), Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
+would reach row 68, and an equal pair takes the slice path on rows 15, 79 and 47.
+Kroma BF16 was measured on 2026-10-16 and row 15 excludes it
+([Kroma cfg2](#kroma-cfg2)).
 Where an equal pair was measured, the slice path stayed under the floor but
-did not match one GPU: Chroma BF16 read NRMS 0.034 ([Chroma](#evidence-chroma))
-and FLUX.3 Klein Base 0.009 to 0.031
-([FLUX.3 Klein Base](#evidence-flux-3-klein-base)).
+did not match one GPU: Chroma BF16 read NRMS 0.034 ([Chroma](#evidence-chroma)),
+FLUX.3 Klein Base 0.009 to 0.031
+([FLUX.3 Klein Base](#evidence-flux-3-klein-base)) and Kroma BF16 0.009 to 0.011.
 At world 4 a batch-1 render on a cfg row refuses class K. An evidence record
 has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
 under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength

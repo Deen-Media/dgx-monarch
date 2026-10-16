@@ -199,6 +199,16 @@ metadata reads the new version
   as selected and untested, the Krea2 rows say row 15 covers BF16 as well as
   FP8, and VALIDATION lists Kroma BF16 among the untested files that reach a
   cfg2 row. `uly2` keeps the tested path.
+- Keep Kroma off Krea2's cfg2 row 15. Measured on 2026-10-16 with the head
+  capped at 2100 MHz, at CFG 1.5 and 1152 and 1536 square, cfg2 did not match
+  one GPU on the shipped zeroed negative: one-step NRMS 0.009 to 0.011, and
+  full renders diverged. That pair has equal shapes, so one GPU folds it into
+  one batch-2 call where cfg2 makes two batch-1 calls. With an empty text
+  negative cfg2 matched one GPU exactly and ran 1.24x to 1.31x faster than
+  `uly2`. Row 15's evidence record now excludes a checkpoint whose header
+  carries Kroma's merge record, so `auto` keeps a Kroma BF16 file on Ulysses
+  (row 12), and MODELS marks its cfg2 cell constrained
+  ([VALIDATION](docs/VALIDATION.md#kroma-cfg2)).
 
 - Fill every pending row of `example_workflows/artifacts.toml`. 71 rows now
   carry a url pinned to a Hugging Face commit, with the file's size and

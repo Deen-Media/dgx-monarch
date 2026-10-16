@@ -27,11 +27,15 @@ class CfgEvidence:
     exact: bool
     in_band: bool
     basis: str
+    # Checkpoint variants (checkpoint_variant) that read the record's family
+    # and were measured to fail its bar; the record never grants them.
+    excludes: tuple[str, ...] = ()
 
-    def permits(self, row: object, quant_kind: str) -> bool:
+    def permits(self, row: object, quant_kind: str, variant: str | None = None) -> bool:
         """Whether this result covers the candidate row and artifact."""
         return (
-            getattr(row, "row", None) == self.row
+            (variant is None or variant not in self.excludes)
+            and getattr(row, "row", None) == self.row
             and getattr(row, "family", None) == self.family
             and (not self.quants or quant_kind in self.quants)
             and getattr(row, "mp_min", None) == self.min_mp
@@ -111,7 +115,14 @@ CFG2_EVIDENCE: dict[int, CfgEvidence] = {
               "1536 square and the Turbo BF16 file at 1536; mxfp8 and nvfp4 files share the fp8 "
               "kind and were not measured (September RAW nvfp4 cfg2 read 1-step NRMS 0.0113); "
               "RAW INT8 ConvRot read bit-identical at the same four sizes but 0.97x, 0.98x, "
-              "1.03x and 1.08x against uly2, so this record does not grant it",
+              "1.03x and 1.08x against uly2, so this record does not grant it. Kroma BF16 "
+              "(2026-10-16, dgx-monarch 70fb8997, ComfyUI 29e28e2b, CFG 1.5 under euler, "
+              "1152 and 1536 square) was bit-identical and 1.24x to 1.31x faster than uly2 on "
+              "an empty text negative, but its shipped ConditioningZeroOut negative has the "
+              "positive's shape, one GPU folds the pair into one batch-2 call, and cfg2 read "
+              "1-step NRMS 0.0087 to 0.0108 with full renders diverging, so this record "
+              "excludes it",
+        excludes=("kroma",),
     ),
     19: CfgEvidence(
         row=19,
@@ -193,7 +204,33 @@ def cfg_evidence_for(row: object) -> CfgEvidence | None:
     return CFG2_EVIDENCE.get(row_id) if isinstance(row_id, int) else None
 
 
-def cfg_row_is_eligible(row: object, quant_kind: str) -> bool:
+def cfg_row_is_eligible(row: object, quant_kind: str, variant: str | None = None) -> bool:
     """Fail-closed cfg admission shared by auto selection and tests."""
     record = cfg_evidence_for(row)
-    return record is not None and record.permits(row, quant_kind)
+    return record is not None and record.permits(row, quant_kind, variant)
+
+
+# Kroma (a Krea2 fine-tune) ships as a merge, and its header records the merge
+# inputs under these metadata names; Krea2 RAW and Turbo files carry none.
+KROMA_MERGE_METADATA_KEYS = frozenset({"base", "copy_prefixes", "finetune", "target"})
+
+
+def checkpoint_variant(family: str, metadata_keys: tuple[str, ...]) -> str | None:
+    """Name a checkpoint a cfg record may treat apart from its family.
+
+    Only the header decides: a renamed Kroma file is still Kroma, and a Kroma
+    file re-saved without its merge metadata reads as plain Krea2.
+    """
+    if family == "krea2" and KROMA_MERGE_METADATA_KEYS <= set(metadata_keys):
+        return "kroma"
+    return None
+
+
+def sniffed_checkpoint_variant(path: str, family: str) -> str | None:
+    """``checkpoint_variant`` of a file on disk; an unreadable header names none."""
+    from .adapters.detect import CheckpointSniffError, sniff_metadata_keys
+
+    try:
+        return checkpoint_variant(family, sniff_metadata_keys(path))
+    except (CheckpointSniffError, OSError):
+        return None

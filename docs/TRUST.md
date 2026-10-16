@@ -903,7 +903,7 @@ copied from historical evidence.
   same transaction get no skip
   ([`gate_inconclusive.py:210-210`](../src/dgx_monarch/nodes/gate_inconclusive.py#L210-L210 "anchor:remember_kind")).
   This is enforced at
-  [`common.py:300-378`](../src/dgx_monarch/nodes/common.py#L300-L378 "anchor:run_render"),
+  [`common.py:304-382`](../src/dgx_monarch/nodes/common.py#L304-L382 "anchor:run_render"),
   [`auto_gate.py:200-267`](../src/dgx_monarch/nodes/auto_gate.py#L200-L267 "anchor:auto_gate_required"),
   [`auto_gate.py:270-469`](../src/dgx_monarch/nodes/auto_gate.py#L270-L469 "anchor:maybe_auto_gate"), and
   [`pipeline.py:282-367`](../src/dgx_monarch/nodes/pipeline.py#L282-L367 "anchor:_push_bound"), with

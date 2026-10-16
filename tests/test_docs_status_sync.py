@@ -711,10 +711,15 @@ _MP_PROBES = (0.26, 0.79, 1.05, 1.19, 1.5, 2.36, 8.0)
 # there, because a plain sampler drops the uncond pass, so auto cannot reach
 # cfg2 for them. This is a fact about the checkpoint, not a glyph: the stars
 # below derive from it. Kroma is not one: its shipped graphs run Euler at CFG 1,
-# but its model card allows CFG up to 1.5, where a BF16 file takes Krea2's cfg2
-# row (Kroma's cfg2 grant below).
+# but its model card allows CFG up to 1.5. Krea2's cfg2 row would take a BF16
+# file there, and that row's record excludes the Kroma checkpoint variant.
 _DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2", "FLUX.3 Klein"})
 _REAL_CFG = 3.5
+
+# Rows whose canonical checkpoint the auto table reads as a variant of its
+# family (topology_cfg_evidence.checkpoint_variant), so the stars derive from
+# the table as that checkpoint meets it.
+_ROW_VARIANT: dict[str, str] = {"Kroma": "kroma"}
 
 # What the dated hardware evidence behind an **HW** row covers, per starred
 # mode. One reviewed entry per starred cell, and four states:
@@ -730,7 +735,6 @@ _REAL_CFG = 3.5
 # entry here fails CI: the state is a review decision, and a glyph cannot
 # imply it.
 _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
-    ("Kroma", "cfg2"): ("unrun", "takes the Krea2 cfg2 row, untested on Kroma"),
     ("Kroma", "uly"): ("scoped", "BF16 and local INT8, pure Ulysses"),
     ("Krea2 (RAW+Turbo)", "cfg2"): (
         "scoped", "Auto cfg2 covers FP8 and BF16 from 1.2 to 2.36 MP"),
@@ -841,7 +845,8 @@ def _support_matrix_rows() -> dict[str, list[str]]:
     return rows
 
 
-def _auto_selected_modes(family: str, cfg_value: float) -> set[str]:
+def _auto_selected_modes(family: str, cfg_value: float,
+                         variant: str | None = None) -> set[str]:
     """Every parallel mode `auto` can land on for this family at this CFG."""
     from dgx_monarch.topology import choose_auto_topology
 
@@ -849,7 +854,7 @@ def _auto_selected_modes(family: str, cfg_value: float) -> set[str]:
     for quant in ("bf16", "fp8"):
         for megapixels in _MP_PROBES:
             topology = choose_auto_topology(
-                family, quant, megapixels, 2, cfg_value=cfg_value
+                family, quant, megapixels, 2, cfg_value=cfg_value, variant=variant
             ).topology
             if topology.cfg > 1:
                 modes.add("cfg2")
@@ -873,7 +878,7 @@ def test_auto_stars_derive_from_the_runtime_auto_table() -> None:
     for (_section, model), (family, _status) in _SUPPORT_ROW_CONTRACT.items():
         cells = rows[model]
         cfg_value = 1.0 if model in _DISTILLED_CFG1_ROWS else _REAL_CFG
-        selected = _auto_selected_modes(family, cfg_value)
+        selected = _auto_selected_modes(family, cfg_value, _ROW_VARIANT.get(model))
         starred = {mode for mode, column in _MODE_COLUMN.items()
                    if _AUTO_MARK in cells[column]}
         if starred != selected:
