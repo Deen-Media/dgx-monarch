@@ -306,8 +306,10 @@ Once the box is back, close ComfyUI, run `dgxm restart` so both Worker
 services restart together, and start ComfyUI again ([TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 A ComfyUI process attaches again on its own only to a Worker service that came
 back within Monarch's 30 s message delivery timeout, since each start serves a
-new id (CPU-tested; the two-Spark recheck is pending). A box that was down
-longer leaves the driver's channel to it closed. A dead actor process retires the
+new id (checked on the pair on 2026-10-15). A sampler render after both
+services restarted now attaches again within that render, with no Reset
+click (CPU-tested; its pair recheck is pending). A box that was down longer leaves
+the driver's channel to it closed. A dead actor process retires the
 whole attached mesh, and its error names the endpoint and host
 ([TROUBLESHOOTING.md #4](TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)). A worker exception is different: it comes back to the
 caller and leaves its actor alive.

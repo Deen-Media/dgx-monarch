@@ -225,12 +225,15 @@ def force_stock_quarantine(model, handle, timeout_s: float = 600.0,
     """Publish both graph levers off and push that complete policy fail-closed.
 
     A measured class K abort keeps every lever the graph asked for, so there
-    is no new policy to push and no cached key to invalidate.
+    is no new policy to push and no cached key to invalidate. A delivery
+    failure (#47) writes the quarantine but pushes nothing: the actors are
+    gone, and a stale mesh refuses every price until it is replaced.
     """
+    from ..delivery_faults import WorkerDeliveryError
     from .gate_quarantine_scope import measured_abort_guard
 
     quarantine_unproven_paths(model, cause)
-    if measured_abort_guard(cause) is not None:
+    if measured_abort_guard(cause) is not None or isinstance(cause, WorkerDeliveryError):
         return []
     from ..mesh import MeshHandle
 

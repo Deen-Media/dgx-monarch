@@ -276,7 +276,7 @@ copied from historical evidence.
    The claim,
    clone, and pre-verdict drift check are enforced at
    [`gate_session.py:19-174`](../src/dgx_monarch/nodes/gate_session.py#L19-L174 "anchor:run_identity_ceremony"),
-   [`gate_identity.py:259-274`](../src/dgx_monarch/nodes/gate_identity.py#L259-L274 "anchor:model_with_worker_overrides"), and
+   [`gate_identity.py:262-277`](../src/dgx_monarch/nodes/gate_identity.py#L262-L277 "anchor:model_with_worker_overrides"), and
    [`gate_ceremony.py:100-356`](../src/dgx_monarch/nodes/gate_ceremony.py#L100-L356 "anchor:gather_ceremony_evidence"); policy
    drift is covered by
    [`test_gate_orchestration.py:2070-2101`](../tests/test_gate_orchestration.py#L2070-L2101 "anchor:test_identity_ceremony_rejects_policy_drift_before_pass").
@@ -346,7 +346,7 @@ copied from historical evidence.
    [`test_gate_orchestration.py:2125-2144`](../tests/test_gate_orchestration.py#L2125-L2144 "anchor:test_cross_residency_divergence_under_auto_revokes_the_explicit_on_sibling") and
    [`test_gate_orchestration.py:2147-2174`](../tests/test_gate_orchestration.py#L2147-L2174 "anchor:test_lazy_swap_failure_under_auto_leaves_the_explicit_on_sibling_untested"). The conditions are
    [`slab_proof.py:23-90`](../src/dgx_monarch/nodes/slab_proof.py#L23-L90 "anchor:_cycle_state") and
-   [`gate_identity.py:518-577`](../src/dgx_monarch/nodes/gate_identity.py#L518-L577 "anchor:equivalent_slab_mode_contexts")
+   [`gate_identity.py:521-580`](../src/dgx_monarch/nodes/gate_identity.py#L521-L580 "anchor:equivalent_slab_mode_contexts")
    and the rows are written at
    [`gate_verdict.py:212-261`](../src/dgx_monarch/nodes/gate_verdict.py#L212-L261 "anchor:publish_ceremony_verdict"). Positive,
    reverse, config-supplied-auto, and unvouched cases are covered by
@@ -372,8 +372,8 @@ copied from historical evidence.
    `INCONCLUSIVE`. Neither a certificate nor a consent
    can convert an INCONCLUSIVE into a PASS.
    Classification and verdict logic are
-   [`mesh_safety.py:255-256`](../src/dgx_monarch/mesh_safety.py#L255-L256 "anchor:StockLoadCapacityError"),
-   [`mesh_safety.py:259-263`](../src/dgx_monarch/mesh_safety.py#L259-L263 "anchor:is_stock_load_capacity_error"),
+   [`mesh_safety.py:260-261`](../src/dgx_monarch/mesh_safety.py#L260-L261 "anchor:StockLoadCapacityError"),
+   [`mesh_safety.py:264-268`](../src/dgx_monarch/mesh_safety.py#L264-L268 "anchor:is_stock_load_capacity_error"),
    [`driver_footprint.py:103-103`](../src/dgx_monarch/driver_footprint.py#L103-L103 "anchor:DriverFootprintCapacityError"), and
    [`gate_verdict.py:73-101`](../src/dgx_monarch/nodes/gate_verdict.py#L73-L101 "anchor:publish_ceremony_verdict"). A driver-side
    refusal raised inside a first-use leg is covered by
@@ -507,7 +507,7 @@ copied from historical evidence.
    [`test_gating_off_posture.py:163-222`](../tests/test_gating_off_posture.py#L163-L222 "anchor:test_the_submit_dispatches_the_quarantine_clone_with_gating_off"),
    and a measured FAIL leaving that dict unchanged under both the explicit and
    the automatic first-use origin by
-   [`test_quarantine_scope.py:683-722`](../tests/test_quarantine_scope.py#L683-L722 "anchor:test_a_measured_fail_on_a_leaves_bs_levers").
+   [`test_quarantine_scope.py:706-745`](../tests/test_quarantine_scope.py#L706-L745 "anchor:test_a_measured_fail_on_a_leaves_bs_levers").
 8. **Fleet is fail-closed.** Fleet bypasses normal `run_render` gating, so only
    an exact separately scoped world-1 `pass` carries a risky-residency grant;
    every other state, lookup error, and source-manifest failure forces `slab_weights=False` and
@@ -593,8 +593,8 @@ copied from historical evidence.
     operator's explicit first-use-Gate bypass rather than asserting PASS.
     Authorization, setup binding, driver validation, and
     worker revalidation are
-    [`gate_identity.py:329-477`](../src/dgx_monarch/nodes/gate_identity.py#L329-L477 "anchor:authorize_normal_render"),
-    [`render_submit.py:187-417`](../src/dgx_monarch/nodes/render_submit.py#L187-L417 "anchor:_submit_render_guarded"),
+    [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"),
+    [`render_submit.py:242-473`](../src/dgx_monarch/nodes/render_submit.py#L242-L473 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:90-153`](../src/dgx_monarch/mesh_residency.py#L90-L153 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:240-372`](../src/dgx_monarch/mesh_residency.py#L240-L372 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"), and
@@ -793,9 +793,9 @@ copied from historical evidence.
   required grant. The
   dual-model policy, mint, setup-generation attachment, and three validation
   boundaries are
-  [`gate_identity.py:277-287`](../src/dgx_monarch/nodes/gate_identity.py#L277-L287 "anchor:model_for_request"),
-  [`gate_identity.py:329-477`](../src/dgx_monarch/nodes/gate_identity.py#L329-L477 "anchor:authorize_normal_render"),
-  [`render_submit.py:187-417`](../src/dgx_monarch/nodes/render_submit.py#L187-L417 "anchor:_submit_render_guarded"),
+  [`gate_identity.py:280-290`](../src/dgx_monarch/nodes/gate_identity.py#L280-L290 "anchor:model_for_request"),
+  [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"),
+  [`render_submit.py:242-473`](../src/dgx_monarch/nodes/render_submit.py#L242-L473 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
@@ -847,7 +847,7 @@ copied from historical evidence.
   its exact normal `fsdp_clean_reload_v1` context; it cannot stamp Fleet or a
   residency sibling that the proof did not exercise. This is enforced at
   [`gate_verdict.py:212-261`](../src/dgx_monarch/nodes/gate_verdict.py#L212-L261 "anchor:publish_ceremony_verdict") and
-  [`gate_identity.py:518-577`](../src/dgx_monarch/nodes/gate_identity.py#L518-L577 "anchor:equivalent_slab_mode_contexts"), with coverage
+  [`gate_identity.py:521-580`](../src/dgx_monarch/nodes/gate_identity.py#L521-L580 "anchor:equivalent_slab_mode_contexts"), with coverage
   in [`test_gate_orchestration.py:1718-1749`](../tests/test_gate_orchestration.py#L1718-L1749 "anchor:test_cross_mode_reference_passes_and_restores_slab")
   and
   [`test_gate_orchestration.py:2682-2696`](../tests/test_gate_orchestration.py#L2682-L2696 "anchor:test_pass_under_auto_stamps_the_explicit_on_context"),
@@ -865,7 +865,7 @@ copied from historical evidence.
   [`gate_ledger.py:161-190`](../src/dgx_monarch/gate_ledger.py#L161-L190 "anchor:_valid_entry_schema"),
   [`gate_ledger.py:192-234`](../src/dgx_monarch/gate_ledger.py#L192-L234 "anchor:entries_with_integrity"),
   [`gate_ledger.py:260-343`](../src/dgx_monarch/gate_ledger.py#L260-L343 "anchor:lookup_with_integrity"),
-  [`gate_identity.py:329-477`](../src/dgx_monarch/nodes/gate_identity.py#L329-L477 "anchor:authorize_normal_render"), and
+  [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"), and
   [`fleet_policy.py:25-149`](../src/dgx_monarch/nodes/fleet_policy.py#L25-L149 "anchor:_fleet_worker_policy").
 - Process-local FAIL, INCONCLUSIVE, and ERROR verdicts are retained separately
   from the bounded positive cache. They override an older durable PASS for

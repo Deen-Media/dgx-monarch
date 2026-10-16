@@ -185,7 +185,19 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
   this driver last dialed it is primed with one throwaway message. The driver
   still enables one process transport, once, so it re-attaches to a restarted
   loop only within Monarch's message delivery timeout; beyond it the recovery
-  is a fresh driver. Mechanism and evidence:
+  is a fresh driver. After every loop restarted, a sampler render that owns
+  its session and keeps the last render's setup, or an explicit loader's
+  eager load, attaches again within that render: the capacity price wait
+  ends on the first delivery failure the fault hook records for a fleet host
+  and the mesh it prices on (`delivery_faults.py`), and the render compares
+  each loop's id with the one it dialed, retires the stale mesh through the
+  deliberate teardown with a short stop bound and the liveness release below,
+  attaches by the new ids and dispatches once more (`restart_reattach.py`).
+  Some loops moved and others not, no loop moved, an unread id, or old
+  processes not proven gone each refuse at once, class C, with the remedy.
+  Pipelined renders, Gate legs, the Fleet node, a one-host fleet and a render
+  whose setup changed meet the old actors as before and take the supervision
+  path. Mechanism and evidence:
   [TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach).
 - The ComfyUI process is the single Monarch client: when it dies its procs die,
   so no orphaned process holds a model. A supervision-class failure on a
@@ -1160,7 +1172,8 @@ Four invariants that no consent can change:
 **What an aborted ceremony may take, and from whom.** If a Gate run ends
 without a verdict, first-use handling normally disables both residency
 optimizations before dispatching the requested render.
-`nodes/gate_quarantine_scope.py` limits that change in two ways:
+`nodes/gate_quarantine_scope.py` limits that change in two ways, and
+`nodes/gate_identity.py` limits the push in a third:
 
 - A waivable class K refusal concerns accuracy, not residency. It disables no
   residency setting and sends no worker-policy update. The refusal tag is
@@ -1171,6 +1184,11 @@ optimizations before dispatching the requested render.
 - An ordinary abort affects only the combination tested. The next combination
   through the graph starts with the graph's requested settings. The aborted
   combination remains denied until its next Gate run resolves it.
+- An abort on an undeliverable Worker actor (`WorkerDeliveryError`: a Worker
+  loop restarted under the mesh, issue #47) disables the combination's levers
+  like any ordinary abort but sends no worker-policy update. The actors that
+  would take it are gone, and the stale mesh refuses every price until it is
+  replaced.
 
 An abort leaves the earlier `RETESTING` row in place. These limits do not
 clear a measured FAIL: invariant 2 preserves that quarantine across sessions
@@ -1668,6 +1686,10 @@ dgx-monarch/
 │   ├── mesh_attach.py         # transport enable, the pre-dial id gate, heal
 │   │                          #   and the in-process retry
 │   ├── worker_proc_id.py      # per-start Worker proc id: derive, dial, refuse
+│   ├── delivery_faults.py     # the fault hook's delivery failures and the price
+│   │                          #   wait that ends on one (stdlib leaf)
+│   ├── restart_reattach.py    # the render's re-attach after every Worker loop
+│   │                          #   restarted: id check, teardown, refusals
 │   ├── mesh_capacity_consent.py # capacity-rescue consent constants + grant check
 │   ├── mesh_creation.py       # creation publication, claims, and recovery
 │   ├── mesh_lease.py          # setup-generation and raw-RDMA-read leases

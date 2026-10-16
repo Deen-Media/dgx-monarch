@@ -1863,7 +1863,9 @@ scope also establishes no mid-sampling, NCCL, physical-fabric or native-RDMA
 failure recovery. These checks came before per-start Worker ids: upgrading the
 dependency alone did not fix same-driver replacement. Per-start ids close
 [issue #2](https://github.com/Deen-Media/dgx-monarch/issues/2)
-([TROUBLESHOOTING #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)); the two-Spark recheck is pending.
+([TROUBLESHOOTING #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)),
+which records their two-Spark recheck of 2026-10-15; the recheck of the
+re-attach within the first sampler render after a restart is pending.
 
 Under torchmonarch 0.6.0, a 62-log two-host study supported retaining both
 in-flight and grace-window teardown handling. Log counts were upper bounds

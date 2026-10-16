@@ -233,7 +233,8 @@ class DGXMonarchUNETLoader:
             handle = heal_before_eager_setup(
                 handle, site="the UNET Loader", respawn=reprice_then_respawn)
             topo = topology_from_preset(mesh.topology_preset, handle.world)
-            from .. import capacity_agreement, mesh_setup
+            from .. import capacity_agreement, mesh_setup, restart_reattach
+            from ..delivery_faults import WorkerDeliveryError
             from . import render_preflight
             from .render_session import mutation_render_session
 
@@ -249,22 +250,44 @@ class DGXMonarchUNETLoader:
                         mesh.worker_args)
                 first_render.load_deferred(self.ENDPOINT, reason="explicit cfg2 dm-cfg2")
                 return (spec,)
-            # Setup and eager adoption are one residency transaction. No
-            # Fleet/pipeline gap may replace topology between these calls.
-            with mutation_render_session(handle):
-                setup_token = mesh_setup.ensure_request_setup(
-                    handle, topo, mesh.attention, mesh.sync_ulysses,
-                    mesh.worker_args)
-                # After ensure_request_setup: before setup a rank's slab policy
-                # is still the previous session's, and a consent projected
-                # above is not yet visible to it. The SLOT rides the request
-                # because the uncond loader inherits this method, so a slotless
-                # quote would price an uncond load against the cond slot.
-                capacity_agreement.agree_load(
-                    handle, unet_name, options, [], self.SLOT)
-                results = handle.call_all(
-                    self.ENDPOINT, unet_name, options, [], timeout_s=1800,
-                    **mesh_setup.token_kwargs(setup_token))
+
+            def eager_load(handle, topo):
+                # Setup and eager adoption are one residency transaction. No
+                # Fleet/pipeline gap may replace topology between these calls.
+                with mutation_render_session(handle):
+                    setup_token = mesh_setup.ensure_request_setup(
+                        handle, topo, mesh.attention, mesh.sync_ulysses,
+                        mesh.worker_args)
+                    # After ensure_request_setup: before setup a rank's slab
+                    # policy is still the previous session's, and a consent
+                    # projected above is not yet visible to it. The SLOT rides
+                    # the request because the uncond loader inherits this
+                    # method, so a slotless quote would price an uncond load
+                    # against the cond slot.
+                    capacity_agreement.agree_load(
+                        handle, unet_name, options, [], self.SLOT)
+                    return handle.call_all(
+                        self.ENDPOINT, unet_name, options, [], timeout_s=1800,
+                        **mesh_setup.token_kwargs(setup_token))
+
+            def respawn_after_restart(old):
+                # The old fleet's processes died with their loops, so their
+                # residency credits go too; then price and attach as above.
+                from . import recycle_drain
+
+                recycle_drain.drop_residency_memos()
+                return reprice_then_respawn(old)
+
+            try:
+                results = eager_load(handle, topo)
+            except WorkerDeliveryError as exc:
+                # Every Worker loop restarted under this mesh (#47): retire it,
+                # attach by the new ids and load once more, outside the session.
+                handle = restart_reattach.heal(
+                    handle, exc, respawn=respawn_after_restart).handle
+                topo = topology_from_preset(mesh.topology_preset, handle.world)
+                render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
+                results = eager_load(handle, topo)
             for r in results:
                 log.info("%s: %s -> %s", self.ENDPOINT, r.get("host"), r.get("transition"))
             # The SLOT matters: the worker's snapshot carries a certificate for

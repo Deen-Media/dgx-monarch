@@ -77,6 +77,10 @@ REFUSAL_CLASSES = frozenset({
     # StockLoadCapacityError family the cross-mode ceremony converts.
     "FleetCapacityError",
     "FleetQuoteUnavailableError",
+    # A delivery failure to a fleet actor ends that agreement's wait early
+    # (delivery_faults.py, restart_reattach.py, issue #47). Class C on the same
+    # guard and, like a silent rank, a liveness fault, never a capacity verdict.
+    "WorkerDeliveryError",
 })
 
 # Declared exceptions that are not user-facing model/capacity refusals: control

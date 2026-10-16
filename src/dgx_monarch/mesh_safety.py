@@ -13,6 +13,7 @@ from collections.abc import Iterable
 from typing import Any
 
 from . import absorb_fire as _absorb
+from . import delivery_faults as _delivery_faults
 from . import mesh_residency as _mesh_residency
 from .config import ClusterConfig
 from .error_utils import failure_summary
@@ -226,12 +227,16 @@ def is_deliberate_teardown_fault(
     other live mesh or creation keeps ambiguous transport faults visible. An
     authoritative in-flight stop absorbs its own racing faults; otherwise only
     the confirmed-stop grace window covers late stragglers. ``live_mesh_exists``
-    must exclude identities in ``active_teardown_tokens()``.
+    must exclude identities in ``active_teardown_tokens()``. Every transport
+    fault, absorbed or not, is also recorded for the capacity price wait
+    (delivery_faults.py), which counts a fault only when it is stamped after
+    the wait began and names the mesh the wait prices on.
     """
     if is_reason_marked_teardown(text):
         return True
     if not _absorb.hits("fault-marker", text, _TEARDOWN_FAULT_MARKERS):
         return False
+    _delivery_faults.record(text)
     if creation_in_progress or live_mesh_exists:
         return False
     if teardown_in_progress:

@@ -337,6 +337,29 @@ def test_an_unproven_abort_still_pushes_the_stock_policy(monkeypatch):
     assert pushes == [{"slab_weights": False, "lora_low_rss": False}]
 
 
+def test_a_delivery_failure_abort_takes_the_levers_and_pushes_nothing(monkeypatch):
+    """Issue #47: a gate leg on a mesh whose Worker loops restarted ends on the
+    price wait's fast refusal. The actors that would take the stock policy are
+    gone, and a 600 s push to them would hold the abort, so none is sent; the
+    combination's levers still go off, as for any unproven abort."""
+    from dgx_monarch.delivery_faults import WorkerDeliveryError
+
+    pushes = []
+    monkeypatch.setattr(
+        gate_identity, "apply_worker_policy",
+        lambda *args, **kwargs: pushes.append(args))
+    model = _graph(slab_weights=True, lora_low_rss=True)
+    handle = SimpleNamespace(setup_key=("ready",), config=None)
+    refused = WorkerDeliveryError(refusal.refusal(
+        refusal.RefusalClass.CAPACITY, "undeliverable", guard="cross_rank_capacity",
+        waivable=False, troubleshooting=2))
+
+    assert gate_identity.force_stock_quarantine(model, handle, cause=refused) == []
+
+    assert pushes == []
+    assert model.mesh.worker_args == {"slab_weights": False, "lora_low_rss": False}
+
+
 def _patch_auto_state(monkeypatch, token):
     lock = threading.Lock()
     monkeypatch.setattr(

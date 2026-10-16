@@ -1111,6 +1111,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "ContextVar read, not a monarch future",
     ("mesh_session.py", "RenderSession.activate"):
         "ContextVar read, not a monarch future",
+    ("mesh_session.py", "active_render_session"):
+        "ContextVar read, not a monarch future",
     ("mesh_session.py", "_reset_active_session"):
         "ContextVar read, not a monarch future",
     ("mesh_session.py", "claim_render_session"):
@@ -1118,6 +1120,8 @@ _OFF_LOOP_BY_CONSTRUCTION = {
     ("mesh_session.py", "require_mutation_authority"):
         "ContextVar read, not a monarch future",
     ("nodes/render_submit.py", "_collect_earlier_results_before_setup_change"):
+        "ContextVar read, not a monarch future",
+    ("nodes/render_submit.py", "_reattach_facts"):
         "ContextVar read, not a monarch future",
 }
 

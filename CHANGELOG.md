@@ -56,7 +56,32 @@ metadata reads the new version
   3 s. Upgrading: a driver on this release refuses Workers still on an older
   one before dialing, and a ComfyUI started before the update needs a restart
   once its Workers run this release. No unit, config or firewall change.
-  CPU-tested on 2026-10-15; the two-Spark recheck is pending
+  CPU-tested and checked on the pair on 2026-10-15
+  ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
+- A sampler render after the Worker services restart under a ComfyUI that
+  stayed up attaches again within that render, instead of waiting out the
+  30 s capacity price deadline and asking for Reset attached mesh (closes
+  [#47](https://github.com/Deen-Media/dgx-monarch/issues/47)). The driver
+  records each delivery failure its fault hook reports, and the price wait
+  ends within half a second of one that names a fleet host and the mesh the
+  price waits on; a rank that has not answered after 2 s is asked once more,
+  because a restarted loop's old channel session loses the first request with
+  no report. A render through KSampler, KSampler Advanced or Sampler Custom
+  that owns its session and keeps the last render's setup, or an explicit
+  loader's eager load, then reads every loop's id. When every loop serves a
+  new id, it stops the stale mesh with a 2 s bound on each teardown wait,
+  releases it on the liveness proof, attaches by the new ids and renders.
+  Some loops moved and others not, no loop moved, an id it cannot read, or
+  old processes not proven gone each refuse at once, class C, naming the
+  remedy. The driver log prints `restart_reattach outcome=...`, the attach
+  trace adds `event=restart_reattach`, and the render's finish record carries
+  `reattach` and `reattach_s`. KSampler Pipeline renders and the Identity
+  Gate node stop at the fast refusal, which names one KSampler render as the
+  way to attach again; an automatic identity gate that meets the stale mesh
+  aborts without pushing a stock policy to the gone actors. The Fleet node, a
+  one-host fleet and a render whose setup changed meet the old actors as
+  before. After an outage past the delivery timeout the fallback is still a
+  ComfyUI restart. CPU-tested on 2026-10-15; the two-Spark recheck is pending
   ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 - Refuse a checkpoint whose weight scales ComfyUI would drop, before anything
   loads
@@ -687,7 +712,7 @@ metadata reads the new version
   preserving the reproduced same-driver stop/start and restart failures;
   [issue #2](https://github.com/Deen-Media/dgx-monarch/issues/2) stayed open
   after these checks. Per-start Worker ids (above) close it; the two-Spark
-  recheck is pending.
+  recheck ran on 2026-10-15.
 - Add bounded phase timings and opt-in supported Monarch metrics. Advanced
   attached-cluster profiling, SQL and stack tools remain explicitly unavailable
   where the upstream API cannot provide an owned, stoppable session.
