@@ -673,16 +673,167 @@ measured after the placement repair: 77.0 seconds cold, 34.7 warm and a
 
 ### FLUX.3 Klein
 
-Status impl: no hardware leg has run on the step-distilled checkpoint.
-Support follows ComfyUI 20b46065e ("Support Flux3-image"), first released in
-ComfyUI 0.41.0.
+**2026-10-15 and 2026-10-16, dgx-monarch `70fb8997e3ea`, ComfyUI `29e28e2b4`
+on both Sparks.** The hardware ladder ran the release that added the family,
+with torch 2.12.0+cu132 and NCCL 2.32.3, on two NVIDIA GB10 GPUs with
+TORCH_FLASH; stock ComfyUI on the first Spark ran comfy-kitchen 0.2.37. The
+first Spark was capped at 2100 MHz, with a highest sampled SM clock of
+2093 MHz; the second was uncapped. Support follows ComfyUI 20b46065e
+("Support Flux3-image"), first released in ComfyUI 0.41.0. The six DiT
+files matched the manifest's SHA-256 on both Sparks, and the BF16 encoder
+matched its pinned hash on the first Spark, which encodes the text. This
+record covers both checkpoints;
+[FLUX.3 Klein Base](#evidence-flux-3-klein-base) adds the base model's cfg2
+and auto-table readings.
 
-The CPU evidence builds ComfyUI's own FLUX.3 model at toy size in float32 and
-runs the two-rank sharded forward against stock's: every kernel call gets
-stock's q, k and v for its heads in stock order with no pad row, and the
-output equals stock's. The cases cover an even grid, an odd 5 by 5 grid that
-pads both phases, one reference with the shard boundary inside it, two
-references, batch 2, the step-distilled flow map with a real two-row
+The ladder compared each candidate with stock ComfyUI on one GPU, which ran
+on the first Spark in fresh processes of one or more graphs each, and with
+batch row 0 of a same-build dp2 render of batch 2, which carries one-GPU math.
+All 17 dp2 references scored against stock equaled their stock renders, so
+the two references agree. Legs used the shipped recipes unless a row says
+otherwise: the step-distilled model at 16 Euler/simple steps and CFG 1, the
+base model at 25 steps and CFG 3.5, seed 42, the BF16 Qwen3-VL encoder and
+the Flux 2 VAE. Three prompts set the text rows: the shipped step-distilled
+prompt (80 rows, one block, which batches with the empty negative), the
+shipped base prompt (160 rows) and a 355-word vendor-length caption (480
+rows). One-step comparisons use the 0.10 NRMS floor. Multi-step comparisons
+across topologies are recorded, not gated.
+
+| Phase | What ran | Verdict |
+|---|---|---|
+| 0, preparation | Header audits, the header gate scan of the 77 files in each Spark's model directories, pin-stripped INT8 copies, encoder and VAE identity | Every check matched the design; of those 77 files the gate refused one, the diffusers-layout `fp8r` |
+| 1, first numbers | 2 stock references, 3 candidate cells, 4 regression cells | uly2 identical to one GPU and stock; Anima, Kandinsky 5 and Wan 2.1 latents unchanged from dev `6f2b199a3ada`, and Kroma's `uly2+fsdp` equal to its resident twin |
+| 2, stock references | 18 stock jobs, 44 graphs, first Spark only | 42 rendered; the two diffusers-layout NVFP4 files loaded with their scales dropped and failed at the first step |
+| 3, run_matrix candidates | 15 cells | Every gated comparison passed or refused as expected; a batch-2 second row and two first-use readings read CHECK, below |
+| 4, API legs | 76 legs in three driver sessions | Every leg rendered or refused as expected; four readings are CHECK, below |
+| 5, auto-table measurement | 27 cells: 15 base, 10 step-distilled at CFG 1 and 2 step-distilled at CFG 3.5 | uly2 identical to one GPU in every BF16 and NVFP4 cell; no cfg2 row ([FLUX.3 Klein Base](#evidence-flux-3-klein-base)) |
+| 6, scoped sweep | The four public templates: a local session of 36 one-GPU reference cells, then a cluster record of 228 cells. 114 are the scoped cells, every preset and quant on Torch Flash with default levers; the other 114 are cells a stopped full run had finished, on cuDNN and Sage attention and with lever variants | Local 36 PASS. Scoped 109 PASS, 3 CHECK and 2 FINDING, below; the other 114 PASS |
+
+The final scoring of 2026-10-16 read 349 comparisons: 299 PASS, 18 RECORDED,
+17 harness controls equal to stock, 2 second batch rows equal to their
+references, 7 CHECK, 2 MISSING and 4 FAIL. The four FAILs are verdicts on
+vendor files, below, and the two MISSING rows are the diffusers-layout NVFP4
+files, which left no render to compare. The first base cfg2 cell lost its
+one-GPU full-schedule case to a Worker restart (below) and reran on
+2026-10-16 with the five base INT8 auto-table cells. In the rerun both rows of
+the base model's full 25-step dp2 render equaled stock: row 0 its batch-1
+render, and row 1 row 1 of its batch-2 render.
+
+| Comparison | Checkpoints | Result |
+|---|---|---|
+| uly2, one step, 1024 and 1536 square, BF16 | Both | Identical to one GPU and to stock |
+| uly2, one step, odd 1040 and 1552 square grids, BF16 | Both | Identical to one GPU and to stock |
+| uly2, one step, 1024 and 1536 square, NVFP4 | Both | Identical to one-GPU NVFP4 and to stock NVFP4 |
+| uly2, one step, 1024 and 1536 square, INT8 ConvRot | Both | Identical to stock on the pin-stripped copy; against stock with the pins, NRMS 0.020 to 0.021 (base) and 0.149 to 0.160 (step-distilled), recorded |
+| uly2 and cfg2 against a pinned one-GPU render, 1024 to 1536 square, INT8 ConvRot | Base | uly2 one step NRMS 0.020 to 0.022 (one-block prompt) and 0.027 to 0.031 (vendor length), and no full schedule matched; cfg2 identical on the vendor-length prompt, one step 0.015 to 0.016 on the one-block prompt, recorded |
+| uly2, full schedule, 1024 to 1536 square, BF16 and NVFP4 | Both | Identical to one GPU at every size, on every prompt |
+| uly2, the shipped text-to-image graphs, full schedule | Both | Identical to stock |
+| uly2 with the INT8 Qwen3-VL encoder, one step | Base | Identical to stock with that encoder |
+| ring2, one step, 1024 square | Base; step-distilled | NRMS 0.0108; 0.0520. Under the floor, not identical |
+| ring2, odd 1040 square grid | Both | Refused in the Worker; a base-model API leg showed class K with the ring-pad waiver card |
+| `mode=local` on one GPU | Base one step and full, step-distilled one step, base square edit | Identical to stock |
+| uly2 edit, one step, one 4:3 or square reference | Base; step-distilled | NRMS 0.019 to 0.021; 0.053 to 0.055. Under the floor, not identical |
+| uly2 edit, one step, two references | Both | Identical to stock |
+| dp2 edit, one step, one 4:3 reference, row 0 | Base | Identical to stock |
+| cfg2 edit, one step, one 4:3 reference | Base | NRMS 0.020 |
+| uly2 edit, four references (20,155 joint rows) and keep resolution (24,656) | Base | Rendered, finite |
+| uly2, the shipped edit graphs, full schedule | Base; step-distilled | NRMS 0.028; 0.066, recorded |
+| dp2 batch 2, full schedule | Base | Row 0 identical to stock; row 1 identical to stock's batch-2 row 1 |
+| dp2 batch 2, full schedule | Step-distilled | Row 0 identical to stock; row 1 NRMS 0.0083 against stock's batch-2 row 1 (CHECK, batch shape) |
+| Determinism, uly2, one step | Step-distilled | Identical across a Recycle and across two driver sessions |
+| Comfy-managed residency, one step | Step-distilled uly2 BF16; base uly2 BF16 and INT8; base single | The step-distilled render equaled the resident one; on the base cases a second sample after a prompt change equaled the same prompt rendered fresh |
+| `uly2+fsdp`, one step and full schedule | Both, BF16 | Identical to resident uly2 |
+| `uly2+fsdp`, one step | Both, INT8 ConvRot | Identical to resident uly2 |
+| `cfg2+fsdp`; `dp2+fsdp`, both rows, one step | Base, BF16 | Identical to resident cfg2; identical to resident dp2 |
+| `cfg2+fsdp` and `dp2+fsdp`; `uly2+fsdp` | Base INT8; base NVFP4 | Refused class K (the pins); refused class P (no shard layout for block-scaled weights) |
+| Pinned INT8 file, one step | Step-distilled | uly2 dropped the pins and asked nothing; dp2 refused class K with the Sol-Attn card, and under the grant row 0 equaled stock's pinned render |
+| Probe LoRA pinning the ten early blocks, one step | Step-distilled BF16 | uly2 ignored the pins and equaled the render without it; dp2 refused class K, and under the grant row 0 equaled stock's probe render |
+| Synthetic rank-4 LoRA at 0.5, then 0.8, uly2, one step | Both, BF16 and INT8 | Every 0.8 step hot-swapped with no load; the first BF16 use at 0.5 passed the first-use Gate with the LoRA loaded; at 0.8, NRMS 0.0096 (base) and 0.0499 (step-distilled) against stock's LoRA loader |
+| The same LoRA on `uly2+fsdp` with `lora_low_rss` | Base BF16; base INT8 | At 0.8, identical to the resident bake, including keys on the replicated early blocks; INT8 refused class P |
+| Removing the LoRA (un-bake) | Both on the resident rung; base on the slab and FSDP rungs | The next render equaled the render without a LoRA on every rung; only FSDP restored in place, and the resident and slab rungs reloaded (CHECK) |
+
+The first-use Gate for INT8 dp2 ended on the class K guard and changed no
+lever. Two other first-use readings read CHECK and wait on a reading of the
+ledger: uly2 BF16 base gained no new row, and `uly2+fsdp` BF16 base logged
+first-use PASS rows that do not name the clean-reload proof. The first
+two-Spark cells, run earlier on 2026-10-15, recorded the expected LoRA-free
+reading, INCONCLUSIVE `no_material`. The slab rung's first use with a LoRA
+left no Gate row (CHECK), so the slab rung is not vouched for FLUX.3.
+
+**Quantized files.** The NVFP4 files are a capacity choice. Against stock BF16
+at one step, stock NVFP4 read NRMS 0.0589 (base) and 0.4988
+(step-distilled); that is the quantization's own difference, recorded and
+not a fidelity claim. The INT8 files pin comfy-kitchen's INT8 attention on 33
+blocks; stripping those 33 config tensors left every other tensor
+byte-identical, and the stripped copy is the exact reference for uly2, which
+drops the pins. INT8 renders on a topology without sequence parallelism only
+under the Sol-Attn waiver, so INT8 walls and comparisons there are recorded,
+never granted. The vendor's diffusers-layout `variants/fp8r` file loaded in
+stock ComfyUI with its scales dropped and rendered a non-finite or black
+latent. dgx-monarch's header gate refuses it before any load, finding 234
+layers with no ComfyUI quantization record
+([TROUBLESHOOTING #120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+The diffusers-layout `variants/nvfp4` files carry no ComfyUI quantization
+record either: stock ComfyUI loaded them with their weight and input scales
+dropped, and the first step failed with a matrix shape error. The header gate
+refuses both by the same rule, finding 198 packed 4-bit layers in each with no
+record. The 77-file scan did not cover them, so that reading comes from a
+header read with the release's gate code on 2026-10-16. They hold 557 of 953
+(step-distilled) and 555 of 951 (base) tensors byte-identical to the
+ComfyUI-layout NVFP4 files, so they are distinct files, not another layout of
+the same bytes.
+
+**The prompt upsampler.** The vendor's upsampler ran on the driver ahead of
+CLIP Text Encode for a step-distilled uly2 render and a base cfg2 render; both
+were finite. During the uly2 leg the first Spark's lowest sampled available
+memory was 44.6 GiB, and it was still falling when sampling stopped, against
+54.9 GiB for the shipped step-distilled graph on uly2 without it.
+
+**Incidents that changed the evidence.** The first run of the API
+legs, on 2026-10-15, refused 62 of 74 legs with `ComfyManagedResidencyError`.
+The leg order changed the `comfy_managed` policy four times without a Recycle,
+which the product refuses by design
+([TROUBLESHOOTING #62](TROUBLESHOOTING.md#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)).
+The rerun recycled before each change and replaces that run's records, which
+are kept apart and not scored. In phase 5, every INT8 one-GPU and cfg2 row read
+N/A: under the waiver the KSampler node returns a stamped result that
+`benchmark/run_matrix.py` could not unpack. Commit `3244f29` fixes the tool.
+The five INT8 cells reran with the fixed tool on 2026-10-16: every one-GPU and
+cfg2 row rendered under the waiver and records its waiver run ids. uly2 drops
+the pins and runs the exact kernel, so against the pinned one-GPU render it
+read one-step NRMS 0.020 to 0.022 on the one-block prompt and 0.027 to 0.031
+on the vendor-length prompt, under the floor, while no full 25-step render
+matched. The two sides run different attention kernels, so that difference is
+by construction. cfg2, which runs the pinned kernel on both ranks, was
+bit-identical to one GPU on the vendor-length prompt and read 0.015 to 0.016 at
+one step on the one-block prompt, the batch-fold difference BF16 shows
+([FLUX.3 Klein Base](#evidence-flux-3-klein-base)). In phase 1, the Worker
+refused the first case of the first base cfg2 cell, its one-GPU full
+schedule, with `WorkerProcIdError`: it was the first render after a Worker
+restart, the fault that
+[issue #47](https://github.com/Deen-Media/dgx-monarch/issues/47) tracks and
+commit `071c985` fixes. The cell's other cases ran, and the rerun rendered
+that case.
+
+**The scoped sweep.** Both FINDING rows were a label gap in the sweep matrix,
+which pull request [#53](https://github.com/Deen-Media/dgx-monarch/pull/53)
+closed: the matrix predicted an untyped refusal for `cfg2+fsdp` on the
+step-distilled graphs at CFG 1, and the runtime refused with class P. The three
+CHECK rows are step-distilled NVFP4 cells over the 0.10 floor at one step,
+each against the local session's one-GPU render of the same graph: the edit
+on uly2 and on auto, which picks uly2, read NRMS 0.117, and text to image on
+ring2 read 0.183. The base model's NVFP4 edit read 0.019 on uly2 and auto,
+within the floor. So step-distilled NVFP4 edits run on single, and ring2 on
+the step-distilled model is measured, never granted: across the ladder and
+the sweep its one-step readings ran from 0.026 (BF16 text to image) to 0.183,
+so use uly2.
+
+**CPU and file checks.** The CPU evidence builds ComfyUI's own FLUX.3 model
+at toy size in float32 and runs the two-rank sharded forward against stock's:
+every kernel call gets stock's q, k and v for its heads in stock order with no
+pad row, and the output equals stock's. The cases cover an even grid, an odd 5
+by 5 grid that pads both phases, one reference with the shard boundary inside
+it, two references, batch 2, the step-distilled flow map with a real two-row
 `sample_sigmas`, the fused q, k and v layout the INT8 files use, and cached
 against uncached text states. Seam 33 holds the class-scoped census of modules
 the base model runs outside its forward, seam 39 the attention pins and the
@@ -697,18 +848,57 @@ same names, dtypes, shapes and bytes, and differ only in 24 bytes of header
 metadata. The pinned `flux2-vae.safetensors` (`d64f3a68`) and the vendor's
 `vae/flux2-vae.safetensors` (`868fe7b3`) hold the same 250 inference weights
 in two key layouts; each also carries a batch-norm step counter, with
-different values, which inference never reads. No decode has compared the two
-VAE files yet.
+different values, which inference never reads. One latent decoded through
+both VAE files in one stock process gave equal pixels.
+
+Records: the private evidence directory, record `70fb8997e3ea` of
+2026-10-15 and 2026-10-16: the ladder state, the comparison summary and pairs,
+the auto-table summary, the operator notes, the stock job records and the
+sweep summaries.
 
 <a id="evidence-flux-3-klein-base"></a>
 
 ### FLUX.3 Klein Base
 
-Status impl: no hardware leg has run on the base checkpoint. The CPU evidence
-and the encoder and VAE readings under [FLUX.3 Klein](#evidence-flux-3-klein)
-cover it as well: separate q, k and v, no flow map, and seam 41's cached
-branch, which every Worker now takes as stock ComfyUI does. Support follows
-ComfyUI 20b46065e, first released in ComfyUI 0.41.0.
+The [FLUX.3 Klein](#evidence-flux-3-klein) record covers this checkpoint's
+uly2, ring, edit, FSDP, LoRA and quantization results. Its own cfg2 and
+auto-table readings follow.
+
+cfg2 splits the conditional and unconditional calls across the two GPUs. When
+the prompt encodes past one 80-row block, stock ComfyUI on one GPU also runs
+them as two batch-1 calls, and cfg2 matched it exactly: the shipped base
+prompt (160 rows) and the vendor-length caption (480 rows) were identical to
+stock at one step and to one GPU over the full schedule. When the prompt fits
+one block, it has as many rows as the empty negative, and one GPU runs both in
+one batch-2 call. cfg2 still runs two batch-1 calls, so it differs: at 1024
+square the one-step latent read NRMS 0.0094 against one GPU and stock, and
+the full 25-step render failed the same-math bar. A second reading points at
+batch shape. On the step-distilled model at CFG 1, which has no uncond call,
+dgx-monarch's dp2 render runs batch 1 on each rank: its row 0 equaled stock's
+batch-1 render, and its row 1 read NRMS 0.0083 after the full schedule against
+row 1 of stock's batch-2 render. Both readings suggest that ComfyUI's batch-2
+math differs from its batch-1 math on GB10. That is an inference: no run
+scored a stock batch-1 render against a stock batch-2 render. Chroma's
+equal-length prompts read the same way ([Chroma](#evidence-chroma)).
+
+The base model's auto-table cells ran 1024, 1152, 1216, 1280 and 1536 square,
+BF16 and NVFP4, each with the 80-row and the 480-row prompt, head capped at
+2100 MHz. uly2 was identical to one GPU in every cell. cfg2 was 1.88x to 1.98x
+faster than one GPU and 1.23x to 1.41x faster than uly2. It was identical on
+the 480-row prompt at every size; on the 80-row prompt the one-step NRMS read
+0.009 to 0.010 (BF16) and 0.023 to 0.031 (NVFP4), and no full render matched.
+Campaign K's bar asks a cfg2 row to be identical on both prompts at each size
+([cfg2 crossover rows](#campaign-k-cfg2)), so no size qualified and FLUX.3 has
+no cfg2 row; auto takes uly2. INT8 was recorded only, never a candidate. Both
+checkpoints share one family, so a base-model cfg2 row would also reach the
+step-distilled model at CFG other than 1. Two cells measured that case, the
+step-distilled model at CFG 3.5: cfg2 read one-step NRMS 0.061 at 1024 and
+0.059 at 1536 on the 80-row prompt.
+[Benchmarks](BENCHMARKS.md#flux3-klein-one-gpu-uly2-and-cfg2-2026-10-15-to-2026-10-16-head-capped)
+lists every cell's walls.
+
+At CFG 1 the step-distilled model gives cfg2 nothing to split, and an explicit
+cfg2 refused class P.
 
 <a id="evidence-longcat-image"></a>
 
@@ -1474,6 +1664,10 @@ NVFP4 Krea2 files reach row 15 (in September, RAW NVFP4 cfg2 read 1-step NRMS
 0.0113), a Kroma BF16 file reads as family krea2 and reaches row 15 at CFG other
 than 1, Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
 would reach row 68, and an equal pair takes the slice path on rows 79 and 47.
+Where an equal pair was measured, the slice path stayed under the floor but
+did not match one GPU: Chroma BF16 read NRMS 0.034 ([Chroma](#evidence-chroma))
+and FLUX.3 Klein Base 0.009 to 0.031
+([FLUX.3 Klein Base](#evidence-flux-3-klein-base)).
 At world 4 a batch-1 render on a cfg row refuses class K. An evidence record
 has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
 under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength

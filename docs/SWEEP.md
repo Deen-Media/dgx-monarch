@@ -188,9 +188,21 @@ exception to the rule. Mage Flow, Qwen
 Image 2.1 and Wan Animate 2 were tested with dedicated hardware scripts, and no
 matrix-derived sweep cell of the three has run. Their support in MODELS.md is limited to
 those tests, recorded in VALIDATION.md. Their templates still need scoped
-sweeps. FLUX.3 Klein joins at `impl` before any of its sweep cells has run.
-Its scoped sweep runs after the family merges, and the family stays in this
-paragraph until a later PR carries that record.
+sweeps.
+
+The scoped sweep of FLUX.3 Klein's four public templates ran on 2026-10-16
+at dgx-monarch `70fb8997e3ea`. The local session ran 36 single-GPU reference
+cells, all PASS. The cluster record holds 228 cells. The 114 scoped cells
+cover every preset and quant on Torch Flash with default levers: 109 PASS, 3
+CHECK and 2 FINDING. The other 114 are cells a stopped full run had finished,
+on cuDNN and Sage attention and with lever variants, and all of them passed.
+Both FINDING rows were the label gap that pull request
+[#53](https://github.com/Deen-Media/dgx-monarch/pull/53) closed: the matrix
+predicted an untyped refusal for `cfg2+fsdp` on a CFG 1 graph, and the
+runtime refused with class P. The three CHECK rows are step-distilled NVFP4
+cells over the 0.10 floor: the edit on uly2 and on auto, which picks uly2,
+read one-step NRMS 0.117 against one GPU, and text to image on ring2 read
+0.183 ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)).
 
 ## 3. Adding a template
 
