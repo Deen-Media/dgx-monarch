@@ -542,6 +542,50 @@ def _latent_statistics(samples) -> dict[str, float]:
     return values
 
 
+def _refusal_fields(error: BaseException) -> dict[str, str]:
+    """The refusal class, guard and consent kind an exception's text carries.
+
+    A Worker refusal reaches the driver as Monarch's ActorError: the inner
+    exception's message, then the whole wrapper with its remote traceback,
+    are read for a refusal tag and a consent card. Only values from frozen
+    vocabularies are returned: the class letter, a guard listed in
+    ``refusal.GUARDS`` for that class, and a consent kind listed in
+    ``gate_audit_vocab.KIND_CLASS`` for that class. A card without a tag
+    gives its kind's class. Text that carries neither returns nothing.
+    """
+    try:
+        from dgx_monarch import consent_descriptor
+        from dgx_monarch.consent_observe import refusal_text
+        from dgx_monarch.gate_audit_vocab import KIND_CLASS
+        from dgx_monarch.refusal import GUARDS, parse_refusal_tag
+    except ImportError:
+        return {}
+    try:
+        whole = str(error)
+    except Exception:  # an unreadable message carries no class
+        whole = ""
+    tag = kind = None
+    for text in dict.fromkeys((refusal_text(error), whole)):
+        tag = parse_refusal_tag(text)
+        card = consent_descriptor.parse(text)
+        kind = card.kind if card is not None and card.kind in KIND_CLASS else None
+        if tag is not None or kind is not None:
+            break
+    if tag is not None:
+        refusal_class = tag.refusal_class.value
+    elif kind is not None:
+        refusal_class = KIND_CLASS[kind]
+    else:
+        return {}
+    fields = {"refusal_class": refusal_class}
+    spec = GUARDS.get(tag.guard) if tag is not None and tag.guard else None
+    if spec is not None and spec.refusal_class.value == refusal_class:
+        fields["refusal_guard"] = tag.guard
+    if kind is not None and KIND_CLASS[kind] == refusal_class:
+        fields["consent_kind"] = kind
+    return fields
+
+
 def _not_available_result(
     name: str,
     case: dict,
@@ -552,6 +596,11 @@ def _not_available_result(
 
     The raise site (the innermost frame's file name and line) rides beside the
     type: it names where to look without carrying the exception's message.
+    A typed refusal also records ``refusal_class``, with ``refusal_guard`` and
+    ``consent_kind`` when its tag or consent card names them, and its reason
+    reads "refused". Those values come from the frozen refusal and consent
+    vocabularies, so no free text from the exception reaches the row; a row
+    without a tag or card keeps the fields above and nothing more.
     """
     site = ""
     tb = error.__traceback__
@@ -559,12 +608,14 @@ def _not_available_result(
         tb = tb.tb_next
     if tb is not None:
         site = f"{Path(tb.tb_frame.f_code.co_filename).name}:{tb.tb_lineno}"
+    refused = _refusal_fields(error)
     return {
         "name": name,
         "status": "N/A",
-        "reason": "case execution failed",
+        "reason": "refused" if refused else "case execution failed",
         "error_type": type(error).__name__,
         "error_site": site,
+        **refused,
         "settings": _case_settings(case, defaults),
     }
 

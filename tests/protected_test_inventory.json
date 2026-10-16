@@ -1549,6 +1549,14 @@
       "test_the_watched_mesh_name_is_the_one_the_fleet_spawns": "83137078c2bb6e01",
       "test_without_a_failure_the_wait_keeps_its_deadline_and_asks_once_more": "8409823fde2ba6c2"
     },
+    "tests/test_run_matrix_refusal_row.py": {
+      "test_refused_row_keeps_only_listed_guards_and_kinds": "00b5206c2b841f0e",
+      "test_refused_row_reads_the_remote_traceback_when_the_inner_message_is_untagged": "a1a4ee50696cd2fb",
+      "test_refused_row_records_class_k_and_guard_from_an_actor_error": "89ce0f99d983b6ca",
+      "test_refused_row_records_class_p_without_a_guard": "269c9481e7669fee",
+      "test_refused_row_records_the_consent_kind_of_a_card": "2c9d3505a19a7401",
+      "test_untagged_failure_row_is_unchanged": "2e75275c0d2cdcd9"
+    },
     "tests/test_slab.py": {
       "test_a_reserve_smaller_than_the_absolute_floor_is_named_as_outranked": "79cda470745f0dd5",
       "test_a_reserve_the_absolute_floor_outranks_is_still_named": "824d011270e0405b",

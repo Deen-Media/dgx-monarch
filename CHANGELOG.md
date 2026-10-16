@@ -104,6 +104,13 @@ metadata reads the new version
   runner unpacked as a tuple, so each such cell rendered and was then recorded
   as N/A. The runner now unwraps the return and lists the waiver dispatch ids
   in the row's new `waiver_runs` field; other rows are unchanged.
+- Record the refusal class in `benchmark/run_matrix.py` failure rows. A
+  typed refusal raised in a Worker reaches the runner inside Monarch's
+  `ActorError`, so its row named only that type and the raise site. The row
+  now adds `refusal_class`, and `refusal_guard` and `consent_kind` when the
+  tag or consent card names them, and its `reason` reads `refused`. Each value
+  comes from a fixed vocabulary, so no exception text reaches the row; rows
+  without a tag or card are unchanged.
 - Label a cfg topology on a CFG 1 graph `refuse:P` under FSDP as well. The
   sweep matrix predicted an untyped refusal there, but the cfg wrapper's typed
   guard answers before the FSDP admission, as the FLUX.3 sweep of 2026-10-16
