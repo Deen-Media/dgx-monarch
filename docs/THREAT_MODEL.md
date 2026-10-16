@@ -188,9 +188,11 @@ may silently expand into RDMA qualification.
 
 Repository responsibilities are:
 
-- The public source repository holds the current runbook, reviewable validation
-  tools and one exact public target commit. No executable hardware workflow may
-  sit under `.github/workflows/`, and no public workflow may call a
+- The public source repository holds the comparison method in
+  [VALIDATION.md](VALIDATION.md#comparison-method), the
+  [sweep harness](SWEEP.md), reviewable validation tools under `benchmark/`
+  and `tools/`, and one exact public target commit. No executable hardware
+  workflow may sit under `.github/workflows/`, and no public workflow may call a
   runner-registration endpoint such as
   `actions/runners/generate-jitconfig`.
 - The private workspace holds host-specific wrappers, configuration and raw
@@ -358,6 +360,34 @@ digest, and note content can still be sensitive, and console and full logs
 remain outside this boundary. A receipt proves only what the local workflow
 recorded; it is not signed machine identity or remote attestation.
 
+Monarch export is off by default. `[monarch.diagnostics] metrics = true`
+creates dgx-monarch's phase and occupancy instruments, which leave the host
+only through an `otlp_endpoint`
+([CLUSTER.md](CLUSTER.md#monarchdiagnostics)). With an endpoint set, the
+driver, every actor and every Worker send Monarch's metrics and its upstream
+raw logs, as well as those instruments, to the collector that endpoint names.
+Loading the file refuses an endpoint unless `otlp_logs = true` acknowledges
+the logs.
+dgx-monarch sanitizes only its own metric labels; the upstream logs may hold
+more, and an `http://` endpoint carries them unencrypted. Use a collector you
+control. An ambient `OTEL_EXPORTER_OTLP_ENDPOINT` would start that export
+without the file's acknowledgement, so the driver refuses every mesh build
+while the variable is set and export is off, or while it names a different
+endpoint. Actors start with the variable removed when export is off, and the
+Worker loop's environment filter drops it
+([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+
+`dgxm diagnostics` changes no runtime state. For a bounded time it polls
+`GET /dgxm/telemetry` at the ComfyUI address it is given, over plain HTTP, and
+keeps only fixed fields: phase events (phase, outcome, return mode, start time
+and duration), each process's source manifest and transport hashes, version
+strings and random process id, each Worker's rank, world size and two state
+flags, gap counts and the capture settings. It keeps no host names, paths,
+prompts or model names. It writes one new mode-`0600` file at the `--output`
+path, in a directory that must already exist, and refuses an existing path or
+a symbolic link ([CLUSTER.md](CLUSTER.md#monarchdiagnostics)). Timings and
+build identities can still be sensitive; review the file before sharing it.
+
 ## Attack Surface, Mitigations, and Attacker Stories
 
 - **Browser routes.** A hostile web page, open in any browser that can reach the
@@ -404,7 +434,8 @@ recorded; it is not signed machine identity or remote attestation.
   or operator time; resource exhaustion is treated as a realistic availability
   threat, not code execution by itself.
 - **Environment and diagnostics.** Ambient secrets may leak through inherited
-  variables, command lines, logs, reports, or committed artifacts. The worker
+  variables, command lines, logs, reports, opt-in OTLP export, or committed
+  artifacts. The worker
   allowlist, private runtime paths, report redaction, narrow diagnostics, and CI
   leak scanner reduce this risk, but explicit full-fidelity output remains the
   operator's responsibility.

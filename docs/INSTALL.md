@@ -15,6 +15,9 @@ matching Python, torch, torchmonarch and ComfyUI versions; guided setup also
 requires clean Git ComfyUI checkouts except for the missing example files
 described below. Use the current requirements in
 `pyproject.toml` and `requirements.txt`, not a version copied from another rig.
+Each Worker host also needs `/usr/bin/python3` at Python 3.9 or newer, because
+the Worker lifecycle helpers run on it rather than on the configured `python`;
+`dgxm doctor` checks it on every host ([CLUSTER.md](CLUSTER.md#hosts)).
 FLUX.3 Klein needs ComfyUI 0.41.0 or newer
 ([model files](#model-files-required-by-each-template)).
 
@@ -63,9 +66,12 @@ require a full environment archive or restoration afterward.
 Agree on cache reuse before the first CUDA prerequisite check, since even that
 check can create cache files. Set supported cache locations before importing
 Torch or probing CUDA, and record which existing caches remain in use.
-`~/.cache/dgx-monarch` holds consent and model-family memos by default; these
-paths do not follow `XDG_CACHE_HOME`. Preserve them under the approved test and
-restoration plan rather than assuming a new environment isolates them.
+`~/.cache/dgx-monarch` holds consent and model-family memos by default. On
+each Worker host it also holds `profiles/`, where the Init node's
+`load_profile` option, off by default, writes its reports and keeps the
+newest 20. These paths do not follow `XDG_CACHE_HOME`. Preserve them under the
+approved test and restoration plan rather than assuming a new environment
+isolates them.
 
 Driver exports do not establish Worker cache isolation: Worker services filter
 their inherited environment. They also replace caller `TMPDIR` with private

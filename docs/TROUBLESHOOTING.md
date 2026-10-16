@@ -1092,6 +1092,12 @@ re-renders the Worker units (#113). Do not infer a model or
 distributed-math failure from this transport error; verify the per-rank latent
 signatures separately.
 
+**A failed native read also switches native return off.** Any native read that
+fails on the driver latches native return off for that ComfyUI process: later
+renders return their latents by actor messaging, and only a ComfyUI restart
+turns native return back on
+([#115](#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
+
 **If a started native read is incomplete.** dgx-monarch performs zero native
 drops and sends zero ACK; it retains the destination and every part because the
 operation may still be live. If a read completed, or an off-loop contender
@@ -3078,6 +3084,9 @@ gets under `first_use`. So, with `auto_gate=off` on a single-model render:
    `lora_low_rss` and `slab_weights`; `comfy_managed`, if the graph sets it,
    goes off for the whole Init node (DESIGN.md, "What a FAIL takes, and from
    whom"). [#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass) is the way back.
+   The FAIL holds within one package version. A release update expires
+   context-scoped FAILs, so `first_use` retests the combination and `off`
+   treats it as untested.
 3. **`comfy_managed=on` refuses LoRA stacks.** That widget sits in the same
    Init advanced block, so its refusal is easy to blame on `auto_gate`.
    Different lever, different reason ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)), and `auto_gate` neither causes
@@ -3951,8 +3960,8 @@ ranks to merge. A family other than MiniMax H3 refuses with its own reason. A
 box without the package refuses naming that box: the driver checks every rank
 before it dispatches, because a rank raising inside a collective abandons the
 render and strands its peers. A checkpoint that pins `comfy_kitchen_sol` on
-its blocks raises no card under sequence parallelism, because no attention
-call runs the pin there: the sharded attention uses the widget's kernel, and
+its attention modules raises no card under sequence parallelism, because no
+attention call runs the pin there: the sharded attention uses the widget's kernel, and
 the stock attention the pack leaves in place (cross-attention, and the
 refiners and encoders every rank runs whole) uses ComfyUI's default exact
 backend ([ADAPTERS.md](ADAPTERS.md) lists each site). Under sequence
@@ -5457,6 +5466,19 @@ the default policy with native return off. Any other difference from the
 generated unit, including a malformed policy argument, still reads
 `FAILED_SOURCE_LAYOUT`.
 
+The same source check names three other failures, none of them a stale
+policy. `dgxm restart`, a syncing `dgxm up` and the `dgxm doctor` env row
+print them with the host, the exit code and, when there is one, the last
+stderr line:
+`FAILED_WORKER_INTERPRETER` (exit 126 or 127: the shell could not run
+`cluster.python` on that host), `FAILED_LIFECYCLE_LOCK` (the lifecycle lock
+wrapper failed before the check gave a verdict, for example on an unsafe
+`~/.local/state/dgx-monarch`) and `FAILED_SOURCE_PROBE` (the check exited
+without a verdict). Doctor runs the check without the lock, so it never
+reports `FAILED_LIFECYCLE_LOCK`; an exit without a verdict reads
+`FAILED_SOURCE_PROBE` there. Fix the cause the line names on that
+host, then run the command again; the remedy below is for `POLICY_STALE` only.
+
 **Remedy:** stop ComfyUI, then run a verified update to the commit the driver
 checkout already has:
 
@@ -5641,10 +5663,17 @@ waivers and ends on this guard. A pin that runs there (a LoRA's, or an fp8 or
 int8 checkpoint's) therefore refuses even after the grant. Render it on
 uly2+fsdp, where dgx-monarch drops the pin, with `auto_gate=off`
 ([#67](#67-what-auto_gateoff-costs-and-what-it-does-not)), or on a topology
-without fsdp. On a resident topology the ceremony ends on this guard too and
-changes no residency setting; a risky combination (a LoRA stack, or slab
-residency requested) then renders under stock residency, the limit #84
-describes for Sol.
+without fsdp. On a resident topology such as cfg2 the ceremony ends on this
+guard too and changes no residency setting. Under `auto_gate=first_use` every
+new combination there runs that ceremony before it renders, because the
+default `slab_weights=auto` makes it risky, so a checkpoint that pins pays
+for it even with no LoRA. After the ceremony the combination renders
+under stock residency, and that answer stands for the rest of the ComfyUI
+session: the grant does not run the ceremony again, and each new session
+runs it once more. To keep the slab and low-RSS levers, grant the card and
+set `auto_gate=off` for that graph
+([#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora),
+[#67](#67-what-auto_gateoff-costs-and-what-it-does-not)).
 
 **Reading the record.** The `render.last` block of `/dgxm/telemetry` and
 `benchmark/run_matrix.py` result rows carry `attention_pins` (pinned attention
@@ -5694,10 +5723,11 @@ adds cross-attention, for int8 only: Sol needs q, k and v of one shape with a
 head dimension of 128, and cross-attention gives its keys and values the
 text's length, not the image's. `--blocks N` pins only the first N modules.
 Load the file with a LoRA loader at strength 1.0, since strength 0 stages no
-pin. On cfg2 expect the card, then, after the grant, a stamped render whose
-record reads "ran"; on uly2 expect no card and a record that reads "dropped
-(sequence parallelism)"; on cfg2+fsdp or dp2+fsdp under
-`auto_gate=first_use` expect the refusal above even after the grant. The file
+pin. On cfg2 under `auto_gate=first_use` the first queue runs the first-use
+ceremony above, then shows the card; after the grant expect a stamped render
+on stock residency whose record reads "ran". On uly2 expect no card and a
+record that reads "dropped (sequence parallelism)"; on cfg2+fsdp or dp2+fsdp
+under `auto_gate=first_use` expect the refusal above even after the grant. The file
 patches no weight, and slab residency prices it as no bake.
 
 ## 118. Workers in release slots still run the previous version after a plain update

@@ -133,7 +133,9 @@ Separate these cases:
   `dgxm-worker.service` and the managed source/state paths use the real user's
   home. Include `~/.cache/dgx-monarch` in that boundary: it holds consent state
   (`consent_memo.json`) and model-family information (`family_memo.json` by
-  default). Inspect the configured paths; a new environment or config does not
+  default). On each Worker host it also holds `profiles/`, where the Init
+  node's `load_profile` option, when on, keeps its newest 20 reports.
+  Inspect the configured paths; a new environment or config does not
   make those records new. Agree whether to preserve, reuse, or isolate them,
   and retain any existing records for restoration. `HOME` or XDG overrides
   do not safely isolate a second installation.

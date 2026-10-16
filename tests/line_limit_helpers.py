@@ -9,8 +9,8 @@ CEILINGS = {
     "mesh.py": 690, "cli/doctor.py": 770,
     "cli/actor_reaper.py": 603, "adoption_evidence.py": 732,
     # Loader, worker, and Comfy integration seams stay with the state they bind.
-    "actor/unbake.py": 692, "config.py": 658, "actor/sampling.py": 620,
-    "actor/comfy_bridge.py": 543, "actor/worker.py": 509, "comfy_surface.py": 526,
+    "actor/unbake.py": 692, "config.py": 638, "actor/sampling.py": 620,
+    "actor/comfy_bridge.py": 528, "actor/worker.py": 509, "comfy_surface.py": 526,
     # FSDP and capacity pricing are deliberately centralized for exact accounting.
     "adapters/fsdp.py": 589, "actor/capacity_quote.py": 539,
     "capacity_agreement.py": 567, "gate_ledger.py": 527,

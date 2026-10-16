@@ -34,8 +34,9 @@ _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
 _VERSION = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]{0,127}")
 GATE_NOTE = (
-    "Source-bound Gate grants are re-evaluated after source activation; "
-    "sticky FAIL evidence remains authoritative."
+    "Gate results tied to the old source lapse. A FAIL stays quarantined within one package version; "
+    "a new version expires context-scoped FAILs, so auto_gate=first_use retests them and "
+    "auto_gate=off treats them as untested."
 )
 
 

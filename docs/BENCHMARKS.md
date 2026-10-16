@@ -24,6 +24,14 @@ Krea2 and Ideogram4 use the [Ulysses comparison tests](VALIDATION.md#ulysses-com
 Their times are warm full renders of the same graph on one GPU and two GPUs. The first Spark had a 2100 MHz GPU clock cap; the second was uncapped. Separate one-step probes produced identical decoded pixels;
 that does not establish equality at every step of the full render.
 
+The Krea2 row times the shipped template's graph, whose DGX Monarch KSampler
+runs `euler_cfg_pp`, with RAW BF16 loaded. On a pair, `auto` takes cfg2 (row
+15) for that graph, not the Ulysses it was timed on.
+[Campaign K](#campaign-k-cfg2-against-uly2-2026-10-14-head-capped) cell a01
+timed both at 1536: sampler walls of 44.8 s on uly2 and 36.3 s on
+cfg2, with cfg2 bit-identical to one GPU. Sampler walls leave out text
+encoding and VAE decode, so they do not compare with the table's times.
+
 The [H3 comparison](VALIDATION.md#evidence-minimax-h3-t2va-fl2va-ref2va-av)
 used stock ComfyUI for the one-GPU timing. One Monarch worker took 42:20,
 and its output matched the exact-attention pair. This is a different recipe
@@ -239,7 +247,7 @@ Reading the table:
   it ran 1.17x (Chroma INT8 at 1280) to 1.66x (Qwen-Image at 1152) faster
   than uly2 and 1.96x to 2.10x faster than one GPU, and its slowest warm leg
   beat uly2's fastest. Krea2 RAW INT8 read 0.97x, 0.98x and 1.03x against
-  uly2 at 1152, 1216 and 1280, and 1.08x at 1536: its uly2 leg ran 1.93x to
+  uly2 at 1152, 1216 and 1280, and 1.08x at 1536: its uly2 leg ran 1.83x to
   2.07x faster than one GPU, against 1.59x to 1.64x on BF16, so the split had
   less to gain.
 - **cfg2 was bit-identical to one GPU in every cell but LongCat.** LongCat

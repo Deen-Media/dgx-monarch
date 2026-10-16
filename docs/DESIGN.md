@@ -11,8 +11,9 @@ campaign covers a documented subset, not the full matrix. The package declares
 version 1.2.0 with an updated Monarch dependency. The migration has local CPU,
 native-load and [exact-source paired hardware evidence](VALIDATION.md#gpu-checks-for-the-070-migration).
 Clean cancellation remains unproven despite successful explicit recovery;
-native cancellation and fabric-failure recovery remain untested. [Release history](../CHANGELOG.md) records the compatible operator
-improvements; section 9 tracks acceptance.
+native cancellation and fabric-failure recovery remain untested.
+[Release history](../CHANGELOG.md) records what changed since 1.1.0 and how to
+update from it; section 9 tracks acceptance.
 The runtime also includes low-RSS LoRA residency, zero-copy slab residency,
 the identity gate and ledger, `dgxm top`, Fleet sampling, an RDMA latent-return
 path that is off by default with scoped qualification (§5.6), and the per-family
@@ -363,7 +364,8 @@ adapters/
   __init__.py          # the ordered ADAPTERS registry; most specific first
   <family>.py          # one file per family, plus shared helpers
                        #   (flux_shared, usp_pad_exclusion, wan_ring_attention,
-                       #    cfg_parallel, fsdp, sol_attention)
+                       #    cfg_parallel, fsdp, sol_attention, stock_attention,
+                       #    attention_inputs, index_cache)
   cudnn_ring_attention.py # native cuDNN output/LSE contract and instance binding
 ```
 
@@ -442,8 +444,10 @@ fidelity against a single-GPU reference within the measured noise floor.
 measurements in [VALIDATION.md](VALIDATION.md) and keyed on
 (model family, quant, megapixels, world size):
 
-- families with explicit resolution-crossover rows use cfg-parallel at the low
-  end and USP at the high end, with per-model thresholds stored as data; other
+- families with explicit resolution-crossover rows use cfg-parallel in a
+  measured band and USP elsewhere: below 1.2 MP for Chroma, LongCat, Boogu and
+  Anima, and from 1.2 MP up to 1.64 MP for Chroma, 1.77 MP for Qwen-Image and
+  2.36 MP for Krea 2. Per-model thresholds are stored as data; other
   families have explicit full-range ring or Ulysses rows. Mage Flow, Qwen
   Image 2.1 and FLUX.3 Klein have no row, and Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image
   have no row below 1.2 MP; those cases take the generic uly2 fallback
@@ -1577,9 +1581,12 @@ Seven seams are held outside the behavioral suite:
      limitations are canonical in [INSTALL.md](INSTALL.md#guided-multi-node-setup).
    - `dgxm reap`: the same sweep on demand, including on a local-mode box
      with no `cluster.toml`; `--dry-run` prints the plan and signals nothing.
-   - `dgxm update`: compatibility git-pull path that synchronizes the
-     repository's exact torchmonarch pin with `--no-deps`; install/sync dgx-monarch with
-     `--no-deps`; restart and doctor. It never resolves torch/NCCL/xfuser.
+   - `dgxm update`: plain update refuses while ComfyUI runs or when any Worker
+     runs from a release slot. It fetches, checks the fetched commit's exact
+     torchmonarch pin and dependencies, and fast-forwards only after that check
+     passes. It then installs the pin and dgx-monarch with `--no-deps` and, on
+     a cluster, the pin on each Worker host, restarts the Workers and runs
+     doctor. It never resolves torch/NCCL/xfuser.
      `--verify` selects the certainty-aware remote-cluster transaction split
      across inspection, remote release-slot, staged driver-pin, smoke, receipt,
      and state-machine leaves; its operational contract is canonical in
@@ -1588,6 +1595,13 @@ Seven seams are held outside the behavioral suite:
      `dgxm install-service`: refuses a unit it does not own, syncs the package,
      then installs and starts each host's Worker service as a systemd user
      unit, and fails a host whose user lingering is off.
+   - `dgxm diagnostics`: read-only capture of the driver's existing
+     `/dgxm/telemetry` endpoint into a new private JSON file named by
+     `--output`, bounded by duration, event count and bytes. It never attaches,
+     creates an admin listener or stops a Worker. A partial capture exits 3,
+     and `--capabilities` reports the runtime's limits without connecting.
+     Usage is canonical in [CLUSTER.md](CLUSTER.md#monarchdiagnostics).
+   - `dgxm version`: prints the dgx-monarch version and its torchmonarch pin.
    - `dgxm launcher`: separately owned local CLI launcher installation, offered
      during onboarding. It plans by default, binds the selected executable and
      config, preserves unmanaged commands, and makes no Worker or dependency
@@ -1687,6 +1701,8 @@ dgx-monarch/
 │   ├── actor/                 # GPUWorker, model store, failure decorators
 │   │   ├── comfy_custom_nodes.py # headless custom-node discovery/cleanup
 │   │   ├── pread_backend.py   # lazy safetensors backend shim
+│   │   ├── load_profile_file.py # bounded per-host directory of Init
+│   │   │                      #   load_profile reports
 │   │   ├── capacity_quote.py  # one rank's price for one slot, as data: the
 │   │   │                      #   ladder's arithmetic and the wire row it fills
 │   │   ├── rescue_offer.py    # capacity rescue offer parts, shared by the
@@ -1707,8 +1723,19 @@ dgx-monarch/
 │   │   ├── worker_compile.py  # opt-in DiT block compilation boundary
 │   │   └── rdma_handoff.py    # durable worker descriptor ownership + ACK
 │   ├── adapters/              # §5.3 registry (one file per family)
-│   │   └── flux_shared.py     # control-span/shard helpers the flux forwards
-│   │                          #   share with hunyuan, lens, and qwen_image
+│   │   ├── flux_shared.py     # control-span/shard helpers the flux forwards
+│   │   │                      #   share with hunyuan, lens, and qwen_image
+│   │   ├── attention_inputs.py # what ComfyUI hands a model-level attention
+│   │   │                      #   op, and the closed keyword set it accepts
+│   │   ├── stock_attention.py # stock attention left in place under sequence
+│   │   │                      #   parallelism, run without an attention
+│   │   │                      #   module's kernel pin
+│   │   ├── index_cache.py     # bounded per-device cache of the Ulysses pad
+│   │   │                      #   path's index tensors
+│   │   ├── flux3_packing.py   # FLUX.3 Klein span clipping, stream shards, and
+│   │   │                      #   pad rows
+│   │   └── minimax_h3_packing.py # MiniMax H3 per-token packing and checkpoint
+│   │                          #   timestep embeddings
 │   ├── comfy_surface.py       # runtime Comfy touchpoint/signature assertion
 │   ├── comfy_forward_contracts.py # aggregate/re-export forward compatibility map
 │   ├── comfy_rebound_signatures.py # exact stock rebound-method contracts
@@ -1747,6 +1774,16 @@ dgx-monarch/
 │   ├── monarch_semantics.py   # stdlib-only torchmonarch behavior probes
 │   ├── monarch_touchpoint_spec.py # touchpoint record + signature comparison
 │   │                          #   (stdlib leaf; keeps the manifest importable)
+│   ├── monarch_policy.py      # validated Monarch process policy: installed
+│   │                          #   before the runtime import, then read back
+│   ├── monarch_policy_io.py   # policy, trust-fingerprint and driver-host
+│   │                          #   readers that import neither Monarch nor Torch
+│   ├── monarch_launch.py      # explicit process launch policy that keeps the
+│   │                          #   controller's environment out
+│   ├── monarch_capabilities.py # path-redacted Monarch artifact and native-load
+│   │                          #   facts, without hardware probes
+│   ├── monarch_diagnostics.py # opt-in Monarch metrics on a bounded daemon
+│   │                          #   queue; no Jobs, servers or spans
 │   ├── absorb_fire.py         # one greppable INFO line per teardown-absorption
 │   │                          #   site (stdlib leaf; used by soak diagnostics)
 │   ├── fault_repeats.py       # report an unhandled cluster fault once, then
@@ -1754,7 +1791,7 @@ dgx-monarch/
 │   ├── attach_trace.py        # one greppable line per cluster-attach phase:
 │   │                          #   the vocabulary, the timer, and the parser
 │   │                          #   the TROUBLESHOOTING #101 grep depends on
-│   ├── attention_pins.py      # per-block kernel pins: one walk per load, the
+│   ├── attention_pins.py      # per-module kernel pins: one walk per load, the
 │   │                          #   render record fields, the class-K waiver
 │   ├── capacity_agreement.py  # driver-mediated pre-load fan out: every rank
 │   │                          #   prices before any rank allocates
@@ -1776,6 +1813,14 @@ dgx-monarch/
 │   │                          #   and end, and a marker when another box's host answers
 │   ├── telemetry_steps.py     # per-render step marks: each render times a step
 │   │                          #   against its own last one (stdlib leaf)
+│   ├── telemetry_ceremony.py  # Gate ceremony windows and the first-render
+│   │                          #   claim for the progress tracker (stdlib leaf)
+│   ├── runtime_diagnostics.py # bounded advisory phase timings shared by the
+│   │                          #   driver and actors (stdlib leaf)
+│   ├── runtime_timing.py      # advisory queue-wait and GPU-phase timers; the
+│   │                          #   asyncio lock and executor behave as before
+│   ├── diagnostic_session.py  # finite sanitized dgxm diagnostics captures and
+│   │                          #   their private export
 │   ├── transfer.py            # messaging + RDMA return paths
 │   ├── transfer_utils.py      # pure tensor-tree/split/read helpers
 │   ├── rdma_poison.py         # process-lifetime poison records + one-time report
@@ -1793,21 +1838,31 @@ dgx-monarch/
 │   │                          #   the existing metrics thread (stdlib leaf)
 │   ├── return_phases.py       # one native return's phase split for the result
 │   │                          #   row, the render log line and the qualifier
+│   ├── return_diagnostics.py  # observational return counters; never evidence
+│   │                          #   for ACK, release or reuse
 │   ├── tui/readiness_view.py  # pure canonical readiness renderer for the TUI
+│   ├── tui/diagnostics_view.py # fixed, bounded display of recent driver timings
 │   ├── tui/view_helpers.py    # dashboard rendering/recording helpers
 │   └── cli/                   # dgxm command adapters and lifecycle leaves
 │       ├── arguments.py        # public parser; command effects stay in leaves
 │       ├── cluster_smoke.py    # owned DP/NCCL/source-cohort smoke + typed cleanup
 │       ├── config_removal.py   # checked lock-bound durable config unlink
+│       ├── diagnostics_command.py # dgxm diagnostics: bounded read-only capture
+│       │                       #   of the driver's telemetry endpoint
 │       ├── doctor_nccl.py      # loaded NCCL library probe and the cross-host row
 │       ├── doctor_permissions.py # config-mode diagnostic row
 │       ├── doctor_repair.py    # exact-file chmod-only repair transaction
+│       ├── doctor_worker_context.py # the host's owned Worker release for
+│       │                       #   Doctor's environment probe
 │       ├── launcher.py         # managed local command ownership and publication
 │       ├── comfy_top.py        # foreground driver and owned dashboard supervisor
 │       ├── comfy_top_process.py # bounded owned-process signal and settlement helpers
 │       ├── comfy_top_signal.py # owned foreground signal observation and startup gate
 │       ├── legacy_init.py      # compatibility interactive config writer
-│       ├── legacy_update.py    # compatibility pull/sync/restart update
+│       ├── legacy_update.py    # plain update: fetch, dependency check,
+│       │                       #   fast-forward, pin install, restart
+│       ├── legacy_update_dependencies.py # plain update's candidate dependency
+│       │                       #   check before the fast-forward
 │       ├── release_slot.py     # read-only release-slot probe for Doctor and plain update
 │       ├── lifecycle.py        # Worker service lifecycle and package/pin effects
 │       ├── lifecycle_generation.py # Worker generation marker/fence capabilities
@@ -1855,9 +1910,16 @@ dgx-monarch/
 │       ├── setup_services_storage_scripts.py # private release reservation/cleanup
 │       ├── setup_source.py     # imported source identity/manifest binding
 │       ├── setup_verification.py # doctor-first cluster-smoke evidence adapter
-│       ├── sol_attn_prerequisites.py # bounded passive dependency/header/cache evidence
+│       ├── update_activity.py  # read-only driver activity and opt-in
+│       │                       #   privileged process checks
 │       ├── update_cancellation.py # cancellation-precedence helper
 │       ├── update_command.py   # concrete verified-update platform adapter
+│       ├── update_dependency_contract.py # read-only dependency closure checks
+│       │                       #   run in each target interpreter
+│       ├── update_dependency_diagnostics.py # bounded local dependency remedies,
+│       │                       #   never copied into receipts
+│       ├── update_doctor_diagnostics.py # bounded Doctor categories for updater
+│       │                       #   stderr
 │       ├── update_driver_pin.py # driver-pin change: stage both wheels, switch or restore offline
 │       ├── update_entrypoint.py # serialized execution and receipt publication
 │       ├── update_inspect.py   # exact target dependency/source inventory checks
@@ -1933,9 +1995,9 @@ an enforced requirement. The current exceptions are:
 | `cli/actor_reaper.py` | 603 | procfs actor identity, orphan provenance, the termination sequence, the doctor report, and the read-only liveness answer the driver asks after a stop times out |
 | `adoption_evidence.py` | 732 | opt-in, request-bound resident-adoption authority, full-file identity/cache, and strict worker/result validation; the render path retains only narrow integration hooks |
 | `actor/unbake.py` | 692 | byte-verified checkpoint capture/restore engine |
-| `config.py` | 658 | typed cluster schema, fabric profiles, validation, and TOML rendering; strict table-key vocabulary lives in `config_schema.py` |
+| `config.py` | 638 | typed cluster schema, fabric profiles, validation, and TOML rendering; strict table-key vocabulary lives in `config_schema.py` |
 | `actor/sampling.py` | 620 | worker sampler protocol and distributed execution paths; per-adapter data-parallel exemptions keep raw token/weight sequences intact across ranks |
-| `actor/comfy_bridge.py` | 543 | Comfy worker bootstrap and narrowly-scoped runtime patching; DynamicVRAM state, latches, and policy live in `actor/comfy_dynamic.py`, and the pread shim lives in `pread_backend.py` |
+| `actor/comfy_bridge.py` | 528 | Comfy worker bootstrap and narrowly-scoped runtime patching; DynamicVRAM state, latches, and policy live in `actor/comfy_dynamic.py`, and the pread shim lives in `pread_backend.py` |
 | `actor/capacity_quote.py` | 539 | residency memory estimates and the response fields parsed by the driver, including slab LoRA bake memory and default LoRA-path selection |
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |
@@ -2056,13 +2118,19 @@ Every milestone must satisfy this checklist:
 
 ## Appendix A: empirical design inputs
 
-- cfg-parallel won at or below about 1 MP and USP above about 1.5 MP (Krea2
-  and Chroma); the `topology_table.py` auto table rows that split
-  by resolution switch at 1.2 MP. On 2026-10-14, after the 2026-10 sequence
-  parallel fixes, Campaign K measured cfg2 faster than uly2 up to 1.64 MP on
-  Chroma and up to 2.36 MP on Krea2 FP8 and BF16, so those families gained
-  cfg2 rows above 1.2 MP; Krea2 INT8 cfg2 was exact but no faster than uly2
-  below 1536, so it kept Ulysses (BENCHMARKS.md).
+- Earlier measurements found cfg-parallel winning at or below about 1 MP and
+  USP above about 1.5 MP (Krea2 and Chroma), so the `topology_table.py` rows
+  that split by resolution switched at 1.2 MP. On 2026-10-14, after the 2026-10
+  sequence parallel fixes, Campaign K measured cfg2 bit-identical to one GPU
+  and faster than uly2 at every measured size of each new band: Chroma BF16,
+  FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from 1.2 to
+  1.77 MP (row 68), Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15), and
+  Boogu FP8 and Anima BF16 below 1.2 MP (rows 79 and 47). Each upper band
+  ends at the largest size measured; the two lower bands follow rows 20 and 28
+  and rest on one size, 1.05 MP. Krea2 INT8 cfg2 was exact but ran 0.97x to
+  1.08x against uly2, so it kept Ulysses; LongCat cfg2 above 1.2 MP was not
+  bit-identical, and Kandinsky5's image and video checkpoints share one
+  family, so neither gained a row (BENCHMARKS.md).
 - FLUX.3 Klein Base cfg2, measured by Campaign K's method on 2026-10-15 and
   2026-10-16 with the first Spark capped at 2100 MHz, beat uly2 at every size
   from 1024 to 1536 square and was exact when the prompt encoded past one
@@ -2072,7 +2140,10 @@ Every milestone must satisfy this checklist:
 - Ideogram4 head_dim 256, FP8 pair at 1024x1024: Ulysses2 matched
   DP2 at NRMS 0.000; Ring2 measured 0.102 against the 0.100 limit.
 - Sage attention helps only fp8 with USP at high resolution (about 5-8% at
-  1536) and loses on bf16 at 1024.
+  1536 in the 2026-06 campaign) and loses on bf16 at 1024. Campaign K
+  (2026-10-14) read the SAGE route 1 to 5 percent faster than Torch Flash
+  uly2 on Krea2 and Chroma FP8, at 1-step NRMS 0.030 to 0.078 against one
+  GPU, where Torch Flash uly2 was bit-identical.
 - FSDP is a capacity tool, not a speed tool; NCCL_PROTO=LL can deadlock FSDP,
   so never set it.
 - GB10 has GPUDirect RDMA off (`cuMemGdrSupport 0`), so NCCL stages through

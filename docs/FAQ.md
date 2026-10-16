@@ -131,7 +131,12 @@ jobs, is in [VALIDATION.md](VALIDATION.md).
 - **FSDP.** Split the weights so each GPU holds part. That is a capacity tool,
   not a speed tool, and [CONCEPTS.md](CONCEPTS.md) says how much slower. Use
   it when the model does not fit, or you want room for a local LLM.
-- **auto.** A rule table (family, quant, megapixels, how many GPUs). It logs
+- **auto.** A rule table (family, quant, megapixels, how many GPUs, CFG, and
+  whether the sampler keeps the negative pass at CFG 1, as the cfg++ samplers
+  do). It takes cfg2 only for a family, quant and size band where a dated run
+  measured cfg2 faster than one GPU and within the accuracy floor; the rows
+  [Campaign K](BENCHMARKS.md#campaign-k-cfg2-against-uly2-2026-10-14-head-capped)
+  added were also faster than Ulysses and bit-identical to one GPU. It logs
   the row it matched and why. It does not guarantee the fastest option.
 
 Leave Init on `auto` the first time. If you just want two pictures at once,
@@ -151,10 +156,14 @@ Unavailable on this fabric. The topology slot is reserved; there is no
 PipeFusion mode ([DESIGN.md](DESIGN.md)).
 
 **Native RDMA for sending latents back?**
-It is off by default and marked **NOT RUN / HOLD**. Latents come back over
-actor messages; the split itself still uses NCCL. The terms of the hold are in
-[DESIGN.md](DESIGN.md) 5.6, and the failure an operator can see is
-[TROUBLESHOOTING.md #75](TROUBLESHOOTING.md#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails).
+It is off by default. [Selected-rail checks](VALIDATION.md#native-rdma)
+qualify only their recorded scope; native cancellation and fabric-failure
+recovery are untested. Latents come back over actor messages; the split
+itself still uses NCCL. The switch is `rdma_latent_return` in
+[CLUSTER.md](CLUSTER.md#cluster). The failure an operator can see is
+[TROUBLESHOOTING.md #75](TROUBLESHOOTING.md#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails),
+and a failed native read turns native return off until ComfyUI restarts
+([#115](TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
 
 **I already split my queue with an agent.**
 Fleet serves that use case. Ulysses or cfg2 splits one job across both hosts.
