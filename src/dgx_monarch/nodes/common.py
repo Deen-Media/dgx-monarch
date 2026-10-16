@@ -36,6 +36,7 @@ from ..model_sampling import ModelSamplingSpec, freeze_model_sampling, normalize
 from ..qwen_image21_cache import normalize_qwen_image21_cache
 from ..sampling_contract import latent_size_tags
 from ..topology import Topology, choose_auto_topology, topology_from_preset
+from ..topology_cfg_evidence import sniffed_checkpoint_variant
 from ..transfer import pack_conditioning
 from ..transfer_utils import (
     prefer_error,
@@ -205,6 +206,7 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     sniffed, quant = sniff_checkpoint_for_topology(path)
     forced = family_select.override_for_model(model)
     family = family_select.effective_family(sniffed, forced)
+    variant = None if forced else sniffed_checkpoint_variant(path, family)
     if forced:
         # A forced family must not emit the header-selected advisory. Warn once
         # regardless of promotion status and log the header result for diagnosis.
@@ -247,10 +249,12 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     # driver prices its own host through the loader preflight; nothing on the
     # driver prices a remote worker's pool, which needs worker-side facts.
     # Capacity runs use the explicit *+fsdp presets (docs/MODELS.md).
-    # The cfg++ flag rides only when set, so an untagged call keeps its shape.
+    # The cfg++ flag and the variant ride only when set, so an untagged call keeps its shape.
+    tags: dict[str, Any] = {"keeps_uncond": True} if keeps_uncond else {}
+    if variant:
+        tags["variant"] = variant
     decision = choose_auto_topology(
-        family, quant, megapixels, world, cfg_value=cfg_value,
-        batch_size=shape[0], **({"keeps_uncond": True} if keeps_uncond else {}))
+        family, quant, megapixels, world, cfg_value=cfg_value, batch_size=shape[0], **tags)
     # Observed by telemetry only.
     facts = auto_facts(decision, world=world, quant=quant, megapixels=megapixels,
                        family=family, cfg=cfg_value, keeps_uncond=keeps_uncond,

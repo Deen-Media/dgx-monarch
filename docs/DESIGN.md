@@ -468,6 +468,13 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   Campaign K's bar; LongCat above 1.2 MP read the same way and got no row
   either. Auto keeps the uly2 fallback, and cfg2 stays an explicit, measured
   choice (VALIDATION.md);
+- a cfg record can name checkpoints it measured and does not grant.
+  Kroma reads family krea2, but its shipped negative zeroes the positive, so one
+  GPU folds the pair into one batch-2 call, and on 2026-10-16 cfg2 read one-step
+  NRMS 0.009 to 0.011 against it at 1152 and 1536 square. Row 15's record
+  excludes Kroma, which `topology_cfg_evidence.checkpoint_variant` recognizes
+  by the merge record in its header, so a Kroma file keeps row 12; one saved
+  without that record reads as Krea2 (VALIDATION.md);
 - sage auto-on only for fp8 + USP at high res;
 - FSDP only when the model does not fit resident (capacity mode), never for speed;
 - every auto decision logs its row and reason, for example

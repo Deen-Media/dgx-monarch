@@ -8,9 +8,11 @@ import pytest
 from dgx_monarch.topology import AUTO_TABLE, AutoRule, choose_auto_topology
 from dgx_monarch.topology_cfg_evidence import (
     CFG2_EVIDENCE,
+    KROMA_MERGE_METADATA_KEYS,
     CfgEvidence,
     cfg_evidence_for,
     cfg_row_is_eligible,
+    checkpoint_variant,
 )
 
 CFG_ROWS = tuple(row for row in AUTO_TABLE if int(row.topology.get("cfg", 1)) > 1)
@@ -162,6 +164,50 @@ def test_krea2_int8_measured_exact_but_no_faster_keeps_ulysses() -> None:
         assert decision.rule.row == 12
         assert decision.skipped_cfg is not None and decision.skipped_cfg.row == 15
         assert "0.97x to 1.08x" in decision.reason
+
+
+def test_kroma_is_measured_off_the_krea2_cfg2_row() -> None:
+    # 2026-10-16: on Kroma's shipped ConditioningZeroOut pair one GPU folds cond
+    # and uncond into one batch-2 call and cfg2 read 1-step NRMS 0.0087 to 0.0108
+    # at 1152 and 1536, so row 15's record excludes Kroma and it keeps row 12.
+    assert CFG2_EVIDENCE[15].excludes == ("kroma",)
+    row15 = next(row for row in AUTO_TABLE if row.row == 15)
+    assert cfg_row_is_eligible(row15, "bf16")
+    assert not cfg_row_is_eligible(row15, "bf16", "kroma")
+    for megapixels in (1.2, 1.327, 2.359):
+        for cfg_value, keeps_uncond in ((1.5, False), (1.0, True)):
+            kroma = choose_auto_topology("krea2", "bf16", megapixels, 2, cfg_value=cfg_value,
+                                         keeps_uncond=keeps_uncond, variant="kroma")
+            assert kroma.topology.describe() == "uly2" and kroma.rule.row == 12
+            assert kroma.skipped_cfg is not None and kroma.skipped_cfg.row == 15
+            assert "was measured on this kroma checkpoint and does not grant it" in kroma.reason
+            krea2 = choose_auto_topology("krea2", "bf16", megapixels, 2, cfg_value=cfg_value,
+                                         keeps_uncond=keeps_uncond)
+            assert krea2.topology.describe() == "cfg2" and krea2.rule.row == 15
+
+
+def test_an_excluded_variant_only_narrows_its_own_record(monkeypatch) -> None:
+    row = AutoRule(999, "invented", (), 0.0, 1.2, 2, {"cfg": 2}, False, "")
+    monkeypatch.setitem(CFG2_EVIDENCE, 999, CfgEvidence(
+        row=999, family="invented", quants=("bf16",), min_mp=0.0, max_mp=1.2,
+        min_world=2, speedup="2x", fidelity="0.0",
+        faster=True, exact=True, in_band=True, basis="test", excludes=("other",),
+    ))
+    assert cfg_row_is_eligible(row, "bf16")
+    assert cfg_row_is_eligible(row, "bf16", "kroma")
+    assert not cfg_row_is_eligible(row, "bf16", "other")
+    # A variant no record excludes changes no other row.
+    chroma = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=3.5, variant="kroma")
+    assert chroma.topology.cfg == 2 and chroma.rule.row == 20
+
+
+def test_only_a_krea2_header_with_the_kroma_merge_metadata_reads_kroma() -> None:
+    keys = tuple(sorted(KROMA_MERGE_METADATA_KEYS | {"scale", "trim"}))
+    assert checkpoint_variant("krea2", keys) == "kroma"
+    assert checkpoint_variant("krea2", ()) is None
+    assert checkpoint_variant("krea2", ("_quantization_metadata",)) is None
+    assert checkpoint_variant("krea2", ("copy_prefixes", "trim")) is None
+    assert checkpoint_variant("chroma", keys) is None
 
 
 @pytest.mark.parametrize(
