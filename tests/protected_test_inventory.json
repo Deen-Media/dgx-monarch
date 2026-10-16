@@ -820,6 +820,7 @@
       "test_a_ring_render_padded_in_one_phase_refuses_before_any_sharded_block": "4f0b4031b31fe1a4",
       "test_cached_states_match_stock_cached_and_uncached": "24b56b0232a4615f",
       "test_comfys_key_map_routes_split_projection_loras_to_fused_qkv_thirds": "a484d4bf19dc4c6c",
+      "test_every_fused_norm_launch_on_every_rank_holds_stocks_rows_for_its_span": "fdbb62e9351c4bf6",
       "test_fused_qkv_matches_stock": "84743ddc958c9ce4",
       "test_pure_ulysses_hands_every_kernel_stock_operands_and_returns_stock_bits": "e929b63a1990dfec",
       "test_the_early_blocks_run_the_stock_backend_and_the_sharded_blocks_the_override": "0ebcfc9f4da4b4de",

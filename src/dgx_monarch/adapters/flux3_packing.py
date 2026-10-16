@@ -6,12 +6,15 @@ to every row, each later span redoes its own rows, and each span's gate writes
 only its own rows (comfy/ldm/flux3/model.py, ``Block.forward``). Every part of
 a block apart from attention is row-local, so a rank holding a contiguous
 window of rows computes each of them exactly once its spans are clipped to
-that window. These helpers do the clipping, cut one stream into this rank's
-window with its ids and rotary table, and name the window's divisibility pad
-rows. They import no ComfyUI module, so the CPU suite reaches them without one.
+that window and each fused-norm call runs at stock's row count, which
+``stock_norm_rows`` names and adapters/flux3_adaln_parity.py applies. These
+helpers do the clipping, cut one stream into this rank's window with its ids
+and rotary table, and name the window's divisibility pad rows. They import no
+ComfyUI module, so the CPU suite reaches them without one.
 """
 from __future__ import annotations
 
+from collections.abc import Iterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -23,6 +26,16 @@ from .base import UnsupportedModelError, padded_row_indices, shard_seq
 from .flux_shared import _assert_ids_shard_with_tokens, _control_span_overlap
 
 
+def _clip(spans: list, row0: int, rows: int) -> Iterator[tuple[int, int, int, Any]]:
+    """``(index, local start, local end, mod)`` for each span a window keeps."""
+    for index, (start, end, mod) in enumerate(spans):
+        overlap = _control_span_overlap(row0, rows, start, end - start)
+        if overlap is not None:
+            yield index, overlap[0], overlap[1], mod
+        elif index == 0:
+            yield index, 0, 0, mod
+
+
 def local_spans(spans: list, row0: int, rows: int) -> list:
     """Stock's ``(start, end, mod)`` spans clipped to rows ``[row0, row0 + rows)``.
 
@@ -31,14 +44,18 @@ def local_spans(spans: list, row0: int, rows: int) -> list:
     and its empty gate slice writes nothing. A later span with no local row is
     dropped, which changes no row and hands the fused norm no empty launch.
     """
-    out = []
-    for index, (start, end, mod) in enumerate(spans):
-        overlap = _control_span_overlap(row0, rows, start, end - start)
-        if overlap is not None:
-            out.append((overlap[0], overlap[1], mod))
-        elif index == 0:
-            out.append((0, 0, mod))
-    return out
+    return [(start, end, mod) for _index, start, end, mod in _clip(spans, row0, rows)]
+
+
+def stock_norm_rows(spans: list, row0: int, rows: int, stream_rows: int) -> tuple[int, ...]:
+    """Stock's rows a sample in the fused-norm call behind each span ``local_spans`` keeps.
+
+    Stock's first call normalizes the whole stream, so the first span carries
+    ``stream_rows``; each later span carries the rows of the stock span it was
+    clipped from. adapters/flux3_adaln_parity.py launches each piece at this size.
+    """
+    return tuple(stream_rows if index == 0 else spans[index][1] - spans[index][0]
+                 for index, _start, _end, _mod in _clip(spans, row0, rows))
 
 
 @dataclass(frozen=True)
@@ -50,6 +67,7 @@ class StreamShard:
     spans: list            # stock's spans clipped to the window
     drop_rows: list[int]   # the stream's pad rows in Ulysses' gathered order
     orig: int              # the pre-pad length, which sp_gather restores
+    norm_rows: tuple[int, ...] = ()  # stock's fused-norm call rows, one a span
 
 
 def shard_stream(tokens: torch.Tensor, ids: torch.Tensor, spans: list,
@@ -72,7 +90,8 @@ def shard_stream(tokens: torch.Tensor, ids: torch.Tensor, spans: list,
     assert covered == min(rows, max(0, orig - row0)), (
         f"{name}: clipped spans cover {covered} of this rank's real rows")
     return StreamShard(tokens=local.contiguous(), pe=rope(ids_local), spans=clipped,
-                       drop_rows=padded_row_indices([(orig, rows)]), orig=orig)
+                       drop_rows=padded_row_indices([(orig, rows)]), orig=orig,
+                       norm_rows=stock_norm_rows(spans, row0, rows, orig))
 
 
 def assert_joint_layout(parts: list, ids: torch.Tensor, spans: list, batch: int,

@@ -1111,7 +1111,7 @@ Passing this check grants no model-gate verdict or hardware acceptance.
 |---|---|
 | Unexpected pip output or exit status must fail. | [`test_check_dependencies.py:77-93`](../tests/test_check_dependencies.py#L77-L93 "anchor:test_other_results_fail_without_download") |
 | Platform, package, download and installed-file mismatches must fail. | [`test_check_dependencies.py:96-118`](../tests/test_check_dependencies.py#L96-L118 "anchor:test_exception_requires_original_wheel") |
-| CPU jobs must use the reviewed GitHub-hosted images. | [`test_release_surfaces.py:422-442`](../tests/test_release_surfaces.py#L422-L442 "anchor:test_public_source_has_no_hardware_route") |
+| CPU jobs must use the reviewed GitHub-hosted images. | [`test_release_surfaces.py:426-446`](../tests/test_release_surfaces.py#L426-L446 "anchor:test_public_source_has_no_hardware_route") |
 
 Verified-update file ownership follows [troubleshooting entry 110](TROUBLESHOOTING.md#110-verified-update-refuses-color-matcher-test-files).
 The color-matcher allowance applies to bundled test files only and grants

@@ -1008,7 +1008,20 @@ stacks on a repeat call.
    Each rank clips stock's spans to its own rows: the first span is kept
    even when it covers no local row, because the block reads its modulation
    for every row, and a later span with no local row is dropped rather than
-   handed to comfy-kitchen's fused `adaln` as an empty launch. Every shard
+   handed to comfy-kitchen's fused `adaln` as an empty launch. That fused
+   `adaln` picks its CUDA kernel by a call's kernel rows (batch times rows),
+   so a rank's piece of a span normalized in a call sized to the piece can
+   round differently from stock's call for the whole span. Each of the 33
+   sharded blocks therefore gets a per-instance `forward`
+   (`adapters/flux3_adaln_parity.py`) that runs stock's own `Block.forward`
+   code with its `modulated_norm` global resolved to a wrapper: each call is
+   filled with zero rows to stock's row count for its span (the whole stream
+   for the first call, the stock span for each later one), runs once, and
+   keeps the rank's rows. The op is row-local, so those rows are stock's bits
+   whatever row count comfy-kitchen branches on. The class, its module and
+   the early blocks are untouched, and a stock block that stops reading that
+   global runs unrouted with one warning, which the CPU exactness test turns
+   into a failure. Every shard
    chunk is made contiguous, since the block writes its gated residual in
    place and stock's kernels read contiguous rows. Ids shard with the same pad
    and chunk as their tokens and embed locally through stock's `rope`. The
@@ -1063,8 +1076,11 @@ stacks on a repeat call.
    28 single blocks still run their Linears on a shard's rows, and the
    measured latents show they keep stock's bits at those row counts for text
    to image. One-reference edits read one-step NRMS 0.019 to 0.055 against
-   stock, under the floor but not identical, and no record yet explains why;
-   the two-reference edit, which pads both phases, was identical
+   stock, under the floor but not identical, while the two-reference edit,
+   which pads both phases, was identical. A probe on 2026-10-16 traced the
+   edits, and uly2 text to image at 704 square and below, to the fused
+   `adaln` kernel switch above; the parity route makes them bit-identical to
+   one GPU, pending hardware confirmation on <date>
    ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)). On the CPU,
    `tests/test_flux3_comfy_exactness.py` builds ComfyUI's own `Flux3` at toy
    size in float32 and shows every kernel call of the two-rank forward
@@ -1079,6 +1095,10 @@ stacks on a repeat call.
    image rows (about 25 MB at 1 MP in bf16) and one final all-gather of the
    joint stream, beside the 28 times four joint all-to-alls every Ulysses
    family pays; a padded phase adds a row selection and a scatter per block.
+   The fused-norm parity route gives each rank stock's full `adaln` work, the
+   first call of every block over the whole stream: op-level timings put it
+   at 1 to 31 ms per model call, about 2 to 4 percent of a measured uly2 step
+   at 1024 square, pending the hardware walls.
    Every rank runs the replicated prelude whole. The step-distilled edit also
    runs the five reference blocks every step on every rank, about 14 percent
    of each rank's work with one 1 MP reference; the base model computes them

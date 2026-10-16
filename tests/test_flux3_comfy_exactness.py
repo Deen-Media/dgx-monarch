@@ -18,7 +18,9 @@ phases (the family's named pad-exclusion probe, docs/ADAPTERS.md), a rank
 whose image window holds only a pad, one reference whose segment the shard
 boundary cuts, two references, batch 2, the step-distilled flow map with a
 real two-row sigma schedule, fused qkv, and the base model's cached states
-against the uncached path.
+against the uncached path. Every fused-norm launch on every rank holds the
+rows stock's launch for the same span holds, because comfy-kitchen's CUDA
+kernel for it depends on the call's rows.
 
 "Equal" follows tests/test_ernie_stock_equivalence.py: bit equality on this
 rig's aarch64 CPU, where the GEMMs give the same bits per row at these row
@@ -353,6 +355,45 @@ def test_the_early_blocks_run_the_stock_backend_and_the_sharded_blocks_the_overr
         assert len(sharded) == len(model.content_mode_blocks["image"]) + len(model.single_blocks)
         assert all(o is not default_attention_override
                    and getattr(o, base.USP_ATTENTION_OVERRIDE_ATTR, False) for o in sharded)
+
+
+def _is_subsequence(part: list, whole: list) -> bool:
+    remaining = iter(whole)
+    return all(any(item == candidate for candidate in remaining) for item in part)
+
+
+@pytest.mark.parametrize("case", sorted(CASES))
+def test_every_fused_norm_launch_on_every_rank_holds_stocks_rows_for_its_span(
+    monkeypatch, comfy_flux3, case
+):
+    """comfy-kitchen picks its fused AdaLN kernel by a call's rows, and on a
+    CUDA device the kernels round a few outputs apart, so a rank's call must
+    hold the rows stock's call for the same span holds. Each rank's launches
+    are therefore stock's launches with only the spans the rank holds no row
+    of left out (adapters/flux3_adaln_parity.py). The comfy-canary job runs
+    this against comfy master, so a stock block that stops calling
+    ``modulated_norm`` or changes its calls fails here by name."""
+    grid, refs, text_rows, batch = CASES[case]
+    model = _tiny(comfy_flux3)
+    inputs = _inputs(grid, refs, text_rows, batch)
+    kitchen = sys.modules["comfy.quant_ops"].ck
+    adaln = kitchen.adaln
+    launches: dict = {"stock": [], **{rank: [] for rank in range(WORLD)}}
+
+    def record(x, scale, shift, eps=1e-6):
+        who = "stock" if threading.current_thread() is threading.main_thread() else _rank()
+        launches[who].append(tuple(x.shape[:2]))
+        return adaln(x, scale, shift, eps)
+
+    monkeypatch.setattr(kitchen, "adaln", record)
+    expected, _calls, kernel = _stock(monkeypatch, comfy_flux3, model, inputs, {})
+    outputs, _harness = _sharded(monkeypatch, model, inputs, {}, kernel)
+    joint_rows = grid[0] * grid[1] + sum(h * w for h, w in refs) + text_rows
+    for rank in range(WORLD):
+        assert _is_subsequence(launches[rank], launches["stock"]), (rank, launches)
+        # Each single block's first call covers the whole joint stream, as stock's does.
+        assert launches[rank].count((batch, joint_rows)) == len(model.single_blocks)
+    assert _same(outputs[0], expected)
 
 
 def test_a_padded_ring_refuses_class_k_and_a_waived_ring_attends_the_pad_and_moves(
