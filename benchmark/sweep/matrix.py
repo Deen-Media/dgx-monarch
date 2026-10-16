@@ -77,6 +77,7 @@ from dgx_monarch.topology import (  # noqa: E402
     sampler_keeps_uncond_at_cfg1,
     topology_from_preset,
 )
+from dgx_monarch.topology_cfg_evidence import sniffed_checkpoint_variant  # noqa: E402
 
 from .convert import probe_support  # noqa: E402
 
@@ -802,7 +803,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
         topo = (choose_auto_topology(family, quant, facts["megapixels"], world,
                                      cfg_value=facts["cfg"],
                                      batch_size=cell["batch"],
-                                     keeps_uncond=bool(facts.get("auto_keeps_uncond"))).topology
+                                     keeps_uncond=bool(facts.get("auto_keeps_uncond")),
+                                     variant=cell.get("variant")).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception as exc:
         return _label_from(exc), "guard", False, []
@@ -1113,7 +1115,8 @@ def resolved_kernel(cell: dict, facts: dict, world: int) -> str:
             row = choose_auto_topology(cell["family"], cell["quant"], facts["megapixels"],
                                        world, cfg_value=facts["cfg"],
                                        batch_size=cell["batch"],
-                                       keeps_uncond=bool(facts.get("auto_keeps_uncond")))
+                                       keeps_uncond=bool(facts.get("auto_keeps_uncond")),
+                                       variant=cell.get("variant"))
             sage, topo = row.sage, row.topology
         else:
             topo = topology_from_preset(cell["preset"], world)
@@ -1138,7 +1141,8 @@ def resolved_cfg_degree(cell: dict, facts: dict, world: int) -> int:
         topo = (choose_auto_topology(cell["family"], cell["quant"], facts["megapixels"],
                                      world, cfg_value=facts["cfg"],
                                      batch_size=cell["batch"],
-                                     keeps_uncond=bool(facts.get("auto_keeps_uncond"))).topology
+                                     keeps_uncond=bool(facts.get("auto_keeps_uncond")),
+                                     variant=cell.get("variant")).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception:
         return 1
@@ -1452,6 +1456,12 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
                 # admitted. Read once per artifact set so label_cell restates
                 # no marker of its own.
                 "fsdp_lora_admission": fsdp_lora_admission_property(cond)
+                if cond.is_file() else None,
+                # The checkpoint variant a cfg record can exclude, read from
+                # the header the way auto resolution reads it on the driver
+                # (nodes/common.resolve_topology), so the three auto sites
+                # resolve the row the runtime takes. Out of ID_KEYS too.
+                "variant": sniffed_checkpoint_variant(str(cond), family)
                 if cond.is_file() else None,
                 # How many fp32-stored weights the template's LoRA stack patches:
                 # the worker's in-bake check refuses those class P under FSDP.

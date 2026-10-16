@@ -1765,6 +1765,7 @@
       "test_a_full_render_check_is_listed_apart_from_a_probe_check": "178228d6ddede775",
       "test_a_head_dimension_no_kernel_carries_still_refuses": "0cf67c23a8fd7a21",
       "test_a_kernel_that_cannot_carry_the_head_dimension_gives_way_to_flash": "5e61beda39dbf474",
+      "test_a_kroma_auto_cell_resolves_the_ulysses_row_the_runtime_takes": "0bfd044cb758c9c3",
       "test_a_label_wave_leaves_the_waivable_cells_to_the_waiver_wave": "869c8b723726d958",
       "test_a_linked_create_video_fps_still_consumes_its_widget_slot": "04d4bf1db7730370",
       "test_a_local_cell_prices_the_resident_text_encoder": "06c13edf61e249c9",

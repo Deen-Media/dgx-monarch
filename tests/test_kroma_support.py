@@ -15,7 +15,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
-from dgx_monarch import latent_scale
+from dgx_monarch import family_select, latent_scale
 from dgx_monarch.adapters.detect import (
     fsdp_lora_admission_property,
     read_safetensors_keys,
@@ -90,14 +90,16 @@ def test_kroma_headers_use_krea2_auto_route(tmp_path, filename, quant):
     assert resolve_sample_attention("TORCH_FLASH", decision.sage) == "TORCH_FLASH"
 
 
-def _resolve_auto(monkeypatch, path, px, cfg_value):
+def _resolve_auto(monkeypatch, path, px, cfg_value, family_adapter=None):
     folder_paths = types.ModuleType("folder_paths")
     folder_paths.get_full_path = lambda _kind, _name: str(path)
     monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
     monkeypatch.setattr(latent_scale, "comfy_spatial_downscale", lambda _path: 8)
+    # The Init node's family_adapter widget reaches the driver as this worker arg.
+    worker_args = {family_select.WORKER_ARG_KEY: family_adapter} if family_adapter else {}
     model = ModelSpec(
         mesh=MeshSpec(handle=SimpleNamespace(world=2), topology_preset="auto",
-                      attention="TORCH_FLASH", sync_ulysses=True),
+                      attention="TORCH_FLASH", sync_ulysses=True, worker_args=worker_args),
         unet_name=path.name, options={"weight_dtype": "default"})
     return common.resolve_topology(model, torch.zeros(1, 4, px // 8, px // 8), cfg_value)
 
@@ -119,6 +121,25 @@ def test_a_kroma_header_keeps_ulysses_where_krea2_takes_cfg2(monkeypatch, tmp_pa
     assert sniffed_checkpoint_variant(str(krea2), "krea2") is None
     topology, _sage, reason = _resolve_auto(monkeypatch, krea2, px, 1.5)
     assert topology.describe() == "cfg2" and "table row 15" in reason
+
+
+@pytest.mark.parametrize("px", [1152, 1536])
+def test_a_krea2_family_override_keeps_the_kroma_exclusion(monkeypatch, tmp_path, px):
+    # The override names the family and nothing else: forcing the krea2 that a
+    # Kroma header already reads must not lift row 15's exclusion at CFG 1.5,
+    # and forcing it over a plain Krea2 header must not drop that file's cfg2.
+    monkeypatch.setattr(common, "_impl_warned", set())
+    kroma = _checkpoint(tmp_path / "renamed-checkpoint.safetensors", "bf16")
+    for family_adapter in ("krea2", None):
+        topology, sage, reason = _resolve_auto(monkeypatch, kroma, px, 1.5, family_adapter)
+        assert topology.describe() == "uly2" and not sage, family_adapter
+        assert "table row 12" in reason, family_adapter
+        assert "cfg2 table row 15 was measured on this kroma checkpoint" in reason
+
+    krea2 = _checkpoint(tmp_path / "krea2-turbo.safetensors", "bf16", merge_metadata=False)
+    for family_adapter in ("krea2", None):
+        topology, _sage, reason = _resolve_auto(monkeypatch, krea2, px, 1.5, family_adapter)
+        assert topology.describe() == "cfg2" and "table row 15" in reason, family_adapter
 
 
 def test_kroma_int8_keeps_convrot_metadata_and_fsdp_lora_refusal(tmp_path):
