@@ -189,12 +189,14 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
     except WorkerDeliveryError as exc:
         if inherited:
             raise
-        return _attempt_after_restart(attempt, guards[-1].handle, exc)
+        return _attempt_after_restart(
+            attempt, guards[-1].handle, exc, model, request, latent)
 
 
 def _attempt_after_restart(
         attempt: Callable[[], PendingRender], refused: object,
-        exc: WorkerDeliveryError) -> PendingRender:
+        exc: WorkerDeliveryError, model: ModelSpec, request: dict,
+        latent: dict) -> PendingRender:
     """Attach again inside this render when every Worker loop restarted, then retry once.
 
     ``restart_reattach.heal`` retires the stale fleet and attaches by the new
@@ -206,6 +208,15 @@ def _attempt_after_restart(
     from . import recycle_drain
 
     recycle_drain.drop_residency_memos()
+    # The caller's memory check ran before the restart showed, so it may have
+    # credited the old fleet's weights as resident. Price again on the new mesh
+    # before the retry loads anything: weights and activations that each fit
+    # can still overrun together, and a refusal here is the one a first
+    # attempt without the credit raises. The check reads only the latent and
+    # the request's positive conditioning, which the first attempt left alone.
+    if getattr(model, "mesh", None) is not None and outcome.handle is not None:
+        model = render_preflight._model_with_bound_handle(model, outcome.handle)
+    render_preflight.activation_footprint_preflight_for_request(model, request, latent)
     token = _REATTACH_FACTS.set(
         {"reattach": restart_reattach.EVENT, "reattach_s": round(outcome.wall_s, 2)})
     try:

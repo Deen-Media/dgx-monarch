@@ -1530,6 +1530,8 @@
       "test_a_mesh_whose_name_cannot_be_read_keeps_the_whole_deadline": "a9f8ada1e19e14c1",
       "test_a_pipelined_or_gate_render_keeps_the_fast_refusal": "e15d86192742d55c",
       "test_a_render_that_meets_restarted_workers_attaches_again_and_dispatches_once_more": "c8614c17ec9d172e",
+      "test_a_retry_after_a_restart_prices_again_without_the_old_fleets_credit": "cd6613f1cab1914f",
+      "test_a_retry_whose_new_price_fits_dispatches_once_on_the_new_mesh": "dc0f9d4abbc7aac9",
       "test_an_explicit_loader_attaches_again_and_loads_once_more": "c2b51c4b9e43ddca",
       "test_an_unreadable_id_or_a_missing_dial_record_is_unknown": "39a8f28c05534fe7",
       "test_every_loop_moved_retires_the_stale_mesh_and_attaches_by_the_new_ids": "d602f5eb4eb7147a",

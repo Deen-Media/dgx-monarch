@@ -569,6 +569,123 @@ def test_a_detour_that_cannot_heal_raises_its_refusal_without_a_retry(monkeypatc
     assert state.calls == 1 and state.drops == 0
 
 
+# A minimax_h3 checkpoint the size of the vendor's bf16 DiT, byte exact
+# (docs/VALIDATION.md), and the driver host's MemAvailable once the old
+# fleet's processes are gone with its weights (the auto posture in
+# test_h3_activation_preflight.py).
+H3_UNET = "minimax_h3_ref2va_bf16.safetensors"
+H3_DIT_BF16 = 66_280_487_368
+H3_MEM = int(92.2 * 2 ** 30)
+# 1344x768 at 37 latent frames, whose activations price at about 39 GiB on one
+# rank, and 512x320 at 2, about 0.4 GiB.
+H3_LONG_CLIP = (1, 24, 37, 48, 84)
+H3_SHORT_CLIP = (1, 24, 2, 20, 32)
+
+
+def _h3_retry_rig(monkeypatch, tmp_path, video):
+    """An automatic minimax_h3 render on one rank that shares the driver's memory.
+
+    The previous render's success memo credits its weights as resident. The
+    checkpoint, its size and MemAvailable are stubbed and the driver footprint
+    guard stands down, so only the H3 activation guard can refuse. The memo
+    drain and the price are the shipped code; the dispatch and the re-attach
+    are the render rig's stand-ins, and the re-attach returns a new mesh.
+    """
+    import sys
+
+    from dgx_monarch import driver_footprint, h3_activation
+    from dgx_monarch.nodes import recycle_drain, render_preflight
+
+    drain = recycle_drain.drop_residency_memos
+    checkpoint = tmp_path / H3_UNET
+    checkpoint.write_bytes(b"x")
+    folder_paths = types.ModuleType("folder_paths")
+    folder_paths.get_full_path = lambda _kind, _name: str(checkpoint)
+    monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+    monkeypatch.setattr(render_preflight, "sniff_checkpoint",
+                        lambda _path: ("minimax_h3", "bf16"))
+    monkeypatch.setattr(driver_footprint, "file_size_bytes", lambda _path: H3_DIT_BF16)
+    monkeypatch.setattr(driver_footprint, "driver_footprint_preflight",
+                        lambda *_a, **_k: None)
+    # A GPU-less runner would stand the guard down and pass the refusing test.
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: H3_MEM)
+    monkeypatch.delenv(mesh_safety.ACTIVATION_PREFLIGHT_DISABLE_ENV, raising=False)
+    monkeypatch.setattr(render_preflight, "_LAST_RENDERED_UNET", H3_UNET)
+    monkeypatch.setattr(render_preflight, "_LAST_SUBMITTED_UNET", None)
+    monkeypatch.setattr(render_preflight, "_LAST_DRIVER_CHARGED_UNET", None)
+
+    def mesh_handle(name):
+        handle = SimpleNamespace(name=name, owns_hosts=False, world=1)
+        handle.effective_worker_args = lambda requested=None: dict(requested or {})
+        return handle
+
+    fresh = mesh_handle("fresh")
+    render_submit, state = _render_rig(monkeypatch, heal=lambda _handle, _exc: (
+        restart_reattach.Reattached(fresh, 4.25, (A, B), "liveness_release")))
+    # The rig counts drains; these renders take the shipped one.
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos", drain)
+    rig = SimpleNamespace(state=state, prices=[], estimates=[])
+    price = render_preflight.activation_footprint_preflight_for_request
+    estimate = h3_activation.estimate_h3_activation
+
+    def priced(model, request, latent):
+        rig.prices.append((model.mesh.handle.name, state.calls))
+        price(model, request, latent)
+
+    def estimated(**kwargs):
+        rig.estimates.append(estimate(**kwargs))
+        return rig.estimates[-1]
+
+    monkeypatch.setattr(render_preflight, "activation_footprint_preflight_for_request", priced)
+    monkeypatch.setattr(h3_activation, "estimate_h3_activation", estimated)
+    model = SimpleNamespace(unet_name=H3_UNET, options={}, mesh=SimpleNamespace(
+        topology_preset="auto", worker_args={}, world=1, handle=mesh_handle("stale")))
+    request = {"positive": [[SimpleNamespace(shape=(1, 20, 4096)), {}]]}
+    latent = {"samples": SimpleNamespace(shape=video)}
+    # run_render's own price, before submit_render.
+    rig.price = lambda: render_preflight.activation_footprint_preflight_for_request(
+        model, request, latent)
+    rig.submit = lambda: render_submit.submit_render(model, request, latent, None, 1)
+    rig.drain = drain
+    return rig
+
+
+def test_a_retry_after_a_restart_prices_again_without_the_old_fleets_credit(
+        monkeypatch, tmp_path):
+    """Greptile P1 on PR 49: the retry dispatched on the first price, which
+    credited the old fleet's weights. The weights and the activations each
+    fit, and together they do not. The mutation that drops the second price
+    dispatches this render a second time."""
+    rig = _h3_retry_rig(monkeypatch, tmp_path, H3_LONG_CLIP)
+    rig.price()  # the credit leaves the weights out, so the activations fit
+    assert rig.estimates[-1].weight_bytes == 0 and rig.estimates[-1].fits
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as refused:
+        rig.submit()
+    assert rig.state.calls == 1
+    assert rig.prices == [("stale", 0), ("fresh", 1)]
+    charged = rig.estimates[-1]
+    assert charged.weight_bytes == H3_DIT_BF16 and not charged.fits
+    assert charged.weight_bytes <= charged.usable
+    assert charged.activation_bytes <= charged.usable
+    tag = parse_leading_refusal_tag(str(refused.value))
+    assert tag is not None and tag.guard == "activation_footprint_preflight"
+    # The refusal a first attempt with no credit raises, word for word.
+    rig.drain()
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as first:
+        rig.price()
+    assert str(first.value) == str(refused.value)
+
+
+def test_a_retry_whose_new_price_fits_dispatches_once_on_the_new_mesh(
+        monkeypatch, tmp_path):
+    rig = _h3_retry_rig(monkeypatch, tmp_path, H3_SHORT_CLIP)
+    assert rig.submit() == "pending"
+    assert rig.state.calls == 2
+    assert rig.prices == [("fresh", 1)]
+    assert [(e.weight_bytes, e.fits) for e in rig.estimates] == [(H3_DIT_BF16, True)]
+
+
 @pytest.fixture
 def loader_rig(monkeypatch):
     """The UNET Loader's eager load on a fleet whose loops all restarted."""
