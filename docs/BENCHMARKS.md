@@ -270,7 +270,10 @@ first Spark was capped at 2100 MHz, with a highest sampled SM clock of
 [VALIDATION](VALIDATION.md#evidence-flux-3-klein) records the ladder and its
 comparisons, and
 [Campaign K](#campaign-k-cfg2-against-uly2-2026-10-14-head-capped) describes
-the method this section follows.
+the method this section follows. These walls predate the fused-norm parity
+change, which gives each uly2 rank stock's full normalization work: op-level
+timings put it at 1 to 31 ms per model call, about 2 to 4 percent of the uly2
+walls below at 1024 square, until the hardware rerun times it.
 
 Method:
 

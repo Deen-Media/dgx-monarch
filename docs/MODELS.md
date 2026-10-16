@@ -24,7 +24,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 |---|---|---|
 | [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Auto picks cfg2 for FP8 and BF16 from 1.2 to 2.36 MP, including the template's CFG++ sampler at CFG 1, and Ulysses elsewhere. Reference images require `single`. |
 | [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. BF16, local INT8 and BF16 refinement matched their own stock references. See the [tested configurations](VALIDATION.md#evidence-kroma). |
-| [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Run BF16 edits on uly2 or single and step-distilled NVFP4 edits on single. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly; see the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
+| [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly. Since the fused-norm parity change, edits and text to image at 704 square or below on uly2 are bit-identical to one GPU too, pending hardware confirmation on <date>; until then run step-distilled NVFP4 edits on single. See the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -93,8 +93,8 @@ that match the tested configurations in its model details. See
 | Flux 1 Dev | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Padded ring is guarded; distilled checkpoints use CFG 1. Use converted LoRAs. [Details](#model-flux-1-dev) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux 1 Schnell | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | CFG 1; Schnell-specific padded inputs remain unmeasured. [Details](#model-flux-1-schnell) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux2 | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | FP8-mixed Ulysses and BF16 `uly2+fsdp` were compared with references. LoRA/FSDP rendered, but its reference ran out of memory. [Details](#model-flux2) · [Workflow](../example_workflows/dgx-monarch-flux2-t2i.json) |
-| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. BF16 edits use uly2 or single; NVFP4 edits use single, because uly2 read one-step NRMS 0.117 in the sweep. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
-| FLUX.3 Klein Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3.5, 25 steps, euler. cfg2 is measured, not the same math: bit-identical when the prompt encodes past one 80-row block; on a shorter prompt it stays within the one-step floor but full renders diverge, and auto never picks it. ring2 is measured, one-step NRMS 0.011 to 0.057, and padded ring needs a waiver. Edits use uly2 or single in BF16 and NVFP4: the NVFP4 edit read one-step NRMS 0.019 on uly2. Same uly2, INT8, FSDP and LoRA notes as FLUX.3 Klein. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
+| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. Before the fused-norm parity change, uly2 edits and uly2 text to image at 704 square or below differed from one GPU, up to one-step NRMS 0.117 for the NVFP4 edit; after it they are bit-identical in BF16 and NVFP4, pending hardware confirmation on <date>. Until then NVFP4 edits use single. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
+| FLUX.3 Klein Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3.5, 25 steps, euler. cfg2 is measured, not the same math: bit-identical when the prompt encodes past one 80-row block; on a shorter prompt it stays within the one-step floor but full renders diverge, and auto never picks it. ring2 is measured, one-step NRMS 0.011 to 0.057, and padded ring needs a waiver. Edits use uly2 or single in BF16 and NVFP4: the NVFP4 edit read one-step NRMS 0.019 on uly2 before the fused-norm parity change, and uly2 edits are bit-identical to one GPU after it, pending hardware confirmation on <date>. Same uly2, INT8, FSDP and LoRA notes as FLUX.3 Klein. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
 | Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
@@ -438,7 +438,11 @@ file equaled stock running a copy with its pins removed. ring2 read one-step
 NRMS 0.052 against one GPU on the ladder, under the 0.10 floor but not
 identical, and 0.026 to 0.183 in the scoped sweep, over the floor for NVFP4
 text to image, so use uly2. In that sweep the NVFP4 edit on uly2 read
-one-step NRMS 0.117 against one GPU, over the floor.
+one-step NRMS 0.117 against one GPU, over the floor. Those edit readings came
+from one kernel switch in comfy-kitchen, which the fused-norm parity change
+closes (Known limitations below): BF16 and NVFP4 edits on uly2 and uly2 text
+to image at 704 square or below are bit-identical to one GPU after it,
+pending hardware confirmation on <date>.
 `uly2+fsdp` equaled resident uly2 in BF16 and INT8. A synthetic rank-4 LoRA
 hot-swapped from 0.5 to 0.8 without a load and read NRMS 0.0499 at one step
 against stock's LoRA loader. CPU tests compare the two-rank sharded forward
@@ -457,9 +461,15 @@ fidelity claim against BF16. The diffusers-layout `variants/fp8r` file loads
 in stock ComfyUI with its scales dropped and is refused
 ([TROUBLESHOOTING #120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
 No public LoRA existed at release; a synthetic rank-4 LoRA tested hot swap
-and the Gate. BF16 one-reference edits on uly2 pass the one-step floor but are
-not identical to stock; the cause is not yet known. NVFP4 edits on uly2 read
-over the floor, so run them on single. The vendor's optional prompt upsampler
+and the Gate. Before the fused-norm parity change, BF16 one-reference edits
+on uly2 passed the one-step floor but were not identical to stock, NVFP4 edits
+read over it, and uly2 text to image at 704 square or below differed too. The
+cause was comfy-kitchen's fused AdaLN, which picks its CUDA kernel by a call's
+rows: a rank normalized its piece of a span in a smaller call than stock's
+call for the whole span. Each such call now runs at stock's size, so these
+renders are bit-identical to one GPU, pending hardware confirmation on <date>; until then run step-distilled
+NVFP4 edits on single. The change gives each rank stock's full normalization
+work, about 2 to 4 percent of a uly2 step by an op-level estimate. The vendor's optional prompt upsampler
 is a separate 9.7 GB model on the driver that no shipped graph loads; its
 memory is outside the driver estimate. In the 2026-10-15 test the driver
 Spark's lowest sampled available memory was 44.6 GiB with it, still
@@ -511,7 +521,8 @@ stock on one GPU, full 25-step renders to one GPU from 1024 to 1536 square on
 a one-block prompt and a 355-word one, and the shipped text-to-image graph to
 stock. ring2 read one-step NRMS 0.011 on the ladder and 0.015 to 0.057 in the
 scoped sweep. The NVFP4 edit on uly2 read one-step NRMS 0.019 against one GPU
-in that sweep, within the floor. cfg2 is a measured topology: it matched one
+in that sweep, within the floor; after the fused-norm parity change, BF16 and
+NVFP4 edits on uly2 are bit-identical to one GPU, pending hardware confirmation on <date>. cfg2 is a measured topology: it matched one
 GPU exactly on prompts that encode past one 80-row block. On prompts that fit
 one it read one-step NRMS 0.009 to 0.031 and every full render diverged,
 because one GPU batches the two calls there and cfg2 cannot. `uly2+fsdp`, `cfg2+fsdp` and `dp2+fsdp` equaled their
@@ -522,8 +533,8 @@ stock ComfyUI does ([VALIDATION](VALIDATION.md#evidence-flux-3-klein-base)).
 **Known limitations.** As [FLUX.3 Klein](#model-flux-3-klein), except three
 step-distilled points: the base model computes its reference streams once per
 conditioning, it does not read the sampler's sigma schedule, and its NVFP4
-edits stay within the one-step floor on uly2, so they can run on uly2 or
-single. A prompt that encodes past one 80-row block does not batch with the
+edits stayed within the one-step floor on uly2 even before the fused-norm
+parity change, so they can run on uly2 or single. A prompt that encodes past one 80-row block does not batch with the
 empty negative, so ComfyUI runs the two as separate calls and cfg2 gives each
 rank one. A shorter prompt batches with the negative on one GPU, so cfg2
 differs from it: within the one-step floor, while full renders diverge. Auto

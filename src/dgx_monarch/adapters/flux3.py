@@ -9,10 +9,13 @@ rows: the image rows for the five image blocks, gathered and rejoined, then
 the joint stream for the single blocks. Spans are clipped per rank
 (adapters/flux3_packing.py), and Ulysses' head all-to-all concatenates the
 windows in rank order, so every kernel sees stock's key order with no reorder
-descriptor. Divisibility pad rows are named as ``drop_rows`` on every
-topology; a padded ring or hybrid render refuses class K before the first
-block. The final layer runs on the gathered image rows, stock's call on
-stock's rows.
+descriptor. Each of the 33 sharded blocks runs stock's ``Block.forward`` with
+every fused-norm call launched at stock's row count for its span
+(adapters/flux3_adaln_parity.py), because comfy-kitchen's fused AdaLN picks
+its kernel by the call's rows. Divisibility pad rows are named as
+``drop_rows`` on every topology; a padded ring or hybrid render refuses class
+K before the first block. The final layer runs on the gathered image rows,
+stock's call on stock's rows.
 
 The ten early text and reference blocks stay in stock's ``preprocess_conds``,
 replicated, and comfy calls them with no options, so ``inject_usp`` binds
@@ -30,6 +33,7 @@ from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from .attention_patches import assert_usp_attention_patches_safe
 from .base import Adapter, InjectionContext, UnsupportedModelError, sp_gather, usp_options
+from .flux3_adaln_parity import bind_adaln_parity
 from .flux3_packing import (
     assert_joint_layout,
     joint_pad_count,
@@ -184,7 +188,7 @@ class Flux3Adapter(Adapter):
             for block in self.content_mode_blocks["image"]:
                 comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
                                                         malloc_scope="block")
-                h = block(h, image.spans, image.pe, opts)
+                h = block(h, image.spans, image.pe, opts, stock_norm_rows=image.norm_rows)
             img = sp_gather(h, image.orig, dim=1)
             # C. The single blocks on a contiguous window of the joint stream.
             joint = shard_stream(torch.cat([img] + [t for t, _m, _i in parts[1:]], dim=1),
@@ -197,7 +201,7 @@ class Flux3Adapter(Adapter):
                 comfy.model_prefetch.prefetch_queue_pop(queue, device, block, dtype,
                                                         malloc_scope="block")
                 opts["block_index"] = index
-                h = block(h, joint.spans, joint.pe, opts)
+                h = block(h, joint.spans, joint.pe, opts, stock_norm_rows=joint.norm_rows)
             comfy.model_prefetch.prefetch_queue_pop(queue, device, None, malloc_scope="block")
             # D. Stock's final layer on the gathered image rows.
             h = sp_gather(h, joint.orig, dim=1)
@@ -210,6 +214,13 @@ class Flux3Adapter(Adapter):
             bind_stock_attention(block, "flux3 text early block attention")
         for block in diffusion_model.content_mode_blocks["image_cond"]:
             bind_stock_attention(block, "flux3 reference early block attention")
+        # Bind every block first; all() over a generator would stop at the first miss.
+        sharded = [*diffusion_model.content_mode_blocks["image"], *diffusion_model.single_blocks]
+        routable = [bind_adaln_parity(block) for block in sharded]
+        if not all(routable):
+            log.warning("flux3: stock Block.forward reads no modulated_norm global, so "
+                        "the fused-norm parity route is off and a sharded render can "
+                        "differ from one GPU by a few bf16 steps (docs/ADAPTERS.md)")
         self.bind(diffusion_model, "_forward", usp_forward)
         log.info("flux3 USP injected: %d image blocks, %d single blocks, sp=%d",
                  len(diffusion_model.content_mode_blocks["image"]),

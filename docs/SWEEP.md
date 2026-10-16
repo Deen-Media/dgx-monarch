@@ -202,7 +202,8 @@ predicted an untyped refusal for `cfg2+fsdp` on a CFG 1 graph, and the
 runtime refused with class P. The three CHECK rows are step-distilled NVFP4
 cells over the 0.10 floor: the edit on uly2 and on auto, which picks uly2,
 read one-step NRMS 0.117 against one GPU, and text to image on ring2 read
-0.183 ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)).
+0.183 ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)). The edit reading
+predates the fused-norm parity change, which VALIDATION describes.
 
 ## 3. Adding a template
 

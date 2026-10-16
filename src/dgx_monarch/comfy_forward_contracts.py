@@ -109,6 +109,9 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ops", "uncast_bias_weight", positional=("s", "weight", "bias", "offload_stream")),
     _call("comfy.quant_ops", "ck.rms_rope_split_half",
           positional=("q", "k", "freqs_cis", "q_scale", "k_scale", "epsilon")),
+    # FLUX.3's sharded blocks read this global from Block.forward's own module
+    # and launch each call at stock's row count (adapters/flux3_adaln_parity.py).
+    _call("comfy.ldm.flux3.model", "modulated_norm", positional=("x", "norm", "scale", "shift")),
 )
 
 REBOUND_FORWARD_TOUCHPOINTS: tuple[Touchpoint, ...] = tuple(
@@ -181,7 +184,8 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
         positional=("self", "x"),
     ),
     # FLUX.3's sharded forward calls stock's own methods for its prelude and
-    # runs stock's Block unmodified on each rank's rows and clipped spans.
+    # runs stock's Block code on each rank's rows and clipped spans, with each
+    # fused-norm call launched at stock's row count for its span.
     _call("comfy.ldm.flux3.model", "Flux3.preprocess_conds",
           positional=("self", "context", "ref_latents", "vec_target", "transformer_options")),
     _call("comfy.ldm.flux3.model", "Flux3.image_ids", positional=("self", "h", "w", "index", "device")),

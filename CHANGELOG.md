@@ -59,6 +59,19 @@ metadata reads the new version
   NVFP4 refuses FSDP. INT8 runs exact attention only on sequence-parallel
   presets; elsewhere it asks for the Sol-Attn waiver. A synthetic LoRA
   tested hot swap and the Gate, since no public LoRA exists yet.
+- FLUX.3 Image Klein edits on uly2, and uly2 text to image at 704 square or
+  below, now match one GPU. comfy-kitchen's fused AdaLN takes one CUDA kernel
+  for calls of 1024 kernel rows or fewer and another above, and the two round
+  a few outputs one bf16 step apart. A rank normalized its piece of a
+  modulation span in a call sized to the piece, so in BF16 every
+  one-reference edit and every such small render read one-step NRMS 0.01 to
+  0.055 against one GPU, and the step-distilled NVFP4 edit read 0.117. Each
+  fused-norm call of the 33 sharded blocks now runs at stock's row count for
+  its span, filled with zero rows, and keeps the rank's rows. BF16 and NVFP4
+  edits on uly2 and the small text-to-image sizes are bit-identical to one
+  GPU, pending hardware confirmation on <date>. Each rank now does stock's full normalization work, about 2 to 4
+  percent of a uly2 step at 1024 square by an op-level estimate
+  ([VALIDATION](docs/VALIDATION.md#evidence-flux-3-klein)).
 - A ComfyUI that stays up attaches again after a Worker service restarts
   under it (`dgxm restart`, a crash that systemd restarts, or a hand restart)
   when the service comes back within Monarch's 30 s message delivery timeout

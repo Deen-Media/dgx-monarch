@@ -412,6 +412,24 @@ that have not been wired and probed keep the measured-tradeoff contract;
 require exact divisibility only as an explicit, independently validated
 exception.
 
+A row-local op is not always row-count-invariant. Measured on 2026-10-16,
+comfy-kitchen 0.2.37's fused AdaLN took one CUDA kernel for calls of 1024
+kernel rows (batch times rows) or fewer and another above, and the two
+rounded a few outputs one bf16 step apart. FLUX.3 normalizes each modulation span in a call of its own, so a
+rank's piece of a span, normalized in a call sized to the piece, could take
+the other kernel than stock's call for the whole span: on 2026-10-16 every
+uly2 one-reference edit and every uly2 text to image at 704 square or below
+read one-step NRMS 0.01 to 0.055 against one GPU for that reason alone. The
+parity rule: where a sharded forward runs a row-count-sensitive stock op on a
+rank's piece, it launches the op at stock's call size for those rows, filling
+the call with zero rows and keeping the piece's rows, rather than copying a
+kernel threshold that a later comfy-kitchen may move. FLUX.3 applies it to
+every fused-norm call of its 33 sharded blocks
+(`adapters/flux3_adaln_parity.py`), at the cost of each rank doing stock's
+full normalization work. The other families that call comfy-kitchen's
+`adaln` or `rms_adaln` on sharded rows are unchecked
+([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
+
 Adapter acceptance requires identical cross-rank latent statistics and
 fidelity against a single-GPU reference within the measured noise floor.
 

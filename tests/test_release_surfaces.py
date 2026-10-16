@@ -139,6 +139,10 @@ GATES_OUTSIDE_THE_DEV_EXTRA = {
         "sol-attn is an optional lever, never a wheel requirement; the two "
         "tests behind this gate assert the CuTe dispatch entry lands in the "
         "real table, and every other sol test runs without the package"),
+    "comfy_kitchen": (
+        "comfy-kitchen ships with ComfyUI, which the host application owns; "
+        "the FLUX.3 fused-norm seam tests behind this gate also need a CUDA "
+        "device, so they run on a rig and skip on every hosted runner"),
     "comfy_kitchen.tensor": (
         "comfy-kitchen ships with ComfyUI, which the host application owns; "
         "the quantized-shard suite behind this gate runs on a rig venv, and "

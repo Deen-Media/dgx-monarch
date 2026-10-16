@@ -732,12 +732,12 @@ render, and row 1 row 1 of its batch-2 render.
 | ring2, one step, 1024 square | Base; step-distilled | NRMS 0.0108; 0.0520. Under the floor, not identical |
 | ring2, odd 1040 square grid | Both | Refused in the Worker; a base-model API leg showed class K with the ring-pad waiver card |
 | `mode=local` on one GPU | Base one step and full, step-distilled one step, base square edit | Identical to stock |
-| uly2 edit, one step, one 4:3 or square reference | Base; step-distilled | NRMS 0.019 to 0.021; 0.053 to 0.055. Under the floor, not identical |
+| uly2 edit, one step, one 4:3 or square reference | Base; step-distilled | NRMS 0.019 to 0.021; 0.053 to 0.055. Under the floor, not identical; the fused-norm parity change closes it (below) |
 | uly2 edit, one step, two references | Both | Identical to stock |
 | dp2 edit, one step, one 4:3 reference, row 0 | Base | Identical to stock |
 | cfg2 edit, one step, one 4:3 reference | Base | NRMS 0.020 |
 | uly2 edit, four references (20,155 joint rows) and keep resolution (24,656) | Base | Rendered, finite |
-| uly2, the shipped edit graphs, full schedule | Base; step-distilled | NRMS 0.028; 0.066, recorded |
+| uly2, the shipped edit graphs, full schedule | Base; step-distilled | NRMS 0.028; 0.066, recorded; the same cause as the one-step edit row |
 | dp2 batch 2, full schedule | Base | Row 0 identical to stock; row 1 identical to stock's batch-2 row 1 |
 | dp2 batch 2, full schedule | Step-distilled | Row 0 identical to stock; row 1 NRMS 0.0083 against stock's batch-2 row 1 (CHECK, batch shape) |
 | Determinism, uly2, one step | Step-distilled | Identical across a Recycle and across two driver sessions |
@@ -828,6 +828,52 @@ the step-distilled model is measured, never granted: across the ladder and
 the sweep its one-step readings ran from 0.026 (BF16 text to image) to 0.183,
 so use uly2.
 
+**Why uly2 edits differed, and the fused-norm parity change.** A probe on
+2026-10-16, at the same release and ComfyUI, found the cause of the uly2 edit
+readings above and of a gap the ladder never met, uly2 text to image at 704
+square and below. FLUX.3's blocks normalize the whole stream in one call to
+comfy-kitchen's fused AdaLN and then redo each later span in a call of its
+own. comfy-kitchen 0.2.37 takes one CUDA kernel for calls of 1024 kernel rows
+(batch times rows) or fewer and another above, and the two round a few
+outputs one bf16 step apart. A uly2 rank normalized its piece of a span in a
+call sized to the piece, while stock normalizes the same rows in a call sized
+to the whole span. In a one-reference edit the first rank holds the first 40
+reference rows, so its call took the small-call kernel where stock's took the
+other, and attention spread that difference to every token. One rule
+predicted all 11 probe geometries and every ladder leg: rows differ whenever
+their uly2 call holds 1024 kernel rows or fewer while stock's call for them
+holds more. An op-level probe at FLUX.3 Klein's widths found no other
+row-count effect: the Linears, Torch Flash attention on half the heads and
+the fused q and k norm with rotary embedding kept stock's bits at every rank
+and stock row pair it tried.
+
+| Geometry, BF16, one step, step-distilled unless named | Short call on uly2 | uly2 against one GPU, before the change |
+|---|---|---|
+| One square reference (the ladder's square edit) | 40 reference rows | NRMS 0.0545 |
+| One 1152-square reference, 1024 target | 584 reference rows | NRMS 0.0538 |
+| Two references, 1024 target | 680 reference rows | NRMS 0.0240 |
+| Text to image, 512 square | 552 joint rows | NRMS 0.0336 |
+| Text to image, 704 square | 968 image and 1008 joint rows | NRMS 0.0364 |
+| Base, text to image, 512 square | 1024 kernel rows in the image phase | NRMS 0.0098 |
+| Text to image at 736 square, base at 704; one 1408-square or 1 MP 4:3 reference; the ladder's two-reference edit | None | Identical |
+
+The change runs every fused-norm call of the 33 sharded blocks at stock's row
+count for its span: zero rows fill the piece's call to stock's size, and the
+rank keeps its own rows. The op is row-local, so those rows carry stock's bits
+wherever comfy-kitchen puts its branch. On the first Spark's GPU, padded
+pieces of 40 and 1024 rows of a 4096-row span, and a batch-2 piece of 512
+rows a sample, matched stock's call in every output, while the same pieces in
+calls of their own differed in 4, 64 and 44 outputs
+(`tests/test_flux3_adaln_parity.py`). A CPU test drives ComfyUI's own blocks
+and checks that every fused-norm launch on every rank holds stock's rows.
+After the change, BF16 and NVFP4 edits on uly2 and uly2 text to image at 704
+square or below are bit-identical to one GPU, pending hardware confirmation on <date>. The NVFP4 edit readings
+are inferred to be the same switch, larger after 4-bit rounding; the probe
+rendered BF16 only. The base model's cfg2 edit reading of 0.020 has another
+cause: each of its calls stays on the same side of the branch as stock's, and
+it reads like the batch-fold difference under
+[FLUX.3 Klein Base](#evidence-flux-3-klein-base).
+
 **CPU and file checks.** The CPU evidence builds ComfyUI's own FLUX.3 model
 at toy size in float32 and runs the two-rank sharded forward against stock's:
 every kernel call gets stock's q, k and v for its heads in stock order with no
@@ -853,8 +899,8 @@ both VAE files in one stock process gave equal pixels.
 
 Records: the private evidence directory, record `70fb8997e3ea` of
 2026-10-15 and 2026-10-16: the ladder state, the comparison summary and pairs,
-the auto-table summary, the operator notes, the stock job records and the
-sweep summaries.
+the auto-table summary, the operator notes, the stock job records, the
+sweep summaries and the edit probe of 2026-10-16 with its op-level results.
 
 <a id="evidence-flux-3-klein-base"></a>
 
