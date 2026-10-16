@@ -459,12 +459,12 @@ measure quantization error against BF16.
 
 These resident results do not qualify LoRA, FSDP, cfg2, ring, hybrid topologies,
 other attention kernels, reference-image conditioning, other quantizations
-or unlisted dimensions. A Kroma BF16 file reads as family krea2, so at CFG
-other than 1, or at CFG 1 under a CFG++ sampler that a DGX Monarch KSampler
-node names, `auto` takes Krea2's cfg2 row 15 from 1.2 to 2.36 MP. Campaign K
-measured that row on Krea2 files only
-([cfg2 crossover rows](#campaign-k-cfg2)). The shipped 1024×1024 graphs, the
-2048×2048 refinement and the INT8 file keep Ulysses.
+or unlisted dimensions. A Kroma BF16 file reads as family krea2, but Krea2's
+cfg2 row 15 excludes Kroma: measured on 2026-10-16, cfg2 on the shipped
+graph's zero-conditioning negative did not match one GPU, so `auto` keeps
+Ulysses for Kroma at every CFG and sampler ([Kroma cfg2](#kroma-cfg2),
+[cfg2 crossover rows](#campaign-k-cfg2)). The shipped 1024×1024 graphs, the
+2048×2048 refinement and the INT8 file keep Ulysses as well.
 
 #### Kroma manual FSDP
 
