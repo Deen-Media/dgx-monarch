@@ -175,6 +175,8 @@ def test_submit_hands_the_tracker_the_label_kernel_and_auto_facts(monkeypatch):
         "attention": "SAGE_AUTO",
         "auto_row": 11, "megapixels": 2.359, "quant": "fp8",
         **dict.fromkeys(_AUDIT),
+        # No re-attach ran inside this render (issue #47).
+        "reattach": None, "reattach_s": None,
     }
 
 
@@ -182,7 +184,7 @@ def test_submit_with_a_plain_tuple_records_nulls_not_a_failure(monkeypatch):
     meta = _submit_meta(monkeypatch, (Topology(world=1), False, "test"))
     assert meta == {
         "model": "model.safetensors", "topology": "single",
-        "attention": "TORCH_FLASH", **_NO_FACTS,
+        "attention": "TORCH_FLASH", **_NO_FACTS, "reattach": None, "reattach_s": None,
     }
 
 

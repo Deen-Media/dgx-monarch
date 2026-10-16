@@ -146,6 +146,16 @@ def _attach_dial_history_starts_empty(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _delivery_fault_record_starts_empty():
+    """The fault hook's delivery record lives as long as a driver process; each test starts fresh."""
+    from dgx_monarch import delivery_faults
+
+    delivery_faults.clear()
+    yield
+    delivery_faults.clear()
+
+
+@pytest.fixture(autouse=True)
 def _native_return_latch_starts_clear(monkeypatch):
     """The latch lives as long as a driver process; each test starts as a fresh one."""
     from dgx_monarch import native_return_latch

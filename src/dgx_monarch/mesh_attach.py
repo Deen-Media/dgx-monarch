@@ -22,6 +22,12 @@ GENERATION_PROBE_S = 10.0
 _LAST_DIALED: dict[str, str] = {}
 
 
+def last_dialed(address: str) -> str | None:
+    """The id this process last dialed at ``address``: the live mesh's, since
+    one transport serves one mesh at a time (restart_reattach.py reads it)."""
+    return _LAST_DIALED.get(address)
+
+
 def attach_cluster(runtime: dict[str, Any], config: ClusterConfig, handoff: Any):
     """Enable one process transport, heal loops, and attach the configured hosts."""
     factory = runtime["mesh_factory"]

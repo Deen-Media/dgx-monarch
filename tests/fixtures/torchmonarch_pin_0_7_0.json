@@ -35,7 +35,7 @@
     "python": "3.12.3",
     "system": "Linux"
   },
-  "manifest_digest": "617399c2c0534b137fd64d5f08437270925d5f36f32eeb92ec4ede0a5768a5db",
+  "manifest_digest": "8e0663ca325c347cb48202e594646ca71bd78f07702d33ec3bc708ed822d3af7",
   "schema": 2,
   "semantics": {
     "actor_queue_dispatch_default": {
@@ -162,6 +162,12 @@
       "detail": null,
       "kind": "builtins.method_descriptor",
       "signature": "(self, /, seconds)",
+      "status": "ok"
+    },
+    "monarch._src.actor.actor_mesh.ActorMesh._name": {
+      "detail": null,
+      "kind": "builtins.property",
+      "signature": null,
       "status": "ok"
     },
     "monarch._src.actor.actor_mesh.ActorMesh.extent": {

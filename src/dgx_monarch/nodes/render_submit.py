@@ -22,7 +22,7 @@ from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
-from .. import mesh_setup
+from .. import mesh_setup, restart_reattach
 from ..adoption_evidence import (
     CONTEXT_REQUEST_KEY as _ADOPTION_CONTEXT_REQUEST_KEY,
 )
@@ -41,6 +41,7 @@ from ..adoption_evidence import (
 from ..adoption_evidence import (
     request_sha256 as _adoption_request_sha256,
 )
+from ..delivery_faults import WorkerDeliveryError
 from ..log import get_logger
 from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
 from ..progress import ProgressReceiver
@@ -55,7 +56,11 @@ from .gate_identity import (
 from .pending import PendingRender, PendingRenderHandoff
 from .render_quarantine import _enforce_persisted_quarantine
 from .render_result import _finish_render
-from .render_session import RetiredRenderHandleError, claim_render_session
+from .render_session import (
+    RetiredRenderHandleError,
+    active_render_session,
+    claim_render_session,
+)
 from .render_validation import validate_render_topology
 from .resolved_topology import telemetry_facts
 from .submit_guard import SubmitRenderGuard as _SubmitRenderGuard
@@ -75,6 +80,16 @@ _UNCLAIMED_ADOPTION_CONTEXT = object()
 # leases would otherwise refuse this dispatch's setup change.
 _COLLECT_BEFORE_SETUP_CHANGE: ContextVar[Callable[[], None] | None] = ContextVar(
     "dgxm_collect_before_setup_change", default=None)
+# Render lifetime: what the finish record says about a re-attach inside this
+# render (restart_reattach.py). Set only around the one retry after it.
+_REATTACH_FACTS: ContextVar[dict | None] = ContextVar("dgxm_reattach_facts", default=None)
+# read-only after import: the same two facts for every other render.
+_NO_REATTACH = {"reattach": None, "reattach_s": None}
+
+
+def _reattach_facts() -> dict:
+    """The finish record's re-attach facts for this render (a ContextVar read)."""
+    return _REATTACH_FACTS.get() or _NO_REATTACH
 
 
 @contextmanager
@@ -135,6 +150,9 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
         else _claimed_adoption_context)
 
     guards: list[_SubmitRenderGuard] = []
+    # A Pipeline or Gate session is pinned to the mesh it opened on, so only a
+    # submit that owns its session may replace that mesh mid-render.
+    inherited = active_render_session() is not None
 
     def attempt() -> PendingRender:
         guard = _SubmitRenderGuard()
@@ -168,6 +186,32 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
                 exc):
             raise
         return attempt()
+    except WorkerDeliveryError as exc:
+        if inherited:
+            raise
+        return _attempt_after_restart(attempt, guards[-1].handle, exc)
+
+
+def _attempt_after_restart(
+        attempt: Callable[[], PendingRender], refused: object,
+        exc: WorkerDeliveryError) -> PendingRender:
+    """Attach again inside this render when every Worker loop restarted, then retry once.
+
+    ``restart_reattach.heal`` retires the stale fleet and attaches by the new
+    ids, or raises the refusal that names its remedy. The retry's ``ensure_live``
+    then finds the new mesh. Its finish record carries the re-attach and its wall.
+    """
+    outcome = restart_reattach.heal(refused, exc)
+    # As on every process-stop path: the new fleet holds none of the old weights.
+    from . import recycle_drain
+
+    recycle_drain.drop_residency_memos()
+    token = _REATTACH_FACTS.set(
+        {"reattach": restart_reattach.EVENT, "reattach_s": round(outcome.wall_s, 2)})
+    try:
+        return attempt()
+    finally:
+        _REATTACH_FACTS.reset(token)
 
 
 def _heal_abandoned_wedge_once(model: ModelSpec, exc: BaseException) -> bool:
@@ -350,7 +394,8 @@ def _submit_render_guarded(
     # topology it ran, the auto facts behind it and the kernel it used.
     progress_meta = {
         "model": model.unet_name, "topology": topology_label,
-        "attention": sample_attention, **telemetry_facts(resolved)}
+        "attention": sample_attention, **telemetry_facts(resolved),
+        **_reattach_facts()}
     # Publish the cleanup intent before either helper can start background
     # work and then lose its return value to an asynchronous exception.
     guard.telemetry_started = True

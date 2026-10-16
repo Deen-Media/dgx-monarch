@@ -208,7 +208,7 @@ def install_unhandled_fault_hook(correlation_state) -> bool:
         return False
 
 
-def _publish_supervision_failure_state(
+def publish_supervision_failure_state(
     handle, exc: BaseException, text: str, *, deliberate_route: bool = False,
 ) -> tuple[object, bool, bool, bool]:
     """Atomically publish fail-closed supervision state under the handle lock.
@@ -261,7 +261,7 @@ def _finish_supervision_failure_publication(
     holding_lock: bool,
     deliberate_route: bool = False,
 ) -> None:
-    token, deliberate, completed, deferred = _publish_supervision_failure_state(
+    token, deliberate, completed, deferred = publish_supervision_failure_state(
         handle, exc, text, deliberate_route=deliberate_route)
     if deliberate:
         # Same authority rule as the hook: an expired token with no outcome

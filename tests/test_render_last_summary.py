@@ -51,7 +51,9 @@ _FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_s
           "family", "cfg", "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch",
           "sample_s", "mean_step_s",
           # The kernels the model pins per block, beside "attention" (issue #30).
-          "attention_pins", "attention_pins_ran", "attention_pins_dropped")
+          "attention_pins", "attention_pins_ran", "attention_pins_dropped",
+          # A re-attach inside the render after a Worker restart (issue #47).
+          "reattach", "reattach_s")
 
 
 def test_the_summary_keeps_where_the_render_ran_and_its_last_step_rate():

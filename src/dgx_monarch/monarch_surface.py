@@ -197,6 +197,9 @@ TOUCHPOINTS: tuple[MonarchTouchpoint, ...] = (
     # ProcMesh.spawn returns this implementation object even though ActorMesh
     # is not re-exported from monarch.actor.
     _attr("monarch._src.actor.actor_mesh", "ActorMesh.extent"),
+    # restart_reattach.watched_mesh reads the mesh's name, which a delivery
+    # failure spells as dgxm_worker<uid> (issue #47).
+    _attr("monarch._src.actor.actor_mesh", "ActorMesh._name"),
     _call(
         "monarch._src.actor.actor_mesh",
         "ActorMesh.slice",

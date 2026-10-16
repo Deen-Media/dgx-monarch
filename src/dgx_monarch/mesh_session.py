@@ -348,6 +348,11 @@ _ACTIVE_SESSION: ContextVar[RenderSession | None] = ContextVar(
     "dgxm_active_render_session", default=None)
 
 
+def active_render_session() -> RenderSession | None:
+    """The session a Pipeline or Gate activated around this call, else None."""
+    return _ACTIVE_SESSION.get()
+
+
 def _reset_active_session(token: Any, previous: RenderSession | None) -> None:
     """Restore the active context across a wrapper-boundary interruption."""
     try:

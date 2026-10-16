@@ -628,7 +628,7 @@ def test_a_creation_block_never_poisons_a_handle_whose_stop_confirmed():
 
 
 def _publish(handle, text, **kwargs):
-    mesh_helpers._publish_supervision_failure_state(
+    mesh_helpers.publish_supervision_failure_state(
         handle, RuntimeError(text), text, **kwargs)
 
 

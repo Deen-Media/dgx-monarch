@@ -9,9 +9,15 @@ path within seconds. A second case pins the upgrade direction a new loop
 cannot fix: an older driver that dials the bare address fails at its
 config-push bound rather than hanging.
 
-Every process binds 127.0.0.1 on ports 27850 to 27859 and gets its own HOME, so
-its actor ledger never touches the real one. Skipped where torchmonarch does
-not import.
+A third case (issue #47) restarts every loop under a live mesh and sends a
+render's capacity price: the wait ends on the delivery failure, and the
+re-attach that ``submit_render`` calls attaches by the new ids, far inside the
+30 s deadline the price used to wait. The liveness scan, policy admission and
+client lease are stood in (procid_integration_helper.py says why).
+
+Every process binds 127.0.0.1 on ports 27850 to 27859, or 27920 to 27929 for
+the third case, and gets its own HOME, so its actor ledger never touches the
+real one. Skipped where torchmonarch does not import.
 """
 from __future__ import annotations
 
@@ -207,4 +213,60 @@ def test_an_older_driver_dialing_the_bare_address_fails_at_its_bound(
     by_id = _line(driver, 120)
     assert by_id["ok"], by_id
     assert by_id["proc_ids"] == {loop.address: loop.proc_id}
+    assert _line(driver, 30)["step"] == "done"
+
+
+def test_a_render_after_every_loop_restarts_attaches_again_inside_the_render(
+        tmp_path, cleanup):
+    """docs/TROUBLESHOOTING.md #2, issue #47. Both loops restart under a live
+    mesh, and nothing reaches them before the render, so the render's own price
+    request is the message each old channel session loses. The wait asks once
+    more, Monarch reports that request undeliverable, and the wait ends there
+    instead of at its 30 s deadline. The re-attach then reads the new ids,
+    retires the stale mesh through the deliberate teardown and the (stood-in)
+    liveness release, and attaches by the new ids, and the price answers on the
+    new mesh. In mutation runs, removing the short circuit made this price wait
+    out the deadline, and removing the re-attach left it refused."""
+    from dgx_monarch import capacity_agreement
+
+    loop_a = _Loop(tmp_path / "a", 27921)
+    cleanup.append(loop_a)
+    loop_b = _Loop(tmp_path / "b", 27922)
+    cleanup.append(loop_b)
+    spec = {"mode": "render",
+            "hosts": [["a", loop_a.address], ["b", loop_b.address]],
+            "homes": {"a": str(loop_a.home), "b": str(loop_b.home)}}
+    driver = _client(tmp_path, spec, "20s")
+    cleanup.append(driver)
+    assert _line(driver, 120)["ok"]
+
+    # Let the loops acknowledge the driver's traffic first (the first case says why).
+    time.sleep(3.0)
+    old_ids = {loop_a.address: loop_a.proc_id, loop_b.address: loop_b.proc_id}
+    loop_a.stop()
+    loop_b.stop()
+    loop_a = _Loop(tmp_path / "a", 27921)
+    cleanup.append(loop_a)
+    loop_b = _Loop(tmp_path / "b", 27922)
+    cleanup.append(loop_b)
+    driver.stdin.write("go\n")
+    driver.stdin.flush()
+
+    render = _line(driver, 120)
+    assert render["ok"], render
+    deadline = capacity_agreement.CAPACITY_QUOTE_DEADLINE_S
+    assert render["refused_after_s"] < 5.0, render
+    assert render["wall_s"] < deadline / 2, render
+    assert render["old_retired"] and render["new_mesh"], render
+    # The fault text spells the mesh ActorMesh._name reads, so the filter that
+    # keeps a retired mesh's stragglers out of the wait matched this one.
+    assert render["mesh_uid"] and render["failures_named"], render
+    assert render["new_mesh_uid"] not in (None, render["mesh_uid"]), render
+    assert render["teardown"] == "liveness_release", render
+    [reattach] = render["reattach"]
+    assert (reattach["outcome"], reattach["verdict"]) == ("attached", "all"), render
+    assert render["proc_ids"] == {loop_a.address: loop_a.proc_id,
+                                  loop_b.address: loop_b.proc_id}
+    assert set(render["proc_ids"].values()).isdisjoint(old_ids.values())
+    assert render["primed"] == [f"{loop_a.address},{loop_b.address}"], render
     assert _line(driver, 30)["step"] == "done"
