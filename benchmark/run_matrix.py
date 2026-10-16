@@ -306,6 +306,25 @@ def _flux2_schedule(get_schedule, *, steps: int, width: int, height: int):
     return get_schedule(steps=int(steps), width=int(width), height=int(height))[0]
 
 
+def _node_outputs(returned) -> tuple[tuple, list[str]]:
+    """Split a direct node call's return into its outputs and waiver run ids.
+
+    ComfyUI unwraps a node's UI-bearing return itself, but this runner calls
+    the nodes directly. A DGX Monarch sampler returns its plain output tuple,
+    or, for a render under an accuracy waiver,
+    ``{"ui": {"dgxm_waiver_runs": [...]}, "result": outputs}``
+    (``_sampler_result`` in src/dgx_monarch/nodes/samplers.py). The run ids
+    keep only non-empty strings, as the sweep driver's ``waiver_run_ids`` does.
+    """
+    if not isinstance(returned, dict):
+        return tuple(returned), []
+    ui = returned.get("ui")
+    runs = ui.get("dgxm_waiver_runs") if isinstance(ui, dict) else None
+    if not isinstance(runs, list):
+        runs = []
+    return tuple(returned["result"]), sorted({r for r in runs if isinstance(r, str) and r})
+
+
 def _topology_provenance(topology, *, sage: bool, reason: str, attention: str) -> dict:
     return {
         "name": topology.describe(),
@@ -709,12 +728,15 @@ def run_case(
                       and sampler_keeps_uncond_at_cfg1(merged["sampler"])),
     )
 
+    waiver_runs: set[str] = set()
+
     def sample_ksampler():
-        (out,) = DGXMonarchKSampler().sample(
+        (out,), runs = _node_outputs(DGXMonarchKSampler().sample(
             model, int(merged["seed"]), int(merged["steps"]), float(merged["cfg"]),
             merged["sampler"], merged["scheduler"], positive, negative, latent,
             denoise=1.0,
-        )
+        ))
+        waiver_runs.update(runs)
         return out
 
     def sample_flux2():
@@ -737,9 +759,10 @@ def run_case(
             height=int(merged["height"]),
         )
         (guider,) = DGXMonarchBasicGuider().get_guider(model, guided_positive)
-        out, _denoised = DGXMonarchSamplerCustom().sample(
+        (out, _denoised), runs = _node_outputs(DGXMonarchSamplerCustom().sample(
             noise, guider, sampler, sigmas, latent
-        )
+        ))
+        waiver_runs.update(runs)
         return out
 
     times = []
@@ -792,6 +815,8 @@ def run_case(
         **pins,
         "status": "ok",
     }
+    if waiver_runs:  # rendered under an accuracy waiver: never exact output
+        row["waiver_runs"] = sorted(waiver_runs)
 
     ref_name = merged.get("reference")
     if ref_name:

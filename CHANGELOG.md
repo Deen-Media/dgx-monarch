@@ -83,6 +83,11 @@ metadata reads the new version
   before. After an outage past the delivery timeout the fallback is still a
   ComfyUI restart. CPU-tested on 2026-10-15; the two-Spark recheck is pending
   ([TROUBLESHOOTING #2](docs/TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
+- Fix `benchmark/run_matrix.py` for renders under an accuracy waiver. The
+  samplers then return a dict with `ui` and `result` entries, which the
+  runner unpacked as a tuple, so each such cell rendered and was then recorded
+  as N/A. The runner now unwraps the return and lists the waiver dispatch ids
+  in the row's new `waiver_runs` field; other rows are unchanged.
 - Refuse a checkpoint whose weight scales ComfyUI would drop, before anything
   loads
   ([TROUBLESHOOTING #120](docs/TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
