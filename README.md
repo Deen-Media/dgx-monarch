@@ -11,7 +11,7 @@
 
 Generate images and video across two DGX Sparks from one ComfyUI window. Split a render between the GPUs, run separate prompts at once, or shard supported model weights to fit larger checkpoints.
 
-DGX Monarch provides model loaders, samplers, memory controls, and 62 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI.
+DGX Monarch provides model loaders, samplers, memory controls, and 66 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI.
 
 [Get started](docs/QUICKSTART.md) · [Installation](docs/INSTALL.md) · [Model support](docs/MODELS.md) · [Benchmarks](docs/BENCHMARKS.md)
 
@@ -56,7 +56,7 @@ Image generation and editing with up to ten references, including alpha-masked i
 </table>
 
 The pack also includes [Kroma BF16, INT8 and 2x upscale workflows](docs/MODELS.md#model-kroma),
-Flux, Chroma, LTX, Hunyuan, Wan, and other families. Kroma uses the Krea2 runtime;
+Flux, FLUX.3 Klein, Chroma, LTX, Hunyuan, Wan, and other families. Kroma uses the Krea2 runtime;
 its resident BF16, local INT8 and BF16 2x refinement graphs matched their
 [listed stock references](docs/VALIDATION.md#evidence-kroma). Manual
 `uly2+fsdp` also matched these three workflows at batch 1; batch-2 `dp2+fsdp`
@@ -76,7 +76,7 @@ Recorded renders on two DGX Sparks connected over ConnectX-7 200G:
 | Ideogram4 FP8, dual-model, 1024×1024, 20 steps, Ulysses | 36.0 s | 26.0 s | 1.38× |
 | MiniMax H3 INT8 ConvRot, 1280×720, 241 frames, 20 steps, Ulysses | 42m 03s | 23m 07s | 1.82× |
 
-Krea2 and Ideogram4 timings are warm renders of matching graphs. Their separate one-step output checks matched one GPU; those checks do not prove equality at every step of a full render. H3 uses exact attention: the one-GPU timing is stock ComfyUI, while one Monarch worker took 42m 20s and matched the pair's output. Results depend on the settings and hardware; [benchmark details](docs/BENCHMARKS.md#selected-results) describe each comparison.
+Krea2 and Ideogram4 timings are warm renders of matching graphs. Their separate one-step output checks matched one GPU; those checks do not prove equality at every step of a full render. Automatic selection now takes cfg2 for the Krea2 graph: on 2026-10-14 cfg2 was bit-identical to one GPU and ran the sampler 1.23× faster than Ulysses (36.3 s against 44.8 s; one GPU 72.9 s). Those are sampler times from [Campaign K](docs/BENCHMARKS.md#campaign-k-cfg2-against-uly2-2026-10-14-head-capped), with the first Spark capped at 2100 MHz, so compare them with each other, not with the table. H3 uses exact attention: the one-GPU timing is stock ComfyUI, while one Monarch worker took 42m 20s and matched the pair's output. Results depend on the settings and hardware; [benchmark details](docs/BENCHMARKS.md#selected-results) describe each comparison.
 
 **Qwen Image 2.1:** 12 model formats matched native ComfyUI output in one-step tests. Separate full 25-step generation and editing tests also matched, including ten-reference editing. A comparable speed measurement has not been recorded. [Qwen test results](docs/VALIDATION.md#evidence-qwen-image-2-1).
 
@@ -136,6 +136,37 @@ With the default `auto_gate=first_use`, a new combination using slab and low-RSS
 If the comparison fails, supported resident paths use stock residency with the memory optimizations disabled. FSDP has no stock fallback and refuses. Some large FSDP checkpoints cannot fit the gate's reload; [the model guide](docs/MODELS.md) and [troubleshooting](docs/TROUBLESHOOTING.md) explain the available choices.
 
 Native latent RDMA is **off by default**. [Selected-rail return checks](docs/VALIDATION.md#native-rdma) have limited recorded coverage; positive-step qualification is limited to the recorded at-threshold case. Latents return through actor messages; this does not disable NCCL rendering across the pair. [`comfy_managed` residency](docs/TROUBLESHOOTING.md#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) is opt-in and has additional memory and LoRA restrictions. Smaller jobs may gain little from using two GPUs.
+
+## Updating
+
+Read the [changelog](CHANGELOG.md) before you update. Before the first update
+from 1.1.0, follow [Upgrading from 1.1.0](docs/INSTALL.md#upgrading-from-110).
+
+1. Stop ComfyUI. Both update modes refuse while a driver answers.
+2. Check where each host's Workers run. A path under `releases/` means a
+   release slot:
+
+   ```bash
+   readlink -f ~/.local/share/dgx-monarch/src
+   ```
+
+   Guided multi-node setup puts remote Workers in release slots, and a verified
+   update puts every Worker in one.
+3. Update in the matching mode:
+   - One Spark, or Workers that run from plain source directories:
+     `dgxm update`.
+   - Any Worker in a release slot: `dgxm update --verify --target <ref>`, with
+     a release tag or commit as `<ref>`. Plain update cannot change a slot;
+     [TROUBLESHOOTING #118](docs/TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)
+     repairs an install where it ran anyway.
+4. Start ComfyUI again. Under the default `auto_gate=first_use`, each model,
+   residency and LoRA combination runs its first-use Gate once more on its
+   first render, as [Before the first render](#before-the-first-render)
+   describes.
+
+`dgxm update` moves only dgx-monarch and its torchmonarch pin; update ComfyUI
+your own way. [INSTALL](docs/INSTALL.md#updating) covers every flag, recovery
+and rollback.
 
 ## Documentation
 

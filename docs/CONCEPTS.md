@@ -226,9 +226,11 @@ same-name replacements and corruption in those windows without filling the
 unified page cache with a multi-GiB checkpoint. It is a practical fingerprint,
 not a full-file integrity proof.
 
-**Quarantine.** A `FAIL` disables the affected optimization across the fleet,
-records the verdict so later sessions keep it off, and uses the stock path
-when fallback is permitted.
+**Quarantine.** A `FAIL` turns `lora_low_rss` and `slab_weights` off for that
+model combination on every rank, records the verdict so later sessions keep
+them off for it, and uses the stock path when fallback is permitted. Other
+checkpoints on the same Init node keep the settings the graph asked for. A
+`FAIL` does turn `comfy_managed` off for the whole Init node.
 
 **Ambient verify.** After each LoRA swap the worker recomputes a sample of
 weights (two keys by default) through stock ComfyUI math. A mismatch drops
@@ -252,5 +254,5 @@ reloading it from scratch.
 **Checkpoint.** The model file on disk (`.safetensors`).
 
 ---
-Last documentation review: 2026-10-07. Dated hardware-validation evidence is
+Last documentation review: 2026-10-16. Dated hardware-validation evidence is
 in [VALIDATION.md](VALIDATION.md).

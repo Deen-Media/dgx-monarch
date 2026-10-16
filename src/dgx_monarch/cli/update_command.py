@@ -34,6 +34,7 @@ from .update_support import runtime_env as _runtime_env
 from .update_target import resolve_target as _resolve_target
 from .update_transaction import (
     DEFAULT_TARGET,
+    GATE_NOTE,
     ActivitySnapshot,
     Certainty,
     ExactReadback,
@@ -55,7 +56,6 @@ from .update_worker_lifecycle import (
 from .update_worktree import remove_worktree
 
 _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
-
 
 _OK = OperationResult(Certainty.SUCCEEDED)
 _FAILED = OperationResult(Certainty.FAILED)
@@ -228,7 +228,7 @@ class SystemUpdateOps(UpdateOps):
             f"torchmonarch {staged.torchmonarch_pin}) on "
             f"{staged.worker_releases_staged} worker services?"
         )
-        print("This invalidates source-bound Gate grants; sticky FAIL evidence remains.")
+        print(GATE_NOTE)
         return input("continue? [y/N] ").strip().lower() == "y"
 
     def recheck_dependencies(self) -> None:

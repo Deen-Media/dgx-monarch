@@ -159,8 +159,12 @@ messaging
 
 `metrics = false` is the default. Enabling it publishes supported counters and
 histograms through Monarch; gauges and observable instruments are unavailable
-in this release. Local bounded phase timings remain advisory and never prove
-transfer completion, cleanup or readiness.
+in this release. With it on, the driver, each actor and each Worker loop
+publish two phase instruments, the counter `dgxm.phase.completed` and the histogram
+`dgxm.phase.duration.seconds`, both labelled `phase`, `outcome` and
+`return_mode` with the values in [Metrics reference](#metrics-reference), and
+the occupancy counters below. Local bounded phase timings remain advisory and
+never prove transfer completion, cleanup or readiness.
 
 `otlp_endpoint = ""` disables export. A configured HTTP(S) endpoint must have no
 credentials, query, fragment or path other than a bare trailing `/` (the
@@ -230,13 +234,76 @@ dgxm diagnostics --host 127.0.0.1:8188 --duration-s 30 --output /absolute/privat
 ```
 
 The destination directory must already exist; the command creates a new
-mode-0600 file and refuses overwrites and symlinks. Captures are bounded by
-duration, event count and byte count; incomplete coverage stays explicit.
+mode-0600 file and refuses overwrites and symlinks. `--output` is required.
+Captures are bounded by duration (`--duration-s`, default 30, 0.1 to 300
+seconds), retained phase events (`--max-events`, default 4096, 1 to 20000) and
+file size (`--max-bytes`, default 1048576, 65536 to 8388608); incomplete
+coverage stays explicit. The command exits 0 for a complete capture, 3 for a
+partial one, whose `capture.gaps` names what it missed, and 2 when it refuses
+or cannot finish.
 Attached-cluster admin, SQL and process-stack capture
 remain unavailable because the upstream admin API does not return a stoppable
 owned handle. The integration does not manufacture a Job around persistent
 Workers to obtain those features; [DESIGN.md section 5.8](DESIGN.md#58-progress-logging-observability)
 records the 0.7.0 facts behind that decision.
+
+### Metrics reference
+
+`GET /dgxm/metrics` on the ComfyUI port serves Prometheus text drawn from the
+same cached snapshot as `/dgxm/telemetry`, whatever `[monarch.diagnostics]`
+says. A value that is missing or not a finite number is left out, not written
+as zero. Phase and return series carry `scope="driver"` for the ComfyUI
+process, or `scope="worker"` and `worker_index` for a Worker actor, its
+position in the telemetry `workers` list counting from 0. Host series carry,
+as `host`, the host name each actor reports.
+
+| Series | Labels | Value |
+| --- | --- | --- |
+| `dgxm_render_active` | none | 1 while a render runs, else 0 |
+| `dgxm_render_step` | none | the latest sampler step the running render reported |
+| `dgxm_render_sec_per_step` | none | seconds the latest counted sampler step took |
+| `dgxm_telemetry_stale` | none | 1 when the route served its last good snapshot after a failed refresh |
+| `dgxm_native_return_latched` | none | 1 once a failed native read has latched native return off until ComfyUI restarts |
+| `dgxm_native_return_fault_count` | none | failed native reads the latch has counted |
+| `dgxm_mesh_state` | `state` | 1, with `state` one of `ok`, `busy`, `dirty`, `poisoned`, `idle` or `unknown` |
+| `dgxm_mesh_active_leases` | none | sample leases on the reported fleet |
+| `dgxm_mesh_abandoned_samples` | none | abandoned sample leases, which may still own Worker-side latent memory |
+| `dgxm_mesh_pending` | none | 1 when a fleet was created but never published to the attached-mesh cache |
+| `dgxm_mesh_poisoned` | none | 1 when the driver's Monarch transport cannot be reused until ComfyUI restarts |
+| `dgxm_diagnostics_available` | `scope`, `worker_index` | 1 when that process's phase timings are present and fresh |
+| `dgxm_phase_duration_seconds_count`, `_sum`, `_bucket` | `scope`, `worker_index`, `phase`, `outcome`, `return_mode`, and `le` on buckets | histogram of phase durations |
+| `dgxm_return_ownership_available` | `scope`, `worker_index` | 1 when that process's return-ownership counts are present and fresh |
+| `dgxm_return_live_handoffs` | `scope`, `worker_index` | native latent handoffs a Worker actor still owns |
+| `dgxm_return_tombstones` | `scope`, `worker_index` | released handoffs kept, at most 64, so a lost reply can be retried |
+| `dgxm_return_poison_owners` | `scope`, `worker_index` | poisoned RDMA registration owners |
+| `dgxm_return_pending_read_jobs` | `scope`, `worker_index` | native reads not yet settled |
+| `dgxm_return_descriptor_total` | `scope`, `worker_index`, `kind`, `reason` | latent returns a Worker actor packed, by path |
+| `dgxm_gpu_util_pct` | `host` | GPU use in percent |
+| `dgxm_gpu_power_w` | `host` | GPU power in watts |
+| `dgxm_mem_available_gib` | `host` | `MemAvailable` in GiB |
+| `dgxm_rail_rx_bytes_total`, `dgxm_rail_tx_bytes_total` | `host`, `rail` | bytes received and sent on each cabled RDMA port; `rail` is the device name, or `<device>/<port>` on a device with more than one cabled port |
+| `dgxm_swap_verify_failures` | `host` | LoRA swap bakes that did not match ComfyUI's own computation |
+| `dgxm_unbake_file_backed_gib` | `host` | LoRA restore data the Worker reads back from the checkpoint file, in GiB |
+
+`phase` is one of `attach`, `setup`, `queue_wait`, `compute`, `collect`,
+`rdma_preflight`, `rdma_register`, `rdma_read`, `rdma_drop`, `ack`, `recycle`,
+`spawn`, `readiness` or `cancel`; `outcome` is `ok`, `error`, `timeout`,
+`cancelled` or `unknown`; `return_mode` is `none`, `message` or `rdma`. The
+OTLP phase instruments use the same three labels. The bucket bounds are 0.001,
+0.01, 0.1, 1, 10, 60, 300 and 1800 seconds, plus `+Inf`.
+`dgxm_return_descriptor_total` pairs `kind="rdma"` with `reason="native"`, and
+`kind="message"` with `configured_message` (native return off),
+`registry_capacity` (the handoff registry was full), `below_threshold`
+(smaller than `rdma_min_bytes`), `nested_tensor` or `pack_fallback` (the
+native pack fell back for another reason).
+
+A stale snapshot leaves out the mesh series and reads both availability series
+as 0, with no detail series under them. An actor whose status poll failed or
+is not fresh does the same for its own labels. When a stale snapshot's latch
+reads 0, both latch series are left out, because that 0 may be out of date; a
+latched 1 stays, because the latch never clears in a running driver. The
+route reports at most 256 actors and 64 rails per actor. These numbers describe what each process reported; they
+do not prove that a lease, a native read or a teardown has settled.
 
 ### Changing policy after install
 

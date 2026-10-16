@@ -111,14 +111,32 @@ interface for Worker-service lifecycle and setup.
 
 `scripts/setup_env.sh` is a developer-lab helper, not the portable installer.
 It creates or changes `~/monarch-env`, assumes `~/ComfyUI`, selects a fixed
-Torch/CUDA build, and can copy torchaudio from a donor environment. Its rerun
-can change packages already installed there. Do not run it against a user's
+Torch/CUDA build, and for a ComfyUI before v0.38.0, which still needs
+torchaudio, can copy it from a donor environment. Its rerun can change
+packages already installed there. Do not run it against a user's
 working environment as part of agent onboarding.
 
 Use [INSTALL.md](../docs/INSTALL.md) for dependency installation and
 [the setup skill](../skills/dgx-monarch/SKILL.md) for discovery, approved
 setup, verification and recovery. Missing ComfyUI or CUDA dependencies need a
 separate reviewed prerequisite plan.
+
+## CPU test wrapper
+
+`bash scripts/test_cpu.sh` runs `pytest tests/ -q --durations=25` from the
+checkout root with this checkout's `src` first on `PYTHONPATH`,
+`HYPOTHESIS_PROFILE=ci`, and OMP and MKL at one thread unless already set. It
+prints the total time and the 25 slowest tests, and exits with pytest's
+status. `DGXM_TEST_PYTHON` selects the interpreter. The default is `python`,
+which some systems lack, so set it or activate the environment first.
+
+Extra arguments are added to `pytest tests/`. Options such as `-k` or
+`--ignore` narrow the run, but a test file path does not, because `tests/` is
+always collected; run pytest directly for a subset. A run longer than 120
+seconds prints a warning, a workflow annotation in GitHub Actions. The
+warning is advisory and leaves the exit status unchanged.
+[CONTRIBUTING.md](../CONTRIBUTING.md#check-your-change) lists the other
+checks.
 
 ## Optional normal-terminal CLI launcher
 

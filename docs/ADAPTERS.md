@@ -296,8 +296,8 @@ stacks on a repeat call.
    embedding or collectives; other selected kernels and a foreign
    `optimized_attention_override` refuse there too.
 
-   **Per-block attention preference and q/k/v containers.** ComfyUI lets a
-   model file pin an attention kernel for each block. Models pass
+   **Per-module attention preference and q/k/v containers.** ComfyUI lets a
+   model file pin an attention kernel on each attention module. Models pass
    `preferred_attention=self.comfy_attention` to their attention call and box
    q, k and v in `AttentionTensorContainer`. Comfy's `wrap_attn` drops the
    keyword and takes the tensors out of their boxes before it calls
@@ -333,13 +333,13 @@ stacks on a repeat call.
    ran. Qwen's cache-miss prefix fill runs comfy's own
    `block_causal_attention` callback, which hands the preference on, so the
    adapter wraps that callback to pass none. A checkpoint that pins a kernel
-   per block (the comfy-kitchen int8 kernel, or the comfy-kitchen Sol
-   kernel, `comfy_kitchen_sol`, with its tau) therefore renders this
+   on its attention modules (the comfy-kitchen int8 kernel, or the
+   comfy-kitchen Sol kernel, `comfy_kitchen_sol`, with its tau) therefore renders this
    attention with the widget's kernel where stock ComfyUI on one GPU would
    use the pinned one. Under sequence parallelism the pack asks for the
    class-K Sol-Attn waiver only when the widget selects Sol.
 
-   Under sequence parallelism no attention call honors a block's pin. The
+   Under sequence parallelism no attention call honors a module's pin. The
    pack also leaves some stock attention in place, and those calls run
    comfy's default backend, as stock runs them for a checkpoint with no pin;
    the widget picks only the sharded attention's kernel. A read of every
@@ -733,8 +733,12 @@ stacks on a repeat call.
    calls with and without a text pad, and the shipped template on RAW BF16,
    RAW INT8 ConvRot and Turbo FP8-scaled (VALIDATION.md). Before the
    treatments the template read 1-step NRMS 0.015695 on INT8 and 0.034555 on
-   FP8, and an odd-text BF16 gate 0.009848. The SAGE route that auto picks
-   for FP8 above 1.2 MP has not been measured.
+   FP8, and an odd-text BF16 gate 0.009848. Auto takes the SAGE route (row 11)
+   for FP8 from 1.2 MP only where cfg2 on row 15 does not apply: above 2.36 MP,
+   or at CFG 1 with no CFG++ sampler keeping the unconditional pass. Campaign K
+   read that route on Turbo FP8 at 1152 to 1536 square at 1-step NRMS 0.030 to
+   0.058 against one GPU, and its full-schedule latents did not equal the
+   reference ([VALIDATION.md](VALIDATION.md#campaign-k-cfg2)).
    `tests/test_krea2_comfy_exactness.py` builds comfy's own `SingleStreamDiT`
    and shows that every joint and text attention and every text Linear gets
    stock's operands, and that each rank's output equals stock's on the CPU.
@@ -1080,7 +1084,7 @@ stacks on a repeat call.
    which pads both phases, was identical. A probe on 2026-10-16 traced the
    edits, and uly2 text to image at 704 square and below, to the fused
    `adaln` kernel switch above; the parity route makes them bit-identical to
-   one GPU, pending hardware confirmation on <date>
+   one GPU, confirmed on hardware on 2026-10-16
    ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)). On the CPU,
    `tests/test_flux3_comfy_exactness.py` builds ComfyUI's own `Flux3` at toy
    size in float32 and shows every kernel call of the two-rank forward

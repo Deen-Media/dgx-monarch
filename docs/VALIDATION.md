@@ -459,7 +459,12 @@ measure quantization error against BF16.
 
 These resident results do not qualify LoRA, FSDP, cfg2, ring, hybrid topologies,
 other attention kernels, reference-image conditioning, other quantizations
-or unlisted dimensions.
+or unlisted dimensions. A Kroma BF16 file reads as family krea2, but Krea2's
+cfg2 row 15 excludes Kroma: measured on 2026-10-16, cfg2 on the shipped
+graph's zero-conditioning negative did not match one GPU, so `auto` keeps
+Ulysses for Kroma at every CFG and sampler ([Kroma cfg2](#kroma-cfg2),
+[cfg2 crossover rows](#campaign-k-cfg2)). The shipped 1024×1024 graphs, the
+2048×2048 refinement and the INT8 file keep Ulysses as well.
 
 #### Kroma manual FSDP
 
@@ -899,7 +904,11 @@ calls of their own differed in 4, 64 and 44 outputs
 (`tests/test_flux3_adaln_parity.py`). A CPU test drives ComfyUI's own blocks
 and checks that every fused-norm launch on every rank holds stock's rows.
 After the change, BF16 and NVFP4 edits on uly2 and uly2 text to image at 704
-square or below are bit-identical to one GPU, pending hardware confirmation on <date>. The NVFP4 edit readings
+square or below are bit-identical to one GPU, confirmed on 2026-10-16 on
+release `dab81e3`: the five edit legs (E1, E1sq, E2, both checkpoints, and the
+base E1 on dp2) read bit-identical to stock ComfyUI, and text to image at 512
+and 704 square (step-distilled) and 512 square (base) read bit-identical to
+one GPU where they had differed. The NVFP4 edit readings
 are inferred to be the same switch, larger after 4-bit rounding; the probe
 rendered BF16 only. The base model's cfg2 edit reading of 0.020 has another
 cause: each of its calls stays on the same side of the branch as stock's, and
@@ -1224,10 +1233,11 @@ be connected to DGXM_MODEL. LTX 2.3 results do not cover LTX 2.5.
 On 2026-10-14 the four template shapes were rendered again at release 659f2bf
 on ComfyUI e8665ca8 with the vendor's current Gemma 4 int8 encoder (revision
 49b093a3, which replaced the encoder the August runs used). One-step Ulysses
-video/audio NRMS against a stock single-GPU reference of the same graph: text
-to video 0.062/0.019, image to video 0.097/0.047, frame-zero guide
-0.095/0.021, first and last frame 0.069/0.028, the same bands as the August
-readings. The null pair was bit identical. Stock against stock, the encoder
+NRMS of the video and audio latents against a stock single-GPU reference of
+the same graph: text to video 0.062/0.019, image to video 0.097/0.047,
+frame-zero guide 0.095/0.021, first and last frame 0.069/0.028, the same
+bands as the August readings. Decoded frames and waveform were recorded but
+not gated. The null pair was bit identical. Stock against stock, the encoder
 change alone moved the first step by 0.25 video and 0.10 audio NRMS, so
 renders made with the two encoders are not comparable.
 
@@ -1730,9 +1740,13 @@ lists every cell's walls, speedups and fidelity.
   0.057 to 0.078 against one GPU. Both are under the floor, and neither full
   schedule equaled the reference.
 - **Rows.** The bit-identical bands that beat uly2 at every measured size
-  became automatic rows 15, 19, 68, 79 and 47. Each record grants only the
-  precisions that read bit-identical and beat uly2 at every measured size in
-  its band.
+  became automatic rows: 15 for Krea2 FP8 and BF16 from 1.2 to 2.36 MP, 19 for
+  Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP, 68 for Qwen-Image FP8 from
+  1.2 to 1.77 MP, and 79 for Boogu FP8 and 47 for Anima BF16 below 1.2 MP.
+  Each record grants only the precisions that read bit-identical and beat
+  uly2 at every measured size in its band. Kandinsky5 Lite image met that bar
+  at 1024, but its image and video checkpoints share one family, so it has no
+  row.
 
 Not measured: MXFP8 and NVFP4 Krea2 files, Chroma
 FP8-scaled and Radiance above 1024, Qwen-Image Edit-2511, equal prompt pairs on Krea2, Boogu

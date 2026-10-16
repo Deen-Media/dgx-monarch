@@ -101,9 +101,11 @@ class DGXMonarchInit:
                               "as configured, on the levers first_use would have proved. What off "
                               "costs: it records no PASS, so Fleet keeps forcing slab_weights and "
                               "lora_low_rss off for an unproved combination until you run `dgxm gate` "
-                              "or the Identity Gate node. A ceremony that already FAILED still "
-                              "quarantines both levers, because that verdict is measured, not "
-                              "missing. See docs/TROUBLESHOOTING.md #67."}),
+                              "or the Identity Gate node. A ceremony that already FAILED keeps "
+                              "both levers quarantined within one package version, because that "
+                              "verdict is measured, not missing; a new version expires "
+                              "context-scoped FAILs, so first_use retests them and off treats them "
+                              "as untested. See docs/TROUBLESHOOTING.md #67."}),
                 "load_profile": ("BOOLEAN", {"default": False, "advanced": True,
                                  "tooltip": "Diagnostic. Profile each load_models_gpu call in "
                                  "the workers with cProfile and, for a call slower than 2 s, write "

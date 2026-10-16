@@ -19,6 +19,11 @@ in a separate environment. Its CPU runner uses a CUDA-linked Torch wheel
 because FakeTensor tests exercise CUDA device guards. This does not run GPU
 workloads.
 
+On Ubuntu, install `libcairo2` and `fonts-dejavu-core`, as CI does, for the
+brand and card checks. In an environment without the dev extra's CairoSVG,
+pass `--ignore=tests/test_brand_assets.py --ignore=tests/test_template_cards.py`
+to `scripts/test_cpu.sh` and rely on CI for those two files.
+
 ## Check your change
 
 Run these from the checkout in the development environment for Python changes:
@@ -122,8 +127,8 @@ accelerators such as TeaCache are outside project scope.
 
 ## Pull requests and hardware validation
 
-Add the change under `[Unreleased]` in the changelog, creating that section if
-needed. Document new failure modes in a numbered [troubleshooting entry](docs/TROUBLESHOOTING.md). A fix for
+Add a changelog bullet as [Changelog entries](#changelog-entries) describes.
+Document new failure modes in a numbered [troubleshooting entry](docs/TROUBLESHOOTING.md). A fix for
 an upstream ComfyUI break follows [DESIGN §5.10](docs/DESIGN.md): add a behavioral
 test for the affected stock API to `tests/canary/comfy_seam_contracts.py`.
 
@@ -142,9 +147,11 @@ jobs must never execute on protected hardware. A client must not stop persistent
 Worker services as cleanup. Service stops or restarts require explicit
 maintenance authorization and verified restoration.
 
-Use the current runbook and source tools; no archive or separate hardware-control
-repository is required. Keep host-specific wrappers, configuration and raw
-evidence in a private workspace. Review any wrapper before execution.
+Use the validation protocol in [VALIDATION](docs/VALIDATION.md), the
+[sweep harness](docs/SWEEP.md) and the tools under `benchmark/` and `tools/`;
+no archive or separate hardware-control repository is required. Keep
+host-specific wrappers, configuration and raw evidence in a private workspace.
+Review any wrapper before execution.
 
 Keep raw evidence private. Record **NOT RUN** for a check without a clean
 recorded run. Publish measured claims in [VALIDATION](docs/VALIDATION.md) with
@@ -154,6 +161,30 @@ Native latent RDMA remains off by default; actor messaging is the normal
 return path. [Selected-rail qualification](docs/VALIDATION.md#native-rdma)
 covers only its recorded scope, not untested cancellation or fabric-failure
 recovery. Do not generalize one passing configuration to another workload.
+
+### Changelog entries
+
+Give each change a user can see one bullet under `## [Unreleased]` in
+[CHANGELOG.md](CHANGELOG.md); add that heading if it is missing. A change
+earns a bullet when a user or operator would notice it: a new model,
+workflow, node input, command, flag, refusal, Doctor row, metric or config
+key; a fixed defect they could hit; a changed default, dependency pin or
+ComfyUI minimum; or a new support or validation claim. Refactors, test-only
+changes and doc wording fixes earn none.
+
+Keep each bullet to two or three lines at 80 columns. Say what changed and
+what the user does about it, in the active voice. Link the troubleshooting
+entry, issue or doc section that holds the detail; the pull request keeps the
+narrative, the test list and the measurements. A later pull request that
+changes the same feature before release edits that bullet instead of adding
+one.
+
+At release, fold `[Unreleased]` into the version's section, grouped as
+Everyday use, Installation and updates, Compatibility and verification,
+Rendering, Operations, Development and Limits. Open it with an "Upgrading
+from" paragraph when an update needs manual steps. Every user-visible change
+keeps a clause; merge related bullets, fold internal work into one line per
+group or drop it, and keep the section within about 110 lines.
 
 ## Release checks
 
@@ -170,10 +201,12 @@ Release maintainers must complete these checks on the intended release commit:
 3. Complete the authorized manual hardware checks above, including reference
    comparisons for render-path or topology changes. Preserve their scope and
    report anything unperformed as **NOT RUN**.
-4. Review `[Unreleased]`, regenerate workflow templates, and check that
-   dependency declarations and runtime checks agree. `dgxm update` changes only
-   the exact torchmonarch pin and dgx-monarch, both with `--no-deps`; it must not
-   replace Torch, NCCL, xFuser, yunchang or optional extras.
+4. Fold `[Unreleased]` into the release section as
+   [Changelog entries](#changelog-entries) describes, regenerate workflow
+   templates, and check that dependency declarations and runtime checks agree.
+   `dgxm update` changes only the exact torchmonarch pin and dgx-monarch, both
+   with `--no-deps`; it must not replace Torch, NCCL, xFuser, yunchang or
+   optional extras.
 5. Follow the [developer skill's release checklist](skills/dgx-monarch-dev/SKILL.md#release-checklist)
    for the version, changelog, final node API review and source-install smoke.
    Tag only the checked commit and repeat the source-install smoke from that tag.
