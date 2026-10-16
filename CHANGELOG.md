@@ -109,7 +109,8 @@ hold the detail, and TROUBLESHOOTING numbers refer to [that file](docs/TROUBLESH
 - Native latent RDMA stays off by default; [selected-rail checks](docs/VALIDATION.md#native-rdma) keep their
   recorded scope. Not yet run on hardware: FSDP LoRAs on H3, LTXAV or Anima, the
   credited Flux2 proof, return timing, clean cancellation and Kroma's batch-2 `dp2+fsdp`.
-- Kroma keeps Ulysses: its cfg2 failed the same-math bar on 2026-10-16, so Krea2's cfg2 row excludes it.
+- Kroma keeps Ulysses: its cfg2 failed the same-math bar on 2026-10-16, so Krea2's cfg2 row
+  excludes it, even when `family_adapter` names `krea2`, and the sweep labels Kroma cells to match.
 
 ## [1.1.0] - 2026-10-11
 

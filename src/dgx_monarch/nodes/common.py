@@ -206,7 +206,8 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     sniffed, quant = sniff_checkpoint_for_topology(path)
     forced = family_select.override_for_model(model)
     family = family_select.effective_family(sniffed, forced)
-    variant = None if forced else sniffed_checkpoint_variant(path, family)
+    # Read under an override too: naming krea2 must not lift a Kroma exclusion.
+    variant = sniffed_checkpoint_variant(path, family)
     if forced:
         # A forced family must not emit the header-selected advisory. Warn once
         # regardless of promotion status and log the header result for diagnosis.

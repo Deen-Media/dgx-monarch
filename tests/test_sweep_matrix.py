@@ -902,6 +902,40 @@ def test_a_cfg_pp_auto_cell_resolves_the_cfg_row_the_tagged_render_takes(tmp_pat
     assert _auto_fp8(cells, "plain") == [(1, "SAGE_AUTO")]
 
 
+def _krea2_bf16_square(config: dict, stem: str, unet: str, merge_record: bool,
+                       side: int) -> None:
+    """Write a krea2 BF16 header, with or without Kroma's merge record, and its
+    CFG 1.5 graph at ``side`` square."""
+    metadata = {"base": "raw.safetensors", "copy_prefixes": "txtfusion.,txtmlp.",
+                "finetune": "kroma.safetensors", "target": "turbo.safetensors"}
+    save_file({key: torch.zeros(2, 2, dtype=torch.bfloat16) for key in FAMILY_KEYS["krea2"]},
+              str(config["model_dir"] / unet), metadata=metadata if merge_record else None)
+    graph = _graph(unet, cfg=1.5)
+    graph["3"] = {"class_type": "EmptySD3LatentImage",
+                  "inputs": {"width": side, "height": side, "batch_size": 1}}
+    (config["out_dir"] / "graphs" / f"{stem}.json").write_text(json.dumps(graph))
+
+
+@pytest.mark.parametrize("side", [1152, 1536])
+def test_a_kroma_auto_cell_resolves_the_ulysses_row_the_runtime_takes(tmp_path, side):
+    # Krea2's cfg2 row 15 excludes Kroma, which the runtime reads from the
+    # header's merge record (topology_cfg_evidence.checkpoint_variant). The
+    # sweep reads that variant once per artifact and hands it to its three auto
+    # sites, so a Kroma BF16 auto cell at CFG 1.5 records uly2 where a plain
+    # Krea2 BF16 header at the same size keeps cfg2. Explicit cfg2 still runs.
+    config = _rig(tmp_path)
+    _krea2_bf16_square(config, "kroma", "kroma_bf16.safetensors", True, side)
+    _krea2_bf16_square(config, "turbo", "krea2_turbo_bf16.safetensors", False, side)
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    kroma = _pick(cells, "kroma", "auto", attention="TORCH_FLASH")
+    turbo = _pick(cells, "turbo", "auto", attention="TORCH_FLASH")
+    assert (kroma["variant"], turbo["variant"]) == ("kroma", None)
+    assert (kroma["label"], kroma["resolved_cfg"], kroma["cfg_path"]) == ("render", 1, "none")
+    assert (turbo["label"], turbo["resolved_cfg"]) == ("render", 2)
+    explicit = _pick(cells, "kroma", "cfg2", attention="TORCH_FLASH")
+    assert (explicit["label"], explicit["resolved_cfg"]) == ("render", 2)
+
+
 def test_a_sampler_custom_cfg_pp_graph_keeps_the_cfg_one_skip_under_auto(tmp_path):
     # Sampler Custom (DGX Monarch) takes a SAMPLER object with no name, so its
     # latent stays untagged and auto keeps the CFG-1 skip, even when the stock
