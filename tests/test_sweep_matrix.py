@@ -397,10 +397,26 @@ def test_a_cfg_topology_on_a_cfg_one_graph_is_a_refusal(tmp_path):
     # topology installs never gets the two slices it splits.
     cells, _pruned, _unmatched = matrix.build_cells(_rig(tmp_path))
     assert _pick(cells, "cfgone", "cfg2")["label"] == "refuse:P"
-    # The same graph under fsdp keeps the untagged label: the FSDP gate denies
-    # the run before the cfg-one check can tag it.
-    assert _pick(cells, "cfgone", "cfg2+fsdp")["label"] == "refuse:untyped"
     assert _pick(cells, "krea2", "cfg2", artifact_quant="bf16")["label"] == "render"
+
+
+def test_a_cfg_one_graph_on_cfg2_fsdp_refuses_class_p_under_either_gate(tmp_path):
+    """FSDP leaves the cfg-one refusal typed. At auto_gate first_use the
+    clean-reload proof's own render meets the cfg wrapper's class P guard, and
+    the ceremony passes a settled typed refusal through with its class
+    (nodes/gate_ceremony.py). At auto_gate off no proof runs, and the render
+    meets the same guard. Measured 2026-10-16: FLUX.3 Klein cell 2d2d694eef15
+    (cfg2+fsdp, BF16, CFG 1, Euler) answered refuse:P where the matrix had
+    labelled it refuse:untyped."""
+    config = _rig(tmp_path)
+    config.update(toggles={"auto_gate": ["off"]}, toggle_presets={"auto_gate": ["cfg2+fsdp"]})
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    for gate in ("first_use", "off"):
+        cell = _pick(cells, "cfgone", "cfg2+fsdp", artifact_quant="bf16", auto_gate=gate)
+        assert (cell["label"], cell["basis"], cell["waiver"]) == (
+            "refuse:P", "guard", False), gate
+    # A cfg++ sampler keeps the uncond pass, so the same preset renders.
+    assert _pick(cells, "cfgonepp", "cfg2+fsdp", artifact_quant="bf16")["label"] == "render"
 
 
 def test_a_cfg_pp_sampler_at_cfg_one_still_renders_on_a_cfg_topology(tmp_path):
@@ -2407,8 +2423,7 @@ def test_a_pinned_cfg_cell_at_cfg_one_is_waivable_only_where_the_grant_renders(
             "refuse:K", "header", waivable, [guard] if waivable else []), preset
         # Without the pins the same cell answers the cfg rule (or renders).
         plain = _pick(cells, "plain", preset, **over)["label"]
-        assert plain == ("render" if waivable else
-                         "refuse:untyped" if "fsdp" in preset else "refuse:P"), preset
+        assert plain == ("render" if waivable else "refuse:P"), preset
     # dp2 and single run no cfg wrapper, so the grant renders there.
     for cell in (_pick(cells, "pinned", "dp2"), _local(cells, "pinned")):
         assert (cell["label"], cell["waiver"], cell["waiver_guards"]) == (

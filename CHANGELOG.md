@@ -88,6 +88,11 @@ metadata reads the new version
   runner unpacked as a tuple, so each such cell rendered and was then recorded
   as N/A. The runner now unwraps the return and lists the waiver dispatch ids
   in the row's new `waiver_runs` field; other rows are unchanged.
+- Label a cfg topology on a CFG 1 graph `refuse:P` under FSDP as well. The
+  sweep matrix predicted an untyped refusal there, but the cfg wrapper's typed
+  guard answers before the FSDP admission, as the FLUX.3 sweep of 2026-10-16
+  showed on two cells (`cfg2+fsdp` at CFG 1 under plain Euler). A cfg++
+  sampler still renders.
 - Refuse a checkpoint whose weight scales ComfyUI would drop, before anything
   loads
   ([TROUBLESHOOTING #120](docs/TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).

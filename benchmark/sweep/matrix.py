@@ -951,19 +951,29 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
             # meets that refusal, and a grant would only file a finding.
             return _label_from(exc), "header", False, guards
         return _label_from(exc), "header", True, [*guards, tag.guard]
-    # At cfg 1.0 comfy runs no uncond pass, so the batched wrapper a cfg
-    # topology installs never gets the two slices it splits. A cfg++ sampler
-    # keeps the pass (sampler_keeps_uncond), so both ranks work. An fsdp cell
-    # answers untagged before that tag is ever read: the FSDP authorization
-    # gate refuses first, and under auto_gate=first_use the render that meets
-    # this guard is that gate's own proof, whose abort denies every later cell
-    # in the process.
-    if topo.cfg > 1 and not dual and facts["cfg"] is not None \
-            and abs(facts["cfg"] - 1.0) < 1e-6 and not facts["sampler_keeps_uncond"]:
-        return "refuse:untyped" if topo.fsdp else "refuse:P", "guard", False, guards
+    # A dual-model render under FSDP at auto_gate=first_use runs no ceremony
+    # (nodes/auto_gate.py maybe_auto_gate), and the render submit's
+    # authorization refuses it untagged (nodes/gate_identity.py
+    # authorize_normal_render) before the sampler runs, so it answers ahead of
+    # the sample-time cfg rule below.
     if topo.fsdp and facts["dual_model"] and not cell["loras"] \
             and cell["auto_gate"] == "first_use":
         return "refuse:untyped", "guard", False, guards
+    # At cfg 1.0 comfy runs no uncond pass, so the batched wrapper a cfg
+    # topology installs never gets the two slices it splits, and it refuses
+    # class P (adapters/cfg_parallel.py). A cfg++ sampler keeps the pass
+    # (sampler_keeps_uncond), so both ranks work. FSDP keeps the class. At
+    # auto_gate=first_use the auto gate finds no FSDP PASS and runs the
+    # clean-reload proof, whose own render meets this guard first. The ceremony
+    # passes a settled typed refusal through with its class and withdraws its
+    # provisional denial (nodes/gate_ceremony.py, nodes/gate_abort.py
+    # close_aborted_proof), so a later cell meets the same guard. At
+    # auto_gate=off no proof runs and the render meets the guard directly
+    # (2026-10-16: FLUX.3 Klein cfg2+fsdp cell 2d2d694eef15 answered class P
+    # where this rule had labelled it untyped).
+    if topo.cfg > 1 and not dual and facts["cfg"] is not None \
+            and abs(facts["cfg"] - 1.0) < 1e-6 and not facts["sampler_keeps_uncond"]:
+        return "refuse:P", "guard", False, guards
     # One rule reads the encoded prompt, which the graph does not carry: a
     # family that shards its text stream apart from its image stream needs
     # every text stream to divide the SP degree. It refuses typed, under FSDP
