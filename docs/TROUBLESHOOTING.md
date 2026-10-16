@@ -5961,9 +5961,11 @@ in a `scaled_fp8` file, and a `scale_weight` in a file that has
 `_quantization_metadata`. An fp8 or int8 file then loads without an error and
 computes with its scales ignored, so the image is wrong. A packed 4-bit file
 fails at load or at the first step. The gate refuses an fp4 layer by the same
-header rule. The known case is `variants/fp8r/model.safetensors` in Black
-Forest Labs' FLUX.3 Image Klein diffusers repositories, which stores per-row
-fp32 scales and names its format only in header fields ComfyUI does not read.
+header rule. The known cases are in Black Forest Labs' FLUX.3 Image Klein
+diffusers repositories: `variants/fp8r/model.safetensors` stores per-row fp32
+scales and names its format only in header fields ComfyUI does not read, and
+`variants/nvfp4/model.safetensors` stores 198 packed 4-bit layers with scales
+and no record, so stock ComfyUI fails at the first step.
 The gate reads the header alone, on the driver before capacity or mesh work
 and again at every Worker's load entry point, and replays ComfyUI's load
 steps on the key names.

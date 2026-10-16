@@ -23,8 +23,7 @@ refuses. After a verified update, rerun the editable install once so its
 metadata reads the new version
 ([INSTALL](docs/INSTALL.md#upgrading-from-110)).
 
-- Support FLUX.3 Image Klein, the step-distilled and the base checkpoint, at
-  status `impl` with no hardware test yet
+- Support FLUX.3 Image Klein, the step-distilled and the base checkpoint
   ([MODELS](docs/MODELS.md#model-flux-3-klein)). It needs ComfyUI 0.41.0 or
   newer, the first release to carry ComfyUI's support commit 20b46065e of
   2026-10-15
@@ -43,6 +42,23 @@ metadata reads the new version
   references `benchmark/sweep/media.py` now writes. The artifact manifest pins
   the six DiT files and the INT8 encoder at the gated vendor repository's
   commit; the BF16 encoder and the VAE reuse their pinned rows.
+- Promote both FLUX.3 Image Klein rows to **HW** on the hardware ladder of
+  2026-10-15 and 2026-10-16, run at dgx-monarch `70fb8997e3ea` with ComfyUI
+  `29e28e2b4` and the head capped at 2100 MHz
+  ([VALIDATION](docs/VALIDATION.md#evidence-flux-3-klein)). For both
+  checkpoints, uly2 text to image matched stock ComfyUI on one GPU bit for
+  bit at one step, at 1024 and 1536 square in BF16 and NVFP4 and on odd
+  grids in BF16, and its full schedules matched one GPU from 1024 to 1536
+  square; auto keeps it. ring2 on both checkpoints and cfg2 on the base
+  model are measured, not the same math. cfg2 is bit-identical when the
+  prompt encodes past one 80-row block. On a shorter prompt it reads
+  one-step NRMS 0.009 to 0.031, under the 0.10 floor, and full renders
+  diverge; a cfg2 row needs both kinds bit-identical, so FLUX.3 gets none
+  ([BENCHMARKS](docs/BENCHMARKS.md#flux3-klein-one-gpu-uly2-and-cfg2-2026-10-15-to-2026-10-16-head-capped)).
+  FSDP renders matched resident ones in BF16 and, on uly2, in INT8 ConvRot;
+  NVFP4 refuses FSDP. INT8 runs exact attention only on sequence-parallel
+  presets; elsewhere it asks for the Sol-Attn waiver. A synthetic LoRA
+  tested hot swap and the Gate, since no public LoRA exists yet.
 - A ComfyUI that stays up attaches again after a Worker service restarts
   under it (`dgxm restart`, a crash that systemd restarts, or a hand restart)
   when the service comes back within Monarch's 30 s message delivery timeout

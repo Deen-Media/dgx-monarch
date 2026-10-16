@@ -1057,18 +1057,24 @@ stacks on a repeat call.
    per block and keeps the early streams whole through the class-scoped
    census (below).
 
-   Hardware results: none yet. On the CPU,
+   Hardware results (2026-10-15 and 2026-10-16): uly2 one-step latents
+   equaled stock ComfyUI on one GPU at 1024 and 1536 square and on the odd
+   1040 and 1552 grids, for both checkpoints. The five image blocks and the
+   28 single blocks still run their Linears on a shard's rows, and the
+   measured latents show they keep stock's bits at those row counts for text
+   to image. One-reference edits read one-step NRMS 0.019 to 0.055 against
+   stock, under the floor but not identical, and no record yet explains why;
+   the two-reference edit, which pads both phases, was identical
+   ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)). On the CPU,
    `tests/test_flux3_comfy_exactness.py` builds ComfyUI's own `Flux3` at toy
    size in float32 and shows every kernel call of the two-rank forward
    receiving stock's q, k and v for its heads in stock order with no pad row,
    and the output equal to stock's: an even grid, an odd grid that pads both
    phases, one and two references, batch 2, the flow map and the fused q, k
    and v layout the INT8 files use. That proves operands and order, not a GPU
-   kernel. The five image blocks and the 28 single blocks still run their
-   Linears on a shard's rows, and no hardware reading shows yet whether GB10
-   keeps stock's bits at those row counts.
+   kernel.
 
-   Performance cost (not timed), sequence parallelism only. Per model call:
+   Performance cost, sequence parallelism only. Per model call:
    four all-to-alls in each of the five image blocks, one all-gather of the
    image rows (about 25 MB at 1 MP in bf16) and one final all-gather of the
    joint stream, beside the 28 times four joint all-to-alls every Ulysses
@@ -1078,7 +1084,11 @@ stacks on a repeat call.
    of each rank's work with one 1 MP reference; the base model computes them
    once per conditioning. By block rows, an estimate and not a timing, uly2
    leaves each rank half of one GPU's work for text to image and the base edit
-   and about 54 percent for the step-distilled edit.
+   and about 54 percent for the step-distilled edit. Measured on 2026-10-15 and
+   2026-10-16, with the first Spark capped at 2100 MHz, uly2 sampler walls ran
+   1.33x to 1.57x faster than one GPU on the base model, 1.41x to 1.55x on the
+   step-distilled model and 1.50x on the step-distilled edit
+   ([BENCHMARKS](BENCHMARKS.md#flux3-klein-one-gpu-uly2-and-cfg2-2026-10-15-to-2026-10-16-head-capped)).
 
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,

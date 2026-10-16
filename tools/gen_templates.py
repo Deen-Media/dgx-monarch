@@ -5022,6 +5022,18 @@ FLUX3_LICENSE = (
     "read its terms before commercial use. The Qwen3-VL encoder is Apache-2.0.")
 
 
+# What the 2026-10-15 hardware tests showed for the shipped graphs, keyed by edit.
+FLUX3_HW_TESTS = {
+    False: ("In the 2026-10-15 hardware tests, uly2 renders of this graph "
+            "matched stock ComfyUI on one GPU exactly; see "
+            "docs/VALIDATION.md#evidence-flux-3-klein for the scope. "),
+    True: ("In the 2026-10-15 hardware tests, uly2 edits with one reference "
+           "stayed within the 0.10 one-step NRMS floor against stock ComfyUI "
+           "on one GPU but were not identical; see "
+           "docs/VALIDATION.md#evidence-flux-3-klein for the scope. "),
+}
+
+
 def _flux3_template(*, base: bool, edit: bool) -> dict:
     """A FLUX.3 Image Klein graph: stock conditioning, DGX Monarch DiT only."""
     artifact = ("flux3_image_klein_bf16.safetensors" if base
@@ -5098,9 +5110,8 @@ def _flux3_template(*, base: bool, edit: bool) -> dict:
         "The INT8 ConvRot files pin an approximate attention kernel: single, "
         "cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. "
         "This graph uses the BF16 files, which ask nothing. Auto picks Ulysses "
-        "on a configured pair. No hardware comparison has run for FLUX.3 yet; "
-        "see docs/MODELS.md. "
-        f"Expects {artifact} in models/diffusion_models, "
+        "on a configured pair. " + FLUX3_HW_TESTS[edit]
+        + f"Expects {artifact} in models/diffusion_models, "
         "qwen3vl_4b_bf16.safetensors in models/text_encoders (CLIP type flux3) "
         "and flux2-vae.safetensors in models/vae; the vendor's "
         "vae/flux2-vae.safetensors holds the same weights in another key "

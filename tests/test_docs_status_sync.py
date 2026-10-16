@@ -63,8 +63,8 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "Flux 1 Dev"): ("flux", "HW"),
     ("image", "Flux 1 Schnell"): ("flux", "HW"),
     ("image", "Flux2"): ("flux2", "HW"),
-    ("image", "FLUX.3 Klein"): ("flux3", "impl"),
-    ("image", "FLUX.3 Klein Base"): ("flux3", "impl"),
+    ("image", "FLUX.3 Klein"): ("flux3", "HW"),
+    ("image", "FLUX.3 Klein Base"): ("flux3", "HW"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),
@@ -115,6 +115,18 @@ _REQUIRED_DETAIL_EVIDENCE: dict[
          "uly2+fsdp", "dp2+fsdp", "7.335538%", "8.570618%",
          "fsdp_clean_reload", "**BLOCKED**, no end-to-end comparison",
          "341d8e1bdd34d3c5119b5b768badf87ed2a1d663e79d331b85b4c1fc4f7bf498"),
+    ),
+    "FLUX.3 Klein": (
+        "VALIDATION.md",
+        '<a id="evidence-flux-3-klein"></a>',
+        ("ring-pad waiver card", "odd 1040 and 1552 square grids",
+         "Identical to one-GPU NVFP4 and to stock NVFP4", "pin-stripped copy",
+         "NRMS 0.0108; 0.0520", "234 layers"),
+    ),
+    "FLUX.3 Klein Base": (
+        "VALIDATION.md",
+        '<a id="evidence-flux-3-klein-base"></a>',
+        ("NRMS 0.0094", "1.88x to 1.98x", "0.023 to 0.031", "no cfg2 row"),
     ),
     "LTX 2.5 (t2v/AV packed)": (
         "VALIDATION.md",
@@ -732,6 +744,14 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 fp8 dual-model pair, DP2 NRMS 0.000"),
     ("Flux 1 Dev", "uly"): ("granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 DP2 NRMS 0.008"),
     ("Flux2", "uly"): ("scoped", "BF16 `uly2+fsdp`"),
+    ("FLUX.3 Klein", "uly"): (
+        "granted", "2026-10-15 one step bit-identical to one GPU and stock at 1024 and 1536 "
+        "(BF16, NVFP4) and odd 1040 and 1552 (BF16); 2026-10-16 full schedule "
+        "bit-identical to one GPU at 1024 to 1536"),
+    ("FLUX.3 Klein Base", "uly"): (
+        "granted", "2026-10-15 one step bit-identical to one GPU and stock at 1024 and 1536 "
+        "(BF16, NVFP4) and odd 1040 and 1552 (BF16); 2026-10-15 and 2026-10-16 full "
+        "schedule bit-identical to one GPU at 1024 to 1536 on both prompt kinds"),
     ("LongCat-Image", "cfg2"): ("granted", "2026-08-11 DP2 NRMS 0.009"),
     ("LongCat-Image", "uly"): ("granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 DP2 NRMS 0.097"),
     ("HunyuanImage 2.1 (+refiner)", "uly"): (

@@ -434,7 +434,10 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   folds them into sequence parallelism, or on a cfg row refuses (class K);
 - a row may take cfg-parallel only where its exact family, quantization, and
   megapixel band have a dated run that measured it faster than the one-GPU elapsed time
-  and no worse than the step-nrms floor.
+  and no worse than the step-nrms floor. Since Campaign K (2026-10-14) a new
+  row also needs cfg2 faster than uly2 and bit-identical to one GPU, full
+  schedule and one step, at every measured size in its band; rows granted
+  before then keep their records.
   `topology_cfg_evidence.CFG2_EVIDENCE` is keyed by row number and records the
   admitted quantizations. Missing, out-of-band, or inconclusive evidence does
   not preserve a legacy cfg choice: auto selects its Ulysses fallback and logs
@@ -453,6 +456,18 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   Every cfg row's evidence was measured at world 2;
 - ideogram4: auto takes Ulysses2, never cfg2; explicit Ring2 stays for
   diagnosis, and explicit cfg2 runs the dual-model split (MODELS.md);
+- flux3 earns no cfg2 row. Measured by Campaign K's method on 2026-10-15 and
+  2026-10-16 with the first Spark capped at 2100 MHz, cfg2 ran 1.88x to 1.98x
+  faster than one GPU and 1.23x to 1.41x faster than uly2 from 1024 to 1536
+  square on BF16 and NVFP4. It was bit-identical when the prompt encoded past
+  one 80-row text block, where ComfyUI already makes two batch-1 calls. A
+  prompt that fits one block has as many rows as the empty negative, so one
+  GPU folds the pair into one batch-2 call, which cfg2's two batch-1 calls did
+  not reproduce on FLUX.3 or on Chroma: the one-step latent read NRMS 0.009
+  to 0.031 and no full render matched. That meets the floor but not
+  Campaign K's bar; LongCat above 1.2 MP read the same way and got no row
+  either. Auto keeps the uly2 fallback, and cfg2 stays an explicit, measured
+  choice (VALIDATION.md);
 - sage auto-on only for fp8 + USP at high res;
 - FSDP only when the model does not fit resident (capacity mode), never for speed;
 - every auto decision logs its row and reason, for example
@@ -2023,6 +2038,12 @@ Every milestone must satisfy this checklist:
   Chroma and up to 2.36 MP on Krea2 FP8 and BF16, so those families gained
   cfg2 rows above 1.2 MP; Krea2 INT8 cfg2 was exact but no faster than uly2
   below 1536, so it kept Ulysses (BENCHMARKS.md).
+- FLUX.3 Klein Base cfg2, measured by Campaign K's method on 2026-10-15 and
+  2026-10-16 with the first Spark capped at 2100 MHz, beat uly2 at every size
+  from 1024 to 1536 square and was exact when the prompt encoded past one
+  80-row block. On a one-block prompt one GPU folds cond and uncond into one
+  batch-2 call and cfg2 did not match it, so FLUX.3 has no cfg2 row
+  (VALIDATION.md).
 - Ideogram4 head_dim 256, FP8 pair at 1024x1024: Ulysses2 matched
   DP2 at NRMS 0.000; Ring2 measured 0.102 against the 0.100 limit.
 - Sage attention helps only fp8 with USP at high resolution (about 5-8% at

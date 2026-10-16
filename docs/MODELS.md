@@ -24,7 +24,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 |---|---|---|
 | [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Auto picks cfg2 for FP8 and BF16 from 1.2 to 2.36 MP, including the template's CFG++ sampler at CFG 1, and Ulysses elsewhere. Reference images require `single`. |
 | [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. BF16, local INT8 and BF16 refinement matched their own stock references. See the [tested configurations](VALIDATION.md#evidence-kroma). |
-| [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Run edits on uly2 or single. No hardware test has run yet. |
+| [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Run BF16 edits on uly2 or single and step-distilled NVFP4 edits on single. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly; see the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -93,8 +93,8 @@ that match the tested configurations in its model details. See
 | Flux 1 Dev | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Padded ring is guarded; distilled checkpoints use CFG 1. Use converted LoRAs. [Details](#model-flux-1-dev) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux 1 Schnell | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | CFG 1; Schnell-specific padded inputs remain unmeasured. [Details](#model-flux-1-schnell) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux2 | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | FP8-mixed Ulysses and BF16 `uly2+fsdp` were compared with references. LoRA/FSDP rendered, but its reference ran out of memory. [Details](#model-flux2) · [Workflow](../example_workflows/dgx-monarch-flux2-t2i.json) |
-| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | Step-distilled; CFG 1, euler, 16 steps or fewer. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. Edits and padded grids use uly2 or single; padded ring needs a waiver. Edits scale each reference to 1 MP. LoRA untested. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
-| FLUX.3 Klein Base | ✓ | ✓ | ★ | 🔒 | ⚪ | impl | CFG 3.5, 25 steps, euler. Same INT8, edit and ring notes as FLUX.3 Klein. LoRA untested. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
+| FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. BF16 edits use uly2 or single; NVFP4 edits use single, because uly2 read one-step NRMS 0.117 in the sweep. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
+| FLUX.3 Klein Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3.5, 25 steps, euler. cfg2 is measured, not the same math: bit-identical when the prompt encodes past one 80-row block; on a shorter prompt it stays within the one-step floor but full renders diverge, and auto never picks it. ring2 is measured, one-step NRMS 0.011 to 0.057, and padded ring needs a waiver. Edits use uly2 or single in BF16 and NVFP4: the NVFP4 edit read one-step NRMS 0.019 on uly2. Same uly2, INT8, FSDP and LoRA notes as FLUX.3 Klein. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
 | Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
@@ -396,7 +396,7 @@ full placement peak. A hardware test of that path admitted the load and rendered
 
 ### FLUX.3 Klein
 
-Detail status (`FLUX.3 Klein`): impl.
+Detail status (`FLUX.3 Klein`): **HW**.
 
 FLUX.3 Image Klein is Black Forest Labs' 5.6B-parameter image model with the
 Qwen3-VL-4B text encoder and the Flux 2 autoencoder. Two checkpoints share the
@@ -429,28 +429,45 @@ each reference to about 1 MP with stock nodes before encoding it; the render
 takes its size from the first reference. Cite references in the prompt as
 `<ref_image_0>`, `<ref_image_1>` in the order they are chained.
 
-**Tested configurations.** No hardware test has run. CPU tests compare the
-two-rank sharded forward with stock ComfyUI's on tiny real models, for even
-and odd grids, one and two references, batch 2, the step-distilled flow map
-and the fused q, k and v layout the INT8 files use, and check the cond branch,
-the FSDP census and the LoRA key map against ComfyUI. The pinned encoder and
-VAE files were checked against the vendor's copies tensor by tensor
-([VALIDATION](VALIDATION.md#evidence-flux-3-klein)).
+**Tested configurations.** On two GPUs with Torch Flash, uly2 one-step
+latents were bit-identical to stock ComfyUI on one GPU at 1024 and 1536 square
+in BF16 and NVFP4 and on the odd 1040 and 1552 grids in BF16. Full 16-step
+renders were bit-identical to one GPU from 1024 to 1536 square, and the
+shipped text-to-image graph matched stock exactly. On uly2 the INT8 ConvRot
+file equaled stock running a copy with its pins removed. ring2 read one-step
+NRMS 0.052 against one GPU on the ladder, under the 0.10 floor but not
+identical, and 0.026 to 0.183 in the scoped sweep, over the floor for NVFP4
+text to image, so use uly2. In that sweep the NVFP4 edit on uly2 read
+one-step NRMS 0.117 against one GPU, over the floor.
+`uly2+fsdp` equaled resident uly2 in BF16 and INT8. A synthetic rank-4 LoRA
+hot-swapped from 0.5 to 0.8 without a load and read NRMS 0.0499 at one step
+against stock's LoRA loader. CPU tests compare the two-rank sharded forward
+with stock ComfyUI's on tiny real models. The
+[2026-10-15 and 2026-10-16 record](VALIDATION.md#evidence-flux-3-klein) lists
+every comparison; [BENCHMARKS](BENCHMARKS.md#flux3-klein-one-gpu-uly2-and-cfg2-2026-10-15-to-2026-10-16-head-capped)
+has the walls.
 
 **Known limitations.** The INT8 ConvRot files pin comfy-kitchen's INT8
 attention, an approximate kernel, on 33 blocks: single, cfg2 and dp2 ask for
 the Sol-Attn waiver ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)),
 and uly2 drops the pins and runs exact attention, so a uly2 INT8 render
-differs from stock INT8 on one GPU by construction. NVFP4 refuses FSDP. The
-diffusers-layout `variants/fp8r` file loads in stock ComfyUI with its scales
-dropped and is refused ([TROUBLESHOOTING #120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
-No public LoRA existed at release, so LoRA is untested. The vendor's optional prompt
-upsampler is a separate 9.7 GB model on the driver that no shipped graph
-loads; its memory is outside the driver estimate and has not been measured
-here. The step-distilled model reruns the five reference blocks every step on
-every rank, so references cost more per step than on the base model. A grid
-with an odd row count pads: uly2 and single render it, and padded ring or
-hybrid refuses unless waived. An unscaled reference sets the render size from
+differs from stock INT8 on one GPU by construction. NVFP4 refuses FSDP, and
+it is a capacity choice: uly2 NVFP4 equals one-GPU NVFP4, which is not a
+fidelity claim against BF16. The diffusers-layout `variants/fp8r` file loads
+in stock ComfyUI with its scales dropped and is refused
+([TROUBLESHOOTING #120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+No public LoRA existed at release; a synthetic rank-4 LoRA tested hot swap
+and the Gate. BF16 one-reference edits on uly2 pass the one-step floor but are
+not identical to stock; the cause is not yet known. NVFP4 edits on uly2 read
+over the floor, so run them on single. The vendor's optional prompt upsampler
+is a separate 9.7 GB model on the driver that no shipped graph loads; its
+memory is outside the driver estimate. In the 2026-10-15 test the driver
+Spark's lowest sampled available memory was 44.6 GiB with it, still
+falling when sampling stopped, and 54.9 GiB without it. The step-distilled
+model reruns the five reference blocks every step on every rank, so
+references cost more per step than on the base model. A grid with an odd row
+count pads: uly2 and single render it, and padded ring or hybrid refuses
+unless waived. An unscaled reference sets the render size from
 the source file with no limit, so keep the scale node. The step-distilled
 model reads the sampler's whole sigma schedule each step. Every stock
 sampler node hands it over. A custom sampling path that does not fails in
@@ -469,7 +486,7 @@ Apache-2.0.
 
 ### FLUX.3 Klein Base
 
-Detail status (`FLUX.3 Klein Base`): impl.
+Detail status (`FLUX.3 Klein Base`): **HW**.
 
 The undistilled checkpoint of [FLUX.3 Klein](#model-flux-3-klein), on the
 same adapter, encoder and VAE.
@@ -488,17 +505,29 @@ carries the same references as the positive.
 | `qwen3vl_4b_bf16.safetensors` | `models/text_encoders` | Qwen3-VL-4B encoder; set CLIPLoader type to `flux3` |
 | `flux2-vae.safetensors` | `models/vae` | Flux 2 VAE |
 
-**Tested configurations.** No hardware test has run; the CPU tests listed for
-[FLUX.3 Klein](#model-flux-3-klein) cover this checkpoint too. On every
-Worker the base model computes its text and reference streams once per
-conditioning, as stock ComfyUI does.
+**Tested configurations.** As [FLUX.3 Klein](#model-flux-3-klein), on the
+same dates and kinds of test: uly2 one-step latents were bit-identical to
+stock on one GPU, full 25-step renders to one GPU from 1024 to 1536 square on
+a one-block prompt and a 355-word one, and the shipped text-to-image graph to
+stock. ring2 read one-step NRMS 0.011 on the ladder and 0.015 to 0.057 in the
+scoped sweep. The NVFP4 edit on uly2 read one-step NRMS 0.019 against one GPU
+in that sweep, within the floor. cfg2 is a measured topology: it matched one
+GPU exactly on prompts that encode past one 80-row block. On prompts that fit
+one it read one-step NRMS 0.009 to 0.031 and every full render diverged,
+because one GPU batches the two calls there and cfg2 cannot. `uly2+fsdp`, `cfg2+fsdp` and `dp2+fsdp` equaled their
+resident twins, and `mode=local` on one GPU equaled stock. On every Worker the
+base model computes its text and reference streams once per conditioning, as
+stock ComfyUI does ([VALIDATION](VALIDATION.md#evidence-flux-3-klein-base)).
 
-**Known limitations.** As [FLUX.3 Klein](#model-flux-3-klein), except the
-two step-distilled points: the base model computes its reference streams once
-per conditioning, and it does not read the sampler's sigma schedule. A prompt
-that encodes past one 80-token block does not batch with the empty negative,
-so ComfyUI runs the two as separate calls and cfg2 gives each rank one. Auto
-has no cfg2 row for FLUX.3; cfg2 is an explicit choice.
+**Known limitations.** As [FLUX.3 Klein](#model-flux-3-klein), except three
+step-distilled points: the base model computes its reference streams once per
+conditioning, it does not read the sampler's sigma schedule, and its NVFP4
+edits stay within the one-step floor on uly2, so they can run on uly2 or
+single. A prompt that encodes past one 80-row block does not batch with the
+empty negative, so ComfyUI runs the two as separate calls and cfg2 gives each
+rank one. A shorter prompt batches with the negative on one GPU, so cfg2
+differs from it: within the one-step floor, while full renders diverge. Auto
+has no cfg2 row for FLUX.3; cfg2 is an explicit, measured choice.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-flux-3-klein-base).
 
@@ -1240,9 +1269,10 @@ exceptions.
 
 Black Forest Labs publishes FLUX.3 Image Klein in ComfyUI layout at
 `black-forest-labs/flux-3-image-klein-comfy@3700a1012ec75ad50a54e92199f85ba7cba93c1e`,
-a gated repository. These are vendor files, not local conversions, and no
-hardware comparison covers any of them yet; the support matrix states what
-each topology asks of each kind.
+a gated repository. These are vendor files, not local conversions. The
+[2026-10-15 and 2026-10-16 tests](VALIDATION.md#evidence-flux-3-klein) cover
+the BF16, INT8 ConvRot and NVFP4 files; the support matrix states what each
+topology asks of each kind.
 
 <details>
 <summary>FLUX.3 Image Klein files, layouts and checksums</summary>
@@ -1265,8 +1295,11 @@ files carry per-row FP32 weight scales with no ComfyUI quantization record:
 stock ComfyUI loads them without an error, drops the scales and computes
 unscaled, so dgx-monarch refuses them and ships no template or manifest row
 for them ([TROUBLESHOOTING #120](TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
-Their `variants/nvfp4/model.safetensors` files hold different bytes from the
-ComfyUI-layout NVFP4 files above. They have not been audited yet, so no
+Their `variants/nvfp4/model.safetensors` files hold 557 of 953
+(step-distilled) and 555 of 951 (base) tensors byte-identical to the
+ComfyUI-layout NVFP4 files above and carry no ComfyUI quantization record.
+In the 2026-10-15 test stock ComfyUI dropped their scales and failed at the
+first step. dgx-monarch's header gate refuses them by the same rule, so no
 template or manifest row names them.
 
 ## Shared topology and memory guidance
