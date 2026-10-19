@@ -22,10 +22,10 @@
   place-items: center;
   margin-bottom: 7px;
 }
-.brand-mark svg {
+.brand-mark img {
   width: 36px;
   height: 36px;
-  fill: var(--brand);
+  object-fit: contain;
 }
 .rail-divider {
   height: 1px;

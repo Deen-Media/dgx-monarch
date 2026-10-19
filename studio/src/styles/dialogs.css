@@ -169,19 +169,16 @@ dialog::backdrop {
 .presentation .viewer-footer {
   display: none;
 }
-.flapping .wing {
+.brand-mark img.working {
   transform-origin: center;
-  animation: wing-beat 1.7s ease-in-out infinite;
+  animation: brand-activity 1.7s ease-in-out infinite;
 }
-.flapping .right {
-  animation-delay: 0.05s;
-}
-@keyframes wing-beat {
+@keyframes brand-activity {
   0%,
   100% {
-    transform: scaleX(1);
+    transform: translateY(0);
   }
   50% {
-    transform: scaleX(0.55);
+    transform: translateY(-1.5px);
   }
 }

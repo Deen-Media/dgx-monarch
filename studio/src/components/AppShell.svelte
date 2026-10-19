@@ -4,6 +4,7 @@
   import type { Draft } from '../model';
   import type { ChangeDraft } from '../contracts';
   import { navigation } from '../navigation';
+  import monarchMark from '../../../web/brand/monarch-small-dark.svg?url&inline';
   let {
     connection,
     draft,
@@ -43,15 +44,14 @@
           e.preventDefault();
           navigate('workspace');
         }}
-        ><svg
-          viewBox="0 0 40 40"
-          aria-hidden="true"
-          class:flapping={activeCount > 0 && !connection.hidden}
-          ><path class="wing left" d="M20 20C8 1 0 7 6 20c3 6 9 7 14 1-12 9-6 17 0 4Z" /><path
-            class="wing right"
-            d="M20 20C32 1 40 7 34 20c-3 6-9 7-14 1 12 9 6 17 0 4Z"
-          /></svg
-        ></a
+        ><img
+          src={monarchMark}
+          alt=""
+          width="36"
+          height="36"
+          draggable="false"
+          class:working={activeCount > 0 && !connection.hidden}
+        /></a
       >
       <span class="rail-divider"></span>
       {#each navigation as item}<button

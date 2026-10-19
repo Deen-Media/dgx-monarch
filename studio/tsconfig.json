@@ -9,7 +9,7 @@
     "noEmit": true,
     "skipLibCheck": true,
     "verbatimModuleSyntax": true,
-    "types": ["svelte"]
+    "types": ["svelte", "vite/client"]
   },
   "include": ["src/**/*.ts", "src/**/*.svelte", "vite.config.ts"],
   "exclude": ["src/**/*.test.ts"]
