@@ -53,36 +53,6 @@
   font-size: 10px;
   line-height: 1.7;
 }
-.orbit-art {
-  position: relative;
-  height: 160px;
-  width: 260px;
-  margin-top: 40px;
-}
-.orbit-art div {
-  position: absolute;
-  width: 220px;
-  height: 80px;
-  border: 1px solid #536d2b55;
-  border-radius: 50%;
-  top: 30px;
-  left: 0;
-  transform: rotate(-25deg);
-}
-.orbit-art div:nth-child(2) {
-  transform: rotate(25deg);
-}
-.orbit-art div:nth-child(3) {
-  transform: rotate(90deg);
-}
-.orbit-art span {
-  position: absolute;
-  left: 93px;
-  top: 33px;
-  font-size: 44px;
-  font-weight: 200;
-  color: #88b840;
-}
 dialog {
   background: #191e26;
   border: 1px solid #3c4450;

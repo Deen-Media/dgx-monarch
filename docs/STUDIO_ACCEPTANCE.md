@@ -104,7 +104,8 @@ warning, not a measurement of generation overhead. The observer microbenchmark
 and its retained-allocation limits are recorded separately in the performance
 record. No real hardware or production service acceptance was run.
 
-The logo-only follow-up imports the canonical repository small dark SVG. It
+The brand follow-up imports the canonical repository small dark SVG. The
+welcome screen retains its headline without the unrelated orbit illustration. It
 passed 22 frontend tests, zero Svelte/TypeScript diagnostics, all 418 Studio
 packaging/resource/inventory cases and the brand-generation check. Browser
 inspection confirmed the rendered SVG matches the source geometry and colors.

@@ -13,12 +13,6 @@
     <p>
       Image, video and distributed generation.<br />One workspace for your Monarch host.
     </p>
-    <div class="orbit-art" aria-hidden="true">
-      <div></div>
-      <div></div>
-      <div></div>
-      <span>◈</span>
-    </div>
   </div>
   <form
     class="connect-card"

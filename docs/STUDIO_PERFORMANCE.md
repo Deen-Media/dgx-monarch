@@ -11,8 +11,8 @@ not JavaScript execution, browser responsiveness or Spark overhead.
 
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
-| `index-BqmrDvng.js` | 185,997 | 64,854 |
-| `index-D0tb4LE8.css` | 27,726 | 6,972 |
+| `index-BVIZXrRA.css` | 27,287 | 6,855 |
+| `index-BqMjl_YJ.js` | 185,896 | 64,819 |
 
 ## CPU observer microbenchmark
 
