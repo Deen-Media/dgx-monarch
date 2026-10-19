@@ -38,7 +38,11 @@ submission. A timed-out submission retains its idempotency key and disables fres
 submission until the companion can reconcile its outcome.
 
 The client keeps at most 400 event lines / 128 KiB. Gallery and queue history use
-100-record durable API pages with a 2,000-record client window. The gallery mounts
+pages of up to 100 records. Saved record windows and selector catalogs are
+bounded to 2,000 records and 8 MiB of serialized JSON; oversized catalogs give an
+explicit error and direct users to paginated library browsing. Snapshot and job
+history rows are summaries; full job and operation provenance loads on demand.
+The gallery mounts
 only visible rows, requests bounded 320-pixel thumbnails, and caps each thumbnail
 response at 512 KiB. Full media loads only for selection or explicit download and
 has a 64 MiB byte limit. Object URLs are revoked after use. Polling pauses in hidden

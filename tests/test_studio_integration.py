@@ -230,6 +230,8 @@ def test_complete_http_generation_provenance_and_media_flow(tmp_path, monkeypatc
             snapshot = await system.request("GET", "/snapshot")
             completed = next(row for row in snapshot["jobs"] if row["id"] == job_id)
             assert completed["state"] == "succeeded"
+            assert completed["summary"] and "workflow" not in completed["submission"]
+            completed = await system.request("GET", f"/jobs/{job_id}")
             assert completed["submission"]["requested"] == draft
             assert completed["submission"]["workflow"] == workflow
             assert completed["submission"]["parent_artifact_ids"] == ["parent-output"]
@@ -304,7 +306,9 @@ def test_project_revision_and_offline_driver_keep_host_and_version_available(tmp
             offline = await system.request("GET", "/snapshot")
             assert offline["driver"]["state"] == "unavailable"
             assert offline["telemetry"]["state"] == "stale"
-            assert offline["records"]["projects"][0]["data"] == data
+            assert offline["records"]["projects"][0]["summary"]
+            assert offline["records"]["projects"][0]["data"]["name"] == data["name"]
+            assert (await system.request("GET", "/records/projects"))["records"][0]["data"] == data
             retained = await system.browser.get("/")
             assert retained.status == 200 and await retained.read() == static_bytes
             await system.request("GET", "/catalog", expected=503)

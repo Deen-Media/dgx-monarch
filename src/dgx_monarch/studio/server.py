@@ -13,7 +13,16 @@ from aiohttp import web
 
 from . import SCHEMA_VERSION
 from .comfy import ComfyClient
-from .contracts import MAX_BODY_BYTES, RECORD_KINDS, StudioError, identifier, object_value, schema_document, timestamp
+from .contracts import (
+    MAX_BODY_BYTES,
+    RECORD_KINDS,
+    StudioError,
+    canonical,
+    identifier,
+    object_value,
+    schema_document,
+    timestamp,
+)
 from .experiments import GridExperiments
 from .history import page_artifacts, page_jobs
 from .jobs import Jobs
@@ -22,9 +31,14 @@ from .media_assets import MediaAssets
 from .operations import Operations
 from .runtime_history import page_runtime
 from .store import Store
+from .wire_records import snapshot_rows, telemetry_summary
 from .workflows import WorkflowError, inspect_workflow
 
 MEDIA_LIMIT = 64 * 1024 * 1024
+
+
+def json_response(value: Any, *, status: int = 200) -> web.Response:
+    return web.json_response(value, status=status, dumps=canonical)
 
 
 def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: set[str],
@@ -61,7 +75,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
                 raise StudioError("origin", "Cross-origin access is forbidden.", 403)
             if request.path.startswith("/api/"):
                 authorization = request.headers.get("Authorization", "")
-                if not hmac.compare_digest(authorization, f"Bearer {token}"):
+                if not hmac.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
                     raise StudioError("authentication", "Enter this companion's owner token.", 401)
                 version = request.headers.get("X-DGXM-Schema", SCHEMA_VERSION)
                 if version.split(".")[0] != SCHEMA_VERSION.split(".")[0]:
@@ -70,33 +84,39 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
                     raise StudioError("content_type", "Mutations require application/json.", 415)
             response = await handler(request)
         except StudioError as exc:
-            response = web.json_response({"error": {"code": exc.code, "message": str(exc)}}, status=exc.status)
+            response = json_response({"error": {"code": exc.code, "message": str(exc)}}, status=exc.status)
         except WorkflowError as exc:
-            response = web.json_response({"error": {"code": "workflow", "message": str(exc)}}, status=400)
+            response = json_response({"error": {"code": "workflow", "message": str(exc)}}, status=400)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            response = web.json_response({"error": {"code": "invalid_json", "message": "Invalid JSON request."}}, status=400)
+            response = json_response({"error": {"code": "invalid_json", "message": "Invalid JSON request."}}, status=400)
+        return response
+
+    async def response_headers(request: web.Request, response: web.StreamResponse) -> None:
+        # Streaming handlers prepare their response before middleware returns.
         response.headers.update({"X-Content-Type-Options": "nosniff", "Referrer-Policy": "no-referrer",
                                  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' blob: data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'",
                                  "Cache-Control": "no-store"})
-        return response
 
     app = web.Application(middlewares=[boundary], client_max_size=MAX_BODY_BYTES)
+    app.on_response_prepare.append(response_headers)
 
     async def payload(request: web.Request) -> dict[str, Any]:
         return object_value(await request.json())
 
     async def capabilities(request: web.Request) -> web.Response:
         from .presentation import presentation_contract
-        return web.json_response({**schema_document(), "instance_id": instance, "operations": ops.capabilities(),
+        return json_response({**schema_document(), "instance_id": instance, "operations": ops.capabilities(),
                                   "presentation": presentation_contract(), "driver_origin": client.origin,
                                   "support_status": "draft; see docs/STUDIO_ACCEPTANCE.md for unimplemented acceptance criteria"})
 
     async def snapshot(request: web.Request) -> web.Response:
-        return web.json_response({"schema_version": SCHEMA_VERSION, "instance_id": instance,
+        rows, omitted = snapshot_rows(store)
+        return json_response({"schema_version": SCHEMA_VERSION, "instance_id": instance,
                                   "server_time": timestamp(), "cursor": store.events(0)["latest_cursor"],
-                                  "jobs": store.list("jobs"), "artifacts": store.list("artifacts"),
-                                  "operations": store.list("operations"), "records": {kind: store.list(kind) for kind in RECORD_KINDS},
-                                  "telemetry": jobs.telemetry, "driver": jobs.driver})
+                                  "jobs": rows["jobs"], "artifacts": rows["artifacts"], "operations": rows["operations"],
+                                  "records": {kind: rows[kind] for kind in RECORD_KINDS}, "omitted": omitted,
+                                  "jobs_truncated": bool(omitted.get("jobs")),
+                                  "telemetry": telemetry_summary(jobs.telemetry), "driver": jobs.driver})
 
     async def events(request: web.Request) -> web.Response:
         try:
@@ -105,97 +125,113 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
             raise StudioError("cursor", "Cursor must be an integer.") from exc
         if cursor < 0:
             raise StudioError("cursor", "Cursor must be nonnegative.")
-        return web.json_response(store.events(cursor))
+        return json_response(store.events(cursor))
 
     async def catalog(request: web.Request) -> web.Response:
-        return web.json_response(await jobs.catalog())
+        return json_response(await jobs.catalog())
 
     async def workflows(request: web.Request) -> web.Response:
         return web.Response(body=resources.joinpath("data/workflows.json").read_bytes(), content_type="application/json")
 
     async def inspect(request: web.Request) -> web.Response:
         body = await payload(request)
-        await jobs.catalog()
-        return web.json_response(inspect_workflow(object_value(body.get("workflow")), jobs.schema))
+        catalog_value = await jobs.catalog()
+        return json_response(inspect_workflow(object_value(body.get("workflow")), catalog_value["object_info"]))
 
     async def preview(request: web.Request) -> web.Response:
-        return web.json_response(await jobs.preview(await payload(request)))
+        return json_response(await jobs.preview(await payload(request)))
 
     async def submit(request: web.Request) -> web.Response:
-        return web.json_response(jobs.submit(await payload(request)), status=202)
+        body = await payload(request)
+        existing = store.request("jobs", body.get("idempotency_key"), body)
+        if existing is None:
+            await jobs.catalog()
+        return json_response(existing if existing is not None else jobs.submit(body), status=202)
 
     async def job_action(request: web.Request) -> web.Response:
         body = await payload(request)
         if request.match_info["action"] == "cancel":
+            from .contracts import bounded_key
+            bounded_key(body.get("idempotency_key"))
             value = await jobs.cancel(request.match_info["id"], body)
         elif request.match_info["action"] == "retry":
             value = jobs.retry(request.match_info["id"], body)
         else:
             raise StudioError("job_action", "Unknown job action.", 404)
-        return web.json_response(value, status=202)
+        return json_response(value, status=202)
 
     async def job(request: web.Request) -> web.Response:
-        return web.json_response(store.get("jobs", request.match_info["id"]))
+        return json_response(store.get("jobs", request.match_info["id"]))
 
     async def job_preview(request: web.Request) -> web.Response:
-        return web.json_response(store.get("previews", request.match_info["id"]))
+        return json_response(store.get("previews", request.match_info["id"]))
 
     async def runtime_history(request: web.Request) -> web.Response:
-        return web.json_response(page_runtime(store, request.match_info["id"], dict(request.query)))
+        return json_response(page_runtime(store, request.match_info["id"], dict(request.query)))
 
     async def history(request: web.Request) -> web.Response:
         page = page_artifacts if request.path.endswith("/artifacts") else page_jobs
-        return web.json_response(page(store, dict(request.query)))
+        return json_response(page(store, dict(request.query)))
 
     async def grid_preview(request: web.Request) -> web.Response:
-        return web.json_response(await grids.preview(await payload(request)))
+        return json_response(await grids.preview(await payload(request)))
 
     async def grid_submit(request: web.Request) -> web.Response:
-        return web.json_response(grids.submit(await payload(request)), status=202)
+        body = await payload(request)
+        existing = store.request("grid_runs", body.get("idempotency_key"), body)
+        if existing is None:
+            await jobs.catalog()
+        return json_response(grids.get(existing["id"]) if existing is not None else grids.submit(body), status=202)
 
     async def grid_get(request: web.Request) -> web.Response:
         if "id" in request.match_info:
-            return web.json_response(grids.get(request.match_info["id"]))
-        return web.json_response({"items": [grids.get(item["id"]) for item in store.list("grid_runs")]})
+            return json_response(grids.get(request.match_info["id"]))
+        return json_response({"items": [grids.get(item["id"]) for item in store.list("grid_runs")]})
 
     async def grid_retry(request: web.Request) -> web.Response:
-        return web.json_response(grids.retry(request.match_info["id"], await payload(request)), status=202)
+        return json_response(grids.retry(request.match_info["id"], await payload(request)), status=202)
 
     async def request_status(request: web.Request) -> web.Response:
         with store.lock:
             row = store.db.execute("SELECT kind,entity_id FROM requests WHERE key=?", (request.match_info["key"],)).fetchone()
         if row is None:
             raise StudioError("not_found", "No accepted request exists for this idempotency key.", 404)
-        return web.json_response(store.get(row["kind"], row["entity_id"]))
+        value = store.get(row["kind"], row["entity_id"])
+        if row["kind"] == "job_cancellations":
+            value = store.get("jobs", value["job_id"])
+        return json_response(value)
 
     async def records(request: web.Request) -> web.Response:
         kind = request.match_info["kind"]
         if kind not in RECORD_KINDS:
             raise StudioError("record_kind", "Unknown record kind.", 404)
         if request.method == "GET":
-            return web.json_response(library.page(kind, dict(request.query)))
+            return json_response(library.page(kind, dict(request.query)))
         body = await payload(request)
         value = library.save(kind, request.match_info["id"], object_value(body.get("data")), body.get("revision"))
-        return web.json_response(value)
+        return json_response(value)
 
     async def library_export(request: web.Request) -> web.Response:
-        return web.json_response(library.export(request.query.get("project_id")))
+        return json_response(library.export(request.query.get("project_id")))
 
     async def library_preview(request: web.Request) -> web.Response:
-        return web.json_response(library.preview(await payload(request)))
+        return json_response(library.preview(await payload(request)))
 
     async def library_import(request: web.Request) -> web.Response:
-        return web.json_response(library.apply(await payload(request)))
+        return json_response(library.apply(await payload(request)))
 
     async def membership(request: web.Request) -> web.Response:
-        return web.json_response(library.membership(request.match_info["id"], await payload(request)))
+        return json_response(library.membership(request.match_info["id"], await payload(request)))
 
     async def operation_preview(request: web.Request) -> web.Response:
         body = await payload(request)
-        return web.json_response(await ops.prepare(body))
+        return json_response(await ops.prepare(body))
 
     async def operation_apply(request: web.Request) -> web.Response:
-        return web.json_response(ops.apply(request.match_info["id"], await payload(request)), status=202)
+        return json_response(ops.apply(request.match_info["id"], await payload(request)), status=202)
+
+    async def operation_get(request: web.Request) -> web.Response:
+        return json_response(store.get("operations", request.match_info["id"]))
 
     async def media(request: web.Request) -> web.StreamResponse:
         artifact = store.get("artifacts", request.match_info["id"])
@@ -228,7 +264,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
         return response
 
     async def upload_asset(request: web.Request) -> web.Response:
-        return web.json_response(await media_assets.upload(await payload(request)), status=201)
+        return json_response(await media_assets.upload(await payload(request)), status=201)
 
     async def thumbnail(request: web.Request) -> web.Response:
         return web.Response(body=await media_assets.preview(request.match_info["id"]), content_type="image/jpeg")
@@ -264,6 +300,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
     app.router.add_post("/api/v1/library/import/preview", library_preview)
     app.router.add_post("/api/v1/library/import", library_import)
     app.router.add_post("/api/v1/operations/preview", operation_preview)
+    app.router.add_get("/api/v1/operations/{id}", operation_get)
     app.router.add_post("/api/v1/operations/{id}/apply", operation_apply)
     app.router.add_post("/api/v1/assets", upload_asset)
     app.router.add_get("/api/v1/artifacts", history)

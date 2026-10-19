@@ -215,7 +215,17 @@ class RuntimeObservations:
                 previous = cursor["sequence"] if cursor.get("producer_id") == page["producer_id"] else 0
                 if page["next_sequence"] < previous or len(page["events"]) > 128:
                     raise ValueError("Runtime replay cursor regressed")
-                known = {job["prompt_id"]: job["id"] for job in self.store.all("jobs") if job.get("prompt_id")}
+                # The prompt index resolves this page without loading
+                # every immutable workflow and submission in the job history.
+                prompts = {event["prompt_id"] for event in page["events"] if valid_event(event)}
+                known = {}
+                if prompts:
+                    placeholders = ",".join("?" for _ in prompts)
+                    with self.store.lock:
+                        rows = self.store.db.execute(
+                            "SELECT id,json_extract(document,'$.prompt_id') FROM objects WHERE kind='jobs' "  # noqa: S608
+                            f"AND json_extract(document,'$.prompt_id') IN ({placeholders})", list(prompts)).fetchall()
+                    known = {row[1]: row[0] for row in rows}
                 sequence_gap = False
                 for event in page["events"]:
                     if not valid_event(event) or event["producer_id"] != page["producer_id"]:

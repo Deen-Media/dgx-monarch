@@ -208,18 +208,29 @@ cancellation request; without a definitive backend terminal event it does not
 claim cancellation completed. Running-job cancellation uses the driver's
 atomic prompt-specific cancellation route when available. Older drivers refuse
 that request; the adapter never falls back to a global interrupt.
+Each job retains one durable cancellation intent, including after a lost
+acknowledgement or companion restart. Repeating that intent cannot dispatch it
+again. A reviewed management operation is single-use; its original request key
+reconciles the receipt. Fresh execution requires a fresh review.
 
 Published limits are 4 MiB per JSON request/driver response, 4,096 replay events
-and 8 MiB of replay payload, 1,000 console lines/256 KiB, 600 chart samples and
+and 8 MiB of replay payload, 400 browser console lines/128 KiB, 240 chart samples and
 one hour, a 32 MiB thumbnail cache budget, a 64 MiB media display limit, and
-1,024 grid combinations. API snapshots return the newest 200 rows per kind;
-record storage permits 2,000 editable records per kind. History uses stable
-pagination; the browser retains at most 2,000 loaded rows per window. Thumbnail
+1,024 grid combinations. Snapshots return compact windows of up to 200 rows per
+kind under a shared byte budget, prioritizing unresolved jobs and reporting
+omitted counts. Job history returns summaries; full job provenance and operation
+receipts load by identity when opened or exported. Artifact lists omit only the
+derived search index. Record and history pages are limited to 8 MiB; cursors
+advance by actual returned rows. Record storage permits 2,000 editable records
+per kind. The browser bounds loaded record windows and catalogs to 8 MiB and
+2,000 rows. Thumbnail
 decoding accepts at most 16 megapixels and 8 MiB per source image, returns at
 most 320 pixels per edge and runs at most two decodes concurrently. Input
 uploads accept 2 MiB encoded source files and preserve mask alpha after
 orientation normalization. Live previews retain at most 16 identity-bound
 frames. Grid previews allow at most 32 MiB of complete cell submissions.
+Random seeds honor the installed input bounds and JavaScript's exact integer
+range so the generated seed can be reused without rounding.
 
 ## Development
 

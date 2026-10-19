@@ -29,7 +29,7 @@ The smoke verifies workflow inspection, submission preview, idempotent duplicate
 submission, request reconciliation, terminal job state, immutable workflow/seed,
 and authenticated artifact retrieval through the real companion HTTP routes.
 It refuses drivers without the explicit fixture node and refuses enabled
-management operations other than the read-only version operation.
+mutation controls. It does not invoke the available read-only diagnostics.
 
 For manual browser verification, open that separate companion, enter its token,
 and import `/tmp/studio-cpu-workflow.json`. Edit the visible prompt/seed controls,

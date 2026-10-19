@@ -11,6 +11,7 @@ from .comfy import ComfyClient
 from .contracts import StudioError, digest, identifier, timestamp
 from .driver_service import DriverService
 from .management_fields import COMMAND_FIELDS, FIELDS, FIXED_COMMANDS, NO_CONFIG, parse
+from .operation_reservations import reserve_review
 from .store import Store
 
 # Each command and every flag here is owned by Monarch. Browser JSON never becomes argv.
@@ -153,7 +154,7 @@ class Operations:
 
     def apply(self, operation_id: str, request: dict[str, Any]) -> dict[str, Any]:
         existing = self.store.request("operations", request.get("idempotency_key"),
-                                      {"operation_id": operation_id, **request})
+                                      {**request, "operation_id": operation_id})
         if existing is not None:
             return existing
         plan = self.store.get("operations", operation_id)
@@ -171,8 +172,8 @@ class Operations:
         if fingerprint(self.config) != plan["config_fingerprint"]:
             raise StudioError("config_changed", "Configuration changed after review; prepare another operation.", 409)
         value = {**plan, "id": identifier(), "review_id": operation_id, "state": "applying"}
-        value, created = self.store.reserve("operations", request.get("idempotency_key"),
-                                           {"operation_id": operation_id, **request}, value)
+        value, created = reserve_review(self.store, request.get("idempotency_key"),
+                                        {**request, "operation_id": operation_id}, value)
         if created:
             task = asyncio.create_task(self.execute(value))
             self.tasks.add(task)
@@ -180,6 +181,8 @@ class Operations:
         return value
 
     async def execute(self, operation: dict[str, Any]) -> None:
+        from .management_update import settle
+
         async with (asyncio.Lock() if operation["action"].startswith("top.") else self.execution_lock):
             action = operation["action"]
             try:
@@ -191,9 +194,7 @@ class Operations:
                 if action in FIELDS:
                     state, receipt = await self.management.execute(operation)
                 elif action in DRIVER_ACTIONS:
-                    if self.driver_binding is None or not operation.get("driver_identity"):
-                        raise StudioError("driver_service_identity", "Review the owner driver service identity first.", 409)
-                    state, receipt = await self.driver_binding.perform(DRIVER_ACTIONS[action], operation["driver_identity"])
+                    state, receipt = await settle(self.execute_owned(operation))
                 elif action in HTTP_ACTIONS:
                     parameters = dict(operation["parameters"])
                     if action == "consent.apply":
@@ -205,33 +206,7 @@ class Operations:
                         state = "unknown"  # /free acknowledges queuing, not completed memory reclamation.
                     receipt = {"source": "driver", "result": result}
                 else:
-                    argv = [sys.executable, "-m", "dgx_monarch"]
-                    if self.config:
-                        argv.extend(["--config", str(self.config)])
-                    argv.extend(command_arguments(action, operation["parameters"]))
-                    proc = await asyncio.create_subprocess_exec(*argv, stdin=asyncio.subprocess.DEVNULL,
-                                                                stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
-                    self.store.update("operations", operation["id"], {"process_id": proc.pid})
-                    retained = bytearray()
-                    total = 0
-                    if proc.stdout:
-                        while chunk := await proc.stdout.read(8192):
-                            total += len(chunk)
-                            if len(retained) < 262144:
-                                retained.extend(chunk[:262144 - len(retained)])
-                    code = await proc.wait()
-                    # Arbitrary stdout is not returned to browsers: existing command output is not a disclosure-safe receipt.
-                    state = "succeeded" if code == 0 else "unknown" if code == 3 else "failed"
-                    receipt = {"source": "existing_cli" if action in COMMANDS else "owner_service",
-                               "exit_code": code, "output_bytes": total, "output_retained": False}
-                    from .management_reports import command_report
-                    report = command_report(action, bytes(retained))
-                    if report is not None:
-                        receipt["report"] = report
-                    if action == "version":
-                        receipt.update(version=__version__, torchmonarch_pin=TORCHMONARCH_PIN)
-                    if action in {"status", "doctor"} and report is None:
-                        receipt["report"] = {"state": "unavailable", "reason": "Command did not produce one complete JSON report."}
+                    state, receipt = await settle(self.execute_owned(operation))
                 self.store.update("operations", operation["id"], {"state": state, "receipt": receipt,
                                   "completed_at": timestamp()})
             except asyncio.CancelledError:
@@ -244,3 +219,50 @@ class Operations:
                 self.store.update("operations", operation["id"], {"state": "unknown", "receipt": {**retained,
                     "error": exc.code if isinstance(exc, StudioError) else "operation_io_failed",
                     "message": "Operation outcome requires reconciliation; automatic retry is disabled."}})
+
+    async def execute_owned(self, operation: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+        """Settle a local mutator and retain its receipt before releasing its lock."""
+        action = operation["action"]
+        if action in DRIVER_ACTIONS:
+            if self.driver_binding is None or not operation.get("driver_identity"):
+                raise StudioError("driver_service_identity", "Review the owner driver service identity first.", 409)
+            state, receipt = await self.driver_binding.perform(DRIVER_ACTIONS[action], operation["driver_identity"])
+        else:
+            argv = [sys.executable, "-m", "dgx_monarch"]
+            if self.config:
+                argv.extend(["--config", str(self.config)])
+            argv.extend(command_arguments(action, operation["parameters"]))
+            if self.config is None and action in {"doctor", "reap.preview", "reap.apply"}:
+                # The public CLI deliberately discovers defaults. Studio's
+                # absent config is an explicit local-only selection instead.
+                argv = [sys.executable, "-m", "dgx_monarch.studio.local_commands", action]
+                if action.startswith("reap."):
+                    argv.extend(["--grace", str(operation["parameters"]["grace_s"])])
+            proc = await asyncio.create_subprocess_exec(*argv, stdin=asyncio.subprocess.DEVNULL,
+                                                        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
+            retained = bytearray()
+            total = 0
+            try:
+                self.store.update("operations", operation["id"], {"process_id": proc.pid})
+            finally:
+                # Even a failed PID checkpoint cannot abandon the spawned child.
+                try:
+                    if proc.stdout:
+                        while chunk := await proc.stdout.read(8192):
+                            total += len(chunk)
+                            if len(retained) < 262144:
+                                retained.extend(chunk[:262144 - len(retained)])
+                finally:
+                    code = await proc.wait()
+            state = "succeeded" if code == 0 else "unknown" if code == 3 else "failed"
+            receipt = {"source": "existing_cli", "exit_code": code, "output_bytes": total, "output_retained": False}
+            from .management_reports import command_report
+            report = command_report(action, bytes(retained))
+            if report is not None:
+                receipt["report"] = report
+            if action == "version":
+                receipt.update(version=__version__, torchmonarch_pin=TORCHMONARCH_PIN)
+            if action in {"status", "doctor"} and report is None:
+                receipt["report"] = {"state": "unavailable", "reason": "Command did not produce one complete JSON report."}
+        self.store.update("operations", operation["id"], {"receipt": receipt})
+        return state, receipt

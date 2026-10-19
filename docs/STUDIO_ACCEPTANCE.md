@@ -110,3 +110,28 @@ passed 22 frontend tests, zero Svelte/TypeScript diagnostics, all 418 Studio
 packaging/resource/inventory cases and the brand-generation check. Browser
 inspection confirmed the rendered SVG matches the source geometry and colors.
 The full CPU result above belongs to implementation commit `ba31a02`.
+
+The subsequent PR-wide quality pass added regressions for single-use operation
+reviews, cancellation replay and interrupted local mutators, explicit local-only
+diagnostics, immutable prompt identities, concurrent schema/runtime capture,
+schema-bounded random seeds, reconnect races, and exact library references.
+Live preview updates preserve memberships and extensions. Snapshot/history
+summaries and byte-bounded library windows retain full provenance through
+explicit detail reads. Streamed media carries the same security headers as
+ordinary responses.
+
+Compiled-browser checks against the synthetic CPU fixture verified queue detail
+loading, restored prompt/seed through Gallery reuse, and a full read-only version
+receipt. The browser reported no console errors. These do not close the
+hardware, real-service, accessibility or long-session acceptance gates above.
+
+Quality-pass validation on 2026-10-19: the complete CPU harness passed
+13,652 tests with 39 skipped in 315.11 seconds (317 seconds for the wrapper;
+its 120-second target warning remains advisory). The final Studio-only suite,
+including the pagination regression added after full-suite collection, passed
+all 851 cases. All 35 frontend tests passed, with zero Svelte/TypeScript
+diagnostics. Ruff, mypy (479 source files), inventory, protected-test, trust,
+artifact, brand/template and leak checks passed. Both installed package formats
+passed `dgxm-studio --check`; wheel and source archive matched 482 runtime and
+resource files. The installed wheel passed the actual synthetic HTTP generation
+and idempotency smoke with Node absent from PATH.

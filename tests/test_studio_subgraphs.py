@@ -188,3 +188,36 @@ def test_duplicate_promoted_targets_refuse_instead_of_last_write_wins():
     source["nodes"][1]["widgets_values"].append("different")
     with pytest.raises(WorkflowError, match="more than one value"):
         compile_workflow(source, INFO)
+
+
+def test_style_roles_cannot_alias_the_same_subgraph_input():
+    from dgx_monarch.studio.contracts import StudioError
+    from dgx_monarch.studio.preview_drafts import prepare_preview
+
+    source = promoted_workflow()
+    source["nodes"] = source["nodes"][:3]
+    source["links"].pop()
+    row = next(row for row in inspect_workflow(source, INFO)["bindings"] if row["graph_id"] == "child")
+    with pytest.raises(StudioError, match="distinct input bindings"):
+        prepare_preview({"workflow": source, "styles": [
+            {"id": "paint", "prompt": "painted {prompt}", "negative_prompt": "blur"}],
+            "style_bindings": {"prompt": row["id"], "negative_prompt": row["aliases"][0]}}, INFO)
+
+
+def test_distinct_legacy_style_targets_normalize_without_losing_edits():
+    from dgx_monarch.studio.preview_drafts import prepare_preview
+
+    source = promoted_workflow()
+    source["nodes"] = source["nodes"][:3]
+    source["links"].pop()
+    child = source["definitions"]["subgraphs"][0]
+    child["nodes"].append({"id": 2, "type": "Text", "widgets_values": ["negative"]})
+    rows = {row["node_id"]: row for row in inspect_workflow(source, INFO)["bindings"] if row["graph_id"] == "child"}
+    prompt, values, effective = prepare_preview({"workflow": source,
+        "values": {rows["1"]["id"]: "draft", rows["2"]["aliases"][0]: "noise"},
+        "styles": [{"id": "paint", "prompt": "painted {prompt}", "negative_prompt": "blur"}],
+        "style_bindings": {"prompt": rows["1"]["aliases"][0], "negative_prompt": rows["2"]["aliases"][0]}}, INFO)
+    assert prompt[rows["1"]["execution_node_id"]]["inputs"]["text"] == "painted draft"
+    assert prompt[rows["2"]["execution_node_id"]]["inputs"]["text"] == "noise, blur"
+    assert values == {rows["1"]["id"]: "painted draft", rows["2"]["id"]: "noise, blur"}
+    assert effective["style_bindings"] == {"prompt": rows["1"]["id"], "negative_prompt": rows["2"]["id"]}

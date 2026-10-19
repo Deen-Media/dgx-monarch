@@ -37,10 +37,13 @@
     bindings.filter((b) => b.resolved !== false && ['STRING', 'COMBO'].includes(bindingType(b))),
   );
   function clear() {
+    sourceGeneration++;
     canvas?.getContext('2d')?.clearRect(0, 0, canvas.width, canvas.height);
     receipt = null;
   }
+  let sourceGeneration = 0;
   function reset() {
+    sourceGeneration++;
     if (source) URL.revokeObjectURL(source);
     source = '';
     file = undefined;
@@ -55,11 +58,16 @@
       error = 'Choose a PNG, JPEG or WebP image no larger than 2 MiB.';
       return;
     }
+    const ticket = ++sourceGeneration;
     const nextUrl = URL.createObjectURL(next);
     const image = new Image();
     image.src = nextUrl;
     try {
       await image.decode();
+      if (ticket !== sourceGeneration) {
+        URL.revokeObjectURL(nextUrl);
+        return;
+      }
       if (image.naturalWidth > 4096 || image.naturalHeight > 4096)
         throw new Error('Editor dimensions are limited to 4096 pixels per side.');
       reset();
@@ -76,6 +84,7 @@
   let previous: { x: number; y: number } | null = null;
   function paint(event: PointerEvent) {
     if (!drawing) return;
+    sourceGeneration++;
     const rect = canvas.getBoundingClientRect();
     const x = ((event.clientX - rect.left) * canvas.width) / rect.width;
     const y = ((event.clientY - rect.top) * canvas.height) / rect.height;
@@ -116,10 +125,17 @@
   async function upload() {
     busy = true;
     error = '';
+    const originalWorkflow = draft.workflow,
+      originalTarget = target,
+      originalMode = mode;
+    const originalSource = sourceGeneration,
+      originalName = name,
+      originalWidth = width,
+      originalHeight = height;
     try {
-      const blob = mode === 'mask' ? await maskBlob() : file;
+      const blob = originalMode === 'mask' ? await maskBlob() : file;
       if (!blob) throw new Error('Choose an input image first.');
-      if (!target) throw new Error('Choose the actual workflow input binding.');
+      if (!originalTarget) throw new Error('Choose the actual workflow input binding.');
       if (blob.size > limit) throw new Error('Encoded asset exceeds the 2 MiB upload limit.');
       const data = await new Promise<string>((resolve, reject) => {
         const reader = new FileReader();
@@ -133,11 +149,22 @@
         height: number;
         binding_value: string;
       }>('/assets', {
-        filename: mode === 'mask' ? 'studio-mask.png' : name,
+        filename: originalMode === 'mask' ? 'studio-mask.png' : originalName,
         media_type: blob.type,
         data_base64: data,
-        kind: mode,
+        kind: originalMode,
       });
+      if (
+        draft.workflow !== originalWorkflow ||
+        target !== originalTarget ||
+        mode !== originalMode ||
+        sourceGeneration !== originalSource ||
+        width !== originalWidth ||
+        height !== originalHeight
+      )
+        throw new Error(
+          `Asset ${result.binding_value} uploaded, but the draft or editor changed. It was not attached; select the intended input and upload again.`,
+        );
       receipt = result;
       bindings = bindings.map((binding) =>
         binding.id === target && bindingType(binding) === 'COMBO'
@@ -211,6 +238,7 @@
     <label><input type="checkbox" bind:checked={erase} /> Erase paint</label>
     <button onclick={clear}>Clear mask</button><button
       onclick={() => {
+        sourceGeneration++;
         const c = canvas.getContext('2d');
         if (c) {
           c.globalCompositeOperation = 'source-over';

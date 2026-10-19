@@ -7,6 +7,10 @@
   and job-bound runtime evidence. CLI parity mappings and typed LoRA/subgraph
   editing have CPU coverage. Release acceptance remains incomplete; see the
   [acceptance record](docs/STUDIO_ACCEPTANCE.md) before enabling it.
+- Harden Studio review/cancellation replay, concurrent preview isolation and
+  reconnect handling. Bound list responses and record windows while retaining
+  full provenance on demand; preserve preview membership and copied experiment
+  references.
 
 ## [1.2.0] - 2026-10-16
 

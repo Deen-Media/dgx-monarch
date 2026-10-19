@@ -59,6 +59,7 @@
     error = '';
     zoom = 1;
     mode = 'fit';
+    if (selected?.kind === 'video' || secondary?.kind === 'video') comparison = 'side';
     if (!selected) {
       loading = false;
       return;

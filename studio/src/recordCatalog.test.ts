@@ -65,3 +65,37 @@ test('saving preserves reviewed identity and revision in a single PUT', async ()
   assert.deepEqual(calls, [['/records/presets/stable', { revision: 2, data: result.data }, 'PUT']]);
   assert.equal(refreshed, true);
 });
+
+test('byte-bounded catalog pages can require more than ten requests', async () => {
+  let calls = 0;
+  const client = {
+    request: async () => {
+      const id = String(calls++);
+      return { records: [{ id, revision: 1, data: {} }], next_offset: calls < 12 ? calls : null };
+    },
+  } as unknown as StudioClient;
+  const records = await loadRecordCatalog(client, 'styles');
+  assert.equal(calls, 12);
+  assert.equal(records.length, 12);
+  assert.equal(records.at(-1)?.id, '11');
+});
+
+test('catalog refuses a stalled cursor instead of polling forever', async () => {
+  const client = {
+    request: async () => ({ records: [{ id: 'a', revision: 1, data: {} }], next_offset: 0 }),
+  } as unknown as StudioClient;
+  await assert.rejects(loadRecordCatalog(client, 'styles'), /non-advancing library page/);
+});
+
+test('catalog refuses an oversized aggregate rather than return a partial selector', async () => {
+  let calls = 0;
+  const text = 'a'.repeat(5 * 1024 * 1024);
+  const client = {
+    request: async () => ({
+      records: [{ id: String(++calls), revision: 1, data: { notes: text } }],
+      next_offset: calls === 1 ? 1 : null,
+    }),
+  } as unknown as StudioClient;
+  await assert.rejects(loadRecordCatalog(client, 'styles'), /8 MiB.*No partial catalog/);
+  assert.equal(calls, 2);
+});

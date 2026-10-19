@@ -50,7 +50,12 @@
   }
 </script>
 
-<h3>Selected stack <span class="muted">{draft.lora_stack.length}</span></h3>
+<h3>Studio stack override <span class="muted">{draft.lora_stack.length}</span></h3>
+<p class="muted">
+  With no Studio override, LoRA loaders and strengths already in the workflow remain active.
+  Removing the last override restores those original workflow settings; it does not disable its
+  LoRAs. Review All inputs and the effective submission to see inherited loaders.
+</p>
 <LoraInsertion {draft} {catalog} {connections} {changeDraft} />
 {#each draft.lora_stack as lora, i}<div class="lora-card">
     <div class="stack-row">

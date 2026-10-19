@@ -18,9 +18,9 @@ class GridExperiments:
         draft = object_value(request.get("draft"), "draft")
         if draft.get("seed_policy", "fixed") != "fixed":
             raise StudioError("grid_seed", "Grid previews require resolved fixed or incrementing seeds.")
-        await self.jobs.catalog()
-        await self.jobs.capture_runtime()
-        inspection = inspect_workflow(object_value(draft.get("workflow")), self.jobs.schema)
+        schema = (await self.jobs.catalog())["object_info"]
+        runtime = await self.jobs.capture_runtime()
+        inspection = inspect_workflow(object_value(draft.get("workflow")), schema)
         bindings = {row["id"]: row for row in inspection["bindings"] if row["resolved"]}
         schemas = {key: row["schema"] for key, row in bindings.items()}
         policy = request.get("seed_policy", "fixed")
@@ -68,7 +68,7 @@ class GridExperiments:
                             records.append(deepcopy(style_cache[identity]))
                         cell_draft.update(style_records=records, styles=[{**row["data"], "id": row["id"]} for row in records])
                         row["style_records"] = records
-                    preview = self.jobs.build_preview(cell_draft)
+                    preview = self.jobs.build_preview(cell_draft, schema=schema, runtime=runtime)
                     byte_count += len(canonical(preview).encode())
                     if byte_count > 32 * 1024 * 1024:
                         raise StudioError("grid_size", "Expanded submissions exceed the 32 MiB grid budget.")
@@ -80,7 +80,7 @@ class GridExperiments:
             cells.append(row)
         value = {"id": identifier(), "request": deepcopy(request), "cells": cells, "total": expanded["total"],
                  "job_count": expanded["job_count"], "created_at": timestamp(), "expires_at": timestamp() + 600,
-                 "schema_digest": digest(self.jobs.schema), "ready": bool(expanded["job_count"]) and all(
+                 "schema_digest": digest(schema), "ready": bool(expanded["job_count"]) and all(
                      row["excluded"] or not row["errors"] for row in cells)}
         value["digest"] = digest(value)
         return self.store.create("grid_previews", value)

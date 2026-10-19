@@ -19,6 +19,7 @@ export class Submission {
   }
 
   review(preview: JobPreview, kind = 'job') {
+    if (this.pending) throw new Error('Reconcile the pending submission before reviewing another.');
     this.preview = preview;
     this.kind = kind;
     this.key = crypto.randomUUID();
@@ -26,6 +27,7 @@ export class Submission {
   }
 
   async prepare(draft: Draft) {
+    if (this.pending) throw new Error('Reconcile the pending submission before reviewing another.');
     this.review(await this.connection.client.request<JobPreview>('/jobs/preview', draft));
   }
 
@@ -36,6 +38,7 @@ export class Submission {
   }
 
   async submit() {
+    if (this.pending) throw new Error('Reconcile or retry the retained submission first.');
     if (!this.preview || !this.confirmed) throw new Error('Review and confirm a submission first.');
     this.pending = { key: this.key, preview_id: this.preview.id };
     sessionStorage.setItem(PENDING_KEY, JSON.stringify(this.pending));

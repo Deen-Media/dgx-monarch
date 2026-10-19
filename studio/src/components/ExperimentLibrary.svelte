@@ -30,6 +30,7 @@
   );
   const record = $derived(records.find((row) => row.id === selected));
   async function refresh() {
+    records = [];
     records = await loadRecordCatalog(client, 'experiments');
   }
   async function run(action: () => Promise<void>) {

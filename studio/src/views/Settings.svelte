@@ -77,8 +77,9 @@
         are limited to tab session storage.
       </p>
       <p class="muted">
-        Event console: 400 lines / 128 KiB. Gallery: 40 records per page. Viewer: selected media
-        only, 64 MiB per file. Polling backs off to 30 seconds and pauses while hidden.
+        Event console: 400 lines / 128 KiB. Gallery: 100 records per page, up to 2,000 per window.
+        Viewer: selected media only, 64 MiB per file. Polling backs off to 30 seconds and pauses
+        while hidden.
       </p>
       <button onclick={disconnect}>Disconnect and forget token</button>
       <details>

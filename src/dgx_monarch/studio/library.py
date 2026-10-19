@@ -1,7 +1,9 @@
 """Project membership and reviewed, atomic portable-library import/export."""
 from __future__ import annotations
 
+import json
 from collections import Counter
+from contextlib import closing
 from copy import deepcopy
 from typing import Any
 
@@ -21,6 +23,7 @@ from .store import Store
 
 FORMAT = "dgxm.studio.library"
 MAX_LIBRARY_BYTES = 4 * 1024 * 1024
+PAGE_BYTES = 8 * 1024 * 1024
 AUXILIARY_LIMIT = RECORD_LIMIT
 AUXILIARY_BYTES = 16 * 1024 * 1024
 PREVIEW_LIMIT = 256
@@ -54,13 +57,7 @@ def project_ids(data: dict[str, Any]) -> list[str]:
     return list(dict.fromkeys(bounded_key(value, "project id") for value in values))
 
 
-def _remap(data: dict[str, Any], mapping: dict[str, str], styles: dict[str, str] | None = None) -> dict[str, Any]:
-    result = deepcopy(data)
-    if "project_ids" in result:
-        result["project_ids"] = [mapping.get(value, value) for value in project_ids(result)]
-    if isinstance(result.get("project_id"), str):
-        result["project_id"] = mapping.get(result["project_id"], result["project_id"])
-    draft = result.get("draft")
+def _remap_draft(draft: Any, mapping: dict[str, str], styles: dict[str, str]) -> None:
     if isinstance(draft, dict):
         if isinstance(draft.get("project_id"), str):
             draft["project_id"] = mapping.get(draft["project_id"], draft["project_id"])
@@ -69,7 +66,31 @@ def _remap(data: dict[str, Any], mapping: dict[str, str], styles: dict[str, str]
             raise StudioError("library_references", "Draft styles must be an array.")
         for style in stack:
             if isinstance(style, dict) and isinstance(style.get("id"), str):
-                style["id"] = (styles or {}).get(style["id"], style["id"])
+                style["id"] = styles.get(style["id"], style["id"])
+
+
+def _remap(data: dict[str, Any], mapping: dict[str, str], styles: dict[str, str] | None = None) -> dict[str, Any]:
+    result = deepcopy(data)
+    if "project_ids" in result:
+        result["project_ids"] = [mapping.get(value, value) for value in project_ids(result)]
+    if isinstance(result.get("project_id"), str):
+        result["project_id"] = mapping.get(result["project_id"], result["project_id"])
+    style_ids = styles or {}
+    _remap_draft(result.get("draft"), mapping, style_ids)
+    grid = result.get("grid_request")
+    if isinstance(grid, dict):
+        _remap_draft(grid.get("draft"), mapping, style_ids)
+        axes = grid.get("axes", [])
+        if not isinstance(axes, list):
+            raise StudioError("library_references", "Grid axes must be an array.")
+        for axis in axes:
+            if not isinstance(axis, dict) or axis.get("name") != "styles":
+                continue
+            selections = axis.get("values")
+            if (not isinstance(selections, list) or any(not isinstance(selection, list)
+                    or any(not isinstance(identity, str) for identity in selection) for selection in selections)):
+                raise StudioError("library_references", "Style axes require arrays of saved style IDs.")
+            axis["values"] = [[style_ids.get(identity, identity) for identity in selection] for selection in selections]
     return result
 
 
@@ -108,8 +129,8 @@ class Library:
             offset, limit = int(query.get("offset", "0")), int(query.get("limit", "100"))
         except ValueError as exc:
             raise StudioError("library_page", "Offset and limit must be integers.") from exc
-        if offset < 0 or not 1 <= limit <= 200:
-            raise StudioError("library_page", "Offset must be nonnegative and page size 1-200.")
+        if not 0 <= offset <= RECORD_LIMIT or not 1 <= limit <= 200:
+            raise StudioError("library_page", "Offset must be 0-2000 and page size 1-200.")
         project = query.get("project_id")
         clauses, params = ["kind=?"], [kind]
         if project:
@@ -122,32 +143,57 @@ class Library:
                                "OR (json_extract(document,'$.data.project_ids') IS NULL AND "
                                "COALESCE(json_extract(document,'$.data.project_id'),json_extract(document,'$.data.draft.project_id'))=?))")
                 params.extend([project, project])
-        with self.store.lock:
-            rows = self.store.db.execute("SELECT document FROM objects WHERE " + " AND ".join(clauses) +  # noqa: S608
-                                         " ORDER BY updated DESC,id LIMIT ? OFFSET ?", [*params, limit + 1, offset]).fetchall()
-        import json
-
-        return {"records": [json.loads(row[0]) for row in rows[:limit]],
-                "next_offset": offset + limit if len(rows) > limit else None}
+        records: list[dict[str, Any]] = []
+        size, more = 64, False
+        with self.store.lock, closing(self.store.db.execute(
+                "SELECT document FROM objects WHERE " + " AND ".join(clauses) +  # noqa: S608
+                " ORDER BY updated DESC,id LIMIT ? OFFSET ?", [*params, limit + 1, offset])) as cursor:
+            for row in cursor:
+                if len(records) == limit:
+                    more = True
+                    break
+                record = json.loads(row[0])
+                record_size = len(json.dumps(record).encode()) + 2
+                if size + record_size > PAGE_BYTES:
+                    if not records:
+                        raise StudioError("library_page_limit", "This record exceeds the 8 MiB library page budget.", 413)
+                    more = True
+                    break
+                records.append(record)
+                size += record_size
+        return {"records": records, "next_offset": offset + len(records) if more else None}
 
     def export(self, project: str | None = None) -> dict[str, Any]:
         if project:
             self.store.get("projects", project)
+        records: dict[str, list[dict[str, Any]]] = {kind: [] for kind in sorted(RECORD_KINDS)}
+        result: dict[str, Any] = {"format": FORMAT, "schema_version": SCHEMA_VERSION, "records": records,
+                                  "artifact_references": [], "unresolved_references": [], "import_metadata": []}
+        size = len(json.dumps(result).encode())
+        collections = [(kind, records[kind]) for kind in records] + [
+            ("artifacts", result["artifact_references"]), ("library_references", result["unresolved_references"]),
+            ("library_metadata", result["import_metadata"])]
         with self.store.lock:
-            records = {kind: [row for row in self.store.all(kind) if not project or
-                              (row["id"] == project if kind == "projects" else project in project_ids(row["data"]))]
-                       for kind in sorted(RECORD_KINDS)}
-            references = [row for row in self.store.all("library_references")
-                          if not project or project in project_ids(row)]
-            artifacts = [row for row in self.store.all("artifacts")
-                         if not project or project in project_ids(row)]
-            metadata = [row for row in self.store.all("library_metadata")
-                        if not project or project_ids(row) == [project]]
-        result = {"format": FORMAT, "schema_version": SCHEMA_VERSION, "records": records,
-                  "artifact_references": artifacts, "unresolved_references": references,
-                  "import_metadata": metadata}
-        if len(canonical(result).encode()) > MAX_LIBRARY_BYTES:
-            raise StudioError("library_limit", "Export exceeds 4 MiB; export a single project.", 413)
+            for kind, target in collections:
+                cursor = self.store.db.execute("SELECT document FROM objects WHERE kind=? ORDER BY id", (kind,))
+                try:
+                    for raw in cursor:
+                        row = json.loads(raw[0])
+                        if project:
+                            if kind == "projects":
+                                selected = row["id"] == project
+                            elif kind == "library_metadata":
+                                selected = project_ids(row) == [project]
+                            else:
+                                selected = project in project_ids(row["data"] if kind in RECORD_KINDS else row)
+                            if not selected:
+                                continue
+                        size += len(json.dumps(row).encode()) + 2
+                        if size > MAX_LIBRARY_BYTES:
+                            raise StudioError("library_limit", "Export exceeds 4 MiB; export a single project.", 413)
+                        target.append(row)
+                finally:
+                    cursor.close()
         return result
 
     def preview(self, request: dict[str, Any]) -> dict[str, Any]:

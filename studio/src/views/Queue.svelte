@@ -2,11 +2,11 @@
   import type { StudioClient } from '../api';
   import type { Job } from '../contracts';
   import { formatTime } from '../model';
-  import { exportJSON } from '../files';
-  import RuntimeEvidence from '../components/RuntimeEvidence.svelte';
+  import JobProvenance from '../components/JobProvenance.svelte';
   let {
     client,
     jobs,
+    truncated = false,
     busy,
     refresh,
     fail,
@@ -14,6 +14,7 @@
   }: {
     client: StudioClient;
     jobs: Job[];
+    truncated?: boolean;
     busy: boolean;
     refresh: () => Promise<void>;
     fail: (error: unknown) => void;
@@ -89,15 +90,20 @@
         >{/each}</select
     ><button disabled={loading} onclick={() => void load(true)}>Refresh history</button>
   </div>
+  {#if truncated}<p class="warning" role="status">
+      The live snapshot is limited; additional jobs may exist. Search or load more durable history
+      to find jobs outside this snapshot.
+    </p>{/if}
   <p class="muted">
     {active.length} active or unresolved jobs remain visible above {history.length} loaded history records
     (maximum 2,000 per window).
   </p>
-  {#each shown as job}<details
+  {#each shown as job (job.id)}<details
       class="record"
       open={selectedJob?.id === job.id}
       ontoggle={(e) => {
         if (e.currentTarget.open) selectedJob = job;
+        else if (selectedJob?.id === job.id) selectedJob = null;
       }}
     >
       <summary
@@ -115,7 +121,7 @@
           ><button
             disabled={busy || !['failed', 'cancelled'].includes(job.state)}
             onclick={() => void jobAction(job, 'retry')}>Retry as new job</button
-          ><button onclick={() => exportJSON(job, `${job.id}.json`)}>Export provenance</button>
+          >
         </div>
         <p class="muted">
           Cancellation is requested first; the backend confirms the final outcome. Retry creates a
@@ -126,8 +132,7 @@
             >{job.progress.value ?? 0} / {job.progress.max} · node {job.progress.node ??
               'unknown'}</span
           >{:else if job.state === 'running'}<p>Running · completion percentage unavailable</p>{/if}
-        <pre>{JSON.stringify(job, null, 2)}</pre>
-        <RuntimeEvidence {client} {job} />
+        {#if selectedJob?.id === job.id}<JobProvenance {client} summary={job} />{/if}
       </div>
     </details>{/each}{#if !shown.length}<div class="empty-state">
       <h2>No recorded jobs yet.</h2>

@@ -203,3 +203,32 @@ def test_observer_lease_gap_remains_visible_after_reconnection(store, monkeypatc
         assert consumer.status["has_gaps"] and not consumer.status["gap"]
         assert len(store.all("runtime_gaps")) == 1
     asyncio.run(scenario())
+
+
+def test_replay_joins_only_page_prompts_without_materializing_job_history(store, monkeypatch):
+    class Client:
+        async def execution_events(self, after, producer):
+            return {"schema_version": 1, "producer_id": "producer", "next_sequence": 1,
+                    "events": [event()] if after == 0 else []}
+
+    job(store)
+    for index in range(20):
+        store.create("jobs", {"id": f"other-{index}", "prompt_id": f"other-prompt-{index}",
+                              "state": "succeeded", "submission": {"workflow": "x" * 10000}})
+    original_get = store.get
+
+    def get(kind, identity):
+        assert kind != "jobs" or identity == "job", "Replay loaded an unrelated submission"
+        return original_get(kind, identity)
+
+    def all_records(kind):
+        pytest.fail(f"Replay materialized the complete {kind} history")
+
+    monkeypatch.setattr(store, "get", get)
+    monkeypatch.setattr(store, "all", all_records)
+    consumer = RuntimeObservations(store, Client())
+    asyncio.run(consumer.poll())
+    assert consumer.status["state"] == "connected"
+    assert original_get("jobs", "job")["monarch"]["event_count"] == 1
+    asyncio.run(consumer.poll())
+    assert original_get("jobs", "job")["monarch"]["event_count"] == 1

@@ -31,13 +31,14 @@ export interface JobPreview {
   [key: string]: unknown;
 }
 export interface Job {
+  summary?: boolean;
   id: string;
   state: string;
   created_at: number;
   updated_at?: number;
   idempotency_key?: string;
   submission: {
-    requested?: Draft;
+    requested?: Partial<Draft>;
     workflow?: Workflow;
     project_id?: string;
     [key: string]: unknown;
@@ -161,6 +162,7 @@ export interface Snapshot {
   server_time?: number;
   cursor?: number;
   jobs: Job[];
+  jobs_truncated?: boolean;
   artifacts: Artifact[];
   operations: OperationRecord[];
   records: Records;

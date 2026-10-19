@@ -8,6 +8,7 @@ from typing import Any
 
 from .contracts import StudioError, canonical, digest
 from .store import Store
+from .wire_records import PAGE_BYTES, projection
 
 
 def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
@@ -85,13 +86,25 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     direction = "DESC" if order == "newest" else "ASC"
     with store.lock:
         # All SQL fragments are constants selected above; user values are bound parameters.
-        rows = store.db.execute(f"SELECT document FROM objects WHERE {' AND '.join(clauses)} "  # noqa: S608
-                                f"ORDER BY {created} {direction},id {direction} LIMIT ?", [*params, limit + 1]).fetchall()
-    items = [json.loads(row[0]) for row in rows[:limit]]
+        rows = store.db.execute(f"SELECT {projection(kind)} FROM objects WHERE {' AND '.join(clauses)} "  # noqa: S608
+                                f"ORDER BY {created} {direction},id {direction} LIMIT ?", [*params, limit + 1])
+        items: list[dict[str, Any]] = []
+        byte_count = 4096  # Response envelope and cursor.
+        more = False
+        for row in rows:
+            value = json.loads(row[0])
+            size = len(canonical(value).encode()) + 1
+            if len(items) == limit or byte_count + size > PAGE_BYTES:
+                if not items:
+                    raise StudioError("history_size", "One history record exceeds the 8 MiB page budget.", 413)
+                more = True
+                break
+            items.append(value)
+            byte_count += size
     next_cursor = None
-    if len(rows) > limit:
+    if more:
         last = items[-1]
-        next_cursor = base64.urlsafe_b64encode(canonical({"filter": fingerprint, "time": last.get("created_at", 0),
+        next_cursor = base64.urlsafe_b64encode(canonical({"filter": fingerprint, "time": last.get("created_at") or 0,
                                                         "id": last["id"]}).encode()).decode()
     return {"items": items, "next_cursor": next_cursor}
 

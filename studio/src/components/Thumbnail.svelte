@@ -1,16 +1,21 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
   import type { Artifact } from '../contracts';
   import type { StudioClient } from '../api';
   let { artifact, client }: { artifact: Artifact; client: StudioClient } = $props();
   let url = $state(''),
     status = $state('Loading preview');
-  onMount(() => {
+  $effect(() => {
+    const id = artifact.id;
+    const digest = artifact.intermediate ? artifact.metadata?.sha256 : undefined;
+    const api = client;
+    void digest;
+    url = '';
+    status = 'Loading preview';
     const controller = new AbortController();
     let active = true,
       blobUrl = '';
-    client
-      .thumbnail(artifact.id, controller.signal)
+    api
+      .thumbnail(id, controller.signal)
       .then((blob) => {
         if (!active) return;
         blobUrl = URL.createObjectURL(blob);

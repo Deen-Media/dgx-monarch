@@ -65,6 +65,7 @@ class Store:
             CREATE TABLE IF NOT EXISTS events (
                 cursor INTEGER PRIMARY KEY AUTOINCREMENT, document TEXT NOT NULL, size INTEGER NOT NULL);
             CREATE INDEX IF NOT EXISTS artifacts_by_job ON objects(json_extract(document,'$.job_id')) WHERE kind='artifacts';
+            CREATE INDEX IF NOT EXISTS jobs_by_prompt ON objects(json_extract(document,'$.prompt_id')) WHERE kind='jobs';
         """)
         row = self.db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if row is not None and row[0] != "1":
@@ -101,6 +102,16 @@ class Store:
         with self.lock:
             rows = self.db.execute("SELECT document FROM objects WHERE kind=? ORDER BY id", (kind,)).fetchall()
         return [json.loads(row[0]) for row in rows]
+
+    def jobs_by_prompt(self) -> dict[str, dict[str, Any]]:
+        """Read reconciliation identities without loading immutable workflow payloads."""
+        with self.lock:
+            rows = self.db.execute("SELECT id,json_extract(document,'$.prompt_id') AS prompt_id,"
+                                   "json_extract(document,'$.state') AS state,"
+                                   "json_type(document,'$.reconciliation') AS reconciled "
+                                   "FROM objects WHERE kind='jobs' AND json_extract(document,'$.prompt_id') IS NOT NULL")
+            return {row["prompt_id"]: {"id": row["id"], "prompt_id": row["prompt_id"], "state": row["state"],
+                                       **({"reconciliation": True} if row["reconciled"] else {})} for row in rows}
 
     def artifacts_for_jobs(self, identities: builtins.list[str]) -> builtins.list[dict[str, Any]]:
         result: builtins.list[dict[str, Any]] = []
@@ -187,6 +198,8 @@ class Store:
             old = self.get(kind, object_id)
             if "submission" in updates and updates["submission"] != old.get("submission"):
                 raise StudioError("immutable_submission", "Accepted submission settings are immutable.", 409)
+            if kind == "jobs" and old.get("prompt_id") and updates.get("prompt_id", old["prompt_id"]) != old["prompt_id"]:
+                raise StudioError("prompt_identity", "An accepted job cannot be rebound to a different driver prompt.", 409)
             if old.get("state") in TERMINAL_STATES and updates.get("state", old["state"]) != old["state"]:
                 return old
             if ((old.get("state") in {"running", "cancel_requested"} and updates.get("state") == "queued")

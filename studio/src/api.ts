@@ -1,9 +1,11 @@
 export const API_VERSION = '1';
 export class ApiError extends Error {
   status: number;
-  constructor(status: number, message: string) {
+  code?: string;
+  constructor(status: number, message: string, code?: string) {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 export class StudioClient {
@@ -34,6 +36,7 @@ export class StudioClient {
           typeof data.error === 'string'
             ? data.error
             : (data.error?.message ?? data.message ?? JSON.stringify(data.error ?? data)),
+          typeof data.error?.code === 'string' ? data.error.code : undefined,
         );
       return data as T;
     } finally {

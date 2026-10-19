@@ -31,18 +31,20 @@ def _styles(request: dict[str, Any], bindings: dict[str, Any], values: dict[str,
         raise StudioError("style_binding", "Choose an explicit prompt input for the selected styles.")
     if any(style.get("negative_prompt", "") for style in enabled) and not mapping.get("negative_prompt"):
         raise StudioError("style_binding", "Choose a negative-prompt input for styles that change negative text.")
-    if len(set(mapping.values())) != len(mapping):
-        raise StudioError("style_binding", "Positive and negative styles must use distinct input bindings.")
     text = {"prompt": "", "negative_prompt": ""}
+    canonical_mapping = {}
     for role, identity in mapping.items():
         binding = bindings.get(identity)
         if role not in text or not binding or not binding["resolved"] or binding["schema"]["type"] != "STRING":
             raise StudioError("style_binding", "Styles require resolved STRING workflow input bindings.")
+        canonical_mapping[role] = binding["id"]
         text[role] = validate_value(values.get(identity, binding["value"]), binding["schema"])
+    if len(set(canonical_mapping.values())) != len(canonical_mapping):
+        raise StudioError("style_binding", "Positive and negative styles must use distinct input bindings.")
     expanded = apply_styles(text["prompt"], text["negative_prompt"], styles)
-    for role, identity in mapping.items():
+    for role, identity in canonical_mapping.items():
         values[identity] = expanded[role]
-    return {"styles": expanded, "style_bindings": deepcopy(mapping)}
+    return {"styles": expanded, "style_bindings": canonical_mapping}
 
 
 def prepare_preview(request: dict[str, Any], schema: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:

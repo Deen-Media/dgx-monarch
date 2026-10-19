@@ -34,10 +34,16 @@ export class Connection {
   private stopped = false;
   private backoff = 1500;
   private polling = false;
+  private generation = 0;
+  private snapshotSequence = 0;
 
   async refresh() {
     if (!this.client.token) return;
-    const result = await this.client.request<Snapshot>('/snapshot');
+    const client = this.client,
+      generation = this.generation,
+      sequence = ++this.snapshotSequence;
+    const result = await client.request<Snapshot>('/snapshot');
+    if (generation !== this.generation || sequence !== this.snapshotSequence) return;
     if (
       result.instance_id === this.instance &&
       Number(result.server_time) < Number(this.snapshot.server_time)
@@ -47,7 +53,9 @@ export class Connection {
       this.cursor = 0;
       this.logs = [];
       this.metricHistory = [];
-      this.capabilities = await this.client.request('/capabilities');
+      const capabilities = await client.request<Capabilities>('/capabilities');
+      if (generation !== this.generation || sequence !== this.snapshotSequence) return;
+      this.capabilities = capabilities;
     }
     this.instance = result.instance_id;
     this.snapshot = result;
@@ -64,29 +72,39 @@ export class Connection {
   }
 
   async connect() {
+    this.stop();
+    const generation = this.generation;
     this.state = 'reconnecting';
-    this.client = new StudioClient(this.token.trim());
+    const client = new StudioClient(this.token.trim());
+    this.client = client;
     try {
-      const cap = await this.client.request<Capabilities>('/capabilities');
+      const cap = await client.request<Capabilities>('/capabilities');
+      if (generation !== this.generation) return;
       if (String(cap.schema_version ?? '').split('.')[0] !== '1')
         throw new Error(
           `Incompatible companion schema ${cap.schema_version ?? 'unknown'}; Studio requires 1.x.`,
         );
       this.capabilities = cap;
-      this.workflows =
-        (await this.client.request<{ workflows: WorkflowEntry[] }>('/workflows')).workflows ?? [];
+      const workflows = await client.request<{ workflows: WorkflowEntry[] }>('/workflows');
+      if (generation !== this.generation) return;
+      this.workflows = workflows.workflows ?? [];
       try {
-        this.catalog = await this.client.request('/catalog');
+        const catalog = await client.request<Catalog>('/catalog');
+        if (generation !== this.generation) return;
+        this.catalog = catalog;
       } catch {
+        if (generation !== this.generation) return;
         this.catalog = {};
       }
       sessionStorage.setItem(TOKEN_KEY, this.client.token);
       await this.refresh();
+      if (generation !== this.generation) return;
       this.backoff = 1500;
       this.stopped = false;
       clearTimeout(this.timer);
       this.timer = setTimeout(() => void this.poll(), this.backoff);
     } catch (error) {
+      if (generation !== this.generation) return;
       this.connected = false;
       this.state = 'unavailable';
       throw error;
@@ -96,9 +114,12 @@ export class Connection {
   private async poll() {
     if (this.stopped || this.polling) return;
     this.polling = true;
+    const generation = this.generation,
+      client = this.client;
     if (!this.hidden && this.client.token) {
       try {
-        const result = await this.client.request('/events?after=' + this.cursor);
+        const result = await client.request('/events?after=' + this.cursor);
+        if (generation !== this.generation) return;
         const accepted = consumeEvents(this.cursor, result.events ?? []);
         this.cursor = Math.max(accepted.cursor, Number(result.cursor) || 0);
         this.logs = boundedLog([
@@ -109,8 +130,10 @@ export class Connection {
           ),
         ]);
         await this.refresh();
+        if (generation !== this.generation) return;
         this.backoff = 1500;
       } catch (error) {
+        if (generation !== this.generation) return;
         this.state = 'stale';
         this.error = error instanceof Error ? error.message : String(error);
         this.backoff = Math.min(30000, this.backoff * 2);
@@ -136,6 +159,8 @@ export class Connection {
   }
 
   stop() {
+    this.generation++;
+    this.polling = false;
     this.stopped = true;
     clearTimeout(this.timer);
   }
@@ -146,5 +171,20 @@ export class Connection {
     this.client = new StudioClient('');
     this.connected = false;
     this.state = 'unavailable';
+    this.instance = undefined;
+    this.cursor = 0;
+    this.logs = [];
+    this.metricHistory = [];
+    this.capabilities = {};
+    this.catalog = {};
+    this.workflows = [];
+    this.snapshot = {
+      jobs: [],
+      artifacts: [],
+      operations: [],
+      records: {},
+      telemetry: {},
+      driver: {},
+    };
   }
 }

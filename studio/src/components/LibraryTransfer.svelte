@@ -34,6 +34,7 @@
     error = $state(''),
     notice = $state('');
   let key = '';
+  let sourceGeneration = 0;
   let uncertain = $state(false);
   const storage = 'dgxm.studio.library.pending.v1';
   onMount(() => {
@@ -51,9 +52,12 @@
   });
   async function read(file?: File) {
     if (!file || uncertain) return;
+    const ticket = ++sourceGeneration;
     try {
       if (file.size > 4 * 1024 * 1024) throw new Error('Library imports are limited to 4 MiB.');
-      document = JSON.parse(await file.text());
+      const incoming = JSON.parse(await file.text());
+      if (ticket !== sourceGeneration) return;
+      document = incoming;
       name = file.name;
       plan = null;
       choices = {};
@@ -152,7 +156,7 @@
     <label
       >Import identities<select
         bind:value={mode}
-        disabled={uncertain}
+        disabled={uncertain || busy}
         onchange={() => {
           plan = null;
           choices = {};
@@ -175,6 +179,7 @@
         <label
           >Resolve {conflict.key}<select
             value={choices[conflict.key]?.action ?? ''}
+            disabled={busy || uncertain}
             onchange={(event) => {
               choices = {
                 ...choices,

@@ -6033,3 +6033,23 @@ ComfyUI. Every other family keeps working on the older ComfyUI meanwhile.
 Every Gate PASS goes stale with the ComfyUI change, so each combination runs
 its first-use Gate again
 ([#114](#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
+
+## 122. Studio refuses a stale review or cannot display a complete library catalog
+
+**Symptom:** Studio reports `schema_changed`, `operation_consumed`, or an
+oversized library catalog. A cancelled request may remain unresolved after a
+connection loss.
+
+**Cause:** generation previews bind the installed driver schema. A management
+review authorizes one execution. Cancellation records one durable intent per
+job before contacting the driver. Catalog selectors also refuse to load more
+than 8 MiB of saved records rather than silently select from an incomplete list.
+
+**Fix:** after `schema_changed`, inspect and review the draft again. For
+`operation_consumed`, open the existing operation receipt; obtain a fresh review
+only when another execution is intended. Reconnect to reconcile uncertain jobs
+or cancellations without changing their request keys. The companion never
+repeats a cancellation simply because its acknowledgement was lost. Open the
+Project library to browse records in bounded windows when a selector exceeds
+its catalog budget. Full job provenance and operation receipts load when opened
+or exported; compact list rows do not mean those records were deleted.

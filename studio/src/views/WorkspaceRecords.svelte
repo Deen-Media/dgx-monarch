@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { StudioClient } from '../api';
   import LibraryTransfer from '../components/LibraryTransfer.svelte';
+  import { retainRecordPage } from '../recordRetention';
   import { recordProjects } from '../recordPersistence';
   import { loadRecordCatalog } from '../recordCatalog';
   import type { Draft } from '../model';
@@ -55,7 +56,10 @@
     projectRevision;
     void loadRecordCatalog(client, 'projects')
       .then((rows) => (projectOptions = rows))
-      .catch(fail);
+      .catch((cause) => {
+        projectOptions = [];
+        fail(cause);
+      });
   });
   const kinds: RecordKind[] = [
     'projects',
@@ -71,12 +75,14 @@
   let nextOffset = $state<number | null>(null),
     loading = $state(false);
   let sequence = 0;
+  let windowNotice = $state('');
   const revisionKey = $derived(
     (allRecords[recordKind] ?? []).map((row) => `${row.id}:${row.revision}`).join(','),
   );
   async function load(append = false) {
     const ticket = ++sequence;
     loading = true;
+    if (!append) records = [];
     try {
       const params = new URLSearchParams({
         limit: '100',
@@ -87,10 +93,19 @@
         `/records/${recordKind}?${params}`,
       );
       if (ticket !== sequence) return;
-      records = append ? [...records, ...result.records].slice(-2000) : result.records;
+      const retained = retainRecordPage(append ? records : [], result.records);
+      records = retained.records;
+      windowNotice = retained.replaced
+        ? 'Started the next record window. Earlier rows were released to stay within 8 MiB and 2,000 records.'
+        : append
+          ? windowNotice
+          : '';
       nextOffset = result.next_offset;
     } catch (cause) {
-      fail(cause);
+      if (ticket === sequence) {
+        records = [];
+        fail(cause);
+      }
     } finally {
       if (ticket === sequence) loading = false;
     }
@@ -168,6 +183,7 @@
   >
   <div class="tabs">
     {#each kinds as kind}<button
+        disabled={busy}
         class:active={recordKind === kind}
         onclick={() => {
           recordKind = kind;
@@ -184,13 +200,17 @@
   <div class="operation-grid">
     <div>
       <h2>Saved {recordKind}</h2>
+      <p class="muted">
+        Up to 8 MiB and 2,000 records per window. Load more continues from the last row.
+      </p>
+      {#if windowNotice}<p role="status">{windowNotice}</p>{/if}
       {#each records as record}<div class="surface library-record">
           <div>
             <h3>{record.data?.name ?? record.id}</h3>
             <small>Revision {record.revision} · {record.id}</small>
           </div>
           <div class="workflow-actions">
-            <button onclick={() => void applyRecord(record, recordKind)}
+            <button disabled={busy || loading} onclick={() => void applyRecord(record, recordKind)}
               >{recordKind === 'experiments'
                 ? 'Open in Grids'
                 : recordKind === 'styles'
@@ -198,7 +218,11 @@
                   : recordKind === 'projects'
                     ? 'Select project'
                     : 'Load into draft'}</button
-            ><button onclick={() => exportJSON(record, `${record.id}.json`)}>Export</button><button
+            ><button
+              disabled={busy || loading}
+              onclick={() => exportJSON(record, `${record.id}.json`)}>Export</button
+            ><button
+              disabled={busy || loading}
               onclick={() => {
                 selectedRecord = record;
                 recordName = record.data?.name ?? '';

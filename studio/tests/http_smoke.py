@@ -29,7 +29,7 @@ def run(origin: str, token: str) -> dict:
     assert capabilities["schema_version"].split(".")[0] == "1"
     catalog = call("/catalog")
     assert "StudioCPUFixture" in catalog["object_info"], "Refusing a non-fixture driver"
-    assert not any(operation["available"] and operation["id"] != "version"
+    assert not any(operation["available"] and operation.get("requires_confirmation", True)
                    for operation in capabilities["operations"]), "Refusing enabled management"
     inspection = call("/workflows/inspect", {"workflow": WORKFLOW})
     assert not inspection["errors"], inspection["errors"]
@@ -57,6 +57,8 @@ def run(origin: str, token: str) -> dict:
     artifact = next(artifact for artifact in snapshot["artifacts"] if artifact["job_id"] == job["id"])
     image = call("/artifacts/" + artifact["id"] + "/file", raw=True)
     assert image.startswith(b"\x89PNG\r\n\x1a\n")
+    assert job["summary"] is True and "workflow" not in job["submission"]
+    job = call("/jobs/" + job["id"])
     assert job["submission"]["prompt"]["1"]["inputs"]["seed"] == 7
     assert job["submission"]["workflow"] == WORKFLOW
     return {"evidence": "synthetic CPU HTTP fixture; no inference or hardware acceptance",

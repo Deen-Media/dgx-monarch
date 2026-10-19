@@ -62,6 +62,7 @@
   let requestKey = '',
     retryKey = '',
     retryIndices = $state<number[]>([]);
+  let loadGeneration = 0;
   let dispatchPending = $state(false);
   let retryPending = $state(false);
   let savedGrids = $state<Grid[]>([]),
@@ -90,6 +91,7 @@
   async function loadExperiment(data: RecordData) {
     if (dispatchPending || retryPending)
       throw new Error('Reconcile the pending grid dispatch before replacing its definition.');
+    loadGeneration++;
     const saved = experimentDefinition(data);
     await restoreDraft(saved.draft);
     axisA = saved.axisA;
@@ -111,6 +113,7 @@
   }
   async function prepare() {
     if (dispatchPending || retryPending) return;
+    loadGeneration++;
     busy = true;
     error = '';
     confirmed = false;
@@ -143,6 +146,7 @@
   }
   async function dispatch() {
     if (!preview || !confirmed) return;
+    loadGeneration++;
     busy = true;
     error = '';
     try {
@@ -172,9 +176,10 @@
       error = 'Reconcile the pending grid action before opening another run.';
       return;
     }
+    const ticket = passive ? loadGeneration : ++loadGeneration;
     try {
       const result = await client.request<Grid>(`/grids/${encodeURIComponent(id)}`);
-      if (passive && grid?.id !== id) return;
+      if (ticket !== loadGeneration || (passive && grid?.id !== id)) return;
       if (grid?.id !== id) {
         selected = [];
         retryKey = '';
@@ -189,6 +194,7 @@
   }
   async function retry() {
     if (!grid || (!retryPending && !selected.length)) return;
+    loadGeneration++;
     busy = true;
     error = '';
     if (!retryPending && (!retryKey || JSON.stringify(retryIndices) !== JSON.stringify(selected))) {

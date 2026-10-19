@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import math
 import secrets
 from copy import deepcopy
 from pathlib import PurePosixPath
@@ -15,6 +16,19 @@ from .job_observations import model_identities, observation, requested_topology
 from .preview_drafts import prepare_preview
 from .runtime_observations import RuntimeObservations
 from .store import Store
+from .workflows import node_inputs
+
+
+def _random_seed(schema: dict[str, Any]) -> int:
+    """Sample the installed range that browser JSON can round-trip exactly."""
+    bounds = [schema.get("min", 0), schema.get("max", 2**64 - 1)]
+    if any(type(bound) not in (int, float) or (type(bound) is float and not math.isfinite(bound)) for bound in bounds):
+        raise StudioError("seed_bounds", "Random seeds require finite numeric bounds in the installed input schema.")
+    safe_integer = 2**53 - 1
+    low, high = max(math.ceil(bounds[0]), -safe_integer), min(math.floor(bounds[1]), safe_integer)
+    if low > high:
+        raise StudioError("seed_bounds", "The installed seed input has no integer range that browser JSON can represent exactly.")
+    return low + secrets.randbelow(high - low + 1)
 
 
 class Jobs:
@@ -46,34 +60,39 @@ class Jobs:
         return {"object_info": self.schema, "loras": entries}
 
     async def preview(self, request: dict[str, Any]) -> dict[str, Any]:
-        await self.catalog()
-        await self.capture_runtime()
-        return self.build_preview(request)
+        schema = (await self.catalog())["object_info"]
+        runtime = await self.capture_runtime()
+        return self.build_preview(request, schema=schema, runtime=runtime)
 
-    async def capture_runtime(self) -> None:
+    async def capture_runtime(self) -> dict[str, Any]:
         try:
             stats = object_value(await self.client.request("GET", "/system_stats"))
             system = object_value(stats.get("system", {}))
-            self.runtime = {"observed_at": timestamp(), "source": "driver_system_stats", "reported": {
+            runtime = {"observed_at": timestamp(), "source": "driver_system_stats", "reported": {
                 key: system[key] for key in ("comfyui_version", "python_version", "pytorch_version", "required_frontend_version")
                 if key in system}}
             if self.telemetry.get("state") == "connected" and timestamp() - self.telemetry.get("observed_at", 0) < 30:
                 sample = self.telemetry.get("sample", {})
                 if isinstance(sample, dict):
-                    self.runtime["monarch_diagnostic_identity"] = deepcopy(sample.get("diagnostic_identity"))
-                    self.runtime["comfy_source"] = deepcopy(sample.get("comfy"))
-                    self.runtime["identity_observed_at"] = self.telemetry["observed_at"]
+                    runtime["monarch_diagnostic_identity"] = deepcopy(sample.get("diagnostic_identity"))
+                    runtime["comfy_source"] = deepcopy(sample.get("comfy"))
+                    runtime["identity_observed_at"] = self.telemetry["observed_at"]
         except StudioError:
-            self.runtime = {"observed_at": timestamp(), "source": "unavailable", "reported": {}}
+            runtime = {"observed_at": timestamp(), "source": "unavailable", "reported": {}}
+        self.runtime = runtime
+        return runtime
 
-    def build_preview(self, request: dict[str, Any]) -> dict[str, Any]:
+    def build_preview(self, request: dict[str, Any], *, schema: dict[str, Any] | None = None,
+                      runtime: dict[str, Any] | None = None) -> dict[str, Any]:
+        schema = self.schema if schema is None else schema
+        runtime = self.runtime if runtime is None else runtime
         workflow = object_value(request.get("workflow"), "workflow")
         parents = request.get("parent_artifact_ids", [])
         if not isinstance(parents, list) or len(parents) > 128 or any(not isinstance(parent, str) for parent in parents):
             raise StudioError("artifact_lineage", "Parent artifacts must be at most 128 saved artifact identities.")
         for parent in parents:
             self.store.get("artifacts", parent)
-        prompt, values, transformations = prepare_preview(request, self.schema)
+        prompt, values, transformations = prepare_preview(request, schema)
         effective = deepcopy(request)
         effective["values"] = deepcopy(values)
         effective.update(transformations)
@@ -82,20 +101,21 @@ class Jobs:
             raise StudioError("seed_policy", "Seed policy must be fixed or random.")
         seeds: dict[str, int] = {}
         for node_id, node in prompt.items():
+            fields = {name: field for name, field, _ in node_inputs(schema[node["class_type"]])}
             for name in ("seed", "noise_seed"):
-                if name in node["inputs"] and isinstance(node["inputs"][name], int):
+                if type(node["inputs"].get(name)) is int and fields.get(name, {}).get("type") == "INT":
                     if policy == "random":
-                        node["inputs"][name] = secrets.randbelow(2**63)
+                        node["inputs"][name] = _random_seed(fields[name])
                     seeds[f"{node_id}.{name}"] = node["inputs"][name]
         effective["seeds"] = seeds
         operation = request.get("operation", "workflow")
         if operation not in {"image", "video", "edit", "upscale", "workflow", "fleet"}:
             raise StudioError("operation", "Unknown generation operation.")
         snapshot = {"requested": deepcopy(request), "effective": effective, "prompt": prompt, "workflow": deepcopy(workflow),
-                    "workflow_digest": digest(workflow), "schema_digest": digest(self.schema),
+                    "workflow_digest": digest(workflow), "schema_digest": digest(schema),
                     "adapter_version": SCHEMA_VERSION, "schema_version": SCHEMA_VERSION,
-                    "versions": {"dgx_monarch": __version__, "driver": self.runtime.get("reported", {}).get("comfyui_version", "unknown")},
-                    "runtime_observation": deepcopy(self.runtime), "model_identities": model_identities(prompt),
+                    "versions": {"dgx_monarch": __version__, "driver": runtime.get("reported", {}).get("comfyui_version", "unknown")},
+                    "runtime_observation": deepcopy(runtime), "model_identities": model_identities(prompt),
                     "requested_topology": requested_topology(prompt),
                     "project_id": request.get("project_id"), "parent_artifact_ids": request.get("parent_artifact_ids", []),
                     "model_fingerprints": "unavailable", "effective_topology": "pending_backend_admission"}
@@ -153,7 +173,7 @@ class Jobs:
             if not isinstance(queue, dict) or not isinstance(history, dict):
                 raise StudioError("driver_schema", "Driver queue snapshot is malformed.", 502)
             self.driver = {"state": "connected", "timestamp": timestamp()}
-            known = {str(job["prompt_id"]): job for job in self.store.all("jobs") if job.get("prompt_id")}
+            known = self.store.jobs_by_prompt()
             lookup = getattr(self.client, "history_prompt", None)
             if callable(lookup):
                 active = {entry[1] for key in ("queue_running", "queue_pending")
@@ -178,7 +198,10 @@ class Jobs:
             for prompt_id, value in history.items():
                 if not isinstance(value, dict):
                     continue
-                job = self._discover(value.get("prompt", []), known)
+                entry = value.get("prompt", [])
+                if isinstance(entry, (list, tuple)) and len(entry) >= 2 and entry[1] != prompt_id:
+                    continue
+                job = self._discover(entry, known)
                 if job is None:
                     job = known.get(prompt_id)
                 if not job:
@@ -223,7 +246,8 @@ class Jobs:
         if isinstance(studio_id, str):
             try:
                 job = self.store.get("jobs", studio_id)
-                if studio.get("digest") == job["submission"].get("digest") and entry[2] == job["submission"].get("prompt"):
+                if (job.get("prompt_id") in (None, entry[1]) and studio.get("digest") == job["submission"].get("digest")
+                        and entry[2] == job["submission"].get("prompt")):
                     known[entry[1]] = job
                     return job
             except StudioError:
@@ -277,35 +301,8 @@ class Jobs:
                             raise
 
     async def cancel(self, job_id: str, request: dict[str, Any]) -> dict[str, Any]:
-        if request.get("confirmed") is not True:
-            raise StudioError("confirmation", "Explicit cancellation confirmation is required.", 409)
-        await self.reconcile()
-        job = self.store.get("jobs", job_id)
-        if job["state"] in TERMINAL_STATES:
-            return job
-        scoped_cancel = getattr(self.client, "cancel_prompt", None)
-        if not job.get("prompt_id") or job["state"] not in {"queued", "running", "cancel_requested"}:
-            raise StudioError("cancellation_scope", "Only queued graph tasks can be cancelled safely; running driver interruption is global.", 409)
-        if job["state"] != "queued" and not callable(scoped_cancel):
-            raise StudioError("cancellation_scope", "Only queued graph tasks are supported by this driver adapter; atomic prompt cancellation is unavailable.", 409)
-        self.store.update("jobs", job_id, {"state": "cancel_requested", "cancellation_scope":
-                                          "atomic_prompt" if callable(scoped_cancel) else "queued_only"})
-        try:
-            if callable(scoped_cancel):
-                receipt = await scoped_cancel(job["prompt_id"])
-            else:
-                await self.client.request("POST", "/queue", {"delete": [job["prompt_id"]]})
-                receipt = {"deletion_requested": True}
-            updates: dict[str, Any] = {"cancellation": {"prompt_id": job["prompt_id"], "receipt": receipt,
-                                                        "observed_at": timestamp(), "completion": "awaiting_driver_evidence"}}
-            if receipt.get("cancelled") is False:
-                updates["state"] = "unknown"
-                updates["cancellation"]["completion"] = "not_dispatched"
-            self.store.update("jobs", job_id, updates)
-        except StudioError as exc:
-            self.store.update("jobs", job_id, {"state": "unknown", "cancellation": {"code": exc.code, "completion": "unknown"}})
-            raise
-        return self.store.get("jobs", job_id)
+        from .cancellation import cancel_job
+        return await cancel_job(self, job_id, request)
 
     def consume_event(self, message: dict[str, Any], *, known: dict[str, Any] | None = None) -> None:
         parsed = observation(message)
@@ -314,7 +311,7 @@ class Jobs:
         event, updates = parsed
         prompt_id = event["data"]["prompt_id"]
         if known is None:
-            known = {job["prompt_id"]: job for job in self.store.all("jobs") if job.get("prompt_id")}
+            known = self.store.jobs_by_prompt()
         job = known.get(prompt_id)
         if job is None:
             return

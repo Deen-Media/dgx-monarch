@@ -344,6 +344,40 @@ def test_update_restores_only_after_exact_success(store, config, monkeypatch, st
     assert checkpoints[1]["phase"] == "driver_stop_requested"
 
 
+@pytest.mark.parametrize("mode", ["legacy", "verified"])
+def test_config_free_update_execution_is_limited_to_reviewed_legacy(store, monkeypatch, mode):
+    _, reviewed = update_plan()
+    reviewed.update(mode=mode, driver_identity=None, config_sha256=None)
+    manager = management_update.Updates(None, None, Driver.origin, store.directory)
+    backend = SimpleNamespace(repo=store.directory, repo_snapshot=lambda target: RepoSnapshot("a" * 40, True, True))
+    monkeypatch.setattr(manager, "operations", lambda parameters: backend)
+    monkeypatch.setattr(management_update, "checkout_identity", lambda path: reviewed["checkout"])
+    monkeypatch.setattr(management_update, "inspect_checkout", lambda *args: (ReleaseMetadata(**reviewed["prior_release"]), ()))
+    monkeypatch.setattr(management_update.update_controller, "binding", lambda driver: reviewed["controller"])
+    calls = []
+    def prepare(directory, config, repo, plan, host, privileged, lock_fd):
+        assert config is None and plan is reviewed and lock_fd == 123
+        calls.append("prepare")
+        return {"private": "controller"}
+    def execute(prepared):
+        calls.append("update")
+        return UpdateResult(0, "legacy_updated", "settled", {"reviewed_target": reviewed["release"]["target_sha"]})
+    monkeypatch.setattr(management_update.update_controller, "prepare", prepare)
+    monkeypatch.setattr(management_update.update_controller, "run", execute)
+    monkeypatch.setattr(management_update.update_controller, "cleanup", lambda prepared: calls.append("cleanup"))
+    parameters = {"mode": mode, "stop_driver": False, "restore_driver": False, "privileged_process_inspection": False}
+    checkpoints = []
+    if mode == "verified":
+        with pytest.raises(StudioError, match="configuration is unavailable"):
+            asyncio.run(manager.execute(parameters, reviewed, checkpoints.append))
+        assert calls == []
+    else:
+        state, receipt = asyncio.run(manager.execute(parameters, reviewed, checkpoints.append))
+        assert state == "succeeded" and calls == ["prepare", "update", "cleanup"]
+        assert receipt["update"]["reviewed_target"] == reviewed["release"]["target_sha"]
+        assert checkpoints[0]["phase"] == "controller_prepared"
+
+
 def test_update_accepts_selected_checkout_independent_of_companion_import(config, tmp_path, monkeypatch):
     repo = tmp_path / "separate-source-checkout"
     (repo / "src/dgx_monarch").mkdir(parents=True)

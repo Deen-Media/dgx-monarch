@@ -175,7 +175,7 @@ class Updates:
             current_driver = await blocking(self.driver.inspect) if self.driver else None
             if current_driver != reviewed["driver_identity"] or update_controller.binding(current_driver) != reviewed["controller"]:
                 raise StudioError("update_changed", "Driver or controller identity changed after review.", 409)
-            if self.config is None:
+            if self.config is None and reviewed.get("mode") != "legacy":
                 raise StudioError("update_config", "The reviewed configuration is unavailable.", 409)
             prepared = await blocking(update_controller.prepare, self.directory, self.config, ops.repo, reviewed,
                                       urlsplit(self.origin).netloc, parameters["privileged_process_inspection"], lock.fileno())

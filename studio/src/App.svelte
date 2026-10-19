@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { fullJob } from './jobProvenance';
+  import { initialWorkspace } from './initialWorkspace';
   import { Submission } from './submission.svelte';
   import { Connection } from './connection.svelte';
   import { emptyDraft, restoreDraft } from './model';
@@ -59,6 +61,8 @@
     showConsole = $state(false),
     presentation = $state(false),
     width = $state(340);
+  let inspectionSequence = 0,
+    pendingActions = 0;
   let palettePanel: CommandPalette, previewPanel: SubmissionReview;
   let jobs = $derived(connection.snapshot.jobs),
     activeJobs = $derived(jobs.filter(isActiveJob));
@@ -106,8 +110,12 @@
   }
   async function importDraft(value: Draft) {
     const previous = structuredClone($state.snapshot(draft));
+    changeDraft(value);
     draft = value;
-    dirty = true;
+    bindings = [];
+    connections = [];
+    bindingErrors = [];
+    rawWorkflow = '';
     if (draft.workflow) await inspect(draft.workflow, draft.workflowName, true);
     undoDraft = previous;
   }
@@ -122,30 +130,27 @@
   }
 
   function changeDraft(change: Partial<Draft>) {
+    inspectionSequence++;
     undoDraft = structuredClone($state.snapshot(draft));
     draft = { ...draft, ...change };
     dirty = true;
     submission.preview = null;
   }
 
-  function undo() {
+  async function undo() {
     if (undoDraft) {
-      const prior = structuredClone($state.snapshot(draft));
-      draft = undoDraft;
-      undoDraft = prior;
-      dirty = true;
-      setNotice('Draft change undone.');
+      await importDraft(undoDraft);
+      if (!error) setNotice('Draft change undone.');
     }
   }
 
   async function inspect(workflow: Workflow, name: string, preserveValues = false) {
+    const ticket = ++inspectionSequence,
+      api = connection.client;
+    const values = preserveValues ? structuredClone($state.snapshot(draft.values)) : undefined;
     await withBusy(async () => {
-      const result = await inspectDraft(
-        connection.client,
-        workflow,
-        name,
-        preserveValues ? draft.values : undefined,
-      );
+      const result = await inspectDraft(connection.client, workflow, name, values);
+      if (ticket !== inspectionSequence || api !== connection.client) return;
       bindings = result.bindings;
       connections = result.connections;
       bindingErrors = result.errors;
@@ -162,17 +167,23 @@
     });
   }
   async function reuse(artifact: Artifact, operation?: string) {
-    const job =
-      jobs.find((j) => j.id === artifact.job_id) ??
-      (await connection.client.request<Job>(`/jobs/${encodeURIComponent(artifact.job_id)}`));
+    await withBusy(() => loadArtifact(artifact, operation));
+  }
+  async function loadArtifact(artifact: Artifact, operation?: string) {
+    const ticket = ++inspectionSequence,
+      api = connection.client;
+    const job = await fullJob(
+      api,
+      artifact.job_id,
+      jobs.find((j) => j.id === artifact.job_id),
+    );
+    if (ticket !== inspectionSequence || api !== connection.client) return;
     if (!job?.submission?.workflow) {
       error = 'Source workflow is unavailable. Restore the job provenance before reuse.';
       return;
     }
-    const previousDraft = structuredClone($state.snapshot(draft));
-    draft = artifactDraft(artifact, job, operation);
-    await inspect(draft.workflow!, draft.workflowName, true);
-    undoDraft = previousDraft;
+    await importDraft(artifactDraft(artifact, job, operation));
+    if (error) return;
     navigate('workspace');
     dirty = true;
     setNotice(
@@ -201,10 +212,8 @@
         setNotice('Style appended. Review expanded prompts before submission.');
       }
       if (kind === 'presets' || kind === 'sessions') {
-        const previousDraft = structuredClone($state.snapshot(draft));
-        draft = restoreDraft(record.data.draft);
-        dirty = true;
-        if (draft.workflow) await inspect(draft.workflow, draft.workflowName, true);
+        await importDraft(restoreDraft(record.data.draft));
+        if (error) return;
         if (kind === 'sessions') {
           await refresh();
           selected =
@@ -216,7 +225,6 @@
           showTelemetry = layout.showTelemetry ?? true;
           showConsole = layout.showConsole ?? false;
         }
-        undoDraft = previousDraft;
         navigate('workspace');
         setNotice('Draft replaced from saved record. Undo is available.');
       }
@@ -228,19 +236,11 @@
 
   onMount(() => {
     try {
-      const saved = localStorage.getItem(DRAFT_KEY);
-      if (saved) {
-        draft = restoreDraft(JSON.parse(saved).draft);
-        savedDraft = saved;
-      }
-      const layout = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? 'null');
-      if (layout) {
-        width = Math.min(520, Math.max(280, layout.width ?? 340));
-        showTelemetry = layout.showTelemetry ?? true;
-        showConsole = layout.showConsole ?? false;
-      }
-      const pending = sessionStorage.getItem('dgxm.studio.pending');
-      if (pending) submission.pending = JSON.parse(pending);
+      const restored = initialWorkspace();
+      if (restored.draft) draft = restored.draft;
+      savedDraft = restored.saved;
+      if (restored.layout) ({ width, showTelemetry, showConsole } = restored.layout);
+      submission.pending = restored.pending;
     } catch (e) {
       localError = 'Local draft could not be restored; the stored record is retained.';
     }
@@ -282,6 +282,7 @@
     if (submission.observe(jobs)) setNotice('Submission reconciled.');
   });
   async function withBusy(action: () => Promise<void>) {
+    pendingActions++;
     busy = true;
     error = '';
     try {
@@ -289,7 +290,7 @@
     } catch (e) {
       fail(e);
     } finally {
-      busy = false;
+      busy = --pendingActions > 0;
     }
   }
   async function prepareJob() {
@@ -423,6 +424,7 @@
         {setNotice}
       />
     {:else if view === 'queue'}<Queue
+        truncated={connection.snapshot.jobs_truncated}
         client={connection.client}
         {jobs}
         {busy}

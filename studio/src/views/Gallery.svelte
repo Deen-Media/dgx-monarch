@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Artifact, Job, ReuseArtifact } from '../contracts';
   import type { StudioClient } from '../api';
+  import { fullJob } from '../jobProvenance';
   import { formatTime } from '../model';
   import { exportJSON } from '../files';
   import { galleryEntries, virtualRows, type GalleryFilter, type GalleryEntry } from '../gallery';
@@ -123,11 +124,20 @@
       setNotice(cause instanceof Error ? cause.message : String(cause));
     }
   }
+  async function exportProvenance(entry: GalleryEntry) {
+    try {
+      const job = await fullJob(client, entry.artifact.job_id, entry.job);
+      exportJSON(
+        { artifact: entry.artifact, submission: job.submission },
+        `${entry.artifact.id}.json`,
+      );
+    } catch (cause) {
+      setNotice(String(cause));
+    }
+  }
   async function copy(entry: GalleryEntry, kind: 'prompt' | 'seed') {
     try {
-      const job =
-        entry.job ??
-        (await client.request<Job>(`/jobs/${encodeURIComponent(entry.artifact.job_id)}`));
+      const job = await fullJob(client, entry.artifact.job_id, entry.job);
       const values = job.submission.requested?.values;
       // Explicit source identity: never guess which ambiguous string or number was the prompt/seed.
       const prompt = job.submission.prompt;
@@ -277,13 +287,7 @@
                 <button onclick={() => void copy(entry, 'prompt')}>Copy API prompt</button><button
                   onclick={() => void copy(entry, 'seed')}>Copy named inputs / seeds</button
                 >
-                <button
-                  onclick={() =>
-                    exportJSON(
-                      { artifact, submission: entry.job?.submission },
-                      `${artifact.id}.json`,
-                    )}>Export provenance</button
-                >
+                <button onclick={() => void exportProvenance(entry)}>Export provenance</button>
               </div>
             </details>
           </div>
