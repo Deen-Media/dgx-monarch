@@ -7,7 +7,16 @@ from collections.abc import Mapping
 from typing import Any
 
 from .drafts import DraftError, validate_value
-from .workflows import SCALAR_TYPES, WorkflowError, binding_id, graph_index, is_api_prompt, node_inputs, widget_values
+from .workflows import (
+    SCALAR_TYPES,
+    WorkflowError,
+    api_prompt_nodes,
+    binding_id,
+    graph_index,
+    is_api_prompt,
+    node_inputs,
+    widget_values,
+)
 
 _DECORATIVE = {"Note", "MarkdownNote"}
 _VIRTUAL = {"PrimitiveNode", "Reroute"}
@@ -109,7 +118,7 @@ def compile_graph(workflow: Mapping[str, Any], info: Mapping[str, Any],
     root = graphs[gid]
     nodes = root["nodes"]
     if is_api_prompt(workflow):
-        prompt = copy.deepcopy(dict(workflow))
+        prompt = copy.deepcopy(api_prompt_nodes(workflow))
         for nid, node in prompt.items():
             if not isinstance(node.get("inputs"), dict):
                 raise WorkflowError(f"Node {nid} inputs must be an object")

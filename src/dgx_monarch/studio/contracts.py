@@ -88,8 +88,10 @@ def schema_document() -> dict[str, Any]:
         },
         "limits": {"request_bytes": MAX_BODY_BYTES, "event_count": EVENT_LIMIT,
                    "event_bytes": EVENT_BYTE_LIMIT, "list_page": 200, "grid_cells": 1024,
-                   "console_lines": 1000, "console_bytes": 262144,
-                   "chart_samples": 600, "chart_seconds": 3600, "thumbnail_bytes": 33554432},
+                   "console_lines": 400, "console_bytes": 131072,
+                   "chart_samples": 240, "chart_seconds": 3600, "thumbnail_bytes": 33554432,
+                   "history_page_bytes": 8388608, "record_window_bytes": 8388608,
+                   "preview_bytes": MAX_BODY_BYTES, "grid_preview_bytes": 33554432},
         "replay": "Cursors are durable. A reset response requires a fresh snapshot before applying later events.",
         "reproduction": "Reconstructs configuration; hardware and kernel determinism are not guaranteed.",
     }

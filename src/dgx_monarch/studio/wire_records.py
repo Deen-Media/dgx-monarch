@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from .contracts import RECORD_KINDS, canonical
+from .grid_views import projection as grid_projection
 from .store import Store
 
 PAGE_BYTES = 8 * 1024 * 1024
@@ -16,6 +17,8 @@ def _object(fields: tuple[str, ...], prefix: str = "$") -> str:
 
 def projection(kind: str) -> str:
     """SQL only projects fixed fields, avoiding decoding large graph payloads."""
+    if kind == "grid_runs":
+        return grid_projection()
     if kind == "jobs":
         base = _object(("id", "state", "created_at", "updated_at", "accepted_at", "prompt_id", "idempotency_key",
                         "progress", "error", "cancellation", "cancellation_scope", "external", "retry_of",

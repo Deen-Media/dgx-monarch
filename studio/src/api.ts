@@ -8,6 +8,20 @@ export class ApiError extends Error {
     this.code = code;
   }
 }
+/** An acknowledgement without its durable identity cannot settle a mutation. */
+export function requireRecordIdentity<T>(value: T): T {
+  if (
+    !value ||
+    typeof value !== 'object' ||
+    !('id' in value) ||
+    typeof value.id !== 'string' ||
+    !value.id
+  )
+    throw new Error(
+      'The companion response has no durable record identity. Reconcile the retained request.',
+    );
+  return value;
+}
 export class StudioClient {
   token: string;
   constructor(token: string) {
@@ -29,7 +43,7 @@ export class StudioClient {
         credentials: 'same-origin',
         cache: 'no-store',
       });
-      const data = await response.json().catch(() => ({}));
+      const data = response.ok ? await response.json() : await response.json().catch(() => ({}));
       if (!response.ok)
         throw new ApiError(
           response.status,

@@ -5,6 +5,7 @@ from copy import deepcopy
 from typing import Any
 
 from .contracts import StudioError, bounded_key, digest, object_value, timestamp
+from .grid_views import live_view
 from .store import Store
 
 
@@ -17,7 +18,7 @@ def bind_grid_record(store: Store, data: dict[str, Any]) -> dict[str, Any]:
         return result
     bounded_key(identity, "grid id")
     try:
-        grid = store.get("grid_runs", identity)
+        grid = live_view(store, store.get("grid_runs", identity))
     except StudioError as exc:
         if exc.code != "not_found":
             raise

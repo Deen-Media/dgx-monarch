@@ -80,3 +80,24 @@ test('thumbnails use an authenticated bounded endpoint independently of full med
     globalThis.fetch = realFetch;
   }
 });
+for (const body of ['', '{"id":', '<html>Proxy error</html>']) {
+  test(`malformed successful JSON stays an uncertain failure: ${body}`, async () => {
+    globalThis.fetch = async () => new Response(body, { status: 202 });
+    try {
+      await assert.rejects(new StudioClient('token').request('/jobs', {}), SyntaxError);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  });
+}
+test('non-JSON HTTP refusal retains its HTTP status', async () => {
+  globalThis.fetch = async () => new Response('Proxy unavailable', { status: 502 });
+  try {
+    await assert.rejects(
+      new StudioClient('token').request('/jobs', {}),
+      (error: unknown) => error instanceof ApiError && error.status === 502,
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

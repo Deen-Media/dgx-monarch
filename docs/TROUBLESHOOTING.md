@@ -6053,3 +6053,10 @@ repeats a cancellation simply because its acknowledgement was lost. Open the
 Project library to browse records in bounded windows when a selector exceeds
 its catalog budget. Full job provenance and operation receipts load when opened
 or exported; compact list rows do not mean those records were deleted.
+
+If startup reports `driver_identity_mismatch`, use the original driver for that
+state directory, or choose a separate `--state-dir` for the new driver. Existing
+unbound draft databases bind on their first upgraded start; select the original
+origin then. If a preview reports a 4 MiB expansion limit, reduce the template or
+workflow payload. Grid expansion also has a combined 32 MiB budget. A rejected
+expansion does not partially save its cell previews.

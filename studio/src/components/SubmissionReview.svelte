@@ -16,6 +16,9 @@
     submitPreview: () => Promise<void>;
   } = $props();
   let previewDialog: HTMLDialogElement;
+  $effect(() => {
+    if (!preview) previewDialog?.close();
+  });
   export function open() {
     previewDialog.showModal();
   }

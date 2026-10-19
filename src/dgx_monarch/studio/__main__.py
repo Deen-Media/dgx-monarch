@@ -53,13 +53,13 @@ def main(argv: list[str] | None = None) -> int:
         os.close(lock)
         store.close()
         raise SystemExit("A companion already owns this state directory.") from exc
-    client = ComfyClient(args.driver)
-    ops = Operations(store, client, config=args.config, allow_management=args.allow_management, driver_service=args.driver_service)
-    token = secrets.token_urlsafe(32)
-    host = f"[{args.host}]" if ":" in args.host else args.host
-    print(f"Studio: http://{host}:{args.port}\nOwner token: {token}", flush=True)
-    app = create_app(store, client, token, allowed_hosts={f"{host}:{args.port}"}, operations=ops)
     try:
+        client = ComfyClient(args.driver)
+        ops = Operations(store, client, config=args.config, allow_management=args.allow_management, driver_service=args.driver_service)
+        token = secrets.token_urlsafe(32)
+        host = f"[{args.host}]" if ":" in args.host else args.host
+        app = create_app(store, client, token, allowed_hosts={f"{host}:{args.port}"}, operations=ops)
+        print(f"Studio: http://{host}:{args.port}\nOwner token: {token}", flush=True)
         web.run_app(app, host=args.host, port=args.port, access_log=None, print=None)
     except StudioError as exc:
         raise SystemExit(str(exc)) from exc

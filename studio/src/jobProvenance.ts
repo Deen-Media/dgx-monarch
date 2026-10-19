@@ -3,7 +3,11 @@ import type { Job } from './contracts';
 
 /** List and snapshot rows are summaries; provenance actions require the full source record. */
 export async function fullJob(client: StudioClient, id: string, candidate?: Job): Promise<Job> {
-  if (candidate?.id === id && !candidate.summary && candidate.submission?.workflow)
+  if (
+    candidate?.id === id &&
+    !candidate.summary &&
+    (candidate.submission?.workflow || candidate.submission?.prompt)
+  )
     return candidate;
   const job = await client.request<Job>(`/jobs/${encodeURIComponent(id)}`);
   if (job.id !== id || job.summary)

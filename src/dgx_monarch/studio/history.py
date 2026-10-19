@@ -115,3 +115,17 @@ def page_artifacts(store: Store, query: dict[str, Any]) -> dict[str, Any]:
 
 def page_jobs(store: Store, query: dict[str, Any]) -> dict[str, Any]:
     return _page(store, "jobs", query)
+
+
+def page_grids(store: Store, query: dict[str, Any]) -> dict[str, Any]:
+    from .grid_views import live_view
+
+    if set(query) - {"limit", "cursor", "sort"}:
+        raise StudioError("history_filter", "Unknown grid history filter.")
+    result = _page(store, "grid_runs", query)
+    items: list[dict[str, Any]] = []
+    for value in result["items"]:
+        live = live_view(store, value)
+        items.append({key: live[key] for key in ("id", "created_at", "updated_at", "state", "summary")} |
+                     {"cell_count": len(live["cells"])})
+    return {**result, "items": items}

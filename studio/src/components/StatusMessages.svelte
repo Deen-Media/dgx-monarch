@@ -60,3 +60,10 @@
         >Retry retained request</button
       >{/if}
   </div>{/if}
+{#if submission.recoveryError}<div class="notice warning" role="alert">
+    <span>{submission.recoveryError}</span><button
+      disabled={busy}
+      onclick={() => submission.clearUnreadableRequest()}
+      >I checked Queue; clear unreadable request</button
+    >
+  </div>{/if}

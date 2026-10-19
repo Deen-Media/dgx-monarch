@@ -178,7 +178,7 @@
       jobs.find((j) => j.id === artifact.job_id),
     );
     if (ticket !== inspectionSequence || api !== connection.client) return;
-    if (!job?.submission?.workflow) {
+    if (!job?.submission?.workflow && !job?.submission?.prompt) {
       error = 'Source workflow is unavailable. Restore the job provenance before reuse.';
       return;
     }
@@ -235,15 +235,13 @@
   }
 
   onMount(() => {
-    try {
-      const restored = initialWorkspace();
-      if (restored.draft) draft = restored.draft;
-      savedDraft = restored.saved;
-      if (restored.layout) ({ width, showTelemetry, showConsole } = restored.layout);
-      submission.pending = restored.pending;
-    } catch (e) {
-      localError = 'Local draft could not be restored; the stored record is retained.';
-    }
+    const restored = initialWorkspace();
+    localError = restored.error;
+    submission.recoveryError = restored.pendingError;
+    if (restored.draft) draft = restored.draft;
+    savedDraft = restored.saved;
+    if (restored.layout) ({ width, showTelemetry, showConsole } = restored.layout);
+    submission.pending = restored.pending;
     const storage = (e: StorageEvent) => {
       if (e.key === DRAFT_KEY && e.newValue !== savedDraft) draftConflict = true;
     };
@@ -385,7 +383,7 @@
           workflows={connection.workflows}
           {dirty}
           {busy}
-          pending={!!submission.pending}
+          pending={!!submission.pending || !!submission.recoveryError}
           driverState={connection.snapshot.driver.state}
           {changeDraft}
           {inspect}

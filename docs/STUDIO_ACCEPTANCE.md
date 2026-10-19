@@ -135,3 +135,32 @@ artifact, brand/template and leak checks passed. Both installed package formats
 passed `dgxm-studio --check`; wheel and source archive matched 482 runtime and
 resource files. The installed wheel passed the actual synthetic HTTP generation
 and idempotency smoke with Node absent from PATH.
+
+The additional triple review used three independent passes over authored PR
+changes: correctness/recovery; trust boundaries/data integrity; and product,
+transport, persistence and package integration. Each pass traced call sites and
+failure sequences; reported defects were reproduced and cross-checked. Generated
+inventories and bundles were checked against their producers and consumers.
+
+This pass fixed pending-request loss after malformed acknowledgements or local
+storage corruption, recovery after definitive pre-acceptance refusals, effective
+seed/style/LoRA reuse, API-workflow layout metadata, retry endpoint identity,
+driver-origin binding, pre-allocation template/grid limits and atomic grid
+preview persistence. Grid histories now use read-only live summaries; full
+exports and saved experiment output references remain available.
+
+Compiled-browser checks exercised expired-review recovery and a two-cell grid
+through submission, reload and saving its observed outcomes. Backend regressions
+also cover current and previous-attempt artifacts in saved experiments. These
+remain synthetic CPU checks, not inference or real-service acceptance.
+
+Triple-review validation on 2026-10-19: the full CPU harness passed 13,673
+tests with 39 skipped in 319.45 seconds (322 seconds including the wrapper;
+the 120-second advisory warning remains). All 871 Studio tests and 86 frontend
+tests passed. Svelte/TypeScript reported zero errors or warnings; Ruff, mypy
+(480 source files), inventory, protected tests, trust citations and leak checks
+passed. Wheel and source archive matched 483 runtime/resource files byte for
+byte; both installed formats passed their startup check. The installed wheel
+passed the synthetic HTTP smoke without Node on PATH, and 20 focused tests
+passed from the extracted source archive. No protected tests changed in this
+follow-up. Hosted checks and the unrun acceptance gates remain separate.

@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import copy
 import itertools
+import json
 import math
 from collections.abc import Callable, Mapping, Sequence
 from typing import Any
+
+from .contracts import MAX_BODY_BYTES, canonical
+
+MAX_GRID_PARAMETER_BYTES = 32 * 1024 * 1024
 
 
 class DraftError(ValueError):
@@ -63,6 +68,16 @@ def apply_styles(prompt: str, negative_prompt: str, styles: Sequence[Mapping[str
             template = style.get(field, "{prompt}")
             if not isinstance(template, str):
                 raise DraftError("Style templates must be text")
+            # Count the escaped JSON bytes before replacement: a short style
+            # stack can otherwise double a prompt into gigabytes of text.
+            occurrences = template.count("{prompt}")
+            current_bytes = len(json.dumps(current, ensure_ascii=True)) - 2
+            template_bytes = len(json.dumps(template, ensure_ascii=True)) - 2
+            expanded_bytes = (template_bytes - occurrences * len("{prompt}")
+                              + occurrences * current_bytes if occurrences else
+                              current_bytes + template_bytes + (2 if current and template else 0))
+            if expanded_bytes > MAX_BODY_BYTES:
+                raise DraftError("Expanded style text exceeds the 4 MiB JSON budget")
             expanded = template.replace("{prompt}", current)
             if "{prompt}" not in template:
                 expanded = ", ".join(part for part in (current, template) if part)
@@ -131,11 +146,16 @@ def expand_grid(base: Mapping[str, Any], axes: Sequence[Mapping[str, Any]],
         raise DraftError("Excluded cell index is out of range")
     excluded_set = set(excluded)
     cells = []
+    byte_count = 0
     for index, combination in enumerate(itertools.product(*values)):
-        parameters = copy.deepcopy(dict(base))
+        parameters = dict(base)
         parameters.update(dict(zip(names, combination, strict=True)))
         if "seed" not in names:
             parameters["seed"] = base_seed + (index if seed_policy == "increment" else 0)
+        byte_count += len(canonical(parameters).encode()) + len(canonical(dict(zip(names, combination, strict=True))).encode())
+        if byte_count > MAX_GRID_PARAMETER_BYTES:
+            raise DraftError("Grid exceeds the 32 MiB expanded parameter budget")
+        parameters = copy.deepcopy(parameters)
         errors = []
         for name, value in parameters.items():
             if name in schemas:

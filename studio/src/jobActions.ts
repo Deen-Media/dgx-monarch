@@ -1,4 +1,4 @@
-import type { StudioClient } from './api';
+import { requireRecordIdentity, type StudioClient } from './api';
 import type { Job } from './contracts';
 
 export function isActiveJob(job: Job): boolean {
@@ -15,9 +15,11 @@ export async function requestJobAction(client: StudioClient, job: Job, action: '
   const storageKey = `dgxm.studio.${action}.${job.id}`;
   const key = sessionStorage.getItem(storageKey) ?? crypto.randomUUID();
   sessionStorage.setItem(storageKey, key);
-  await client.request(`/jobs/${encodeURIComponent(job.id)}/${action}`, {
-    confirmed: true,
-    idempotency_key: key,
-  });
+  requireRecordIdentity(
+    await client.request(`/jobs/${encodeURIComponent(job.id)}/${action}`, {
+      confirmed: true,
+      idempotency_key: key,
+    }),
+  );
   sessionStorage.removeItem(storageKey);
 }

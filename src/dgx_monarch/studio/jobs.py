@@ -11,7 +11,16 @@ from typing import Any
 from .. import __version__
 from . import SCHEMA_VERSION
 from .comfy import ComfyClient, safe_descriptor
-from .contracts import TERMINAL_STATES, StudioError, digest, identifier, object_value, timestamp
+from .contracts import (
+    MAX_BODY_BYTES,
+    TERMINAL_STATES,
+    StudioError,
+    canonical,
+    digest,
+    identifier,
+    object_value,
+    timestamp,
+)
 from .job_observations import model_identities, observation, requested_topology
 from .preview_drafts import prepare_preview
 from .runtime_observations import RuntimeObservations
@@ -83,7 +92,7 @@ class Jobs:
         return runtime
 
     def build_preview(self, request: dict[str, Any], *, schema: dict[str, Any] | None = None,
-                      runtime: dict[str, Any] | None = None) -> dict[str, Any]:
+                      runtime: dict[str, Any] | None = None, persist: bool = True) -> dict[str, Any]:
         schema = self.schema if schema is None else schema
         runtime = self.runtime if runtime is None else runtime
         workflow = object_value(request.get("workflow"), "workflow")
@@ -122,7 +131,9 @@ class Jobs:
         value = {"id": identifier(), "digest": digest(snapshot), **snapshot, "created_at": timestamp(),
                  "expires_at": timestamp() + 600, "errors": [],
                  "warnings": ["Schema validation is complete. Memory, topology, identity and consent guards run in the backend at execution."]}
-        return self.store.create("previews", value)
+        if len(canonical(value).encode()) > MAX_BODY_BYTES:
+            raise StudioError("preview_limit", "Expanded submission preview exceeds the 4 MiB JSON budget.", 413)
+        return self.store.create("previews", value) if persist else value
 
     def reviewed_snapshot(self, preview_id: str) -> dict[str, Any]:
         preview = self.store.get("previews", preview_id)
@@ -335,7 +346,7 @@ class Jobs:
             await asyncio.sleep(2)
 
     def retry(self, job_id: str, request: dict[str, Any]) -> dict[str, Any]:
-        key_request = {"retry_of": job_id, **request}
+        key_request = {**request, "retry_of": job_id}
         existing = self.store.request("jobs", request.get("idempotency_key"), key_request)
         if existing is not None:
             return existing

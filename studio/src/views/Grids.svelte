@@ -2,35 +2,16 @@
   import { onMount } from 'svelte';
   import type { Binding, Draft } from '../model';
   import { fieldLabel } from '../model';
-  import type { StudioClient } from '../api';
+  import { requireRecordIdentity, type StudioClient } from '../api';
   import GridCellDetails from '../components/GridCellDetails.svelte';
   import Viewer from '../components/Viewer.svelte';
   import StyleAxisCatalog from '../components/StyleAxisCatalog.svelte';
   import ExperimentLibrary from '../components/ExperimentLibrary.svelte';
   import { experimentDefinition } from '../experimentRecords';
+  import { submissionRefused } from '../submissionRefusal';
   import type { Artifact, RecordData, ReuseArtifact } from '../contracts';
   import { exportJSON } from '../files';
-  interface Cell {
-    index: number;
-    coordinates: Record<string, unknown>;
-    excluded?: boolean;
-    errors?: string[];
-    preview_id?: string;
-    job_id?: string;
-    state?: string;
-    attempts?: string[];
-    artifact_ids?: string[];
-  }
-  interface Grid {
-    id: string;
-    state?: string;
-    digest?: string;
-    cells: Cell[];
-    ready?: boolean;
-    total?: number;
-    job_count?: number;
-    expires_at?: number;
-  }
+  import { gridIdentity, type Grid } from '../gridState';
   let {
     client,
     draft,
@@ -66,6 +47,8 @@
   let dispatchPending = $state(false);
   let retryPending = $state(false);
   let savedGrids = $state<Grid[]>([]),
+    savedCursor = $state<string | null>(null),
+    savedLoading = $state(false),
     cellPage = $state(0),
     output = $state<Artifact | null>(null),
     compare = $state<Artifact | null>(null);
@@ -75,8 +58,8 @@
     sessionStorage.setItem(
       storage,
       JSON.stringify({
-        preview,
-        grid,
+        preview: gridIdentity(preview),
+        grid: gridIdentity(grid),
         requestKey,
         retryKey,
         retryIndices,
@@ -129,7 +112,7 @@
         : [];
       if (exclusions.some((value) => !Number.isInteger(value) || value < 0))
         throw new Error('Excluded cell numbers must be positive integers.');
-      preview = await client.request<Grid>('/grids/preview', {
+      preview = await client.request<Grid>('/grids/preview?summary=true', {
         draft: { ...$state.snapshot(draft), seed_policy: 'fixed' },
         axes,
         seed_policy: seedPolicy,
@@ -158,13 +141,21 @@
         dispatchPending = prior;
         throw cause;
       }
-      grid = await client.request<Grid>('/grids', {
-        preview_id: preview.id,
-        idempotency_key: requestKey,
-      });
+      grid = requireRecordIdentity(
+        await client.request<Grid>('/grids?summary=true', {
+          preview_id: preview.id,
+          idempotency_key: requestKey,
+        }),
+      );
       dispatchPending = false;
       remember();
     } catch (cause) {
+      if (submissionRefused(cause, 'grid')) {
+        dispatchPending = false;
+        preview = null;
+        confirmed = false;
+        remember();
+      }
       fail(cause);
     } finally {
       busy = false;
@@ -178,7 +169,7 @@
     }
     const ticket = passive ? loadGeneration : ++loadGeneration;
     try {
-      const result = await client.request<Grid>(`/grids/${encodeURIComponent(id)}`);
+      const result = await client.request<Grid>(`/grids/${encodeURIComponent(id)}?summary=true`);
       if (ticket !== loadGeneration || (passive && grid?.id !== id)) return;
       if (grid?.id !== id) {
         selected = [];
@@ -210,31 +201,59 @@
         retryPending = prior;
         throw cause;
       }
-      grid = await client.request<Grid>(`/grids/${grid.id}/retry`, {
-        indices: retryIndices,
-        idempotency_key: retryKey,
-        confirmed: true,
-      });
+      grid = requireRecordIdentity(
+        await client.request<Grid>(`/grids/${grid.id}/retry?summary=true`, {
+          indices: retryIndices,
+          idempotency_key: retryKey,
+          confirmed: true,
+        }),
+      );
       retryKey = '';
       retryPending = false;
       selected = [];
       remember();
     } catch (cause) {
+      if (submissionRefused(cause, 'grid-retry')) {
+        retryPending = false;
+        retryKey = '';
+        retryIndices = [];
+        remember();
+      }
       fail(cause);
     } finally {
       busy = false;
     }
   }
+  async function exportGrid(value: Grid, isPreview = false) {
+    try {
+      const path = isPreview ? `/grids/previews/${value.id}` : `/grids/${value.id}`;
+      exportJSON(await client.request(path), isPreview ? 'grid-preview.json' : 'grid-results.json');
+    } catch (cause) {
+      fail(cause);
+    }
+  }
+  async function loadSavedGrids() {
+    if (savedLoading) return;
+    savedLoading = true;
+    try {
+      const result = await client.request<{ items: Grid[]; next_cursor: string | null }>(
+        `/grids${savedCursor ? '?cursor=' + encodeURIComponent(savedCursor) : ''}`,
+      );
+      savedGrids = savedGrids.length >= 2000 ? result.items : [...savedGrids, ...result.items];
+      savedCursor = result.next_cursor;
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      savedLoading = false;
+    }
+  }
   onMount(() => {
-    void client
-      .request<{ items: Grid[] }>('/grids')
-      .then((result) => (savedGrids = result.items))
-      .catch(fail);
+    void loadSavedGrids();
     try {
       const saved = JSON.parse(sessionStorage.getItem(storage) ?? 'null');
       if (saved) {
-        preview = saved.preview;
-        grid = saved.grid;
+        preview = gridIdentity(saved.preview);
+        grid = gridIdentity(saved.grid);
         requestKey = saved.requestKey;
         retryKey = saved.retryKey ?? '';
         retryIndices = saved.retryIndices ?? [];
@@ -243,6 +262,16 @@
       }
     } catch {
       error = 'Saved grid could not be restored. Load a durable grid ID.';
+    }
+    if (preview) {
+      const id = preview.id,
+        ticket = loadGeneration;
+      void client
+        .request<Grid>(`/grids/previews/${encodeURIComponent(id)}?summary=true`)
+        .then((value) => {
+          if (ticket === loadGeneration && preview?.id === id) preview = value;
+        })
+        .catch(fail);
     }
     let stopped = false,
       timer: ReturnType<typeof setTimeout>;
@@ -320,6 +349,9 @@
         ></select
       ></label
     >
+    {#if savedCursor}<button disabled={savedLoading} onclick={loadSavedGrids}
+        >{savedGrids.length >= 2000 ? 'Next saved-grid window' : 'Load more saved grids'}</button
+      >{/if}
     {#if seedPolicy === 'increment'}<label
         >Seed binding<select bind:value={seedBinding}
           ><option value="">Choose seed input</option
@@ -374,9 +406,7 @@
       <button class="primary" disabled={busy || !confirmed || !preview.ready} onclick={dispatch}
         >Submit reviewed grid</button
       >
-      <button onclick={() => exportJSON(preview, 'grid-preview.json')}
-        >Export complete preview</button
-      >
+      <button onclick={() => void exportGrid(preview!, true)}>Export complete preview</button>
     </div>{/if}
   <div class="filter-bar">
     <label
@@ -400,7 +430,7 @@
   {#if grid}<div class="surface">
       <h2>Grid {grid.id} · {grid.state}</h2>
       <button onclick={() => void refresh()}>Refresh status</button><button
-        onclick={() => exportJSON(grid, 'grid-results.json')}>Export manifest and outcomes</button
+        onclick={() => void exportGrid(grid!)}>Export manifest and outcomes</button
       ><button disabled={busy || (!retryPending && !selected.length)} onclick={retry}
         >{retryPending
           ? 'Reconcile retained retry'

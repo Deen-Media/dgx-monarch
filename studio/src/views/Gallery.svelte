@@ -2,6 +2,7 @@
   import type { Artifact, Job, ReuseArtifact } from '../contracts';
   import type { StudioClient } from '../api';
   import { fullJob } from '../jobProvenance';
+  import { recordedSettings } from '../recordedSettings';
   import { formatTime } from '../model';
   import { exportJSON } from '../files';
   import { galleryEntries, virtualRows, type GalleryFilter, type GalleryEntry } from '../gallery';
@@ -138,12 +139,7 @@
   async function copy(entry: GalleryEntry, kind: 'prompt' | 'seed') {
     try {
       const job = await fullJob(client, entry.artifact.job_id, entry.job);
-      const values = job.submission.requested?.values;
-      // Explicit source identity: never guess which ambiguous string or number was the prompt/seed.
-      const prompt = job.submission.prompt;
-      await navigator.clipboard.writeText(
-        JSON.stringify(kind === 'prompt' ? (prompt ?? values ?? {}) : (values ?? {}), null, 2),
-      );
+      await navigator.clipboard.writeText(recordedSettings(job, kind));
       setNotice(
         kind === 'prompt'
           ? 'Copied recorded API prompt.'

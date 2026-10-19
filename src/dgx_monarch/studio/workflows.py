@@ -27,9 +27,16 @@ def binding_id(graph_id: str, node_id: str, name: str) -> str:
     return f"{graph_id}:{quote(node_id, safe='')}:{quote(name, safe='')}"
 
 
+def api_prompt_nodes(workflow: Mapping[str, Any]) -> dict[str, Any]:
+    """Separate Studio display metadata from executable API-prompt nodes."""
+    return {key: node for key, node in workflow.items()
+            if not (key == "extra" and isinstance(node, dict) and "class_type" not in node)}
+
+
 def is_api_prompt(workflow: Mapping[str, Any]) -> bool:
-    return bool(workflow) and all(isinstance(node, dict) and "class_type" in node
-                                  for node in workflow.values())
+    nodes = api_prompt_nodes(workflow)
+    return bool(nodes) and all(isinstance(node, dict) and "class_type" in node
+                              for node in nodes.values())
 
 
 def graph_index(workflow: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
@@ -69,10 +76,11 @@ def graph_index(workflow: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
                 visit(node["subgraph"], f"{gid}/node/{nid}", depth + 1)
 
     if is_api_prompt(workflow):
-        if any(not isinstance(node["class_type"], str) for node in workflow.values()):
+        prompt_nodes = api_prompt_nodes(workflow)
+        if any(not isinstance(node["class_type"], str) for node in prompt_nodes.values()):
             raise WorkflowError("API node class_type must be a string")
         nodes = {str(nid): {**node, "id": str(nid), "type": node["class_type"]}
-                 for nid, node in workflow.items()}
+                 for nid, node in prompt_nodes.items()}
         graphs["root"] = {"graph": {}, "nodes": nodes}
     else:
         visit(workflow, "root", 0)

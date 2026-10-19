@@ -6,7 +6,7 @@ from copy import deepcopy
 from typing import Any
 
 from .contracts import StudioError, object_value
-from .drafts import apply_styles, validate_value
+from .drafts import DraftError, apply_styles, validate_value
 from .lora_graph import apply_loras
 from .workflows import compile_workflow, inspect_workflow
 
@@ -41,7 +41,10 @@ def _styles(request: dict[str, Any], bindings: dict[str, Any], values: dict[str,
         text[role] = validate_value(values.get(identity, binding["value"]), binding["schema"])
     if len(set(canonical_mapping.values())) != len(canonical_mapping):
         raise StudioError("style_binding", "Positive and negative styles must use distinct input bindings.")
-    expanded = apply_styles(text["prompt"], text["negative_prompt"], styles)
+    try:
+        expanded = apply_styles(text["prompt"], text["negative_prompt"], styles)
+    except DraftError as exc:
+        raise StudioError("styles", str(exc)) from exc
     for role, identity in canonical_mapping.items():
         values[identity] = expanded[role]
     return {"styles": expanded, "style_bindings": canonical_mapping}

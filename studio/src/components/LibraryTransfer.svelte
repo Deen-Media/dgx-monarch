@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ApiError } from '../api';
+  import { submissionRefused } from '../submissionRefusal';
+  import { requireLibraryReceipt } from '../libraryImport';
   import type { StudioClient } from '../api';
   import { exportJSON } from '../files';
   interface Conflict {
@@ -102,6 +103,7 @@
         '/library/import',
         { preview_id: plan.id, digest: plan.digest, confirmed: true, idempotency_key: key },
       );
+      requireLibraryReceipt(result);
       notice = `${result.imported} records imported; ${result.repair_list.length} unresolved source references. No jobs were dispatched.`;
       sessionStorage.removeItem(storage);
       uncertain = false;
@@ -110,7 +112,7 @@
       name = '';
       await onrefresh();
     } catch (cause) {
-      if (cause instanceof ApiError && cause.status >= 400 && cause.status < 500) {
+      if (submissionRefused(cause, 'library')) {
         uncertain = false;
         sessionStorage.removeItem(storage);
       }

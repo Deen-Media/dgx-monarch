@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { ApiError, type StudioClient } from '../api';
+  import { ApiError, requireRecordIdentity, type StudioClient } from '../api';
   import type { Capabilities, OperationRecord } from '../contracts';
   import OperationReceipt from './OperationReceipt.svelte';
   import OperationField from './OperationField.svelte';
@@ -107,11 +107,13 @@
       return;
     }
     try {
-      await client.request(`/operations/${encodeURIComponent(preview.id)}/apply`, {
-        digest: preview.digest,
-        confirmed: true,
-        idempotency_key: requestKey,
-      });
+      requireRecordIdentity(
+        await client.request(`/operations/${encodeURIComponent(preview.id)}/apply`, {
+          digest: preview.digest,
+          confirmed: true,
+          idempotency_key: requestKey,
+        }),
+      );
       pending = false;
       preview = null;
       sessionStorage.removeItem(reviewStorageKey);

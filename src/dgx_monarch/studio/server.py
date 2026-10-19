@@ -24,7 +24,9 @@ from .contracts import (
     timestamp,
 )
 from .experiments import GridExperiments
-from .history import page_artifacts, page_jobs
+from .grid_views import read as read_grid
+from .grid_views import summary as grid_summary
+from .history import page_artifacts, page_grids, page_jobs
 from .jobs import Jobs
 from .library import Library
 from .media_assets import MediaAssets
@@ -45,6 +47,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
                operations: Operations | None = None, poll: bool = True) -> web.Application:
     if len(token) < 32:
         raise ValueError("Authentication token must contain at least 32 characters")
+    store.bind_driver(client.origin)
     jobs = Jobs(store, client)
     grids = GridExperiments(jobs)
     library = Library(store)
@@ -174,22 +177,37 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
         return json_response(page(store, dict(request.query)))
 
     async def grid_preview(request: web.Request) -> web.Response:
-        return json_response(await grids.preview(await payload(request)))
+        compact = compact_grid(request)
+        value = await grids.preview(await payload(request))
+        return json_response(grid_summary(value) if compact else value)
+
+    def compact_grid(request: web.Request) -> bool:
+        value = request.query.get("summary", "false")
+        if value not in {"true", "false"}:
+            raise StudioError("grid_summary", "Summary must be true or false.")
+        return value == "true"
 
     async def grid_submit(request: web.Request) -> web.Response:
+        compact = compact_grid(request)
         body = await payload(request)
         existing = store.request("grid_runs", body.get("idempotency_key"), body)
         if existing is None:
             await jobs.catalog()
-        return json_response(grids.get(existing["id"]) if existing is not None else grids.submit(body), status=202)
+        value = grids.get(existing["id"], compact=compact) if existing is not None else grids.submit(body)
+        return json_response(grid_summary(value) if compact else value, status=202)
 
     async def grid_get(request: web.Request) -> web.Response:
         if "id" in request.match_info:
-            return json_response(grids.get(request.match_info["id"]))
-        return json_response({"items": [grids.get(item["id"]) for item in store.list("grid_runs")]})
+            return json_response(grids.get(request.match_info["id"], compact=compact_grid(request)))
+        return json_response(page_grids(store, dict(request.query)))
+
+    async def grid_preview_get(request: web.Request) -> web.Response:
+        return json_response(read_grid(store, "grid_previews", request.match_info["id"], compact=compact_grid(request)))
 
     async def grid_retry(request: web.Request) -> web.Response:
-        return json_response(grids.retry(request.match_info["id"], await payload(request)), status=202)
+        compact = compact_grid(request)
+        value = grids.retry(request.match_info["id"], await payload(request))
+        return json_response(grid_summary(value) if compact else value, status=202)
 
     async def request_status(request: web.Request) -> web.Response:
         with store.lock:
@@ -292,6 +310,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
     app.router.add_get("/api/v1/grids", grid_get)
     app.router.add_post("/api/v1/grids/preview", grid_preview)
     app.router.add_post("/api/v1/grids", grid_submit)
+    app.router.add_get("/api/v1/grids/previews/{id}", grid_preview_get)
     app.router.add_get("/api/v1/grids/{id}", grid_get)
     app.router.add_post("/api/v1/grids/{id}/retry", grid_retry)
     app.router.add_get("/api/v1/records/{kind}", records)

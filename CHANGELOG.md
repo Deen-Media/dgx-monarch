@@ -11,6 +11,9 @@
   reconnect handling. Bound list responses and record windows while retaining
   full provenance on demand; preserve preview membership and copied experiment
   references.
+- Preserve pending requests through malformed acknowledgements and local draft
+  recovery, replay effective seeds without reapplying styles, bind saved state
+  to its driver, and bound template/grid expansion before allocation.
 
 ## [1.2.0] - 2026-10-16
 

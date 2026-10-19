@@ -16,7 +16,7 @@ from unperformed host and browser performance acceptance.
 ## Install and start
 
 Follow [the existing installation procedure](INSTALL.md) with the `studio`
-extra added to the selected source installation. It adds only `aiohttp`; the
+extra added to the selected source installation. It adds `aiohttp` and Pillow; the
 normal Torch, Monarch and xFuser constraints still apply. Node is needed only
 when rebuilding the frontend, not when installing or running a built checkout,
 wheel or source archive.
@@ -33,6 +33,10 @@ API request and disables cross-origin access. It does not open a public port,
 configure a reverse proxy or install a service. For a remote browser, use an
 operator-managed encrypted tunnel retaining the configured Host. ComfyUI
 itself must remain on a trusted local connection or authenticated HTTPS.
+Each state directory is bound to one canonical driver origin. A different
+driver requires a separate `--state-dir`; this prevents old artifact names from
+being served by an unrelated driver. Existing unbound draft databases adopt the
+selected origin on their first upgraded start, so use their original driver.
 
 Pass an existing `--config /absolute/path/cluster.toml` to use the supported
 cluster reporting actions. Management actions additionally require
@@ -92,6 +96,9 @@ Submitted jobs keep requested and effective settings, the workflow and its
 digest, adapter version and lineage. Missing fingerprints and execution facts
 are labelled unavailable. Reproduction reconstructs configuration; it does not
 promise deterministic pixels across hardware and software versions.
+Reuse loads the recorded executable prompt with its resolved seeds as a fixed
+draft. Already expanded styles and inserted LoRAs remain in that prompt and are
+not applied twice; original workflow metadata is retained separately.
 
 Parameter grids use typed workflow inputs or named style stacks as axes. A
 style-axis value is an ordered list of saved style IDs; an empty list selects
@@ -228,9 +235,17 @@ decoding accepts at most 16 megapixels and 8 MiB per source image, returns at
 most 320 pixels per edge and runs at most two decodes concurrently. Input
 uploads accept 2 MiB encoded source files and preserve mask alpha after
 orientation normalization. Live previews retain at most 16 identity-bound
-frames. Grid previews allow at most 32 MiB of complete cell submissions.
+frames. Expanded style text and complete submission previews each have a 4 MiB
+JSON budget. Grid expansion is bounded before copying parameters. All cell
+previews and the grid review commit together under a combined 32 MiB budget;
+failure leaves no partial previews. Grid history and polling use compact views
+under an 8 MiB budget, with full records fetched only for explicit export.
 Random seeds honor the installed input bounds and JavaScript's exact integer
 range so the generated seed can be reused without rounding.
+Definitive pre-acceptance refusals release pending review controls. Incomplete
+or malformed acknowledgements, authentication failures and transport timeouts
+retain the exact request identity for reconciliation. Corrupt optional draft or
+layout storage cannot clear that protection.
 
 ## Development
 

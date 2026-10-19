@@ -363,7 +363,12 @@ class Library:
             existing = self.store.request("library_imports", key, request)
             if existing is not None:
                 return existing
-            plan = self.store.get("library_previews", request.get("preview_id", ""))
+            try:
+                plan = self.store.get("library_previews", request.get("preview_id", ""))
+            except StudioError as exc:
+                if exc.code != "not_found":
+                    raise
+                raise StudioError("library_preview", "Import review is unavailable; review the library again.", 409) from exc
             if request.get("confirmed") is not True or request.get("digest") != plan["digest"]:
                 raise StudioError("library_confirmation", "Confirm this exact reviewed library import.", 409)
             if not plan["ready"] or plan["expires_at"] < timestamp():

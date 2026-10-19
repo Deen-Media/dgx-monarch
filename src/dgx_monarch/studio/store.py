@@ -9,6 +9,7 @@ import stat
 import threading
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .contracts import (
     EVENT_BYTE_LIMIT,
@@ -77,6 +78,23 @@ class Store:
 
     def close(self) -> None:
         self.db.close()
+
+    def bind_driver(self, origin: str) -> None:
+        """Keep durable prompts and media descriptors on their original driver."""
+        parsed = urlsplit(origin)
+        host = (parsed.hostname or "").lower()
+        if ":" in host:
+            host = f"[{host}]"
+        port = parsed.port
+        authority = host if port is None or (parsed.scheme, port) in {("http", 80), ("https", 443)} else f"{host}:{port}"
+        canonical_origin = f"{parsed.scheme}://{authority}"
+        with self.lock, self.transaction():
+            row = self.db.execute("SELECT value FROM meta WHERE key='driver_origin'").fetchone()
+            if row is not None and row[0] != canonical_origin:
+                raise StudioError("driver_identity_mismatch",
+                                  "This state directory belongs to a different driver origin. "
+                                  "Use its original driver or choose a separate --state-dir.", 409)
+            self.db.execute("INSERT OR IGNORE INTO meta VALUES ('driver_origin',?)", (canonical_origin,))
 
     def get(self, kind: str, object_id: str) -> dict[str, Any]:
         if not isinstance(object_id, str):

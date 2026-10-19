@@ -6,6 +6,7 @@ from typing import Any
 
 from .contracts import StudioError, canonical, digest, identifier, object_value, timestamp
 from .drafts import DraftError, expand_grid
+from .grid_views import GRID_BYTES, VIEW_BYTES, live_view, read, summary
 from .jobs import Jobs
 from .workflows import inspect_workflow
 
@@ -43,7 +44,7 @@ class GridExperiments:
                                    base_seed=request.get("base_seed", 0) if policy != "fixed" else 0, excluded=excluded)
         except DraftError as exc:
             raise StudioError("grid_axes", str(exc)) from exc
-        cells, byte_count = [], 0
+        cells, previews, byte_count = [], [], 0
         style_cache: dict[str, dict[str, Any]] = {}
         axis_names = {axis["name"] for axis in axes}
         for cell in expanded["cells"]:
@@ -68,10 +69,11 @@ class GridExperiments:
                             records.append(deepcopy(style_cache[identity]))
                         cell_draft.update(style_records=records, styles=[{**row["data"], "id": row["id"]} for row in records])
                         row["style_records"] = records
-                    preview = self.jobs.build_preview(cell_draft, schema=schema, runtime=runtime)
+                    preview = self.jobs.build_preview(cell_draft, schema=schema, runtime=runtime, persist=False)
                     byte_count += len(canonical(preview).encode())
-                    if byte_count > 32 * 1024 * 1024:
+                    if byte_count > GRID_BYTES:
                         raise StudioError("grid_size", "Expanded submissions exceed the 32 MiB grid budget.")
+                    previews.append(preview)
                     row.update(preview_id=preview["id"], submission_digest=preview["digest"])
                 except ValueError as exc:
                     if isinstance(exc, StudioError) and exc.code == "grid_size":
@@ -83,7 +85,13 @@ class GridExperiments:
                  "schema_digest": digest(schema), "ready": bool(expanded["job_count"]) and all(
                      row["excluded"] or not row["errors"] for row in cells)}
         value["digest"] = digest(value)
-        return self.store.create("grid_previews", value)
+        if byte_count + len(canonical(value).encode()) > GRID_BYTES or len(canonical(summary(value)).encode()) > VIEW_BYTES:
+            raise StudioError("grid_size", "Expanded grid exceeds its 32 MiB storage or 8 MiB display budget.")
+        with self.store.lock, self.store.transaction():
+            for preview in previews:
+                self.store._put("previews", preview, 1)
+            self.store._put("grid_previews", value, 1)
+        return value
 
     def submit(self, request: dict[str, Any]) -> dict[str, Any]:
         existing = self.store.request("grid_runs", request.get("idempotency_key"), request)
@@ -124,24 +132,11 @@ class GridExperiments:
                 "experiment_id": parent, "cell_index": index, "retry_of": retry_of,
                 "created_at": timestamp(), "updated_at": timestamp()}
 
-    def get(self, identity: str) -> dict[str, Any]:
-        value = self.store.get("grid_runs", identity)
-        cells = deepcopy(value["cells"])
-        artifacts = self.store.artifacts_for_jobs([identity for cell in cells for identity in cell["attempts"]])
-        for cell in cells:
-            if cell["excluded"]:
-                continue
-            job = self.store.get("jobs", cell["job_id"])
-            cell.update(state=job["state"], prompt_id=job.get("prompt_id"),
-                        artifact_ids=[row["id"] for row in artifacts if row.get("job_id") in cell["attempts"]])
-        states = {cell["state"] for cell in cells if not cell["excluded"]}
-        state = ("unknown" if "unknown" in states else "running" if states & {"running", "cancel_requested"} else
-                 "submitting" if "submitting" in states else "queued" if "queued" in states else
-                 "succeeded" if states == {"succeeded"} else "completed_with_failures")
-        return self.store.update("grid_runs", identity, {"cells": cells, "state": state})
+    def get(self, identity: str, *, compact: bool = False) -> dict[str, Any]:
+        return live_view(self.store, read(self.store, "grid_runs", identity, compact=compact))
 
     def retry(self, identity: str, request: dict[str, Any]) -> dict[str, Any]:
-        bound_request = {"grid_id": identity, **request}
+        bound_request = {**request, "grid_id": identity}
         existing = self.store.request("grid_retries", request.get("idempotency_key"), bound_request)
         if existing is not None:
             return self.get(identity)

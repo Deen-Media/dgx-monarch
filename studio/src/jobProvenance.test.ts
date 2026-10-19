@@ -38,6 +38,23 @@ test('known full immutable provenance needs no additional request', async () => 
   assert.equal(await fullJob(client, provenance.id, provenance), provenance);
 });
 
+test('full external API prompt provenance is usable without a UI workflow', async () => {
+  const external = {
+    ...provenance,
+    submission: {
+      prompt: {
+        '1': { class_type: 'Render', inputs: { seed: 42 } },
+      },
+    },
+  };
+  const client = {
+    request: () => {
+      throw new Error('Unexpected request');
+    },
+  } as unknown as StudioClient;
+  assert.equal(await fullJob(client, external.id, external), external);
+});
+
 test('legacy list rows without workflows also request full provenance', async () => {
   let requested = false;
   const client = {
