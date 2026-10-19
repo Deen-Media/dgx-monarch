@@ -1,5 +1,11 @@
 include __init__.py
 include .gitignore
+include .gitattributes
+recursive-include studio *.json *.js *.ts *.svelte *.css *.html *.md *.py
+include studio/.gitignore
+prune studio/node_modules
+recursive-include src/dgx_monarch/studio/data *.json
+recursive-include src/dgx_monarch/studio/static *.html *.js *.css *.json *.svg
 include .pre-commit-config.yaml
 include CHANGELOG.md
 include CONTRIBUTING.md
@@ -51,6 +57,7 @@ recursive-include scripts *.md *.sh
 recursive-include tests *.json *.py
 recursive-include tests/fixtures *.jsonl *.txt
 include tests/fixtures/workflows/README.md
+recursive-include tests/fixtures/studio *.md
 recursive-include tools *.py
 recursive-include tools *.mjs
 include tools/leak_allowlist.toml

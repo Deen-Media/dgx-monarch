@@ -170,6 +170,10 @@ and rollback.
 
 ## Documentation
 
+[Studio draft](docs/STUDIO.md) describes the optional browser companion and its
+current acceptance gaps. Existing CLI, TUI and ComfyUI workflows remain the
+supported interfaces while Studio's complete specification is under development.
+
 [Documentation index](docs/README.md) · [Model guide](docs/MODELS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [FAQ](docs/FAQ.md) · [Contributing](CONTRIBUTING.md)
 
 DGX Monarch uses [PyTorch Monarch](https://github.com/meta-pytorch/monarch) for actors and [xDiT / xfuser](https://github.com/xdit-project/xDiT) for parallel attention, inside [ComfyUI](https://github.com/comfyanonymous/ComfyUI). These dependencies are installed separately; this repository does not vendor their code.

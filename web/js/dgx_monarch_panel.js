@@ -31,6 +31,8 @@ import {
 import { button, el } from "./dgx_monarch_ui.js";
 import { brandHeader, brandMark, updateBrand } from "./dgx_monarch_brand.js";
 
+import { MEMORY, STATUS, formatMetric, availableMemoryStatus } from "./dgx_monarch_presentation.js";
+
 const POLL_MS = 2500;
 let refreshInFlight = false;
 // Page lifetime: the last rail byte counters per host, for the GB/s between polls.
@@ -41,7 +43,7 @@ const actionState = {
 };
 
 function dot(ok) {
-    return el("span", `color:${ok ? "#4ade80" : "#f87171"};`, "●");
+    return el("span", `color:${ok ? STATUS.ready : STATUS.unknown};`, "●");
 }
 
 function legendItem(parent, color, label, title) {
@@ -70,31 +72,38 @@ function hostCard(name, stats, meta, rates) {
     const { total, used, gpu: gpuMem, slab, pool, anon: anonSeg, other,
             reclaimable: reclaim, free } = computeMemorySegments(stats, meta);
 
+    const memoryKnown = Number.isFinite(stats.mem_gib?.MemTotal) && stats.mem_gib.MemTotal > 0
+        && Number.isFinite(stats.mem_gib?.MemAvailable);
+    const available = stats.mem_gib?.MemAvailable;
+    const breakdownKnown = memoryKnown && [stats.mem_gib?.AnonPages, stats.mem_gib?.Shmem,
+        stats.gpu_proc_gib, stats.pool_gib, mm?.slab_gib].every(Number.isFinite);
     const title = el("div", "font-weight:600;display:flex;justify-content:space-between;");
     title.appendChild(el("span", "", name));
-    title.appendChild(el("span", "opacity:.7;font-weight:400;",
-        `used ${used.toFixed(1)} / ${total.toFixed(1)}G`));
+    title.appendChild(el("span", `font-weight:400;color:${STATUS[availableMemoryStatus(available)]};`,
+        memoryKnown ? `used ${formatMetric(used, "GiB")} / ${formatMetric(total, "GiB")} · avail ${formatMetric(available, "GiB")}`
+            : "memory unknown"));
     card.appendChild(title);
     // Six colored categories plus the background partition MemTotal exactly
     // (the accounting itself lives in dgx_monarch_segments.js).
-    card.appendChild(bar([[gpuMem, "#22d3ee"], [slab, "#34d399"], [pool, "#fb923c"],
-                          [anonSeg, "#c084fc"], [other, "#64748b"],
-                          [reclaim, "#facc15"]], total));
+    if (breakdownKnown) card.appendChild(bar([[gpuMem, MEMORY.gpu], [slab, MEMORY.slab], [pool, MEMORY.pool],
+                          [anonSeg, MEMORY.anonymous], [other, MEMORY.other],
+                          [reclaim, MEMORY.cache]], total));
     const legend = el("div", "font-size:11px;opacity:.75;");
-    legendItem(legend, "#22d3ee", `gpu ${gpuMem.toFixed(1)}G (models+CUDA)`);
-    legendItem(legend, "#34d399", `slab ${slab.toFixed(1)}G`);
-    legendItem(legend, "#fb923c", `pool ${pool.toFixed(1)}G`,
+    legendItem(legend, MEMORY.gpu, `gpu ${gpuMem.toFixed(1)} GiB (models+CUDA)`);
+    legendItem(legend, MEMORY.slab, `slab ${slab.toFixed(1)} GiB`);
+    legendItem(legend, MEMORY.pool, `pool ${pool.toFixed(1)} GiB`,
         "Retained allocator pool: the load-staging high-water mark, kept after model unload. It returns " +
         "to the OS only when its process exits; the Reset attached mesh button ends worker actor processes.");
-    legendItem(legend, "#c084fc", `anon ${anonSeg.toFixed(1)}G`);
-    legendItem(legend, "#64748b", `other ${other.toFixed(1)}G`);
-    legendItem(legend, "#facc15", `cache ${reclaim.toFixed(1)}G reclaimable`);
-    legend.appendChild(el("span", "opacity:.6;", `□ free ${free.toFixed(1)}G`));
-    card.appendChild(legend);
+    legendItem(legend, MEMORY.anonymous, `anon ${anonSeg.toFixed(1)} GiB`);
+    legendItem(legend, MEMORY.other, `other ${other.toFixed(1)} GiB`);
+    legendItem(legend, MEMORY.cache, `cache ${reclaim.toFixed(1)} GiB reclaimable`);
+    legend.appendChild(el("span", "opacity:.6;", `□ free ${free.toFixed(1)} GiB`));
+    if (breakdownKnown) card.appendChild(legend);
+    else card.appendChild(el("div", "opacity:.7;", "memory breakdown unknown"));
     if (gpu.util_pct !== undefined) {
         card.appendChild(el("div", "font-size:11px;opacity:.75;margin-top:2px;",
-            `GPU ${gpu.util_pct}% · ${((gpu.clock_mhz || 0) / 1000).toFixed(2)} GHz · ` +
-            `${gpu.power_w ?? "?"} W · ${gpu.temp_c ?? "?"}°C`));
+            `GPU ${formatMetric(gpu.util_pct, "%")} · ${formatMetric(gpu.clock_mhz, "GHz", true)} · ` +
+            `${formatMetric(gpu.power_w, "W")} · ${formatMetric(gpu.temp_c, "°C")}`));
     }
     // One line per box: RX and TX GB/s per rail between two polls, which
     // refreshOnce measures once per box, and in red the state of any rail that
@@ -103,7 +112,7 @@ function hostCard(name, stats, meta, rates) {
     if (railParts.length) {
         const line = el("div", "font-size:11px;opacity:.75;margin-top:2px;");
         for (const part of railParts) {
-            line.appendChild(part.alert ? el("span", "color:#f87171;", part.text)
+            line.appendChild(part.alert ? el("span", `color:${STATUS.blocked};`, part.text)
                 : document.createTextNode(part.text));
         }
         card.appendChild(line);
@@ -113,9 +122,9 @@ function hostCard(name, stats, meta, rates) {
         const line = el("div", "font-size:11px;margin-top:2px;");
         line.appendChild(document.createTextNode(`${mm.lora_mode || ""}` +
             (mm.unbake_file_backed_gib != null
-                ? ` · unbake ${mm.unbake_file_backed_gib}G file-backed` : "") +
+                ? ` · unbake ${mm.unbake_file_backed_gib} GiB file-backed` : "") +
             " · verify fails "));
-        line.appendChild(el("span", `color:${fails ? "#f87171" : "#4ade80"};`, String(fails)));
+        line.appendChild(el("span", `color:${fails ? STATUS.blocked : STATUS.ready};`, String(fails)));
         card.appendChild(line);
     }
     return card;
@@ -123,12 +132,12 @@ function hostCard(name, stats, meta, rates) {
 
 function timelineRow(label, seconds, span) {
     // A fleet row passes a span on the driver's clock; a node row passes none.
-    // An unknown wall prints as a dash: 0.00s would read as a measured zero.
+    // An unknown wall stays labelled unknown; 0.00 s means a measured zero.
     const line = el("div", "display:flex;justify-content:space-between;gap:8px;");
     line.appendChild(el("span",
         "overflow:hidden;text-overflow:ellipsis;white-space:nowrap;", label));
     if (span) line.appendChild(el("span", "opacity:.55;flex:0 0 auto;", span));
-    const wall = Number.isFinite(seconds) ? `${seconds.toFixed(2)}s` : "-";
+    const wall = formatMetric(seconds, "s");
     line.appendChild(el("span", "opacity:.7;flex:0 0 auto;", wall));
     return line;
 }
@@ -353,7 +362,7 @@ async function refreshOnce(root, zones) {
         g.appendChild(document.createTextNode(
             ceremonyRender ? "gates for this render: " : "gates: "));
         for (const [verdict, count] of verdicts) {
-            const color = verdict === "PASS" ? "#4ade80" : verdict === "FAIL" ? "#f87171" : "#facc15";
+            const color = verdict === "PASS" ? STATUS.ready : verdict === "FAIL" ? STATUS.blocked : STATUS.degraded;
             g.appendChild(el("span", `color:${color};`, `${verdict}:${count}`));
             g.appendChild(document.createTextNode(" "));
         }

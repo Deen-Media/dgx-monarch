@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+- Add an optional Studio companion with bundled workflow controls and durable
+  job records. This remains an incomplete draft; see the
+  [acceptance record](docs/STUDIO_ACCEPTANCE.md) before enabling it.
+
 ## [1.2.0] - 2026-10-16
 
 **Upgrading from 1.1.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-110): the first update runs the 1.1.0

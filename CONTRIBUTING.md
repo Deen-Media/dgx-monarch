@@ -42,6 +42,13 @@ defaults.
 
 Choose additional checks based on the files and behavior you changed:
 
+For the optional Studio interface, also run `npm ci`, `npm run check`,
+`npm test`, and `npm run build` in `studio/`, then
+`python tools/gen_studio_inventory.py --check`. Commit the generated bundle
+with the source and verify `dgxm-studio --check` from both installed package
+formats. [Studio acceptance](docs/STUDIO_ACCEPTANCE.md) remains separate from
+CPU and mocked HTTP coverage.
+
 | Change | Validation |
 |---|---|
 | Documentation or comments | Run the affected documentation tests, check links and examples, and verify any source citations. No hardware run is needed for wording alone. |

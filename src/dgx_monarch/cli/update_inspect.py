@@ -12,6 +12,7 @@ import tomllib
 from pathlib import Path, PurePosixPath
 
 from ..runtime_provenance import dgx_source_manifest_sha256
+from ..studio_resource_validation import validate_studio_resources
 from .update_release import ReleaseMetadata
 
 _SHA = re.compile(r"(?:[0-9a-f]{40}|[0-9a-f]{64})")
@@ -118,6 +119,7 @@ def inspect_checkout(
     )
     if actual != tracked:
         raise RuntimeError("target import source does not equal the tracked commit")
+    validate_studio_resources(str(package))
     dependency_manifest = hashlib.sha256(
         json.dumps(
             dependencies, separators=(",", ":"), ensure_ascii=True

@@ -17,9 +17,11 @@ from typing import Any, cast
 
 from rich.text import Text
 
+from ..studio.presentation import available_memory_status, format_metric
 from .braille import EVENT_STYLES, bar, braille_rows, segmented_bar
 from .brand import header_layout, measured_activity, supports_unicode
 from .data import Poller, RingStore, event_time
+from .presentation import THEMES, gpu_summary, known_number, last_render_facts, terminal_palette
 from .readiness_view import readiness_text
 from .run_story import RunStory, StoryTrack, story_spans
 from .view_helpers import (
@@ -32,26 +34,6 @@ from .view_helpers import (
     gate_chip_style,
 )
 
-# The six memory-bar segments (model is the gpu segment) take their colors from
-# the theme, never one of the sixteen standard ANSI names: a terminal can remap
-# those slots until two look alike. "spark" is the browser sidebar's six
-# swatches in hex, so a box reads the same in both places. "mono" alternates
-# light and dark greys so neighbors stand apart. Status keys are exempt: "spark"
-# keeps ANSI green, yellow and red, so the terminal's own red still means danger.
-THEMES = {
-    "spark": {"accent": "bright_cyan", "model": "#22d3ee", "slab": "#34d399",
-              "pool": "#fb923c", "anon": "#c084fc", "other": "#64748b",
-              "cache": "#facc15", "good": "green", "warn": "yellow", "bad": "red",
-              "bolt": "bright_yellow"},
-    "ember": {"accent": "orange1", "model": "dark_orange", "slab": "light_salmon1",
-              "pool": "hot_pink3", "anon": "red3", "other": "grey50",
-              "cache": "gold1", "good": "green3", "warn": "orange1", "bad": "red1",
-              "bolt": "orange1"},
-    "mono": {"accent": "white", "model": "grey100", "slab": "grey54",
-             "pool": "grey85", "anon": "grey42", "other": "grey70",
-             "cache": "grey30", "good": "white", "warn": "grey85", "bad": "white",
-             "bolt": "white"},
-}
 # A panel's round border and `padding: 0 1` take four columns, and the summary
 # line starts with one space.
 _SUMMARY_INSET = 5
@@ -120,7 +102,7 @@ class DgxmTopApp:
 
             @property
             def pal(self):
-                return THEMES[self.theme_name]
+                return terminal_palette(self.theme_name, self.console.color_system)
 
             def current(self) -> dict | None:
                 return self.ring.at(self.cursor if self.paused else -1)
@@ -242,11 +224,27 @@ class DgxmTopApp:
                     # Five used categories sum to MemTotal - MemAvailable.
                     # Reclaimable cache and the uncolored free remainder split
                     # MemAvailable, so colored segments + background = MemTotal.
-                    total = mem.get("MemTotal") or 121.6
-                    avail = mem.get("MemAvailable") or 0
+                    total = mem.get("MemTotal")
+                    if not known_number(total) or total <= 0 or not known_number(mem.get("MemAvailable")):
+                        if i:
+                            out.append("\n")
+                        out.append(f"{host[-4:]:>5s} memory unknown", style=pal["bad"])
+                        continue
+                    avail = mem["MemAvailable"]
                     anon = mem.get("AnonPages") or 0
                     cache = (mem.get("Cached") or 0) + (mem.get("Buffers") or 0)
                     wmeta = tick.get("workers", {}).get(host) or {}
+                    memory = wmeta.get("memory") or {}
+                    if not all(known_number(value) for value in (
+                            mem.get("AnonPages"), mem.get("Shmem"), stats.get("gpu_proc_gib"),
+                            stats.get("pool_gib"), memory.get("slab_gib"))):
+                        if i:
+                            out.append("\n")
+                        out.append(f"{host[-4:]:>5s} total {format_metric(total, 'GiB')} "
+                                   f"avail {format_metric(avail, 'GiB')} · memory breakdown unknown", style="dim")
+                        if stats.get("gpu"):
+                            out.append("\n      " + gpu_summary(stats), style="dim")
+                        continue
                     # GB10: CUDA allocations are driver-owned pages outside
                     # AnonPages; the nvidia-smi per-process sum is models+CUDA.
                     # Capping each later segment by the used memory left absorbs
@@ -281,39 +279,36 @@ class DgxmTopApp:
                              (other, pal["other"]), (reclaim, pal["cache"])], total, width):
                         out.append(span, style=style_key)
                     out.append("] ")
-                    out.append(f"used {used:5.1f}/{total:.0f}G  avail {avail:5.1f}G",
-                               style=pal["good"] if avail > 20 else pal["bad"])
+                    out.append(f"used {used:5.1f}/{total:.1f} GiB  avail {format_metric(avail, 'GiB')}",
+                               style=pal["good"] if available_memory_status(avail) == "ready" else pal["warn"])
                     gpu = stats.get("gpu", {})
                     if gpu:
-                        out.append(f"   GPU {gpu.get('util_pct', 0):3d}% "
-                                   f"{(gpu.get('clock_mhz') or 0) / 1000:.2f}GHz "
-                                   f"{gpu.get('power_w', 0):5.1f}W {gpu.get('temp_c', 0):2d}°C",
-                                   style="dim")
+                        out.append("   " + gpu_summary(stats), style="dim")
                     mm = wmem
                     if mm:
                         out.append("\n      ")
                         out.append(f"{mm.get('lora_mode', '?')} ", style=pal["accent"])
                         fb = mm.get("unbake_file_backed_gib")
                         if fb is not None:
-                            out.append(f"unbake {fb}G file-backed  ", style="dim")
+                            out.append(f"unbake {fb} GiB file-backed  ", style="dim")
                         fails = mm.get("swap_verify_failures", 0)
                         out.append(f"verify✓ fails {fails}",
                                    style=pal["good"] if not fails else f"bold {pal['bad']}")
                     out.append("\n      ", style="dim")
                     out.append("█", style=pal["model"])
-                    out.append(f" gpu {gpu_mem:.1f}G (models+CUDA)  ", style="dim")
+                    out.append(f" gpu {gpu_mem:.1f} GiB (models+CUDA)  ", style="dim")
                     if slab:
                         out.append("█", style=pal["slab"])
-                        out.append(f" slab {slab:.1f}G (model, zero-copy)  ", style="dim")
+                        out.append(f" slab {slab:.1f} GiB (model, zero-copy)  ", style="dim")
                     out.append("█", style=pal["pool"])
-                    out.append(f" pool {pool:.1f}G (retained)  ", style="dim")
+                    out.append(f" pool {pool:.1f} GiB (retained)  ", style="dim")
                     out.append("█", style=pal["anon"])
-                    out.append(f" anon {anon_seg:.1f}G  ", style="dim")
+                    out.append(f" anon {anon_seg:.1f} GiB  ", style="dim")
                     out.append("█", style=pal["other"])
-                    out.append(f" other {other:.1f}G  ", style="dim")
+                    out.append(f" other {other:.1f} GiB  ", style="dim")
                     out.append("█", style=pal["cache"])
-                    out.append(f" cache {reclaim:.1f}G reclaimable  ", style="dim")
-                    out.append(f"free {max(0.0, avail - reclaim):.1f}G", style="dim")
+                    out.append(f" cache {reclaim:.1f} GiB reclaimable  ", style="dim")
+                    out.append(f"free {max(0.0, avail - reclaim):.1f} GiB", style="dim")
                 return out
 
             def draw_rails(self, tick):
@@ -324,26 +319,27 @@ class DgxmTopApp:
                 width = max(20, (self.size.width - 30) // 2)
                 hosts = sorted(tick.get("hosts", {}).items())
                 shown = False
-                for host, entry in hosts[:1]:  # rails are symmetric: the first host by name is enough
+                for host, entry in hosts:
                     for rail, rate in sorted((entry.get("rails") or {}).items()):
-                        gbs = rate["rx_gbs"] + rate["tx_gbs"]
-                        series = _series(
-                            self.ring, self.cursor if self.paused else -1,
-                            lambda t, h=host, r=rail: (
-                                (t["hosts"].get(h, {}).get("rails") or {}).get(r, {})
-                                .get("rx_gbs", 0)
-                                + (t["hosts"].get(h, {}).get("rails") or {}).get(r, {})
-                                .get("tx_gbs", 0)),
-                            width * 2)
-                        rows = braille_rows(series, width, 1, vmax=25.0)
-                        out.append(f"{rail:>4s} ", style=f"bold {pal['accent']}")
-                        out.append(rows[0] if rows else "", style=pal["accent"])
-                        out.append(f" {gbs:5.2f} GB/s   ", style="dim")
+                        if shown:
+                            out.append("\n")
+                        out.append(f"{host} {rail} ", style=f"bold {pal['accent']}")
+                        for direction in ("rx", "tx"):
+                            key = direction + "_gbs"
+                            series = _series(
+                                self.ring, self.cursor if self.paused else -1,
+                                lambda t, h=host, r=rail, k=key: (
+                                    (t.get("hosts", {}).get(h, {}).get("rails") or {}).get(r, {}).get(k)),
+                                width * 2)
+                            rows = braille_rows(series, width, 1, vmax=25.0)
+                            out.append(f"{direction} ", style="dim")
+                            out.append(rows[0] if rows else "", style=pal["accent"])
+                            out.append(f" {format_metric(rate.get(key), 'GB/s')}  ", style="dim")
                         shown = True
-                    if shown:
-                        out.append("\n     ")
-                        out.append_text(_marker_lane(
-                            self.ring, self.cursor if self.paused else -1, width))
+                if shown:
+                    out.append("\n     ")
+                    out.append_text(_marker_lane(
+                        self.ring, self.cursor if self.paused else -1, width))
                 return out if shown else Text("no RDMA rails visible", style="dim")
 
             def draw_render(self, tick):
@@ -354,8 +350,8 @@ class DgxmTopApp:
                 out = Text()
                 counts = (tick.get("ledger") or {}).get("combinations") or {}
                 if render.get("active"):
-                    step = render.get("step") or 0
-                    steps = render.get("steps") or 1
+                    step = render.get("step")
+                    steps = render.get("steps")
                     # Distinguish proof, cross-check, and requested renders.
                     try:
                         label = self.view().live_label(render)
@@ -363,18 +359,25 @@ class DgxmTopApp:
                         label = "render"
                     out.append(f" {label} ", style=f"bold {pal['accent']} reverse")
                     out.append(f" {render.get('model', '')} ", style="bold")
-                    out.append(f" step {step}/{steps} ")
-                    out.append(bar(step / max(1, steps), max(10, self.size.width - 60)),
-                               style=pal["accent"])
+                    out.append(f" step {format_metric(step, 'count')}/{format_metric(steps, 'count')} ")
+                    if known_number(step) and known_number(steps) and steps > 0:
+                        out.append(bar(step / steps, max(10, self.size.width - 60)), style=pal["accent"])
                     sps = render.get("sec_per_step")
-                    if sps:
+                    if known_number(step) and known_number(steps) and steps > 0 and known_number(sps):
                         eta = max(0, (steps - step)) * sps
-                        out.append(f" {sps:.2f}s/it eta {eta:4.0f}s", style="dim")
+                        out.append(f" {format_metric(sps, 's')}/step · estimated remaining {format_metric(eta, 's')}", style="dim")
                 else:
                     out.append(" idle ", style="dim reverse")
-                    last = render.get("last_wall_s")
-                    if last:
-                        out.append(f"  last render {last}s", style="dim")
+                    last = render.get("last")
+                    if isinstance(last, dict):
+                        out.append(f"  last render {last.get('model', 'unknown')} · "
+                                   f"{format_metric(last.get('wall_s'), 's')} · "
+                                   f"{format_metric(last.get('steps'), 'count')} steps", style="dim")
+                        facts = last_render_facts(last)
+                        if facts:
+                            out.append("\n " + facts, style="dim")
+                    elif render.get("last_wall_s") is not None:
+                        out.append("  last render " + format_metric(render["last_wall_s"], "s"), style="dim")
                 if counts:
                     # Color each verdict's count, not the whole row; gate_chip_style says why.
                     out.append("   gates:")

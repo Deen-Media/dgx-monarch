@@ -1,0 +1,3 @@
+"""Generated Studio resource hashes; regenerate after building the frontend."""
+
+RESOURCE_SHA256 = {'studio/data/parity.json': 'c7815ddf6f2bd288d8a7a36a19ab35229b9658e0e96d92515073309ec4d58d0c', 'studio/data/presentation.json': '33a53e01a0fa3bf799bfb42716adf4ddfb095181512718f82ddb4da930aa956b', 'studio/data/workflows.json': '4707c75a14fea1ba3d655c4b2972bb55e3f16d7c34fcc303c40d3c68177046ca', 'studio/static/assets/index-yUzH7Qw5.js': '9323904baf77ab4e41a4f54d6270b4fb8f0fdbf88093b6f44c9f3556d5be04a0', 'studio/static/assets/index-zdB5ZhgI.css': '0c469fae40d5968d85ab1367e3a55bc752d7b3e129bfdb1d0eb24da7f7516004', 'studio/static/index.html': 'a6fcf9773634ff787bd17972e678c240ded6bac508ac1207becd532c2a15b88e'}

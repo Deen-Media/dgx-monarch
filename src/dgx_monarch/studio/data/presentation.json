@@ -1,0 +1,372 @@
+{
+  "free_memory_color": null,
+  "freshness": {
+    "default_interval_s": 1,
+    "future_timestamp": "unknown",
+    "minimum_stale_s": 3,
+    "retain_last_sample": true,
+    "source_sampling": "host route cached 1 s; retained pool cached 10 s; preserve source timestamps",
+    "stale_after_intervals": 3
+  },
+  "memory": {
+    "anonymous": {
+      "ansi": "magenta",
+      "ansi256": 141,
+      "hex": "#c084fc",
+      "label": "Anonymous"
+    },
+    "cache": {
+      "ansi": "yellow",
+      "ansi256": 220,
+      "hex": "#facc15",
+      "label": "Reclaimable cache"
+    },
+    "gpu": {
+      "ansi": "cyan",
+      "ansi256": 45,
+      "hex": "#22d3ee",
+      "label": "GPU"
+    },
+    "other": {
+      "ansi": "white",
+      "ansi256": 244,
+      "hex": "#64748b",
+      "label": "Other"
+    },
+    "pool": {
+      "ansi": "yellow",
+      "ansi256": 208,
+      "hex": "#fb923c",
+      "label": "Retained pool"
+    },
+    "slab": {
+      "ansi": "green",
+      "ansi256": 79,
+      "hex": "#34d399",
+      "label": "Slab"
+    }
+  },
+  "memory_order": [
+    "gpu",
+    "slab",
+    "pool",
+    "anonymous",
+    "other",
+    "cache"
+  ],
+  "memory_overlap": {
+    "partition_source": "web/js/dgx_monarch_segments.js",
+    "reason": "Retained pools overlap AnonPages and slabs overlap Shmem; GPU accounting shares the physical UMA total. Apply the bounded partition before stacking.",
+    "stack_raw_counters": false
+  },
+  "metrics": [
+    {
+      "aggregation": "none",
+      "id": "host.memory.total",
+      "missing": "unknown",
+      "name": "Total memory",
+      "safety_authority": "backend_policy",
+      "source": "mem_gib.MemTotal",
+      "threshold": null,
+      "unit": "GiB"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.memory.available",
+      "missing": "unknown",
+      "name": "Available memory",
+      "safety_authority": "backend_policy",
+      "source": "mem_gib.MemAvailable",
+      "threshold": "available_memory_gib",
+      "unit": "GiB"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.memory.gpu",
+      "missing": "unknown",
+      "name": "GPU memory",
+      "safety_authority": "backend_policy",
+      "source": "gpu_proc_gib",
+      "threshold": null,
+      "unit": "GiB"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.memory.slab",
+      "missing": "unknown",
+      "name": "Slab",
+      "safety_authority": "backend_policy",
+      "source": "worker.memory.slab_gib",
+      "threshold": null,
+      "unit": "GiB"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.memory.pool",
+      "missing": "unknown",
+      "name": "Retained pool",
+      "safety_authority": "backend_policy",
+      "source": "pool_gib",
+      "threshold": null,
+      "unit": "GiB"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.memory.anonymous",
+      "missing": "unknown",
+      "name": "Anonymous",
+      "safety_authority": "backend_policy",
+      "source": "mem_gib.AnonPages",
+      "threshold": null,
+      "unit": "GiB"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.memory.cache",
+      "missing": "unknown",
+      "name": "Reclaimable cache",
+      "safety_authority": "backend_policy",
+      "source": "derived: min(MemAvailable, max(0, MemAvailable - MemFree))",
+      "threshold": null,
+      "unit": "GiB"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.gpu.utilization",
+      "missing": "unknown",
+      "name": "GPU utilization",
+      "safety_authority": "backend_policy",
+      "source": "gpu.util_pct",
+      "threshold": null,
+      "unit": "%"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.gpu.clock",
+      "missing": "unknown",
+      "name": "GPU clock",
+      "safety_authority": "backend_policy",
+      "source": "gpu.clock_mhz",
+      "threshold": null,
+      "unit": "MHz"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.gpu.power",
+      "missing": "unknown",
+      "name": "GPU power",
+      "safety_authority": "backend_policy",
+      "source": "gpu.power_w",
+      "threshold": null,
+      "unit": "W"
+    },
+    {
+      "aggregation": "none",
+      "id": "host.gpu.temperature",
+      "missing": "unknown",
+      "name": "GPU temperature",
+      "safety_authority": "backend_policy",
+      "source": "gpu.temp_c",
+      "threshold": null,
+      "unit": "°C"
+    },
+    {
+      "aggregation": "per_host_per_rail_rate",
+      "id": "host.rail.rx",
+      "missing": "unknown",
+      "name": "Rail receive",
+      "safety_authority": "backend_policy",
+      "source": "rails.*.rx_bytes",
+      "threshold": null,
+      "unit": "GB/s"
+    },
+    {
+      "aggregation": "per_host_per_rail_rate",
+      "id": "host.rail.tx",
+      "missing": "unknown",
+      "name": "Rail transmit",
+      "safety_authority": "backend_policy",
+      "source": "rails.*.tx_bytes",
+      "threshold": null,
+      "unit": "GB/s"
+    },
+    {
+      "aggregation": "none",
+      "id": "render.step",
+      "missing": "unknown",
+      "name": "Step",
+      "safety_authority": "backend_policy",
+      "source": "render.step",
+      "threshold": null,
+      "unit": "count"
+    },
+    {
+      "aggregation": "none",
+      "id": "render.steps",
+      "missing": "unknown",
+      "name": "Total steps",
+      "safety_authority": "backend_policy",
+      "source": "render.steps",
+      "threshold": null,
+      "unit": "count"
+    },
+    {
+      "aggregation": "none",
+      "id": "render.step_duration",
+      "missing": "unknown",
+      "name": "Step duration",
+      "safety_authority": "backend_policy",
+      "source": "render.sec_per_step",
+      "threshold": null,
+      "unit": "s"
+    },
+    {
+      "aggregation": "none",
+      "id": "render.last.duration",
+      "missing": "unknown",
+      "name": "Last render duration",
+      "safety_authority": "backend_policy",
+      "source": "render.last.wall_s",
+      "threshold": null,
+      "unit": "s"
+    }
+  ],
+  "missing": "unknown",
+  "rail_rate": {
+    "counter_reset": "unknown",
+    "directions": [
+      "rx",
+      "tx"
+    ],
+    "divisor": 1000000000,
+    "identity": [
+      "host",
+      "rail"
+    ],
+    "nonpositive_interval": "unknown"
+  },
+  "render_fields": [
+    "topology",
+    "auto_row",
+    "megapixels",
+    "quant",
+    "attention",
+    "sec_per_step",
+    "last_step_t"
+  ],
+  "schema_version": 1,
+  "status": {
+    "blocked": {
+      "ansi": "red",
+      "hex": "#f87171",
+      "icon": "?",
+      "label": "blocked"
+    },
+    "busy": {
+      "ansi": "green",
+      "hex": "#4ade80",
+      "icon": "✓",
+      "label": "busy"
+    },
+    "degraded": {
+      "ansi": "yellow",
+      "hex": "#facc15",
+      "icon": "!",
+      "label": "degraded"
+    },
+    "idle": {
+      "ansi": "green",
+      "hex": "#4ade80",
+      "icon": "✓",
+      "label": "idle"
+    },
+    "legacy-active": {
+      "ansi": "yellow",
+      "hex": "#facc15",
+      "icon": "!",
+      "label": "legacy-active"
+    },
+    "ready": {
+      "ansi": "green",
+      "hex": "#4ade80",
+      "icon": "✓",
+      "label": "ready"
+    },
+    "rendering": {
+      "ansi": "green",
+      "hex": "#4ade80",
+      "icon": "✓",
+      "label": "rendering"
+    },
+    "unknown": {
+      "ansi": "red",
+      "hex": "#f87171",
+      "icon": "?",
+      "label": "unknown"
+    }
+  },
+  "theme": {
+    "background": "#111318",
+    "brand": "#87f900",
+    "focus": "#22d3ee",
+    "selection": "#334155",
+    "text": "#f3f5f7",
+    "warning": "#facc15"
+  },
+  "thresholds": {
+    "available_memory_gib": {
+      "above": "ready",
+      "authority": "presentation_only",
+      "operator": ">",
+      "otherwise": "degraded",
+      "value": 20.0
+    }
+  },
+  "units": {
+    "%": {
+      "divisor": 1,
+      "precision": 0,
+      "source_unit": "%"
+    },
+    "GB/s": {
+      "divisor": 1000000000,
+      "precision": 2,
+      "source_unit": "bytes/s"
+    },
+    "GHz": {
+      "divisor": 1000,
+      "precision": 2,
+      "source_unit": "MHz"
+    },
+    "GiB": {
+      "divisor": 1073741824,
+      "precision": 1,
+      "source_unit": "bytes"
+    },
+    "MHz": {
+      "divisor": 1,
+      "precision": 0,
+      "source_unit": "MHz"
+    },
+    "W": {
+      "divisor": 1,
+      "precision": 1,
+      "source_unit": "W"
+    },
+    "count": {
+      "divisor": 1,
+      "precision": 0,
+      "source_unit": "count"
+    },
+    "s": {
+      "divisor": 1,
+      "precision": 2,
+      "source_unit": "s"
+    },
+    "°C": {
+      "divisor": 1,
+      "precision": 0,
+      "source_unit": "°C"
+    }
+  }
+}

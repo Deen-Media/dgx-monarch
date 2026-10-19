@@ -11,6 +11,7 @@ from pathlib import Path
 
 from ..config import ClusterConfig, HostConfig
 from ..runtime_provenance import dgx_source_manifest_sha256
+from ..studio_resource_validation import validate_studio_resources
 from . import lifecycle
 from .lifecycle_host import remote_colocation_error
 from .update_cancellation import stronger_cancellation
@@ -100,6 +101,7 @@ class ReleaseManager:
             self._pip_stage(site, checkout, metadata.torchmonarch_pin)
             if dgx_source_manifest_sha256(site / "dgx_monarch") != metadata.source_manifest:
                 raise ReleaseLayoutError("private driver release source manifest mismatched")
+            validate_studio_resources(str(site / "dgx_monarch"))
             slot.pin_payload_digest = site_payload_digest(site, metadata.torchmonarch_pin)
             slot.site_manifest = site_tree_digest(site)
             shutil.copytree(

@@ -118,6 +118,10 @@ jobs:
               }
               assert "dgx_monarch/__main__.py" in names
               assert "dgx_monarch/comfy_surface.py" in names
+              assert "dgx_monarch/studio/static/index.html" in names
+              assert "dgx_monarch/studio/data/parity.json" in names
+              assert "dgx_monarch/studio/data/workflows.json" in names
+              assert any(name.startswith("dgx_monarch/studio/static/assets/") and name.endswith(".js") for name in names)
               assert any(name.endswith(".dist-info/entry_points.txt") for name in names)
               # The wheel holds only the package and the CLI; node-pack assets
               # come from the source checkout described in docs/INSTALL.md.
@@ -280,9 +284,11 @@ jobs:
           python -m venv wheel-smoke
           wheel-smoke/bin/python -m pip install --no-deps dist/*.whl
           wheel-smoke/bin/dgxm version
+          wheel-smoke/bin/dgxm-studio --check
           python -m venv sdist-smoke
           sdist-smoke/bin/python -m pip install --no-deps dist/*.tar.gz
           sdist-smoke/bin/dgxm version
+          sdist-smoke/bin/dgxm-studio --check
       - name: dgxm smoke
         run: |
           dgxm version

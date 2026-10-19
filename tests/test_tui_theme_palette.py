@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import itertools
+import json
 import math
 import re
 from pathlib import Path
@@ -18,7 +19,7 @@ pytest.importorskip("rich")
 
 from rich.color import ANSI_COLOR_NAMES, Color
 
-from dgx_monarch.tui.app import THEMES
+from dgx_monarch.tui.app import THEMES, terminal_palette
 
 REPO = Path(__file__).resolve().parents[1]
 APP = REPO / "src" / "dgx_monarch" / "tui" / "app.py"
@@ -28,7 +29,7 @@ PANEL = REPO / "web" / "js" / "dgx_monarch_panel.js"
 SEGMENTS = ("model", "slab", "pool", "anon", "other", "cache")
 
 # The browser panel's legend, one call per segment, color then label.
-LEGEND_CALL = re.compile(r'legendItem\(\w+,\s*"(#[0-9a-fA-F]{6})",\s*`(\w+) ')
+LEGEND_CALL = re.compile(r'legendItem\(\w+,\s*MEMORY\.(\w+),\s*`(\w+) ')
 
 # Straight RGB distance. The grayscale theme sets the floor: six levels spread
 # across the range a dark terminal can show land about 52 apart, and they
@@ -46,7 +47,8 @@ def _rgb(name: str) -> tuple[int, int, int]:
 
 def _panel_swatches() -> dict[str, str]:
     """The sidebar's segment colors, keyed by this module's palette names."""
-    found = {label: value for value, label in LEGEND_CALL.findall(PANEL.read_text())}
+    contract = json.loads((REPO / "src/dgx_monarch/studio/data/presentation.json").read_text())
+    found = {label: contract["memory"][key]["hex"] for key, label in LEGEND_CALL.findall(PANEL.read_text())}
     gpu = found.pop("gpu", None)
     if gpu is not None:
         found["model"] = gpu
@@ -128,8 +130,8 @@ def test_spark_is_the_browser_panel_s_palette():
 
 # The panel's three colors, one ternary in dgx_monarch_panel.js.
 PANEL_CHIP = re.compile(
-    r'verdict === "PASS" \? "(#[0-9a-fA-F]{6})" : '
-    r'verdict === "FAIL" \? "(#[0-9a-fA-F]{6})" : "(#[0-9a-fA-F]{6})"')
+    r'verdict === "PASS" \? STATUS\.(\w+) : '
+    r'verdict === "FAIL" \? STATUS\.(\w+) : STATUS\.(\w+)')
 
 
 @pytest.mark.parametrize("theme", sorted(THEMES))
@@ -148,12 +150,14 @@ def test_the_terminal_and_the_browser_agree_on_the_three_chip_roles():
     """PASS green, FAIL red, everything else amber, in both surfaces."""
     match = PANEL_CHIP.search(PANEL.read_text())
     assert match, f"cannot read the gate chip colors out of {PANEL.name}"
-    good, bad, other = (_rgb(value) for value in match.groups())
+    contract = json.loads((REPO / "src/dgx_monarch/studio/data/presentation.json").read_text())
+    colors = [contract["status"][key]["hex"] for key in match.groups()]
+    good, bad, other = (_rgb(value) for value in colors)
     assert good[1] > good[0] and good[1] > good[2], "PASS is the green chip"
     assert bad[0] > bad[1] and bad[0] > bad[2], "FAIL is the red chip"
     assert other[0] > other[2] and other[1] > other[2], "the rest are amber"
-    spark = THEMES["spark"]
-    assert (spark["good"], spark["bad"], spark["warn"]) == ("green", "red", "yellow")
+    spark = terminal_palette("spark", "truecolor")
+    assert (spark["good"], spark["bad"], spark["warn"]) == tuple(colors)
 
 
 def test_the_render_row_paints_every_verdict_and_not_the_row_at_once():

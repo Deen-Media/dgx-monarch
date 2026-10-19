@@ -39,9 +39,11 @@ dev = ["ruff>=0.8", "pytest>=8", "mypy>=1.8", "hypothesis>=6.100", "pyyaml>=6",
        "aiohttp>=3.9", "rich>=13", "pillow>=10", "soundfile>=0.12",
        "CairoSVG>=2.7", "fonttools>=4", "textual>=0.80"]
 tui = ["textual>=0.80", "nvidia-ml-py"]
+studio = ["aiohttp>=3.9,<4"]
 
 [project.scripts]
 dgxm = "dgx_monarch.cli.main:main"
+dgxm-studio = "dgx_monarch.studio.__main__:main"
 
 [project.urls]
 Repository = "https://github.com/Deen-Media/dgx-monarch"
@@ -49,6 +51,9 @@ Documentation = "https://github.com/Deen-Media/dgx-monarch/tree/HEAD/docs"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+"dgx_monarch.studio" = ["data/*.json", "static/*", "static/assets/*"]
 
 [tool.setuptools.dynamic]
 version = {attr = "dgx_monarch.__version__"}

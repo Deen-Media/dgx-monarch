@@ -16,7 +16,7 @@ def test_brand_theme_fallback_and_closed_panel_badge(tmp_path):
     if not node:
         pytest.skip("node is required for browser behavior checks")
     (tmp_path / "package.json").write_text('{"type":"module"}')
-    for name in ("dgx_monarch_ui.js", "dgx_monarch_brand.js", "dgx_monarch_panel.js"):
+    for name in ("dgx_monarch_ui.js", "dgx_monarch_brand.js", "dgx_monarch_panel.js", "dgx_monarch_presentation.js"):
         source = (WEB / name).read_text()
         if name == "dgx_monarch_panel.js":
             import re
@@ -24,7 +24,7 @@ def test_brand_theme_fallback_and_closed_panel_badge(tmp_path):
             source = re.sub(
                 r'import \{[\s\S]*?\} from "([^"]+)";',
                 lambda m: m.group() if m.group(1) in (
-                    "./dgx_monarch_ui.js", "./dgx_monarch_brand.js"
+                    "./dgx_monarch_ui.js", "./dgx_monarch_brand.js", "./dgx_monarch_presentation.js"
                 ) else m.group().replace(m.group(1), "./mocks.js"),
                 source,
             )

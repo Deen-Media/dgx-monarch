@@ -424,9 +424,20 @@ def test_the_panel_feeds_the_fleet_block_in_and_keeps_the_memory_bars():
     assert "fleetJobRows" in panel
     # The span the driver measured rides the row the panel already drew.
     assert "timelineRow(row.label, row.seconds, row.span)" in panel
-    # A row whose wall is unknown prints a dash, not a measured-looking zero.
-    # The panel needs a DOM, so this column is pinned as text.
-    assert 'Number.isFinite(seconds) ? `${seconds.toFixed(2)}s` : "-"' in panel
+    # A row whose wall is unknown must remain distinct from measured zero.
+    # Verify the panel delegates this column to the real shared formatter.
+    assert 'const wall = formatMetric(seconds, "s");' in panel
+    node = shutil.which("node")
+    if node is None:
+        pytest.skip("node is required for the shared duration formatter check")
+    presentation = PANEL.with_name("dgx_monarch_presentation.js")
+    driver = (
+        f"import {{ formatMetric }} from {json.dumps(presentation.as_uri())};\n"
+        "process.stdout.write(JSON.stringify([null, 0, 1.25].map(value => formatMetric(value, 's'))));\n"
+    )
+    result = subprocess.run([node, "--input-type=module", "-e", driver],
+                            capture_output=True, text=True, timeout=30, check=True)
+    assert json.loads(result.stdout) == ["unknown", "0.00 s", "1.25 s"]
     # The per-box cards and their bars are what a fleet wave is watched on;
     # the job rows are added beside them and displace nothing.
     assert "selectMemoryHostCards(t)" in panel

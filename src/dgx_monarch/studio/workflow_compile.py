@@ -1,0 +1,195 @@
+"""Conservative conversion of serialized workflows into Comfy API prompts."""
+
+from __future__ import annotations
+
+import copy
+from collections.abc import Mapping
+from typing import Any
+
+from .drafts import DraftError, validate_value
+from .workflows import SCALAR_TYPES, WorkflowError, binding_id, graph_index, is_api_prompt, node_inputs, widget_values
+
+_DECORATIVE = {"Note", "MarkdownNote"}
+_VIRTUAL = {"PrimitiveNode", "Reroute"}
+
+
+def _link_rows(graph: Mapping[str, Any]) -> dict[str, tuple[str, int, str, int]]:
+    links = {}
+    for row in graph.get("links", []):
+        if isinstance(row, dict):
+            values = [row.get(key) for key in ("id", "origin_id", "origin_slot", "target_id", "target_slot")]
+        elif isinstance(row, list) and len(row) >= 5:
+            values = row[:5]
+        else:
+            raise WorkflowError("Unsupported serialized link")
+        identity, source, source_slot, target, target_slot = values
+        if (identity is None or source is None or target is None
+                or type(source_slot) is not int or type(target_slot) is not int
+                or source_slot < 0 or target_slot < 0):
+            raise WorkflowError("Invalid serialized link endpoint")
+        if str(identity) in links:
+            raise WorkflowError("Duplicate link identity")
+        links[str(identity)] = (str(source), source_slot, str(target), target_slot)
+    return links
+
+
+def _cycle_check(prompt: Mapping[str, Any]) -> None:
+    active: set[str] = set()
+    done: set[str] = set()
+
+    def visit(identity: str) -> None:
+        if identity in active:
+            raise WorkflowError("Workflow contains a dependency cycle")
+        if identity in done:
+            return
+        active.add(identity)
+        for value in prompt[identity]["inputs"].values():
+            if isinstance(value, list):
+                visit(str(value[0]))
+        active.remove(identity)
+        done.add(identity)
+
+    try:
+        for identity in prompt:
+            visit(identity)
+    except RecursionError as exc:
+        raise WorkflowError("Workflow dependency depth is unsupported") from exc
+
+
+def _validate_prompt(prompt: dict[str, Any], info: Mapping[str, Any]) -> dict[str, Any]:
+    for nid, node in prompt.items():
+        definition = info.get(node["class_type"])
+        if definition is None:
+            raise WorkflowError(f"Node type unavailable: {node['class_type']}")
+        fields = node_inputs(definition)
+        declared = {name for name, _, _ in fields}
+        if set(node["inputs"]) - declared:
+            raise WorkflowError(f"Unknown inputs for node {nid}")
+        for name, schema, required in fields:
+            if name not in node["inputs"]:
+                if required:
+                    raise WorkflowError(f"Required input is missing: {nid}.{name}")
+                continue
+            value = node["inputs"][name]
+            if isinstance(value, list):
+                if len(value) != 2 or not isinstance(value[0], str) or type(value[1]) is not int:
+                    raise WorkflowError(f"Malformed input link: {nid}.{name}")
+                source = prompt.get(value[0])
+                if source is None:
+                    raise WorkflowError(f"Link references missing node: {nid}.{name}")
+                source_info = info.get(source["class_type"], {})
+                output_types = source_info.get("output", [])
+                if not 0 <= value[1] < len(output_types):
+                    raise WorkflowError(f"Link references invalid output slot: {nid}.{name}")
+                source_type = output_types[value[1]]
+                if schema["type"] == "COMBO":
+                    compatible = source_type in {"STRING", "COMBO"}
+                else:
+                    compatible = source_type == schema["type"] or source_type == "*" or schema["type"] == "*"
+                if not compatible:
+                    raise WorkflowError(f"Incompatible input link: {nid}.{name}")
+            else:
+                try:
+                    validate_value(value, schema)
+                except DraftError as exc:
+                    raise WorkflowError(f"{nid}.{name}: {exc}") from exc
+    _cycle_check(prompt)
+    if not any(info[node["class_type"]].get("output_node", False) for node in prompt.values()):
+        raise WorkflowError("Workflow has no available output node")
+    return prompt
+
+
+def compile_graph(workflow: Mapping[str, Any], info: Mapping[str, Any],
+                  values: Mapping[str, Any]) -> dict[str, Any]:
+    """Convert explicitly supported core serialization; refuse custom graph code."""
+    if not info:
+        raise WorkflowError("Driver object_info is required to validate workflow inputs")
+    graphs = graph_index(workflow)
+    gid = next(iter(graphs))
+    root = graphs[gid]
+    nodes = root["nodes"]
+    if is_api_prompt(workflow):
+        prompt = copy.deepcopy(dict(workflow))
+        for nid, node in prompt.items():
+            if not isinstance(node.get("inputs"), dict):
+                raise WorkflowError(f"Node {nid} inputs must be an object")
+            for name, _, _ in node_inputs(info.get(node["class_type"], {})):
+                identity = binding_id("root", str(nid), name)
+                if identity in values:
+                    node["inputs"][name] = copy.deepcopy(values[identity])
+        return _validate_prompt(prompt, info)
+    links = _link_rows(root["graph"])
+    prompt = {}
+
+    def source_value(source_id: str, slot: int, seen: frozenset[str]) -> Any:
+        if len(seen) > 256:
+            raise WorkflowError("Virtual node dependency depth exceeds 256")
+        if source_id in seen:
+            raise WorkflowError("Virtual node link cycle")
+        seen = seen | {source_id}
+        source = nodes.get(source_id)
+        if source is None:
+            raise WorkflowError("Link references a missing node")
+        kind = source.get("type")
+        if source.get("mode", 0) != 0:
+            raise WorkflowError("Muted or bypassed connected nodes require explicit graph conversion")
+        if kind == "PrimitiveNode":
+            serialized = source.get("widgets_values", [])
+            if slot != 0 or not isinstance(serialized, list) or not serialized:
+                raise WorkflowError("Unsupported primitive serialization")
+            if len(serialized) > 2 or (len(serialized) == 2 and serialized[1] not in
+                                      {"fixed", "increment", "decrement", "randomize"}):
+                raise WorkflowError("Custom primitive widgets require an explicit adapter")
+            return copy.deepcopy(values.get(binding_id(gid, source_id, "value"), serialized[0]))
+        if kind == "Reroute":
+            sockets = source.get("inputs", [])
+            if slot != 0 or len(sockets) != 1 or sockets[0].get("link") is None:
+                raise WorkflowError("Reroute has no unique connected source")
+            link = links.get(str(sockets[0]["link"]))
+            if link is None or link[2:] != (source_id, 0):
+                raise WorkflowError("Reroute link endpoint mismatch")
+            return source_value(link[0], link[1], seen)
+        return [source_id, slot]
+
+    for nid, node in nodes.items():
+        kind = node.get("type")
+        if kind in _DECORATIVE or kind in _VIRTUAL:
+            continue
+        if kind in graphs or "subgraph" in node:
+            raise WorkflowError("Subgraph execution needs a frontend-exported API prompt; graph metadata is preserved")
+        if node.get("mode", 0) != 0:
+            raise WorkflowError("Muted or bypassed nodes require a frontend-exported API prompt")
+        definition = info.get(kind)
+        if definition is None:
+            raise WorkflowError(f"Node type unavailable: {kind}")
+        fields = node_inputs(definition)
+        serialized = widget_values(node, definition)
+        inputs = {}
+        sockets = node.get("inputs", [])
+        if not isinstance(sockets, list):
+            raise WorkflowError("UI workflow inputs must be an array")
+        names = [socket.get("name") for socket in sockets if isinstance(socket, dict)]
+        if len(set(names)) != len(sockets):
+            raise WorkflowError("Duplicate or malformed input sockets")
+        declared = {name for name, _, _ in fields}
+        if set(names) - declared:
+            raise WorkflowError("Custom input sockets require an explicit typed adapter")
+        by_name = {socket["name"]: (index, socket) for index, socket in enumerate(sockets)}
+        for name, schema, _ in fields:
+            identity = binding_id(gid, nid, name)
+            socket_index, socket = by_name.get(name, (-1, {}))
+            if socket.get("link") is not None:
+                if identity in values:
+                    raise WorkflowError("Connected input cannot be overridden; edit its source")
+                link = links.get(str(socket["link"]))
+                if link is None or link[2:] != (nid, socket_index):
+                    raise WorkflowError("Input link endpoint mismatch")
+                inputs[name] = source_value(link[0], link[1], frozenset())
+            elif identity in values:
+                inputs[name] = copy.deepcopy(values[identity])
+            elif name in serialized:
+                inputs[name] = serialized[name]
+            elif "default" in schema and schema["type"] in SCALAR_TYPES:
+                inputs[name] = copy.deepcopy(schema["default"])
+        prompt[nid] = {"class_type": kind, "inputs": inputs}
+    return _validate_prompt(prompt, info)

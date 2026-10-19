@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from ..studio_resource_validation import studio_resource_validation_source
+
 
 def trusted_manifest_source() -> str:
     """Return code defining ``trusted_manifest`` without importing candidate code."""
-    return r"""
-def trusted_manifest(root):
+    return studio_resource_validation_source() + r"""
+def trusted_manifest(root, validate_resources=True):
  import grp,hashlib,importlib.machinery,os,pathlib,pwd,stat
  def unsafe(info):
   if info.st_uid!=os.geteuid() or info.st_mode&0o002: return True
@@ -68,6 +70,7 @@ def trusted_manifest(root):
   identity=lambda item:(int(item.st_dev),int(item.st_ino),int(item.st_size),int(item.st_mtime_ns),int(item.st_ctime_ns))
   if identity(before)!=identity(after) or identity(after)!=identity(final): raise RuntimeError('source changed')
  if paths!=inventory(): raise RuntimeError('source set changed')
+ if validate_resources: validate_studio_resources(str(root))
  return digest.hexdigest()
 """
 

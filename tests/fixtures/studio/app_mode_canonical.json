@@ -1,0 +1,100 @@
+{
+  "id": "main",
+  "version": 0.4,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "Text",
+      "title": "Duplicate label",
+      "widgets_values": [
+        "original"
+      ],
+      "inputs": []
+    },
+    {
+      "id": 2,
+      "type": "Sampler",
+      "title": "Duplicate label",
+      "widgets_values": [
+        42,
+        "randomize",
+        20,
+        "euler"
+      ],
+      "inputs": [
+        {
+          "name": "text",
+          "link": 1
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "Save",
+      "widgets_values": [],
+      "inputs": [
+        {
+          "name": "image",
+          "link": 2
+        }
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      2,
+      0,
+      "STRING"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ]
+  ],
+  "groups": [
+    {
+      "title": "Preserve graph editing",
+      "bounding": [
+        0,
+        0,
+        100,
+        100
+      ]
+    }
+  ],
+  "extra": {
+    "frontendVersion": "canonical-widget-id-contract-2026-10-19",
+    "linearMode": true,
+    "linearData": {
+      "inputs": [
+        [
+          "main:1:text",
+          "text",
+          {
+            "height": 120,
+            "description": "Prompt",
+            "future": {
+              "x": 1
+            }
+          }
+        ]
+      ],
+      "outputs": [
+        3
+      ]
+    },
+    "unknownExtension": {
+      "opaque": [
+        1,
+        "<svg onload='never execute'>"
+      ]
+    }
+  }
+}

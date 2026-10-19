@@ -1,0 +1,171 @@
+.controls-panel {
+  width: var(--control-width);
+  min-width: 280px;
+  max-width: 520px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  padding: 26px 20px 0;
+  background: #181b22;
+  border-right: 1px solid var(--border);
+  resize: horizontal;
+  overflow: auto;
+}
+.panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 17px;
+}
+.panel-title h1,
+.panel-title h2 {
+  margin: 0;
+}
+.panel-title .eyebrow {
+  margin-bottom: 4px;
+}
+.panel-title h1 {
+  font-size: 24px;
+}
+.panel-title h2 {
+  font-size: 12px;
+}
+.panel-title button {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  padding: 3px 5px;
+}
+.workflow-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin: 9px 0 15px;
+}
+.workflow-actions button,
+.workflow-actions .button {
+  font-size: 10px;
+  padding: 6px 8px;
+}
+.import-label {
+  font-weight: 500;
+  margin: 0;
+}
+.import-label input[type='file'] {
+  position: absolute;
+  opacity: 0;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+.import-label:focus-within {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+.input-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin: 8px 0 18px;
+}
+.input-row label {
+  margin: 0;
+}
+.input-row input {
+  margin-top: 6px;
+}
+.tabs {
+  display: flex;
+  gap: 3px;
+  border-bottom: 1px solid var(--border);
+  margin: 0 0 20px;
+  flex-shrink: 0;
+}
+.tabs button {
+  border: none;
+  border-radius: 0;
+  background: none;
+  color: var(--muted);
+  padding: 12px 9px;
+  font-size: 11px;
+  border-bottom: 2px solid transparent;
+}
+.tabs button.active {
+  color: var(--brand);
+  border-bottom-color: var(--brand);
+  background: none;
+}
+.controls-scroll {
+  overflow: auto;
+  flex: 1;
+  min-height: 0;
+  padding-right: 3px;
+  padding-bottom: 20px;
+  scrollbar-width: thin;
+}
+.field {
+  margin-bottom: 21px;
+}
+.field label {
+  display: flex;
+  justify-content: space-between;
+  gap: 5px;
+}
+.field-type {
+  font-size: 9px;
+  text-transform: uppercase;
+  color: #717c8c;
+  letter-spacing: 0.5px;
+}
+.field textarea {
+  line-height: 1.65;
+  background: #11151a;
+}
+.field small {
+  display: block;
+  margin-top: 6px;
+}
+.field-invalid input,
+.field-invalid select {
+  border-color: #744e50;
+}
+.submission-footer {
+  padding: 18px 0 17px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+  background: #181b22;
+}
+.target-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 9px;
+  margin-bottom: 12px;
+  color: #c7ced8;
+}
+.target-line > .muted {
+  margin-left: auto;
+}
+.generate {
+  width: 100%;
+  justify-content: space-between;
+  padding: 12px 15px !important;
+  font-size: 12px;
+}
+.generate span {
+  font-size: 19px;
+}
+.submission-footer > small {
+  display: block;
+  font-size: 9px;
+  text-align: center;
+  margin-top: 10px;
+}
+.workspace-center {
+  flex: 1;
+  min-width: 300px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}

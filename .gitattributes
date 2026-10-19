@@ -1,0 +1,3 @@
+src/dgx_monarch/studio/data/*.json linguist-generated=true
+src/dgx_monarch/studio/static/** linguist-generated=true whitespace=-blank-at-eol
+web/js/dgx_monarch_presentation.js linguist-generated=true

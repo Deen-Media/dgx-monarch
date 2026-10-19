@@ -1,0 +1,20 @@
+:root {
+  --bg: #111318;
+  --surface: #181b22;
+  --surface-raised: #222730;
+  --text: #f3f5f7;
+  --muted: #8e99aa;
+  --border: #2b3039;
+  --brand: #87f900;
+  --focus: #b4d9ff;
+  --selection: #3d512a;
+  --status-ready: #4ade80;
+  --status-degraded: #facc15;
+  --status-unknown: #f87171;
+  --memory-gpu: #22d3ee;
+  --memory-slab: #34d399;
+  --memory-pool: #fb923c;
+  --memory-anonymous: #c084fc;
+  --memory-other: #64748b;
+  --memory-cache: #facc15;
+}

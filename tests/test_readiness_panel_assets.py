@@ -114,7 +114,7 @@ def test_the_host_card_draws_rail_text_through_text_nodes():
     panel = PANEL.read_text()
     card = panel[panel.index("function hostCard("):panel.index("function timelineRow(")]
     assert "for (const part of railParts)" in card
-    assert 'el("span", "color:#f87171;", part.text)' in card
+    assert 'el("span", `color:${STATUS.blocked};`, part.text)' in card
     assert "document.createTextNode(part.text)" in card
 
 

@@ -7,7 +7,7 @@ import shlex
 
 from .lifecycle_lock import lifecycle_lock_source
 from .setup_services_generation import generation_reader_source
-from .setup_services_manifest_script import trusted_json_source
+from .setup_services_manifest_script import trusted_json_source, trusted_manifest_source
 
 _TOKEN = re.compile(r"s-[0-9a-f]{16}")
 _DIGEST = re.compile(r"[0-9a-f]{64}")
@@ -165,10 +165,12 @@ def build_cleanup_script(python_bin: str, token: str, ordinal: int, digest: str)
     reader = trusted_json_source()
     lifecycle_lock = lifecycle_lock_source()
     generation = generation_reader_source(token)
+    source_validator = trusted_manifest_source()
     return f"""{_pybin(python_bin)}
 "$PYBIN" -I -S -B - {relative!r} {token!r} {ordinal} {digest!r} <<'PY'
 import fcntl,hashlib,importlib.machinery,json,os,pathlib,shutil,stat,subprocess,sys
 {reader}
+{source_validator}
 {lifecycle_lock}
 home=pathlib.Path.home(); base=home/'.local/share/dgx-monarch'; unit=home/'.config/systemd/user/dgxm-worker.service'
 {generation}
@@ -294,7 +296,7 @@ if present:
  # A failed rsync may leave a partial Python tree. Refuse links, foreign owners,
  # and non-source payloads, then quarantine the exact recorded slot inode.
  try:
-  suffixes=('.py',*importlib.machinery.EXTENSION_SUFFIXES); package=site/'dgx_monarch'
+  suffixes=('.py',*importlib.machinery.EXTENSION_SUFFIXES); package=site/'dgx_monarch'; resource_files=[]
   if os.path.lexists(site) and os.path.lexists(package):
    for root,dirs,files in os.walk(package,followlinks=False):
     current=pathlib.Path(root); ci=current.lstat()
@@ -302,7 +304,12 @@ if present:
     for name in (*dirs,*files):
      child=current/name; child_info=child.lstat()
      if stat.S_ISLNK(child_info.st_mode) or child_info.st_uid!=os.geteuid(): raise RuntimeError('unsafe source')
-    if any(not name.endswith(suffixes) for name in files): raise RuntimeError('foreign source entry')
+    resource_files.extend(current/name for name in files if not name.endswith(suffixes))
+   if resource_files:
+    if trusted_manifest(package,False)!=sys.argv[4]: raise RuntimeError('resource source manifest mismatch')
+    resource_hashes=validate_studio_resources(str(package),False)
+    if any(path.relative_to(package).as_posix() not in resource_hashes for path in resource_files):
+     raise RuntimeError('foreign source entry')
   elif os.path.lexists(site) and any(site.iterdir()): raise RuntimeError('foreign site entry')
   quarantine=local_quarantine if candidate in (archive,local_quarantine) else release_quarantine
   if candidate!=quarantine:

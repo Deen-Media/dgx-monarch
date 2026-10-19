@@ -1,0 +1,180 @@
+.app-shell {
+  display: flex;
+  height: 100vh;
+  min-height: 600px;
+  overflow: hidden;
+}
+.nav-rail {
+  display: flex;
+  flex-direction: column;
+  width: 78px;
+  flex-shrink: 0;
+  align-items: center;
+  border-right: 1px solid var(--border);
+  background: #14161c;
+  padding: 19px 8px;
+  gap: 5px;
+}
+.brand-mark {
+  width: 43px;
+  height: 43px;
+  display: grid;
+  place-items: center;
+  margin-bottom: 7px;
+}
+.brand-mark svg {
+  width: 36px;
+  height: 36px;
+  fill: var(--brand);
+}
+.rail-divider {
+  height: 1px;
+  background: var(--border);
+  width: 28px;
+  margin: 4px 0 15px;
+}
+.nav-rail button {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  width: 60px;
+  min-height: 56px;
+  border: 0;
+  background: none;
+  color: #8d96a5;
+  border-radius: 8px;
+  padding: 8px 3px;
+}
+.nav-rail button > span {
+  font-size: 22px;
+  line-height: 1.1;
+}
+.nav-rail button small {
+  font-size: 9px;
+  color: inherit;
+  letter-spacing: 0.1px;
+}
+.nav-rail button.current {
+  background: #242d1e;
+  color: var(--brand);
+}
+.nav-rail button.current:before {
+  content: '';
+  position: absolute;
+  width: 2px;
+  height: 25px;
+  background: var(--brand);
+  left: -8px;
+  border-radius: 2px;
+}
+.nav-rail button:hover {
+  background: #21252d;
+}
+.nav-rail button b {
+  position: absolute;
+  right: 7px;
+  top: 4px;
+  font-size: 9px;
+  color: #111;
+  background: var(--brand);
+  border-radius: 8px;
+  padding: 0 4px;
+}
+.nav-rail .palette-launch {
+  margin-top: auto;
+}
+.main-shell {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+.app-header {
+  height: 76px;
+  min-height: 76px;
+  display: flex;
+  align-items: center;
+  gap: 36px;
+  justify-content: space-between;
+  padding: 14px 28px;
+  border-bottom: 1px solid var(--border);
+  background: #16191f;
+}
+.wordmark {
+  font-size: 15px;
+  letter-spacing: 2.3px;
+  font-weight: 750;
+}
+.wordmark em {
+  font-style: normal;
+  color: #818b9a;
+  font-size: 10px;
+  letter-spacing: 2px;
+  font-weight: 500;
+  margin-left: 7px;
+}
+.host-line {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 10px;
+  color: #b2bac7;
+  margin-top: 6px;
+}
+.status-dot {
+  display: inline-block;
+  flex-shrink: 0;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--status-unknown);
+  vertical-align: middle;
+}
+.status-dot.healthy {
+  background: var(--status-ready);
+}
+.context-select {
+  margin-right: auto;
+  max-width: 210px;
+  min-width: 130px;
+}
+.context-select select {
+  font-size: 11px;
+  padding: 7px 24px 7px 10px;
+  background: #1b1f26;
+}
+.header-actions {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+.activity-pill {
+  display: inline-flex;
+  gap: 7px;
+  align-items: center;
+  color: #a8b29c;
+  font-size: 10px;
+}
+.activity-pill:before {
+  content: '';
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--status-ready);
+}
+main {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+main:focus {
+  outline: none;
+}
+.workspace {
+  display: flex;
+  height: 100%;
+  min-height: 500px;
+}

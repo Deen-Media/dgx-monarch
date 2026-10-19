@@ -1,0 +1,346 @@
+"""Versioned, lossless ComfyUI workflow inspection and App Mode bindings.
+
+The adapter uses serialized graph identities and /object_info. It never executes
+frontend extensions. Unsupported serialization remains visible and blocks compile.
+"""
+
+from __future__ import annotations
+
+import copy
+import hashlib
+import json
+from collections.abc import Mapping
+from typing import Any
+from urllib.parse import quote, unquote
+
+ADAPTER_VERSION = 1
+SCALAR_TYPES = {"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"}
+
+
+class WorkflowError(ValueError):
+    """Workflow input cannot be resolved without guessing."""
+
+
+def binding_id(graph_id: str, node_id: str, name: str) -> str:
+    return f"{graph_id}:{quote(node_id, safe='')}:{quote(name, safe='')}"
+
+
+def is_api_prompt(workflow: Mapping[str, Any]) -> bool:
+    return bool(workflow) and all(isinstance(node, dict) and "class_type" in node
+                                  for node in workflow.values())
+
+
+def graph_index(workflow: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    """Index root and subgraph definitions; reject duplicate graph identities."""
+    graphs: dict[str, dict[str, Any]] = {}
+
+    def visit(graph: Mapping[str, Any], fallback: str, depth: int) -> None:
+        if depth > 32:
+            raise WorkflowError("Subgraph nesting exceeds 32 levels")
+        gid = str(graph.get("id", fallback))
+        if gid in graphs:
+            raise WorkflowError(f"Duplicate graph identity: {gid}")
+        nodes = graph.get("nodes", [])
+        if not isinstance(nodes, list):
+            raise WorkflowError("Graph nodes must be an array")
+        by_id: dict[str, Any] = {}
+        for node in nodes:
+            if not isinstance(node, dict) or "id" not in node:
+                raise WorkflowError("Each graph node needs an identity")
+            if not isinstance(node.get("type"), str):
+                raise WorkflowError("Graph node type must be a string")
+            nid = str(node["id"])
+            if nid in by_id:
+                raise WorkflowError(f"Duplicate node identity: {gid}:{nid}")
+            by_id[nid] = node
+        graphs[gid] = {"graph": graph, "nodes": by_id}
+        definitions_record = graph.get("definitions", {})
+        if not isinstance(definitions_record, dict):
+            raise WorkflowError("Graph definitions must be an object")
+        definitions = definitions_record.get("subgraphs", [])
+        if not isinstance(definitions, list) or any(not isinstance(item, dict) for item in definitions):
+            raise WorkflowError("Subgraph definitions must be objects in an array")
+        for index, subgraph in enumerate(definitions):
+            visit(subgraph, f"{gid}/definition/{index}", depth + 1)
+        for nid, node in by_id.items():
+            if isinstance(node.get("subgraph"), dict):
+                visit(node["subgraph"], f"{gid}/node/{nid}", depth + 1)
+
+    if is_api_prompt(workflow):
+        if any(not isinstance(node["class_type"], str) for node in workflow.values()):
+            raise WorkflowError("API node class_type must be a string")
+        nodes = {str(nid): {**node, "id": str(nid), "type": node["class_type"]}
+                 for nid, node in workflow.items()}
+        graphs["root"] = {"graph": {}, "nodes": nodes}
+    else:
+        visit(workflow, "root", 0)
+    if sum(len(item["nodes"]) for item in graphs.values()) > 10000:
+        raise WorkflowError("Workflow exceeds 10000 nodes")
+    return graphs
+
+
+def node_inputs(info: Mapping[str, Any]) -> list[tuple[str, dict[str, Any], bool]]:
+    """Return declared input order, retaining connection-only socket types."""
+    fields = []
+    for group in ("required", "optional"):
+        definitions = info.get("input", {}).get(group, {})
+        order = info.get("input_order", {}).get(group, list(definitions))
+        if set(order) != set(definitions) or len(order) != len(definitions):
+            raise WorkflowError("object_info input order does not match its input schema")
+        for name in order:
+            spec = definitions[name]
+            if not isinstance(spec, (list, tuple)) or not spec:
+                raise WorkflowError(f"Invalid input schema: {name}")
+            options = copy.deepcopy(spec[1]) if len(spec) > 1 and isinstance(spec[1], dict) else {}
+            kind = spec[0]
+            if isinstance(kind, list):
+                options.update(type="COMBO", choices=copy.deepcopy(kind))
+            elif kind == "COMBO" and isinstance(options.get("options"), list):
+                options.update(type="COMBO", choices=options["options"])
+            elif isinstance(kind, str):
+                options["type"] = kind
+            else:
+                raise WorkflowError(f"Unsupported input type schema: {name}")
+            fields.append((name, options, group == "required"))
+    return fields
+
+
+def widget_values(node: Mapping[str, Any], info: Mapping[str, Any], *, api: bool = False) -> dict[str, Any]:
+    if api:
+        return copy.deepcopy(dict(node.get("inputs", {})))
+    serialized = node.get("widgets_values", [])
+    fields = [(name, schema) for name, schema, _ in node_inputs(info)
+              if schema["type"] in SCALAR_TYPES and not schema.get("forceInput")]
+    if isinstance(serialized, dict):
+        unknown = set(serialized) - {name for name, _ in fields}
+        if unknown:
+            raise WorkflowError(f"Unknown named widgets: {sorted(unknown)}")
+        return copy.deepcopy(serialized)
+    if not isinstance(serialized, list):
+        raise WorkflowError("Serialized widget values must be an array or object")
+    result, position = {}, 0
+    for name, schema in fields:
+        if position >= len(serialized):
+            break
+        result[name] = copy.deepcopy(serialized[position])
+        position += 1
+        # Core Comfy seed widgets add a UI-only control after their number.
+        has_control = schema.get("control_after_generate", name in {"seed", "noise_seed"})
+        if has_control and position < len(serialized) and isinstance(serialized[position], str):
+            if serialized[position] in {"fixed", "increment", "decrement", "randomize"}:
+                position += 1
+    if position != len(serialized):
+        raise WorkflowError("Widget serialization has unsupported extra values; explicit widget adapter required")
+    return result
+
+
+def _resolve(identity: Any, name: str | None, graphs: Mapping[str, Any]) -> tuple[str, str, str | None]:
+    root = next(iter(graphs))
+    text = str(identity)
+    segments = text.split(":")
+    if len(segments) == 3 and segments[0] in graphs:
+        gid, nid, canonical_name = segments[0], unquote(segments[1]), unquote(segments[2])
+        if nid not in graphs[gid]["nodes"]:
+            raise WorkflowError("Referenced node was deleted or is missing")
+        return gid, nid, canonical_name
+    if len(segments) == 2 and segments[0] in graphs:
+        gid, nid = segments[0], unquote(segments[1])
+        if nid in graphs[gid]["nodes"]:
+            return gid, nid, name
+    if len(segments) > 1:
+        # Legacy node identities encode the path through subgraph instances.
+        gid = root
+        for position, segment in enumerate(segments):
+            nid = unquote(segment)
+            node = graphs[gid]["nodes"].get(nid)
+            if node is None:
+                raise WorkflowError("Legacy graph path references a missing node")
+            if position == len(segments) - 1:
+                return gid, nid, name
+            child = node.get("subgraph", {})
+            child_id = str(child.get("id", f"{gid}/node/{nid}")) if child else str(node.get("type"))
+            if child_id not in graphs:
+                raise WorkflowError("Legacy graph path has no resolvable subgraph")
+            gid = child_id
+    if text in graphs[root]["nodes"]:
+        return root, text, name
+    matches = [(gid, text, name) for gid, graph in graphs.items() if text in graph["nodes"]]
+    if len(matches) == 1:
+        return matches[0]
+    raise WorkflowError("Ambiguous legacy node identity" if matches else "Referenced node was deleted or is missing")
+
+
+def _primitive_definition(nid: str, graph: Mapping[str, Any], info: Mapping[str, Any]) -> dict[str, Any]:
+    """Infer a core PrimitiveNode widget only from its typed destination sockets."""
+    from .workflow_compile import _link_rows
+    links = _link_rows(graph["graph"])
+    pending, seen, schemas = [nid], set(), []
+    while pending:
+        source = pending.pop()
+        if source in seen:
+            return {}
+        seen.add(source)
+        for origin, _, target, target_slot in links.values():
+            if origin != source:
+                continue
+            node = graph["nodes"].get(target, {})
+            if node.get("type") == "Reroute":
+                pending.append(target)
+                continue
+            sockets = node.get("inputs", [])
+            if not 0 <= target_slot < len(sockets):
+                return {}
+            name = sockets[target_slot].get("name")
+            definition = info.get(node.get("type"), {})
+            matches = [schema for field, schema, _ in node_inputs(definition) if field == name]
+            if len(matches) != 1 or matches[0]["type"] not in SCALAR_TYPES:
+                return {}
+            schemas.append(matches[0])
+    if not schemas or any(schema["type"] != schemas[0]["type"] for schema in schemas):
+        return {}
+    combined = copy.deepcopy(schemas[0])
+    for schema in schemas[1:]:
+        for key, combine in (("min", max), ("max", min)):
+            if key in schema:
+                combined[key] = combine(combined.get(key, schema[key]), schema[key])
+        if combined["type"] == "COMBO":
+            combined["choices"] = [value for value in combined["choices"] if value in schema["choices"]]
+    kind = combined.pop("type")
+    combined.pop("forceInput", None)
+    combined["control_after_generate"] = True
+    return {"input": {"required": {"value": [combined.pop("choices") if kind == "COMBO" else kind, combined]}}}
+
+
+def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Inspect all typed inputs, preserving unresolved App Mode selections."""
+    if not isinstance(workflow, dict):
+        raise WorkflowError("Workflow must be an object")
+    info = object_info or {}
+    graphs = graph_index(workflow)
+    api = is_api_prompt(workflow)
+    bindings: list[dict[str, Any]] = []
+    errors: list[str] = []
+    for gid, graph in graphs.items():
+        for nid, node in graph["nodes"].items():
+            definition = info.get(node.get("type"), {})
+            if node.get("type") == "PrimitiveNode" and not api:
+                try:
+                    definition = _primitive_definition(nid, graph, info)
+                except WorkflowError as exc:
+                    errors.append(f"{gid}:{nid}: {exc}")
+            if not definition:
+                continue
+            try:
+                values = widget_values(node, definition, api=api)
+                fields = node_inputs(definition)
+            except WorkflowError as exc:
+                errors.append(f"{gid}:{nid}: {exc}")
+                continue
+            linked = {field.get("name") for field in node.get("inputs", [])
+                      if isinstance(field, dict) and field.get("link") is not None} if not api else set()
+            for name, schema, required in fields:
+                if schema["type"] not in SCALAR_TYPES:
+                    continue
+                value = values.get(name, schema.get("default"))
+                is_link = name in linked or (api and isinstance(value, list))
+                bindings.append({"id": binding_id(gid, nid, name), "source_identity": None,
+                                 "graph_id": gid, "node_id": nid, "input_name": name, "label": name,
+                                 "order": len(bindings), "prominent": False, "config": {}, "schema": schema,
+                                 "value": value, "required": required, "resolved": not is_link,
+                                 "reason": "Input is connected; edit its source instead" if is_link else None})
+    lookup = {binding["id"]: binding for binding in bindings}
+    extra = workflow.get("extra", {})
+    if not isinstance(extra, dict):
+        raise WorkflowError("Workflow extra metadata must be an object")
+    linear = extra.get("linearData", {}) if isinstance(extra, dict) else {}
+    if not isinstance(linear, dict) or not isinstance(linear.get("inputs", []), list) or not isinstance(linear.get("outputs", []), list):
+        raise WorkflowError("App Mode data must contain input and output arrays")
+    studio = extra.get("dgxm_studio", {})
+    if not isinstance(studio, dict) or not isinstance(studio.get("bindings", {}), dict):
+        raise WorkflowError("Studio display bindings must be an object")
+    overrides = studio.get("bindings", {})
+    if any(not isinstance(item, dict) for item in overrides.values()):
+        raise WorkflowError("Studio display binding entries must be objects")
+    for index, entry in enumerate(linear.get("inputs", [])):
+        identity, name = (entry[:2] if isinstance(entry, (list, tuple)) and len(entry) >= 2 else (None, None))
+        config = copy.deepcopy(entry[2]) if isinstance(entry, (list, tuple)) and len(entry) > 2 else {}
+        unresolved_id = "unresolved:" + hashlib.sha256(json.dumps([identity, name], sort_keys=True).encode()).hexdigest()[:16]
+        try:
+            if identity is None or not isinstance(name, str):
+                raise WorkflowError("App Mode input must be [identity, widgetName, optional configuration]")
+            gid, nid, resolved_name = _resolve(identity, name, graphs)
+            key = binding_id(gid, nid, str(resolved_name))
+            key = overrides.get(key, overrides.get(unresolved_id, {})).get("target", key)
+            binding = lookup.get(key)
+            if binding is None:
+                raise WorkflowError("Widget missing, custom, or unsupported by object_info")
+            if not binding["resolved"]:
+                raise WorkflowError(binding["reason"])
+            binding.update(source_identity=identity, prominent=True, order=index, config=config)
+        except WorkflowError as exc:
+            target = overrides.get(unresolved_id, {}).get("target")
+            if target in lookup and lookup[target]["resolved"]:
+                lookup[target].update(source_identity=identity, prominent=True, order=index, config=config)
+                continue
+            errors.append(f"App Mode input {index}: {exc}")
+            bindings.append({"id": unresolved_id, "source_identity": identity, "graph_id": None,
+                             "node_id": None, "input_name": name, "label": name or "Unresolved input",
+                             "order": index, "prominent": True, "config": config, "schema": None,
+                             "value": None, "resolved": False, "reason": str(exc)})
+    for binding in bindings:
+        display = overrides.get(binding["id"], {})
+        for field in ("label", "group", "order", "prominent"):
+            if field in display:
+                binding[field] = copy.deepcopy(display[field])
+    outputs = []
+    for identity in linear.get("outputs", []):
+        try:
+            gid, nid, _ = _resolve(identity, None, graphs)
+            outputs.append({"source_identity": identity, "graph_id": gid, "node_id": nid,
+                            "resolved": True, "reason": None})
+        except WorkflowError as exc:
+            outputs.append({"source_identity": identity, "resolved": False, "reason": str(exc)})
+            errors.append(f"App Mode output {identity}: {exc}")
+    prompt = None
+    if not errors:
+        try:
+            from .workflow_compile import compile_graph
+            prompt = compile_graph(workflow, info, {})
+        except WorkflowError as exc:
+            errors.append(str(exc))
+    return {"adapter_version": ADAPTER_VERSION, "workflow": copy.deepcopy(workflow),
+            "bindings": bindings, "outputs": outputs, "prompt": prompt, "errors": errors}
+
+
+def compile_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any],
+                     values: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    from .workflow_compile import compile_graph
+    inspection = inspect_workflow(workflow, object_info)
+    # Compilation validates the resulting values. Existing invalid defaults may be
+    # repaired by explicit edits; unresolved selected identities cannot be skipped.
+    unresolved = [item for item in inspection["bindings"] if item["prominent"] and not item["resolved"]]
+    if unresolved or any(not item["resolved"] for item in inspection["outputs"]):
+        raise WorkflowError("Resolve App Mode bindings before submission")
+    editable = {item["id"] for item in inspection["bindings"] if item["resolved"]}
+    if set(values or {}) - editable:
+        raise WorkflowError("Unknown, connected, or unresolved input binding")
+    return compile_graph(workflow, object_info, values or {})
+
+
+def export_workflow(record: Mapping[str, Any]) -> dict[str, Any]:
+    return copy.deepcopy(dict(record["workflow"]))
+
+
+def rebind_workflow(workflow: Mapping[str, Any], source: str, target: str,
+                    object_info: Mapping[str, Any]) -> dict[str, Any]:
+    inspection = inspect_workflow(workflow, object_info)
+    bindings = {item["id"]: item for item in inspection["bindings"]}
+    if source not in bindings or target not in bindings or not bindings[target]["resolved"]:
+        raise WorkflowError("Rebinding requires an existing source and resolved typed target")
+    source_schema = bindings[source]["schema"]
+    if source_schema and source_schema["type"] != bindings[target]["schema"]["type"]:
+        raise WorkflowError("Rebinding must preserve the input type")
+    result = copy.deepcopy(dict(workflow))
+    preferences = result.setdefault("extra", {}).setdefault("dgxm_studio", {}).setdefault("bindings", {})
+    preferences.setdefault(source, {})["target"] = target
+    return result

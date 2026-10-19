@@ -390,7 +390,10 @@ def test_browser_panel_avoids_html_interpolation_and_accounts_slab():
     assert "innerHTML" not in panel
     assert 'from "./dgx_monarch_segments.js"' in panel
     assert "slab_gib" in segments
-    assert "slab ${slab.toFixed(1)}G" in panel
+    assert 'from "./dgx_monarch_presentation.js"' in panel
+    assert 'legendItem(legend, MEMORY.slab, `slab ${slab.toFixed(1)} GiB`)' in panel
+    assert "if (breakdownKnown) card.appendChild(legend)" in panel
+    assert '"memory breakdown unknown"' in panel
 
 
 def test_setup_script_is_fail_fast_and_python_version_independent():

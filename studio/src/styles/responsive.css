@@ -1,0 +1,356 @@
+@media (min-width: 1700px) {
+  .telemetry-panel {
+    width: 270px;
+  }
+  .viewer {
+    padding: 30px 35px 0;
+  }
+  .recent-strip {
+    padding-left: 35px;
+    padding-right: 35px;
+  }
+  .controls-panel {
+    padding-left: 24px;
+    padding-right: 24px;
+  }
+}
+@media (max-width: 1250px) {
+  .telemetry-panel {
+    width: 200px;
+    padding: 26px 12px;
+  }
+  .app-header {
+    gap: 20px;
+    padding: 14px 20px;
+  }
+  .header-actions {
+    gap: 6px;
+  }
+  .activity-pill {
+    display: none;
+  }
+  .controls-panel {
+    width: 300px;
+    min-width: 270px;
+  }
+  .viewer {
+    padding: 25px 19px 0;
+  }
+  .recent-strip {
+    padding: 18px 19px;
+  }
+  .context-select {
+    max-width: 160px;
+  }
+  .wordmark {
+    font-size: 13px;
+  }
+}
+@media (max-width: 1050px) {
+  .workspace {
+    flex-wrap: wrap;
+    overflow: auto;
+    height: auto;
+    min-height: 100%;
+  }
+  .controls-panel {
+    width: 300px;
+    max-height: calc(100vh - 110px);
+    min-height: 600px;
+  }
+  .workspace-center {
+    min-height: 600px;
+    height: calc(100vh - 110px);
+  }
+  .telemetry-panel {
+    width: 100%;
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px 25px;
+  }
+  .telemetry-panel .panel-title,
+  .telemetry-panel .sample-state {
+    margin: 0;
+  }
+  .telemetry-panel > details {
+    grid-column: 1/-1;
+  }
+  .telemetry-summary {
+    margin: 0;
+  }
+  .memory-legend {
+    margin: 0;
+  }
+  .page-section {
+    padding: 30px 25px;
+  }
+  .connect-screen {
+    gap: 40px;
+  }
+  .connect-art h1 {
+    font-size: 50px;
+  }
+  .connect-card {
+    width: 330px;
+  }
+}
+@media (max-width: 760px) {
+  .app-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+  }
+  .main-shell {
+    height: auto;
+    min-height: 100vh;
+    overflow: visible;
+    margin-bottom: 68px;
+  }
+  .nav-rail {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    width: 100%;
+    height: 66px;
+    z-index: 5;
+    flex-direction: row;
+    border: 0;
+    border-top: 1px solid var(--border);
+    overflow-x: auto;
+    padding: 5px;
+    gap: 2px;
+    justify-content: space-around;
+  }
+  .nav-rail .brand-mark,
+  .rail-divider {
+    display: none;
+  }
+  .nav-rail button {
+    min-width: 53px;
+    min-height: 50px;
+    width: auto;
+    padding: 7px 8px;
+  }
+  .nav-rail button > span {
+    font-size: 18px;
+  }
+  .nav-rail button small {
+    font-size: 8px;
+  }
+  .nav-rail button.current:before {
+    display: none;
+  }
+  .nav-rail .palette-launch {
+    margin: 0;
+  }
+  .app-header {
+    gap: 14px;
+    height: 70px;
+    min-height: 70px;
+    padding: 13px 17px;
+    flex-wrap: wrap;
+  }
+  .wordmark {
+    font-size: 12px;
+    letter-spacing: 1.8px;
+  }
+  .wordmark em {
+    font-size: 8px;
+    margin-left: 5px;
+  }
+  .host-line {
+    font-size: 8px;
+  }
+  .context-select {
+    display: none;
+  }
+  .header-actions {
+    margin-left: auto;
+  }
+  .header-actions .icon-button {
+    font-size: 10px;
+    padding: 5px 8px;
+  }
+  .header-actions .icon-button:last-child {
+    display: none;
+  }
+  .workspace {
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+    overflow: visible;
+  }
+  .controls-panel {
+    width: 100%;
+    max-width: none;
+    min-width: 0;
+    min-height: 0;
+    max-height: none;
+    resize: none;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+    padding: 22px 18px 0;
+  }
+  .controls-scroll {
+    max-height: 480px;
+    min-height: 140px;
+  }
+  .controls-panel .workflow-actions {
+    margin-bottom: 8px;
+  }
+  .controls-panel .tabs {
+    margin-bottom: 12px;
+  }
+  .submission-footer {
+    padding: 15px 0;
+  }
+  .workspace-center {
+    width: 100%;
+    height: 620px;
+    min-height: 450px;
+  }
+  .viewer {
+    padding: 23px 17px 0;
+  }
+  .viewer > .section-heading h2 {
+    font-size: 13px;
+    max-width: 230px;
+  }
+  .recent-strip {
+    padding: 17px;
+    margin-top: 18px;
+  }
+  .viewer-footer > span {
+    max-width: 100%;
+  }
+  .telemetry-panel {
+    padding: 20px 18px;
+  }
+  .page-section {
+    padding: 25px 18px;
+  }
+  .page-section h1 {
+    font-size: 25px;
+  }
+  .operation-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+  .surface {
+    padding: 18px;
+  }
+  .filter-bar {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .filter-bar input {
+    width: 100%;
+    flex: auto;
+  }
+  .filter-bar select {
+    flex: 1;
+  }
+  .record {
+    padding: 6px 11px;
+  }
+  .record > summary {
+    flex-wrap: wrap;
+    gap: 9px;
+  }
+  .record > summary > span:last-child {
+    margin-left: 0;
+  }
+  .record > summary > .mono {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .app-footer {
+    padding: 8px 14px;
+    min-height: 36px;
+  }
+  .app-footer > .muted {
+    display: none;
+  }
+  .connect-screen {
+    flex-direction: column;
+    gap: 35px;
+    padding: 40px 22px;
+  }
+  .connect-art {
+    width: 100%;
+  }
+  .connect-art h1 {
+    font-size: 46px;
+    margin: 18px 0;
+  }
+  .connect-art .eyebrow {
+    font-size: 8px;
+  }
+  .connect-art > p {
+    font-size: 12px;
+    margin: 0;
+  }
+  .orbit-art {
+    display: none;
+  }
+  .connect-card {
+    width: 100%;
+    max-width: 450px;
+    padding: 24px;
+  }
+  .connect-screen > .connect-art {
+    max-width: 450px;
+  }
+  .notice {
+    padding: 9px 15px;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .notice > span {
+    flex: 1;
+    min-width: 220px;
+  }
+  .presentation .main-shell {
+    margin-bottom: 0;
+    height: 100vh;
+  }
+  .presentation .viewer {
+    height: calc(100vh - 54px);
+  }
+  .presentation .header-actions .icon-button:last-child {
+    display: inline-flex;
+  }
+  .gallery-grid {
+    grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
+    gap: 12px;
+  }
+  .artifact-preview {
+    height: 140px;
+  }
+  .section-heading {
+    align-items: flex-start;
+  }
+  .section-heading > .tag {
+    font-size: 8px;
+  }
+  .memory-legend {
+    grid-template-columns: 1fr 1fr;
+  }
+  .console-panel {
+    height: 200px;
+    resize: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}

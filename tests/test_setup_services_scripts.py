@@ -244,6 +244,40 @@ def test_rc4_not_found_allows_activation_and_owned_cleanup(tmp_path: Path) -> No
     assert cleaned.returncode == 0 and cleaned.stdout.strip() == "CLEANED"
 
 
+@pytest.mark.parametrize("tamper", ["extra", "changed", "symlink", "source"])
+def test_cleanup_preserves_unverified_studio_payload(tmp_path: Path, tamper: str) -> None:
+    env, digest, _address, _candidate = _stage(tmp_path, start=False, local=False)
+    compensated = _run(scripts.build_compensate_script(sys.executable, TOKEN, 1, digest), env)
+    assert compensated.returncode == 0 and compensated.stdout.strip() == "COMPENSATED"
+    package = Path(env["HOME"]) / scripts.release_rel(TOKEN, 1) / "site/dgx_monarch"
+    target = package / "studio/data/presentation.json"
+    if tamper == "extra":
+        (package / "studio/data/user-owned.txt").write_text("must remain")
+    elif tamper == "changed":
+        target.write_text("{}")
+    elif tamper == "source":
+        source = package / "__init__.py"
+        source.write_text(source.read_text() + "\n# changed after review\n")
+    else:
+        external = tmp_path / "external.json"
+        external.write_text("must remain")
+        target.unlink()
+        target.symlink_to(external)
+    cleaned = _run(scripts.build_cleanup_script(sys.executable, TOKEN, 1, digest), env)
+    assert cleaned.returncode == 0 and cleaned.stdout.strip() == "UNKNOWN"
+    assert package.is_dir()
+    if tamper == "symlink":
+        assert external.read_text() == "must remain"
+
+
+def test_verify_stage_refuses_altered_studio_resources(tmp_path: Path) -> None:
+    env, digest, _address, _candidate = _prepare(tmp_path, local=False)
+    package = Path(env["HOME"]) / scripts.release_rel(TOKEN, 1) / "site/dgx_monarch"
+    (package / "studio/data/presentation.json").write_text("{}")
+    checked = _run(scripts.build_verify_stage_script(sys.executable, TOKEN, 1, digest), env)
+    assert checked.returncode == 0 and checked.stdout.strip() == "UNKNOWN"
+
+
 def test_activation_refuses_when_stale_generation_cannot_be_replaced(tmp_path: Path) -> None:
     prepared = _prepare(tmp_path, local=False)
     env, _digest, _address, _candidate = prepared

@@ -87,6 +87,11 @@ REFUSAL_CLASSES = frozenset({
 # flow, lifecycle faults, IO faults and internal invariants. Adding an exception
 # class to src forces a choice between these two sets.
 NOT_REFUSAL_CLASSES = frozenset({
+    # Studio validates HTTP records and graph serialization. These errors do
+    # not grant or override model, topology, capacity, or consent authority.
+    "StudioError",
+    "WorkflowError",
+    "DraftError",
     "CaptureAborted",
     # Lifecycle faults from the sample stall guard and the poisoned-context
     # latch (2026-08-21): the stall is a driver-side eviction decision and the

@@ -1,0 +1,187 @@
+.connect-screen {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 100px;
+  min-height: 100%;
+  padding: 60px 45px;
+  background: radial-gradient(ellipse at 30% 60%, #29351d45, transparent 45%);
+}
+.connect-art {
+  max-width: 460px;
+  position: relative;
+}
+.connect-art h1 {
+  font-size: 64px;
+  line-height: 1.05;
+  letter-spacing: -3px;
+  font-weight: 580;
+  margin: 26px 0;
+}
+.connect-art h1 span {
+  color: var(--brand);
+}
+.connect-art > p {
+  color: #a0aab7;
+  font-size: 13px;
+  line-height: 1.9;
+}
+.connect-card {
+  width: 360px;
+  max-width: 100%;
+  background: #191d25;
+  border: 1px solid #32383f;
+  border-radius: 14px;
+  padding: 30px;
+  box-shadow: 0 25px 70px #0003;
+}
+.connect-card h2 {
+  font-size: 23px;
+  margin: 15px 0;
+}
+.connect-card > p {
+  font-size: 12px;
+  line-height: 1.8;
+  margin-bottom: 25px;
+}
+.connect-card > .primary {
+  width: 100%;
+  margin: 18px 0 22px;
+  padding: 12px;
+}
+.connect-card small {
+  font-size: 10px;
+  line-height: 1.7;
+}
+.orbit-art {
+  position: relative;
+  height: 160px;
+  width: 260px;
+  margin-top: 40px;
+}
+.orbit-art div {
+  position: absolute;
+  width: 220px;
+  height: 80px;
+  border: 1px solid #536d2b55;
+  border-radius: 50%;
+  top: 30px;
+  left: 0;
+  transform: rotate(-25deg);
+}
+.orbit-art div:nth-child(2) {
+  transform: rotate(25deg);
+}
+.orbit-art div:nth-child(3) {
+  transform: rotate(90deg);
+}
+.orbit-art span {
+  position: absolute;
+  left: 93px;
+  top: 33px;
+  font-size: 44px;
+  font-weight: 200;
+  color: #88b840;
+}
+dialog {
+  background: #191e26;
+  border: 1px solid #3c4450;
+  color: var(--text);
+  border-radius: 12px;
+  box-shadow: 0 35px 120px #0009;
+  padding: 25px;
+  max-height: 85vh;
+  width: min(680px, calc(100vw - 30px));
+}
+dialog::backdrop {
+  background: #080b11b3;
+  backdrop-filter: blur(5px);
+}
+.command-dialog {
+  width: 540px;
+  padding: 16px;
+  margin-top: 15vh;
+}
+.palette-search {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 0 15px;
+  border-bottom: 1px solid var(--border);
+}
+.palette-search input {
+  border: 0;
+  background: none;
+  outline: 0;
+  padding: 7px 0;
+  font-size: 14px;
+}
+.palette-search > span {
+  font-size: 25px;
+  color: #8693a5;
+}
+.palette-search button {
+  font-size: 9px;
+  padding: 4px;
+}
+.command-dialog > .eyebrow {
+  margin: 17px 9px 9px;
+  font-size: 8px;
+}
+.command-row {
+  display: flex;
+  width: 100%;
+  border: 0;
+  background: none;
+  justify-content: space-between;
+  padding: 13px 11px;
+  color: #c8d2de;
+  text-align: left;
+}
+.command-row > span:last-child {
+  color: #6c798c;
+}
+.palette-hint {
+  border-top: 1px solid var(--border);
+  color: #6e7c90;
+  font-size: 9px;
+  padding: 13px 8px 0;
+  margin-top: 10px;
+}
+.preview-dialog pre {
+  max-height: 40vh;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin-top: 20px;
+}
+.presentation .app-header {
+  height: 54px;
+  min-height: 54px;
+}
+.presentation .viewer {
+  height: 100%;
+  padding-bottom: 15px;
+}
+.presentation .viewer > .section-heading,
+.presentation .viewer-footer {
+  display: none;
+}
+.flapping .wing {
+  transform-origin: center;
+  animation: wing-beat 1.7s ease-in-out infinite;
+}
+.flapping .right {
+  animation-delay: 0.05s;
+}
+@keyframes wing-beat {
+  0%,
+  100% {
+    transform: scaleX(1);
+  }
+  50% {
+    transform: scaleX(0.55);
+  }
+}
