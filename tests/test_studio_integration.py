@@ -13,6 +13,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
 
+import aiohttp
+import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
@@ -56,6 +58,9 @@ class DriverProtocol:
     def __init__(self):
         self.submissions = []
         self.media_requests = []
+        self.uploaded = {}
+        self.chunked_upload = False
+        self.chunked_media = False
         self.queue = {"queue_pending": [], "queue_running": []}
         self.history = {}
         self.schema = {
@@ -92,9 +97,34 @@ class DriverProtocol:
 
         async def media(request):
             self.media_requests.append(dict(request.query))
+            if request.query.get("filename") in self.uploaded:
+                return web.Response(body=self.uploaded[request.query["filename"]], content_type="image/png")
             if dict(request.query) != {"filename": "result.png", "subfolder": "studio", "type": "output"}:
                 raise web.HTTPNotFound()
+            if self.chunked_media:
+                response = web.StreamResponse(headers={"Content-Type": "image/png"})
+                await response.prepare(request)
+                await response.write(PNG)
+                await response.write_eof()
+                return response
             return web.Response(body=PNG, content_type="image/png")
+
+        async def upload(request):
+            parts = await request.multipart()
+            part = await parts.next()
+            assert part.name == "image" and part.filename.endswith(".png")
+            self.uploaded[part.filename] = bytes(await part.read())
+            value = {"name": part.filename, "subfolder": "studio", "type": "input"}
+            if self.chunked_upload:
+                raw = json.dumps(value).encode()
+                response = web.StreamResponse(headers={"Content-Type": "application/json"})
+                await response.prepare(request)
+                await response.write(raw[:8])
+                await asyncio.sleep(0.01)
+                await response.write(raw[8:])
+                await response.write_eof()
+                return response
+            return web.json_response(value)
 
         app.router.add_get("/object_info", object_info)
         app.router.add_get("/queue", queue)
@@ -102,6 +132,7 @@ class DriverProtocol:
         app.router.add_get("/dgxm/telemetry", telemetry)
         app.router.add_post("/prompt", submit)
         app.router.add_get("/view", media)
+        app.router.add_post("/upload/image", upload)
         return app
 
 
@@ -157,6 +188,8 @@ def test_complete_http_generation_provenance_and_media_flow(tmp_path, monkeypatc
             inspection = await system.request("POST", "/workflows/inspect", json={"workflow": workflow})
             assert inspection["errors"] == []
             assert any(row["id"] == "main:1:text" for row in inspection["bindings"])
+            system.store.create("artifacts", {"id": "parent-output", "kind": "image", "job_id": None,
+                                              "filename": "parent.png", "subfolder": "", "type": "output"})
             draft = {"workflow": workflow, "values": {"main:1:text": "integration prompt", "main:2:seed": 123},
                      "seed_policy": "fixed", "operation": "image", "project_id": "project-one",
                      "parent_artifact_ids": ["parent-output"]}
@@ -201,14 +234,52 @@ def test_complete_http_generation_provenance_and_media_flow(tmp_path, monkeypatc
             assert completed["submission"]["workflow"] == workflow
             assert completed["submission"]["parent_artifact_ids"] == ["parent-output"]
             assert any(row.get("external") and row["prompt_id"] == "external-prompt" for row in snapshot["jobs"])
-            assert len(snapshot["artifacts"]) == 1
-            artifact = snapshot["artifacts"][0]
+            assert len(snapshot["artifacts"]) == 2
+            artifact = next(row for row in snapshot["artifacts"] if row["id"] != "parent-output")
             assert artifact["job_id"] == job_id and artifact["metadata"]["width"] == 1
             media = await system.browser.get(f"/api/v1/artifacts/{artifact['id']}/file", headers=system.headers)
             assert media.status == 200 and media.content_type == "image/png"
             assert await media.read() == PNG
             assert system.protocol.media_requests == [{"filename": "result.png", "subfolder": "studio", "type": "output"}]
             assert len(system.protocol.submissions) == 1
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("chunked", [False, True])
+def test_input_upload_and_bounded_thumbnail_flow(tmp_path, monkeypatch, chunked):
+    import io
+
+    from PIL import Image
+
+    async def scenario():
+        async with companion(tmp_path, monkeypatch) as system:
+            system.protocol.chunked_upload = chunked
+            data = io.BytesIO()
+            Image.new("RGBA", (640, 480), (255, 0, 0, 0)).save(data, "PNG")
+            asset = await system.request("POST", "/assets", expected=201, json={
+                "filename": "../../untrusted.png", "kind": "mask", "media_type": "image/png",
+                "data_base64": base64.b64encode(data.getvalue()).decode(),
+            })
+            assert asset["width"] == 640 and asset["height"] == 480
+            assert asset["type"] == "input" and asset["binding_value"].startswith("studio/")
+            assert "untrusted" not in asset["filename"]
+            response = await system.browser.get(f"/api/v1/artifacts/{asset['id']}/thumbnail", headers=system.headers)
+            assert response.status == 200
+            with Image.open(io.BytesIO(await response.read())) as preview:
+                assert preview.size == (320, 240)
+            assert len(system.protocol.uploaded) == 1
+    asyncio.run(scenario())
+
+
+def test_oversize_chunked_media_aborts_instead_of_returning_a_partial_file(tmp_path, monkeypatch):
+    async def scenario():
+        async with companion(tmp_path, monkeypatch) as system:
+            monkeypatch.setattr(server_module, "MEDIA_LIMIT", len(PNG) - 1)
+            system.protocol.chunked_media = True
+            system.store.create("artifacts", {"id": "oversize", "filename": "result.png", "subfolder": "studio", "type": "output"})
+            response = await system.browser.get("/api/v1/artifacts/oversize/file", headers=system.headers)
+            with pytest.raises(aiohttp.ClientPayloadError):
+                await response.read()
     asyncio.run(scenario())
 
 

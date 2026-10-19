@@ -2,7 +2,7 @@
   import { onMount } from 'svelte';
   import type { StudioClient } from '../api';
   import type { Capabilities, OperationRecord } from '../contracts';
-  import Field from './Field.svelte';
+  import OperationField from './OperationField.svelte';
   import { formatTime } from '../model';
   let {
     client,
@@ -144,13 +144,8 @@
             current.description ??
             'Availability and guards are checked during preview.'}
         </p>
-        {#each current.parameters ?? [] as field}<Field
-            binding={{
-              id: `operation-${field.name}`,
-              label: field.name,
-              type: field.type,
-              required: field.required,
-            }}
+        {#each current.parameters ?? [] as field}<OperationField
+            {field}
             value={parameters[field.name]}
             onchange={(value) => {
               parameters = { ...parameters, [field.name]: value };

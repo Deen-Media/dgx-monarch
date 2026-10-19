@@ -11,8 +11,8 @@ not JavaScript execution, browser responsiveness or Spark overhead.
 
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
-| `index-yUzH7Qw5.js` | 124,490 | 43,772 |
-| `index-zdB5ZhgI.css` | 25,183 | 6,435 |
+| `index-C8sTQzL0.js` | 158,585 | 56,018 |
+| `index-DLfCXZN9.css` | 27,734 | 6,988 |
 
 ## Runtime acceptance
 
@@ -26,11 +26,11 @@ not JavaScript execution, browser responsiveness or Spark overhead.
 | Long-session retention and growth | NOT RUN | NOT RUN |
 
 The CPU-only HTTP fixture verifies contract behavior and artifact transport;
-it is not a substitute for these measurements. A browser smoke checked selected
-workspace actions with the real companion and an unavailable driver. The final
-component refactor passed static accessibility/type checks and HTTP regression
-smoke; a final browser replay was unavailable because the browser tool exposed
-no enabled browser.
+it is not a substitute for these measurements. The interface passed browser
+checks against the synthetic fixture for workflow import, generation
+review/submission, a two-cell grid, durable results, thumbnail gallery and image
+viewer. These checks do not establish video, accessibility or long-session
+performance acceptance.
 
 A release report must record exact source, driver, model, workflow, topology,
 client hardware/browser and baseline variance. Measure wall time, host CPU/GPU,

@@ -9,10 +9,13 @@
     ReportError,
   } from '../contracts';
   import { exportJSON } from '../files';
+  import type { StudioClient } from '../api';
+  import AssetEditor from '../components/AssetEditor.svelte';
   import Field from '../components/Field.svelte';
   import LoraStack from '../components/LoraStack.svelte';
   import WorkflowLayout from '../components/WorkflowLayout.svelte';
   let {
+    client,
     draft,
     bindings = $bindable(),
     rawWorkflow = $bindable(),
@@ -30,6 +33,7 @@
     undo,
     prepareJob,
   }: {
+    client: StudioClient;
     draft: Draft;
     bindings: Binding[];
     rawWorkflow: string;
@@ -130,7 +134,7 @@
     </div>
   </div>
   <div class="tabs" aria-label="Generation sections">
-    {#each [{ id: 'inputs', label: 'Inputs' }, { id: 'advanced', label: 'All inputs' }, { id: 'loras', label: 'LoRAs' }, { id: 'workflow', label: 'Layout' }] as tab}<button
+    {#each [{ id: 'inputs', label: 'Inputs' }, { id: 'advanced', label: 'All inputs' }, { id: 'assets', label: 'Assets' }, { id: 'loras', label: 'LoRAs' }, { id: 'workflow', label: 'Layout' }] as tab}<button
         class:active={controlTab === tab.id}
         onclick={() => (controlTab = tab.id)}>{tab.label}</button
       >{/each}
@@ -202,7 +206,12 @@
           <small>Lineage records ancestry. Workflow asset controls specify the actual input.</small
           ><button onclick={() => changeDraft({ parent_artifact_ids: [] })}>Clear lineage</button>
         </div>{/if}
-    {:else if controlTab === 'loras'}<LoraStack
+    {:else if controlTab === 'assets'}<AssetEditor
+        {client}
+        {draft}
+        bind:bindings
+        {changeDraft}
+      />{:else if controlTab === 'loras'}<LoraStack
         {draft}
         {catalog}
         {changeDraft}

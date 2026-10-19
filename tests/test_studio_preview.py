@@ -126,6 +126,8 @@ def test_preview_repairs_imported_invalid_default_and_freezes_effective(request_
 
     class Client:
         async def request(self, method, path):
+            if path == "/system_stats":
+                return {"system": {"comfyui_version": "test-driver"}}
             assert (method, path) == ("GET", "/object_info")
             return deepcopy(schema)
 

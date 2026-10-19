@@ -45,8 +45,10 @@ Backend idle, consent, refusal and recovery rules remain authoritative.
 The optional `--driver-service` setting names an already installed owner-managed
 ComfyUI systemd user unit. It neither installs a unit nor grants permissions.
 The companion refuses unrecognized driver ownership and does not interpret
-Worker-service controls as driver controls. Missing management adapters are
-explicitly marked incomplete, not hidden behind a CLI fallback.
+Worker-service controls as driver controls. Management controls expose typed
+review plans and retained receipts. Update executes the existing verified
+transaction in a frozen controller using the reviewed driver interpreter;
+uncertain outcomes suppress automatic restoration and retain recovery data.
 
 ## Working with workflows
 
@@ -57,8 +59,10 @@ App Mode labels and layout can change without changing binding identity.
 
 Compilation preserves the original workflow and extension metadata. Unknown
 widgets, ambiguous bindings and unsupported graph constructs refuse execution
-with a repair reason. A frontend-exported API prompt is required for unsupported
-UI subgraph execution. Studio does not execute imported widget JavaScript.
+with a repair reason. Nested serialized subgraph interfaces compile into
+separate execution identities. Ambiguous edits to shared definitions and
+unsupported promoted-widget encodings require an explicitly resolved API
+prompt. Studio does not execute imported widget JavaScript.
 
 Preview resolves values and seed policy and freezes the submission. Styles
 require explicit positive/negative prompt bindings. LoRA stacks bind only to
@@ -100,15 +104,21 @@ snapshot. Terminal job state never regresses; a late submission response cannot
 replace a running state with queued. Restarted in-flight operations become
 unknown and are never automatically re-executed. Queue deletion records a
 cancellation request; without a definitive backend terminal event it does not
-claim cancellation completed. Running-job cancellation remains restricted to
-avoid a race that interrupts another graph task.
+claim cancellation completed. Running-job cancellation uses the driver's
+atomic prompt-specific cancellation route when available. Older drivers refuse
+that request; the adapter never falls back to a global interrupt.
 
 Published limits are 4 MiB per JSON request/driver response, 4,096 replay events
 and 8 MiB of replay payload, 1,000 console lines/256 KiB, 600 chart samples and
 one hour, a 32 MiB thumbnail cache budget, a 64 MiB media display limit, and
 1,024 grid combinations. API snapshots return the newest 200 rows per kind;
-record storage permits 2,000 editable records per kind. Long-history browsing,
-thumbnail generation and full experiment dispatch remain acceptance gaps.
+record storage permits 2,000 editable records per kind. History uses stable
+pagination; the browser retains at most 2,000 loaded rows per window. Thumbnail
+decoding accepts at most 16 megapixels and 8 MiB per source image, returns at
+most 320 pixels per edge and runs at most two decodes concurrently. Input
+uploads accept 2 MiB encoded source files and preserve mask alpha after
+orientation normalization. Live previews retain at most 16 identity-bound
+frames. Grid previews allow at most 32 MiB of complete cell submissions.
 
 ## Development
 

@@ -64,3 +64,9 @@ class UpdateLock:
                 os.close(descriptor)
             except OSError:
                 pass
+
+    def fileno(self) -> int:
+        """Allow an isolated update controller to retain this held flock."""
+        if self._descriptor is None:
+            raise UpdateLockUnavailable("update lock is not held")
+        return self._descriptor

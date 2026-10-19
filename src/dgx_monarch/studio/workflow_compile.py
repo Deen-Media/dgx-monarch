@@ -118,6 +118,9 @@ def compile_graph(workflow: Mapping[str, Any], info: Mapping[str, Any],
                 if identity in values:
                     node["inputs"][name] = copy.deepcopy(values[identity])
         return _validate_prompt(prompt, info)
+    if len(graphs) > 1 or any(node.get("mode", 0) in {2, 4} for node in nodes.values()):
+        from .subgraph_compile import compile_subgraphs
+        return compile_subgraphs(dict(workflow), dict(info), dict(values))
     links = _link_rows(root["graph"])
     prompt = {}
 

@@ -37,8 +37,9 @@ review and submit, then select the resulting PNG from recent outputs. This is
 synthetic integration evidence only; it is not GPU generation or fidelity proof.
 Terminate both fixture processes and delete the temporary token when finished.
 
-The HTTP smoke passed during development. The initial interface had native-browser
-verification for offline-driver operation, durable records, navigation and
-presentation mode. After component extraction, the available browser inventory
-was empty, so final component structure has type/unit/build and HTTP integration
-coverage, with browser regression verification still required.
+The HTTP smoke passed during development. Browser verification against this
+fixture subsequently covered workflow import, typed controls, immutable review,
+a completed synthetic job, a two-cell grid and durable thumbnail gallery.
+Offline-driver operation, durable records, navigation and presentation mode had
+earlier browser coverage. Complete keyboard, screen-reader, video and performance
+acceptance remains required; see `docs/STUDIO_ACCEPTANCE.md`.

@@ -2,6 +2,7 @@
   import { onDestroy, untrack } from 'svelte';
   import type { StudioClient } from '../api';
   import type { Artifact, ReuseArtifact } from '../contracts';
+  import ComparisonDetails from './ComparisonDetails.svelte';
   import { displayUnknown } from '../model';
   let {
     artifact = null,
@@ -31,12 +32,22 @@
   let muted = $state(true),
     loop = $state(true),
     sync = $state(false);
+  let frameRate = $derived(artifact?.metadata?.frame_rate ?? artifact?.metadata?.fps);
+  const mediaKey = $derived(
+    JSON.stringify([
+      artifact?.id,
+      artifact?.intermediate ? artifact.metadata?.sha256 : null,
+      compare?.id,
+      compare?.intermediate ? compare.metadata?.sha256 : null,
+    ]),
+  );
   let generation = 0;
   let pan = { x: 0, y: 0, left: 0, top: 0, active: false };
   $effect(() => {
-    const selected = artifact,
-      secondary = compare,
-      api = client;
+    const key = mediaKey;
+    const [selected, secondary] = untrack(() => [artifact, compare]);
+    const api = client;
+    if (!key) return;
     const ticket = ++generation;
     const controller = new AbortController();
     untrack(() => {
@@ -86,13 +97,27 @@
   }
   function syncPlayback() {
     if (!sync || !video || !secondVideo) return;
-    secondVideo.currentTime = Math.min(
-      video.currentTime,
-      secondVideo.duration || video.currentTime,
-    );
-    if (video.paused) secondVideo.pause();
-    else void secondVideo.play().catch(() => {});
+    const duration = Number.isFinite(secondVideo.duration)
+      ? secondVideo.duration
+      : video.currentTime;
+    const target = Math.min(video.currentTime, duration);
+    if (Math.abs(secondVideo.currentTime - target) > 0.08) secondVideo.currentTime = target;
+    secondVideo.playbackRate = video.playbackRate;
+    if (video.paused || target >= duration) secondVideo.pause();
+    else if (secondVideo.paused) void secondVideo.play().catch(() => {});
   }
+  function stepFrame(direction: number) {
+    if (!video || !frameRate) return;
+    video.pause();
+    video.currentTime = Math.max(
+      0,
+      Math.min(video.duration, video.currentTime + direction / frameRate),
+    );
+    syncPlayback();
+  }
+  $effect(() => {
+    if (sync) syncPlayback();
+  });
 </script>
 
 <section class="viewer">
@@ -203,7 +228,9 @@
             {loop}
             onplay={syncPlayback}
             onpause={syncPlayback}
-            onseeked={syncPlayback}><track kind="captions" /></video
+            onseeked={syncPlayback}
+            ontimeupdate={syncPlayback}
+            onratechange={syncPlayback}><track kind="captions" /></video
           >
         {:else}<img
             src={url}
@@ -244,11 +271,23 @@
         >{/if}<button onclick={() => onselect(null)}>Exit comparison</button>
     </div>{/if}
   {#if artifact?.kind === 'video'}<div class="viewer-toolbar">
+      <button disabled={!frameRate} onclick={() => stepFrame(-1)}>Previous frame</button><button
+        disabled={!frameRate}
+        onclick={() => stepFrame(1)}>Next frame</button
+      >
+      <small
+        >{frameRate
+          ? `${frameRate} fps step`
+          : 'Frame rate unknown; use native seek controls'}</small
+      >
       <label><input type="checkbox" bind:checked={muted} /> Mute</label><label
         ><input type="checkbox" bind:checked={loop} /> Loop</label
       >{#if compare?.kind === 'video'}<label
           ><input type="checkbox" bind:checked={sync} /> Synchronize playback time</label
-        ><small>Different durations are clamped; frames may not align.</small>{/if}
+        ><small
+          >First video is the playback leader. The shorter video holds at its end; timestamps
+          synchronize, not source frames.</small
+        >{/if}
     </div>{/if}
   {#if artifact}<div class="viewer-footer">
       <span class="muted"
@@ -261,6 +300,7 @@
         ><button onclick={() => onreuse(artifact, 'upscale')}>Upscale</button>
       </div>
     </div>{/if}
+  {#if artifact && compare}<ComparisonDetails left={artifact} right={compare} {client} />{/if}
   {#if metadata && artifact}<div class="metadata-panel">
       <dl>
         <dt>Job</dt>

@@ -2,6 +2,8 @@ import { StudioClient } from './api';
 import { consumeEvents, boundedLog, formatTime } from './model';
 import type { Capabilities, Catalog, Snapshot, WorkflowEntry } from './contracts';
 
+import { appendTelemetry, type MetricSeries } from './telemetryHistory';
+
 const TOKEN_KEY = 'dgxm.studio.token.v1';
 
 /** Owns companion transport and reconciled host state, never unsent draft edits. */
@@ -24,6 +26,7 @@ export class Connection {
     driver: {},
   });
   logs = $state<string[]>([]);
+  metricHistory = $state<MetricSeries[]>([]);
   hidden = $state(document.hidden);
   cursor = 0;
   private instance?: string;
@@ -43,10 +46,16 @@ export class Connection {
     if (this.instance && result.instance_id !== this.instance) {
       this.cursor = 0;
       this.logs = [];
+      this.metricHistory = [];
       this.capabilities = await this.client.request('/capabilities');
     }
     this.instance = result.instance_id;
     this.snapshot = result;
+    this.metricHistory = appendTelemetry(
+      this.metricHistory,
+      result.telemetry,
+      this.capabilities.presentation?.metrics ?? [],
+    );
     this.cursor = Math.max(this.cursor, result.cursor ?? 0);
     this.lastSeen = formatTime(result.server_time);
     this.state = 'connected';

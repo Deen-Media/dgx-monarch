@@ -1,11 +1,20 @@
 <script lang="ts">
+  import TelemetryCharts from '../components/TelemetryCharts.svelte';
+  import type { MetricSeries, Presentation } from '../telemetryHistory';
   import type { Telemetry, ChangeDraft } from '../contracts';
   let {
     telemetry,
+    history,
+    presentation,
     changeDraft,
     navigate,
-  }: { telemetry: Telemetry; changeDraft: ChangeDraft; navigate: (view: string) => void } =
-    $props();
+  }: {
+    telemetry: Telemetry;
+    history: MetricSeries[];
+    presentation?: Presentation;
+    changeDraft: ChangeDraft;
+    navigate: (view: string) => void;
+  } = $props();
 </script>
 
 <section class="page-section">
@@ -33,6 +42,7 @@
       in-flight pause, reorder and retry are unavailable at the graph-task boundary.
     </p>
   </div>
+  <TelemetryCharts {history} {presentation} />
   <h2>Reported Fleet state</h2>
   <pre>{JSON.stringify(
       telemetry?.sample?.render?.fleet ??

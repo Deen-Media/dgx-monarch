@@ -187,7 +187,7 @@ class DriverService:
         else:
             raise _refuse("Driver is not in a known stable running or stopped state.")
         config = {"unit": self.unit, "owner_uid": self.uid, "unit_files": unit_files,
-                  "source_files": source, "exec_digest": digest(argv), "interpreter": str(interpreter),
+                  "source_files": source, "exec_digest": digest(argv), "executable": str(executable), "interpreter": str(interpreter),
                   "interpreter_identity": [interpreter_stat.st_dev, interpreter_stat.st_ino, interpreter_stat.st_mtime_ns],
                   "service_policy": {name: fields[name] for name in ("UnitFileState", "Restart", "KillMode")}}
         return {"schema_version": 1, "role": "comfyui_driver", "config": config,

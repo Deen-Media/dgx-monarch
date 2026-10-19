@@ -59,3 +59,24 @@ test('oversized media is cancelled before reading its body', async () => {
     globalThis.fetch = realFetch;
   }
 });
+test('thumbnails use an authenticated bounded endpoint independently of full media', async () => {
+  let cancelled = false;
+  globalThis.fetch = async (input, options) => {
+    assert.equal(input, '/api/v1/artifacts/a%2Fb/thumbnail');
+    assert.deepEqual(options?.headers, { Authorization: 'Bearer test-token' });
+    return new Response(
+      new ReadableStream({
+        cancel() {
+          cancelled = true;
+        },
+      }),
+      { headers: { 'Content-Length': String(513 * 1024) } },
+    );
+  };
+  try {
+    await assert.rejects(new StudioClient('test-token').thumbnail('a/b'), /512 KiB/);
+    assert.equal(cancelled, true);
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});

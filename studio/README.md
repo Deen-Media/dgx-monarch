@@ -37,21 +37,39 @@ copy independently of browser storage. Changing a draft never edits a job's froz
 submission. A timed-out submission retains its idempotency key and disables fresh
 submission until the companion can reconcile its outcome.
 
-The client keeps at most 400 event lines / 128 KiB, requests 40 gallery records per
-page from its bounded snapshot, and fetches only selected full media. Each media
-fetch has a 64 MiB byte limit. Object URLs are revoked when selection changes or the
-viewer unmounts. Polling pauses in hidden tabs and backs off to 30 seconds after
-failures. The activity mark reflects accepted/running work, pauses in hidden tabs,
-and is static for reduced motion. These are implementation limits, not measured
-long-session performance acceptance.
+The client keeps at most 400 event lines / 128 KiB. Gallery and queue history use
+100-record durable API pages with a 2,000-record client window. The gallery mounts
+only visible rows, requests bounded 320-pixel thumbnails, and caps each thumbnail
+response at 512 KiB. Full media loads only for selection or explicit download and
+has a 64 MiB byte limit. Object URLs are revoked after use. Polling pauses in hidden
+tabs and backs off to 30 seconds after failures. Metric history retains 240 points
+per series and at most 256 series, preserving source timestamps and missing-value
+gaps. These are implementation limits, not measured long-session acceptance.
 
-`docs/STUDIO_ACCEPTANCE.md` is the authority for complete-product acceptance and
-known gaps. In particular, gallery pagination currently uses metadata cards, not
-thumbnail generation; workflow asset inputs are typed fields rather than a mask
-editor; telemetry is an inspectable source sample rather than finished charts.
-The parameter-grid view validates all combinations and persists an experiment,
-but each cell requires its own explicit submission review. Never interpret a
-missing control adapter or unmeasured acceptance criterion as a completed feature.
+The Assets tab uploads PNG, JPEG or WebP inputs and painted PNG masks through the
+companion's 2 MiB upload contract. Binding selection is explicit; the returned
+server filename is the actual workflow value. Painted mask pixels export with
+transparent alpha, matching Comfy LoadImage's inverse-alpha mask output. Clear
+editor, replace source, clear mask, and clear bound input are separate actions.
+
+Gallery filters cover provenance, operation, model, date, status, project,
+media kind and dimensions. Images support shared zoom and wipe comparison;
+videos support leader/follower time and playback-rate synchronization, duration
+clamping, and frame stepping when frame rate is recorded. This does not promise
+frame alignment between different encodings or durations. Unsupported thumbnails
+remain labelled placeholders.
+
+Grids validate complete typed combinations in the backend, expose each complete
+cell preview on demand, and require confirmation before grouped dispatch through
+the existing Comfy queue. Durable outcomes, linked retries of selected failed or
+cancelled cells, saved-run resume, output comparison and manifest export remain
+available after dispatch. Fixed and incrementing grid seeds are explicit; grid
+previews never silently randomize seeds. History views retain active jobs while
+browsing older records.
+
+`docs/STUDIO_ACCEPTANCE.md` remains the authority for complete-product acceptance,
+including measured performance, real-driver behavior and hardware qualification.
+Neither a passing CPU test nor a rendered control establishes those outcomes.
 
 The presentation layer is divided into `views/` for view-owned state,
 `components/` for reusable controls and shell regions, and typed records in

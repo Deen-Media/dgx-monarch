@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from pathlib import PurePosixPath
 from typing import Any
 from urllib.parse import urlsplit
 
 import aiohttp
 
-from .contracts import MAX_BODY_BYTES, StudioError
+from .contracts import MAX_BODY_BYTES, MAX_EVENT_BYTES, StudioError, bounded_key
 
 GET_PATHS = frozenset({"/object_info", "/queue", "/history", "/system_stats", "/dgxm/telemetry", "/dgxm/consents"})
 POST_PATHS = frozenset({"/prompt", "/queue", "/interrupt", "/free", "/dgxm/recycle", "/dgxm/consent"})
@@ -43,8 +44,13 @@ class ComfyClient:
         self.session: aiohttp.ClientSession | None = None
 
     async def start(self) -> None:
+        trace = aiohttp.TraceConfig()
+        async def no_redirect(session: Any, context: Any, params: Any) -> None:
+            raise StudioError("driver_redirect", "Driver redirects are not permitted.", 502)
+        trace.on_request_redirect.append(no_redirect)
         self.session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=20),
-                                             headers={"Authorization": f"Bearer {self.bearer}"} if self.bearer else {})
+                                             headers={"Authorization": f"Bearer {self.bearer}"} if self.bearer else {},
+                                             trace_configs=[trace])
 
     async def close(self) -> None:
         if self.session:
@@ -54,6 +60,45 @@ class ComfyClient:
         allowed = GET_PATHS if method == "GET" else POST_PATHS if method == "POST" else frozenset()
         if path not in allowed:
             raise StudioError("driver_endpoint", "The driver endpoint is not allowlisted.")
+        return await self._request(method, path, data)
+
+    async def history_prompt(self, prompt_id: str) -> Any:
+        return await self._request("GET", "/history/" + bounded_key(prompt_id, "prompt id"))
+
+    async def cancel_prompt(self, prompt_id: str) -> dict[str, Any]:
+        # This upstream API checks identity and interrupts under the queue mutex.
+        # /interrupt is intentionally not used: even its prompt_id variant races.
+        result = await self._request("POST", "/api/jobs/" + bounded_key(prompt_id, "prompt id") + "/cancel", {})
+        if not isinstance(result, dict) or type(result.get("cancelled")) is not bool:
+            raise StudioError("cancellation_unknown", "Driver did not confirm a prompt-specific cancellation request.", 503)
+        return result
+
+    async def stream_events(self, client_id: str) -> AsyncIterator[dict[str, Any]]:
+        from .live_preview import FRAME_BYTES, parse_frame
+
+        if self.session is None:
+            raise StudioError("driver_offline", "Driver is unavailable.", 503)
+        try:
+            async with self.session.ws_connect(self.origin + "/ws", params={"clientId": bounded_key(client_id)},
+                                               heartbeat=15, max_msg_size=FRAME_BYTES + 16392) as socket:
+                await socket.send_json({"type": "feature_flags", "data": {"supports_preview_metadata": True}})
+                async for message in socket:
+                    if message.type == aiohttp.WSMsgType.TEXT:
+                        if len(message.data.encode()) > MAX_EVENT_BYTES:
+                            continue
+                        value = json.loads(message.data)
+                        if isinstance(value, dict):
+                            yield value
+                    elif message.type == aiohttp.WSMsgType.BINARY:
+                        frame = parse_frame(message.data)
+                        if frame is not None:
+                            yield frame
+                    elif message.type == aiohttp.WSMsgType.ERROR:
+                        raise StudioError("driver_events", "Driver event stream disconnected.", 503)
+        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
+            raise StudioError("driver_events", "Driver event stream disconnected; reconcile snapshots.", 503) from exc
+
+    async def _request(self, method: str, path: str, data: Any = None) -> Any:
         if self.session is None:
             raise StudioError("driver_offline", "The driver connection is not initialized.", 503)
         params = {"max_items": "200"} if path == "/history" else None
@@ -70,7 +115,8 @@ class ComfyClient:
                 if response.status >= 300:
                     # Raw backend errors may contain prompts, credentials or local paths.
                     raise StudioError("driver_rejected", f"Driver returned HTTP {response.status}; inspect its local diagnostics.", 502)
-                return json.loads(raw)
+                # ComfyUI queue deletion returns an empty successful response.
+                return json.loads(raw) if raw else {}
         except (aiohttp.ClientError, TimeoutError, json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise StudioError("driver_unknown", "The driver did not return a complete response; reconcile before retrying.", 503) from exc
 

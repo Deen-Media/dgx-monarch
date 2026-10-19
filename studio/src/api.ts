@@ -40,18 +40,28 @@ export class StudioClient {
       clearTimeout(timeout);
     }
   }
-  async media(id: string, signal?: AbortSignal): Promise<Blob> {
-    const response = await fetch(`/api/v1/artifacts/${encodeURIComponent(id)}/file`, {
-      headers: { Authorization: `Bearer ${this.token}` },
-      cache: 'no-store',
-      signal,
-    });
+  async thumbnail(id: string, signal?: AbortSignal): Promise<Blob> {
+    return this.media(id, signal, true);
+  }
+  async media(id: string, signal?: AbortSignal, thumbnail = false): Promise<Blob> {
+    const response = await fetch(
+      `/api/v1/artifacts/${encodeURIComponent(id)}/${thumbnail ? 'thumbnail' : 'file'}`,
+      {
+        headers: { Authorization: `Bearer ${this.token}` },
+        cache: 'no-store',
+        signal,
+      },
+    );
     if (!response.ok) throw new ApiError(response.status, `Media unavailable (${response.status})`);
-    const limit = 64 * 1024 * 1024;
+    const limit = thumbnail ? 512 * 1024 : 64 * 1024 * 1024;
     const size = Number(response.headers.get('Content-Length') ?? 0);
     if (size > limit) {
       await response.body?.cancel();
-      throw new Error('Media exceeds the 64 MiB display budget.');
+      throw new Error(
+        thumbnail
+          ? 'Thumbnail exceeds the 512 KiB display budget.'
+          : 'Media exceeds the 64 MiB display budget.',
+      );
     }
     if (!response.body) throw new Error('Media response has no body.');
     const reader = response.body.getReader();
@@ -63,7 +73,11 @@ export class StudioClient {
       received += value.byteLength;
       if (received > limit) {
         await reader.cancel();
-        throw new Error('Media exceeds the 64 MiB display budget.');
+        throw new Error(
+          thumbnail
+            ? 'Thumbnail exceeds the 512 KiB display budget.'
+            : 'Media exceeds the 64 MiB display budget.',
+        );
       }
       chunks.push(value as Uint8Array<ArrayBuffer>);
     }

@@ -35,7 +35,7 @@ export interface Job {
     project_id?: string;
     [key: string]: unknown;
   };
-  progress?: { total?: number; completed?: number; step?: number };
+  progress?: { max?: number; value?: number; node?: string | number };
   [key: string]: unknown;
 }
 export interface Artifact {
@@ -85,6 +85,9 @@ export type RecordKind =
   'projects' | 'presets' | 'styles' | 'sessions' | 'workflows' | 'experiments';
 export type Records = Partial<Record<RecordKind, StoredRecord[]>>;
 export interface OperationParameter {
+  choices?: unknown[];
+  min?: number;
+  max?: number;
   name: string;
   type: string;
   default?: unknown;
@@ -115,6 +118,7 @@ export interface OperationRecord {
   [key: string]: unknown;
 }
 export interface Capabilities {
+  presentation?: import('./telemetryHistory').Presentation;
   schema_version?: string;
   host?: string;
   instance_id?: string;

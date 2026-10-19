@@ -7,9 +7,7 @@
   import type {
     Artifact,
     Job,
-    JobPreview,
     Workflow,
-    Inspection,
     StoredRecord,
     RecordKind,
     RecordData,
@@ -64,6 +62,16 @@
         ['queued', 'running', 'submitting', 'cancel_requested', 'accepted'].includes(j.state),
       ),
     );
+  const displayedArtifact = $derived(
+    selected
+      ? (connection.snapshot.artifacts.find((item) => item.id === selected?.id) ?? selected)
+      : null,
+  );
+  const displayedComparison = $derived(
+    comparison
+      ? (connection.snapshot.artifacts.find((item) => item.id === comparison?.id) ?? comparison)
+      : null,
+  );
   const refresh = () => connection.refresh();
   function navigate(id: string) {
     view = id;
@@ -153,7 +161,9 @@
     });
   }
   async function reuse(artifact: Artifact, operation?: string) {
-    const job = jobs.find((j) => j.id === artifact.job_id);
+    const job =
+      jobs.find((j) => j.id === artifact.job_id) ??
+      (await connection.client.request<Job>(`/jobs/${encodeURIComponent(artifact.job_id)}`));
     if (!job?.submission?.workflow) {
       error = 'Source workflow is unavailable. Restore the job provenance before reuse.';
       return;
@@ -320,10 +330,7 @@
   async function retryPending() {
     await withBusy(() => submission.retryRetained());
   }
-  function reviewCell(value: JobPreview, kind: string) {
-    submission.review(value, kind);
-    previewPanel.open();
-  }
+
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -370,14 +377,15 @@
   <main id="main-heading" tabindex="-1">
     {#if !connection.connected}<Connect bind:token={connection.token} {busy} {connect} />
     {:else if presentation}<Viewer
-        artifact={selected}
-        compare={comparison}
+        artifact={displayedArtifact}
+        compare={displayedComparison}
         client={connection.client}
         onreuse={reuse}
         onselect={(a) => (comparison = a)}
       />
     {:else if view === 'workspace'}<div class="workspace">
         <Generation
+          client={connection.client}
           {draft}
           bind:bindings
           bind:rawWorkflow
@@ -396,10 +404,12 @@
           {prepareJob}
         /><WorkspaceOutput
           client={connection.client}
-          {selected}
-          {comparison}
+          selected={displayedArtifact}
+          comparison={displayedComparison}
           artifacts={connection.snapshot.artifacts}
           telemetry={connection.snapshot.telemetry}
+          history={connection.metricHistory}
+          presentation={connection.capabilities.presentation}
           driverState={connection.snapshot.driver.state}
           connectionState={connection.state}
           activeCount={activeJobs.length}
@@ -412,6 +422,7 @@
         />
       </div>
     {:else if view === 'gallery'}<Gallery
+        client={connection.client}
         allArtifacts={connection.snapshot.artifacts}
         {jobs}
         projectId={draft.project_id}
@@ -422,16 +433,18 @@
         {reuse}
         {setNotice}
       />
-    {:else if view === 'queue'}<Queue {jobs} {busy} {refresh} {fail} {jobAction} />
-    {:else if view === 'grid'}<Grids
+    {:else if view === 'queue'}<Queue
         client={connection.client}
-        {draft}
-        {bindings}
-        pending={!!submission.pending}
-        {saveRecord}
-        onreview={reviewCell}
+        {jobs}
+        {busy}
+        {refresh}
+        {fail}
+        {jobAction}
       />
+    {:else if view === 'grid'}<Grids {reuse} client={connection.client} {draft} {bindings} />
     {:else if view === 'fleet'}<Fleet
+        history={connection.metricHistory}
+        presentation={connection.capabilities.presentation}
         telemetry={connection.snapshot.telemetry}
         {changeDraft}
         {navigate}

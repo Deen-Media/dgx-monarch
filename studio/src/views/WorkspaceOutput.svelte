@@ -2,6 +2,8 @@
   import type { StudioClient } from '../api';
   import type { Artifact, Telemetry, ReuseArtifact } from '../contracts';
   import { formatTime } from '../model';
+  import TelemetryCharts from '../components/TelemetryCharts.svelte';
+  import type { MetricSeries, Presentation } from '../telemetryHistory';
   import Viewer from '../components/Viewer.svelte';
   let {
     client,
@@ -9,6 +11,8 @@
     comparison,
     artifacts,
     telemetry,
+    history,
+    presentation,
     driverState,
     connectionState,
     activeCount,
@@ -24,6 +28,8 @@
     comparison: Artifact | null;
     artifacts: Artifact[];
     telemetry: Telemetry;
+    history: MetricSeries[];
+    presentation?: Presentation;
     driverState?: string;
     connectionState: string;
     activeCount: number;
@@ -51,7 +57,7 @@
       >
     </div>
     <div class="recent-list">
-      {#each (artifacts ?? []).slice(-8).reverse() as artifact}<button
+      {#each (artifacts ?? []).slice(0, 8) as artifact}<button
           class:selected={selected?.id === artifact.id}
           onclick={() => onselect(artifact)}
           ><span aria-hidden="true">{artifact.kind === 'video' ? '▷' : '▧'}</span><span
@@ -84,6 +90,7 @@
         class="text-small">{driverState ?? 'unknown'}</strong
       >
     </div>
+    <TelemetryCharts {history} {presentation} />
     <details open>
       <summary>Authoritative host sample</summary>
       <pre>{JSON.stringify(telemetry ?? {}, null, 2)}</pre>

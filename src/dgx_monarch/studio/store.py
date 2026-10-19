@@ -1,6 +1,7 @@
 """Owner-private durable records, immutable submissions and bounded event replay."""
 from __future__ import annotations
 
+import builtins
 import json
 import os
 import sqlite3
@@ -63,17 +64,22 @@ class Store:
                 key TEXT PRIMARY KEY, digest TEXT NOT NULL, kind TEXT NOT NULL, entity_id TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS events (
                 cursor INTEGER PRIMARY KEY AUTOINCREMENT, document TEXT NOT NULL, size INTEGER NOT NULL);
+            CREATE INDEX IF NOT EXISTS artifacts_by_job ON objects(json_extract(document,'$.job_id')) WHERE kind='artifacts';
         """)
         row = self.db.execute("SELECT value FROM meta WHERE key='schema'").fetchone()
         if row is not None and row[0] != "1":
             self.db.close()
             raise StudioError("storage_version", "Unsupported storage schema; export with the matching companion.")
         self.db.execute("INSERT OR IGNORE INTO meta VALUES ('schema','1')")
+        self.db.execute("INSERT OR IGNORE INTO meta VALUES ('client_id',?)", (identifier(),))
+        self.client_id = self.db.execute("SELECT value FROM meta WHERE key='client_id'").fetchone()[0]
 
     def close(self) -> None:
         self.db.close()
 
     def get(self, kind: str, object_id: str) -> dict[str, Any]:
+        if not isinstance(object_id, str):
+            raise StudioError("record_id", "Record identity must be text.")
         with self.lock:
             row = self.db.execute("SELECT document FROM objects WHERE kind=? AND id=?", (kind, object_id)).fetchone()
         if row is None:
@@ -89,6 +95,41 @@ class Store:
     def _put(self, kind: str, value: dict[str, Any], revision: int) -> None:
         self.db.execute("INSERT OR REPLACE INTO objects VALUES (?,?,?,?,?)",
                         (kind, value["id"], revision, canonical(value), timestamp()))
+
+    def all(self, kind: str) -> builtins.list[dict[str, Any]]:
+        """Internal reconciliation cannot truncate identities at the UI page limit."""
+        with self.lock:
+            rows = self.db.execute("SELECT document FROM objects WHERE kind=? ORDER BY id", (kind,)).fetchall()
+        return [json.loads(row[0]) for row in rows]
+
+    def artifacts_for_jobs(self, identities: builtins.list[str]) -> builtins.list[dict[str, Any]]:
+        result: builtins.list[dict[str, Any]] = []
+        with self.lock:
+            for start in range(0, len(identities), 256):
+                batch = identities[start:start + 256]
+                placeholders = ",".join("?" for _ in batch)
+                rows = self.db.execute("SELECT document FROM objects WHERE kind='artifacts' "  # noqa: S608
+                                       f"AND json_extract(document,'$.job_id') IN ({placeholders})", batch).fetchall()
+                result.extend(json.loads(row[0]) for row in rows)
+        return result
+
+    def reserve_group(self, kind: str, key: Any, request: Any, value: dict[str, Any],
+                      children: builtins.list[dict[str, Any]], *, replace: dict[str, Any] | None = None) -> tuple[dict[str, Any], bool]:
+        """Commit the complete dispatch intent before any child reaches the driver."""
+        key = bounded_key(key)
+        with self.lock, self.transaction():
+            existing = self.request(kind, key, request)
+            if existing is not None:
+                return existing, False
+            self.db.execute("INSERT INTO requests VALUES (?,?,?,?)", (key, digest(request), kind, value["id"]))
+            self._put(kind, value, 1)
+            for child in children:
+                self._put("jobs", child, 1)
+                self._event("jobs.accepted", child["id"], {"state": child["state"], "experiment_id": child.get("experiment_id")})
+            if replace is not None:
+                self._put("grid_runs", replace, 1)
+            self._event(f"{kind}.accepted", value["id"], {"state": value.get("state")})
+        return value, True
 
     def save_record(self, kind: str, object_id: str, data: dict[str, Any], revision: Any) -> dict[str, Any]:
         if kind not in RECORD_KINDS:
@@ -147,7 +188,9 @@ class Store:
                 raise StudioError("immutable_submission", "Accepted submission settings are immutable.", 409)
             if old.get("state") in TERMINAL_STATES and updates.get("state", old["state"]) != old["state"]:
                 return old
-            if old.get("state") in {"running", "cancel_requested"} and updates.get("state") == "queued":
+            if ((old.get("state") in {"running", "cancel_requested"} and updates.get("state") == "queued")
+                    or (old.get("state") == "cancel_requested" and updates.get("state") == "running"
+                        and old.get("cancellation_scope") == "atomic_prompt")):
                 updates = {key: value for key, value in updates.items() if key != "state"}
             if all(old.get(key) == value for key, value in updates.items()):
                 return old
@@ -156,6 +199,34 @@ class Store:
                 return old
             self._put(kind, value, 1)
             self._event(f"{kind}.updated", object_id, {key: value[key] for key in ("state", "prompt_id", "progress") if key in value})
+            return value
+
+    def observe(self, job_id: str, event: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
+        """Durably deduplicate driver messages and their materialized job state."""
+        event_key = digest(event)
+        with self.lock, self.transaction():
+            old = self.get("jobs", job_id)
+            receipts = old.get("backend_events", [])
+            if any(row["key"] == event_key for row in receipts):
+                return old
+            updates = dict(updates)
+            event_time = event.get("data", {}).get("timestamp")
+            previous_time = old.get("backend_event_timestamp")
+            if isinstance(event_time, (int, float)) and not isinstance(event_time, bool):
+                if isinstance(previous_time, (int, float)) and event_time < previous_time:
+                    updates = {}
+                else:
+                    updates["backend_event_timestamp"] = event_time
+            if old.get("state") in TERMINAL_STATES:
+                updates.clear()
+            elif (old.get("state") == "cancel_requested" and updates.get("state") == "running"
+                  and old.get("cancellation_scope") == "atomic_prompt"):
+                updates.pop("state", None)
+            receipt = {"key": event_key, "observed_at": timestamp(), **event}
+            value = {**old, **updates, "backend_events": [*receipts[-127:], receipt], "updated_at": timestamp()}
+            self._put("jobs", value, 1)
+            self._event("jobs.observed", job_id, {"state": value.get("state"), "prompt_id": value.get("prompt_id"),
+                                                 "progress": value.get("progress"), "observation": receipt})
             return value
 
     def _event(self, kind: str, object_id: str, data: dict[str, Any]) -> None:
@@ -180,7 +251,7 @@ class Store:
     def recover(self) -> None:
         """A new process cannot infer whether an earlier dispatch completed."""
         for kind in ("jobs", "operations"):
-            for value in self.list(kind, limit=RECORD_LIMIT):
+            for value in self.all(kind):
                 if value.get("state") in {"submitting", "running", "applying"}:
                     self.update(kind, value["id"], {"state": "unknown", "recovery": "Reconcile before any retry."})
 

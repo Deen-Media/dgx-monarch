@@ -10,6 +10,7 @@ from .. import __version__
 from .comfy import ComfyClient
 from .contracts import StudioError, digest, identifier, timestamp
 from .driver_service import DriverService
+from .management_fields import FIELDS, NO_CONFIG
 from .store import Store
 
 # Each command and every flag here is owned by Monarch. Browser JSON never becomes argv.
@@ -24,17 +25,7 @@ COMMANDS: dict[str, tuple[str, ...]] = {
 }
 DRIVER_ACTIONS = {"driver.start": "start", "driver.stop": "stop", "driver.restart": "restart"}
 HTTP_ACTIONS = {"actors.recycle": "/dgxm/recycle", "driver.free": "/free", "consent.apply": "/dgxm/consent"}
-READ_ONLY = frozenset({"version", "status", "doctor", "reap.preview", "gate.inspect", "gate.repair.preview"})
-UNIMPLEMENTED = {
-    "launcher": "Launcher plan/apply binding is not implemented in this draft.",
-    "sol-install": "Durable exact-plan Sol installation adapter is not implemented in this draft.",
-    "sol-smoke": "Explicit hardware maintenance adapter is not implemented in this draft.",
-    "init": "Interactive legacy configuration needs the typed setup adapter, not terminal input forwarding.",
-    "setup": "Persisted setup-plan application is not implemented in this draft.",
-    "update": "Exact update-plan and driver restoration transaction is not implemented in this draft.",
-    "uninstall": "Ownership-bound uninstall adapter is not implemented in this draft.",
-    "top.record": "Durable telemetry recording/replay adapter is not implemented in this draft.",
-}
+READ_ONLY = frozenset({"version", "status", "doctor", "reap.preview", "gate.inspect", "gate.repair.preview", "top.replay"})
 
 
 def fingerprint(path: Path | None) -> str | None:
@@ -57,18 +48,27 @@ class Operations:
         self.driver_binding = DriverService(driver_service) if driver_service else None
         self.tasks: set[asyncio.Task[Any]] = set()
         self.execution_lock = asyncio.Lock()
+        self._management: Any = None
+
+    @property
+    def management(self) -> Any:
+        if self._management is None:
+            from .management import Management
+
+            self._management = Management(self.store, self.client, self.config, self.driver_binding)
+        return self._management
 
     def capabilities(self) -> list[dict[str, Any]]:
         rows = []
-        for action in sorted(set(COMMANDS) | set(HTTP_ACTIONS) | set(DRIVER_ACTIONS) | set(UNIMPLEMENTED)):
-            reason = UNIMPLEMENTED.get(action)
+        for action in sorted(set(COMMANDS) | set(HTTP_ACTIONS) | set(DRIVER_ACTIONS) | set(FIELDS)):
+            reason = None
             if not reason and action not in READ_ONLY and not self.allow_management:
                 reason = "Restart the companion with --allow-management to authorize management controls."
             if not reason and action in DRIVER_ACTIONS and not self.driver_service:
                 reason = "No existing owner-managed ComfyUI driver service was selected at companion launch."
-            if not reason and action in COMMANDS and action != "version" and not self.config:
+            if not reason and (action in COMMANDS or action in FIELDS) and action not in NO_CONFIG | {"version"} and not self.config:
                 reason = "Select an existing cluster configuration when starting the companion."
-            fields = []
+            fields = FIELDS.get(action, [])
             if action == "driver.free":
                 fields = [{"name": "unload_models", "type": "BOOLEAN", "default": True},
                           {"name": "free_memory", "type": "BOOLEAN", "default": True}]
@@ -77,7 +77,7 @@ class Operations:
                           {"name": "id", "type": "STRING", "required": True}]
             rows.append({"id": action, "label": action.replace(".", " · "), "available": reason is None,
                          "reason": reason, "parameters": fields, "requires_confirmation": action not in READ_ONLY,
-                         "implementation": "missing" if action in UNIMPLEMENTED else "adapter"})
+                         "implementation": "typed_adapter" if action in FIELDS else "adapter"})
         return rows
 
     def preview(self, request: dict[str, Any]) -> dict[str, Any]:
@@ -106,7 +106,18 @@ class Operations:
                     raise StudioError("driver_service_state", f"{action} requires a reviewed {expected} driver.", 409)
             except StudioError as exc:
                 row = {**row, "available": False, "reason": str(exc)}
+        adapter_plan = None
+        if action in FIELDS and row["available"]:
+            try:
+                parameters, adapter_plan = self.management.preview(action, parameters)
+                if adapter_plan.get("ready") is False:
+                    row = {**row, "available": False, "reason": "Backend plan is blocked; inspect its review evidence."}
+            except StudioError:
+                raise
+            except (OSError, ValueError, RuntimeError) as exc:
+                raise StudioError("operation_plan", "The backend could not prepare a safe management plan; inspect local prerequisites.", 409) from exc
         plan = {"action": action, "parameters": parameters, "config_fingerprint": fingerprint(self.config),
+                "adapter_plan": adapter_plan,
                 "driver_service": self.driver_service, "driver_identity": driver_identity, "version": __version__}
         return self.store.create("operations", {"id": identifier(), **plan, "digest": digest(plan),
                                  "description": row["label"], "requires_confirmation": row["requires_confirmation"],
@@ -143,7 +154,7 @@ class Operations:
         return value
 
     async def execute(self, operation: dict[str, Any]) -> None:
-        async with self.execution_lock:
+        async with (asyncio.Lock() if operation["action"].startswith("top.") else self.execution_lock):
             action = operation["action"]
             try:
                 current = next((row for row in self.capabilities() if row["id"] == action), None)
@@ -151,7 +162,9 @@ class Operations:
                     raise StudioError("operation_unavailable", "Operation authority changed after review.", 409)
                 if fingerprint(self.config) != operation["config_fingerprint"]:
                     raise StudioError("config_changed", "Configuration changed while awaiting the operation lock.", 409)
-                if action in DRIVER_ACTIONS:
+                if action in FIELDS:
+                    state, receipt = await self.management.execute(operation)
+                elif action in DRIVER_ACTIONS:
                     if self.driver_binding is None or not operation.get("driver_identity"):
                         raise StudioError("driver_service_identity", "Review the owner driver service identity first.", 409)
                     state, receipt = await self.driver_binding.perform(DRIVER_ACTIONS[action], operation["driver_identity"])
@@ -195,7 +208,13 @@ class Operations:
                             receipt["report"] = {"state": "unavailable", "reason": "Command did not produce one complete JSON report."}
                 self.store.update("operations", operation["id"], {"state": state, "receipt": receipt,
                                   "completed_at": timestamp()})
-            except (StudioError, OSError) as exc:
-                self.store.update("operations", operation["id"], {"state": "unknown", "receipt": {
+            except asyncio.CancelledError:
+                retained = self.store.get("operations", operation["id"]).get("receipt", {})
+                self.store.update("operations", operation["id"], {"state": "unknown", "receipt": {**retained,
+                                  "error": "operation_interrupted", "message": "Reconcile retained receipts before any retry."}})
+                raise
+            except (OSError, ValueError, RuntimeError) as exc:
+                retained = self.store.get("operations", operation["id"]).get("receipt", {})
+                self.store.update("operations", operation["id"], {"state": "unknown", "receipt": {**retained,
                     "error": exc.code if isinstance(exc, StudioError) else "operation_io_failed",
                     "message": "Operation outcome requires reconciliation; automatic retry is disabled."}})

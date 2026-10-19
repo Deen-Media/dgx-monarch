@@ -95,7 +95,7 @@ def test_missing_and_custom_widget_are_preserved_and_rebound(workflow, info):
     assert "unsupported" in inspect_workflow(workflow, info)["bindings"][-1]["reason"]
 
 
-def test_nested_graph_resolution_is_distinct_from_execution(workflow, info):
+def test_nested_graph_resolution_preserves_source_binding(workflow, info):
     child = {"id": "nested", "nodes": [{"id": 1, "type": "Text", "widgets_values": ["child"]}]}
     workflow["definitions"] = {"subgraphs": [child]}
     workflow["nodes"].append({"id": 8, "type": "nested"})
@@ -103,7 +103,7 @@ def test_nested_graph_resolution_is_distinct_from_execution(workflow, info):
     result = inspect_workflow(workflow, info)
     selected = next(item for item in result["bindings"] if item["id"] == "nested:1:text")
     assert selected["value"] == "child" and selected["resolved"]
-    assert any("Subgraph execution" in error for error in result["errors"])
+    assert result["errors"] == []
     workflow["extra"]["linearData"]["inputs"] = [["8:1", "text"]]
     assert next(item for item in inspect_workflow(workflow, info)["bindings"]
                 if item["id"] == "nested:1:text")["prominent"]
