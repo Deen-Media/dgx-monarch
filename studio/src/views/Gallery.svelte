@@ -5,6 +5,7 @@
   import { exportJSON } from '../files';
   import { galleryEntries, virtualRows, type GalleryFilter, type GalleryEntry } from '../gallery';
   import Thumbnail from '../components/Thumbnail.svelte';
+  import ArtifactProjects from '../components/ArtifactProjects.svelte';
   let {
     allArtifacts,
     jobs,
@@ -50,6 +51,7 @@
   let widthFilter = $state(''),
     heightFilter = $state(''),
     generation = 0;
+  let openActions = $state<string[]>([]);
   let scroller: HTMLDivElement;
   const entries = $derived(galleryEntries(loaded, jobs));
   const artifacts = $derived(entries);
@@ -250,9 +252,23 @@
                 }
               }}>Compare</button
             >
-            <details>
+            <details
+              ontoggle={(event) => {
+                openActions = event.currentTarget.open
+                  ? [...openActions, artifact.id]
+                  : openActions.filter((id) => id !== artifact.id);
+              }}
+            >
               <summary>Actions</summary>
               <div class="actions-menu">
+                {#if openActions.includes(artifact.id)}<ArtifactProjects
+                    {client}
+                    {artifact}
+                    onsave={(value) => {
+                      loaded = loaded.map((item) => (item.id === value.id ? value : item));
+                      setNotice('Output project membership saved.');
+                    }}
+                  />{/if}
                 <button onclick={() => void download(artifact)}>Download</button>
                 <button onclick={() => void reuse(artifact, 'edit')}>Send to edit</button><button
                   onclick={() => void reuse(artifact, 'upscale')}>Upscale</button

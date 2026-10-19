@@ -87,6 +87,10 @@ def validate_ack_responses(
         raise RuntimeError(
             f"RDMA handoff ACK expected exactly one owner, got {owners}")
 
+    from .execution_events import native_ack
+
+    native_ack(generation, token, [row["status"] for row in rows])
+
 
 def _ack_owner(
     desc: dict,

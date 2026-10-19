@@ -31,6 +31,9 @@ class _FleetPending:
     audit_retired: bool = False
     progress_closed: bool = False
     cancel_requested: bool = False
+    _execution_scope: Any = None
+    _execution_output_validated: bool = False
+    _execution_completed: bool = False
 
 
 def _cancel_fleet_pending(

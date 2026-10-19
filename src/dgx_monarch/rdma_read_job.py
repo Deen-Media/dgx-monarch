@@ -7,6 +7,7 @@ from typing import Any
 
 from . import rdma_job_registry as _registry
 from . import rdma_read_token
+from .execution_events import bind_operation
 from .rdma_read_attempt import NOT_ENTERED
 from .rdma_read_attempt import Claim as _Claim
 
@@ -37,7 +38,7 @@ class LatentReadJob:
         construction_owner: list[LatentReadJob],
     ) -> None:
         self.guard = guard
-        self.operation = operation
+        self.operation = bind_operation(operation)
         self.holder = holder
         self.token_owner: list[Any] = []
         self.runners: list[threading.Thread] = []

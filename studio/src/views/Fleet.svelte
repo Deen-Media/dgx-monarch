@@ -1,20 +1,35 @@
 <script lang="ts">
   import TelemetryCharts from '../components/TelemetryCharts.svelte';
   import type { MetricSeries, Presentation } from '../telemetryHistory';
-  import type { Telemetry, ChangeDraft } from '../contracts';
+  import type { Telemetry, ChangeDraft, Job } from '../contracts';
+  import type { StudioClient } from '../api';
+  import RuntimeEvidence from '../components/RuntimeEvidence.svelte';
   let {
     telemetry,
     history,
     presentation,
     changeDraft,
     navigate,
+    client,
+    jobs,
   }: {
     telemetry: Telemetry;
     history: MetricSeries[];
     presentation?: Presentation;
     changeDraft: ChangeDraft;
     navigate: (view: string) => void;
+    client: StudioClient;
+    jobs: Job[];
   } = $props();
+  let selected = $state('');
+  const fleetJobs = $derived(
+    jobs.filter(
+      (job) =>
+        job.submission?.requested?.operation === 'fleet' ||
+        Object.values(job.monarch?.renders ?? {}).some((render: any) => render.fleet_index != null),
+    ),
+  );
+  const selectedJob = $derived(fleetJobs.find((job) => job.id === selected) ?? fleetJobs[0]);
 </script>
 
 <section class="page-section">
@@ -43,6 +58,15 @@
     </p>
   </div>
   <TelemetryCharts {history} {presentation} />
+  <h2>Durable Fleet execution</h2>
+  <label
+    >Graph task<select bind:value={selected}
+      >{#each fleetJobs as job}<option value={job.id}>{job.id} · {job.state}</option>{/each}</select
+    ></label
+  >
+  {#if selectedJob}<RuntimeEvidence {client} job={selectedJob} />{:else}<p>
+      No recorded Fleet graph task has been observed.
+    </p>{/if}
   <h2>Reported Fleet state</h2>
   <pre>{JSON.stringify(
       telemetry?.sample?.render?.fleet ??

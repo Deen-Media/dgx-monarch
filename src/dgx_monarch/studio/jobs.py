@@ -13,6 +13,7 @@ from .comfy import ComfyClient, safe_descriptor
 from .contracts import TERMINAL_STATES, StudioError, digest, identifier, object_value, timestamp
 from .job_observations import model_identities, observation, requested_topology
 from .preview_drafts import prepare_preview
+from .runtime_observations import RuntimeObservations
 from .store import Store
 
 
@@ -26,6 +27,7 @@ class Jobs:
         self.runtime: dict[str, Any] = {}
         self.observation_lock = asyncio.Lock()
         self.history_cursor = 0
+        self.runtime_events = RuntimeObservations(store, client)
 
     def launch(self, coroutine: Any) -> None:
         task = asyncio.create_task(coroutine)
@@ -123,6 +125,7 @@ class Jobs:
         return value
 
     async def dispatch(self, job: dict[str, Any]) -> None:
+        await self.runtime_events.poll()
         snapshot = job["submission"]
         try:
             result = await self.client.request("POST", "/prompt", {
@@ -196,9 +199,12 @@ class Jobs:
                                                       "backend_status": status, "progress": None,
                                                       "reconciliation": {"source": "driver_history", "digest": digest(value)}})
                 self._artifacts(job["id"], value.get("outputs", {}))
+            await self.runtime_events.poll()
+            self.telemetry["runtime_events"] = self.runtime_events.status
             try:
                 sample = await self.client.request("GET", "/dgxm/telemetry")
-                self.telemetry = {"sample": sample, "observed_at": timestamp(), "state": "connected"}
+                self.telemetry = {"sample": sample, "observed_at": timestamp(), "state": "connected",
+                                  "runtime_events": self.runtime_events.status}
             except StudioError:
                 self.telemetry = {**self.telemetry, "state": "stale" if self.telemetry else "unavailable"}
         except StudioError:

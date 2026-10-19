@@ -460,9 +460,10 @@ def register() -> None:
                 status=503)
         return web.Response(text=_metrics_text(data), content_type="text/plain")
 
-    from . import consent_routes
+    from . import consent_routes, execution_event_routes
 
     consent_routes.register(app, web)
+    execution_event_routes.register(app, web)
 
     # Queue-time graph advice is not a route, so a server that cannot take its
     # handler (an older ComfyUI, or the canary's instance built without

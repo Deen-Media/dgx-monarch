@@ -6,26 +6,34 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from .. import __version__
+from .. import TORCHMONARCH_PIN, __version__
 from .comfy import ComfyClient
 from .contracts import StudioError, digest, identifier, timestamp
 from .driver_service import DriverService
-from .management_fields import FIELDS, NO_CONFIG
+from .management_fields import COMMAND_FIELDS, FIELDS, FIXED_COMMANDS, NO_CONFIG, parse
 from .store import Store
 
 # Each command and every flag here is owned by Monarch. Browser JSON never becomes argv.
-COMMANDS: dict[str, tuple[str, ...]] = {
-    "version": ("version",), "status": ("status", "--json"), "doctor": ("doctor", "--json"),
-    "workers.up": ("up", "--no-sync"), "workers.down": ("down",),
-    "workers.restart": ("restart", "--no-sync"), "reap.preview": ("reap", "--dry-run"),
-    "reap.apply": ("reap",), "service.install": ("install-service",),
-    "doctor.repair": ("doctor", "--repair", "--yes"),
-    "gate.inspect": ("gate", "--list"), "gate.repair.preview": ("gate", "--repair"),
-    "gate.repair.apply": ("gate", "--repair", "--apply"),
-}
+COMMANDS = FIXED_COMMANDS
+
 DRIVER_ACTIONS = {"driver.start": "start", "driver.stop": "stop", "driver.restart": "restart"}
 HTTP_ACTIONS = {"actors.recycle": "/dgxm/recycle", "driver.free": "/free", "consent.apply": "/dgxm/consent"}
-READ_ONLY = frozenset({"version", "status", "doctor", "reap.preview", "gate.inspect", "gate.repair.preview", "top.replay"})
+READ_ONLY = frozenset({"version", "status", "doctor", "reap.preview", "gate.inspect", "gate.repair.preview", "top.replay",
+                       "diagnostics", "diagnostics.capabilities"})
+
+
+def command_arguments(action: str, parameters: dict[str, Any]) -> list[str]:
+    """Fixed commands and individually typed options; never accept command text."""
+    args = list(COMMANDS[action])
+    if action in {"workers.up", "workers.restart"} and parameters["no_sync"]:
+        args.append("--no-sync")
+    if action == "doctor.repair" and parameters.get("receipt"):
+        args += ["--receipt", str(Path(parameters["receipt"]).expanduser())]
+    if action.startswith("reap."):
+        args += ["--grace", str(parameters["grace_s"])]
+    if action.startswith("gate."):
+        args += ["--report-dir", str(Path(parameters["report_dir"]).expanduser()), "--timeout", str(parameters["timeout_s"])]
+    return args
 
 
 def fingerprint(path: Path | None) -> str | None:
@@ -66,9 +74,9 @@ class Operations:
                 reason = "Restart the companion with --allow-management to authorize management controls."
             if not reason and action in DRIVER_ACTIONS and not self.driver_service:
                 reason = "No existing owner-managed ComfyUI driver service was selected at companion launch."
-            if not reason and (action in COMMANDS or action in FIELDS) and action not in NO_CONFIG | {"version"} and not self.config:
+            if not reason and (action in COMMANDS or action in FIELDS) and action not in NO_CONFIG | {"version", "setup", "init", "launcher"} and not self.config:
                 reason = "Select an existing cluster configuration when starting the companion."
-            fields = FIELDS.get(action, [])
+            fields = FIELDS.get(action, COMMAND_FIELDS.get(action, []))
             if action == "driver.free":
                 fields = [{"name": "unload_models", "type": "BOOLEAN", "default": True},
                           {"name": "free_memory", "type": "BOOLEAN", "default": True}]
@@ -77,10 +85,21 @@ class Operations:
                           {"name": "id", "type": "STRING", "required": True}]
             rows.append({"id": action, "label": action.replace(".", " · "), "available": reason is None,
                          "reason": reason, "parameters": fields, "requires_confirmation": action not in READ_ONLY,
-                         "implementation": "typed_adapter" if action in FIELDS else "adapter"})
+                         "implementation": "typed_adapter" if action in FIELDS else "adapter",
+                         **({"requires_config_for_modes": ["verified"]} if action == "update" else {})})
         return rows
 
-    def preview(self, request: dict[str, Any]) -> dict[str, Any]:
+    async def prepare(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Obtain authenticated remote evidence before publishing a review."""
+        if not isinstance(request.get("parameters", {}), dict):
+            raise StudioError("operation_fields", "Operation parameters must be an object.")
+        if request.get("action") == "gate.last" and self.allow_management:
+            parameters = parse("gate.last", request.get("parameters", {}))
+            plan = await self.management.gate_preview(parameters)
+            return await asyncio.to_thread(self.preview, request, plan)
+        return await asyncio.to_thread(self.preview, request)
+
+    def preview(self, request: dict[str, Any], remote_plan: dict[str, Any] | None = None) -> dict[str, Any]:
         action, parameters = request.get("action"), request.get("parameters", {})
         row = next((row for row in self.capabilities() if row["id"] == action), None)
         if row is None:
@@ -90,6 +109,8 @@ class Operations:
         allowed = {field["name"] for field in row["parameters"]}
         if set(parameters) - allowed:
             raise StudioError("operation_fields", "Unsupported operation parameter.")
+        if action in COMMAND_FIELDS:
+            parameters = parse(action, parameters)
         if action == "driver.free":
             parameters = {"unload_models": parameters.get("unload_models", True), "free_memory": parameters.get("free_memory", True)}
             if any(type(value) is not bool for value in parameters.values()):
@@ -109,7 +130,12 @@ class Operations:
         adapter_plan = None
         if action in FIELDS and row["available"]:
             try:
-                parameters, adapter_plan = self.management.preview(action, parameters)
+                if action == "gate.last":
+                    if remote_plan is None:
+                        raise StudioError("operation_plan", "Gate preview requires authenticated history evidence.", 409)
+                    parameters, adapter_plan = parse(action, parameters), remote_plan
+                else:
+                    parameters, adapter_plan = self.management.preview(action, parameters)
                 if adapter_plan.get("ready") is False:
                     row = {**row, "available": False, "reason": "Backend plan is blocked; inspect its review evidence."}
             except StudioError:
@@ -182,7 +208,7 @@ class Operations:
                     argv = [sys.executable, "-m", "dgx_monarch"]
                     if self.config:
                         argv.extend(["--config", str(self.config)])
-                    argv.extend(COMMANDS[action])
+                    argv.extend(command_arguments(action, operation["parameters"]))
                     proc = await asyncio.create_subprocess_exec(*argv, stdin=asyncio.subprocess.DEVNULL,
                                                                 stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.STDOUT)
                     self.store.update("operations", operation["id"], {"process_id": proc.pid})
@@ -198,14 +224,14 @@ class Operations:
                     state = "succeeded" if code == 0 else "unknown" if code == 3 else "failed"
                     receipt = {"source": "existing_cli" if action in COMMANDS else "owner_service",
                                "exit_code": code, "output_bytes": total, "output_retained": False}
+                    from .management_reports import command_report
+                    report = command_report(action, bytes(retained))
+                    if report is not None:
+                        receipt["report"] = report
                     if action == "version":
-                        receipt["version"] = __version__
-                    if action in {"status", "doctor"}:
-                        import json
-                        try:
-                            receipt["report"] = json.loads(retained)
-                        except (ValueError, UnicodeDecodeError):
-                            receipt["report"] = {"state": "unavailable", "reason": "Command did not produce one complete JSON report."}
+                        receipt.update(version=__version__, torchmonarch_pin=TORCHMONARCH_PIN)
+                    if action in {"status", "doctor"} and report is None:
+                        receipt["report"] = {"state": "unavailable", "reason": "Command did not produce one complete JSON report."}
                 self.store.update("operations", operation["id"], {"state": state, "receipt": receipt,
                                   "completed_at": timestamp()})
             except asyncio.CancelledError:

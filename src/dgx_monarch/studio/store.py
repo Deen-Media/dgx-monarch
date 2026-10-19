@@ -143,7 +143,8 @@ class Store:
                 raise StudioError("revision_conflict", "A newer version exists; reload before saving.", 409)
             if not old and self.db.execute("SELECT count(*) FROM objects WHERE kind=?", (kind,)).fetchone()[0] >= RECORD_LIMIT:
                 raise StudioError("record_limit", "Export or remove records before adding more.", 409)
-            value = {"id": object_id, "revision": revision + 1, "data": data}
+            extensions = self.get(kind, object_id) if old else {}
+            value = {**extensions, "id": object_id, "revision": revision + 1, "data": data}
             self._put(kind, value, revision + 1)
             self._event("record.saved", object_id, {"record_kind": kind, "revision": revision + 1})
         return value

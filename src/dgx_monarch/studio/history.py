@@ -37,8 +37,13 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
             value = str(query[key])
             if len(value) > 256:
                 raise StudioError("history_filter", "Filter value is too long.")
-            clauses.append(f"CAST(json_extract(document,'{path}') AS TEXT)=?")
-            params.append(value)
+            if key == "project_id" and kind == "artifacts":
+                clauses.append("(EXISTS (SELECT 1 FROM json_each(json_extract(document,'$.project_ids')) WHERE value=?) "
+                               "OR (json_extract(document,'$.project_ids') IS NULL AND json_extract(document,'$.project_id')=?))")
+                params.extend([value, value])
+            else:
+                clauses.append(f"CAST(json_extract(document,'{path}') AS TEXT)=?")
+                params.append(value)
     for key, operator in (("after", ">="), ("before", "<=")):
         if query.get(key) not in (None, ""):
             try:

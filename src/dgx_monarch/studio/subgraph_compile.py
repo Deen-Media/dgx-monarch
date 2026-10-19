@@ -2,7 +2,7 @@
 
 Subgraph interfaces use their serialized virtual input/output node identities.
 Every instance gets separate execution IDs; source graph identities remain the
-keys for draft edits. Ambiguous edits to shared definitions are refused.
+aliases for unique instances. Shared definitions use explicit instance paths.
 """
 from __future__ import annotations
 
@@ -32,6 +32,13 @@ class Context:
         if not self.path:
             return nid
         return "__studio_subgraph__" + "/".join(quote(part, safe="") for part in (*self.path, nid))
+
+    def binding(self, nid: str, name: str) -> str:
+        root = self
+        while root.parent is not None:
+            root = root.parent
+        scope = ("@instance/" + "/".join(quote(part, safe="") for part in (root.gid, *self.path))) if self.path else self.gid
+        return binding_id(scope, nid, name)
 
 
 class Compiler:
@@ -65,30 +72,67 @@ class Compiler:
             counts[context.gid] = counts.get(context.gid, 0) + 1
         for key in values:
             if counts.get(key.rsplit(":", 2)[0], 0) > 1:
-                raise WorkflowError("Shared subgraph binding is ambiguous; select an instance-specific API workflow")
-        for context in self.contexts:
+                raise WorkflowError("Shared subgraph binding is ambiguous; select an instance-specific binding")
+        self.counts = counts
+        for context in reversed(self.contexts):
             self.promoted_values(context)
+
+    def value(self, context: Context, nid: str, name: str, default: Any) -> Any:
+        specific, legacy = context.binding(nid, name), binding_id(context.gid, nid, name)
+        if specific in self.values and legacy in self.values and specific != legacy:
+            raise WorkflowError("Both instance and legacy values were supplied for the same input")
+        return self.values.get(specific, self.values.get(legacy, default))
+
+    def proxy_target(self, context: Context, nid: str, name: str, depth: int = 0) -> tuple[Context, str, str]:
+        if depth > 32:
+            raise WorkflowError("Promoted widget nesting exceeds 32 levels")
+        node = context.nodes.get(nid)
+        if node is None:
+            raise WorkflowError("Promoted widget references a missing node")
+        if nid in context.children:
+            properties = node.get("properties", {})
+            if not isinstance(properties, dict):
+                raise WorkflowError("Promoted widget properties must be an object")
+            proxies = properties.get("proxyWidgets", [])
+            if not isinstance(proxies, list):
+                raise WorkflowError("Promoted widget mappings must be an array")
+            matches = [proxy for proxy in proxies if isinstance(proxy, list) and len(proxy) == 2 and proxy[1] == name]
+            if len(matches) != 1:
+                raise WorkflowError("Nested promoted widget requires one explicit matching widget mapping")
+            return self.proxy_target(context.children[nid], str(matches[0][0]), name, depth + 1)
+        fields = {field: schema for field, schema, _ in node_inputs(self.info.get(node["type"], {}))}
+        if name not in fields or fields[name]["type"] not in SCALAR_TYPES:
+            raise WorkflowError("Promoted widget has no supported scalar type")
+        sockets = node.get("inputs", [])
+        if not isinstance(sockets, list) or any(not isinstance(socket, dict) for socket in sockets):
+            raise WorkflowError("Malformed promoted widget input sockets")
+        if any(socket.get("name") == name and socket.get("link") is not None for socket in sockets):
+            raise WorkflowError("Promoted widget cannot override a connected input")
+        return context, nid, name
 
     def promoted_values(self, context: Context) -> None:
         if context.host is None:
             return
         values = context.host.get("widgets_values", [])
-        proxies = context.host.get("properties", {}).get("proxyWidgets", [])
+        properties = context.host.get("properties", {})
+        if not isinstance(properties, dict):
+            raise WorkflowError("Promoted widget properties must be an object")
+        proxies = properties.get("proxyWidgets", [])
         if not proxies:
             return  # Scalar interface values are resolved by name in external_input.
         if not isinstance(proxies, list) or not isinstance(values, list) or len(values) != len(proxies):
             raise WorkflowError("Promoted subgraph widgets need an explicit, ordered typed mapping")
+        targets: set[tuple[tuple[str, ...], str, str]] = set()
         for proxy, value in zip(proxies, values, strict=True):
             if not isinstance(proxy, list) or len(proxy) != 2 or not isinstance(proxy[1], str):
                 raise WorkflowError("Malformed promoted widget identity")
             nid, name = str(proxy[0]), proxy[1]
-            node = context.nodes.get(nid)
-            if node is None or nid in context.children:
-                raise WorkflowError("Promoted widget must resolve to one typed node input")
-            fields = {name: schema for name, schema, _ in node_inputs(self.info.get(node["type"], {}))}
-            if name not in fields or fields[name]["type"] not in SCALAR_TYPES:
-                raise WorkflowError("Promoted widget has no supported scalar type")
-            context.overrides[nid, name] = copy.deepcopy(value)
+            target, target_node, target_name = self.proxy_target(context, nid, name)
+            identity = (target.path, target_node, target_name)
+            if identity in targets:
+                raise WorkflowError("Promoted widgets map more than one value to the same input")
+            targets.add(identity)
+            target.overrides[target_node, target_name] = copy.deepcopy(value)
 
     def linked(self, context: Context, nid: str, index: int, socket: dict[str, Any], seen: frozenset[Any]) -> Any:
         if socket.get("link") is None:
@@ -164,7 +208,7 @@ class Compiler:
                 raise WorkflowError("Unsupported primitive serialization")
             if len(serialized) == 2 and serialized[1] not in {"fixed", "increment", "decrement", "randomize"}:
                 raise WorkflowError("Unsupported primitive control")
-            return copy.deepcopy(self.values.get(binding_id(context.gid, nid, "value"), serialized[0]))
+            return copy.deepcopy(self.value(context, nid, "value", serialized[0]))
         return [context.execution_id(nid), slot]
 
     def compile(self) -> dict[str, Any]:
@@ -191,13 +235,13 @@ class Compiler:
                     raise WorkflowError("Duplicate or unsupported subgraph input sockets")
                 inputs: dict[str, Any] = {}
                 for name, schema, _ in fields:
-                    key = binding_id(context.gid, nid, name)
+                    key = context.binding(nid, name)
                     index, socket = by_name.get(name, (-1, {}))
                     value = self.linked(context, nid, index, socket, frozenset())
                     if value is not _MISSING and key in self.values:
                         raise WorkflowError("Connected input cannot be overridden")
                     if value is _MISSING:
-                        value = self.values.get(key, context.overrides.get((nid, name), serialized.get(name, schema.get("default", _MISSING))))
+                        value = self.value(context, nid, name, context.overrides.get((nid, name), serialized.get(name, schema.get("default", _MISSING))))
                     if value is not _MISSING:
                         inputs[name] = copy.deepcopy(value)
                 execution_id = context.execution_id(nid)

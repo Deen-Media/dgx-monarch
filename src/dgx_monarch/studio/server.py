@@ -17,8 +17,10 @@ from .contracts import MAX_BODY_BYTES, RECORD_KINDS, StudioError, identifier, ob
 from .experiments import GridExperiments
 from .history import page_artifacts, page_jobs
 from .jobs import Jobs
+from .library import Library
 from .media_assets import MediaAssets
 from .operations import Operations
+from .runtime_history import page_runtime
 from .store import Store
 from .workflows import WorkflowError, inspect_workflow
 
@@ -31,6 +33,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
         raise ValueError("Authentication token must contain at least 32 characters")
     jobs = Jobs(store, client)
     grids = GridExperiments(jobs)
+    library = Library(store)
     media_assets = MediaAssets(store, client)
     ops = operations or Operations(store, client)
     instance = identifier()
@@ -137,6 +140,9 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
     async def job_preview(request: web.Request) -> web.Response:
         return web.json_response(store.get("previews", request.match_info["id"]))
 
+    async def runtime_history(request: web.Request) -> web.Response:
+        return web.json_response(page_runtime(store, request.match_info["id"], dict(request.query)))
+
     async def history(request: web.Request) -> web.Response:
         page = page_artifacts if request.path.endswith("/artifacts") else page_jobs
         return web.json_response(page(store, dict(request.query)))
@@ -167,14 +173,26 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
         if kind not in RECORD_KINDS:
             raise StudioError("record_kind", "Unknown record kind.", 404)
         if request.method == "GET":
-            return web.json_response({"records": store.list(kind)})
+            return web.json_response(library.page(kind, dict(request.query)))
         body = await payload(request)
-        value = store.save_record(kind, request.match_info["id"], object_value(body.get("data")), body.get("revision"))
+        value = library.save(kind, request.match_info["id"], object_value(body.get("data")), body.get("revision"))
         return web.json_response(value)
+
+    async def library_export(request: web.Request) -> web.Response:
+        return web.json_response(library.export(request.query.get("project_id")))
+
+    async def library_preview(request: web.Request) -> web.Response:
+        return web.json_response(library.preview(await payload(request)))
+
+    async def library_import(request: web.Request) -> web.Response:
+        return web.json_response(library.apply(await payload(request)))
+
+    async def membership(request: web.Request) -> web.Response:
+        return web.json_response(library.membership(request.match_info["id"], await payload(request)))
 
     async def operation_preview(request: web.Request) -> web.Response:
         body = await payload(request)
-        return web.json_response(await asyncio.to_thread(ops.preview, body))
+        return web.json_response(await ops.prepare(body))
 
     async def operation_apply(request: web.Request) -> web.Response:
         return web.json_response(ops.apply(request.match_info["id"], await payload(request)), status=202)
@@ -233,6 +251,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
     app.router.add_get("/api/v1/jobs/request/{key}", request_status)
     app.router.add_get("/api/v1/jobs/previews/{id}", job_preview)
     app.router.add_get("/api/v1/jobs/{id}", job)
+    app.router.add_get("/api/v1/jobs/{id}/runtime", runtime_history)
     app.router.add_post("/api/v1/jobs/{id}/{action}", job_action)
     app.router.add_get("/api/v1/grids", grid_get)
     app.router.add_post("/api/v1/grids/preview", grid_preview)
@@ -241,12 +260,16 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
     app.router.add_post("/api/v1/grids/{id}/retry", grid_retry)
     app.router.add_get("/api/v1/records/{kind}", records)
     app.router.add_put("/api/v1/records/{kind}/{id}", records)
+    app.router.add_get("/api/v1/library/export", library_export)
+    app.router.add_post("/api/v1/library/import/preview", library_preview)
+    app.router.add_post("/api/v1/library/import", library_import)
     app.router.add_post("/api/v1/operations/preview", operation_preview)
     app.router.add_post("/api/v1/operations/{id}/apply", operation_apply)
     app.router.add_post("/api/v1/assets", upload_asset)
     app.router.add_get("/api/v1/artifacts", history)
     app.router.add_get("/api/v1/artifacts/{id}/thumbnail", thumbnail)
     app.router.add_get("/api/v1/artifacts/{id}/file", media)
+    app.router.add_put("/api/v1/artifacts/{id}/projects", membership)
     app.router.add_get("/{path:.*}", static_file)
 
     async def lifecycle(application: web.Application) -> Any:

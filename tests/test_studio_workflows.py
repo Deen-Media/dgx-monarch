@@ -101,12 +101,12 @@ def test_nested_graph_resolution_preserves_source_binding(workflow, info):
     workflow["nodes"].append({"id": 8, "type": "nested"})
     workflow["extra"]["linearData"]["inputs"] = [["nested:1:text", "text"]]
     result = inspect_workflow(workflow, info)
-    selected = next(item for item in result["bindings"] if item["id"] == "nested:1:text")
+    selected = next(item for item in result["bindings"] if "nested:1:text" in item["aliases"])
     assert selected["value"] == "child" and selected["resolved"]
     assert result["errors"] == []
     workflow["extra"]["linearData"]["inputs"] = [["8:1", "text"]]
     assert next(item for item in inspect_workflow(workflow, info)["bindings"]
-                if item["id"] == "nested:1:text")["prominent"]
+                if "nested:1:text" in item["aliases"])["prominent"]
 
 
 def test_ambiguous_legacy_node_is_not_resolved_by_label(workflow, info):

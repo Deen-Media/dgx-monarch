@@ -1,5 +1,6 @@
 export interface Binding {
   id: string;
+  aliases?: string[];
   label?: string;
   name?: string;
   input_name?: string;
@@ -58,6 +59,11 @@ export interface Draft {
   project_id: string;
   styles: unknown[];
   lora_stack: Lora[];
+  lora_insertion?: {
+    loader: string;
+    model_targets: Array<{ node_id: string; input_name: string }>;
+    clip_targets: Array<{ node_id: string; input_name: string }>;
+  };
   style_bindings?: { prompt?: string; negative_prompt?: string };
   seed_policy: string;
   parent_artifact_ids: string[];

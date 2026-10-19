@@ -1,4 +1,8 @@
 <script lang="ts">
+  import type { StudioClient } from '../api';
+  import LibraryTransfer from '../components/LibraryTransfer.svelte';
+  import { recordProjects } from '../recordPersistence';
+  import { loadRecordCatalog } from '../recordCatalog';
   import type { Draft } from '../model';
   import type {
     Artifact,
@@ -21,6 +25,8 @@
     saveRecord,
     applyRecord,
     fail,
+    client,
+    onrefresh,
   }: {
     allRecords: Records;
     draft: Draft;
@@ -30,12 +36,27 @@
     saveRecord: SaveRecord;
     applyRecord: (record: StoredRecord, kind: RecordKind) => Promise<void>;
     fail: ReportError;
+    client: StudioClient;
+    onrefresh: () => Promise<void>;
   } = $props();
   let busy = $state(false),
     recordKind = $state<RecordKind>('projects'),
     recordName = $state(''),
     recordText = $state(''),
+    negativeText = $state(''),
+    styleMode = $state('append'),
+    gridId = $state(''),
     selectedRecord = $state<StoredRecord | null>(null);
+  let projectOptions = $state<StoredRecord[]>([]);
+  const projectRevision = $derived(
+    (allRecords.projects ?? []).map((row) => `${row.id}:${row.revision}`).join(','),
+  );
+  $effect(() => {
+    projectRevision;
+    void loadRecordCatalog(client, 'projects')
+      .then((rows) => (projectOptions = rows))
+      .catch(fail);
+  });
   const kinds: RecordKind[] = [
     'projects',
     'presets',
@@ -44,11 +65,53 @@
     'workflows',
     'experiments',
   ];
-  let records = $derived(allRecords[recordKind] ?? []);
+  let records = $state<StoredRecord[]>([]),
+    projectFilter = $state(''),
+    membership = $state<string[]>([]);
+  let nextOffset = $state<number | null>(null),
+    loading = $state(false);
+  let sequence = 0;
+  const revisionKey = $derived(
+    (allRecords[recordKind] ?? []).map((row) => `${row.id}:${row.revision}`).join(','),
+  );
+  async function load(append = false) {
+    const ticket = ++sequence;
+    loading = true;
+    try {
+      const params = new URLSearchParams({
+        limit: '100',
+        offset: String(append ? (nextOffset ?? 0) : 0),
+      });
+      if (projectFilter && recordKind !== 'projects') params.set('project_id', projectFilter);
+      const result = await client.request<{ records: StoredRecord[]; next_offset: number | null }>(
+        `/records/${recordKind}?${params}`,
+      );
+      if (ticket !== sequence) return;
+      records = append ? [...records, ...result.records].slice(-2000) : result.records;
+      nextOffset = result.next_offset;
+    } catch (cause) {
+      fail(cause);
+    } finally {
+      if (ticket === sequence) loading = false;
+    }
+  }
+  $effect(() => {
+    revisionKey;
+    recordKind;
+    projectFilter;
+    void load();
+  });
+  $effect(() => {
+    projectFilter = draft.project_id;
+  });
+  $effect(() => {
+    if (!selectedRecord) membership = draft.project_id ? [draft.project_id] : [];
+  });
   async function createRecord() {
     busy = true;
     try {
       let data: RecordData = { ...(selectedRecord?.data ?? {}), name: recordName.trim() };
+      data.project_ids = recordKind === 'projects' ? [] : membership;
       if (!data.name) throw new Error('Enter a record name.');
       if (recordKind === 'presets') data.draft = $state.snapshot(draft);
       else if (recordKind === 'sessions')
@@ -61,12 +124,17 @@
         };
       else if (recordKind === 'workflows') data.workflow = draft.workflow ?? undefined;
       else if (recordKind === 'styles')
-        data = { ...data, prompt: recordText, negative_prompt: '', mode: 'append' };
+        data = { ...data, prompt: recordText, negative_prompt: negativeText, mode: styleMode };
+      else if (recordKind === 'experiments') data = { ...data, notes: recordText, grid_id: gridId };
       else data.notes = recordText;
       await saveRecord(recordKind, data, selectedRecord?.id, selectedRecord?.revision ?? 0);
+      await load();
       selectedRecord = null;
       recordName = '';
       recordText = '';
+      negativeText = '';
+      styleMode = 'append';
+      gridId = '';
     } catch (e) {
       fail(e);
     } finally {
@@ -81,12 +149,23 @@
       <span class="eyebrow">REUSABLE WORK</span>
       <h1>Project library</h1>
     </div>
-    <button
-      onclick={() =>
-        exportJSON({ schema_version: '1.0', records: allRecords }, 'monarch-library.json')}
-      >Export library</button
-    >
   </div>
+  <LibraryTransfer
+    {client}
+    projectId={draft.project_id}
+    onrefresh={async () => {
+      await onrefresh();
+      await load();
+    }}
+  />
+  <label
+    >Project filter<select bind:value={projectFilter}
+      ><option value="">All projects and shared records</option
+      >{#each projectOptions as project}<option value={project.id}
+          >{project.data.name ?? project.id}</option
+        >{/each}</select
+    ></label
+  >
   <div class="tabs">
     {#each kinds as kind}<button
         class:active={recordKind === kind}
@@ -95,6 +174,10 @@
           selectedRecord = null;
           recordName = '';
           recordText = '';
+          negativeText = '';
+          styleMode = 'append';
+          gridId = '';
+          membership = draft.project_id ? [draft.project_id] : [];
         }}>{kind}</button
       >{/each}
   </div>
@@ -107,19 +190,23 @@
             <small>Revision {record.revision} · {record.id}</small>
           </div>
           <div class="workflow-actions">
-            {#if recordKind !== 'experiments'}<button
-                onclick={() => void applyRecord(record, recordKind)}
-                >{recordKind === 'styles'
+            <button onclick={() => void applyRecord(record, recordKind)}
+              >{recordKind === 'experiments'
+                ? 'Open in Grids'
+                : recordKind === 'styles'
                   ? 'Append style'
                   : recordKind === 'projects'
                     ? 'Select project'
                     : 'Load into draft'}</button
-              >{/if}<button onclick={() => exportJSON(record, `${record.id}.json`)}>Export</button
-            ><button
+            ><button onclick={() => exportJSON(record, `${record.id}.json`)}>Export</button><button
               onclick={() => {
                 selectedRecord = record;
                 recordName = record.data?.name ?? '';
                 recordText = record.data?.notes ?? record.data?.prompt ?? '';
+                negativeText = record.data.negative_prompt ?? '';
+                styleMode = String(record.data.mode ?? 'append');
+                gridId = typeof record.data.grid_id === 'string' ? record.data.grid_id : '';
+                membership = recordProjects(record.data);
               }}>Edit</button
             >
           </div>
@@ -128,6 +215,9 @@
             <pre>{JSON.stringify(record.data, null, 2)}</pre>
           </details>
         </div>{/each}{#if !records.length}<p class="muted">No saved {recordKind}.</p>{/if}
+      {#if nextOffset !== null}<button disabled={loading} onclick={() => void load(true)}
+          >Load more records</button
+        >{/if}
     </div>
     <div class="surface">
       <h2>{selectedRecord ? 'Update record' : 'Save a record'}</h2>
@@ -137,6 +227,38 @@
       />{#if ['projects', 'styles', 'experiments'].includes(recordKind)}<label for="record-text"
           >{recordKind === 'styles' ? 'Prompt text to append' : 'Notes'}</label
         ><textarea id="record-text" rows="6" bind:value={recordText}></textarea>{/if}
+      {#if recordKind === 'styles'}
+        <label>Negative prompt<textarea rows="3" bind:value={negativeText}></textarea></label>
+        <label
+          >Style mode<select bind:value={styleMode}
+            ><option value="append">Append</option><option value="template">Template</option
+            ></select
+          ></label
+        >
+        <p class="muted">
+          Use {'{prompt}'} to insert the existing text. Without it, text is appended in stack order.
+        </p>
+      {/if}
+      {#if recordKind === 'experiments'}<label
+          >Linked durable grid ID<input bind:value={gridId} /></label
+        >
+        <p class="muted">
+          A local grid freezes its definition and observed outcomes on save. Imported definitions
+          remain available when their original run is absent.
+        </p>{/if}
+      {#if recordKind !== 'projects'}<label
+          >Project membership<select
+            multiple
+            bind:value={membership}
+            aria-label="Record project membership"
+            >{#each projectOptions as project}<option value={project.id}
+                >{project.data.name ?? project.id}</option
+              >{/each}</select
+          ></label
+        >
+        <p class="muted">
+          No selected project means a shared record. Membership does not move source assets.
+        </p>{/if}
       <p class="muted">
         {recordKind === 'presets'
           ? 'Saves the complete current generation draft. Loading replaces its fields and supports undo.'
@@ -153,6 +275,9 @@
             selectedRecord = null;
             recordName = '';
             recordText = '';
+            negativeText = '';
+            styleMode = 'append';
+            gridId = '';
           }}>Cancel edit</button
         >{/if}
     </div>

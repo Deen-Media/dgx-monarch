@@ -7,6 +7,7 @@
     ChangeDraft,
     InspectWorkflow,
     ReportError,
+    GraphConnection,
   } from '../contracts';
   import { exportJSON } from '../files';
   import type { StudioClient } from '../api';
@@ -22,6 +23,7 @@
     controlTab = $bindable(),
     bindingErrors,
     catalog,
+    connections,
     workflows,
     dirty,
     busy,
@@ -40,6 +42,7 @@
     controlTab: string;
     bindingErrors: string[];
     catalog: Catalog;
+    connections: GraphConnection[];
     workflows: WorkflowEntry[];
     dirty: boolean;
     busy: boolean;
@@ -160,7 +163,9 @@
           <h3>Workflow needs attention</h3>
           {#each bindingErrors as issue}<p>{issue}</p>{/each}
         </div>{/if}
-      {#if draft.styles.length}<div class="surface">
+      {#if bindings.some((binding) => binding.resolved !== false && bindingType(binding) === 'STRING')}<div
+          class="surface"
+        >
           <h3>Ordered prompt styles</h3>
           <label for="style-positive">Prompt input</label><select
             id="style-positive"
@@ -214,6 +219,7 @@
       />{:else if controlTab === 'loras'}<LoraStack
         {draft}
         {catalog}
+        {connections}
         {changeDraft}
       />{:else if controlTab === 'workflow'}<WorkflowLayout
         {draft}

@@ -2,8 +2,10 @@
 
 ## [Unreleased]
 
-- Add an optional Studio companion with bundled workflow controls and durable
-  job records. This remains an incomplete draft; see the
+- Add an optional Studio companion with bundled workflow controls, durable
+  job records, project libraries, reviewed imports, reusable grid experiments
+  and job-bound runtime evidence. CLI parity mappings and typed LoRA/subgraph
+  editing have CPU coverage. Release acceptance remains incomplete; see the
   [acceptance record](docs/STUDIO_ACCEPTANCE.md) before enabling it.
 
 ## [1.2.0] - 2026-10-16

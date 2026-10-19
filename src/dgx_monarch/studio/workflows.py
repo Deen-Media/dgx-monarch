@@ -13,6 +13,8 @@ from collections.abc import Mapping
 from typing import Any
 from urllib.parse import quote, unquote
 
+from ..constants import MODEL_TYPE
+
 ADAPTER_VERSION = 1
 SCALAR_TYPES = {"INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"}
 
@@ -138,8 +140,9 @@ def _resolve(identity: Any, name: str | None, graphs: Mapping[str, Any]) -> tupl
     root = next(iter(graphs))
     text = str(identity)
     segments = text.split(":")
-    if len(segments) == 3 and segments[0] in graphs:
-        gid, nid, canonical_name = segments[0], unquote(segments[1]), unquote(segments[2])
+    canonical = text.rsplit(":", 2)
+    if len(canonical) == 3 and canonical[0] in graphs:
+        gid, nid, canonical_name = canonical[0], unquote(canonical[1]), unquote(canonical[2])
         if nid not in graphs[gid]["nodes"]:
             raise WorkflowError("Referenced node was deleted or is missing")
         return gid, nid, canonical_name
@@ -248,6 +251,15 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
                                  "order": len(bindings), "prominent": False, "config": {}, "schema": schema,
                                  "value": value, "required": required, "resolved": not is_link,
                                  "reason": "Input is connected; edit its source instead" if is_link else None})
+    if not api and len(graphs) > 1:
+        try:
+            from .instance_bindings import project_bindings
+            bindings = project_bindings(workflow, dict(info), bindings)
+        except WorkflowError as exc:
+            errors.append(str(exc))
+    else:
+        for binding in bindings:
+            binding.update(instance_path=[], execution_node_id=binding["node_id"], aliases=[])
     lookup = {binding["id"]: binding for binding in bindings}
     extra = workflow.get("extra", {})
     if not isinstance(extra, dict):
@@ -268,15 +280,21 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
         try:
             if identity is None or not isinstance(name, str):
                 raise WorkflowError("App Mode input must be [identity, widgetName, optional configuration]")
-            gid, nid, resolved_name = _resolve(identity, name, graphs)
-            key = binding_id(gid, nid, str(resolved_name))
+            if isinstance(identity, str) and identity in lookup:
+                key, resolved_name = identity, lookup[identity]["input_name"]
+            else:
+                gid, nid, resolved_name = _resolve(identity, name, graphs)
+                key = binding_id(gid, nid, str(resolved_name))
             key = overrides.get(key, overrides.get(unresolved_id, {})).get("target", key)
-            binding = lookup.get(key)
-            if binding is None:
+            selected_binding = lookup.get(key)
+            if selected_binding is None and not api and len(graphs) > 1:
+                from .instance_bindings import select_binding
+                selected_binding = select_binding(identity, str(resolved_name), bindings, key)
+            if selected_binding is None:
                 raise WorkflowError("Widget missing, custom, or unsupported by object_info")
-            if not binding["resolved"]:
-                raise WorkflowError(binding["reason"])
-            binding.update(source_identity=identity, prominent=True, order=index, config=config)
+            if not selected_binding["resolved"]:
+                raise WorkflowError(selected_binding["reason"])
+            selected_binding.update(source_identity=identity, prominent=True, order=index, config=config)
         except WorkflowError as exc:
             target = overrides.get(unresolved_id, {}).get("target")
             if target in lookup and lookup[target]["resolved"]:
@@ -309,7 +327,11 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
         except WorkflowError as exc:
             errors.append(str(exc))
     return {"adapter_version": ADAPTER_VERSION, "workflow": copy.deepcopy(workflow),
-            "bindings": bindings, "outputs": outputs, "prompt": prompt, "errors": errors}
+            "bindings": bindings, "outputs": outputs, "prompt": prompt, "errors": errors,
+            "connections": [{"node_id": nid, "input_name": name, "type": schema["type"], "source": value}
+                            for nid, node in (prompt or {}).items()
+                            for name, schema, _ in node_inputs(info.get(node["class_type"], {}))
+                            if schema["type"] in {"MODEL", MODEL_TYPE, "CLIP"} and isinstance((value := node["inputs"].get(name)), list)]}
 
 
 def compile_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any],
@@ -321,7 +343,10 @@ def compile_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
     unresolved = [item for item in inspection["bindings"] if item["prominent"] and not item["resolved"]]
     if unresolved or any(not item["resolved"] for item in inspection["outputs"]):
         raise WorkflowError("Resolve App Mode bindings before submission")
-    editable = {item["id"] for item in inspection["bindings"] if item["resolved"]}
+    editable = {key for item in inspection["bindings"] if item["resolved"] for key in (item["id"], *item.get("aliases", []))}
+    if any(key not in editable and any(row.get("definition_binding_id") == key for row in inspection["bindings"])
+           for key in (values or {})):
+        raise WorkflowError("Shared subgraph binding is ambiguous; choose a specific instance")
     if set(values or {}) - editable:
         raise WorkflowError("Unknown, connected, or unresolved input binding")
     return compile_graph(workflow, object_info, values or {})

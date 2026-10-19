@@ -117,6 +117,10 @@ def discover_cli() -> list[dict[str, Any]]:
                 row["interfaces"]["cli"] = {"status": "available", "command": "dgxm " + " ".join([*path, option])}
                 rows.append(row)
     walk(build_parser(Commands()), [])
+    from .management_parity import validate_bindings
+    mapping = validate_bindings(rows)
+    for row in rows:
+        row["studio_binding"] = mapping[row["id"]]
     return rows
 
 

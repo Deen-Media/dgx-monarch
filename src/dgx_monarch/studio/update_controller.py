@@ -48,11 +48,13 @@ def binding(driver: dict[str, Any] | None) -> dict[str, Any]:
             "environment": environment, "source_manifest": dgx_source_manifest_sha256(SOURCE)}
 
 
-def prepare(directory: Path, config: Path, repo: Path, reviewed: dict[str, Any],
+def prepare(directory: Path, config: Path | None, repo: Path, reviewed: dict[str, Any],
             driver_host: str, privileged: bool, lock_fd: int) -> dict[str, Any]:
-    if config_digest(config) != reviewed["config_sha256"]:
+    if config is None and reviewed.get("mode") != "legacy":
+        raise StudioError("update_config", "Verified update requires a configuration.")
+    if (config_digest(config) if config else None) != reviewed["config_sha256"]:
         raise StudioError("update_changed", "Configuration changed after review.", 409)
-    request = {"config": str(config.resolve()), "config_sha256": reviewed["config_sha256"],
+    request = {"config": str(config.resolve()) if config else None, "config_sha256": reviewed["config_sha256"],
                "repo": str(repo), "reviewed": reviewed, "driver_host": driver_host,
                "privileged_process_inspection": privileged, "lock_fd": lock_fd}
     root, digest = _snapshot(SOURCE, directory / "update-controllers", request)
@@ -114,24 +116,47 @@ def child(root: Path, manifest: dict[str, Any]) -> int:
     lock = os.fstat(request["lock_fd"])
     if not stat.S_ISREG(lock.st_mode) or lock.st_uid != os.getuid() or lock.st_mode & 0o077:
         raise StudioError("update_controller", "The inherited update lock is unavailable.", 409)
-    config_path = Path(request["config"])
-    expected_config = request["config_sha256"]
-    if hashlib.sha256(_regular_bytes(config_path)).hexdigest() != expected_config:
-        raise StudioError("update_changed", "Configuration changed before isolated update.", 409)
-    config = load_cluster_config(config_path)
-    if hashlib.sha256(_regular_bytes(config_path)).hexdigest() != expected_config:
-        raise StudioError("update_changed", "Configuration changed while loading isolated update.", 409)
+    config = None
+    if request["config"] is None:
+        if reviewed.get("mode") != "legacy" or request["config_sha256"] is not None:
+            raise StudioError("update_config", "Only legacy source updates may omit configuration.")
+    else:
+        config_path = Path(request["config"])
+        expected_config = request["config_sha256"]
+        if config_digest(config_path) != expected_config:
+            raise StudioError("update_changed", "Configuration changed before isolated update.", 409)
+        config = load_cluster_config(config_path)
+        if config_digest(config_path) != expected_config:
+            raise StudioError("update_changed", "Configuration changed while loading isolated update.", 409)
     repo = Path(request["repo"])
     if checkout_identity(repo) != reviewed["checkout"]:
         raise StudioError("update_changed", "Selected checkout changed before isolated update.", 409)
-    ops = SystemUpdateOps(repo, config, driver_host=request["driver_host"],
-                          privileged_process_inspection=request["privileged_process_inspection"])
+    from .management_repository import RepositoryOps
+    ops = (RepositoryOps(repo) if config is None else
+           SystemUpdateOps(repo, config, driver_host=request["driver_host"],
+                           privileged_process_inspection=request["privileged_process_inspection"]))
     prior = ops.repo_snapshot(reviewed["release"]["target_sha"])
     metadata, _ = inspect_checkout(repo, prior.current_sha)
     if not prior.clean or not prior.fast_forward or asdict(metadata) != reviewed["prior_release"]:
         raise StudioError("update_changed", "Selected source changed before isolated update.", 409)
     try:
-        result = execute_verified_update(UpdateRequest(reviewed["release"]["target_sha"]), ReviewedUpdate(ops, reviewed["release"]))
+        if reviewed.get("mode") == "legacy":
+            from types import SimpleNamespace
+
+            from ..cli import legacy_update
+            from ..cli.main import _driver_probe
+            code = legacy_update._run_locked(SimpleNamespace(host=request["driver_host"]), repo=repo,
+                load_config=lambda args: config, driver_probe=_driver_probe,
+                expected_candidate=tuple(reviewed["legacy_candidate"]),
+                expected_source_manifest=reviewed["release"]["source_manifest"])
+            result = UpdateResult(code, "legacy_updated" if code == 0 else "legacy_incomplete",
+                                  "Existing legacy update completed.", {"mode": "legacy", "exit_code": code,
+                                  "reviewed_target": reviewed["release"]["target_sha"]})
+        else:
+            result = execute_verified_update(UpdateRequest(reviewed["release"]["target_sha"]), ReviewedUpdate(ops, reviewed["release"]))
+        if reviewed.get("receipt_path"):
+            from ..cli.operator_receipt import write_receipt
+            write_receipt(result.receipt, reviewed["receipt_path"])
     except BaseException as exc:
         receipt = interrupted_receipt(exc)
         if receipt:

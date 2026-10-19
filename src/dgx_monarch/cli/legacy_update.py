@@ -182,6 +182,8 @@ def _run_locked(
     repo: Path,
     load_config: Callable[[object], ClusterConfig | None],
     driver_probe: DriverProbe,
+    expected_candidate: tuple[str, bool] | None = None,
+    expected_source_manifest: str | None = None,
 ) -> int:
     """Run the legacy update while holding the checkout lock.
 
@@ -236,6 +238,10 @@ def _run_locked(
         print(f"{repo} is not a plain git checkout (no .git directory); skipping the fetch "
               "and checking the working tree's pyproject.toml")
 
+    if expected_candidate is not None and (candidate, merge) != expected_candidate:
+        print("reviewed legacy update target changed; nothing was installed or restarted", file=sys.stderr)
+        return 2
+
     try:
         if candidate is None:
             project = (repo / "pyproject.toml").read_bytes()
@@ -288,17 +294,47 @@ def _run_locked(
         text=True,
     ).returncode:
         return 1
+    if expected_source_manifest is not None and subprocess.run(
+        _installed_command(repo, [], expected_source_manifest), text=True,
+    ).returncode:
+        print("installed source differs from review; workers were not changed", file=sys.stderr)
+        return 1
     if config is not None and config.hosts:
         if not lifecycle.ensure_torchmonarch_pin(config, pin):
             print("worker torchmonarch pin install failed; workers were not restarted", file=sys.stderr)
             return 1
         config_args = ["--config", str(config.source)] if config.source else []
         if subprocess.run(
-            [sys.executable, "-m", "dgx_monarch", *config_args, "restart"], text=True
+            _installed_command(repo, [*config_args, "restart"], expected_source_manifest), text=True
         ).returncode:
             return 1
         doctor = subprocess.run(
-            [sys.executable, "-m", "dgx_monarch", *config_args, "doctor"], text=True
+            _installed_command(repo, [*config_args, "doctor"], expected_source_manifest), text=True
         )
         return 0 if doctor.returncode == 0 else 1
     return 0
+
+
+# Isolated children must load the reviewed, newly installed source, not the
+# private controller package in their inherited working directory.
+_INSTALLED_CLI = r"""
+import importlib.util
+import sys
+from pathlib import Path
+source, expected = Path(sys.argv[1]), sys.argv[2]
+spec = importlib.util.find_spec("dgx_monarch")
+if spec is None or spec.origin is None or Path(spec.origin).resolve() != source / "__init__.py":
+    raise SystemExit("installed package path differs from reviewed source")
+from dgx_monarch.runtime_provenance import dgx_source_manifest_sha256
+if dgx_source_manifest_sha256(source) != expected:
+    raise SystemExit("installed package source differs from reviewed hash")
+if sys.argv[3:]:
+    from dgx_monarch.cli.main import main
+    raise SystemExit(main(sys.argv[3:]))
+"""
+
+
+def _installed_command(repo: Path, args: list[str], manifest: str | None) -> list[str]:
+    if manifest is None:
+        return [sys.executable, "-m", "dgx_monarch", *args]
+    return [sys.executable, "-I", "-c", _INSTALLED_CLI, str(repo / "src/dgx_monarch"), manifest, *args]

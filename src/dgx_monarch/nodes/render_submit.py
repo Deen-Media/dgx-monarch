@@ -22,7 +22,7 @@ from contextvars import ContextVar
 from functools import partial
 from typing import TYPE_CHECKING, cast
 
-from .. import mesh_setup, restart_reattach
+from .. import mesh_setup, restart_reattach, runtime_observer
 from ..adoption_evidence import (
     CONTEXT_REQUEST_KEY as _ADOPTION_CONTEXT_REQUEST_KEY,
 )
@@ -165,6 +165,7 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
                 adoption_context=adoption_context)
 
         def on_failure(exc: BaseException) -> None:
+            runtime_observer.submission_failed(guard, exc)
             if (guard.dispatch_started and guard.handle is not None
                     and isinstance(exc, Exception)):
                 mark_defunct_on_supervision_failure(guard.handle, exc)
@@ -418,6 +419,7 @@ def _submit_render_guarded(
     guard.progress = progress
     progress.__enter__()
 
+    execution_scope = runtime_observer.prepare(request)
     with session.activate():
         future = mesh_setup.prepare_sample(handle, setup_token)
         guard.future = future
@@ -433,6 +435,7 @@ def _submit_render_guarded(
         elif submitted is not future:
             raise RuntimeError("sample dispatch replaced its prepared authority")
 
+    execution_scope = runtime_observer.dispatch(request, handle, topo, execution_scope)
     # The collector notes the sampler wall under this render's token, so a
     # pipelined render in flight beside it cannot publish the wall as its own.
     finish_render = partial(_finish_render, telemetry_token=guard.telemetry_token)
@@ -457,9 +460,11 @@ def _submit_render_guarded(
                 expected_adoption_setup_generation
             ),
         )
+    finish_render = partial(runtime_observer.finish, execution_scope, finish_render)
     pending = PendingRender(
         handle, future, progress, topo, latent, timeout, render_id, finish_render,
-        session_close=session_close, telemetry_token=guard.telemetry_token)
+        session_close=session_close, telemetry_token=guard.telemetry_token,
+        execution_scope=execution_scope)
     guard.pending = pending
     # Finish the caller-owned session transition before publishing the
     # PendingRender. A direct session starts draining here; its tracked future

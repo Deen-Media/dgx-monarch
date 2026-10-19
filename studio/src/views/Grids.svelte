@@ -5,7 +5,10 @@
   import type { StudioClient } from '../api';
   import GridCellDetails from '../components/GridCellDetails.svelte';
   import Viewer from '../components/Viewer.svelte';
-  import type { Artifact, ReuseArtifact } from '../contracts';
+  import StyleAxisCatalog from '../components/StyleAxisCatalog.svelte';
+  import ExperimentLibrary from '../components/ExperimentLibrary.svelte';
+  import { experimentDefinition } from '../experimentRecords';
+  import type { Artifact, RecordData, ReuseArtifact } from '../contracts';
   import { exportJSON } from '../files';
   interface Cell {
     index: number;
@@ -33,7 +36,14 @@
     draft,
     bindings,
     reuse,
-  }: { client: StudioClient; draft: Draft; bindings: Binding[]; reuse: ReuseArtifact } = $props();
+    restoreDraft,
+  }: {
+    client: StudioClient;
+    draft: Draft;
+    bindings: Binding[];
+    reuse: ReuseArtifact;
+    restoreDraft: (draft: Draft) => Promise<void>;
+  } = $props();
   let axisA = $state(''),
     axisB = $state(''),
     valuesA = $state('[1,2]'),
@@ -51,7 +61,9 @@
     resumeId = $state('');
   let requestKey = '',
     retryKey = '',
-    retryIndices: number[] = [];
+    retryIndices = $state<number[]>([]);
+  let dispatchPending = $state(false);
+  let retryPending = $state(false);
   let savedGrids = $state<Grid[]>([]),
     cellPage = $state(0),
     output = $state<Artifact | null>(null),
@@ -61,13 +73,44 @@
   function remember() {
     sessionStorage.setItem(
       storage,
-      JSON.stringify({ preview, grid, requestKey, retryKey, retryIndices }),
+      JSON.stringify({
+        preview,
+        grid,
+        requestKey,
+        retryKey,
+        retryIndices,
+        dispatchPending,
+        retryPending,
+      }),
     );
   }
   function fail(cause: unknown) {
     error = cause instanceof Error ? cause.message : String(cause);
   }
+  async function loadExperiment(data: RecordData) {
+    if (dispatchPending || retryPending)
+      throw new Error('Reconcile the pending grid dispatch before replacing its definition.');
+    const saved = experimentDefinition(data);
+    await restoreDraft(saved.draft);
+    axisA = saved.axisA;
+    valuesA = saved.valuesA;
+    axisB = saved.axisB;
+    valuesB = saved.valuesB;
+    seedPolicy = saved.seedPolicy;
+    seedBinding = saved.seedBinding;
+    baseSeed = saved.baseSeed;
+    excluded = saved.excluded;
+    preview = null;
+    grid = null;
+    confirmed = false;
+    selected = [];
+    cellPage = 0;
+    requestKey = '';
+    retryKey = '';
+    remember();
+  }
   async function prepare() {
+    if (dispatchPending || retryPending) return;
     busy = true;
     error = '';
     confirmed = false;
@@ -87,8 +130,7 @@
         draft: { ...$state.snapshot(draft), seed_policy: 'fixed' },
         axes,
         seed_policy: seedPolicy,
-        base_seed: baseSeed,
-        ...(seedBinding ? { seed_binding: seedBinding } : {}),
+        ...(seedPolicy !== 'fixed' ? { base_seed: baseSeed, seed_binding: seedBinding } : {}),
         excluded: exclusions,
       });
       requestKey = crypto.randomUUID();
@@ -104,10 +146,19 @@
     busy = true;
     error = '';
     try {
+      const prior = dispatchPending;
+      dispatchPending = true;
+      try {
+        remember();
+      } catch (cause) {
+        dispatchPending = prior;
+        throw cause;
+      }
       grid = await client.request<Grid>('/grids', {
         preview_id: preview.id,
         idempotency_key: requestKey,
       });
+      dispatchPending = false;
       remember();
     } catch (cause) {
       fail(cause);
@@ -117,9 +168,19 @@
   }
   async function refresh(id = grid?.id, passive = false) {
     if (!id) return;
+    if (!passive && (dispatchPending || retryPending)) {
+      error = 'Reconcile the pending grid action before opening another run.';
+      return;
+    }
     try {
       const result = await client.request<Grid>(`/grids/${encodeURIComponent(id)}`);
       if (passive && grid?.id !== id) return;
+      if (grid?.id !== id) {
+        selected = [];
+        retryKey = '';
+        retryIndices = [];
+        cellPage = 0;
+      }
       grid = result;
       remember();
     } catch (cause) {
@@ -127,21 +188,29 @@
     }
   }
   async function retry() {
-    if (!grid || !selected.length) return;
+    if (!grid || (!retryPending && !selected.length)) return;
     busy = true;
     error = '';
-    if (!retryKey || JSON.stringify(retryIndices) !== JSON.stringify(selected)) {
+    if (!retryPending && (!retryKey || JSON.stringify(retryIndices) !== JSON.stringify(selected))) {
       retryKey = crypto.randomUUID();
       retryIndices = [...selected];
-      remember();
     }
     try {
+      const prior = retryPending;
+      retryPending = true;
+      try {
+        remember();
+      } catch (cause) {
+        retryPending = prior;
+        throw cause;
+      }
       grid = await client.request<Grid>(`/grids/${grid.id}/retry`, {
         indices: retryIndices,
         idempotency_key: retryKey,
         confirmed: true,
       });
       retryKey = '';
+      retryPending = false;
       selected = [];
       remember();
     } catch (cause) {
@@ -163,6 +232,8 @@
         requestKey = saved.requestKey;
         retryKey = saved.retryKey ?? '';
         retryIndices = saved.retryIndices ?? [];
+        dispatchPending = saved.dispatchPending ?? false;
+        retryPending = saved.retryPending ?? !!saved.retryKey;
       }
     } catch {
       error = 'Saved grid could not be restored. Load a durable grid ID.';
@@ -193,24 +264,48 @@
     Each cell passes normal backend admission. Comfy's queue controls execution; Studio does not run
     a second scheduler. More cells increase total compute and memory residency time.
   </p>
+  <ExperimentLibrary
+    {client}
+    projectId={draft.project_id}
+    gridId={grid?.id}
+    disabled={busy || dispatchPending || retryPending}
+    onload={loadExperiment}
+    onresume={async (id) => {
+      cellPage = 0;
+      await refresh(id);
+    }}
+  />
   <div class="operation-grid">
     <div class="surface">
       <h3>Axis A</h3>
       <select bind:value={axisA} aria-label="First grid axis"
-        ><option value="">Choose a typed input</option>{#each editable as binding}<option
-            value={binding.id}>{fieldLabel(binding)}</option
+        ><option value="">Choose a typed input</option><option value="styles"
+          >Named style stack</option
+        >{#each editable as binding}<option value={binding.id}>{fieldLabel(binding)}</option
           >{/each}</select
       ><label>Values as JSON array<textarea bind:value={valuesA} rows="3"></textarea></label>
     </div>
     <div class="surface">
       <h3>Axis B (optional)</h3>
       <select bind:value={axisB} aria-label="Second grid axis"
-        ><option value="">No second axis</option>{#each editable as binding}<option
-            value={binding.id}>{fieldLabel(binding)}</option
+        ><option value="">No second axis</option><option value="styles">Named style stack</option
+        >{#each editable as binding}<option value={binding.id}>{fieldLabel(binding)}</option
           >{/each}</select
       ><label>Values as JSON array<textarea bind:value={valuesB} rows="3"></textarea></label>
     </div>
   </div>
+  <StyleAxisCatalog
+    {client}
+    onchoose={(axis, id) => {
+      if (axis === 'A') {
+        axisA = 'styles';
+        valuesA = JSON.stringify([[id]]);
+      } else {
+        axisB = 'styles';
+        valuesB = JSON.stringify([[id]]);
+      }
+    }}
+  />
   <div class="filter-bar">
     <label
       >Seed policy<select bind:value={seedPolicy}
@@ -238,13 +333,23 @@
     Execution target and topology are inherited from the active workflow and shown in each cell's
     backend preview. Maximum 1,024 cells.
   </p>
-  <button class="primary" disabled={busy || !draft.workflow || !axisA} onclick={prepare}
-    >{busy ? 'Working…' : 'Validate every cell'}</button
+  <button
+    class="primary"
+    disabled={busy || dispatchPending || retryPending || !draft.workflow || !axisA}
+    onclick={prepare}>{busy ? 'Working…' : 'Validate every cell'}</button
   >
   {#if error}<p class="error" role="alert">{error}</p>
     <p class="muted">
       An uncertain dispatch retains its request ID. Retry the same action to reconcile; do not
       create a new preview merely to retry transport.
+    </p>{/if}
+  {#if dispatchPending}<p role="status">
+      Grid dispatch outcome is pending. Retry the same reviewed grid to reconcile its retained
+      request identity.
+    </p>{/if}
+  {#if retryPending}<p role="status">
+      Retry outcome is pending for cells {retryIndices.map((index) => index + 1).join(', ')}. Retry
+      the retained selection to reconcile the same request.
     </p>{/if}
   {#if preview}<div class="surface">
       <h2>
@@ -290,12 +395,14 @@
       <h2>Grid {grid.id} · {grid.state}</h2>
       <button onclick={() => void refresh()}>Refresh status</button><button
         onclick={() => exportJSON(grid, 'grid-results.json')}>Export manifest and outcomes</button
-      ><button disabled={busy || !selected.length} onclick={retry}
-        >Retry {selected.length} selected failed/cancelled cells</button
+      ><button disabled={busy || (!retryPending && !selected.length)} onclick={retry}
+        >{retryPending
+          ? 'Reconcile retained retry'
+          : `Retry ${selected.length} selected failed/cancelled cells`}</button
       >
     </div>{/if}
   <div class="grid-cells">
-    {#each ((grid ?? preview)?.cells ?? []).slice(cellPage * 40, (cellPage + 1) * 40) as cell}<article
+    {#each ((grid ?? preview)?.cells ?? []).slice(cellPage * 40, (cellPage + 1) * 40) as cell (cell.job_id ?? cell.preview_id ?? `${(grid ?? preview)?.id}:${cell.index}`)}<article
         class="surface"
       >
         <h3>Cell {cell.index + 1} · {cell.excluded ? 'Excluded' : (cell.state ?? 'Preview')}</h3>
@@ -304,6 +411,7 @@
         {#if grid && ['failed', 'cancelled'].includes(cell.state ?? '')}<label
             ><input
               type="checkbox"
+              disabled={retryPending}
               checked={selected.includes(cell.index)}
               onchange={(event) =>
                 (selected = event.currentTarget.checked

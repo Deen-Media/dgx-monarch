@@ -409,6 +409,9 @@ def run_sample(
         # at the ledger's current protocol (gate_ledger.GATE_PROTOCOL_VERSION).
         worker_env.ACCURACY_WAIVER_RESULT_KEY: worker_env.accuracy_waiver_stamps(),
     }
+    from ..runtime_observer import worker_identity
+
+    worker_identity(request, worker, result)
     if resident_adoption_evidence is not None:
         result["resident_adoption_evidence"] = resident_adoption_evidence
     if pins is not None:

@@ -360,5 +360,10 @@
   color: #8793a5;
 }
 
-.actual .media-stage.side {grid-template-columns:max-content max-content;}
-.actual .media-stage.side > img,.actual .media-stage.side > video {width:auto;}
+.actual .media-stage.side {
+  grid-template-columns: max-content max-content;
+}
+.actual .media-stage.side > img,
+.actual .media-stage.side > video {
+  width: auto;
+}

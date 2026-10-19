@@ -38,11 +38,13 @@ def preview(action: str, config: ClusterConfig, parameters: dict[str, Any]) -> d
         return {"hosts": len(config.hosts), "scope": "Explicit BF16 dense kernel control; no model fidelity evidence.",
                 "timeout_s": parameters["timeout_s"]}
     allowed = allowed_names(parameters["allow_change"])
-    token = uuid.uuid4().hex
+    token = parameters.get("plan") or uuid.uuid4().hex
+    if not re.fullmatch(r"[a-f0-9]{32}", token):
+        raise StudioError("sol_plan", "Existing plan token must be 32 lowercase hex characters.")
     plans = {}
     rows = []
     for index, host in enumerate(config.hosts):
-        result = sol_install._host(config, host, "plan", token, allowed)
+        result = sol_install._host(config, host, "read" if parameters.get("plan") else "plan", token, allowed)
         if result is not None and result.get("status") == "ok":
             plans[host.name] = result["plan"]
             rows.append({"ordinal": index, "plan": result["plan"]})
@@ -51,7 +53,10 @@ def preview(action: str, config: ClusterConfig, parameters: dict[str, Any]) -> d
     if len(plans) != len(config.hosts):
         return {"token": token, "ready": False, "allowed": allowed, "hosts": rows,
                 "recovery": "Incomplete private staging retained; no package apply attempted."}
-    return {"token": token, "fleet_digest": sol_install.fleet_digest(config, token, allowed, plans),
+    fleet_digest = sol_install.fleet_digest(config, token, allowed, plans)
+    if parameters.get("plan_digest") and parameters["plan_digest"] != fleet_digest:
+        raise StudioError("sol_plan", "Existing fleet plan digest does not match.", 409)
+    return {"token": token, "fleet_digest": fleet_digest,
             "ready": True, "allowed": allowed, "hosts": rows}
 
 

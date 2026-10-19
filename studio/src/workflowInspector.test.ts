@@ -25,3 +25,28 @@ test('inspection keeps graph-owned sockets out of draft values and preserves edi
   assert.deepEqual(result.errors, ['original seed invalid']);
   assert.equal(result.controlTab, 'advanced');
 });
+
+test('instance bindings retain only their explicit unique legacy alias', async () => {
+  const client = {
+    request: async () => ({
+      bindings: [
+        {
+          id: '@instance/root/host:1:seed',
+          aliases: ['definition:1:seed'],
+          value: 1,
+          schema: { type: 'INT' },
+        },
+        { id: '@instance/root/other:1:seed', value: 2, schema: { type: 'INT' } },
+      ],
+      connections: [
+        { node_id: 'mapped', input_name: 'model', type: 'DGXM_MODEL', source: ['loader', 0] },
+      ],
+    }),
+  } as unknown as StudioClient;
+  const result = await inspectDraft(client, {}, 'Shared graph', { 'definition:1:seed': 99 });
+  assert.deepEqual(result.patch.values, {
+    '@instance/root/host:1:seed': 99,
+    '@instance/root/other:1:seed': 2,
+  });
+  assert.equal(result.connections[0].type, 'DGXM_MODEL');
+});

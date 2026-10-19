@@ -1,14 +1,18 @@
 <script lang="ts">
   import type { Draft, Lora } from '../model';
-  import type { Catalog, CatalogLora, ChangeDraft } from '../contracts';
+  import type { Catalog, CatalogLora, ChangeDraft, GraphConnection } from '../contracts';
+  import LoraInsertion from './LoraInsertion.svelte';
   let {
     draft,
     catalog,
     changeDraft,
-  }: { draft: Draft; catalog: Catalog; changeDraft: ChangeDraft } = $props();
+    connections,
+  }: { draft: Draft; catalog: Catalog; changeDraft: ChangeDraft; connections: GraphConnection[] } =
+    $props();
   let loraQuery = $state('');
   let loras = $derived(
     (catalog.loras ?? [])
+      .filter((l) => !draft.lora_insertion || l.source_node === draft.lora_insertion.loader)
       .filter((l) => JSON.stringify(l).toLowerCase().includes(loraQuery.toLowerCase()))
       .slice(0, 100),
   );
@@ -47,6 +51,7 @@
 </script>
 
 <h3>Selected stack <span class="muted">{draft.lora_stack.length}</span></h3>
+<LoraInsertion {draft} {catalog} {connections} {changeDraft} />
 {#each draft.lora_stack as lora, i}<div class="lora-card">
     <div class="stack-row">
       <label
@@ -98,5 +103,5 @@
   bind:value={loraQuery}
 /><small>Compatibility is verified by the backend; a filename is not evidence.</small>
 {#each loras as lora}<button class="catalog-item" onclick={() => addLora(lora)}
-    ><span>{typeof lora === 'string' ? lora : (lora.name ?? lora.id)}</span><span>+</span></button
+    ><span>{lora.name ?? lora.id}<small>{lora.source_node}</small></span><span>+</span></button
   >{/each}{#if !loras.length}<p class="muted">No matching LoRAs reported by the driver.</p>{/if}

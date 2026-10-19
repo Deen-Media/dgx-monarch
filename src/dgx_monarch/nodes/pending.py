@@ -4,7 +4,7 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-from .. import mesh_setup
+from .. import mesh_setup, runtime_observer
 from ..log import get_logger
 from ..refusal import parse_leading_refusal_tag
 from ..retry_policy import retry_twice
@@ -114,7 +114,8 @@ class PendingRender:
 
     def __init__(self, handle: Any, future: Any, progress: Any, topo: Any,
                  latent: dict, timeout: float, render_id: str, finish: Any,
-                 session_close: Any = None, telemetry_token: object | None = None):
+                 session_close: Any = None, telemetry_token: object | None = None, execution_scope: Any = None):
+        self._execution_scope = execution_scope
         self._handle = handle
         self._future = future
         self._progress = progress
@@ -421,6 +422,7 @@ class PendingRender:
                 results, self._topo, self._latent, self._future)
             phase = "release"
             self._close(abandoned=False)
+            runtime_observer.completed(self._execution_scope)
             return finished
         except BaseException as exc:
             surfaced = exc
@@ -483,6 +485,7 @@ class PendingRender:
                             "post-cleanup render interruption check failed")
                         if surfaced is not previous:
                             surfaced_cause = cause
+            runtime_observer.failed(self._execution_scope, surfaced, phase, refused)
             if surfaced is not exc:
                 raise_with_distinct_cause(surfaced, surfaced_cause)
             raise

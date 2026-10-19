@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import uuid
 
-from .. import mesh_setup, native_return_latch, sampling_contract, telemetry_fleet
+from .. import mesh_setup, native_return_latch, runtime_observer, sampling_contract, telemetry_fleet
 from ..constants import MODEL_TYPE, NODE_CATEGORY
 from ..log import get_logger
 from ..mesh import ensure_live, mark_defunct_on_supervision_failure
@@ -112,7 +112,7 @@ def _collect_fleet_wave(handle, pending: list, results: list, timeout_s: float,
             raise RuntimeError(
                 f"fleet job {item.job_index} returned no latent ({result})")
         guard = (item.future,) if isinstance(item.future, mesh_setup.SetupBoundFuture) else ()
-        results[item.job_index] = native_return_latch.typed_read(  # #115 on a latched fault
+        results[item.job_index] = runtime_observer.fleet_read(item, native_return_latch.typed_read,  # #115 on a latched fault
             read_latent_result, result["latent"], *guard)
         item.consumed = True
         if job_outputs is not None:
@@ -135,6 +135,7 @@ def _collect_fleet_wave(handle, pending: list, results: list, timeout_s: float,
                 output, stamps)
         # Recorded with the job's output: a rejected reply leaves its telemetry row open.
         telemetry_fleet.fleet_jobs.record_job(item.job_index, item.rank, result)
+        runtime_observer.fleet_result(item, result)
         log.info(
             "fleet job %d/%d done on %s rank %s in %.1fs", item.job_index + 1,
             job_count, result.get("host"), result.get("rank"),
@@ -147,6 +148,7 @@ def _collect_fleet_wave(handle, pending: list, results: list, timeout_s: float,
             item.refused = typed_worker_refusal(exc)
         except BaseException as refusal_exc:
             safe_note(exc, "fleet typed-refusal inspection failed", refusal_exc)
+        runtime_observer.fleet_failed(item, exc)
 
     def settle(item):
         nonlocal cleanup_error
@@ -179,6 +181,7 @@ def _collect_fleet_wave(handle, pending: list, results: list, timeout_s: float,
                 or not isinstance(stage_error, Exception)
             ):
                 cleanup_error = record(cleanup_error, stage_error, label)
+        runtime_observer.fleet_settled(item)
 
     for _item, exc, label in _drain_fleet_collections(
         handle, list(pending), timeout_s, prepare, publish, classify, settle
@@ -400,6 +403,7 @@ class DGXMonarchFleetKSampler:
                 if future is not None:
                     session.track(future)
                     submit_kwargs["authority"] = future
+                execution_scope = runtime_observer.prepare(request, i)
                 submitted = handle.submit_sample_to(
                     i % world, request, progress_port=progress.port,
                     **submit_kwargs)
@@ -410,6 +414,7 @@ class DGXMonarchFleetKSampler:
                     raise RuntimeError(
                         "fleet sample dispatch replaced its prepared authority")
                 entry = _FleetPending(i, future, progress, render_id, i % world)
+                entry._execution_scope = runtime_observer.dispatch(request, handle, Topology(world=1), execution_scope)
                 pending.append(entry)
                 published = True
                 telemetry_fleet.fleet_jobs.start_job(i, entry.rank)

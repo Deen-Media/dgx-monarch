@@ -23,6 +23,7 @@ from . import update_controller
 from .contracts import StudioError, identifier
 from .driver_service import DriverService
 from .management_config import absolute
+from .management_repository import RepositoryOps
 from .store import private_directory
 
 
@@ -96,17 +97,19 @@ class Updates:
         self.config, self.driver, self.origin, self.directory = config, driver, origin, directory
 
     def operations(self, parameters: dict[str, Any]) -> Any:
-        if self.config is None:
-            raise StudioError("update_config", "Select an existing cluster configuration.")
         repo = absolute(parameters["repo"]).resolve()
         checkout_identity(repo)
+        if self.config is None:
+            if parameters.get("mode", "verified") != "legacy":
+                raise StudioError("update_config", "Verified update requires an existing cluster configuration.")
+            return RepositoryOps(repo)
         return SystemUpdateOps(repo, load_cluster_config(self.config), driver_host=urlsplit(self.origin).netloc,
                                privileged_process_inspection=parameters["privileged_process_inspection"])
 
     def preview(self, parameters: dict[str, Any]) -> dict[str, Any]:
-        if self.config is None:
-            raise StudioError("update_config", "Select an existing cluster configuration.")
-        config_sha256 = update_controller.config_digest(self.config)
+        if parameters.get("receipt"):
+            absolute(parameters["receipt"])
+        config_sha256 = update_controller.config_digest(self.config) if self.config else None
         ops = self.operations(parameters)
         driver = self.driver.inspect() if self.driver else None
         controller = update_controller.binding(driver)
@@ -115,7 +118,20 @@ class Updates:
         if parameters["restore_driver"] and (not driver or driver["state"] != "active" or not parameters["stop_driver"]):
             raise StudioError("update_driver", "Restoration requires an explicitly reviewed stop of the running owner driver.", 409)
         with UpdateLock(ops.repo):
-            target = ops.resolve_target(parameters["target_ref"])
+            mode = parameters.get("mode", "verified")
+            legacy_candidate = None
+            if mode == "legacy":
+                from ..cli import legacy_update
+                if parameters["target_ref"] != "origin/HEAD" or parameters["privileged_process_inspection"] or parameters.get("receipt"):
+                    raise StudioError("update_fields", "Target selection, receipts and privileged inspection require verified mode.")
+                if not (ops.repo / ".git").is_dir() or legacy_update._contract_edited(ops.repo):
+                    raise StudioError("update_repository", "Legacy update requires a plain checkout with unchanged package contract.", 409)
+                legacy_candidate = legacy_update._fetch_candidate(ops.repo)
+                if legacy_candidate is None:
+                    raise StudioError("update_repository", "The legacy upstream candidate could not be established.", 409)
+                target = legacy_candidate[0]
+            else:
+                target = ops.resolve_target(parameters["target_ref"])
             prior = ops.repo_snapshot(target)
             if not prior.clean or not prior.fast_forward:
                 raise StudioError("update_repository", "The reviewed update requires a clean fast-forward checkout.", 409)
@@ -133,19 +149,20 @@ class Updates:
                 cleaned = remove_worktree(checkout, root, ops._git)
                 if cleaned.certainty != Certainty.SUCCEEDED:
                     raise StudioError("update_plan_cleanup", "Private source review cleanup is unconfirmed; inspect retained update-plans.", 409)
-        if update_controller.config_digest(self.config) != config_sha256:
+        if (update_controller.config_digest(self.config) if self.config else None) != config_sha256:
             raise StudioError("update_changed", "Configuration changed during review.", 409)
         return {"token": identifier(), "prior_commit": prior.current_sha, "prior_release": asdict(original),
+                "mode": mode, "legacy_candidate": legacy_candidate, "receipt_path": parameters.get("receipt") or None,
                 "checkout": checkout_identity(ops.repo), "release": asdict(metadata),
                 "driver_identity": driver, "controller": controller, "config_sha256": config_sha256,
-                "review_scope": "Exact source and dependency selection. Existing backend stages and verifies the same selection after idle guards, before Worker mutation.",
-                "restart_policy": "Restore only after the verified update succeeds and the stopped driver identity still matches."}
+                "review_scope": "Exact source and dependency selection. The selected backend retains its original admission and lifecycle guards.",
+                "restart_policy": "Restore only after the selected update succeeds and the stopped driver identity still matches."}
 
     async def execute(self, parameters: dict[str, Any], reviewed: dict[str, Any],
                       checkpoint: Callable[[dict[str, Any]], None]) -> tuple[str, dict[str, Any]]:
         ops = self.operations(parameters)
         expected = reviewed["release"]
-        receipt: dict[str, Any] = {"source": "verified_update", "token": reviewed["token"], "release": expected}
+        receipt: dict[str, Any] = {"source": reviewed.get("mode", "verified") + "_update", "token": reviewed["token"], "release": expected}
         with UpdateLock(ops.repo) as lock:
             if checkout_identity(ops.repo) != reviewed["checkout"]:
                 raise StudioError("update_changed", "The selected source checkout identity changed after review.", 409)
@@ -176,7 +193,7 @@ class Updates:
                 if state != "succeeded":
                     return "unknown", {**receipt, "recovery": "Driver stop is uncertain; update and restoration were not attempted."}
                 stopped = stop_receipt["observed_identity"]
-            checkpoint({**receipt, "phase": "verified_update_requested"})
+            checkpoint({**receipt, "phase": reviewed.get("mode", "verified") + "_update_requested"})
 
             result = await blocking(update_controller.run, prepared)
             receipt.update(update=dict(result.receipt), result_code=result.code)

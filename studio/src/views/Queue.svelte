@@ -3,6 +3,7 @@
   import type { Job } from '../contracts';
   import { formatTime } from '../model';
   import { exportJSON } from '../files';
+  import RuntimeEvidence from '../components/RuntimeEvidence.svelte';
   let {
     client,
     jobs,
@@ -34,7 +35,9 @@
     ),
   );
   const terminal = $derived(
-    history.map(job=>jobs.find(current=>current.id===job.id)??job).filter((job) => !active.some((current) => current.id === job.id)),
+    history
+      .map((job) => jobs.find((current) => current.id === job.id) ?? job)
+      .filter((job) => !active.some((current) => current.id === job.id)),
   );
   const shown = $derived([...active, ...terminal.slice(page * 40, (page + 1) * 40)]);
   async function load(reset = false) {
@@ -118,13 +121,13 @@
           Cancellation is requested first; the backend confirms the final outcome. Retry creates a
           linked job.
         </p>
-        {#if job.progress?.max}<progress
-            max={job.progress.max}
-            value={job.progress.value ?? 0}
+        {#if job.progress?.max}<progress max={job.progress.max} value={job.progress.value ?? 0}
           ></progress><span
-            >{job.progress.value ?? 0} / {job.progress.max} · node {job.progress.node ?? 'unknown'}</span
+            >{job.progress.value ?? 0} / {job.progress.max} · node {job.progress.node ??
+              'unknown'}</span
           >{:else if job.state === 'running'}<p>Running · completion percentage unavailable</p>{/if}
         <pre>{JSON.stringify(job, null, 2)}</pre>
+        <RuntimeEvidence {client} {job} />
       </div>
     </details>{/each}{#if !shown.length}<div class="empty-state">
       <h2>No recorded jobs yet.</h2>

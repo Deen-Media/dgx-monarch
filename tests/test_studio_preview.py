@@ -152,3 +152,111 @@ def test_connected_style_input_refuses(request_body, schema):
     request_body.update(styles=[{"id": "a", "prompt": "pretty"}], style_bindings={"prompt": "root:2:text"})
     with pytest.raises((WorkflowError, StudioError)):
         prepare_preview(request_body, schema)
+
+
+def test_lora_append_inserts_typed_nodes_at_chain_tail(request_body, schema):
+    request_body["lora_stack"] = [{"id": name, "model_strength": strength} for name, strength in
+                                   [("b.safetensors", 1.0), ("a.safetensors", 0.2), ("b.safetensors", -0.7)]]
+    before = deepcopy(request_body)
+    prompt, values, effective = prepare_preview(request_body, schema)
+    inserted = effective["lora_insertion"]["inserted_nodes"]
+    assert len(inserted) == 1
+    assert prompt[inserted[0]]["inputs"] == {"model": ["5", 0], "lora_name": "b.safetensors", "strength_model": -0.7}
+    assert prompt["6"]["inputs"]["model"] == [inserted[0], 0]
+    assert values["root:4:lora_name"] == "b.safetensors"
+    assert request_body == before
+
+
+def test_lora_insertion_rewires_only_explicit_consumers_and_freezes_boundary(request_body, schema):
+    for nid in ("4", "5"):
+        request_body["workflow"].pop(nid)
+    request_body["workflow"]["6"]["inputs"]["model"] = ["1", 0]
+    request_body["workflow"]["7"] = deepcopy(request_body["workflow"]["6"])
+    request_body["lora_stack"] = [{"id": "a.safetensors", "model_strength": 0.8},
+                                   {"id": "b.safetensors", "model_strength": -0.1}]
+    with pytest.raises(StudioError):
+        prepare_preview(request_body, schema)
+    request_body["lora_insertion"] = {"loader": "LoraLoaderModelOnly",
+                                       "model_targets": [{"node_id": "6", "input_name": "model"}]}
+    before = deepcopy(request_body)
+    prompt, _, effective = prepare_preview(request_body, schema)
+    first, second = effective["lora_insertion"]["inserted_nodes"]
+    assert prompt[first]["inputs"]["model"] == ["1", 0]
+    assert prompt[second]["inputs"]["model"] == [first, 0]
+    assert prompt["6"]["inputs"]["model"] == [second, 0]
+    assert prompt["7"]["inputs"]["model"] == ["1", 0]
+    assert effective["lora_insertion"]["model_source"] == ["1", 0]
+    assert request_body == before
+    request_body["lora_insertion"]["model_targets"] = [{"node_id": "6", "input_name": "positive"}]
+    with pytest.raises(StudioError, match="MODEL input"):
+        prepare_preview(request_body, schema)
+
+
+def test_dual_lora_insertion_preserves_model_and_clip_chain(request_body, schema):
+    schema["Model"]["output"] = ["MODEL", "CLIP"]
+    full = deepcopy(schema["LoraLoaderModelOnly"])
+    full["input"]["required"].update(clip=["CLIP"], strength_clip=["FLOAT", {"min": -2, "max": 2, "default": 1.0}])
+    full["output"] = ["MODEL", "CLIP"]
+    schema["LoraLoader"] = full
+    schema["Output"]["input"]["required"]["clip"] = ["CLIP"]
+    for nid in ("4", "5"):
+        request_body["workflow"].pop(nid)
+    request_body["workflow"]["6"]["inputs"].update(model=["1", 0], clip=["1", 1])
+    request_body["lora_stack"] = [{"id": "a.safetensors", "model_strength": 0.8, "clip_strength": -0.2},
+                                   {"id": "b.safetensors", "model_strength": -0.1, "clip_strength": 0.5}]
+    request_body["lora_insertion"] = {"loader": "LoraLoader", "model_targets": [{"node_id": "6", "input_name": "model"}],
+                                       "clip_targets": [{"node_id": "6", "input_name": "clip"}]}
+    prompt, _, effective = prepare_preview(request_body, schema)
+    first, second = effective["lora_insertion"]["inserted_nodes"]
+    assert prompt[first]["inputs"]["clip"] == ["1", 1]
+    assert prompt[second]["inputs"]["clip"] == [first, 1]
+    assert prompt["6"]["inputs"]["clip"] == [second, 1]
+    assert prompt["6"]["inputs"]["model"] == [second, 0]
+    request_body["lora_insertion"].pop("clip_targets")
+    with pytest.raises(StudioError, match="preserve"):
+        prepare_preview(request_body, schema)
+
+
+def test_lora_insertion_refuses_different_sources_and_unadvertised_loader_contract(request_body, schema):
+    for nid in ("4", "5"):
+        request_body["workflow"].pop(nid)
+    request_body["workflow"]["6"]["inputs"]["model"] = ["1", 0]
+    request_body["workflow"]["7"] = deepcopy(request_body["workflow"]["6"])
+    request_body["workflow"]["8"] = deepcopy(request_body["workflow"]["1"])
+    request_body["workflow"]["7"]["inputs"]["model"] = ["8", 0]
+    request_body["lora_stack"] = [{"id": "a.safetensors", "model_strength": 1}]
+    request_body["lora_insertion"] = {"loader": "LoraLoaderModelOnly", "model_targets": [
+        {"node_id": "6", "input_name": "model"}, {"node_id": "7", "input_name": "model"}]}
+    with pytest.raises(StudioError, match="same source"):
+        prepare_preview(request_body, schema)
+    request_body["lora_insertion"]["model_targets"].pop()
+    schema["LoraLoaderModelOnly"]["output"] = ["IMAGE"]
+    with pytest.raises(StudioError, match="typed LoRA contract"):
+        prepare_preview(request_body, schema)
+
+
+def test_monarch_lora_uses_its_actual_model_type_for_existing_and_inserted_chains(request_body, schema):
+    from dgx_monarch.constants import MODEL_TYPE
+    from dgx_monarch.studio.workflows import inspect_workflow
+
+    schema["Model"]["output"] = [MODEL_TYPE]
+    schema["Output"]["input"]["required"]["model"] = [MODEL_TYPE]
+    loader = deepcopy(schema["LoraLoaderModelOnly"])
+    loader["input"]["required"]["model"] = [MODEL_TYPE]
+    loader["output"] = [MODEL_TYPE]
+    schema["DGXMonarchLoraLoader"] = loader
+    for nid in ("4", "5"):
+        request_body["workflow"][nid]["class_type"] = "DGXMonarchLoraLoader"
+    request_body["lora_stack"] = [{"id": "a.safetensors", "source_node": "DGXMonarchLoraLoader", "model_strength": 0.7}] * 3
+    prompt, _, effective = prepare_preview(request_body, schema)
+    inserted = effective["lora_insertion"]["inserted_nodes"]
+    assert len(inserted) == 1 and prompt[inserted[0]]["class_type"] == "DGXMonarchLoraLoader"
+    for nid in ("4", "5"):
+        request_body["workflow"].pop(nid)
+    request_body["workflow"]["6"]["inputs"]["model"] = ["1", 0]
+    inspection = inspect_workflow(request_body["workflow"], schema)
+    assert inspection["connections"] == [{"node_id": "6", "input_name": "model", "type": MODEL_TYPE, "source": ["1", 0]}]
+    request_body["lora_insertion"] = {"loader": "DGXMonarchLoraLoader", "model_targets": [{"node_id": "6", "input_name": "model"}]}
+    prompt, _, effective = prepare_preview(request_body, schema)
+    assert len(effective["lora_insertion"]["inserted_nodes"]) == 3
+    assert prompt["6"]["inputs"]["model"] == [effective["lora_insertion"]["inserted_nodes"][-1], 0]

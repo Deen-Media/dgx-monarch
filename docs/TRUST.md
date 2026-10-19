@@ -521,7 +521,7 @@ copied from historical evidence.
    [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
    [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"),
    with production call order at
-   [`sample_protocol.py:150-414`](../src/dgx_monarch/actor/sample_protocol.py#L150-L414 "anchor:run_sample").
+   [`sample_protocol.py:150-417`](../src/dgx_monarch/actor/sample_protocol.py#L150-L417 "anchor:run_sample").
    Driver and worker failures are covered by
    [`test_fleet.py:677-711`](../tests/test_fleet.py#L677-L711 "anchor:test_fleet_forces_stock_policy_until_exact_context_pass"),
    [`test_fleet.py:752-820`](../tests/test_fleet.py#L752-L820 "anchor:test_fleet_preserves_requested_policy_only_for_exact_context_pass"),
@@ -594,7 +594,7 @@ copied from historical evidence.
     Authorization, setup binding, driver validation, and
     worker revalidation are
     [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"),
-    [`render_submit.py:242-473`](../src/dgx_monarch/nodes/render_submit.py#L242-L473 "anchor:_submit_render_guarded"),
+    [`render_submit.py:243-478`](../src/dgx_monarch/nodes/render_submit.py#L243-L478 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:90-153`](../src/dgx_monarch/mesh_residency.py#L90-L153 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:240-372`](../src/dgx_monarch/mesh_residency.py#L240-L372 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"), and
@@ -795,7 +795,7 @@ copied from historical evidence.
   boundaries are
   [`gate_identity.py:280-290`](../src/dgx_monarch/nodes/gate_identity.py#L280-L290 "anchor:model_for_request"),
   [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"),
-  [`render_submit.py:242-473`](../src/dgx_monarch/nodes/render_submit.py#L242-L473 "anchor:_submit_render_guarded"),
+  [`render_submit.py:243-478`](../src/dgx_monarch/nodes/render_submit.py#L243-L478 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"), with source-skew coverage in

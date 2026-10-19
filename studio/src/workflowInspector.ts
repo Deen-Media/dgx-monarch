@@ -16,12 +16,19 @@ export async function inspectDraft(
       .filter((binding) => binding.resolved !== false)
       .map((binding) => [
         binding.id,
-        priorValues?.[binding.id] ?? binding.value ?? binding.schema?.default ?? binding.default,
+        priorValues?.[binding.id] ??
+          binding.aliases
+            ?.map((alias) => priorValues?.[alias])
+            .find((value) => value !== undefined) ??
+          binding.value ??
+          binding.schema?.default ??
+          binding.default,
       ]),
   );
   const original = result.workflow ?? workflow;
   return {
     bindings,
+    connections: result.connections ?? [],
     errors: result.errors ?? [],
     patch: { workflow: original, workflowName: name, values },
     rawWorkflow: JSON.stringify(original, null, 2),

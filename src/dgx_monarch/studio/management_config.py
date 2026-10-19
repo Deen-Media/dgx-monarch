@@ -40,11 +40,11 @@ def hosts(values: list[dict[str, Any]]) -> tuple[CandidateHost, ...]:
 
 
 def setup_request(path: Path, parameters: dict[str, Any]) -> SetupRequest:
-    values = {**parameters, "hosts": hosts(parameters["hosts"]), "artifacts": tuple(parameters["artifacts"]),
+    values = {**{key: value for key, value in parameters.items() if key not in {"output", "receipt"}}, "hosts": hosts(parameters["hosts"]), "artifacts": tuple(parameters["artifacts"]),
               "fabric_profile": parameters["fabric_profile"] or None}
     if parameters["verify"] and not (parameters["install_service"] and parameters["start_workers"]):
         raise StudioError("operation_fields", "Setup verification requires explicit paired install and start authority.")
-    return SetupRequest(config_path=path, **values)
+    return SetupRequest(config_path=path, receipt_path=absolute(parameters["receipt"]) if parameters.get("receipt") else None, **values)
 
 
 def setup_view(plan: Any) -> dict[str, Any]:

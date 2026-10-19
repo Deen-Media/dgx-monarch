@@ -163,3 +163,14 @@ def test_child_rechecks_review_before_typed_backend(tmp_path, monkeypatch, drift
             assert controller.child(root, manifest) == 0
             assert calls == ["resolve", "update"]
             assert json.loads((root / "result.json").read_text())["receipt"] == {"exact": "receipt"}
+
+
+def test_config_free_frozen_manifest_is_available_only_for_legacy(tmp_path, monkeypatch):
+    _, reviewed = source_fixture(tmp_path, monkeypatch)
+    reviewed.update(mode="legacy", config_sha256=None)
+    prepared = controller.prepare(tmp_path / "state", None, tmp_path, reviewed, "localhost:8188", False, 123)
+    manifest = json.loads((Path(prepared["path"]) / "manifest.json").read_text())
+    assert manifest["request"]["config"] is None and manifest["request"]["config_sha256"] is None
+    reviewed["mode"] = "verified"
+    with pytest.raises(StudioError, match="requires a configuration"):
+        controller.prepare(tmp_path / "state", None, tmp_path, reviewed, "localhost:8188", False, 123)

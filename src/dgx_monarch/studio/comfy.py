@@ -62,6 +62,16 @@ class ComfyClient:
             raise StudioError("driver_endpoint", "The driver endpoint is not allowlisted.")
         return await self._request(method, path, data)
 
+    async def execution_events(self, after: int, producer: str | None = None) -> Any:
+        if type(after) is not int or after < 0:
+            raise ValueError("Invalid runtime event cursor")
+        from urllib.parse import urlencode
+
+        query = {"after": str(after)}
+        if producer is not None:
+            query["producer"] = bounded_key(producer, "event producer")
+        return await self._request("GET", "/dgxm/execution-events?" + urlencode(query))
+
     async def history_prompt(self, prompt_id: str) -> Any:
         return await self._request("GET", "/history/" + bounded_key(prompt_id, "prompt id"))
 

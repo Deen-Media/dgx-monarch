@@ -50,6 +50,14 @@ review plans and retained receipts. Update executes the existing verified
 transaction in a frozen controller using the reviewed driver interpreter;
 uncertain outcomes suppress automatic restoration and retain recovery data.
 
+The generated inventory maps all 101 CLI command and option rows to typed
+actions, parameters, selectors, launch context or presentation behavior.
+Diagnostics capture and capabilities, last-gate inspection, reap grace,
+Worker synchronization choices and recording/replay controls have explicit
+mappings. Inventory validation rejects missing mappings and mismatched
+advertised defaults or choices. Live availability still depends on the
+selected configuration, permissions and backend guards.
+
 ## Working with workflows
 
 Choose one of the 66 packaged workflows or import a ComfyUI UI workflow/API
@@ -59,15 +67,24 @@ App Mode labels and layout can change without changing binding identity.
 
 Compilation preserves the original workflow and extension metadata. Unknown
 widgets, ambiguous bindings and unsupported graph constructs refuse execution
-with a repair reason. Nested serialized subgraph interfaces compile into
-separate execution identities. Ambiguous edits to shared definitions and
-unsupported promoted-widget encodings require an explicitly resolved API
-prompt. Studio does not execute imported widget JavaScript.
+with a repair reason. Repeated nested subgraphs have separate execution and
+input-binding identities, so changing one instance leaves the others intact.
+Bindings identify the root graph, host-instance path, node and typed input;
+legacy definition bindings remain aliases only when they identify one instance.
+Nested promoted scalar widgets follow explicit serialized mappings. Ambiguous,
+missing or unsupported mappings require repair. Studio does not execute
+imported widget JavaScript.
 
 Preview resolves values and seed policy and freezes the submission. Styles
-require explicit positive/negative prompt bindings. LoRA stacks bind only to
-existing supported loader slots in a single model chain; an unsupported branch
-or missing slot refuses. File names never establish model compatibility.
+require explicit positive/negative prompt bindings. LoRA stacks fill and extend
+a single supported loader chain. For a workflow without slots, select the
+loader and exact connected consumers that should receive the new chain.
+Core loaders require `MODEL` sockets; `DGXMonarchLoraLoader` requires
+`DGXM_MODEL`. A loader with text-encoder support also requires the corresponding
+`CLIP` connections. Other branches keep their original inputs. Preview freezes
+the inserted node identities, connection boundaries, asset names and strengths.
+Multiple ambiguous chains or incompatible typed connections refuse execution.
+File names never establish model compatibility.
 Execution-time guards still check the actual model and topology. A schema-only
 preview is not a memory-admission, topology or identity-gate PASS.
 
@@ -75,6 +92,71 @@ Submitted jobs keep requested and effective settings, the workflow and its
 digest, adapter version and lineage. Missing fingerprints and execution facts
 are labelled unavailable. Reproduction reconstructs configuration; it does not
 promise deterministic pixels across hardware and software versions.
+
+Parameter grids use typed workflow inputs or named style stacks as axes. A
+style-axis value is an ordered list of saved style IDs; an empty list selects
+no styles. Each cell freezes the selected definitions and revisions before
+expanding its prompt. Later library edits do not change that submission or its
+retry. Fixed seed mode preserves draft seeds; incrementing mode requires an
+explicit seed binding and base value. Invalid cells remain visible and block
+dispatch until corrected or explicitly excluded. Each accepted cell has its
+own immutable submission and outcome, with selective failed/cancelled retries
+through the existing ComfyUI queue.
+
+## Runtime evidence
+
+Expand a queue entry's Monarch evidence view to inspect per-render outcomes
+or exact runtime events. These records use the Comfy prompt ID, executing node
+ID and list index, plus a Monarch render ID and optional Fleet item index.
+Capture requires ComfyUI's `get_executing_context()` boundary. If that API or an
+executing context is absent, Studio leaves the facts unavailable. It never
+assigns the global last-render or last-Fleet snapshot to a particular job.
+
+A dispatch observation establishes that the driver's guards and dispatch
+returned; it does not establish Worker acceptance or successful output.
+Validated Worker results supply their actual setup generation, topology,
+software versions and available process-lifetime source manifest. Dispatch
+attention is labelled as the driver's selection; Worker results report both
+selected and effective attention where available. Model/LoRA identities reuse
+the existing parity-validated start/middle/end fingerprints, not full-file
+content hashes. Latent statistics retain the runtime's full-byte digest.
+
+Output validation, resource retirement and graph completion are separate facts.
+A render or Fleet item is complete only after its output is validated and its
+existing resource retirement succeeds. Native owner ACKs are recorded only
+after the existing validator checks the response count, generation/token and
+exactly one owner; they are not inferred from a returned tensor or graph
+success. The journal stores a SHA-256 identity for an owner token, never the
+raw capability. The separate opt-in resident-adoption evidence is not copied
+into this journal. Unknown outcomes remain unknown. Late verified facts may
+enrich an ended job without changing its terminal graph state or submitted
+settings.
+
+The companion polls the Monarch-owned `/dgxm/execution-events` route and grants
+a 30-second observer lease. Without a lease, hooks skip context lookup,
+fingerprinting and event serialization; no driver journal is written to disk.
+Requests already marked for observation can still finish collecting their
+Worker identity after the companion stops. Ordinary callback and context
+handling remain, so this is not a claim of zero runtime overhead.
+
+Driver replay retains at most 8,192 events and 8 MiB of encoded event payload.
+Event data is limited to 32 KiB plus sequencing metadata; a page budgets 2 MiB
+for event data and at most 128 rows, with additional sequencing and response
+metadata. These are payload
+bounds, not measurements of Python process memory. Producer restarts, expired
+leases, eviction and omitted events create explicit coverage gaps. Capture is
+not retroactive, and reconnecting cannot reconstruct a missing native ACK.
+
+The owner-private companion database retains received events and complete
+per-render records. Deduplication and producer watermarks survive replay-window
+and display-summary eviction. Each job displays at most 32 render summaries,
+limited to 4 KiB each, with complete outcome counts and a count of omitted
+summaries. Full outcomes and events remain available through the evidence view
+and authenticated `/api/v1/jobs/{id}/runtime` pages. Durable history is not
+silently pruned; its long-session disk growth remains a measurement gate.
+Runtime records can contain Worker hostnames and model filenames. The driver's
+existing trusted-network/authentication boundary and the companion's owner
+boundary protect those details.
 
 ## State, reconciliation and limits
 
@@ -91,6 +173,25 @@ record. Browser-local drafts and layout survive connection loss. Exported
 records retain unknown metadata. Durable jobs and operation receipts are not
 silently deleted. Expired previews can be recreated; review a new preview after
 capabilities change.
+
+Saved records support explicit project memberships and project filtering;
+artifact memberships have their own revision checks. A record can be shared
+across projects without moving its source assets. Portable library export
+includes records, extension metadata and source references, for the entire
+library or one project. Import first creates a review plan. Preserve-ID mode
+requires an explicit keep/replace decision for conflicts; copy mode creates
+new record IDs and remaps project/style references. Applying the reviewed
+digest checks revisions again and commits atomically with an idempotency key.
+Missing media or job references remain on a repair list. Import does not copy
+media, dispatch jobs or recreate missing source provenance. Library documents
+are limited to 4 MiB.
+
+Save a durable grid as a named experiment to retain its definition, observed
+cell outcomes and source references in the project library. Loading the
+definition replaces the editable draft and axes and requires a fresh preview;
+resuming a local run reads its existing jobs. An imported experiment can retain
+its frozen definition while its original run is unavailable. Saving or importing
+an experiment never submits those historical jobs again.
 
 A request has a caller idempotency key and a server-issued identity. Repeat
 requests must have identical bodies. After a lost response, reconcile by the

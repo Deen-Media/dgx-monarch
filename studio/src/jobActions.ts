@@ -1,6 +1,10 @@
 import type { StudioClient } from './api';
 import type { Job } from './contracts';
 
+export function isActiveJob(job: Job): boolean {
+  return ['queued', 'running', 'submitting', 'cancel_requested', 'accepted'].includes(job.state);
+}
+
 /** Keep the request identity if a transport failure leaves the result unknown. */
 export async function requestJobAction(client: StudioClient, job: Job, action: 'cancel' | 'retry') {
   const description =

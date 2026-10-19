@@ -23,8 +23,8 @@ class GridExperiments:
         inspection = inspect_workflow(object_value(draft.get("workflow")), self.jobs.schema)
         bindings = {row["id"]: row for row in inspection["bindings"] if row["resolved"]}
         schemas = {key: row["schema"] for key, row in bindings.items()}
-        seed_binding = request.get("seed_binding")
         policy = request.get("seed_policy", "fixed")
+        seed_binding = request.get("seed_binding") if policy != "fixed" else None
         if not isinstance(policy, str) or (seed_binding is not None and not isinstance(seed_binding, str)):
             raise StudioError("grid_seed", "Seed policy and binding must be text.")
         if seed_binding is not None and (seed_binding not in bindings or bindings[seed_binding]["schema"].get("type") != "INT"
@@ -35,21 +35,40 @@ class GridExperiments:
         axes, excluded = request.get("axes", []), request.get("excluded", [])
         if not isinstance(axes, list) or any(not isinstance(axis, dict) for axis in axes) or not isinstance(excluded, list):
             raise StudioError("grid_axes", "Axes and exclusions must be arrays.")
+        for axis in axes:
+            if axis.get("name") == "styles":
+                schemas["styles"] = {"type": "COMBO", "choices": axis.get("values", [])}
         try:
             expanded = expand_grid(object_value(draft.get("values", {})), axes, schemas, seed_policy=policy,
-                                   base_seed=request.get("base_seed", 0), excluded=excluded)
+                                   base_seed=request.get("base_seed", 0) if policy != "fixed" else 0, excluded=excluded)
         except DraftError as exc:
             raise StudioError("grid_axes", str(exc)) from exc
         cells, byte_count = [], 0
+        style_cache: dict[str, dict[str, Any]] = {}
         axis_names = {axis["name"] for axis in axes}
         for cell in expanded["cells"]:
             row = {key: deepcopy(cell[key]) for key in ("index", "coordinates", "excluded", "errors")}
-            values = {key: val for key, val in cell["parameters"].items() if key != "seed"}
-            if seed_binding and seed_binding not in axis_names:
+            values = {key: val for key, val in cell["parameters"].items() if key not in {"seed", "styles"}}
+            if policy == "increment" and seed_binding and seed_binding not in axis_names:
                 values[seed_binding] = cell["parameters"]["seed"]
             if not row["errors"]:
                 try:
-                    preview = self.jobs.build_preview({**deepcopy(draft), "values": values})
+                    cell_draft = {**deepcopy(draft), "values": values}
+                    if "styles" in axis_names:
+                        selection = cell["parameters"]["styles"]
+                        if (not isinstance(selection, list) or len(selection) > 64
+                                or any(not isinstance(identity, str) or not identity for identity in selection)):
+                            raise StudioError("grid_styles", "Each style-axis value must be an ordered list of up to 64 saved style IDs.")
+                        records = []
+                        for identity in selection:
+                            if identity not in style_cache:
+                                record = self.store.get("styles", identity)
+                                style_cache[identity] = {"id": identity, "revision": record["revision"],
+                                                         "data": deepcopy(record["data"]), "digest": digest(record["data"])}
+                            records.append(deepcopy(style_cache[identity]))
+                        cell_draft.update(style_records=records, styles=[{**row["data"], "id": row["id"]} for row in records])
+                        row["style_records"] = records
+                    preview = self.jobs.build_preview(cell_draft)
                     byte_count += len(canonical(preview).encode())
                     if byte_count > 32 * 1024 * 1024:
                         raise StudioError("grid_size", "Expanded submissions exceed the 32 MiB grid budget.")

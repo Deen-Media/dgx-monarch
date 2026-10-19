@@ -257,3 +257,97 @@ def test_runtime_capture_does_not_claim_global_telemetry_as_job_execution(store)
         assert value["effective_topology"] == "pending_backend_admission"
         assert value["model_fingerprints"] == "unavailable"
     asyncio.run(scenario())
+
+
+def test_style_grid_freezes_ordered_saved_revisions_through_dispatch_and_retry(store):
+    async def scenario():
+        store.save_record("styles", "paint", {"prompt": "painting of {prompt}"}, 0)
+        store.save_record("styles", "frame", {"prompt": "framed {prompt}"}, 0)
+        jobs = Jobs(store, Driver())
+        grids = GridExperiments(jobs)
+        request = grid_request()
+        request["draft"].update(style_bindings={"prompt": "root:1:text"}, styles=[{"id": "old", "prompt": "old"}])
+        request["axes"] = [{"name": "styles", "values": [[], ["paint", "frame"], ["frame", "paint"]]},
+                           {"name": "root:1:steps", "values": [2, 4]}]
+        preview = await grids.preview(request)
+        assert preview["ready"] and preview["job_count"] == 6
+        texts = [store.get("previews", row["preview_id"])["prompt"]["1"]["inputs"]["text"] for row in preview["cells"]]
+        assert texts == ["cat", "cat", "framed painting of cat", "framed painting of cat", "painting of framed cat", "painting of framed cat"]
+        assert [row["id"] for row in preview["cells"][2]["style_records"]] == ["paint", "frame"]
+        store.save_record("styles", "paint", {"prompt": "changed {prompt}"}, 1)
+        submit = {"preview_id": preview["id"], "idempotency_key": "style-grid"}
+        result = grids.submit(submit)
+        await drained(jobs)
+        assert grids.submit(submit)["id"] == result["id"]
+        first = result["cells"][2]["job_id"]
+        frozen = store.get("jobs", first)["submission"]
+        assert frozen["prompt"]["1"]["inputs"]["text"] == "framed painting of cat"
+        assert frozen["requested"]["style_records"][0]["revision"] == 1
+        store.update("jobs", first, {"state": "failed"})
+        retry_request = {"indices": [2], "confirmed": True, "idempotency_key": "style-retry"}
+        retried = grids.retry(result["id"], retry_request)
+        await drained(jobs)
+        assert store.get("jobs", retried["cells"][2]["job_id"])["submission"] == frozen
+        grids.retry(result["id"], retry_request)
+        assert len(store.all("jobs")) == 7
+    asyncio.run(scenario())
+
+
+def test_style_grid_missing_records_are_visible_and_explicitly_excludable(store):
+    async def scenario():
+        request = grid_request()
+        request["draft"]["style_bindings"] = {"prompt": "root:1:text"}
+        request["axes"] = [{"name": "styles", "values": [[], ["missing"], "malformed"]}]
+        grids = GridExperiments(Jobs(store, Driver()))
+        preview = await grids.preview(request)
+        assert not preview["ready"]
+        assert not preview["cells"][0]["errors"]
+        assert all(row["errors"] for row in preview["cells"][1:])
+        request["excluded"] = [1, 2]
+        preview = await grids.preview(request)
+        assert preview["ready"] and preview["job_count"] == 1
+    asyncio.run(scenario())
+
+
+def test_fixed_grid_preserves_draft_seeds_despite_stale_increment_controls(store):
+    async def scenario():
+        request = grid_request()
+        request.update(seed_policy="fixed", base_seed=42, seed_binding="root:1:seed")
+        grids = GridExperiments(Jobs(store, Driver()))
+        preview = await grids.preview(request)
+        assert preview["ready"]
+        assert all(store.get("previews", row["preview_id"])["prompt"]["1"]["inputs"]["seed"] == 5
+                   for row in preview["cells"])
+        request["draft"]["values"] = {"root:1:seed": 8}
+        request.update(seed_binding="deleted:node:seed", base_seed=-1)
+        preview = await grids.preview(request)
+        assert all(store.get("previews", row["preview_id"])["prompt"]["1"]["inputs"]["seed"] == 8
+                   for row in preview["cells"])
+    asyncio.run(scenario())
+
+
+def test_experiment_record_freezes_grid_definition_and_live_outcome_without_dispatch(store):
+    from dgx_monarch.studio.experiment_records import bind_grid_record
+
+    async def scenario():
+        jobs = Jobs(store, Driver())
+        grids = GridExperiments(jobs)
+        preview = await grids.preview(grid_request())
+        grid = grids.submit({"preview_id": preview["id"], "idempotency_key": "linked-grid"})
+        await drained(jobs)
+        failed = grid["cells"][0]["job_id"]
+        store.update("jobs", failed, {"state": "failed"})
+        calls = len(jobs.client.calls)
+        source = {"name": "Linked experiment", "grid_id": grid["id"], "extension": {"retained": True}}
+        linked = bind_grid_record(store, source)
+        assert linked["grid_request"] == grid_request()
+        assert linked["grid_snapshot"]["cells"][0]["state"] == "failed"
+        assert linked["grid_source"]["state"] == "available"
+        assert source == {"name": "Linked experiment", "grid_id": grid["id"], "extension": {"retained": True}}
+        assert len(jobs.client.calls) == calls and len(store.all("jobs")) == 4
+        linked["grid_id"] = "unavailable-imported-grid"
+        restored = bind_grid_record(store, linked)
+        assert restored["grid_request"] == grid_request()
+        assert restored["grid_source"]["state"] == "unavailable"
+        assert len(jobs.client.calls) == calls and len(store.all("jobs")) == 4
+    asyncio.run(scenario())

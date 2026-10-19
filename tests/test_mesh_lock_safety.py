@@ -1101,6 +1101,10 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "ContextVar read, not a monarch future",
     ("adoption_evidence.py", "active_context_wire"):
         "ContextVar read, not a monarch future",
+    ("execution_events.py", "native_ack"):
+        "observer ContextVar read, not a monarch future",
+    ("execution_events.py", "bind_operation"):
+        "observer ContextVar read, not a monarch future",
     ("adoption_evidence.py", "consume_active_context_wire"):
         "ContextVar read, not a monarch future",
     ("adoption_evidence.py", "require_inactive_context"):

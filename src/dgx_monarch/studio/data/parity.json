@@ -60,6 +60,14 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "diagnostics",
+          "diagnostics.capabilities"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -100,6 +108,14 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "doctor",
+          "doctor.repair"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -140,6 +156,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "workers.down"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -180,6 +203,16 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "gate.last",
+          "gate.inspect",
+          "gate.repair.preview",
+          "gate.repair.apply"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -220,6 +253,15 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "init",
+          "service.install",
+          "workers.up"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -260,6 +302,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "service.install"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -300,6 +349,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "launcher"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -340,6 +396,14 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "reap.apply",
+          "reap.preview"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -380,6 +444,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "workers.restart"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -420,6 +491,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -460,6 +538,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-install"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -500,6 +585,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-smoke"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -540,6 +632,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "status"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -580,6 +679,14 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "top.record",
+          "top.replay"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -620,6 +727,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "uninstall"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -660,6 +774,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "workers.up"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -700,6 +821,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "update"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -740,6 +868,13 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "version"
+        ],
+        "equivalence": "Typed action selection; availability and live backend guards are checked separately.",
+        "kind": "adapter"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -787,6 +922,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "diagnostics.capabilities"
+        ],
+        "equivalence": "Read the same exact-runtime capability report without connecting.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -834,6 +976,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "diagnostics"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "diagnostics",
+            "duration_s"
+          ]
+        ]
+      },
       "units": "s",
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -882,6 +1036,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -929,6 +1087,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+        "kind": "context"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -976,6 +1138,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "diagnostics"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "diagnostics",
+            "max_bytes"
+          ]
+        ]
+      },
       "units": "bytes",
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1023,6 +1197,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "diagnostics"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "diagnostics",
+            "max_events"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1070,6 +1256,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "diagnostics"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "diagnostics",
+            "output"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1118,6 +1316,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1165,6 +1367,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Doctor check rows and readiness are returned as sanitized structured JSON in receipt.report.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1212,6 +1418,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "doctor.repair"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "doctor.repair",
+            "receipt"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1259,6 +1477,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "doctor.repair"
+        ],
+        "equivalence": "Select the allowlisted permission repair and subsequent Doctor checks.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1306,6 +1531,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "doctor.repair"
+        ],
+        "equivalence": "Explicit confirmed=true on the exact review replaces the terminal prompt.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1354,6 +1586,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1401,6 +1637,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "gate.repair.apply"
+        ],
+        "equivalence": "Apply the reviewed append-only repair with explicit confirmation.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1449,6 +1692,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1496,6 +1743,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+        "kind": "context"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1543,6 +1794,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "gate.last"
+        ],
+        "equivalence": "Review the latest history prompt transformed into the same Identity Gate graph.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1590,6 +1848,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "gate.inspect"
+        ],
+        "equivalence": "Read current trusted gate verdicts from the selected ledger.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1637,6 +1902,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "gate.repair.preview"
+        ],
+        "equivalence": "Inspect orphan RETESTING contexts with no writes.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1684,6 +1956,33 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "gate.last",
+          "gate.inspect",
+          "gate.repair.preview",
+          "gate.repair.apply"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "gate.last",
+            "report_dir"
+          ],
+          [
+            "gate.inspect",
+            "report_dir"
+          ],
+          [
+            "gate.repair.preview",
+            "report_dir"
+          ],
+          [
+            "gate.repair.apply",
+            "report_dir"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1731,6 +2030,33 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "gate.last",
+          "gate.inspect",
+          "gate.repair.preview",
+          "gate.repair.apply"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "gate.last",
+            "timeout_s"
+          ],
+          [
+            "gate.inspect",
+            "timeout_s"
+          ],
+          [
+            "gate.repair.preview",
+            "timeout_s"
+          ],
+          [
+            "gate.repair.apply",
+            "timeout_s"
+          ]
+        ]
+      },
       "units": "s",
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1778,6 +2104,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Owner selects --config at companion launch; each review binds the selected file identity. Studio does not silently discover another config.",
+        "kind": "context"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1826,6 +2156,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1874,6 +2208,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1922,6 +2260,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -1969,6 +2311,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "launcher"
+        ],
+        "equivalence": "Apply the exact reviewed digest with explicit confirmation.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2016,6 +2365,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "launcher"
+        ],
+        "equivalence": "Preview without apply is the default; no launcher is written.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2063,6 +2419,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": true,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "launcher"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "launcher",
+            "cluster_config"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2110,6 +2478,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "launcher"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "launcher",
+            "destination"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2157,6 +2537,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": true,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "launcher"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "launcher",
+            "executable"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2205,6 +2597,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2252,6 +2648,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "reap.preview"
+        ],
+        "equivalence": "Execute the same dry-run orphan inspection without sending signals.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2299,6 +2702,23 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "reap.apply",
+          "reap.preview"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "reap.apply",
+            "grace_s"
+          ],
+          [
+            "reap.preview",
+            "grace_s"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2347,6 +2767,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2395,6 +2819,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2442,6 +2870,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "workers.restart"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "workers.restart",
+            "no_sync"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2489,6 +2929,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "equivalence": "Required transport_security=trusted_fabric is explicit consent; there is no implicit default.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2536,6 +2983,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "equivalence": "Apply the exact reviewed setup plan; preview itself never applies.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2583,6 +3037,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "artifacts"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2630,6 +3096,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "client_ip"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2677,6 +3155,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "comfy_dir"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2724,6 +3214,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "fabric_profile"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2772,6 +3274,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2819,6 +3325,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "hosts"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2866,6 +3384,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "install_service"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2913,6 +3443,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Setup plan and outcome are already structured JSON; apply still requires explicit confirmation.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -2960,6 +3494,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "output"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3007,6 +3553,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "privileged_process_inspection"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3058,6 +3616,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "profile"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3105,6 +3675,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "python_bin"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3152,6 +3734,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "receipt"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3199,6 +3793,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "ssh_key"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3246,6 +3852,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "start_workers"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3293,6 +3911,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "setup",
+            "verify"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3340,6 +3970,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "setup"
+        ],
+        "equivalence": "Explicit confirmed=true on the exact review replaces the terminal prompt.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3387,6 +4024,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-install"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "sol-install",
+            "allow_change"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3434,6 +4083,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-install"
+        ],
+        "equivalence": "Apply the exact fleet plan after digest review and explicit confirmation.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3482,6 +4138,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3529,6 +4189,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-install"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "sol-install",
+            "idle_maintenance"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3576,6 +4248,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-install"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "sol-install",
+            "plan"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3623,6 +4307,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-install"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "sol-install",
+            "plan_digest"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3671,6 +4367,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3718,6 +4418,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-smoke"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "sol-smoke",
+            "idle_maintenance"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3765,6 +4477,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "sol-smoke"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "sol-smoke",
+            "timeout_s"
+          ]
+        ]
+      },
       "units": "s",
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3813,6 +4537,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3860,6 +4588,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Host rows, mesh and readiness are returned as sanitized structured JSON in receipt.report.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3908,6 +4640,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -3955,6 +4691,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+        "kind": "context"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4002,6 +4742,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "top.record"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "top.record",
+            "interval_s"
+          ]
+        ]
+      },
       "units": "s",
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4049,6 +4801,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "top.record"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "top.record",
+            "path"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4096,6 +4860,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "top.replay"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "top.replay",
+            "path"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4147,6 +4923,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Terminal palette selection is a presentation-only option; Studio uses its shared semantic palette.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4195,6 +4975,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4243,6 +5027,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4290,6 +5078,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "workers.up"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "workers.up",
+            "no_sync"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4338,6 +5138,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4385,6 +5189,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+        "kind": "context"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4432,6 +5240,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "update"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "update",
+            "privileged_process_inspection"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4479,6 +5299,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "update"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "update",
+            "receipt"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4526,6 +5358,18 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "update"
+        ],
+        "kind": "parameter",
+        "parameters": [
+          [
+            "update",
+            "target_ref"
+          ]
+        ]
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4573,6 +5417,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "update"
+        ],
+        "equivalence": "mode=verified selects the verified transaction; mode=legacy remains the CLI default.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4620,6 +5471,13 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "actions": [
+          "update"
+        ],
+        "equivalence": "Explicit confirmation replaces the terminal prompt after exact source review.",
+        "kind": "selector"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },
@@ -4668,6 +5526,10 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "equivalence": "Capability descriptions, typed parameters and availability reasons replace terminal argparse help.",
+        "kind": "presentation"
+      },
       "units": null,
       "validation": "Owning backend is authoritative; discovery does not execute validation."
     },

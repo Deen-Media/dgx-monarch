@@ -20,7 +20,7 @@ from dgx_monarch.studio import management_config, management_sol, management_upd
 from dgx_monarch.studio.contracts import StudioError
 from dgx_monarch.studio.management import Management
 from dgx_monarch.studio.management_fields import FIELDS, parse
-from dgx_monarch.studio.operations import Operations
+from dgx_monarch.studio.operations import READ_ONLY, Operations
 from dgx_monarch.studio.store import Store
 
 
@@ -69,8 +69,8 @@ def test_all_management_actions_have_typed_fields_and_permission_gate(store, con
     enabled = {row["id"]: row for row in Operations(store, Driver(), config=config, allow_management=True).capabilities()}
     for action in FIELDS:
         assert enabled[action]["available"] and enabled[action]["implementation"] == "typed_adapter"
-        assert enabled[action]["parameters"]
-        if action != "top.replay":
+        assert bool(enabled[action]["parameters"]) is (action != "diagnostics.capabilities")
+        if action not in READ_ONLY:
             assert not disabled[action]["available"]
 
 

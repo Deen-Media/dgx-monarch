@@ -23,6 +23,7 @@ from .update_entrypoint import run_serialized_update
 from .update_inspect import inspect_checkout as _inspect_checkout
 from .update_pin_diagnostic import pin_refusal_message
 from .update_release import CommandRunner, ReleaseLayoutError, ReleaseManager, ReleaseMetadata
+from .update_repository import git_command, repository_snapshot
 from .update_site_probe import site_matches
 from .update_stage_cleanup import settle_stage_failure
 from .update_support import candidate_dependencies_available as _candidate_dependencies_available
@@ -93,20 +94,7 @@ class SystemUpdateOps(UpdateOps):
         self._dependency_roots: tuple[str, ...] | None = None
 
     def _git(self, *args: str, cwd: Path | None = None, timeout: float = 60) -> subprocess.CompletedProcess[str]:
-        return self._run(
-            ["git", "--no-replace-objects", "-c", "core.hooksPath=/dev/null",
-             "-c", "core.fsmonitor=false", "-c", "core.untrackedCache=false",
-             "-C", str(cwd or self.repo), *args],
-            capture_output=True, text=True, timeout=timeout,
-            env={
-                "GIT_CONFIG_GLOBAL": os.devnull,
-                "GIT_CONFIG_NOSYSTEM": "1",
-                "GIT_NO_REPLACE_OBJECTS": "1",
-                "LANG": "C",
-                "LC_ALL": "C",
-                "PATH": os.defpath,
-            },
-        )
+        return git_command(self.repo, self._run, *args, cwd=cwd, timeout=timeout)
 
     def resolve_target(self, target_ref: str) -> str:
         if self._resolved:
@@ -122,23 +110,7 @@ class SystemUpdateOps(UpdateOps):
         slot = getattr(self._releases, "slot", None)
         if slot is not None and slot.prior_metadata is not None and not slot.remote_activated and not self._releases.prior_hosts_match():
             raise UpdatePreconditionError("prior_worker_changed", "worker release changed after staging")
-        head = self._git("rev-parse", "HEAD")
-        status = self._git("status", "--porcelain=v1", "--untracked-files=all", "--ignore-submodules=none")
-        assume = self._git("ls-files", "-v")
-        sparse = self._git("ls-files", "-t")
-        if any(result.returncode != 0 for result in (head, status, assume, sparse)):
-            raise RuntimeError("repository state query failed")
-        hidden = any(line[:1].islower() for line in assume.stdout.splitlines()) or any(
-            line.startswith("S ") for line in sparse.stdout.splitlines()
-        )
-        ff = self._git("merge-base", "--is-ancestor", head.stdout.strip(), target_sha)
-        if ff.returncode not in (0, 1):
-            raise RuntimeError("fast-forward query failed")
-        snapshot = RepoSnapshot(
-            current_sha=head.stdout.strip(),
-            clean=not status.stdout.strip() and not hidden,
-            fast_forward=ff.returncode == 0,
-        )
+        snapshot = repository_snapshot(target_sha, self._git)
         if not self._prior_sha:
             self._prior_sha = snapshot.current_sha
         return snapshot

@@ -11,9 +11,12 @@
     StoredRecord,
     RecordKind,
     RecordData,
+    GraphConnection,
   } from './contracts';
   import { exportJSON } from './files';
-  import { requestJobAction } from './jobActions';
+  import { isActiveJob, requestJobAction } from './jobActions';
+  import { persistRecord } from './recordPersistence';
+  import { artifactDraft } from './artifactDraft';
   import { inspectDraft } from './workflowInspector';
   import StatusMessages from './components/StatusMessages.svelte';
   import AppShell from './components/AppShell.svelte';
@@ -41,6 +44,7 @@
     bindingErrors = $state<string[]>([]),
     rawWorkflow = $state(''),
     controlTab = $state('inputs');
+  let connections = $state<GraphConnection[]>([]);
   let view = $state('workspace'),
     selected = $state<Artifact | null>(null),
     comparison = $state<Artifact | null>(null),
@@ -57,11 +61,7 @@
     width = $state(340);
   let palettePanel: CommandPalette, previewPanel: SubmissionReview;
   let jobs = $derived(connection.snapshot.jobs),
-    activeJobs = $derived(
-      jobs.filter((j) =>
-        ['queued', 'running', 'submitting', 'cancel_requested', 'accepted'].includes(j.state),
-      ),
-    );
+    activeJobs = $derived(jobs.filter(isActiveJob));
   const displayedArtifact = $derived(
     selected
       ? (connection.snapshot.artifacts.find((item) => item.id === selected?.id) ?? selected)
@@ -147,6 +147,7 @@
         preserveValues ? draft.values : undefined,
       );
       bindings = result.bindings;
+      connections = result.connections;
       bindingErrors = result.errors;
       changeDraft(result.patch);
       rawWorkflow = result.rawWorkflow;
@@ -169,15 +170,7 @@
       return;
     }
     const previousDraft = structuredClone($state.snapshot(draft));
-    const requested: Partial<Draft> = job.submission.requested ?? {};
-    draft = {
-      ...emptyDraft(),
-      ...requested,
-      workflow: job.submission.workflow,
-      workflowName: `From ${artifact.id}`,
-      operation: operation ?? requested.operation ?? 'image',
-      parent_artifact_ids: [artifact.id],
-    };
+    draft = artifactDraft(artifact, job, operation);
     await inspect(draft.workflow!, draft.workflowName, true);
     undoDraft = previousDraft;
     navigate('workspace');
@@ -190,19 +183,15 @@
   }
 
   async function saveRecord(kind: RecordKind, data: RecordData, id?: string, revision = 0) {
-    const recordId = id ?? crypto.randomUUID();
-    const result = await connection.client.request(
-      `/records/${kind}/${encodeURIComponent(recordId)}`,
-      { revision, data },
-      'PUT',
-    );
-    await refresh();
-    setNotice(`${kind} record saved.`);
-    return result;
+    return persistRecord(connection.client, refresh, setNotice, kind, data, id, revision);
   }
 
   async function applyRecord(record: StoredRecord, kind: RecordKind) {
     try {
+      if (kind === 'experiments') {
+        sessionStorage.setItem('dgxm.studio.experiment.selection', record.id);
+        navigate('grid');
+      }
       if (kind === 'projects') {
         changeDraft({ project_id: record.id });
         setNotice(`Project: ${record.data.name}`);
@@ -330,7 +319,6 @@
   async function retryPending() {
     await withBusy(() => submission.retryRetained());
   }
-
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -392,6 +380,7 @@
           bind:controlTab
           {bindingErrors}
           catalog={connection.catalog}
+          {connections}
           workflows={connection.workflows}
           {dirty}
           {busy}
@@ -441,8 +430,16 @@
         {fail}
         {jobAction}
       />
-    {:else if view === 'grid'}<Grids {reuse} client={connection.client} {draft} {bindings} />
+    {:else if view === 'grid'}<Grids
+        {reuse}
+        client={connection.client}
+        {draft}
+        {bindings}
+        restoreDraft={importDraft}
+      />
     {:else if view === 'fleet'}<Fleet
+        client={connection.client}
+        {jobs}
         history={connection.metricHistory}
         presentation={connection.capabilities.presentation}
         telemetry={connection.snapshot.telemetry}
@@ -457,6 +454,8 @@
         onrefresh={() => void refresh().catch(fail)}
       />
     {:else if view === 'projects'}<WorkspaceRecords
+        client={connection.client}
+        onrefresh={refresh}
         allRecords={connection.snapshot.records}
         {draft}
         {selected}

@@ -11,6 +11,13 @@ export interface Inspection {
   workflow: Workflow;
   bindings: Binding[];
   errors: string[];
+  connections?: GraphConnection[];
+}
+export interface GraphConnection {
+  node_id: string;
+  input_name: string;
+  type: 'MODEL' | 'DGXM_MODEL' | 'CLIP';
+  source: [string, number];
 }
 export interface JobPreview {
   id: string;
@@ -36,6 +43,23 @@ export interface Job {
     [key: string]: unknown;
   };
   progress?: { max?: number; value?: number; node?: string | number };
+  monarch?: {
+    schema_version: number;
+    event_count: number;
+    render_count?: number;
+    render_status_counts?: Record<string, number>;
+    renders?: Record<string, RuntimeRender>;
+    omitted_render_count?: number;
+  };
+  [key: string]: unknown;
+}
+export interface RuntimeRender {
+  render_id: string;
+  producer_id: string;
+  node_id: string;
+  fleet_index?: number | null;
+  status: string;
+  effective_topology?: unknown;
   [key: string]: unknown;
 }
 export interface Artifact {

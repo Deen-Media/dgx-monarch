@@ -98,3 +98,93 @@ def test_unambiguous_bypass_resolves_while_muted_dependency_refuses():
     source["nodes"][1]["mode"] = 2
     with pytest.raises(WorkflowError, match="muted"):
         compile_workflow(source, INFO)
+
+
+def promoted_workflow():
+    source = workflow()
+    child = source["definitions"]["subgraphs"][0]
+    child["nodes"][0] = {"id": 1, "type": "Text", "widgets_values": ["default"]}
+    child["links"].pop(0)
+    source["nodes"][1].update(properties={"proxyWidgets": [["1", "text"]]}, widgets_values=["first"])
+    source["nodes"].extend([
+        {"id": "4/a:b", "type": "child", "properties": {"proxyWidgets": [["1", "text"]]}, "widgets_values": ["second"]},
+        {"id": 5, "type": "Save", "inputs": [{"name": "value", "link": 3}]},
+    ])
+    source["links"].append([3, "4/a:b", 0, 5, 0, "STRING"])
+    return source
+
+
+def test_shared_instances_project_distinct_editable_binding_ids_and_preserve_source():
+    source = promoted_workflow()
+    before = copy.deepcopy(source)
+    inspected = inspect_workflow(source, INFO)
+    rows = {tuple(row["instance_path"]): row for row in inspected["bindings"] if row["graph_id"] == "child"}
+    first, second = rows[("2",)], rows[("4/a:b",)]
+    assert first["id"] != second["id"] and not first["aliases"] and not second["aliases"]
+    assert second["id"] == "@instance/main/4%2Fa%3Ab:1:text"
+    assert (first["value"], second["value"]) == ("first", "second")
+    prompt = compile_workflow(source, INFO, {second["id"]: "changed"})
+    assert prompt[first["execution_node_id"]]["inputs"]["text"] == "first"
+    assert prompt[second["execution_node_id"]]["inputs"]["text"] == "changed"
+    source["extra"]["linearData"] = {"inputs": [[second["id"], "text"]]}
+    assert not inspect_workflow(source, INFO)["errors"]
+    source["extra"].pop("linearData")
+    assert source == before
+
+
+def test_nested_promoted_values_follow_explicit_widget_mapping_per_instance():
+    source = promoted_workflow()
+    child = source["definitions"]["subgraphs"][0]
+    leaf = copy.deepcopy(child)
+    leaf["id"] = "leaf"
+    child["nodes"][0] = {"id": 1, "type": "leaf", "properties": {"proxyWidgets": [["1", "text"]]},
+                         "widgets_values": ["inner default"]}
+    source["definitions"]["subgraphs"].append(leaf)
+    inspection = inspect_workflow(source, INFO)
+    assert not inspection["errors"]
+    rows = {tuple(row["instance_path"]): row for row in inspection["bindings"] if row["graph_id"] == "leaf"}
+    first, second = rows[("2", "1")], rows[("4/a:b", "1")]
+    assert (first["value"], second["value"]) == ("first", "second")
+    prompt = compile_workflow(source, INFO, {first["id"]: "explicit"})
+    assert prompt[first["execution_node_id"]]["inputs"]["text"] == "explicit"
+    assert prompt[second["execution_node_id"]]["inputs"]["text"] == "second"
+    source["extra"]["linearData"] = {"inputs": [["2:1:1", "text"]]}
+    assert next(row for row in inspect_workflow(source, INFO)["bindings"] if row["id"] == first["id"])["prominent"]
+    child["nodes"][0]["properties"]["proxyWidgets"].append(["9", "text"])
+    child["nodes"][0]["widgets_values"].append("ambiguous")
+    with pytest.raises(WorkflowError, match=r"missing node|matching widget"):
+        compile_workflow(source, INFO)
+
+
+def test_unique_legacy_alias_still_works_and_duplicate_alias_edits_refuse():
+    source = promoted_workflow()
+    source["nodes"] = source["nodes"][:3]
+    source["links"].pop()
+    row = next(row for row in inspect_workflow(source, INFO)["bindings"] if row["graph_id"] == "child")
+    assert row["aliases"] == ["child:1:text"]
+    assert compile_workflow(source, INFO, {"child:1:text": "legacy"})[row["execution_node_id"]]["inputs"]["text"] == "legacy"
+    with pytest.raises(WorkflowError, match="Both instance and legacy"):
+        compile_workflow(source, INFO, {"child:1:text": "one", row["id"]: "two"})
+
+
+def test_styles_apply_to_one_nested_instance_after_legacy_alias_edits():
+    from dgx_monarch.studio.preview_drafts import prepare_preview
+
+    source = promoted_workflow()
+    source["nodes"] = source["nodes"][:3]
+    source["links"].pop()
+    row = next(row for row in inspect_workflow(source, INFO)["bindings"] if row["graph_id"] == "child")
+    prompt, values, effective = prepare_preview({"workflow": source, "values": {"child:1:text": "draft"},
+                                                "styles": [{"id": "paint", "prompt": "painted {prompt}"}],
+                                                "style_bindings": {"prompt": row["id"]}}, INFO)
+    assert prompt[row["execution_node_id"]]["inputs"]["text"] == "painted draft"
+    assert values[row["id"]] == "painted draft" and "child:1:text" not in values
+    assert effective["styles"]["unexpanded"]["prompt"] == "draft"
+
+
+def test_duplicate_promoted_targets_refuse_instead_of_last_write_wins():
+    source = promoted_workflow()
+    source["nodes"][1]["properties"]["proxyWidgets"].append(["1", "text"])
+    source["nodes"][1]["widgets_values"].append("different")
+    with pytest.raises(WorkflowError, match="more than one value"):
+        compile_workflow(source, INFO)
