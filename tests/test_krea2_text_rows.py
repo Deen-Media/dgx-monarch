@@ -8,8 +8,10 @@ rank, so under pure Ulysses the forward runs stock's text path on all rows and
 shards only its output. These tests drive the real bound forward over the toy
 of tests/test_krea2_order.py and read which rows each text stage was handed,
 and which mask and options `txtfusion` got: stock passes no mask and the
-caller's options. Ring and hybrid keep the shard-first path, refiner attention
-through USP included, and the last test pins it.
+caller's options, which the forward hands on with only the override that drops
+a block's kernel pin added (adapters/stock_attention.py). Ring and hybrid keep
+the shard-first path, refiner attention through USP included, and the last
+test pins it.
 """
 from __future__ import annotations
 
@@ -17,6 +19,7 @@ import pytest
 import torch
 
 from dgx_monarch.adapters import base
+from dgx_monarch.adapters.stock_attention import stock_attention_options
 from test_krea2_order import (  # noqa: F401  (fixture re-exported)
     DIM,
     SHAPES,
@@ -53,9 +56,10 @@ def test_pure_ulysses_runs_every_text_stage_on_every_text_row(monkeypatch, text_
         assert len(fusion.inputs) == 1
         assert torch.equal(fusion.inputs[0], stock_input)
         assert fusion.inputs[0].stride() == stock_input.stride()
-        # Stock's call: no mask, and the caller's options rather than USP ones.
+        # Stock's call: no mask, and the caller's options rather than USP
+        # ones, with the pin-dropping override added.
         assert len(fusion.masks) == 1 and fusion.masks[0] is None
-        assert fusion.options == [CALLER_OPTIONS]
+        assert fusion.options == [stock_attention_options(CALLER_OPTIONS)]
         assert [spy.seen for spy in fusion.layerwise_blocks] == [
             [(batch * text_rows, 1, DIM)]] * 2
         assert fusion.projector.seen == [(batch, text_rows, DIM, 1)]

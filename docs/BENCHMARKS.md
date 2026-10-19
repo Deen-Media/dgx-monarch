@@ -17,15 +17,31 @@ comparison fields. Times below are seconds unless marked otherwise.
 | Ideogram4 | 36.0 s | 26.0 s | FP8-scaled dual-model, 1024x1024, 20 steps, CFG 7, Ulysses |
 | MiniMax H3 video/audio | 42:03 | 23:07 | INT8 ConvRot, 1280x720, 241 frames, 20 steps, CFG 1, exact-attention Ulysses; times are minutes:seconds |
 | Qwen Image 2.1 | Not timed | Not timed | Matching native output recorded for 25-step T2I and editing; no comparable timing published here |
+| FLUX.3 Klein | 10.2 s | 6.7 s | Step-distilled BF16, 1024x1024, 16 steps, CFG 1, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
+| FLUX.3 Klein Base | 29.8 s | 20.0 s | BF16, 1024x1024, 25 steps, CFG 3.5, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
 
 Krea2 and Ideogram4 use the [Ulysses comparison tests](VALIDATION.md#ulysses-comparisons).
 Their times are warm full renders of the same graph on one GPU and two GPUs. The first Spark had a 2100 MHz GPU clock cap; the second was uncapped. Separate one-step probes produced identical decoded pixels;
 that does not establish equality at every step of the full render.
 
+The Krea2 row times the shipped template's graph, whose DGX Monarch KSampler
+runs `euler_cfg_pp`, with RAW BF16 loaded. On a pair, `auto` takes cfg2 (row
+15) for that graph, not the Ulysses it was timed on.
+[Campaign K](#campaign-k-cfg2-against-uly2-2026-10-14-head-capped) cell a01
+timed both at 1536: sampler walls of 44.8 s on uly2 and 36.3 s on
+cfg2, with cfg2 bit-identical to one GPU. Sampler walls leave out text
+encoding and VAE decode, so they do not compare with the table's times.
+
 The [H3 comparison](VALIDATION.md#evidence-minimax-h3-t2va-fl2va-ref2va-av)
 used stock ComfyUI for the one-GPU timing. One Monarch worker took 42:20,
 and its output matched the exact-attention pair. This is a different recipe
 from the shorter September H3 runs below, whose audio comparison was missing.
+
+The
+[FLUX.3 Klein times](#flux3-klein-one-gpu-uly2-and-cfg2-2026-10-15-to-2026-10-16-head-capped)
+are warm sampler walls, which leave out text encoding and VAE decode, from
+2026-10-15 and 2026-10-16. The first Spark was capped at 2100 MHz; the second
+was uncapped.
 
 [Qwen Image 2.1 tests](VALIDATION.md#evidence-qwen-image-2-1) compare complete
 latents and RGBA pixels against native ComfyUI. Qwen-Image 2512 timings below
@@ -101,8 +117,12 @@ family once the Ideogram4 offload churn is gone (re-timed 2026-08-25: 39.2 GiB a
 
 ## Stills: cfg2 warm render time
 
-Below 1.2 MP, automatic selection offers cfg2 for Chroma BF16/FP8/INT8
-and LongCat BF16 when CFG is not 1. These October 1, 2026 measurements used
+On October 1, 2026, below 1.2 MP, automatic selection offered cfg2 for
+Chroma BF16/FP8/INT8 and LongCat BF16 when CFG was not 1. Campaign K
+(2026-10-14) later added Boogu FP8 and Anima BF16 below 1.2 MP, and cfg2 at
+CFG 1 under a CFG++ sampler
+([Campaign K](#campaign-k-cfg2-against-uly2-2026-10-14-head-capped)). These
+October 1, 2026 measurements used
 ComfyUI `a7169322` and torch 2.12.0+cu132. The first Spark was capped at 2100 MHz (2086 MHz median
 SM clock); the second was uncapped. Compare within this table.
 
@@ -150,6 +170,255 @@ Reading the table:
   These are the harness's warm legs (one render after a cold one), not this
   file's two-queue method, so read them against each other, not against the
   table above.
+
+<a id="campaign-k-cfg2-against-uly2-2026-10-14-head-capped"></a>
+
+## Campaign K: cfg2 against uly2
+
+Campaign K timed cfg2 and uly2 against one GPU on 2026-10-14, so the
+automatic table could gain cfg2 rows above 1.2 MP. Every cell ran dgx-monarch
+`d549f10d` except a09-anima-1024, which ran `65d14333`. Both Sparks ran
+ComfyUI `e8665ca8`. The first Spark was capped at 2100 MHz, with a highest
+sampled SM clock of 2093 MHz; the second was uncapped.
+
+Method:
+
+- **Instrument.** `benchmark/run_matrix.py` in cluster mode, one process per
+  cell. Each leg ran one cold render and two warm renders, and the table gives
+  the mean of the two warm sampler walls in seconds. A sampler wall leaves out
+  text encoding and VAE decode, so these numbers read lower than the
+  whole-prompt walls in the tables above. Compare within this table.
+- **One GPU.** At world 2 the reference is a dp2 render of batch 2. Each rank
+  renders one image alone, so batch row 0 carries one-GPU math and its wall is
+  the capped first Spark's one-GPU wall.
+- **uly2** ran on Torch Flash. **Auto SAGE uly2** is the route auto took
+  before this campaign for Krea2 and Chroma FP8 above 1.2 MP, measured where
+  it applies.
+- **Fidelity.** Bit-identical means batch row 0 of the full-schedule latent
+  and of a one-step latent both equal the one-GPU reference exactly.
+  Otherwise the table gives the one-step NRMS and the full schedule's largest
+  absolute latent difference.
+- **Recipes.** Prompts, steps, CFG, sampler, scheduler and text encoders come
+  from each family's shipped template. The one exception is the Krea2
+  control, which runs CFG 4.5 under plain Euler. The Krea2 template runs CFG 1
+  under `euler_cfg_pp` with an empty negative prompt; a CFG++ sampler keeps
+  the unconditional pass, so cfg2 still splits the step.
+
+| Cell | Checkpoint | Size | MP | Steps, CFG, sampler | One GPU | uly2 | cfg2 | cfg2 vs one GPU | cfg2 vs uly2 | Auto SAGE uly2 | cfg2 against one GPU |
+|---|---|--:|--:|---|--:|--:|--:|--:|--:|--:|---|
+| a09-anima-1024 | Anima BF16 | 1024 | 1.05 | 30, 4, `euler` | 19.6 | 12.7 | 10.0 | 1.96x | 1.27x | not run | bit-identical |
+| a08-boogu-fp8-1024 | Boogu FP8-scaled | 1024 | 1.05 | 25, 4, `euler` | 48.1 | 34.0 | 24.3 | 1.98x | 1.40x | not run | bit-identical |
+| b-chroma-bf16-1152 | Chroma1-HD BF16 | 1152 | 1.33 | 26, 3.5, `euler` | 77.3 | 51.6 | 39.3 | 1.97x | 1.31x | not run | bit-identical |
+| b-chroma-fp8mixed-1152 | Chroma1-HD FP8-mixed | 1152 | 1.33 | 26, 3.5, `euler` | 58.2 | 39.2 | 29.1 | 2.00x | 1.34x | 38.0 (1-step NRMS 0.078) | bit-identical |
+| b-chroma-bf16-1216 | Chroma1-HD BF16 | 1216 | 1.48 | 26, 3.5, `euler` | 87.2 | 56.6 | 43.6 | 2.00x | 1.30x | not run | bit-identical |
+| b-chroma-fp8mixed-1216 | Chroma1-HD FP8-mixed | 1216 | 1.48 | 26, 3.5, `euler` | 65.0 | 43.8 | 32.6 | 1.99x | 1.34x | 42.0 (1-step NRMS 0.065) | bit-identical |
+| b-chroma-bf16-1280 | Chroma1-HD BF16 | 1280 | 1.64 | 26, 3.5, `euler` | 97.9 | 64.6 | 49.2 | 1.99x | 1.31x | not run | bit-identical |
+| b-chroma-fp8mixed-1280 | Chroma1-HD FP8-mixed | 1280 | 1.64 | 26, 3.5, `euler` | 75.4 | 49.8 | 37.8 | 2.00x | 1.32x | 47.5 (1-step NRMS 0.057) | bit-identical |
+| c-chroma-int8-1152 | Chroma1-HD INT8 ConvRot | 1152 | 1.33 | 26, 3.5, `euler` | 61.2 | 40.3 | 30.6 | 2.00x | 1.32x | not run | bit-identical |
+| c-chroma-int8-1216 | Chroma1-HD INT8 ConvRot | 1216 | 1.48 | 26, 3.5, `euler` | 70.7 | 46.9 | 35.1 | 2.01x | 1.33x | not run | bit-identical |
+| c-chroma-int8-1280 | Chroma1-HD INT8 ConvRot | 1280 | 1.64 | 26, 3.5, `euler` | 87.8 | 51.7 | 44.0 | 2.00x | 1.17x | not run | bit-identical |
+| a07-kandinsky5-1024 | Kandinsky5 Lite image BF16 | 1024 | 1.05 | 50, 3.5, `euler` | 81.0 | 49.4 | 40.5 | 2.00x | 1.22x | not run | bit-identical |
+| b-krea2-turbo-fp8-1152 | Krea2 Turbo FP8-scaled | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 34.7 | 22.5 | 17.3 | 2.00x | 1.30x | 22.3 (1-step NRMS 0.030) | bit-identical |
+| b-krea2-turbo-fp8-1216 | Krea2 Turbo FP8-scaled | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 39.1 | 25.3 | 19.5 | 2.01x | 1.30x | 24.9 (1-step NRMS 0.033) | bit-identical |
+| b-krea2-turbo-fp8-1280 | Krea2 Turbo FP8-scaled | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 43.7 | 27.7 | 21.7 | 2.01x | 1.27x | 27.1 (1-step NRMS 0.058) | bit-identical |
+| c-krea2-turbo-fp8-1408 | Krea2 Turbo FP8-scaled | 1408 | 1.98 | 8, 1, `euler_cfg_pp` | 53.5 | 33.8 | 26.9 | 1.99x | 1.25x | 32.8 (1-step NRMS 0.030) | bit-identical |
+| c-krea2-raw-bf16-1152 | Krea2 RAW BF16 | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 40.4 | 25.3 | 20.1 | 2.01x | 1.26x | not run | bit-identical |
+| c-krea2-raw-bf16-1216 | Krea2 RAW BF16 | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 45.5 | 27.9 | 22.6 | 2.02x | 1.24x | not run | bit-identical |
+| c-krea2-raw-bf16-1280 | Krea2 RAW BF16 | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 51.0 | 31.1 | 25.2 | 2.02x | 1.23x | not run | bit-identical |
+| a01-krea2-raw-bf16-1536 | Krea2 RAW BF16 | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 72.9 | 44.8 | 36.3 | 2.01x | 1.23x | not run | bit-identical |
+| a02-krea2-turbo-bf16-1536 | Krea2 Turbo BF16 | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 72.6 | 46.3 | 36.1 | 2.01x | 1.28x | not run | bit-identical |
+| a03-krea2-turbo-fp8-1536 | Krea2 Turbo FP8-scaled | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 62.9 | 39.8 | 31.4 | 2.00x | 1.27x | 38.9 (1-step NRMS 0.042) | bit-identical |
+| c-krea2-raw-int8-1152 | Krea2 RAW INT8 ConvRot | 1152 | 1.33 | 8, 1, `euler_cfg_pp` | 40.6 | 19.6 | 20.2 | 2.01x | 0.97x | not run | bit-identical |
+| c-krea2-raw-int8-1216 | Krea2 RAW INT8 ConvRot | 1216 | 1.48 | 8, 1, `euler_cfg_pp` | 47.8 | 23.4 | 23.8 | 2.01x | 0.98x | not run | bit-identical |
+| c-krea2-raw-int8-1280 | Krea2 RAW INT8 ConvRot | 1280 | 1.64 | 8, 1, `euler_cfg_pp` | 52.5 | 27.2 | 26.3 | 1.99x | 1.03x | not run | bit-identical |
+| a04-krea2-raw-int8-1536 | Krea2 RAW INT8 ConvRot | 1536 | 2.36 | 8, 1, `euler_cfg_pp` | 82.0 | 44.8 | 41.4 | 1.98x | 1.08x | not run | bit-identical |
+| a05-krea2-turbo-fp8-1536-cfg45-euler | Krea2 Turbo FP8-scaled, control | 1536 | 2.36 | 8, 4.5, `euler` | 64.9 | 40.7 | 32.4 | 2.00x | 1.26x | 39.1 (1-step NRMS 0.041) | bit-identical |
+| b-longcat-bf16-1152 | LongCat-Image BF16 | 1152 | 1.33 | 20, 4, `euler` | 37.8 | 23.5 | 18.6 | 2.03x | 1.26x | not run | 1-step NRMS 0.007; full schedule max abs 7.62 |
+| b-longcat-bf16-1216 | LongCat-Image BF16 | 1216 | 1.48 | 20, 4, `euler` | 42.1 | 25.9 | 20.4 | 2.06x | 1.27x | not run | 1-step NRMS 0.007; full schedule max abs 2.65 |
+| b-longcat-bf16-1280 | LongCat-Image BF16 | 1280 | 1.64 | 20, 4, `euler` | 46.1 | 28.6 | 22.5 | 2.05x | 1.27x | not run | 1-step NRMS 0.006; full schedule max abs 4.54 |
+| b-qwen-fp8-1152 | Qwen-Image 2512 FP8 | 1152 | 1.33 | 50, 4, `euler` | 214.4 | 169.8 | 102.3 | 2.10x | 1.66x | not run | bit-identical |
+| b-qwen-fp8-1216 | Qwen-Image 2512 FP8 | 1216 | 1.48 | 50, 4, `euler` | 235.4 | 179.9 | 113.8 | 2.07x | 1.58x | not run | bit-identical |
+| b-qwen-fp8-1280 | Qwen-Image 2512 FP8 | 1280 | 1.64 | 50, 4, `euler` | 253.1 | 196.3 | 122.7 | 2.06x | 1.60x | not run | bit-identical |
+| a06-qwen-fp8-1328 | Qwen-Image 2512 FP8 | 1328 | 1.76 | 50, 4, `euler` | 271.2 | 211.2 | 132.1 | 2.05x | 1.60x | not run | bit-identical |
+
+Reading the table:
+
+- **cfg2 beat uly2 in every cell but Krea2 RAW INT8 below 1536.** Elsewhere
+  it ran 1.17x (Chroma INT8 at 1280) to 1.66x (Qwen-Image at 1152) faster
+  than uly2 and 1.96x to 2.10x faster than one GPU, and its slowest warm leg
+  beat uly2's fastest. Krea2 RAW INT8 read 0.97x, 0.98x and 1.03x against
+  uly2 at 1152, 1216 and 1280, and 1.08x at 1536: its uly2 leg ran 1.83x to
+  2.07x faster than one GPU, against 1.59x to 1.64x on BF16, so the split had
+  less to gain.
+- **cfg2 was bit-identical to one GPU in every cell but LongCat.** LongCat
+  read 1-step NRMS 0.006 to 0.007, and its full-schedule latent differed,
+  while uly2 read bit-identical on the same cells. LongCat keeps Ulysses above
+  1.2 MP.
+- **The SAGE route bought little.** It ran 1 to 5 percent faster than Torch
+  Flash uly2 and read 1-step NRMS 0.030 to 0.078 against one GPU, while Torch
+  Flash uly2 read bit-identical.
+- **New automatic rows.** Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15),
+  Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from
+  1.2 to 1.77 MP (row 68), Boogu FP8 below 1.2 MP (row 79) and Anima BF16
+  below 1.2 MP (row 47). Each upper band ends at the largest size measured.
+  The two lower bands follow rows 20 and 28 and rest on one size, 1.05 MP.
+  Each grant covers only the precisions that read bit-identical and beat uly2
+  at every measured size in its band, so Krea2 RAW INT8 keeps Ulysses (row
+  12). Kandinsky5's image and video checkpoints share one family, so it has
+  no row.
+
+<a id="flux3-klein-one-gpu-uly2-and-cfg2-2026-10-15-to-2026-10-16-head-capped"></a>
+
+## FLUX.3 Klein: one GPU, uly2 and cfg2
+
+The FLUX.3 hardware ladder timed FLUX.3 Klein on 2026-10-15 and 2026-10-16
+with dgx-monarch `70fb8997e3ea` and ComfyUI `29e28e2b4` on both Sparks. The
+first Spark was capped at 2100 MHz, with a highest sampled SM clock of
+2093 MHz; the second was uncapped.
+[VALIDATION](VALIDATION.md#evidence-flux-3-klein) records the ladder and its
+comparisons, and
+[Campaign K](#campaign-k-cfg2-against-uly2-2026-10-14-head-capped) describes
+the method this section follows. These walls predate the fused-norm parity
+change, which gives each uly2 rank stock's full normalization work: op-level
+timings put it at 1 to 31 ms per model call, about 2 to 4 percent of the uly2
+walls below at 1024 square, until the hardware rerun times it.
+
+Method:
+
+- **Instrument.** `benchmark/run_matrix.py` in cluster mode, one process per
+  cell. Each full-schedule leg ran one cold render and two warm renders, and
+  the tables give the mean of the two warm sampler walls in seconds; one-step
+  legs ran once, for fidelity. A sampler wall leaves out text encoding and VAE
+  decode. Compare within each table.
+- **One GPU.** Batch row 0 of a dp2 render of batch 2: each rank renders one
+  image alone, so its wall is the capped first Spark's one-GPU wall.
+- **Recipes.** The base model ran 25 Euler/simple steps at CFG 3.5 with an
+  empty negative, and the step-distilled model 16 steps at CFG 1, both with
+  the BF16 Qwen3-VL encoder and Torch Flash. The one-block prompt encodes to
+  80 text rows, the size of the empty negative, so one GPU batches the two
+  calls and cfg2 takes the slice path. The vendor-length prompt encodes to 480
+  rows, so one GPU runs two calls and cfg2 dispatches one to each rank.
+- **Fidelity.** Bit-identical means batch row 0 of the full-schedule latent
+  and of a one-step latent both equal the one-GPU reference exactly.
+  Otherwise the table gives the one-step NRMS and the full schedule's largest
+  absolute latent difference.
+
+Base model (K1), head capped at 2100 MHz:
+
+| Cell | Checkpoint | Size | MP | Prompt (text rows) | One GPU | uly2 | cfg2 | uly2 vs one GPU | cfg2 vs one GPU | cfg2 vs uly2 | cfg2 against one GPU |
+|---|---|--:|--:|---|--:|--:|--:|--:|--:|--:|---|
+| k1-base-bf16-1024 | Base BF16 | 1024 | 1.05 | One block (80) | 29.8 | 20.0 | 15.5 | 1.49x | 1.92x | 1.29x | 1-step NRMS 0.009; full schedule max abs 1.36 |
+| k1-base-bf16-1024 | Base BF16 | 1024 | 1.05 | Vendor length (480) | 31.6 | 20.5 | 16.6 | 1.54x | 1.90x | 1.23x | bit-identical |
+| k1-base-bf16-1152 | Base BF16 | 1152 | 1.33 | One block (80) | 38.4 | 25.8 | 20.1 | 1.49x | 1.91x | 1.28x | 1-step NRMS 0.010; full schedule max abs 0.94 |
+| k1-base-bf16-1152 | Base BF16 | 1152 | 1.33 | Vendor length (480) | 40.8 | 26.5 | 21.2 | 1.54x | 1.93x | 1.25x | bit-identical |
+| k1-base-bf16-1216 | Base BF16 | 1216 | 1.48 | One block (80) | 43.3 | 28.7 | 22.3 | 1.51x | 1.94x | 1.29x | 1-step NRMS 0.010; full schedule max abs 2.34 |
+| k1-base-bf16-1216 | Base BF16 | 1216 | 1.48 | Vendor length (480) | 46.0 | 29.5 | 24.1 | 1.56x | 1.91x | 1.23x | bit-identical |
+| k1-base-bf16-1280 | Base BF16 | 1280 | 1.64 | One block (80) | 49.0 | 32.2 | 25.2 | 1.52x | 1.95x | 1.28x | 1-step NRMS 0.009; full schedule max abs 1.76 |
+| k1-base-bf16-1280 | Base BF16 | 1280 | 1.64 | Vendor length (480) | 51.2 | 32.8 | 26.6 | 1.56x | 1.93x | 1.24x | bit-identical |
+| k1-base-bf16-1536 | Base BF16 | 1536 | 2.36 | One block (80) | 76.5 | 49.5 | 39.0 | 1.54x | 1.96x | 1.27x | 1-step NRMS 0.009; full schedule max abs 3.48 |
+| k1-base-bf16-1536 | Base BF16 | 1536 | 2.36 | Vendor length (480) | 79.5 | 50.7 | 41.1 | 1.57x | 1.94x | 1.23x | bit-identical |
+| k1-base-nvfp4-1024 | Base NVFP4 | 1024 | 1.05 | One block (80) | 20.3 | 15.3 | 10.8 | 1.33x | 1.88x | 1.41x | 1-step NRMS 0.031; full schedule max abs 4.24 |
+| k1-base-nvfp4-1024 | Base NVFP4 | 1024 | 1.05 | Vendor length (480) | 21.9 | 15.2 | 11.6 | 1.44x | 1.89x | 1.31x | bit-identical |
+| k1-base-nvfp4-1152 | Base NVFP4 | 1152 | 1.33 | One block (80) | 27.5 | 19.1 | 13.9 | 1.44x | 1.97x | 1.37x | 1-step NRMS 0.027; full schedule max abs 5.57 |
+| k1-base-nvfp4-1152 | Base NVFP4 | 1152 | 1.33 | Vendor length (480) | 28.6 | 19.8 | 15.1 | 1.45x | 1.90x | 1.31x | bit-identical |
+| k1-base-nvfp4-1216 | Base NVFP4 | 1216 | 1.48 | One block (80) | 30.8 | 22.0 | 15.8 | 1.40x | 1.95x | 1.39x | 1-step NRMS 0.029; full schedule max abs 4.38 |
+| k1-base-nvfp4-1216 | Base NVFP4 | 1216 | 1.48 | Vendor length (480) | 32.4 | 22.5 | 17.0 | 1.44x | 1.90x | 1.32x | bit-identical |
+| k1-base-nvfp4-1280 | Base NVFP4 | 1280 | 1.64 | One block (80) | 35.5 | 25.0 | 17.9 | 1.42x | 1.98x | 1.39x | 1-step NRMS 0.026; full schedule max abs 3.14 |
+| k1-base-nvfp4-1280 | Base NVFP4 | 1280 | 1.64 | Vendor length (480) | 36.4 | 25.4 | 18.9 | 1.43x | 1.93x | 1.34x | bit-identical |
+| k1-base-nvfp4-1536 | Base NVFP4 | 1536 | 2.36 | One block (80) | 57.2 | 39.1 | 29.2 | 1.46x | 1.96x | 1.34x | 1-step NRMS 0.023; full schedule max abs 3.76 |
+| k1-base-nvfp4-1536 | Base NVFP4 | 1536 | 2.36 | Vendor length (480) | 59.5 | 38.7 | 30.7 | 1.54x | 1.94x | 1.26x | bit-identical |
+
+uly2 was bit-identical to one GPU in every cell above.
+
+Base INT8 ConvRot (K1), rerun on 2026-10-16, head capped at 2100 MHz. The INT8
+files pin an approximate attention kernel, so the one-GPU and cfg2 legs
+rendered under the Sol-Attn waiver. These walls are recorded only and never
+make a row. uly2 drops the pins and runs the exact kernel, so it differs from
+the pinned one-GPU render by construction
+([VALIDATION](VALIDATION.md#evidence-flux-3-klein)).
+
+| Cell | Checkpoint | Size | MP | Prompt (text rows) | One GPU | uly2 | cfg2 | uly2 vs one GPU | cfg2 vs one GPU | cfg2 vs uly2 | Fidelity against one GPU |
+|---|---|--:|--:|---|--:|--:|--:|--:|--:|--:|---|
+| k1-base-int8-1024 | Base INT8 ConvRot | 1024 | 1.05 | One block (80) | 24.9 | 15.1 | 10.0 | 1.66x | 2.49x | 1.51x | uly2 1-step NRMS 0.021, full schedule max abs 2.50; cfg2 1-step NRMS 0.016, full schedule max abs 1.72 |
+| k1-base-int8-1024 | Base INT8 ConvRot | 1024 | 1.05 | Vendor length (480) | 20.5 | 15.1 | 11.0 | 1.36x | 1.86x | 1.37x | uly2 1-step NRMS 0.031, full schedule max abs 6.29; cfg2 bit-identical |
+| k1-base-int8-1152 | Base INT8 ConvRot | 1152 | 1.33 | One block (80) | 34.7 | 19.8 | 13.3 | 1.75x | 2.60x | 1.49x | uly2 1-step NRMS 0.020, full schedule max abs 5.60; cfg2 1-step NRMS 0.015, full schedule max abs 1.64 |
+| k1-base-int8-1152 | Base INT8 ConvRot | 1152 | 1.33 | Vendor length (480) | 27.7 | 19.8 | 14.9 | 1.40x | 1.86x | 1.33x | uly2 1-step NRMS 0.027, full schedule max abs 6.58; cfg2 bit-identical |
+| k1-base-int8-1216 | Base INT8 ConvRot | 1216 | 1.48 | One block (80) | 39.0 | 23.1 | 15.9 | 1.69x | 2.46x | 1.46x | uly2 1-step NRMS 0.022, full schedule max abs 2.43; cfg2 1-step NRMS 0.016, full schedule max abs 3.66 |
+| k1-base-int8-1216 | Base INT8 ConvRot | 1216 | 1.48 | Vendor length (480) | 33.3 | 22.4 | 18.3 | 1.49x | 1.82x | 1.22x | uly2 1-step NRMS 0.028, full schedule max abs 5.37; cfg2 bit-identical |
+| k1-base-int8-1280 | Base INT8 ConvRot | 1280 | 1.64 | One block (80) | 43.5 | 28.1 | 19.2 | 1.55x | 2.27x | 1.46x | uly2 1-step NRMS 0.020, full schedule max abs 3.20; cfg2 1-step NRMS 0.015, full schedule max abs 1.88 |
+| k1-base-int8-1280 | Base INT8 ConvRot | 1280 | 1.64 | Vendor length (480) | 39.7 | 25.1 | 20.8 | 1.58x | 1.91x | 1.21x | uly2 1-step NRMS 0.028, full schedule max abs 5.04; cfg2 bit-identical |
+| k1-base-int8-1536 | Base INT8 ConvRot | 1536 | 2.36 | One block (80) | 68.7 | 46.2 | 32.5 | 1.49x | 2.11x | 1.42x | uly2 1-step NRMS 0.020, full schedule max abs 3.66; cfg2 1-step NRMS 0.016, full schedule max abs 1.74 |
+| k1-base-int8-1536 | Base INT8 ConvRot | 1536 | 2.36 | Vendor length (480) | 66.9 | 38.7 | 34.2 | 1.73x | 1.96x | 1.13x | uly2 1-step NRMS 0.027, full schedule max abs 4.83; cfg2 bit-identical |
+
+Step-distilled model (K2, one-block prompt) and the step-distilled model at
+CFG 3.5 (K3), head capped at 2100 MHz:
+
+| Cell | Checkpoint | Size | MP | Steps, CFG | One GPU | uly2 | cfg2 | uly2 vs one GPU | cfg2 vs one GPU | cfg2 vs uly2 | Fidelity against one GPU |
+|---|---|--:|--:|---|--:|--:|--:|--:|--:|--:|---|
+| k2-sd-bf16-1024 | Step-distilled BF16 | 1024 | 1.05 | 16, 1 | 10.2 | 6.7 | not run | 1.53x | | | uly2 bit-identical |
+| k2-sd-bf16-1152 | Step-distilled BF16 | 1152 | 1.33 | 16, 1 | 13.2 | 8.7 | not run | 1.51x | | | uly2 bit-identical |
+| k2-sd-bf16-1216 | Step-distilled BF16 | 1216 | 1.48 | 16, 1 | 14.6 | 9.6 | not run | 1.53x | | | uly2 bit-identical |
+| k2-sd-bf16-1280 | Step-distilled BF16 | 1280 | 1.64 | 16, 1 | 16.4 | 10.8 | not run | 1.53x | | | uly2 bit-identical |
+| k2-sd-bf16-1536 | Step-distilled BF16 | 1536 | 2.36 | 16, 1 | 25.4 | 16.4 | not run | 1.55x | | | uly2 bit-identical |
+| k2-sd-nvfp4-1024 | Step-distilled NVFP4 | 1024 | 1.05 | 16, 1 | 7.2 | 5.1 | not run | 1.41x | | | uly2 bit-identical |
+| k2-sd-nvfp4-1152 | Step-distilled NVFP4 | 1152 | 1.33 | 16, 1 | 9.3 | 6.5 | not run | 1.43x | | | uly2 bit-identical |
+| k2-sd-nvfp4-1216 | Step-distilled NVFP4 | 1216 | 1.48 | 16, 1 | 10.5 | 7.4 | not run | 1.42x | | | uly2 bit-identical |
+| k2-sd-nvfp4-1280 | Step-distilled NVFP4 | 1280 | 1.64 | 16, 1 | 11.8 | 8.3 | not run | 1.42x | | | uly2 bit-identical |
+| k2-sd-nvfp4-1536 | Step-distilled NVFP4 | 1536 | 2.36 | 16, 1 | 19.0 | 12.5 | not run | 1.52x | | | uly2 bit-identical |
+| k3-sd-bf16-1024-cfg35 | Step-distilled BF16 | 1024 | 1.05 | 16, 3.5 | 19.4 | 13.1 | 10.2 | 1.48x | 1.91x | 1.29x | uly2 bit-identical; cfg2 1-step NRMS 0.061, full schedule max abs 3.61 |
+| k3-sd-bf16-1536-cfg35 | Step-distilled BF16 | 1536 | 2.36 | 16, 3.5 | 49.2 | 31.8 | 25.2 | 1.55x | 1.95x | 1.26x | uly2 bit-identical; cfg2 1-step NRMS 0.059, full schedule max abs 3.40 |
+
+The step-distilled edit with one 4:3 reference (8,110 joint rows, 16 steps)
+ran through the driver API, head capped at 2100 MHz, one cold and two warm
+renders on each side, with `mode=local` as the one-GPU side. Its sampler
+walls read 13.91, 13.92 and 13.96 s on uly2 against 21.28, 20.94 and 20.95 s
+on one GPU, a 1.50x warm speedup.
+
+Reading the tables:
+
+- **cfg2 was the fastest topology in every base BF16 and NVFP4 cell but earned
+  no row.** It ran 1.88x to 1.98x faster than one GPU and 1.23x to 1.41x
+  faster than uly2, and was bit-identical on the vendor-length prompt. On the one-block prompt
+  one GPU batches the two calls and cfg2 cannot, so cfg2 read 1-step NRMS 0.009
+  to 0.031 and no full schedule matched. A row needs both prompts
+  bit-identical at each size, so auto keeps uly2
+  ([DESIGN](DESIGN.md#54-topology--auto-mode)).
+- **uly2 ran 1.33x to 1.57x faster than one GPU** on the base model and 1.41x
+  to 1.55x on the step-distilled model, bit-identical in every BF16 and NVFP4
+  cell.
+- **INT8 walls are recorded only.** One GPU and cfg2 run the pinned kernel
+  under the waiver and uly2 runs the exact one. cfg2 ran 1.82x to 2.60x faster
+  than one GPU on the same kernel; uly2 ran 1.36x to 1.75x faster, a ratio
+  across two kernels.
+- **NVFP4 ran faster than BF16 here**, but it is a capacity choice: these
+  cells compare NVFP4 with NVFP4 on one GPU, not with BF16.
+
+The first two-Spark cells, run on 2026-10-15 before the hardware ladder,
+timed one render each of the shipped recipes through
+`benchmark/run_matrix.py`, head capped at 2100 MHz. Their walls run higher
+than the warm means above.
+
+| Cell | One GPU | uly2 | cfg2 | Speedup |
+|---|--:|--:|--:|---|
+| Step-distilled BF16, 1024, 16 steps, CFG 1 | 11.82 | 10.19 | n/a (CFG 1) | 1.16x uly2 |
+| Step-distilled BF16, 1536, 16 steps, CFG 1 | 27.04 | 19.89 | n/a | 1.36x uly2 |
+| Base BF16, 1024, 25 steps, CFG 3.5 | 31.61 | 23.77 | 15.58 | 1.33x uly2, 2.03x cfg2 |
+
+Stock ComfyUI on one Spark (2026-10-15, head capped at 2100 MHz) ran the
+vendor template settings: the step-distilled model at 15 steps with
+`er_sde`, the base model at 25 Euler steps and CFG 3.5, the BF16 encoder for
+the BF16 cell and the INT8 ConvRot encoder for the others. Walls are
+ComfyUI's whole-prompt times in one process, cold (with loads) and warm (a
+new seed). The recipe differs from the tables above, so compare within this
+table only.
+
+| Stock cell | Steps | CFG | Cold s | Warm s | Warm s per step |
+|---|--:|--:|--:|--:|--:|
+| Step-distilled INT8 ConvRot, 1024 | 15 | 1.0 | 9.39 | 6.48 | 0.43 |
+| Step-distilled BF16, 1024 | 15 | 1.0 | 15.05 | 9.90 | 0.66 |
+| Step-distilled NVFP4, 1024 | 15 | 1.0 | 10.52 | 7.00 | 0.47 |
+| Base INT8 ConvRot, 1024 | 25 | 3.5 | 26.18 | 25.16 | 1.01 (two passes per step) |
+| Step-distilled INT8 ConvRot, 1536 | 15 | 1.0 | 21.57 | 21.18 | 1.41 |
 
 <a id="campaign-render-times-stills-2026-09-12-to-2026-09-28-head-capped"></a>
 

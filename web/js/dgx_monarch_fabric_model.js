@@ -185,9 +185,43 @@ export function railLineParts(rows) {
     return parts;
 }
 
+const byName = ([a], [b]) => (a < b ? -1 : a > b ? 1 : 0);
+
+// One model's pins and what ran: "comfy_kitchen_sol x 40 modules, ran".
+function pinClause(record) {
+    if (!isRecord(record) || !isRecord(record.attention_pins)) return "";
+    const counts = Object.entries(record.attention_pins)
+        .filter(([, n]) => Number.isInteger(n) && n >= 0).sort(byName);
+    if (!counts.length) return "";
+    const pinned = counts.map(([k, n]) => `${k} x ${n} module${n !== 1 ? "s" : ""}`).join(", ");
+    if (record.attention_pins_ran === true) return `${pinned}, ran`;
+    const reasons = isRecord(record.attention_pins_dropped)
+        ? Object.entries(record.attention_pins_dropped).filter(([, n]) => Number.isInteger(n)) : [];
+    const why = reasons.map(([r]) => r).sort().join(", ");
+    const dropped = reasons.reduce((sum, [, n]) => sum + n, 0);
+    const total = counts.reduce((sum, [, n]) => sum + n, 0);
+    if (!why || dropped >= total) return `${pinned}, dropped${why ? ` (${why})` : ""}`;
+    return `${pinned}, ran on ${total - dropped}, dropped on ${dropped} (${why})`;
+}
+
+// The kernels the model pinned per attention module and whether they ran, the
+// line attention_pins.describe writes: "pinned: comfy_kitchen_sol tau=0.7 x 40
+// modules, ran", or one clause per model when both models of a dual-model
+// cfg2 render pin. Empty when the record carries no pins.
+export function pinnedAttention(last) {
+    if (!isRecord(last)) return "";
+    const models = isRecord(last.attention_pins_models)
+        ? Object.entries(last.attention_pins_models).sort(byName) : [];
+    const clauses = models.map(([slot, fields]) => [slot, pinClause(fields)])
+        .filter(([, text]) => text).map(([slot, text]) => `${slot} model: ${text}`);
+    if (clauses.length > 1) return `pinned: ${clauses.join("; ")}`;
+    const clause = pinClause(last);
+    return clause ? `pinned: ${clause}` : "";
+}
+
 // Where the last render ran and its last step rate, from the facts the driver
-// records at finish: "uly2 · auto row 11 · 1.92s/it". Empty when the record
-// carries none, as an older driver's does.
+// records at finish: "uly2 · auto row 11 · 1.92s/it", then any pinned
+// attention kernels. Empty when the record carries none, as an older driver's does.
 export function lastRenderFacts(last) {
     if (!isRecord(last)) return "";
     const parts = [];
@@ -195,5 +229,7 @@ export function lastRenderFacts(last) {
     if (degree(last.auto_row) !== null) parts.push(`auto row ${last.auto_row}`);
     const rate = finite(last.sec_per_step);
     if (rate !== null) parts.push(`${rate}s/it`);
+    const pins = pinnedAttention(last);
+    if (pins) parts.push(pins);
     return parts.join(" · ");
 }

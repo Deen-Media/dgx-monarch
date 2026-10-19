@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .. import residency_mode
+from .. import attention_pins, residency_mode
 from ..compile_policy import compile_dit_blocks_slab, compile_dit_is_known_noop
 from ..constants import TRANSITION_LOAD
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error
@@ -216,6 +216,9 @@ def fresh_load(
         # take the stock branch after a slab decision. The worker's injection
         # seam reads this marker before it can call the compiler.
         base._dgxm_slab_resident = slab is not None
+        # The checkpoint's per-block attention pins, read once per load before
+        # injection and before any LoRA stages its own (attention_pins.py).
+        attention_pins.scan_loaded(base)
         if on_base_loaded is not None:
             on_base_loaded(
                 base,
@@ -223,6 +226,7 @@ def fresh_load(
                 lora_stack,
                 precision_evidence,
             )
+            attention_pins.note_injected(base)
         if fsdp_checkpoint_proof is not None:
             # Every block is sharded now, so nothing needs the mmap any more.
             # This runs before comfy's own load_models_gpu, which sizes what it

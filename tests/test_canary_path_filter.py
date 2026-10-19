@@ -168,13 +168,14 @@ def test_every_listed_test_file_is_run_or_imported_by_a_step():
 
 def test_the_pad_exclusion_harness_is_a_trigger_for_its_importers():
     """The 2026-10-12 review read this entry as a file no step runs. It is the
-    two-rank harness four real-comfy files import, so it stays a trigger."""
+    two-rank harness five real-comfy files import, so it stays a trigger."""
     roots = _step_files(_workflow())
     importers = {
         root for root in roots
         if "tests/test_flux_pad_exclusion.py" in _imported_files(root, root=True)}
     assert importers >= {
         "tests/test_ernie_stock_equivalence.py",
+        "tests/test_flux3_comfy_exactness.py",
         "tests/test_hunyuan_stock_equivalence.py",
         "tests/test_ideogram4_stock_equivalence.py",
         "tests/test_lens_comfy_exactness.py",

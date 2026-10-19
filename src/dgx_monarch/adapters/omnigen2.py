@@ -24,6 +24,7 @@ from .base import (
     sp_gather,
     usp_options,
 )
+from .stock_attention import stock_attention_options
 
 log = get_logger(__name__)
 
@@ -139,9 +140,12 @@ class Omnigen2Adapter(Adapter):
             _assert_uniform_batch(seq_lengths)
 
             # Refiners remain replicated so the text stage can apply its mask.
+            # Their stock attention ignores a block's pinned kernel
+            # (adapters/stock_attention.py).
+            refiner_options = stock_attention_options(transformer_options)
             for layer in self.context_refiner:
                 text_hidden_states = layer(text_hidden_states, text_attention_mask, context_rotary_emb,
-                                           transformer_options=transformer_options)
+                                           transformer_options=refiner_options)
 
             img_len = hidden_states.shape[1]
             combined_img_hidden_states = self.img_patch_embed_and_refine(
@@ -150,7 +154,7 @@ class Omnigen2Adapter(Adapter):
                 noise_rotary_emb, ref_img_rotary_emb,
                 l_effective_ref_img_len, l_effective_img_len,
                 temb,
-                transformer_options=transformer_options,
+                transformer_options=refiner_options,
             )
 
             hidden_states = torch.cat([text_hidden_states, combined_img_hidden_states], dim=1)

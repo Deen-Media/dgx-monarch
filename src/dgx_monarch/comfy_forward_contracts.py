@@ -98,7 +98,9 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _attr("comfy.ldm.minimax.model", "AUDIO_COND_TIMESTEP"),
     _call("comfy.model_prefetch", "make_prefetch_queue",
           positional=("queue", "device", "transformer_options")),
-    _call("comfy.model_prefetch", "prefetch_queue_pop", positional=("queue", "device", "module")),
+    # Stock FLUX.3 hands the pop its dtype and block scope, as the bound forward does.
+    _call("comfy.model_prefetch", "prefetch_queue_pop", "malloc_scope",
+          positional=("queue", "device", "module", "dtype")),
     # Ernie's pure-Ulysses attention builds q and k on stock's inference
     # branch: the norm weights cast for comfy-kitchen's fused kernel, then
     # released, exactly as ErnieImageAttention.forward does.
@@ -107,6 +109,9 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ops", "uncast_bias_weight", positional=("s", "weight", "bias", "offload_stream")),
     _call("comfy.quant_ops", "ck.rms_rope_split_half",
           positional=("q", "k", "freqs_cis", "q_scale", "k_scale", "epsilon")),
+    # FLUX.3's sharded blocks read this global from Block.forward's own module
+    # and launch each call at stock's row count (adapters/flux3_adaln_parity.py).
+    _call("comfy.ldm.flux3.model", "modulated_norm", positional=("x", "norm", "scale", "shift")),
 )
 
 REBOUND_FORWARD_TOUCHPOINTS: tuple[Touchpoint, ...] = tuple(
@@ -178,6 +183,17 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
         "transformer_options",
         positional=("self", "x"),
     ),
+    # FLUX.3's sharded forward calls stock's own methods for its prelude and
+    # runs stock's Block code on each rank's rows and clipped spans, with each
+    # fused-norm call launched at stock's row count for its span.
+    _call("comfy.ldm.flux3.model", "Flux3.preprocess_conds",
+          positional=("self", "context", "ref_latents", "vec_target", "transformer_options")),
+    _call("comfy.ldm.flux3.model", "Flux3.image_ids", positional=("self", "h", "w", "index", "device")),
+    _call("comfy.ldm.flux3.model", "Flux3.ref_ids", positional=("self", "ref_shapes", "device")),
+    _call("comfy.ldm.flux3.model", "Flux3.text_ids", positional=("self", "length", "device")),
+    _call("comfy.ldm.flux3.model", "Flux3.rope", positional=("self", "ids")),
+    _call("comfy.ldm.flux3.model", "Block.forward",
+          positional=("self", "x", "spans", "pe", "transformer_options")),
 )
 
 

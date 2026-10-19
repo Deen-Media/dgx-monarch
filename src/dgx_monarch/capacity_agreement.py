@@ -4,10 +4,11 @@ The driver sends read-only, GPU-free endpoint calls under one shared deadline,
 then applies a pure decision function. Per-rank futures identify a missing
 reply without waiting for an NCCL collective watchdog.
 
-Both refusal types use class C and the same guard. A measured shortfall stays
+Every refusal type uses class C and the same guard. A measured shortfall stays
 in the ``StockLoadCapacityError`` family for cross-residency classification.
 A missing reply is a liveness fault: its type and message must not contain
-that family name, which the remote-error classifier matches as text.
+that family name, which the remote-error classifier matches as text, and
+neither may a delivery failure's (``WorkerDeliveryError``).
 
 Agreement does not validate price accuracy or replace post-load checks.
 """
@@ -15,6 +16,7 @@ from __future__ import annotations
 
 import time
 from dataclasses import dataclass, replace
+from functools import partial
 from typing import Any, NoReturn
 
 from .actor import store_slab_admit
@@ -28,6 +30,7 @@ from .actor.capacity_quote import (
 )
 from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib
 from .consent_descriptor import ConsentDescriptor, SlabResidencyRescueOffer
+from .delivery_faults import WorkerDeliveryError
 from .gate_audit_evidence import measured_tag
 from .log import get_logger
 from .mesh_safety import StockLoadCapacityError
@@ -440,21 +443,27 @@ def collect(handle: Any, request: dict, world: int, *,
 
     Per-rank futures identify the rank that timed out; an all-rank ValueMesh
     would report only an aggregate failure. Send all requests before waiting so
-    the total wait is not multiplied by world size.
+    the total wait is not multiplied by world size. A delivery failure that names
+    a fleet host and this fleet's mesh ends the wait at once (delivery_faults.py,
+    restart_reattach.py).
     """
-    from . import mesh_setup
+    from . import delivery_faults, mesh_setup, restart_reattach
 
     mesh_setup.require_endpoint(handle, "capacity_quote")
     gpus = int(getattr(handle, "gpus_per_host", 1) or 1)
     labels = list(handle.workers.extent.labels)
-    futures = []
-    for index in range(world):
+
+    def send(index: int) -> Any:
         coords: dict[str, int] = {"gpus": index % gpus}
         if "hosts" in labels:
             coords["hosts"] = index // gpus
-        futures.append(
-            (index, handle.workers.slice(**coords).capacity_quote.call_one(request)))
+        return handle.workers.slice(**coords).capacity_quote.call_one(request)
+
+    # Before the sends: a delivery failure may come back before the last one.
     started = time.monotonic()
+    futures = [(index, send(index)) for index in range(world)]
+    watched = delivery_faults.fleet_addresses(handle)
+    mesh = restart_reattach.watched_mesh(handle) if watched else None
     answers = []
     for index, future in futures:
         asked = time.monotonic()
@@ -463,7 +472,13 @@ def collect(handle: Any, request: dict, world: int, *,
             answers.append(RankAnswer(index, silent="did not answer in time"))
             continue
         try:
-            reply = handle._await_or_evict(future, left)
+            reply = delivery_faults.await_rank(
+                handle._await_or_evict, future, left, watched=watched, mesh=mesh,
+                since=started, reask=partial(send, index),
+                on_failure=lambda failed: restart_reattach.refuse_undelivered(
+                    handle, failed, time.monotonic() - started, deadline_s))
+        except WorkerDeliveryError:
+            raise
         except TimeoutError:
             answers.append(RankAnswer(index, silent="did not answer in time"))
         except BaseException as exc:

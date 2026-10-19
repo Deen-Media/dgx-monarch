@@ -1417,16 +1417,17 @@ def test_worker_setup_is_dirty_before_pre_nccl_side_effects(monkeypatch, isolate
 def _no_generation_probe(monkeypatch):
     """Stand in for the listener-generation reading the attach takes.
 
-    The attach reads each loop's listener generation over the lifecycle
-    runner before every attempt, and that runner is ssh for a remote host.
-    These tests cover the transport and the poison, so the reading is canned
-    and no test here reaches the network.
+    The attach reads each loop's listener generation and id over the
+    lifecycle runner before every attempt, and that runner is ssh for a remote
+    host. These tests cover the transport and the poison, so the reading is
+    canned and no test here reaches the network.
     """
     from dgx_monarch.cli import listener_generation
 
     monkeypatch.setattr(
         listener_generation, "fleet",
-        lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa"}
+        lambda config, **_kwargs: {host.address: {"gen": "aaaaaaaaaaaa",
+                                                  "proc_id": "aaaaaaaaaaaa0001"}
                                    for host in config.hosts})
 
 

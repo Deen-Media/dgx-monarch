@@ -26,7 +26,6 @@ completion does not establish FSDP fidelity; see docs/VALIDATION.md.
 """
 from __future__ import annotations
 
-import inspect
 import math
 from numbers import Real
 from typing import Any
@@ -47,6 +46,7 @@ from .base import (
     usp_options,
 )
 from .minimax_h3_packing import (
+    _build_packed_layout,
     h3_modulation_plan,
     h3_timestep_embedding,
     pad_row_index,
@@ -59,6 +59,7 @@ from .sol_attention import (
     sol_dense_step,
     sol_sink_scope,
 )
+from .stock_attention import bind_stock_attention
 
 log = get_logger(__name__)
 
@@ -101,25 +102,6 @@ def _has_current_audio_carry_outer(forward: Any) -> bool:
         "minimax_h3_sigma_shift_video",
         "minimax_h3_sigma_shift_audio",
     } <= constants and "time_shift_sigma" in code.co_names
-
-
-def _build_packed_layout(packed_layout_cls, payload, text_len, latent_t,
-                         lat_h, lat_w, audio_t):
-    """Build the stock PackedLayout across the frame_count seam.
-
-    Comfy e01fb4c56 removed PackedLayout's frame_count parameter (the new
-    guide anchoring replaced it). Older comfy revisions still take it and use
-    it for last-frame keyframes, so it is passed only where the installed
-    class accepts it.
-    """
-    extra = {}
-    init = inspect.signature(packed_layout_cls.__init__)
-    if "frame_count" in init.parameters:
-        extra["frame_count"] = payload.get("frame_count")
-    return packed_layout_cls(text_len, latent_t, lat_h, lat_w, audio_t,
-                             keyframes=payload.get("keyframes"),
-                             refs=payload.get("refs"),
-                             **extra)
 
 
 def _reject_latent_noise_masks(denoise_mask: Any, audio_denoise_mask: Any) -> None:
@@ -405,7 +387,8 @@ class MiniMaxH3Adapter(Adapter):
             text_states = context[0]
             if text_states.shape[-1] != self.hidden_size:
                 # Use stock options: this full replicated text sequence must not
-                # enter the sharded attention override.
+                # enter the sharded attention override. The refiner's bound
+                # attention drops a pinned kernel (end of inject_usp).
                 text_states = self.token_refiner(self.condition_proj(text_states),
                                                  transformer_options=transformer_options)
 
@@ -493,6 +476,10 @@ class MiniMaxH3Adapter(Adapter):
             # forward converts audio once; never convert it here.
             return [-video_out.to(video_x.dtype), -audio_out.to(audio_x.dtype)]
 
+        # comfy runs the token refiner from extra_conds on every rank with no
+        # transformer_options; its stock attention must ignore a pinned kernel.
+        for block in getattr(getattr(diffusion_model, "token_refiner", None), "blocks", ()):
+            bind_stock_attention(block.attn, "minimax_h3 token refiner attention")
         self.bind(diffusion_model, "_forward", usp_forward)
         log.info("minimax_h3 USP injected: %d blocks, sp=%d",
                  len(diffusion_model.blocks), ctx.topology_sp)

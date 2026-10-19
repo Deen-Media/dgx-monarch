@@ -66,6 +66,12 @@ ADAPTER_BIND_SITES: tuple[AdapterBindSite, ...] = (
     _site("ernie.py", "ErnieAdapter.inject_usp", "layer.self_attention", "forward",
           "usp_attention_forward", ("ernie",), "usp:self-attention",
           ("comfy.ldm.ernie.model.ErnieImageAttention.forward",)),
+    _site("flux3.py", "Flux3Adapter.inject_usp", "diffusion_model", "_forward", "usp_forward",
+          ("flux3",), "usp", ("comfy.ldm.flux3.model.Flux3._forward",)),
+    # The first comfy.model_base target: the bind sits on the BaseModel itself
+    # and runs on every topology, not only under sequence parallelism.
+    _site("flux3.py", "Flux3Adapter.prepare_base_model", "base_model", "extra_conds",
+          "extra_conds", ("flux3",), "conds", ("comfy.model_base.Flux3.extra_conds",)),
     _site("flux_family.py", "ChromaAdapter.inject_usp", "diffusion_model", "forward_orig",
           "usp_forward_orig", ("chroma",), "usp",
           ("comfy.ldm.chroma.model.Chroma.forward_orig",
@@ -167,6 +173,9 @@ ADAPTER_BIND_SITES: tuple[AdapterBindSite, ...] = (
     _site("wan_variants.py", "WanDancerAdapter.inject_usp", "diffusion_model", "forward_orig",
           "usp_forward_orig", ("wan_dancer",), "usp",
           ("comfy.ldm.wan.model_wandancer.WanDancerModel.forward_orig",)),
+    _site("wan_variants.py", "WanDancerAdapter.inject_usp", "layer.self_attn", "forward",
+          "music_self_attention", ("wan_dancer",), "usp:music-encoder",
+          ("comfy.ldm.wan.model_wandancer.MusicSelfAttention.forward",)),
     _site("wan_animate2.py", "WanAnimate2Adapter.inject_usp", "diffusion_model", "forward_orig",
           "forward_orig", ("wan_animate2",), "spatial-frame-gather",
           ("comfy.ldm.wan.model_animate2.WanAnimate2Model.forward_orig",), binder="Adapter.bind"),

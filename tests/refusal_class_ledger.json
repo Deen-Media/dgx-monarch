@@ -8,7 +8,7 @@
     "first_load_stock_memo": "no card this release: a rescue grant subsumes it for that load",
     "shard_quant_scale": "the unscoped spelling the card and the headless env var use; every raise site is family scoped",
     "slab_vouched_families": "no card this release: an explicit slab request still loads unvouched",
-    "sol_attn": "the unscoped spelling the card and the headless env var use; every raise site is family scoped"
+    "sol_attn": "the unscoped spelling the card and the headless env var use; every raise site is scoped, to a family or to the checkpoint pin route"
   },
   "untagged_by_module": {
     "actor/fsdp_checkpoint_pin.py": 8,
@@ -178,12 +178,6 @@
     },
     {
       "site": "actor/slab_certificate.py::CertificateBuilder.verify_region::SlabCertificateError#1",
-      "class": "P",
-      "guard": null,
-      "waivable": false
-    },
-    {
-      "site": "actor/store_fsdp.py::_assert_artifact_runnable::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -448,6 +442,24 @@
     },
     {
       "site": "adapters/cudnn_ring_attention.py::_validate_surface::UnsupportedModelError#5",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux3.py::Flux3Adapter.matches::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux3.py::require_sample_sigmas::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux3_packing.py::refuse_indivisible_heads::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false
@@ -945,6 +957,12 @@
       "waivable": false
     },
     {
+      "site": "attention_pins.py::assert_waived::UnsupportedModelError#0",
+      "class": "K",
+      "guard": "sol_attn:checkpoint_pin",
+      "waivable": true
+    },
+    {
       "site": "capacity_agreement.py::_offer_rescue::SlabResidencyRescueOffer#0",
       "class": "C",
       "guard": "stock_load_preflight",
@@ -1035,12 +1053,6 @@
       "waivable": true
     },
     {
-      "site": "nodes/loader_preflight.py::preflight_upstream_gated_artifact::UnsupportedModelError#0",
-      "class": "P",
-      "guard": null,
-      "waivable": false
-    },
-    {
       "site": "nodes/render_preflight.py::preflight_krea2_reference_latents::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1083,8 +1095,26 @@
       "waivable": false
     },
     {
+      "site": "restart_reattach.py::_refuse::WorkerDeliveryError#0",
+      "class": "C",
+      "guard": "cross_rank_capacity",
+      "waivable": false
+    },
+    {
       "site": "topology.py::choose_auto_topology::UnsupportedModelError#0",
       "class": "K",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#1",
+      "class": "P",
       "guard": null,
       "waivable": false
     }

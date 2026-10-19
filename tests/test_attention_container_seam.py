@@ -12,9 +12,10 @@ unless the override declares a ``container_function`` attribute.
 such attribute, so every family that threads ``optimized_attention_override``
 keeps working unmodified across the seam. An op the pack installs on the
 model itself is different: comfy calls it before ``wrap_attn``, so it receives
-the containers and ``preferred_attention`` directly. Anima's ``attn_op`` is the
-one such op (tests/test_anima_adapter.py, and the "attention keyword handoff"
-seam in tests/canary/comfy_seam_contracts.py).
+the containers and ``preferred_attention`` directly. Anima's ``attn_op`` and
+Qwen Image 2.1's attention callbacks are such ops (tests/test_anima_adapter.py,
+tests/test_qwen_image21_adapter.py, and the "attention keyword handoff" seam in
+tests/canary/comfy_seam_contracts.py).
 
 The stub reproduces that dispatcher and imports no comfy, so it runs in the
 CPU suite; the "lumina attention container" seam in

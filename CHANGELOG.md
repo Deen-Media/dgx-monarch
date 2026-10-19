@@ -2,306 +2,115 @@
 
 ## [Unreleased]
 
-- Price the FSDP clean-reload proof against what the proof frees. The initial
-  preflight and the post-baseline reprice now credit each rank's resident shard
-  pool, read from the worker's reserved figure and capped at one share, because
-  the proof unloads that shard set before it builds the next one. The Worker's
-  own check after the real unload stays decisive. On the 60 GiB bf16 Flux2
-  checkpoint the preflight refused at 39.1 GiB available against 39.8 required
-  while 30 GiB of shards it was about to drop were resident. With the credit the
-  price fits, but the Flux2 proof has not been rerun on hardware with it.
-  Every refusal names the credit it applied
-  ([TROUBLESHOOTING #88](docs/TROUBLESHOOTING.md#88-the-first-render-of-an-fsdp-topology-refuses-with-a-capacity-figure-and-no-proof)).
-- Clear a set of small defects and hygiene items an external review and the
-  2026-10-13 audit turned up. `dgxm setup` closes each config-directory
-  descriptor once and never retries a released number. `dgxm top` rail rates
-  and the driver's telemetry cache TTL use a monotonic clock, so a wall-clock
-  step cannot print a 1000x rate or hold a stale payload. The whole package now
-  type-checks under mypy's `check_untyped_defs`, and CI prints the mypy version;
-  the TUI attribute that shadowed Textual's `App.animate` is renamed. The
-  sidebar refreshes once when a reset outcome lands, and a revoked consent no
-  longer hides the re-raised card for 15 s. The lifecycle helpers name the
-  system interpreter through one `SYSTEM_PYTHON` constant with its reasons, a
-  new doctor row checks that `/usr/bin/python3` on each host starts and is 3.9
-  or newer, CLUSTER.md states the requirement, the generation helper is
-  assembled from two constants instead of a string split, and the Sol-Attn
-  install script refuses to ship a relative import. Load profiles are written
-  under `~/.cache/dgx-monarch/profiles/` with the newest 20 kept,
-  `/proc/meminfo` is read with a context manager, a dead duplicate
-  `wait_for_mesh_creation` is gone, ADAPTERS.md and VALIDATION.md say that
-  `sync_ulysses` has no effect on the pinned xfuser, and the ComfyUI canary's
-  path filter lists every module its real-Comfy steps import.
-- Render Anima under sequence parallelism again on current ComfyUI builds.
-  ComfyUI now hands a model's attention op its q, k and v in single-use
-  containers and names a preferred kernel for each block; Anima's op refused
-  both with a TypeError inside the worker. The op now takes the containers and
-  ignores the preference, because the Init node's attention setting picks the
-  kernel, and a new seam contract holds that handoff against the real ComfyUI
-  tree so the daily canary catches the next change of this kind.
-- Heal the abandoned-lease wedge before eager setup too. After a worker crash,
-  changing the checkpoint, topology or levers no longer needs a manual Reset:
-  Init with an explicit topology, the UNET Loader and the BasicScheduler now
-  run the same one-shot reset that renders and Fleet queues run, and log it.
-- Show more of the cluster where operators already look. `/dgxm/metrics` adds
-  `dgxm_render_sec_per_step`, `dgxm_native_return_latched` (0 or 1) and
-  `dgxm_native_return_fault_count`; under a stale telemetry payload the latch
-  series appear only when the cached latch is set, so a cached clear is never
-  reported. The render finish record in `/dgxm/telemetry` now carries the
-  resolved topology label, the auto table row, the latent megapixels, the quant
-  kind, the attention kernel and the final seconds per step, so readers of
-  `/dgxm/telemetry` and the sidebar can see where the table's choice is slow.
-  `dgxm top` and `dgxm diagnostics` captures do not show these fields yet. Each
-  render now times a step against its own previous step, so the second leader
-  of a dp>1 render, or another render in the same Fleet wave, no longer turns
-  the gap between two messages into the seconds per step. Telemetry publishes
-  the RDMA rail link state next to the byte counters, read from the same sysfs
-  files `dgxm doctor` uses, and the time the box read them, so the sidebar and
-  `dgxm top` time each rate by the box's own readings. A device with more than
-  one cabled port now reports each port as `<device>/<port>` in the counters,
-  the link state and the `/dgxm/metrics` rail label. The sidebar draws the
-  active topology above the host cards and one rails line per host with RX and
-  TX rates, and in red the link state of any rail that is not ACTIVE. A box
-  that runs two ranks has its rails read once per poll, so its two cards show
-  the same rates. The idle render line names the topology, the table row and
-  the step rate. The rail readers moved to `rails.py`, the resolved topology
-  facts live in `nodes/resolved_topology.py` and the per-render step marks in
-  `telemetry_steps.py`.
-- Fix five defects an external review of the dev branch confirmed. A
-  measured or persisted identity-gate FAIL now quarantines only its own
-  checkpoint combination, applied on each dispatch through a per-dispatch
-  policy clone, so other checkpoints on the same Init node keep the residency
-  levers the graph asked for and run their own first-use Gate; `comfy_managed`
-  still turns off for the whole Init node, and an unreadable ledger still
-  fails closed for the graph
-  ([TROUBLESHOOTING #67](docs/TROUBLESHOOTING.md#67-what-auto_gateoff-costs-and-what-it-does-not)).
-  Because two checkpoints on one Init node can now need different worker
-  settings, a pipelined render whose setup differs from the live one first
-  collects the renders still in flight, whose result leases would otherwise
-  refuse the change. The three verdict helpers that `auto_gate.py` held moved unchanged to
-  `nodes/gate_process_verdicts.py`. Quantized FSDP shards keep every
-  row-aligned layout parameter, such as an int8 per-row scale, whole on every
-  rank and gather only the weight bytes, so a weight whose shard holds a
-  single row, or whose rows do not split evenly across ranks, no longer hangs
-  the all-gather or rebuilds with the wrong scale; no supported checkpoint
-  reaches either case today. The Chroma cfg-pad forward hook calls the class
-  `_forward`, as the other adapters do, so installing it twice replaces the
-  wrapper instead of nesting it. The driver's scratch threads for off-loop
-  waits, RDMA read jobs and Fleet drains are daemon threads regardless of the
-  thread that created them. The loader residency memos and the consent audit
-  set are cleared and written under locks, so a **Reset attached mesh** that
-  lands during a loader preflight can no longer raise out of a memo eviction or
-  carry an audit token into the next generation, and an audit whose write
-  failed releases only its own claim, never a newer one on the same token.
-- Run the abandoned-lease reset before a Fleet queue too. When abandoned
-  samples are the only obstruction, Fleet recycles the attached mesh once
-  before its first dispatch, drops the driver's residency memos and dispatches
-  on the fresh fleet, so a Fleet queue after a failed Fleet wave no longer
-  needs **Reset attached mesh**. Both paths check and reset the fleet whose
-  dispatch refused, so a later wedge in the same ComfyUI session heals as the
-  first one did. An active sample lease, a pending RDMA read or an
-  unconfirmed stop leaves the refusal as it was
-  ([TROUBLESHOOTING #87](docs/TROUBLESHOOTING.md#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)).
-- Record the cold-cache readiness measurement in VALIDATION.md. With the page
-  cache dropped on both Sparks, the `readiness` phase peaked at 4.151 s
-  (3.519 s warm) and each actor bootstrapped in 5 to 6 s, against Monarch's
-  30 s hold on messages to a starting actor, so the hold still gets no policy
-  setting.
-- Bring the docs and three small code paths in line with the pinned
-  TorchMonarch behavior. DESIGN.md now says that an endpoint Future survives a
-  timed-out `.get(timeout)` while a `returns_future` body such as
-  `ProcMesh.stop` is cancelled, keeps abandoning a timed-out sample because a
-  later read cannot settle who owns its result, and names concurrent status,
-  cancellation and lease renewal as the reason every endpoint is async.
-  [TROUBLESHOOTING #1](docs/TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout),
-  the `client_bind` row in CLUSTER.md and the missing-`client_bind` refusal now
-  say that a loopback-only hostname fails at once and a LAN or Tailscale
-  address leaves the fabric. The power-user escape hatch points at `dgxm top`,
-  the sidebar and `dgxm diagnostics`, because `monarch-tui` needs a mesh admin
-  server that the integration never starts. The supervision string net no longer
-  lists `ProcessExited`, which the pinned binding no longer carries. The CPU
-  smoke canary now times out a `ProcMesh.stop` at once and requires the stop to
-  stay cancelled and its procs to answer until a fresh stop. VALIDATION.md
-  records that ownership review and the actor-start readiness measurement
-  against Monarch's 30 s hold on messages to a starting actor; no policy setting
-  was added for the hold, and CLUSTER.md names it beside the readiness budget.
-  The Monarch diagnostics adapter loses its unreachable trace branch and span
-  sink, so its status no longer reports `traces`. `dgxm up` and `dgxm restart`
-  now read a managed host's torchmonarch version from its Worker release, as
-  `dgxm doctor` does, so a stale base interpreter behind a current release no
-  longer warns, and a stale release names `dgxm update` as its only fix.
-- Keep the driver's metrics export through a config edit that does not
-  produce a new fleet. An `otlp_endpoint` the driver cannot install now refuses
-  before anything is written, so the running exporter is never stopped, and an
-  exporter thread waiting on a slow telemetry backend carries on when the
-  backend answers. When the driver admits an edit but cannot stop the old
-  workers, for example because a render still holds them, it now puts back the
-  old fleet's policy and export, so a revert that reuses that fleet finds both
-  as they were. If an exporter stopped for that edit is still blocked in a
-  backend call and cannot restart, the driver logs one ERROR and
-  `/dgxm/telemetry` shows `exporter_still_running` in `monarch_diagnostics`
-  until the next mesh build.
-- Latch native latent return off for the rest of the driver session after a
-  native read fails on the driver. Later setups ask the actors for messaging
-  instead of repeating the fault and retaining another latent each time; the
-  failed render, and a Fleet job whose own native read fails, raise
-  `NativeReturnLatchedError`, the driver logs one warning, and `/dgxm/telemetry`
-  shows the latch next to `return_ownership`. Ownership rules are unchanged;
-  the latch clears when ComfyUI restarts
-  ([TROUBLESHOOTING #115](docs/TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
-- Add `--timing` to `benchmark/rdma_return_bench.py`: first-use and warm timed
-  returns at chosen sizes inside the checked CPU-staged run, in either
-  message/native order, with `--timing-summary` pairing the reports into warmed
-  medians, savings and ratios. The summary needs both orders and refuses a set
-  that lacks one, naming the missing order. Timing evidence refuses host names,
-  addresses, PIDs and home paths, and a plan that would stage more than
-  `--timing-budget-gib` (default 8) refuses. The recorded 2026-10-13 figures
-  came from a private workspace tool; this mode implements the same protocol
-  for later campaigns and has not yet run on hardware.
-- Make plain `dgxm update` fetch first, check the fetched commit's dependencies,
-  and fast-forward only after that check passes, so a refusal leaves the
-  checkout at its current commit instead of at the new commit against the old
-  torchmonarch. A checkout whose HEAD already contains its upstream, as with
-  local commits, stays where it is and is checked at HEAD. A staged, unstaged or
-  index-hidden edit to `pyproject.toml` refuses before the fetch, because the
-  fast-forward would otherwise install it without checking it.
-- Attribute a normal render's progress steps to the render's own telemetry
-  token without transferring ownership, and ignore a step for a finished render
-  or one that arrives when no render is live. A late step no longer leaves
-  `dgxm top` and the sidebar showing an active render until ComfyUI restarts.
-- Stop `dgxm diagnostics` from marking a healthy capture partial because its
-  last poll window was shorter than a fetch: a final window shorter than the
-  slowest fetch so far is slept instead of polled. `--output` is checked before
-  the capture starts, and a refusal prints its fixed reason instead of only the
-  exception type.
-- Report `dgxm_diagnostics_available` and `dgxm_return_ownership_available` as
-  0 for a Worker whose source has no diagnostics block, as after a partial
-  deploy, instead of omitting the series. The driver scope also reads 0 when
-  its payload has no block, as when the first telemetry refresh fails.
-- Cut the `dgxm top` driver phase summary to one row instead of wrapping it over
-  the panels below on an 80-column terminal.
-- Name why a host's source probe failed: a missing or non-executable Worker
-  interpreter reads `FAILED_WORKER_INTERPRETER`, a lifecycle lock failure
-  `FAILED_LIFECYCLE_LOCK`, any other exit without a verdict
-  `FAILED_SOURCE_PROBE`, each with the exit code and a bounded, home-relative
-  stderr tail. `dgxm restart` refuses on all of them before stopping any Worker.
-- Run the driver's policy admission before recycling a live fleet, so a
-  cluster.toml edit the driver refuses (native return without a `nic:` target
-  for every host, an export it cannot start, a transport change that needs a
-  fresh process) keeps the working fleet attached; reverting the edit reuses it.
-  The refusal puts back the driver's earlier policy and export state, so a
-  running metrics export keeps running.
-- Tighten `[monarch]` validation: `nic:` names starting with `-` or `.` or
-  containing `..`, `cpu:` and `gpu:` numbers with leading zeros, a `groups:`
-  affinity with fewer than two groups, and an `otlp_endpoint` with a path
-  other than a bare trailing `/` now fail config loading with a typed error
-  naming the key. A Worker unit rendered from such a value reads
-  `POLICY_STALE`: fix the value in cluster.toml, then run
-  `dgxm update --verify --target HEAD` to re-render the unit. The update, like
-  the probe, checks a unit's policy argument for its keys, value types and
-  canonical encoding but not its values, so it accepts that unit as stale
-  instead of refusing with `prior_worker_drift`.
-- Treat a Worker unit that carries a well-formed Monarch policy other than
-  the current one as stale rather than tampered. A `[monarch]` or
-  `cluster.rdma_latent_return` edit on a managed installation no longer locks
-  out lifecycle commands: the probe reads `POLICY_STALE`, `dgxm restart`
-  refuses before stopping any Worker service, `dgxm up` names the cause, and
-  `dgxm doctor` adds a `worker policy` row per host. When a host's probe goes
-  unanswered, restart keeps the old order and `dgxm up` refuses the stale host
-  after the stop. `dgxm update --verify --target HEAD` renders the current
-  policy with the usual rollback. Worker units carry the default
-  `monarch.startup_timeout_s`, which only the driver reads, so editing it
-  leaves them current. A unit without policy arguments counts as current only
-  under the default policy with native return off
-  ([TROUBLESHOOTING #113](docs/TROUBLESHOOTING.md#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit)).
-- Resolve the driver's own `[monarch.rdma]` host target by matching
-  `client_bind` to a `[[hosts]]` address, the rule the RDMA qualifier now
-  shares; its `--driver-host` becomes an optional check. With native return on,
-  the driver refuses before starting any process unless it and every host
-  resolve to a `nic:<device>` target, whatever `max_nics_per_buffer` allows,
-  and a `host_targets` value other than `nic:<device>` fails config loading.
-- Make driver Monarch metrics and OTLP export work: registering the nodes no
-  longer loads Monarch, so the driver applies its endpoint first. A requested
-  export that cannot start refuses the mesh build with a typed error naming the
-  reason; actors and Workers log it. `/dgxm/telemetry` reports
-  `monarch_diagnostics`.
-- Narrow the Gate configuration fingerprint to settings that can change math,
-  residency or transport, and the transport identity to `[monarch.rdma]`.
-  Editing `auto_heal`, `ssh_key`, `monarch.startup_timeout_s` or
-  `[monarch.diagnostics]` keeps PASS rows. Each combination re-proves once
-  after this change
-  ([TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
-- Stop recording digests of install paths and pip RECORD files in Monarch
-  capability snapshots, remove them from the committed 0.7.0 pin baseline, and
-  make the leak check report a digest of any private home path the scanning
-  interpreter can see.
-- Mark the Kroma INT8 artifact row as a file the reader supplies, record that
-  the pinned upstream Qwen3-VL encoder matches the tested encoder tensor for
-  tensor, and point the data-parallel batch refusal at the Kroma upscale
-  graph's batch-one note.
-- Fix the torchmonarch canary's Future probe to use a returned channel Future,
-  avoiding the constructor removed in 0.7.0, and show comparison reports and
-  failed stages in Actions.
-- Check authenticated managed Worker releases in Doctor host environment probes,
-  so a staged runtime upgrade does not falsely report the unchanged base pin as
-  Worker version skew. Keep driver and plain-install checks separate. Report
-  bounded failure categories from verified-update Doctor checks without private
-  probe details; certainty and rollback behavior remain unchanged.
-- Allow an explicit foreground process-inspector lifetime up to four hours;
-  retain the launcher's 30-minute default and authenticated, bounded inspection.
-- Add Kroma v0.3.1 Turbo OPD workflows for BF16, local INT8 conversions and
-  two-pass 2x refinement using the existing Krea2 runtime. Document upstream
-  sampling settings, required artifacts and native shift handling. Preserve
-  the stock Krea2 final projection shape under pure Ulysses; the BF16 and local
-  INT8 8-step graphs and BF16 2x refinement matched their own stock one-GPU
-  references in conditioning, latents and decoded pixels. Acceptance covers
-  the measured pure-Ulysses configurations. Manual `uly2+fsdp` also matched
-  stock for BF16/local INT8 T2I and BF16 2x refinement at batch 1. Batch-2
-  `dp2+fsdp` T2I remains CHECK: FSDP reload proofs passed, but native
-  stock-output fidelity did not. Keep
-  upscale at batch 1: native VAE encoding collapses an initial image batch of
-  2 to one latent item, which DP2 correctly refuses at refinement.
-- Upgrade to TorchMonarch 0.7.0 and advance the package identity to 1.2.0 so
-  previous Gate PASS rows cannot authorize the new runtime. Preserve the
-  existing Torch/CUDA build and validate the candidate's dependencies before
-  pin installation in plain and verified updates. Report bounded package
-  diagnostics when prerequisites are missing or incompatible.
-- Let verified updates and recovery explicitly reuse the reviewed read-only
-  process inspectors when protected process markers are unreadable. Require
-  fresh authenticated reports at both activity checks and record the choice
-  in the receipt; initial setup defaults remain unchanged.
-- Preserve exact legacy Worker units during migration and verify policy-bearing
-  Worker commands against their captured units. Finish inspector socket cleanup
-  even when terminal shutdown delivers repeated signals.
-- Validate native RDMA binding load and package/import ownership separately from
-  public API signatures. Extend the dependency canary with real local CPU actors,
-  concurrent dispatch, Future timeout semantics and ProcMesh shutdown. Run it
-  against Torch 2.12.0+cu132; retain these checks as CPU-only evidence.
-- Validate the unchanged shipped Krea2 workflow at 1536×1536 with its automatic
-  topology and first-use Gate; record a slab cross-residency PASS and owned cleanup.
-- Validate the unchanged shipped H3 workflow at 1344×768×124 with full CPU
-  video/audio decode and owned cleanup. Its Gate remains INCONCLUSIVE/no_material;
-  the recorded result establishes functional output, not a fidelity or speedup claim.
-- Record exact-source GPU checks for the migration: adapted Krea2 Turbo pixel equality,
-  explicit recovery after interruption, a RAW FSDP clean-reload Gate PASS and
-  reduced-canvas H3 MP4 output. Matched latent decoding localized the pipeline/Fleet
-  pixel differences downstream of sampling; clean cancellation remains unproven.
-  See [the scoped results](docs/VALIDATION.md#gpu-checks-for-the-070-migration)
-  for reused-output counts, recipes and timing limits.
-- Add validated Monarch startup and RDMA policy with per-host target overrides,
-  native readback and transport identity. Start with one NIC, one QP and one
-  application chunk. Selected-rail CPU-staged production returns passed the
-  recorded integrity and ownership cases, and one-step at-threshold latents
-  matched stock and messaging in two fresh native sessions. Repeated large-return
-  timings support opt-in use; native return stays off by default. See [the exact scope](docs/VALIDATION.md#native-rdma).
-- Fix Fleet progress remaining active after completed jobs. Each receiver owns
-  its progress token, retires it during cleanup and ignores late steps after
-  retirement without clearing another render.
-- Record healthy no-model reattach and controlled fresh-driver recovery, while
-  preserving the reproduced same-driver stop/start and restart failures;
-  [issue #2](https://github.com/Deen-Media/dgx-monarch/issues/2) remains open.
-- Add bounded phase timings and opt-in supported Monarch metrics. Advanced
-  attached-cluster profiling, SQL and stack tools remain explicitly unavailable
-  where the upstream API cannot provide an owned, stoppable session.
+## [1.2.0] - 2026-10-16
+
+**Upgrading from 1.1.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-110): the first update runs the 1.1.0
+updater, so this release's checks start with the next one. If a host's Workers
+run from a release slot (remote hosts of guided multi-node setups, every host
+after a verified update), use only `dgxm update --verify`; plain update leaves
+them on 1.1.0 ([TROUBLESHOOTING #118](docs/TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)). From 1.2.0 on, plain update refuses such a
+host and Doctor's `worker release version` row fails a stale one. Before
+updating, turn `rdma_latent_return` off, add no `[monarch]` table and clear
+`DGXM_RDMA_QP_SPLIT` where Workers start. Then install `xxhash` and what
+`pip check` names on every host, clear what [TROUBLESHOOTING #119](docs/TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable) names, add a
+`[monarch.rdma]` target before re-enabling native return, rerun the editable
+install after a verified update, and restart ComfyUI. The torchmonarch pin moves
+to 0.7.0; FLUX.3 Klein needs ComfyUI 0.41.0 or newer, or commit 20b46065e.
+
+### Everyday use
+
+- A ComfyUI that stays up attaches again after its Workers restart within the
+  30 s delivery timeout, and refuses older Workers before it dials (closes [#2](https://github.com/Deen-Media/dgx-monarch/issues/2)).
+  So does a sampler render that meets restarted Workers, recording `reattach`
+  and `reattach_s` (closes [#47](https://github.com/Deen-Media/dgx-monarch/issues/47)); the two-Spark recheck ran on 2026-10-16.
+- Eager setup and Fleet queues heal an abandoned lease without **Reset attached
+  mesh**. The sidebar shows the topology and each host's rail rates, red when a
+  rail is down, and progress no longer sticks after a render.
+- Add three Kroma v0.3.1 Turbo workflows, which matched stock at batch 1, and
+  four FLUX.3 Image Klein workflows, for 66 in all.
+
+### Installation and updates
+
+- From 1.2.0 on, plain `dgxm update` refuses a release-slot host before it
+  fetches (`release_slot_worker`, `release_slot_unknown`), checks the fetched
+  commit's dependencies on every host, fast-forwards only if they pass, and
+  refuses an uncommitted `pyproject.toml` edit or a linked worktree.
+- Doctor, `dgxm up` and `dgxm restart` read a managed Worker's torchmonarch from
+  its release; the skew warning sends a slot to `--verify`; Doctor checks that
+  `/usr/bin/python3` is 3.9 or newer on each host.
+- Verified updates take `--privileged-process-inspection`, keep exact legacy
+  Worker units, and accept a foreground inspector of up to four hours.
+- Every manifest row pins a Hugging Face commit, size and sha256 or names the
+  file you supply (101 pinned, 6 supplied), and CI checks it. The LTX 2.5
+  Gemma 4 row pins the vendor's current file, checked again against stock.
+  `setup_env.sh --comfy` no longer needs torchaudio.
+
+### Compatibility and verification
+
+Node mappings, ordered inputs and defaults stay compatible. The new pin and
+version make each combination re-run its first-use Gate ([TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update));
+later edits that cannot change math, residency or transport keep PASS rows.
+[Migration checks](docs/VALIDATION.md#gpu-checks-for-the-070-migration) ran the shipped Krea2 workflow at 1536 square on that build's
+uly2 route (row 11; slab Gate PASS) and the shipped H3 workflow (output only) on
+ComfyUI e8665ca. Later records ran on ComfyUI 29e28e2b4 (0.41.0); the
+[FLUX.3 Klein record](docs/VALIDATION.md#evidence-flux-3-klein) is the release's acceptance record. The [merged pull requests](https://github.com/Deen-Media/dgx-monarch/compare/v1.1.0...v1.2.0)
+hold the detail, and TROUBLESHOOTING numbers refer to [that file](docs/TROUBLESHOOTING.md).
+
+### Rendering
+
+- Support FLUX.3 Image Klein, step-distilled and base, for text to image and
+  reference editing ([MODELS](docs/MODELS.md#model-flux-3-klein), [TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)). Both rows are **HW**. uly2
+  matched one GPU exactly on text to image from 1024 to 1536 square and, since
+  each fused norm runs at stock's row count, on edits and small sizes
+  (2026-10-16). ring2 and base cfg2 are measured, not exact; NVFP4 refuses FSDP.
+- `auto` takes cfg2 where it was exact and beat uly2 in [Campaign K](docs/BENCHMARKS.md#campaign-k-cfg2-against-uly2-2026-10-14-head-capped): Krea2 FP8
+  and BF16 from 1.2 to 2.36 MP, Chroma BF16, FP8 and INT8 to 1.64 MP, Qwen-Image
+  FP8 to 1.77 MP, Boogu FP8 and Anima BF16 under 1.2 MP, and CFG++ at CFG 1.
+- A checkpoint or LoRA that pins an approximate attention kernel refuses class K
+  where the pin runs, until you grant the Sol-Attn waiver ([TROUBLESHOOTING #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel),
+  closes [#30](https://github.com/Deen-Media/dgx-monarch/issues/30)). Sequence parallelism drops the pin. A BF16 or FP16 checkpoint's
+  own pins refuse class P on `+fsdp`, and `first_use` refuses a running pin on
+  cfg2+fsdp and dp2+fsdp even with the waiver.
+- Refuse a checkpoint whose weight scales ComfyUI would drop, such as FLUX.3
+  Klein's `fp8r` file, class P with no waiver ([TROUBLESHOOTING #120](docs/TROUBLESHOOTING.md#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales)).
+- A Gate FAIL quarantines only its own combination, LoRA keys on FSDP-replicated
+  modules bake, Anima runs sequence-parallel again, padded Ulysses ran 2.2%
+  faster in a Chroma test, and FSDP reload pricing credits freed shards.
+
+### Operations
+
+- Add a validated `[monarch]` policy for startup, RDMA and diagnostics. Config
+  loading names a bad key, native return needs a `nic:` target per host, a
+  policy edit reads `POLICY_STALE` (TROUBLESHOOTING #113) instead of locking out
+  lifecycle commands, and a refused edit keeps the fleet and its export.
+- A mesh build or Worker start refuses an ambient OTLP endpoint with export off
+  and `MONARCH_RDMA_*` or `DGXM_RDMA_QP_SPLIT` values the policy did not set
+  (TROUBLESHOOTING #119); so does an export that cannot start.
+- Add opt-in Monarch metrics with ownership occupancy, OTLP export, and phase
+  timings that split each native return. `/dgxm/metrics` adds step time,
+  native-return latch and faults, and per-port rails; the finish record adds
+  topology, table row, quant, kernel and pins. Monarch's profilers stay off.
+- A failed native read latches native return off for the session
+  (TROUBLESHOOTING #115). Doctor adds `listener generation` and `worker policy`
+  rows and, like `dgxm restart`, names why a source probe failed. Fix partial
+  `dgxm diagnostics` captures, `dgxm top` rates and phases, sidebar refresh
+  after a reset, a Reset that raced a loader preflight and stale ledger temp
+  files. Load profiles live in `~/.cache/dgx-monarch/profiles/`.
+
+### Development
+
+- CI type-checks under `check_untyped_defs`; canaries cover pins, scale replay,
+  LoRA bakes and local actors. The sweep labels pinned cells and CFG 1 cfg cells
+  under FSDP as refusals; the matrix runner records waivers and refusal classes.
+  `tools/make_pin_probe_lora.py` and `rdma_return_bench.py --timing` are new.
+
+### Limits
+
+- Native latent RDMA stays off by default; [selected-rail checks](docs/VALIDATION.md#native-rdma) keep their
+  recorded scope. Not yet run on hardware: FSDP LoRAs on H3, LTXAV or Anima, the
+  credited Flux2 proof, return timing, clean cancellation and Kroma's batch-2 `dp2+fsdp`.
+- Kroma keeps Ulysses: its cfg2 failed the same-math bar on 2026-10-16, so Krea2's cfg2 row
+  excludes it, even when `family_adapter` names `krea2`, and the sweep labels Kroma cells to match.
 
 ## [1.1.0] - 2026-10-11
 

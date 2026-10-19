@@ -1,6 +1,7 @@
 // Fixed diagnostic display only: measurements never establish readiness.
 const PHASES = new Set(["attach", "setup", "queue_wait", "compute", "collect",
-    "rdma_register", "rdma_read", "rdma_drop", "ack", "recycle", "spawn", "readiness", "cancel"]);
+    "rdma_preflight", "rdma_register", "rdma_read", "rdma_drop", "ack", "recycle", "spawn",
+    "readiness", "cancel"]);
 const OUTCOMES = new Set(["ok", "error", "timeout", "cancelled", "unknown"]);
 const MODES = new Set(["none", "message", "rdma"]);
 

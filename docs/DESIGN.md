@@ -11,8 +11,9 @@ campaign covers a documented subset, not the full matrix. The package declares
 version 1.2.0 with an updated Monarch dependency. The migration has local CPU,
 native-load and [exact-source paired hardware evidence](VALIDATION.md#gpu-checks-for-the-070-migration).
 Clean cancellation remains unproven despite successful explicit recovery;
-native cancellation and fabric-failure recovery remain untested. [Release history](../CHANGELOG.md) records the compatible operator
-improvements; section 9 tracks acceptance.
+native cancellation and fabric-failure recovery remain untested.
+[Release history](../CHANGELOG.md) records what changed since 1.1.0 and how to
+update from it; section 9 tracks acceptance.
 The runtime also includes low-RSS LoRA residency, zero-copy slab residency,
 the identity gate and ledger, `dgxm top`, Fleet sampling, an RDMA latent-return
 path that is off by default with scoped qualification (§5.6), and the per-family
@@ -173,6 +174,32 @@ ComfyUI (the driver; user's normal comfy process, any frontend)
 
 - Worker services bind explicit `tcp://<fabric-ip>:<port>` addresses from
   config, never hostname-derived ones. Preflight rejects loopback advertisement.
+- Worker identity is per start. Each Worker loop start serves
+  `<proc-id>@tcp://<fabric-ip>:<port>` with a new Monarch proc id
+  (`worker_proc_id.py`) and records the id in its actor ledger loop record
+  before it listens. The driver dials only an id it read from that host's
+  listener-generation probe for the current attempt, and keeps every
+  bookkeeping key (the released check, the attach trace, errors) on the bare
+  address. When the first reading of an attach lacks a loop's id, the attach
+  refuses before anything dials, with its own type, `WorkerProcIdError`, and
+  the session stays usable. The first dial to a loop whose id changed since
+  this driver last dialed it is primed with one throwaway message. The driver
+  still enables one process transport, once, so it re-attaches to a restarted
+  loop only within Monarch's message delivery timeout; beyond it the recovery
+  is a fresh driver. After every loop restarted, a sampler render that owns
+  its session and keeps the last render's setup, or an explicit loader's
+  eager load, attaches again within that render: the capacity price wait
+  ends on the first delivery failure the fault hook records for a fleet host
+  and the mesh it prices on (`delivery_faults.py`), and the render compares
+  each loop's id with the one it dialed, retires the stale mesh through the
+  deliberate teardown with a short stop bound and the liveness release below,
+  attaches by the new ids and dispatches once more (`restart_reattach.py`).
+  Some loops moved and others not, no loop moved, an unread id, or old
+  processes not proven gone each refuse at once, class C, with the remedy.
+  Pipelined renders, Gate legs, the Fleet node, a one-host fleet and a render
+  whose setup changed meet the old actors as before and take the supervision
+  path. Mechanism and evidence:
+  [TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach).
 - The ComfyUI process is the single Monarch client: when it dies its procs die,
   so no orphaned process holds a model. A supervision-class failure on a
   setup, load or render dispatch evicts the fleet, so the next Init or render
@@ -337,7 +364,8 @@ adapters/
   __init__.py          # the ordered ADAPTERS registry; most specific first
   <family>.py          # one file per family, plus shared helpers
                        #   (flux_shared, usp_pad_exclusion, wan_ring_attention,
-                       #    cfg_parallel, fsdp, sol_attention)
+                       #    cfg_parallel, fsdp, sol_attention, stock_attention,
+                       #    attention_inputs, index_cache)
   cudnn_ring_attention.py # native cuDNN output/LSE contract and instance binding
 ```
 
@@ -369,7 +397,10 @@ normal node-pack practice) and xfuser public APIs:
    attention-mask preservation,
 4. is bound by the worker onto each freshly loaded base, once per load
    (`GPUWorker._inject_for_topology`); `Adapter.bind` replaces a method rather
-   than wrapping it, so repeated graph executions never stack.
+   than wrapping it, so repeated graph executions never stack. A family bind
+   may also target a `comfy.model_base` method on the base model, as FLUX.3's
+   `extra_conds` bind does; the same rebound inventory and bijection hold it
+   as they hold the `comfy.ldm` targets.
 
 The default for non-divisible sharded axes is aligned zero-pad plus gather-time
 trim. The Krea2 padding measurement found that an attended pad key at
@@ -383,6 +414,24 @@ that have not been wired and probed keep the measured-tradeoff contract;
 require exact divisibility only as an explicit, independently validated
 exception.
 
+A row-local op is not always row-count-invariant. Measured on 2026-10-16,
+comfy-kitchen 0.2.37's fused AdaLN took one CUDA kernel for calls of 1024
+kernel rows (batch times rows) or fewer and another above, and the two
+rounded a few outputs one bf16 step apart. FLUX.3 normalizes each modulation span in a call of its own, so a
+rank's piece of a span, normalized in a call sized to the piece, could take
+the other kernel than stock's call for the whole span: on 2026-10-16 every
+uly2 one-reference edit and every uly2 text to image at 704 square or below
+read one-step NRMS 0.01 to 0.055 against one GPU for that reason alone. The
+parity rule: where a sharded forward runs a row-count-sensitive stock op on a
+rank's piece, it launches the op at stock's call size for those rows, filling
+the call with zero rows and keeping the piece's rows, rather than copying a
+kernel threshold that a later comfy-kitchen may move. FLUX.3 applies it to
+every fused-norm call of its 33 sharded blocks
+(`adapters/flux3_adaln_parity.py`), at the cost of each rank doing stock's
+full normalization work. The other families that call comfy-kitchen's
+`adaln` or `rms_adaln` on sharded rows are unchecked
+([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
+
 Adapter acceptance requires identical cross-rank latent statistics and
 fidelity against a single-GPU reference within the measured noise floor.
 
@@ -395,29 +444,65 @@ fidelity against a single-GPU reference within the measured noise floor.
 measurements in [VALIDATION.md](VALIDATION.md) and keyed on
 (model family, quant, megapixels, world size):
 
-- families with explicit resolution-crossover rows use cfg-parallel at the low
-  end and USP at the high end, with per-model thresholds stored as data; other
-  families have explicit full-range ring or Ulysses rows. Mage Flow and Qwen
-  Image 2.1 have no row, and Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image
-  have rows only from 1.2 MP up; those cases take the generic uly2 fallback
+- families with explicit resolution-crossover rows use cfg-parallel in a
+  measured band and USP elsewhere: below 1.2 MP for Chroma, LongCat, Boogu and
+  Anima, and from 1.2 MP up to 1.64 MP for Chroma, 1.77 MP for Qwen-Image and
+  2.36 MP for Krea 2. Per-model thresholds are stored as data; other
+  families have explicit full-range ring or Ulysses rows. Mage Flow, Qwen
+  Image 2.1 and FLUX.3 Klein have no row, and Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image
+  have no row below 1.2 MP; those cases take the generic uly2 fallback
   (row 99). Data parallelism is never a table row: `with_derived_dp` derives it
   from the ranks a row leaves spare, and a batch that cannot split across them
   folds them into sequence parallelism, or on a cfg row refuses (class K);
 - a row may take cfg-parallel only where its exact family, quantization, and
   megapixel band have a dated run that measured it faster than the one-GPU elapsed time
-  and no worse than the step-nrms floor.
+  and no worse than the step-nrms floor. Since Campaign K (2026-10-14) a new
+  row also needs cfg2 faster than uly2 and bit-identical to one GPU, full
+  schedule and one step, at every measured size in its band; rows granted
+  before then keep their records.
   `topology_cfg_evidence.CFG2_EVIDENCE` is keyed by row number and records the
   admitted quantizations. Missing, out-of-band, or inconclusive evidence does
   not preserve a legacy cfg choice: auto selects its Ulysses fallback and logs
   why. Tests hold every predicate, including the fallback, so a new cfg row
   cannot inherit another family's result;
+- a cfg row is skipped at CFG 1.0 unless the sampler keeps the uncond pass
+  there (`topology.sampler_keeps_uncond_at_cfg1`: the cfg++ samplers). The
+  KSampler, KSampler Advanced and KSampler Pipeline nodes and the Identity
+  Gate tag the latent with that answer, so every site that resolves a
+  render's topology, the Gate capability context included, reads the same
+  one. Sampler Custom takes a SAMPLER object with no name, so its latent
+  stays untagged and keeps the skip;
+- a cfg row's `world_min` is 2, so it also matches at world 4. A batch-1
+  render there leaves a spare data-parallel rank, and auto refuses it
+  (class K) rather than fold the rank into a cfg-plus-sequence composite.
+  Every cfg row's evidence was measured at world 2;
 - ideogram4: auto takes Ulysses2, never cfg2; explicit Ring2 stays for
   diagnosis, and explicit cfg2 runs the dual-model split (MODELS.md);
+- flux3 earns no cfg2 row. Measured by Campaign K's method on 2026-10-15 and
+  2026-10-16 with the first Spark capped at 2100 MHz, cfg2 ran 1.88x to 1.98x
+  faster than one GPU and 1.23x to 1.41x faster than uly2 from 1024 to 1536
+  square on BF16 and NVFP4. It was bit-identical when the prompt encoded past
+  one 80-row text block, where ComfyUI already makes two batch-1 calls. A
+  prompt that fits one block has as many rows as the empty negative, so one
+  GPU folds the pair into one batch-2 call, which cfg2's two batch-1 calls did
+  not reproduce on FLUX.3 or on Chroma: the one-step latent read NRMS 0.009
+  to 0.031 and no full render matched. That meets the floor but not
+  Campaign K's bar; LongCat above 1.2 MP read the same way and got no row
+  either. Auto keeps the uly2 fallback, and cfg2 stays an explicit, measured
+  choice (VALIDATION.md);
+- a cfg record can name checkpoints it measured and does not grant.
+  Kroma reads family krea2, but its shipped negative zeroes the positive, so one
+  GPU folds the pair into one batch-2 call, and on 2026-10-16 cfg2 read one-step
+  NRMS 0.009 to 0.011 against it at 1152 and 1536 square. Row 15's record
+  excludes Kroma, which `topology_cfg_evidence.checkpoint_variant` recognizes
+  by the merge record in its header, so a Kroma file keeps row 12; one saved
+  without that record reads as Krea2 (VALIDATION.md);
 - sage auto-on only for fp8 + USP at high res;
 - FSDP only when the model does not fit resident (capacity mode), never for speed;
 - every auto decision logs its row and reason, for example
-  `auto: uly2; krea2 fp8 at 1.0 MP, world 2, table row 99 (...)`. Krea 2 lost
-  its cfg2 row below 1.2 MP (crossover table row 10).
+  `auto: uly2; krea2 fp8 at 1.05 MP, world 2, table row 99 (...)`. Krea 2 lost
+  its cfg2 row below 1.2 MP (crossover table row 10) and gained one for FP8
+  and BF16 from 1.2 to 2.36 MP (row 15, Campaign K, 2026-10-14).
 
 Users can always override; auto is the default widget value.
 
@@ -461,7 +546,10 @@ sharded model needs `lora_low_rss` on (`actor/fsdp_lora.py`): every rank reads t
 comfy's own merge and key-seeded rounding on it, and copies its dim-0 chunk
 into the local shard, with no collective and no comfy backup, so the bake is
 the resident bake exactly; a key leaving the stack is restored with one
-contiguous pread of the rank's rows. With `lora_low_rss` off a sharded model
+contiguous pread of the rank's rows. A key on a module the wrap replicates
+(the outside-forward census below) bakes as a world-1 shard: every rank writes
+the whole merged tensor, which is the resident bake, and any other unsharded
+parameter still raises. With `lora_low_rss` off a sharded model
 refuses the stack, typed. The checkpoint itself must also be admitted for the
 bake, before any load, on every `lora_low_rss` or `auto_gate` setting
 (`adapters/fsdp_lora_admission.py`). Admitted: bf16, fp16, and a
@@ -472,14 +560,17 @@ wrapper that `actor/fsdp_lora.py` refuses outright; the header markers that
 name one are listed in `adapters/detect.py`. The lever's own card fires only
 when the effective `lora_low_rss` is off. The launch-time bake admission check
 does not cover fp32 islands: no header or coarse live signal distinguishes an
-island that Comfy's load keeps live at fp32 (safe to bake) from one it casts
+island that Comfy's load keeps live at fp32 from one it casts
 to the core's compute dtype (a live/file mismatch), so `actor/fsdp_lora.py`'s
 in-bake `_file_tensor` check, per LoRA-patched key, is the backstop for that
 shape. That check and the quantized-key check in `capture_record`/`bake_key`
 (a backstop for a checkpoint the header markers miss) raise the same class P
 tag as the launch-time refusal, not a bare `UnbakeError`: both are
 deterministic per checkpoint, so every rank raises the identical refusal,
-which is what makes tagging them rank symmetric and safe. Header and
+which is what makes tagging them rank symmetric and safe. A key on an island
+kept at fp32 passes the `_file_tensor` check and still raises a bare
+`UnbakeError`: islands stay whole, but outside the census the bake reads as
+replicated. Header and
 loaded-model detection both classify any full-precision mix containing F16 as
 `fp16`, while fp8/int8 storage markers take precedence; an fp16 core is
 admitted uniform only. fp32 parameters inside a bf16 core are islands
@@ -494,9 +585,14 @@ path, which is what keeps them out of every collective. The rule: ComfyUI runs
 diffusion-model module reached from there runs before any FSDP2 pre-forward
 hook has gathered a weight. If sharded, its DTensor weight meets a plain text
 tensor and every rank fails on the first `addmm` (the
-first H3 FSDP render to reach a forward). Three supported families reach one:
-Anima's `llm_adapter`, H3's `condition_proj` and `token_refiner`, and LTXAV's
-two caption projections and two embedding connectors.
+first H3 FSDP render to reach a forward). Four supported families reach one:
+Anima's `llm_adapter`, H3's `condition_proj` and `token_refiner`, LTXAV's
+two caption projections and two embedding connectors, and FLUX.3's early
+streams (`txt_in`, `time_in`, `emb_in`, `early_stream_modulations`,
+`txt_mode_blocks` and `content_mode_blocks.image_cond`), which only the base
+model reaches from there. Flux and other families build `txt_in` and `time_in`
+and run them inside their forwards, so FLUX.3's dotted paths sit in a table
+keyed by its comfy class rather than in the flat name list.
 `adapters/fsdp_islands.py` declares them per family, under the comfy class
 whose `extra_conds` makes the call, and derives the one flat tuple the wrap
 reads by name off the live model. A name is not unique to the family that
@@ -509,7 +605,11 @@ the replicated bytes whole where a shard would have been 1/world of them:
 1.487 GiB on the 61.7 GiB H3 file, 3.755 GiB on the LTX 2.5 bf16 transformer.
 The shard-build price reads a file size and a world, not a module census, so
 `capacity_fit.py` records why that replication fits inside the flat transient
-fraction.
+fraction. FLUX.3's early streams do not fit: they are about 2.8 GB of its
+11.1 GB BF16 file, so a world-2 rank holds more than its half plus the flat
+transient fraction before any block is in flight. FSDP is a function test for
+that family, not a capacity need, and its price stays flat until a hardware
+run records the per-rank peak.
 
 Stock Comfy Wan's tiny FP32 `patch_embedding` convolution keeps its own
 profile, `wan_fp32_patch_embedding_v1`, reported only on an exact match of
@@ -959,10 +1059,67 @@ hidden `UNIQUE_ID`; no node reads its value, but it is part of that contract.
   verdict. An untyped abort keeps its denial and says what stopped the proof.
   Diagnostic status publishes its event watermark and tail from one locked
   snapshot, so the two values always describe one coherent event history.
-- For state the node surface does not show, use `dgxm top`, the sidebar panel
-  or a `dgxm diagnostics` capture. `monarch-tui` (shipped with torchmonarch)
-  needs `--addr` of a mesh admin server, which the integration never starts;
-  docs/TROUBLESHOOTING.md ("Power-user escape hatch") covers the prerequisite.
+- For state the node surface does not show, use `dgxm top`, the sidebar panel,
+  `/dgxm/metrics`, a `dgxm diagnostics` capture or, with
+  `[monarch.diagnostics] metrics = true` and an `otlp_endpoint`, the ownership
+  occupancy counters in your own collector (docs/CLUSTER.md). Monarch's own
+  observability services (`enable_telemetry`, `Job.profile`, `monarch query`,
+  the dashboard and the mesh admin agent that `monarch tui` reads) stay off,
+  and there is no inspector mode for them: no form of them in the pinned 0.7.0
+  wheel is both stoppable and confined to what the integration owns. The paths
+  below are inside that wheel.
+  - `enable_telemetry`, `Job.profile`, `monarch query` and the dashboard each
+    need a Job (`monarch/_src/job/job.py:502-597`; `monarch query` loads the
+    active Job at `monarch/tools/cli.py:601-606`). A Job over the persistent
+    Workers (`StoreJob`, `monarch/_src/job/spmd.py:405-482`) attaches to them
+    as a second client, and attach pushes that client's config to the
+    Workers' host agents (`monarch/_src/actor/bootstrap.py:258-265`;
+    `monarch/_rust_bindings/monarch_hyperactor/config.pyi:179-180`). The
+    driver is the single Monarch client (section 5.1).
+  - The mesh admin agent needs no Job. The private `_spawn_admin`
+    (`monarch/_src/actor/host_mesh.py:482-517`) starts it on any HostMesh the
+    caller holds, such as the driver's own, through the caller's actor
+    instance (509-515). It can bind loopback: `_spawn_admin` and
+    `MeshAdminConfig` (`monarch/_src/job/job_components.py:55-69`) take an
+    `admin_addr`, and the `mesh_admin_addr` config (environment variable
+    `HYPERACTOR_MESH_ADMIN_ADDR`) sets the fallback. That fallback defaults to
+    `[::]:1729` in the native binary, which is every interface; the stub
+    gives the same address only as an example (`config.pyi:177-178`). Its
+    handle has no methods
+    (`monarch/_rust_bindings/monarch_hyperactor/host_mesh.pyi:178-184`), and
+    upstream's own reset only drops the Python reference
+    (`job_components.py:317-319`). So, as far as the Python surface shows, it
+    ends only with the process that spawned it: started in the driver, it
+    would last as long as ComfyUI, and a separate inspector process that
+    attaches to the Workers to get a HostMesh makes the second-client attach
+    above.
+  - Telemetry, `monarch query` and `Job.profile` run in the job sidecar, a
+    daemon built to outlive its caller (`monarch/_src/job/once_daemon.py:82-84`)
+    that a shutdown call can stop (`monarch/_src/job/job_sidecar.py:102-113`).
+    Its query API binds 127.0.0.1
+    (`monarch/monarch_dashboard/server/app.py:89-104`).
+    `start_telemetry_servers` takes a `host` that defaults to `::`
+    (`app.py:107-113`), but `TelemetryConfig` has no bind host
+    (`monarch/_src/job/telemetry_config.py:98-101`) and the sidecar call
+    passes none (327-331), so the dashboard, when enabled, binds `::`, every
+    interface. The sidecar also spawns a telemetry proc mesh on every Worker
+    host (`monarch/_src/job/telemetry_actor.py:148`) whose stop is best effort
+    with a 5 s bound (`telemetry_actor.py:183-196`).
+  - The periodic snapshot actor has no stop handle. Upstream says proc
+    lifecycle owns it and that new config needs the job killed and applied
+    again (`job_components.py:362-375` and the TODO at 529-531), so it runs
+    until its procs stop. Only `snapshot_interval_secs = 0` keeps it off
+    (`job_components.py:400-402`).
+  - `monarch tui` needs `--addr` of a mesh admin server
+    (`monarch/tools/cli.py:85-161`, registered at 719). The wheel also ships a
+    separate `monarch-tui` binary; nobody has checked its arguments.
+
+  An inspector mode becomes possible once upstream gives the admin handle a
+  stop and periodic snapshots an abort handle, lets telemetry run without
+  spawning procs on the hosts, and lets a client attach without pushing its
+  config. A bind host in `TelemetryConfig` would also let it include the
+  dashboard. docs/TROUBLESHOOTING.md ("Power-user escape hatch") says what to
+  use until then.
 
 ### 5.9 Refusal taxonomy: what a typed refusal is allowed to do
 
@@ -980,7 +1137,7 @@ whether a bypass is allowed.
 | **P** physics | the model, ComfyUI, or the machine cannot do it: batch caps a family's DiT at 1, no kernel carries the mask, the checkpoint bytes on disk do not match themselves. | **None.** No consent, no waiver, no env var. The message must name the working alternative, because that is all the user can act on. |
 | **C** capacity-protective | a preflight: this will not fit here. | **Never a bare refusal.** Offer the fitting strategy first (slab residency through one click), refuse outright only once the ladder is spent, and then say what would fit. Consent-clearable where a rescue exists and the identity-gate ledger reads clear for those bytes. |
 | **U** unproven correctness | family validation, first-load-stock, Gate results, and untested fold degrees. Correctness is unproven; no error has been measured. | **Always consent-bypassable.** Log the bypass, write a permanent waiver row, then proceed. Neither U guard has a card this release (`waivable_now` is False for both) and no site raises class U: a rescue grant covers first-load-stock for its load, and an explicit slab request loads a family without slab validation. |
-| **K** known-wrong math | measured wrongness: attended pad rows on ring, an approximate attention kernel the operator selected, and a sharded nvfp4 render of a family measured past the fidelity floor. | **Refuse by default.** The ring divisibility-pad guard carries an expert waiver: one card in the accuracy style carrying the measured wrongness in its own text, `DGXM_WAIVE_KNOWN_WRONG=ring_pad` headless, never auto-eligible, and every render under it stamped. The Sol-Attn kernel carries the same shape under `DGXM_WAIVE_KNOWN_WRONG=sol_attn`, and a sharded nvfp4 render of a measured family carries it under `DGXM_WAIVE_KNOWN_WRONG=shard_quant_scale`. The card and the headless value use the unscoped name. Sol-Attn and shard-quant raise family-scoped at every site; ring pad raises scoped for MiniMax H3 and unscoped at the adapter-base backstop. Historical PixelDiT waiver rows remain readable, but that guard was retired after the exact-gather fix passed hardware parity. |
+| **K** known-wrong math | measured or by-construction wrongness: attended pad rows on ring, an approximate attention kernel the operator selected, an approximate kernel a checkpoint or LoRA pins on an attention module where nothing drops the pin, and a sharded nvfp4 render of a family measured past the fidelity floor. | **Refuse by default.** The ring divisibility-pad guard carries an expert waiver: one card in the accuracy style carrying the measured wrongness in its own text, `DGXM_WAIVE_KNOWN_WRONG=ring_pad` headless, never auto-eligible, and every render under it stamped. The Sol-Attn kernel carries the same shape under `DGXM_WAIVE_KNOWN_WRONG=sol_attn`, and a sharded nvfp4 render of a measured family carries it under `DGXM_WAIVE_KNOWN_WRONG=shard_quant_scale`. The card and the headless value use the unscoped name. Sol-Attn raises family-scoped at the kernel and under `sol_attn:checkpoint_pin` where a pinned approximate kernel would run (docs/ADAPTERS.md); shard-quant raises family-scoped at every site; ring pad raises scoped for MiniMax H3 and unscoped at the adapter-base backstop. Historical PixelDiT waiver rows remain readable, but that guard was retired after the exact-gather fix passed hardware parity. |
 
 Two related boundaries:
 
@@ -1059,7 +1216,8 @@ Four invariants that no consent can change:
 **What an aborted ceremony may take, and from whom.** If a Gate run ends
 without a verdict, first-use handling normally disables both residency
 optimizations before dispatching the requested render.
-`nodes/gate_quarantine_scope.py` limits that change in two ways:
+`nodes/gate_quarantine_scope.py` limits that change in two ways, and
+`nodes/gate_identity.py` limits the push in a third:
 
 - A waivable class K refusal concerns accuracy, not residency. It disables no
   residency setting and sends no worker-policy update. The refusal tag is
@@ -1070,6 +1228,11 @@ optimizations before dispatching the requested render.
 - An ordinary abort affects only the combination tested. The next combination
   through the graph starts with the graph's requested settings. The aborted
   combination remains denied until its next Gate run resolves it.
+- An abort on an undeliverable Worker actor (`WorkerDeliveryError`: a Worker
+  loop restarted under the mesh, issue #47) disables the combination's levers
+  like any ordinary abort but sends no worker-policy update. The actors that
+  would take it are gone, and the stale mesh refuses every price until it is
+  replaced.
 
 An abort leaves the earlier `RETESTING` row in place. These limits do not
 clear a measured FAIL: invariant 2 preserves that quarantine across sessions
@@ -1418,9 +1581,12 @@ Seven seams are held outside the behavioral suite:
      limitations are canonical in [INSTALL.md](INSTALL.md#guided-multi-node-setup).
    - `dgxm reap`: the same sweep on demand, including on a local-mode box
      with no `cluster.toml`; `--dry-run` prints the plan and signals nothing.
-   - `dgxm update`: compatibility git-pull path that synchronizes the
-     repository's exact torchmonarch pin with `--no-deps`; install/sync dgx-monarch with
-     `--no-deps`; restart and doctor. It never resolves torch/NCCL/xfuser.
+   - `dgxm update`: plain update refuses while ComfyUI runs or when any Worker
+     runs from a release slot. It fetches, checks the fetched commit's exact
+     torchmonarch pin and dependencies, and fast-forwards only after that check
+     passes. It then installs the pin and dgx-monarch with `--no-deps` and, on
+     a cluster, the pin on each Worker host, restarts the Workers and runs
+     doctor. It never resolves torch/NCCL/xfuser.
      `--verify` selects the certainty-aware remote-cluster transaction split
      across inspection, remote release-slot, staged driver-pin, smoke, receipt,
      and state-machine leaves; its operational contract is canonical in
@@ -1429,6 +1595,13 @@ Seven seams are held outside the behavioral suite:
      `dgxm install-service`: refuses a unit it does not own, syncs the package,
      then installs and starts each host's Worker service as a systemd user
      unit, and fails a host whose user lingering is off.
+   - `dgxm diagnostics`: read-only capture of the driver's existing
+     `/dgxm/telemetry` endpoint into a new private JSON file named by
+     `--output`, bounded by duration, event count and bytes. It never attaches,
+     creates an admin listener or stops a Worker. A partial capture exits 3,
+     and `--capabilities` reports the runtime's limits without connecting.
+     Usage is canonical in [CLUSTER.md](CLUSTER.md#monarchdiagnostics).
+   - `dgxm version`: prints the dgx-monarch version and its torchmonarch pin.
    - `dgxm launcher`: separately owned local CLI launcher installation, offered
      during onboarding. It plans by default, binds the selected executable and
      config, preserves unmanaged commands, and makes no Worker or dependency
@@ -1521,13 +1694,15 @@ dgx-monarch/
 │   │   ├── pipeline.py        # bounded FIFO submission/abort orchestration
 │   │   ├── recycle_guard.py   # reset single-flight/rate ownership past HTTP timeout
 │   │   ├── render_session.py  # node-side names for the mesh_session.py API
-│   │   ├── resolved_topology.py # auto's row, quant and megapixels for telemetry
+│   │   ├── resolved_topology.py # what auto read and chose, for telemetry
 │   │   ├── sampler_wire.py    # sampler output merge and stock noise rebuild
 │   │   ├── strict_json.py     # non-finite-safe public JSON normalization
 │   │   └── setup_binding.py   # follow-up RPC topology/token reassertion
 │   ├── actor/                 # GPUWorker, model store, failure decorators
 │   │   ├── comfy_custom_nodes.py # headless custom-node discovery/cleanup
 │   │   ├── pread_backend.py   # lazy safetensors backend shim
+│   │   ├── load_profile_file.py # bounded per-host directory of Init
+│   │   │                      #   load_profile reports
 │   │   ├── capacity_quote.py  # one rank's price for one slot, as data: the
 │   │   │                      #   ladder's arithmetic and the wire row it fills
 │   │   ├── rescue_offer.py    # capacity rescue offer parts, shared by the
@@ -1548,20 +1723,40 @@ dgx-monarch/
 │   │   ├── worker_compile.py  # opt-in DiT block compilation boundary
 │   │   └── rdma_handoff.py    # durable worker descriptor ownership + ACK
 │   ├── adapters/              # §5.3 registry (one file per family)
-│   │   └── flux_shared.py     # control-span/shard helpers the flux forwards
-│   │                          #   share with hunyuan, lens, and qwen_image
+│   │   ├── flux_shared.py     # control-span/shard helpers the flux forwards
+│   │   │                      #   share with hunyuan, lens, and qwen_image
+│   │   ├── attention_inputs.py # what ComfyUI hands a model-level attention
+│   │   │                      #   op, and the closed keyword set it accepts
+│   │   ├── stock_attention.py # stock attention left in place under sequence
+│   │   │                      #   parallelism, run without an attention
+│   │   │                      #   module's kernel pin
+│   │   ├── index_cache.py     # bounded per-device cache of the Ulysses pad
+│   │   │                      #   path's index tensors
+│   │   ├── flux3_packing.py   # FLUX.3 Klein span clipping, stream shards, and
+│   │   │                      #   pad rows
+│   │   └── minimax_h3_packing.py # MiniMax H3 per-token packing and checkpoint
+│   │                          #   timestep embeddings
 │   ├── comfy_surface.py       # runtime Comfy touchpoint/signature assertion
 │   ├── comfy_forward_contracts.py # aggregate/re-export forward compatibility map
 │   ├── comfy_rebound_signatures.py # exact stock rebound-method contracts
 │   ├── comfy_rebound_sites.py # declared static self.bind/Adapter.bind inventory
 │   ├── comfy_rebound_validation.py # exact signature/requiredness comparator
-│   ├── topology.py            # dataclasses + auto-mode table (data-driven)
+│   ├── topology.py            # dataclasses + auto-mode resolution
+│   ├── topology_table.py      # the auto-mode table rows (data)
+│   ├── topology_cfg_evidence.py # dated evidence each cfg row needs
 │   ├── error_utils.py         # total diagnostics + cancellation-first composition
 │   ├── retry_policy.py        # bounded retry outcomes without stale diagnostics
 │   ├── actor_lifetime.py      # actor-side reaper (stdlib leaf; watcher installed
 │   │                          #   at bootstrap, lease trigger armed by the client)
 │   ├── client_lease.py        # driver-side lease renewer for live fleets
 │   ├── mesh.py                # attach/spawn/shutdown, registry lock + callback
+│   ├── mesh_attach.py         # transport enable, the pre-dial id gate, heal
+│   │                          #   and the in-process retry
+│   ├── worker_proc_id.py      # per-start Worker proc id: derive, dial, refuse
+│   ├── delivery_faults.py     # the fault hook's delivery failures and the price
+│   │                          #   wait that ends on one (stdlib leaf)
+│   ├── restart_reattach.py    # the render's re-attach after every Worker loop
+│   │                          #   restarted: id check, teardown, refusals
 │   ├── mesh_capacity_consent.py # capacity-rescue consent constants + grant check
 │   ├── mesh_creation.py       # creation publication, claims, and recovery
 │   ├── mesh_lease.py          # setup-generation and raw-RDMA-read leases
@@ -1572,11 +1767,23 @@ dgx-monarch/
 │   ├── mesh_session.py        # driver-side exclusion for logical render sessions
 │   ├── mesh_setup.py          # setup generations, budgets, acks + dispatch tokens
 │   ├── mesh_setup_state.py    # typed same-handle process-group transition state
+│   ├── mesh_setup_transition.py # worker-policy broadcast and process-group
+│   │                          #   setup behind MeshHandle's methods
 │   ├── mesh_safety.py         # lifecycle classification + pure safety policy
 │   ├── mesh_teardown.py       # stop authority and supervision reconciliation
 │   ├── monarch_semantics.py   # stdlib-only torchmonarch behavior probes
 │   ├── monarch_touchpoint_spec.py # touchpoint record + signature comparison
 │   │                          #   (stdlib leaf; keeps the manifest importable)
+│   ├── monarch_policy.py      # validated Monarch process policy: installed
+│   │                          #   before the runtime import, then read back
+│   ├── monarch_policy_io.py   # policy, trust-fingerprint and driver-host
+│   │                          #   readers that import neither Monarch nor Torch
+│   ├── monarch_launch.py      # explicit process launch policy that keeps the
+│   │                          #   controller's environment out
+│   ├── monarch_capabilities.py # path-redacted Monarch artifact and native-load
+│   │                          #   facts, without hardware probes
+│   ├── monarch_diagnostics.py # opt-in Monarch metrics on a bounded daemon
+│   │                          #   queue; no Jobs, servers or spans
 │   ├── absorb_fire.py         # one greppable INFO line per teardown-absorption
 │   │                          #   site (stdlib leaf; used by soak diagnostics)
 │   ├── fault_repeats.py       # report an unhandled cluster fault once, then
@@ -1584,6 +1791,8 @@ dgx-monarch/
 │   ├── attach_trace.py        # one greppable line per cluster-attach phase:
 │   │                          #   the vocabulary, the timer, and the parser
 │   │                          #   the TROUBLESHOOTING #101 grep depends on
+│   ├── attention_pins.py      # per-module kernel pins: one walk per load, the
+│   │                          #   render record fields, the class-K waiver
 │   ├── capacity_agreement.py  # driver-mediated pre-load fan out: every rank
 │   │                          #   prices before any rank allocates
 │   ├── capacity_memory.py     # one /proc/meminfo parser and what it may claim
@@ -1604,6 +1813,14 @@ dgx-monarch/
 │   │                          #   and end, and a marker when another box's host answers
 │   ├── telemetry_steps.py     # per-render step marks: each render times a step
 │   │                          #   against its own last one (stdlib leaf)
+│   ├── telemetry_ceremony.py  # Gate ceremony windows and the first-render
+│   │                          #   claim for the progress tracker (stdlib leaf)
+│   ├── runtime_diagnostics.py # bounded advisory phase timings shared by the
+│   │                          #   driver and actors (stdlib leaf)
+│   ├── runtime_timing.py      # advisory queue-wait and GPU-phase timers; the
+│   │                          #   asyncio lock and executor behave as before
+│   ├── diagnostic_session.py  # finite sanitized dgxm diagnostics captures and
+│   │                          #   their private export
 │   ├── transfer.py            # messaging + RDMA return paths
 │   ├── transfer_utils.py      # pure tensor-tree/split/read helpers
 │   ├── rdma_poison.py         # process-lifetime poison records + one-time report
@@ -1617,21 +1834,36 @@ dgx-monarch/
 │   ├── rdma_settlement.py     # durable local-drop publication helpers
 │   ├── native_return_latch.py # driver latch: messaging after a failed native
 │   │                          #   read, cleared only by a driver restart
+│   ├── occupancy_metrics.py   # opt-in occupancy up-down counters, sampled on
+│   │                          #   the existing metrics thread (stdlib leaf)
+│   ├── return_phases.py       # one native return's phase split for the result
+│   │                          #   row, the render log line and the qualifier
+│   ├── return_diagnostics.py  # observational return counters; never evidence
+│   │                          #   for ACK, release or reuse
 │   ├── tui/readiness_view.py  # pure canonical readiness renderer for the TUI
+│   ├── tui/diagnostics_view.py # fixed, bounded display of recent driver timings
 │   ├── tui/view_helpers.py    # dashboard rendering/recording helpers
 │   └── cli/                   # dgxm command adapters and lifecycle leaves
 │       ├── arguments.py        # public parser; command effects stay in leaves
 │       ├── cluster_smoke.py    # owned DP/NCCL/source-cohort smoke + typed cleanup
 │       ├── config_removal.py   # checked lock-bound durable config unlink
+│       ├── diagnostics_command.py # dgxm diagnostics: bounded read-only capture
+│       │                       #   of the driver's telemetry endpoint
 │       ├── doctor_nccl.py      # loaded NCCL library probe and the cross-host row
 │       ├── doctor_permissions.py # config-mode diagnostic row
 │       ├── doctor_repair.py    # exact-file chmod-only repair transaction
+│       ├── doctor_worker_context.py # the host's owned Worker release for
+│       │                       #   Doctor's environment probe
 │       ├── launcher.py         # managed local command ownership and publication
 │       ├── comfy_top.py        # foreground driver and owned dashboard supervisor
 │       ├── comfy_top_process.py # bounded owned-process signal and settlement helpers
 │       ├── comfy_top_signal.py # owned foreground signal observation and startup gate
 │       ├── legacy_init.py      # compatibility interactive config writer
-│       ├── legacy_update.py    # compatibility pull/sync/restart update
+│       ├── legacy_update.py    # plain update: fetch, dependency check,
+│       │                       #   fast-forward, pin install, restart
+│       ├── legacy_update_dependencies.py # plain update's candidate dependency
+│       │                       #   check before the fast-forward
+│       ├── release_slot.py     # read-only release-slot probe for Doctor and plain update
 │       ├── lifecycle.py        # Worker service lifecycle and package/pin effects
 │       ├── lifecycle_generation.py # Worker generation marker/fence capabilities
 │       ├── lifecycle_host.py   # host certainty, locality, and listener proofs
@@ -1639,7 +1871,8 @@ dgx-monarch/
 │       ├── lifecycle_scripts.py # lock-held Worker start/stop payload builders
 │       ├── lifecycle_systemd.py # canonical legacy unit + ownership proof
 │       ├── listener_generation.py # which process holds a loop's LISTEN socket,
-│       │                       #   how long it has held it, and the doctor row
+│       │                       #   how long it has held it, the id it serves,
+│       │                       #   and the doctor row
 │       ├── operator_receipt.py # bounded disclosure-safe receipt schema/writer
 │       ├── receipt_sanitize.py # conservative receipt-note redaction leaf
 │       ├── sol_attn_prerequisites.py # passive optional dependency/header/cache evidence
@@ -1677,9 +1910,16 @@ dgx-monarch/
 │       ├── setup_services_storage_scripts.py # private release reservation/cleanup
 │       ├── setup_source.py     # imported source identity/manifest binding
 │       ├── setup_verification.py # doctor-first cluster-smoke evidence adapter
-│       ├── sol_attn_prerequisites.py # bounded passive dependency/header/cache evidence
+│       ├── update_activity.py  # read-only driver activity and opt-in
+│       │                       #   privileged process checks
 │       ├── update_cancellation.py # cancellation-precedence helper
 │       ├── update_command.py   # concrete verified-update platform adapter
+│       ├── update_dependency_contract.py # read-only dependency closure checks
+│       │                       #   run in each target interpreter
+│       ├── update_dependency_diagnostics.py # bounded local dependency remedies,
+│       │                       #   never copied into receipts
+│       ├── update_doctor_diagnostics.py # bounded Doctor categories for updater
+│       │                       #   stderr
 │       ├── update_driver_pin.py # driver-pin change: stage both wheels, switch or restore offline
 │       ├── update_entrypoint.py # serialized execution and receipt publication
 │       ├── update_inspect.py   # exact target dependency/source inventory checks
@@ -1750,14 +1990,14 @@ an enforced requirement. The current exceptions are:
 
 | module | ceiling | cohesive reason |
 |---|---:|---|
-| `mesh.py` | 898 | driver mesh lifecycle, actor dispatch, teardown, and recovery orchestration; deliberate-recycle outcomes live in `mesh_recycle.py`, creation publication in `mesh_creation.py`, behavior probes in `monarch_semantics.py`, and diagnostic composition in `error_utils.py` |
-| `cli/doctor.py` | 774 | user-facing preflight plus the hardware failure catalogue |
+| `mesh.py` | 690 | driver mesh lifecycle, actor dispatch, teardown, and recovery orchestration; deliberate-recycle outcomes live in `mesh_recycle.py`, creation publication in `mesh_creation.py`, worker-policy broadcast and process-group setup in `mesh_setup_transition.py`, behavior probes in `monarch_semantics.py`, and diagnostic composition in `error_utils.py` |
+| `cli/doctor.py` | 770 | user-facing preflight plus the hardware failure catalogue |
 | `cli/actor_reaper.py` | 603 | procfs actor identity, orphan provenance, the termination sequence, the doctor report, and the read-only liveness answer the driver asks after a stop times out |
 | `adoption_evidence.py` | 732 | opt-in, request-bound resident-adoption authority, full-file identity/cache, and strict worker/result validation; the render path retains only narrow integration hooks |
 | `actor/unbake.py` | 692 | byte-verified checkpoint capture/restore engine |
-| `config.py` | 658 | typed cluster schema, fabric profiles, validation, and TOML rendering; strict table-key vocabulary lives in `config_schema.py` |
+| `config.py` | 638 | typed cluster schema, fabric profiles, validation, and TOML rendering; strict table-key vocabulary lives in `config_schema.py` |
 | `actor/sampling.py` | 620 | worker sampler protocol and distributed execution paths; per-adapter data-parallel exemptions keep raw token/weight sequences intact across ranks |
-| `actor/comfy_bridge.py` | 543 | Comfy worker bootstrap and narrowly-scoped runtime patching; DynamicVRAM state, latches, and policy live in `actor/comfy_dynamic.py`, and the pread shim lives in `pread_backend.py` |
+| `actor/comfy_bridge.py` | 528 | Comfy worker bootstrap and narrowly-scoped runtime patching; DynamicVRAM state, latches, and policy live in `actor/comfy_dynamic.py`, and the pread shim lives in `pread_backend.py` |
 | `actor/capacity_quote.py` | 539 | residency memory estimates and the response fields parsed by the driver, including slab LoRA bake memory and default LoRA-path selection |
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |
@@ -1878,13 +2118,32 @@ Every milestone must satisfy this checklist:
 
 ## Appendix A: empirical design inputs
 
-- cfg-parallel won at or below about 1 MP and USP above about 1.5 MP (Krea2
-  and Chroma); the `topology.py` auto table rows that split
-  by resolution switch at 1.2 MP.
+- Earlier measurements found cfg-parallel winning at or below about 1 MP and
+  USP above about 1.5 MP (Krea2 and Chroma), so the `topology_table.py` rows
+  that split by resolution switched at 1.2 MP. On 2026-10-14, after the 2026-10
+  sequence parallel fixes, Campaign K measured cfg2 bit-identical to one GPU
+  and faster than uly2 at every measured size of each new band: Chroma BF16,
+  FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from 1.2 to
+  1.77 MP (row 68), Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15), and
+  Boogu FP8 and Anima BF16 below 1.2 MP (rows 79 and 47). Each upper band
+  ends at the largest size measured; the two lower bands follow rows 20 and 28
+  and rest on one size, 1.05 MP. Krea2 INT8 cfg2 was exact but ran 0.97x to
+  1.08x against uly2, so it kept Ulysses; LongCat cfg2 above 1.2 MP was not
+  bit-identical, and Kandinsky5's image and video checkpoints share one
+  family, so neither gained a row (BENCHMARKS.md).
+- FLUX.3 Klein Base cfg2, measured by Campaign K's method on 2026-10-15 and
+  2026-10-16 with the first Spark capped at 2100 MHz, beat uly2 at every size
+  from 1024 to 1536 square and was exact when the prompt encoded past one
+  80-row block. On a one-block prompt one GPU folds cond and uncond into one
+  batch-2 call and cfg2 did not match it, so FLUX.3 has no cfg2 row
+  (VALIDATION.md).
 - Ideogram4 head_dim 256, FP8 pair at 1024x1024: Ulysses2 matched
   DP2 at NRMS 0.000; Ring2 measured 0.102 against the 0.100 limit.
 - Sage attention helps only fp8 with USP at high resolution (about 5-8% at
-  1536) and loses on bf16 at 1024.
+  1536 in the 2026-06 campaign) and loses on bf16 at 1024. Campaign K
+  (2026-10-14) read the SAGE route 1 to 5 percent faster than Torch Flash
+  uly2 on Krea2 and Chroma FP8, at 1-step NRMS 0.030 to 0.078 against one
+  GPU, where Torch Flash uly2 was bit-identical.
 - FSDP is a capacity tool, not a speed tool; NCCL_PROTO=LL can deadlock FSDP,
   so never set it.
 - GB10 has GPUDirect RDMA off (`cuMemGdrSupport 0`), so NCCL stages through
@@ -1893,6 +2152,7 @@ Every milestone must satisfy this checklist:
 - On unified memory the page cache competes with GPU allocations and the
   ComfyUI planner reads free memory, so doctor warns and suggests drop_caches.
 - Monarch bring-up failures map to preflight checks and troubleshooting entries.
-- `scripts/setup_env.sh` documents the torchaudio constraint on aarch64.
+- `scripts/setup_env.sh` documents the aarch64 torchaudio constraint, which
+  applies only to ComfyUI before v0.38.0.
 
 Measurement scope and limitations are recorded in [VALIDATION.md](VALIDATION.md).

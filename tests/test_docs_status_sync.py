@@ -63,6 +63,8 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "Flux 1 Dev"): ("flux", "HW"),
     ("image", "Flux 1 Schnell"): ("flux", "HW"),
     ("image", "Flux2"): ("flux2", "HW"),
+    ("image", "FLUX.3 Klein"): ("flux3", "HW"),
+    ("image", "FLUX.3 Klein Base"): ("flux3", "HW"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),
@@ -113,6 +115,18 @@ _REQUIRED_DETAIL_EVIDENCE: dict[
          "uly2+fsdp", "dp2+fsdp", "7.335538%", "8.570618%",
          "fsdp_clean_reload", "**BLOCKED**, no end-to-end comparison",
          "341d8e1bdd34d3c5119b5b768badf87ed2a1d663e79d331b85b4c1fc4f7bf498"),
+    ),
+    "FLUX.3 Klein": (
+        "VALIDATION.md",
+        '<a id="evidence-flux-3-klein"></a>',
+        ("ring-pad waiver card", "odd 1040 and 1552 square grids",
+         "Identical to one-GPU NVFP4 and to stock NVFP4", "pin-stripped copy",
+         "NRMS 0.0108; 0.0520", "234 layers"),
+    ),
+    "FLUX.3 Klein Base": (
+        "VALIDATION.md",
+        '<a id="evidence-flux-3-klein-base"></a>',
+        ("NRMS 0.0094", "1.88x to 1.98x", "0.023 to 0.031", "no cfg2 row"),
     ),
     "LTX 2.5 (t2v/AV packed)": (
         "VALIDATION.md",
@@ -691,12 +705,21 @@ _CONSTRAINED_MARK = "🔒"
 # selects Ulysses above it.
 _MP_PROBES = (0.26, 0.79, 1.05, 1.19, 1.5, 2.36, 8.0)
 
-# Rows whose canonical checkpoint is guidance distilled and renders at CFG 1.0.
-# choose_auto_topology drops every cfg-parallel row at that CFG, so auto cannot
-# reach cfg2 for them. This is a fact about the checkpoint, not a glyph: the
-# stars below derive from it.
-_DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2"})
+# Rows whose canonical checkpoint is distilled to CFG 1.0 (guidance distilled,
+# or FLUX.3 Klein's step-distilled flow map) and renders there under a plain
+# sampler. choose_auto_topology drops every cfg-parallel row
+# there, because a plain sampler drops the uncond pass, so auto cannot reach
+# cfg2 for them. This is a fact about the checkpoint, not a glyph: the stars
+# below derive from it. Kroma is not one: its shipped graphs run Euler at CFG 1,
+# but its model card allows CFG up to 1.5. Krea2's cfg2 row would take a BF16
+# file there, and that row's record excludes the Kroma checkpoint variant.
+_DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2", "FLUX.3 Klein"})
 _REAL_CFG = 3.5
+
+# Rows whose canonical checkpoint the auto table reads as a variant of its
+# family (topology_cfg_evidence.checkpoint_variant), so the stars derive from
+# the table as that checkpoint meets it.
+_ROW_VARIANT: dict[str, str] = {"Kroma": "kroma"}
 
 # What the dated hardware evidence behind an **HW** row covers, per starred
 # mode. One reviewed entry per starred cell, and four states:
@@ -713,18 +736,32 @@ _REAL_CFG = 3.5
 # imply it.
 _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Kroma", "uly"): ("scoped", "BF16 and local INT8, pure Ulysses"),
+    ("Krea2 (RAW+Turbo)", "cfg2"): (
+        "scoped", "Auto cfg2 covers FP8 and BF16 from 1.2 to 2.36 MP"),
     ("Krea2 (RAW+Turbo)", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; detail table fp8 uly2; VALIDATION 2026-07-10 turbo fp8 uly2 vs dp2"),
-    ("Chroma", "cfg2"): ("granted", "2026-08-11 FP8 cfg2 1024x1024, exact cross-rank"),
+    ("Chroma", "cfg2"): (
+        "granted", "2026-08-11 FP8 cfg2 1024x1024, exact cross-rank; 2026-10-14 BF16 and "
+        "FP8-mixed cfg2 bit-identical to one GPU at 1152 to 1280"),
     ("Chroma", "uly"): ("granted", "2026-08-21 requalification: fp8 NRMS 0.023 / bf16 0.010 at 1536"),
     ("Ideogram4", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 fp8 dual-model pair, DP2 NRMS 0.000"),
     ("Flux 1 Dev", "uly"): ("granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 DP2 NRMS 0.008"),
     ("Flux2", "uly"): ("scoped", "BF16 `uly2+fsdp`"),
+    ("FLUX.3 Klein", "uly"): (
+        "granted", "2026-10-15 one step bit-identical to one GPU and stock at 1024 and 1536 "
+        "(BF16, NVFP4) and odd 1040 and 1552 (BF16); 2026-10-16 full schedule "
+        "bit-identical to one GPU at 1024 to 1536"),
+    ("FLUX.3 Klein Base", "uly"): (
+        "granted", "2026-10-15 one step bit-identical to one GPU and stock at 1024 and 1536 "
+        "(BF16, NVFP4) and odd 1040 and 1552 (BF16); 2026-10-15 and 2026-10-16 full "
+        "schedule bit-identical to one GPU at 1024 to 1536 on both prompt kinds"),
     ("LongCat-Image", "cfg2"): ("granted", "2026-08-11 DP2 NRMS 0.009"),
     ("LongCat-Image", "uly"): ("granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 DP2 NRMS 0.097"),
     ("HunyuanImage 2.1 (+refiner)", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; AUTO_TABLE row 46: uly2 vouched for Image 2.1 and refiner 2026-07-15"),
+    ("Qwen-Image", "cfg2"): (
+        "scoped", "Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP"),
     ("Qwen-Image", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 base 2512 FP8, DP2 NRMS 0.049; 2026-09-14 uly2 TORCH_FLASH, "
         "one-GPU NRMS 0.082 (c2b9258ffce7); auto keeps the declared kernel, SAGE read 0.162 (#377)"),
@@ -739,7 +776,10 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Z-Image latent", "uly"): ("granted", "2026-08-11 DP2 NRMS 0.000, fresh 1536x1536"),
     ("Lens", "uly"): ("granted", "2026-10-06 bit-identical to one GPU; 2026-07-28 DP2 NRMS 0.060-0.061 after the pad-row fix"),
     ("Omnigen2", "ring"): ("granted", "certified DP2 NRMS 0.002; fresh run 2026-08-11"),
+    ("Anima", "cfg2"): (
+        "scoped", "Auto cfg2 covers BF16 below 1.2 MP on the shipped unequal prompt pair"),
     ("Anima", "uly"): ("granted", "byte-identical to true single GPU 2026-08-11"),
+    ("Boogu", "cfg2"): ("scoped", "Unequal prompts use per-conditioning cfg2 dispatch"),
     ("Boogu", "uly"): ("granted", "2026-10-06 bit-identical to dp2; 2026-08-11 DP2 NRMS 0.022"),
     ("PixelDiT / PiD", "uly"): ("granted", "world-2 bf16: uly2 matched dp2 exactly 2026-08-11"),
     ("Kandinsky5-Image", "uly"): (
@@ -805,7 +845,8 @@ def _support_matrix_rows() -> dict[str, list[str]]:
     return rows
 
 
-def _auto_selected_modes(family: str, cfg_value: float) -> set[str]:
+def _auto_selected_modes(family: str, cfg_value: float,
+                         variant: str | None = None) -> set[str]:
     """Every parallel mode `auto` can land on for this family at this CFG."""
     from dgx_monarch.topology import choose_auto_topology
 
@@ -813,7 +854,7 @@ def _auto_selected_modes(family: str, cfg_value: float) -> set[str]:
     for quant in ("bf16", "fp8"):
         for megapixels in _MP_PROBES:
             topology = choose_auto_topology(
-                family, quant, megapixels, 2, cfg_value=cfg_value
+                family, quant, megapixels, 2, cfg_value=cfg_value, variant=variant
             ).topology
             if topology.cfg > 1:
                 modes.add("cfg2")
@@ -837,7 +878,7 @@ def test_auto_stars_derive_from_the_runtime_auto_table() -> None:
     for (_section, model), (family, _status) in _SUPPORT_ROW_CONTRACT.items():
         cells = rows[model]
         cfg_value = 1.0 if model in _DISTILLED_CFG1_ROWS else _REAL_CFG
-        selected = _auto_selected_modes(family, cfg_value)
+        selected = _auto_selected_modes(family, cfg_value, _ROW_VARIANT.get(model))
         starred = {mode for mode, column in _MODE_COLUMN.items()
                    if _AUTO_MARK in cells[column]}
         if starred != selected:

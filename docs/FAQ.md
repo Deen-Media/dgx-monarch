@@ -131,7 +131,12 @@ jobs, is in [VALIDATION.md](VALIDATION.md).
 - **FSDP.** Split the weights so each GPU holds part. That is a capacity tool,
   not a speed tool, and [CONCEPTS.md](CONCEPTS.md) says how much slower. Use
   it when the model does not fit, or you want room for a local LLM.
-- **auto.** A rule table (family, quant, megapixels, how many GPUs). It logs
+- **auto.** A rule table (family, quant, megapixels, how many GPUs, CFG, and
+  whether the sampler keeps the negative pass at CFG 1, as the cfg++ samplers
+  do). It takes cfg2 only for a family, quant and size band where a dated run
+  measured cfg2 faster than one GPU and within the accuracy floor; the rows
+  [Campaign K](BENCHMARKS.md#campaign-k-cfg2-against-uly2-2026-10-14-head-capped)
+  added were also faster than Ulysses and bit-identical to one GPU. It logs
   the row it matched and why. It does not guarantee the fastest option.
 
 Leave Init on `auto` the first time. If you just want two pictures at once,
@@ -151,10 +156,14 @@ Unavailable on this fabric. The topology slot is reserved; there is no
 PipeFusion mode ([DESIGN.md](DESIGN.md)).
 
 **Native RDMA for sending latents back?**
-It is off by default and marked **NOT RUN / HOLD**. Latents come back over
-actor messages; the split itself still uses NCCL. The terms of the hold are in
-[DESIGN.md](DESIGN.md) 5.6, and the failure an operator can see is
-[TROUBLESHOOTING.md #75](TROUBLESHOOTING.md#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails).
+It is off by default. [Selected-rail checks](VALIDATION.md#native-rdma)
+qualify only their recorded scope; native cancellation and fabric-failure
+recovery are untested. Latents come back over actor messages; the split
+itself still uses NCCL. The switch is `rdma_latent_return` in
+[CLUSTER.md](CLUSTER.md#cluster). The failure an operator can see is
+[TROUBLESHOOTING.md #75](TROUBLESHOOTING.md#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails),
+and a failed native read turns native return off until ComfyUI restarts
+([#115](TROUBLESHOOTING.md#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
 
 **I already split my queue with an agent.**
 Fleet serves that use case. Ulysses or cfg2 splits one job across both hosts.
@@ -304,9 +313,12 @@ third-party code. [LICENSE-NOTES.md](../LICENSE-NOTES.md).
 **One Spark died mid-render.**
 Once the box is back, close ComfyUI, run `dgxm restart` so both Worker
 services restart together, and start ComfyUI again ([TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
-A ComfyUI process cannot attach again once its fleet changed under it: a box
-that died, a Worker service that restarted, or old workers the driver had to
-confirm had stopped. A dead actor process retires the
+A ComfyUI process attaches again on its own only to a Worker service that came
+back within Monarch's 30 s message delivery timeout, since each start serves a
+new id (checked on the pair on 2026-10-15). A sampler render after both
+services restarted now attaches again within that render, with no Reset
+click (CPU-tested; its pair recheck is pending). A box that was down longer leaves
+the driver's channel to it closed. A dead actor process retires the
 whole attached mesh, and its error names the endpoint and host
 ([TROUBLESHOOTING.md #4](TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)). A worker exception is different: it comes back to the
 caller and leaves its actor alive.
@@ -314,8 +326,7 @@ caller and leaves its actor alive.
 **I hit Stop in ComfyUI.**
 It stops at a denoise-step boundary, not mid-kernel, and a pipeline abort
 cancels the whole queued window first. If a GPU kernel still has not come back
-after the abort deadline, close ComfyUI, then run `dgxm restart`: a Worker
-service restarted under a live session cannot be attached from it again
+after the abort deadline, close ComfyUI, then run `dgxm restart`
 ([TROUBLESHOOTING.md #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
 
 **It said it refused. Did it crash?**

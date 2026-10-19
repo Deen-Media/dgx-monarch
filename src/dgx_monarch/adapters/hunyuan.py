@@ -30,6 +30,7 @@ from .base import (
 )
 from .chroma_text import full_row_text_projections
 from .flux_family import _control_span_overlap  # Remap control spans in both loops.
+from .stock_attention import stock_attention_options
 from .usp_sequence_order import RankMajorJointOrder
 
 log = get_logger(__name__)
@@ -173,8 +174,10 @@ class HunyuanAdapter(Adapter):
             if txt_mask is not None and not torch.is_floating_point(txt_mask):
                 txt_mask = (txt_mask - 1).to(img.dtype) * torch.finfo(img.dtype).max
 
-            # TokenRefiner attends only over replicated text, outside USP.
-            txt = self.txt_in(txt, timesteps, txt_mask, transformer_options=transformer_options)
+            # TokenRefiner attends only over replicated text, outside USP, and
+            # its stock attention ignores a block's pinned kernel.
+            txt = self.txt_in(txt, timesteps, txt_mask,
+                              transformer_options=stock_attention_options(transformer_options))
 
             if self.cond_type_embedding is not None:
                 self.cond_type_embedding.to(txt.device)

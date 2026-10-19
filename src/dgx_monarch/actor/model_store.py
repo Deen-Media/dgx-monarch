@@ -387,7 +387,10 @@ class ModelStore:
                 import comfy.model_management as mm
 
                 dev = mm.get_torch_device()
-                lora_sd = {k: v.to(dev) if hasattr(v, "to") else v for k, v in lora_sd.items()}
+                # A per-block attention config stays on the host: ComfyUI
+                # decodes its JSON with Tensor.numpy() (attention_pins.py).
+                lora_sd = {k: v.to(dev) if hasattr(v, "to") and not k.endswith(".config") else v
+                           for k, v in lora_sd.items()}
             active, _ = comfy_sd.load_lora_for_models(active, None, lora_sd, float(entry["strength"]), 0)
         return active
 

@@ -25,6 +25,7 @@ from dgx_monarch.adapters.boogu import (
     _split_joint_rope,
     _text_pad_key_bias,
 )
+from dgx_monarch.adapters.stock_attention import default_attention_override
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
 from fake_model_base_helpers import install_fake_model_base
 
@@ -309,9 +310,11 @@ def test_four_stage_wiring_and_negation(comfy_stubs, with_ref):
 
     rec = {k: (a, kw) for k, a, kw in sink}
 
-    # Stage 1 stays local: plain transformer_options, no USP override.
+    # Stage 1 stays local: no USP override, only the one that runs comfy's
+    # default attention so a block's pinned kernel never runs (issue #30).
     ctx_args, ctx_kw = rec["context"]
-    assert "optimized_attention_override" not in ctx_kw["transformer_options"]
+    assert (ctx_kw["transformer_options"]["optimized_attention_override"]
+            is default_attention_override)
     assert ctx_args[0].shape[1] == 3                      # full caption, unsharded
     assert ctx_args[1] is None                            # text mask (none here)
 

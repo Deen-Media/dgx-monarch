@@ -226,6 +226,6 @@ def test_263_still_reports_and_does_not_refuse(models, caplog):
     with caplog.at_level("WARNING"):
         family_select.warn_auto_admits_checkpoint("ltx", path)
     assert any("carries no" in record.getMessage() for record in caplog.records)
-    assert upstream_gate.refuses(path) is False
+    assert upstream_gate.refusal_for(path) is None
     for name in (models.dct, models.latent):
-        assert upstream_gate.refuses(str(models.dir / name)) is False
+        assert upstream_gate.refusal_for(str(models.dir / name)) is None

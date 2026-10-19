@@ -23,6 +23,7 @@ import torch
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from . import base
+from .attention_inputs import note_preferred_attention
 from .attention_patches import assert_no_foreign_attention_override
 from .base import (
     Adapter,
@@ -33,6 +34,10 @@ from .base import (
 )
 
 log = get_logger(__name__)
+
+# Each site gets one debug line from note_preferred_attention.
+_ATTENTION_SITE = "qwen_image21 attention"
+_PREFIX_FILL_SITE = "qwen_image21 prefix fill attention"
 
 
 def _take_native_attention_tensor(value: Any) -> torch.Tensor:
@@ -135,19 +140,46 @@ def agree_prefix_cache(cache: Any, cached: bool, device: torch.device) -> tuple[
 def _optimized_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, heads: int,
                          *, mask: torch.Tensor | None, transformer_options: dict,
                          preferred_attention: Any) -> torch.Tensor:
-    """Run Comfy's selected attention backend and restore Qwen's BNHD layout."""
+    """Run Comfy's default attention backend and restore Qwen's BNHD layout.
+
+    This function notes the checkpoint's per-block kernel preference once and
+    drops it. Under sequence parallelism the Init ``attention`` widget picks
+    the kernel, and this path admits only TORCH_FLASH. In a worker that cannot
+    import xformers, comfy's default backend is torch's scaled dot product
+    attention, which tries flash first. Flash takes no mask, so the masked
+    text segments run another exact torch backend. Handing the preference on
+    would let a checkpoint that pins comfy-kitchen Sol run it under a
+    TORCH_FLASH stamp, and the pack would ask for no Sol-Attn waiver
+    (docs/ADAPTERS.md).
+    """
     # Import at call time because CPU-only unit tests import this adapter
     # without a Comfy checkout. This is the exact stock Qwen entry point,
     # including its selected flash/SDPA fallback and patch dispatch.
     from comfy.ldm.modules.attention import optimized_attention
 
+    note_preferred_attention(_ATTENTION_SITE, preferred_attention)
     out = optimized_attention(
         q.flatten(2), k.flatten(2), v.flatten(2), heads,
         mask=mask,
         transformer_options=transformer_options,
-        preferred_attention=preferred_attention,
+        preferred_attention=None,
     )
     return out.unflatten(-1, (heads, q.shape[-1]))
+
+
+def without_block_preference(attn_fn, site: str):
+    """Wrap a stock comfy attention callback so it ignores the per-block preference.
+
+    Comfy's own ``block_causal_attention`` callback hands the block's
+    ``preferred_attention`` to ``optimized_attention``. The cache-miss prefix
+    fill calls it, so this wrapper notes the preference once at ``site`` and
+    calls the stock callback with none. Other keywords pass through unchanged.
+    """
+    def attn(q, k, v, heads, preferred_attention=None, **kwargs):
+        note_preferred_attention(site, preferred_attention)
+        return attn_fn(q, k, v, heads, preferred_attention=None, **kwargs)
+
+    return attn
 
 
 def cached_target_attention(prefix_k: torch.Tensor, prefix_v: torch.Tensor,
@@ -344,9 +376,11 @@ class QwenImage21Adapter(Adapter):
                         assert prefix_states is not None
                         from comfy.ldm.qwen_image21.model import block_causal_attention
 
-                        prefix_attn = block_causal_attention(
-                            segments[:-1], transformer_options, cache, index,
-                            prefix_states.shape[1])
+                        prefix_attn = without_block_preference(
+                            block_causal_attention(
+                                segments[:-1], transformer_options, cache, index,
+                                prefix_states.shape[1]),
+                            _PREFIX_FILL_SITE)
                         prefix_states = block(
                             prefix_states, mod, prefix_pe, prefix_attn,
                             prefix_states.shape[1], transformer_options)

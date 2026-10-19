@@ -54,6 +54,7 @@ from dgx_monarch.adapters.base import Adapter, UnsupportedModelError
 from dgx_monarch.adapters.boogu import BooguAdapter
 from dgx_monarch.adapters.cogvideo import CogVideoXAdapter
 from dgx_monarch.adapters.ernie import ErnieAdapter
+from dgx_monarch.adapters.flux3 import Flux3Adapter
 from dgx_monarch.adapters.flux_family import ChromaAdapter, Flux2Adapter, FluxAdapter, LongCatAdapter
 from dgx_monarch.adapters.hunyuan import HunyuanAdapter
 from dgx_monarch.adapters.kandinsky5 import Kandinsky5Adapter
@@ -195,6 +196,7 @@ _ROWS = (
         extra_declines=("WAN21",),
         reject_fragment="wan-animate2 variant",
     ),
+    _Row(Flux3Adapter(), {"Flux3": None}, ("Flux3",), reject_fragment="flux3 variant"),
     # Krea2Adapter, Ideogram4Adapter and ChromaAdapter do not override
     # matches(): the inherited isinstance check admits any subclass of their
     # one model_base_classes entry (flux_family.py: ChromaAdapter admits the

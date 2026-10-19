@@ -144,6 +144,17 @@ stock gets the unpadded, maskless shape a true single-GPU call would carry. A
 batch whose rows disagree on that length refuses rather than guessing one
 shape for all of them.
 
+An adapter may also define `prepare_base_model(base_model)`. The worker calls
+it from `_inject_for_topology` on every load path (resident, the dual-model
+slots, the Gate cycle and the FSDP Gate cycle), right after it selects the
+adapter and before any sequence-parallel or cfg install, so it precedes the
+first `extra_conds` of every sample; an adapter without the attribute is left
+as it was. FLUX.3 uses it to bind `extra_conds` on the base model (its
+paragraph below). A hook that binds through `Adapter.bind` on the shared
+`BaseModel` instance survives the patcher clones a LoRA makes and the baked
+hot-swap arm, and one that reads the class function replaces rather than
+stacks on a repeat call.
+
 `inject_usp` binds, on the live diffusion model instance:
 
 1. **A sharded top-level forward.** Implement the family's distributed forward with
@@ -163,7 +174,8 @@ shape for all of them.
 
    * every topology, so a padded sequence on ring or hybrid raises a typed
      refusal instead of rendering known-wrong math: Krea2, Lens, MiniMax H3,
-     LTX, Mage Flow and the flux family (Chroma, Flux, Flux2, LongCat);
+     LTX, Mage Flow, FLUX.3 and the flux family (Chroma, Flux, Flux2,
+     LongCat);
    * pure Ulysses only, so ring and hybrid attend the pad and never refuse:
      Qwen-Image, Hunyuan, Boogu, Ernie-Image and Ideogram4 (each in its own
      paragraph below).
@@ -187,7 +199,8 @@ shape for all of them.
    measured contracts. Wiring another family onto the exclusion requires its
    own probe, which may be a named acceptance test while the family still
    has status `impl`: MiniMax H3's probe was included in its acceptance checks
-   ([VALIDATION.md](VALIDATION.md)). An adapter with a stronger fail-closed
+   ([VALIDATION.md](VALIDATION.md)), and FLUX.3's is the odd-grid case of
+   `tests/test_flux3_comfy_exactness.py`. An adapter with a stronger fail-closed
    invariant may opt into `shard_seq(..., allow_padding=False)`. Omnigen2 does
    so for its joined ring stream. It has no exact pad-row exclusion evidence,
    so a non-divisible stream typed-refuses instead of attending a synthetic
@@ -237,6 +250,18 @@ shape for all of them.
    measured Chroma fp8_scaled/int8_convrot failures.
    Query and key pad coordinates are remapped independently, and the inverse
    permutation restores the original rank layout before the return all-to-all.
+   The permutation, its inverse and the pad exclusion's keep index depend
+   only on integer row counts, so the order and the pad exclusion build them
+   on the device once per layout and keep them in a small cache keyed by
+   shape and device, which drops its least recently used entry past the
+   bound (`adapters/index_cache.py`). The pad-row remap reads a host copy
+   of the inverse, computed by the same arithmetic on the CPU, and the keep
+   index comes from `arange` runs rather than a `nonzero`, so no attention
+   call waits on the device
+   ([VALIDATION.md](VALIDATION.md#padded-ulysses-index-cache)). A
+   self-attention that names one row set for both sides remaps it once and
+   shares one keep index between queries and keys, and the output restore
+   reuses the cached inverse.
    The single-block stream is already canonical. Ring and hybrid topologies
    retain their existing order. With the order restored,
    every Flux 1 Dev, Flux2 fp8mixed and LongCat pad-matrix leg matches
@@ -271,28 +296,245 @@ shape for all of them.
    embedding or collectives; other selected kernels and a foreign
    `optimized_attention_override` refuse there too.
 
-   **Per-block attention preference and q/k/v containers.** ComfyUI lets a
-   model file pin an attention kernel for each block. Models pass
+   **Per-module attention preference and q/k/v containers.** ComfyUI lets a
+   model file pin an attention kernel on each attention module. Models pass
    `preferred_attention=self.comfy_attention` to their attention call and box
    q, k and v in `AttentionTensorContainer`. Comfy's `wrap_attn` drops the
    keyword and takes the tensors out of their boxes before it calls
    `optimized_attention_override`, so the `usp_options` overrides see
-   neither. An op the pack installs on the model itself runs before
-   `wrap_attn` and sees both. Anima's `attn_op` is the one such op: it takes
-   the boxes once and ignores the keyword (`adapters/attention_inputs.py`).
-   It accepts no other keyword. The dispatcher drops an unknown keyword for
-   an ordinary kernel, so the op refuses one with a class P refusal that
-   names it (docs/TROUBLESHOOTING.md #116) rather than let it pass unapplied.
+   neither. An op or callback the pack installs on the model itself runs
+   before `wrap_attn` and sees both. Anima's `attn_op` is one such op: it
+   takes the boxes once and ignores the keyword
+   (`adapters/attention_inputs.py`). It accepts no other keyword. The
+   dispatcher drops an unknown keyword for an ordinary kernel, so the op
+   refuses one with a class P refusal that names it
+   (docs/TROUBLESHOOTING.md #116) rather than let it pass unapplied. Qwen
+   Image 2.1's attention callbacks also receive both, but they do not refuse
+   an unknown keyword as Anima's op does: the two callbacks its forward
+   builds drop any keyword but the preference without a word, and the
+   prefix-fill wrapper hands one to comfy's own callback, which accepts no
+   keyword but the preference.
    Under sequence parallelism the Init `attention` widget and the dispatcher
-   choose the kernel, so the preference is logged at debug level once per
-   call site and otherwise ignored. A checkpoint that pins a kernel per block
-   (the comfy-kitchen int8 kernel, or the comfy-kitchen Sol kernel,
-   `comfy_kitchen_sol`, with its tau) therefore renders with the widget's
-   kernel where stock ComfyUI on one GPU would use the pinned one. Qwen Image
-   2.1 and Wan-Animate 2, whose distributed paths call native Comfy
-   attention, hand the preference on to that call as stock does. The
-   "attention keyword handoff" seam in `tests/canary/comfy_seam_contracts.py`
-   holds both halves against the real ComfyUI tree.
+   choose the kernel, so the pack logs the preference at debug level once
+   per call site where the pack runs the attention and otherwise ignores it.
+   Qwen Image 2.1 and Wan-Animate 2, whose
+   distributed paths call native Comfy attention themselves, follow the same
+   rule: they log the preference once and pass `preferred_attention=None`,
+   so comfy's default backend runs, and these paths admit no widget value
+   but `TORCH_FLASH`. A worker starts ComfyUI with no attention flags, so on
+   NVIDIA, when the worker interpreter cannot import xformers, that default
+   is torch's scaled dot product attention. With xformers importable, comfy
+   picks xformers attention instead. For a call with at least 131,072 query
+   elements, comfy's wrapper asks torch to try flash first, then cuDNN, the
+   efficient kernel and math; it leaves smaller calls to torch's own order.
+   Flash takes no mask, so Qwen's masked text rows run one of the other
+   backends. Each of these is exact, so no approximate kernel runs under the
+   `TORCH_FLASH` stamp, though the stamp does not name the one kernel that
+   ran. Qwen's cache-miss prefix fill runs comfy's own
+   `block_causal_attention` callback, which hands the preference on, so the
+   adapter wraps that callback to pass none. A checkpoint that pins a kernel
+   on its attention modules (the comfy-kitchen int8 kernel, or the
+   comfy-kitchen Sol kernel, `comfy_kitchen_sol`, with its tau) therefore renders this
+   attention with the widget's kernel where stock ComfyUI on one GPU would
+   use the pinned one. Under sequence parallelism the pack asks for the
+   class-K Sol-Attn waiver only when the widget selects Sol.
+
+   Under sequence parallelism no attention call honors a module's pin. The
+   pack also leaves some stock attention in place, and those calls run
+   comfy's default backend, as stock runs them for a checkpoint with no pin;
+   the widget picks only the sharded attention's kernel. A read of every
+   adapter against ComfyUI e8665ca8 on 2026-10-14 found these sites; on
+   2026-10-15 the inventory was checked again against 29e28e2b4, whose
+   commits since e8665ca8 change none of the modules below except to add
+   FLUX.3:
+
+   * cross-attention: every block's `cross_attn` in Wan 2.1 and 2.2, Wan
+     SCAIL, WanDancer and Wan-Animate 2; `attn2` in LTX, and `audio_attn2`
+     as well in LTX audio-video; the visual blocks' `cross_attention` in
+     Kandinsky 5; and Anima's cross-attention, which runs cosmos' stock
+     `torch_attention_op`;
+   * self-attention that every rank runs whole before the sharded block
+     loop: the context and noise refiners in Z-Image; the context, noise and
+     reference-image refiners in OmniGen2; Boogu's context refiner; the
+     token refiner (`txt_in`) in HunyuanImage 2.1 and HunyuanVideo 1.5;
+     Kandinsky 5's text transformer blocks; the text fusion blocks in Krea2
+     and Kroma (all of them under pure Ulysses, the layerwise blocks under
+     ring or hybrid); and WanDancer's music encoder;
+   * text refiners that comfy runs from `extra_conds` on every rank, before
+     the forward: MiniMax H3's token refiner, which also runs inside the
+     forward when the text arrives unrefined, and the video and audio text
+     connectors in LTX audio-video;
+   * FLUX.3's five text blocks and five reference blocks, which comfy runs
+     from `extra_conds` for the base model and at the start of the forward
+     for the step-distilled one, in both cases without options.
+
+   The forward hands each such module a copy of `transformer_options` that
+   carries an override (`adapters/stock_attention.py`). Comfy's `wrap_attn`
+   checks the override before the preference, and the override hands the
+   call, with its arguments unchanged, to the backend function `wrap_attn`
+   would run itself with no pin. An unpinned checkpoint therefore renders
+   exactly as before, and a pinned one renders as stock does unpinned.
+   `wrap_attn` removes the preference before it calls the override, so
+   these sites cannot log the pin. Where comfy hands a module no options, as
+   for the `extra_conds` refiners, the pack binds the module's forward to add
+   the override itself; that bound forward sees the module and logs its
+   preference once per site at debug level. WanDancer's music encoder passes
+   attention no options at all, so the pack binds a copy of its forward that
+   passes `preferred_attention=None` and logs the preference, as the Qwen
+   Image 2.1 and Wan-Animate 2 paths do. These bound forwards log that
+   comfy's default backend runs the call. The copy keeps an override the
+   graph installed already, such as an attention backend node's, and
+   `wrap_attn` runs it ahead of the pin, as stock does, where the forward
+   admits one: LTX and Wan-Animate 2 refuse a foreign override before they
+   build the copy, as Qwen Image 2.1 does
+   ([docs/TROUBLESHOOTING.md #72](TROUBLESHOOTING.md#72-a-distributed-render-refuses-a-comfy-attention-patch-or-nag-style-hook)),
+   and in the families that admit one the pack's sharded attention never
+   runs it, so it runs only at these stock sites. One default backend would
+   differ: with `--use-ck-attention` comfy runs the comfy-kitchen int8
+   kernel, whose own path for boxed q, k and v the override would skip. A
+   worker never passes that flag.
+
+   The other families leave no stock attention call under sequence
+   parallelism: their sharded forwards call the pack's kernel directly,
+   install an override that `wrap_attn` checks before the preference, or,
+   as in Qwen Image 2.1, hand comfy no preference.
+   Every topology without sequence parallelism (its ulysses and ring
+   degrees are both 1; on a two-rank pair that is single, cfg2, dp2,
+   cfg2+fsdp and dp2+fsdp) leaves every stock attention call in place, so a
+   pin runs there as it does in stock ComfyUI on one GPU, with the FSDP
+   cases below. Dropping the pin there would break the cfg2
+   same-math gate, which compares against one GPU, so the pack detects,
+   records and waives it instead (`attention_pins.py`):
+
+   * **Detection.** Once per fresh load, before injection and before
+     ComfyUI stages any LoRA, the pack walks the loaded model and keeps every
+     `comfy_attention` module whose `config` names a kernel, with the kernel
+     ComfyUI bound in `function`. Injection, which includes the FSDP shard
+     build, runs after that walk, so the pack then rereads only the pinned
+     modules. Each render reads the cached walk and adds the pins a LoRA
+     stages: ComfyUI's patcher stages a LoRA's `.config` key as an object
+     patch at `diffusion_model.<module>.comfy_attention`, and `patch_model`
+     puts it in place before the render. A model with no pin costs that one
+     walk per load and a read of the patcher's few object patches per
+     render; nothing runs per step.
+   * **Record.** The render finish record carries `attention_pins` (pinned
+     attention modules per kernel; Sol's tau is part of the kernel's name),
+     `attention_pins_ran` and `attention_pins_dropped` (modules per reason a
+     pin does not run). `attention_pins_ran` is true when ComfyUI dispatches
+     every pinned module to its pinned kernel, as on one GPU; the kernel
+     itself still runs exact attention on a masked call (Sol) or on a float32
+     call with `low_precision_attention` off (int8). The count is per
+     attention module, so a block whose self- and cross-attention are both
+     pinned counts twice. The fields sit beside the `attention` fact, which
+     still names the widget's kernel. The widget's kernel, which also feeds
+     the gate ledger's capability context, is unchanged, so no combination
+     gates again. The sidebar's last-render line and the
+     `benchmark/run_matrix.py` console show them as, for example, "pinned:
+     comfy_kitchen_sol tau=0.7 x 40 modules, ran"; run_matrix result rows
+     carry the three fields. Under dual-model cfg2 each cfg rank renders its
+     own checkpoint, so the fields add the two models' modules, as one rank
+     holding both does. When both models pin, `attention_pins_models` keeps
+     each model's own three fields under `cond` and `uncond`, run_matrix rows
+     carry it too, and the line gives one clause per model, for example
+     "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20 modules, ran; uncond
+     model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped (kernel
+     unavailable on this host)".
+   * **Waiver.** Both kernels ComfyUI binds are approximate by construction.
+     `comfy_kitchen_sol` attends a routed subset of key blocks exactly and
+     pools the rest, so it is not identity preserving. `comfy_kitchen_int8`
+     rounds q, k and v to signed 8-bit integers and the softmax weights to
+     unsigned ones (comfy-kitchen's `int8_attention`; the rotation it applies
+     first keeps q.k exact, and the rounding that follows does not). A SAGE
+     kernel runs because the operator picked it on the Init widget, or
+     because auto picked it on a measured combination. A pinned int8 kernel
+     is neither: the checkpoint or LoRA picked it, and it runs on both legs
+     of the cfg2 same-math gate, so that gate cannot see it. So it takes the
+     waiver too. A kernel this project has not classified counts as
+     approximate. When a pinned approximate kernel would run, the render
+     refuses with class K under the guard `sol_attn:checkpoint_pin` before
+     any sampling, and runs, stamped, once the operator grants the Sol-Attn
+     waiver for that checkpoint, topology and world
+     ([docs/TROUBLESHOOTING.md #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+     The card says the kernel is approximate by construction and claims no
+     measurement for it. The pack decides from the pins, the LoRA stack and the
+     topology, never from whether ComfyUI could bind the kernel on this host,
+     so every rank of a fleet reaches the same verdict. That matters under
+     cfg2+fsdp and dp2+fsdp, which run no readiness exchange: a rank that
+     refused alone there would leave its peer waiting at the first collective
+     until the group timeout. On the other multi-rank topologies the check
+     also sits inside the sample path's load guard, so a rank that refuses
+     for any reason still crosses the readiness flag and its peer refuses
+     with it. A render on one GPU has no peer, so it reads its own binding: a
+     pin whose kernel ComfyUI could not bind there runs ComfyUI's default
+     backend and asks nothing. A pinned exact kernel would only be recorded;
+     ComfyUI ships none today.
+
+   Under sequence parallelism the pack asks nothing and the record says it
+   dropped the pins. The record names two other cases where a pin does not
+   run. The FSDP shard build of a bf16 or fp16 checkpoint reloads the
+   sharded weights through `load_state_dict`, and `ComfyAttention` clears
+   its config on any load whose state dict lacks the key, so a pin that
+   reached that build would not run, and the record would name it. No
+   safetensors checkpoint whose own header pins reaches it today: its uint8
+   config tensors leave the FSDP launch check unable to prove a bf16 or fp16
+   core (`fsdp_islands.header_core_kind`), so every `+fsdp` preset refuses
+   that file class P (`validate_fsdp_launch_quant`) before any shard build.
+   An fp8 or int8 checkpoint takes the direct wrap, which reloads nothing, so
+   its pins stay, run and ask for the waiver as on a resident topology. A
+   LoRA's pin is
+   expected to run under either wrap, since `patch_model` puts it in place
+   after the wrap; no hardware run has checked that yet. A kernel ComfyUI
+   cannot bind on a host leaves ComfyUI's default backend running there, as
+   on one GPU.
+
+   ComfyUI decodes the config tensor with `Tensor.numpy()`, which a GPU
+   tensor refuses, so slab residency and the low-RSS LoRA staging keep these
+   uint8 tensors on the host. Without that, a pinned checkpoint under slab
+   residency and a pinned LoRA under low-RSS staging would each fail to load:
+   a CPU reproduction shows the decode error, though no hardware load has
+   checked either path yet. Slab residency prices a LoRA that holds only
+   these tensors as no bake, because it patches no weight.
+
+   Under dual-model cfg2 each rank checks the checkpoint it holds and its
+   LoRA stack, and the dm-cfg2 readiness exchange makes the other rank
+   refuse with it. The driver keys every grant of that render on the
+   conditional checkpoint, so the card names it even when only the
+   unconditional checkpoint pins, and the card's detail line names the
+   checkpoint that pins.
+
+   The first-use ceremony carries no waiver, so a ceremony on a pinned
+   combination ends on this guard, as it does for every class-K guard, and
+   changes no residency setting. On a resident topology a risky combination
+   (a LoRA stack, or slab residency requested) then renders under stock
+   residency, the limit TROUBLESHOOTING #84 describes for Sol. FSDP has no
+   stock residency to fall back to. Under `auto_gate=first_use`, a render on
+   cfg2+fsdp or dp2+fsdp needs a Gate PASS, and the ceremony that would earn
+   one ends on this guard, so a pin that runs there (a LoRA's, or an fp8 or
+   int8 checkpoint's) refuses even after the grant. Render it on uly2+fsdp,
+   where dgx-monarch drops the pin, with `auto_gate=off`, or on a topology
+   without fsdp. `tools/make_pin_probe_lora.py` writes a LoRA that pins a
+   kernel on one family's attention modules, for a hardware check without a
+   patched checkpoint.
+
+   The "attention keyword handoff" seam in
+   `tests/canary/comfy_seam_contracts.py` holds the Anima op, the
+   `usp_options` override, the Qwen Image 2.1 attention and the Wan-Animate 2
+   attention against the real ComfyUI tree, and with tiny real models the
+   stock sites in the Wan 2.1, LTX, Kandinsky 5, Anima (on its cosmos DiT),
+   Z-Image and Krea2 forwards, WanDancer's music encoder, MiniMax H3's token
+   refiner, the LTX audio-video text connectors and FLUX.3's text and
+   reference blocks, where a tiny real FLUX.3 model carries real config
+   tensors on two early and two sharded blocks. The other sites (SCAIL,
+   WanDancer cross-attention, LTX audio-video `attn2` and `audio_attn2`,
+   OmniGen2, Boogu and the Hunyuan token refiner) have CPU tests with
+   stand-in models (`tests/test_stock_attention_pins.py`). The same seam
+   loads a tiny real Wan 2.1 model with two real config tensors and applies a
+   real LoRA pin through ComfyUI's own patcher, and the detector must report
+   both; it also checks the probe tool's key patterns against tiny real
+   Krea2, Anima, Kandinsky 5, Wan 2.1, Qwen Image 2.1 and FLUX.3 models, the
+   last for both the `flux3` and the `flux3_early` pattern. The
+   detection, record and waiver have CPU tests with stand-in modules
+   (`tests/test_attention_pins.py`, `tests/test_attention_pins_wiring.py`).
 
    **Lens joint order, key bias and text rows.** Each Lens block joins
    `[image, text]`, so Ulysses' head all-to-all gathers `[image0, text0,
@@ -345,10 +587,10 @@ shape for all of them.
    module selection.
 
    Performance cost (not timed), pure Ulysses only. Per block per model call: the order
-   treatment copies q, k, v and the output once each and reads one device
-   value per pad row for each of the query and key sets; even streams take
-   the full-axis call too. The text treatment adds three `all_gather`
-   calls with their copies and a joint-stride buffer, beside the four
+   treatment copies q, k, v and the output once each and reads nothing back
+   from the device; even streams take the full-axis call too. The text
+   treatment adds three `all_gather` calls with their copies and a
+   joint-stride buffer, beside the four
    all-to-alls each block already makes. The bias adds one small tensor cast
    per call, as stock casts its own, and one output copy, and the masked
    backend's speed against flash is unknown. The shipped graph makes 40
@@ -407,19 +649,14 @@ shape for all of them.
    stream with a pad row adds a row selection of q, k and v plus a zero-filled
    output and a scatter, which the default 1328 canvas triggers because 83 by
    83 is odd. That makes nine full-length copies per padded call. Pad rows
-   also cost device to host syncs. `RankMajorJointOrder` remaps the query and
-   key pad sets separately and reads each remapped row back from the device,
-   two syncs per pad row, and the pad exclusion builds each side's keep index
-   with a host to device copy and a `nonzero`, two syncs per side. That is 8
-   syncs per block for a 1328 call with odd text (480 per call), 6 for 1328
-   with even text or 1024 with odd text, and none for 1024 with even text.
-   None of these copies, gathers or syncs has a timing yet. Time a warm 1328
-   render before and after on hardware. Candidate reductions meant to keep
-   every bit, none applied or tested: host arithmetic for the pad remap and
-   the keep index, which needs no sync; one row selection that folds the
-   order permutation into the keep index, five full-length copies instead of
-   nine; and one gather of the q, k, v input with `txt_mlp` run whole on full
-   rows, three gathers instead of six.
+   cost no device to host sync: the order and keep indices come from the
+   per-layout cache, and the pad-row remap reads its host copy of the
+   inverse. None of these copies or gathers has a timing yet. Time a warm
+   1328 render before and after on hardware. Candidate reductions meant to
+   keep every bit, neither applied nor tested: one row selection that folds
+   the order permutation into the keep index, five full-length copies instead
+   of nine; and one gather of the q, k, v input with `txt_mlp` run whole on
+   full rows, three gathers instead of six.
 
    **Ideogram4 pad row.** Ideogram4 packs `[text, image]` into one stream and
    shards it in contiguous chunks, so Ulysses' head all-to-all already hands
@@ -461,15 +698,14 @@ shape for all of them.
    show neither changes a bit at those shapes.
 
    Performance cost (not timed), pure Ulysses with an odd packed total. Per block per
-   model call: `keep_index` runs for the query side and the key side, and each
-   run copies the drop list to the device and reads a `nonzero` result back,
-   both of which wait on the stream, so four waits per block; then a row
-   selection of q, k and v, a zero-filled output and a scatter, about 100 MB
-   of extra writes per block at the template's 4380 by 9 by 256 bf16 rows. The
-   all-to-all count is unchanged. Over the template's 34 blocks that is 136
-   waits and about 3.4 GB per conditional call, and a render makes 20
-   conditional calls; its unconditional calls are even at 1024 and pay
-   nothing. Neither this path nor xfuser 0.7's own forward passes `use_sync`
+   model call: a row selection of q, k and v, a zero-filled output and a
+   scatter, about 100 MB of extra writes per block at the template's 4380 by
+   9 by 256 bf16 rows. The query and key sides share one keep index from the
+   per-layout cache, so the block waits on no device read. The all-to-all
+   count is unchanged. Over the template's 34 blocks that is about 3.4 GB per
+   conditional call, and a render makes 20 conditional calls; its
+   unconditional calls are even at 1024 and pay nothing. Neither this path
+   nor xfuser 0.7's own forward passes `use_sync`
    to the all-to-all. Time a warm template render before and after on
    hardware.
 
@@ -497,8 +733,12 @@ shape for all of them.
    calls with and without a text pad, and the shipped template on RAW BF16,
    RAW INT8 ConvRot and Turbo FP8-scaled (VALIDATION.md). Before the
    treatments the template read 1-step NRMS 0.015695 on INT8 and 0.034555 on
-   FP8, and an odd-text BF16 gate 0.009848. The SAGE route that auto picks
-   for FP8 above 1.2 MP has not been measured.
+   FP8, and an odd-text BF16 gate 0.009848. Auto takes the SAGE route (row 11)
+   for FP8 from 1.2 MP only where cfg2 on row 15 does not apply: above 2.36 MP,
+   or at CFG 1 with no CFG++ sampler keeping the unconditional pass. Campaign K
+   read that route on Turbo FP8 at 1152 to 1536 square at 1-step NRMS 0.030 to
+   0.058 against one GPU, and its full-schedule latents did not equal the
+   reference ([VALIDATION.md](VALIDATION.md#campaign-k-cfg2)).
    `tests/test_krea2_comfy_exactness.py` builds comfy's own `SingleStreamDiT`
    and shows that every joint and text attention and every text Linear gets
    stock's operands, and that each rank's output equals stock's on the CPU.
@@ -507,11 +747,10 @@ shape for all of them.
    measured latents show they keep stock's bits at those row counts.
 
    Performance cost (not timed), pure Ulysses only. Per joint block per model call, the
-   order treatment copies q, k, v and the output once each and builds the
-   permutation once and its inverse twice, and every joint call takes the
-   full-axis path even with no pad row. A padded call already pays two
-   `nonzero` host syncs; the remap adds one device read per pad row for each
-   row set. With `compile_dit` on, the full-axis call is compiler-disabled, so
+   order treatment copies q, k, v and the output once each, with its
+   permutation and inverse from the per-layout cache, and every joint call
+   takes the full-axis path even with no pad row. A padded call reads nothing
+   back from the device. With `compile_dit` on, the full-axis call is compiler-disabled, so
    every joint attention breaks the compiled block there, padded or not. The text
    path costs each rank the whole text compute once per call instead of half,
    adds no gather, and drops the refiner's eight all-to-alls and their pad
@@ -582,20 +821,16 @@ shape for all of them.
    single blocks. Per double block per model call: four text `all_gather`
    calls, each with a contiguous copy and a re-shard copy, plus a joint-stride
    buffer for `txt_attn.proj`; the four text GEMMs run on every text row on
-   both ranks; the order treatment builds a permutation once and its inverse
-   twice, and indexes q, k, v and the output once each. A padded stream adds,
-   in each block of the loop it pads, a row selection of q, k and v, a
-   zero-filled output, a scatter, two host-to-device copies of the pad-row
-   list and two device syncs, one for each kept-row index (query side and key
-   side). In the double loop the order remap also reads two device values per
-   drop row, since it remaps the query and key row sets apart. The template's
-   canvas and prompt pad both loops, which comes to 160 host syncs per model
-   call and 3200 per 20-step render. Time a warm 2048 render before and after
-   on hardware. The HunyuanVideo 1.5 720p checkpoint has 54 double blocks and
-   no single blocks. Its template's prompt is 77 text rows (counted with
-   comfy's tokenizer) and its empty negative 6, so only the
-   cond call's text stream pads: 216 host syncs per step and 4320 per 20-step
-   render.
+   both ranks; the order treatment takes its permutation and inverse from the
+   per-layout cache and indexes q, k, v and the output once each. A padded
+   stream adds, in each block of the loop it pads, a row selection of q, k
+   and v, a zero-filled output and a scatter; neither the keep index nor the
+   order remap reads the device. The template's canvas and prompt pad both
+   loops. Time a warm 2048 render before and after on hardware. The
+   HunyuanVideo 1.5 720p checkpoint has 54 double blocks and no single
+   blocks. Its template's prompt is 77 text rows (counted with comfy's
+   tokenizer) and its empty negative 6, so only the cond call's text stream
+   pads.
 
    **Boogu joint order, pad rows and instruct rows.** Boogu shards five
    streams. The noise and reference refiners each shard their own stream, the
@@ -646,16 +881,15 @@ shape for all of them.
    uncond never batch, and each call runs 8 double, 32 single and 2 + 2
    refiner blocks. In every call each double block's joint attention takes the
    full-axis path, copies q, k, v and the output once each for the order, and
-   builds the permutation and its inverse on the device; `restore` builds that
-   inverse a second time. Every padded call selects the real rows of q, k and
-   v, fills a zeroed output, scatters into it, and makes two device-to-host
-   reads in `nonzero`; the joint call adds two more per pad row, where the
-   order remaps the query and key pad sets. At 1024 the cond call pads the
-   instruct stream, so each double block's joint call makes four reads and
-   each of the 32 single blocks two over the 4205-row stream; the uncond call
-   pads nothing. At 1040 the template prompt pads both double streams: each
-   joint call makes six reads, each image self-attention and each noise
-   refiner block two, and the 4334-row single stream pads nothing. For
+   reads the permutation and its inverse from the per-layout cache, which
+   `restore` reuses. Every padded call selects the real rows of q, k and v,
+   fills a zeroed output and scatters into it, and reads nothing back from
+   the device. At 1024 the cond call pads the instruct stream, so each double
+   block's joint call and each of the 32 single blocks over the 4205-row
+   stream pay that; the uncond call pads nothing. At 1040 the template prompt
+   pads both double streams, so each joint call, each image self-attention
+   and each noise refiner block pay it, and the 4334-row single stream pads
+   nothing. For
    selected Linears, including the shipped fp8_scaled checkpoint, the instruct
    wrapper adds seven `all_gather` calls per double block and runs those GEMMs
    on every row on both ranks. Three gathers duplicate earlier work because
@@ -709,10 +943,11 @@ shape for all of them.
    Performance cost (not timed), pure Ulysses only. An even joint stream
    adds nothing per
    block. An odd one adds, per block per call, a row selection of q, k and v,
-   a zero-filled output and a scatter, and two kept-row index builds, each a
-   device to host sync. The fused branch runs one kernel where the unfused
-   one ran three. The rotary and token-shard copies happen once per forward
-   and the final-norm copy once per odd forward, all at batch 2 only.
+   a zero-filled output and a scatter; its keep index comes from the
+   per-layout cache and reads nothing back from the device. The fused branch
+   runs one kernel where the unfused one ran three. The rotary and
+   token-shard copies happen once per forward and the final-norm copy once
+   per odd forward, all at batch 2 only.
 
    **Mage Flow joint order, pad rows and text rows.** Mage Flow runs
    Qwen-Image's double block, so the same three departures apply. Under pure
@@ -761,6 +996,123 @@ shape for all of them.
    only for its unquantized text Linears. A render runs 12 blocks per model
    call and two calls per step when the two prompts differ in length, as the
    shipped T2I pair does.
+
+   **FLUX.3 Klein two-phase shard, spans and early streams.** FLUX.3 runs
+   five image blocks over the image rows, then 28 single blocks over the
+   joint `[image, references, text]` stream, and modulates by span: each span
+   is a `(start, end, modulation)` row range, the first modulates every row
+   and each later one redoes its own rows. The sharded forward replaces
+   `Flux3._forward` and calls stock's method for every computation of the
+   prelude (the time, image, id and rope embeddings), so only the
+   orchestration is the pack's. The image phase shards the image rows in
+   contiguous chunks and gathers them after the five blocks; the joint phase
+   rebuilds the stream and shards it again in contiguous chunks. Ulysses' head
+   all-to-all then hands the kernel stock's key order with the pads at the
+   tail, so no order descriptor is needed (the Ideogram4 and Boogu shapes).
+   Each rank clips stock's spans to its own rows: the first span is kept
+   even when it covers no local row, because the block reads its modulation
+   for every row, and a later span with no local row is dropped rather than
+   handed to comfy-kitchen's fused `adaln` as an empty launch. That fused
+   `adaln` picks its CUDA kernel by a call's kernel rows (batch times rows),
+   so a rank's piece of a span normalized in a call sized to the piece can
+   round differently from stock's call for the whole span. Each of the 33
+   sharded blocks therefore gets a per-instance `forward`
+   (`adapters/flux3_adaln_parity.py`) that runs stock's own `Block.forward`
+   code with its `modulated_norm` global resolved to a wrapper: each call is
+   filled with zero rows to stock's row count for its span (the whole stream
+   for the first call, the stock span for each later one), runs once, and
+   keeps the rank's rows. The op is row-local, so those rows are stock's bits
+   whatever row count comfy-kitchen branches on. The class, its module and
+   the early blocks are untouched, and a stock block that stops reading that
+   global runs unrouted with one warning, which the CPU exactness test turns
+   into a failure. Every shard
+   chunk is made contiguous, since the block writes its gated residual in
+   place and stock's kernels read contiguous rows. Ids shard with the same pad
+   and chunk as their tokens and embed locally through stock's `rope`. The
+   final layer runs on the gathered joint stream's image rows, stock's call on
+   stock's rows.
+
+   Pad rows are named as `drop_rows` on every topology. A pad row takes the
+   first span's shift, so it is a nonzero key after the first `adaln`; under
+   pure Ulysses the full-axis call drops it, and a padded ring or hybrid
+   render refuses once, before the first block, through the generic
+   `assert_ulysses_only_padding`, whose `uly*` or `single` remedy FLUX.3 can
+   run. ComfyUI pads the text stream to a multiple of 80 tokens with real
+   tokens the model attends, so text never makes a stream odd at an even
+   degree. An odd image grid pads the image phase, and at world 2 the joint
+   phase pads when the joint total is odd: a text-to-image render on an odd
+   grid, or an edit whose second or later references make the total odd. One
+   reference doubles the image rows, so a one-reference edit pads only its
+   image phase. An edit takes its grid from the first reference, so a 4:3
+   source pads where a square one does not.
+
+   The five text blocks and five reference blocks stay in stock's
+   `preprocess_conds`, replicated on every rank: the text stream is short, and
+   sharding it would add all-to-alls and run its Linears at half rows. ComfyUI
+   calls those blocks without options, so under sequence parallelism the
+   adapter binds each to comfy's default attention (the stock sites above);
+   the INT8 files pin none of them. On every load `prepare_base_model` binds
+   `Flux3.extra_conds` to run stock's method under `torch.inference_mode()`,
+   as stock ComfyUI does when it executes a prompt.
+   A Worker samples on its own thread, where inference mode is off, so without
+   the bind the base model would rerun its early blocks on every step at the
+   call's batch. Stock's own predicate still decides the branch: the base
+   model computes its text and reference states once per conditioning, and
+   the step-distilled flow map, whose early modulation depends on each step's
+   target sigma, keeps stock's per-step path, as does any model with
+   conditioning hooks. The bind clones every inference tensor it returns, so
+   no later in-place write meets one. It reads the class function, so a
+   repeat bind replaces rather than stacks, and it sits on the shared
+   `BaseModel` instance, so LoRA clones and the baked hot-swap arm keep it;
+   the worker installs it before any sample's first `extra_conds`. It caches
+   nothing stock does not: no denoising state is reused across steps. On the
+   step-distilled model every rank reads the whole sampler schedule from
+   `transformer_options["sample_sigmas"]`, and a call without it refuses
+   class P before the first block, where stock would raise `KeyError`. A
+   Ulysses degree that does not divide the 24 heads refuses class P at
+   injection. FSDP wraps the single blocks and `content_mode_blocks.image`
+   per block and keeps the early streams whole through the class-scoped
+   census (below).
+
+   Hardware results (2026-10-15 and 2026-10-16): uly2 one-step latents
+   equaled stock ComfyUI on one GPU at 1024 and 1536 square and on the odd
+   1040 and 1552 grids, for both checkpoints. The five image blocks and the
+   28 single blocks still run their Linears on a shard's rows, and the
+   measured latents show they keep stock's bits at those row counts for text
+   to image. One-reference edits read one-step NRMS 0.019 to 0.055 against
+   stock, under the floor but not identical, while the two-reference edit,
+   which pads both phases, was identical. A probe on 2026-10-16 traced the
+   edits, and uly2 text to image at 704 square and below, to the fused
+   `adaln` kernel switch above; the parity route makes them bit-identical to
+   one GPU, confirmed on hardware on 2026-10-16
+   ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)). On the CPU,
+   `tests/test_flux3_comfy_exactness.py` builds ComfyUI's own `Flux3` at toy
+   size in float32 and shows every kernel call of the two-rank forward
+   receiving stock's q, k and v for its heads in stock order with no pad row,
+   and the output equal to stock's: an even grid, an odd grid that pads both
+   phases, one and two references, batch 2, the flow map and the fused q, k
+   and v layout the INT8 files use. That proves operands and order, not a GPU
+   kernel.
+
+   Performance cost, sequence parallelism only. Per model call:
+   four all-to-alls in each of the five image blocks, one all-gather of the
+   image rows (about 25 MB at 1 MP in bf16) and one final all-gather of the
+   joint stream, beside the 28 times four joint all-to-alls every Ulysses
+   family pays; a padded phase adds a row selection and a scatter per block.
+   The fused-norm parity route gives each rank stock's full `adaln` work, the
+   first call of every block over the whole stream: op-level timings put it
+   at 1 to 31 ms per model call, about 2 to 4 percent of a measured uly2 step
+   at 1024 square, pending the hardware walls.
+   Every rank runs the replicated prelude whole. The step-distilled edit also
+   runs the five reference blocks every step on every rank, about 14 percent
+   of each rank's work with one 1 MP reference; the base model computes them
+   once per conditioning. By block rows, an estimate and not a timing, uly2
+   leaves each rank half of one GPU's work for text to image and the base edit
+   and about 54 percent for the step-distilled edit. Measured on 2026-10-15 and
+   2026-10-16, with the first Spark capped at 2100 MHz, uly2 sampler walls ran
+   1.33x to 1.57x faster than one GPU on the base model, 1.41x to 1.55x on the
+   step-distilled model and 1.50x on the step-distilled edit
+   ([BENCHMARKS](BENCHMARKS.md#flux3-klein-one-gpu-uly2-and-cfg2-2026-10-15-to-2026-10-16-head-capped)).
 
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,
@@ -814,7 +1166,9 @@ The worker applies two capacity and performance transforms in
   (`blocks`, `transformer_blocks`, `double_blocks`, `single_blocks`, `layers`,
   `double_stream_layers`, `single_stream_layers`, `context_refiner`,
   `noise_refiner`, `ref_image_refiner`, `pixel_blocks`, `visual_transformer_blocks`,
-  `text_transformer_blocks`, `patch_blocks`) plus the top-level module with
+  `text_transformer_blocks`, `patch_blocks`, and `content_mode_blocks.image`, a
+  dotted path the wrap resolves one attribute at a time, because iterating a
+  `ModuleDict` yields its keys) plus the top-level module with
   `fully_shard`, so each rank holds ~1/world of the weights and all-gathers
   per block. This is a capacity tool and is about 2x slower. Register every new
   family block-list attribute. No matching name raises `UnsupportedModelError`
@@ -849,6 +1203,17 @@ The worker applies two capacity and performance transforms in
   the wrap, they can never deadlock an all-gather. A new family that runs a
   module from `extra_conds` adds it to that table, which the `outside forward
   modules` canary seam holds to the installed ComfyUI.
+
+  A second table, keyed by comfy class, holds dotted paths for a class whose
+  module names other families also build. FLUX.3's `txt_in`, `time_in`,
+  `emb_in`, `early_stream_modulations`, `txt_mode_blocks` and
+  `content_mode_blocks.image_cond` live there, because Flux, Chroma and others
+  build `txt_in` and `time_in` and run them inside their forwards; a flat entry
+  would replicate theirs too. Only the FLUX.3 base model reaches these modules
+  from `extra_conds`; the step-distilled model runs them inside its forward,
+  where replication is still correct but not needed. The same seam reads the
+  class-scoped rows with a reader that follows subscripted attributes and
+  checks them against forward hooks on a tiny real model.
 
 ## Registration
 

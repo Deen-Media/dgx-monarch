@@ -13,6 +13,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from .attention_inputs import STOCK_BACKEND_RUNS, note_preferred_attention
 from .base import (
     Adapter,
     InjectionContext,
@@ -20,9 +21,13 @@ from .base import (
     shard_seq,
     sp_gather,
 )
+from .stock_attention import stock_attention_options
 from .wan_animate2 import WanAnimate2Adapter  # noqa: F401
 
 log = get_logger(__name__)
+
+# The site gets one debug line from note_preferred_attention.
+_MUSIC_ATTENTION_SITE = "wan_dancer music encoder attention"
 
 
 def _bind_usp_self_attention(diffusion_model, attn) -> None:
@@ -45,6 +50,32 @@ def _bind_usp_self_attention(diffusion_model, attn) -> None:
 
     for block in diffusion_model.blocks:
         Adapter.bind(block.self_attn, "forward", usp_self_attention)
+
+
+def music_self_attention(self, x, freqs):
+    """WanDancer's ``MusicSelfAttention.forward`` with no per-block kernel pin.
+
+    Every rank runs the small music encoder whole before the sharded block
+    loop. Its stock call hands ``optimized_attention`` the block's preference
+    and no transformer_options, so no override can reach it. This copy of the
+    stock forward notes the preference once and passes none, so comfy's
+    default backend runs as stock runs it unpinned (adapters/stock_attention.py).
+    """
+    from comfy.ldm.flux.math import apply_rope1
+    from comfy.ldm.modules.attention import AttentionTensorContainer, optimized_attention
+
+    b, s = x.shape[:2]
+    n, d = self.num_heads, self.head_dim
+    q = apply_rope1(self.q_proj(x).view(b, s, n, d), freqs)
+    k = apply_rope1(self.k_proj(x).view(b, s, n, d), freqs)
+    note_preferred_attention(_MUSIC_ATTENTION_SITE, self.comfy_attention,
+                             chooser=STOCK_BACKEND_RUNS)
+    x = optimized_attention(
+        AttentionTensorContainer(q.view(b, s, n * d)),
+        AttentionTensorContainer(k.view(b, s, n * d)),
+        AttentionTensorContainer(self.v_proj(x).view(b, s, n * d)),
+        heads=self.num_heads, preferred_attention=None)
+    return self.out_proj(x)
 
 
 class SCAILAdapter(Adapter):
@@ -85,7 +116,10 @@ class SCAILAdapter(Adapter):
                              sam_latents=None, **kwargs):
             # References join before patch embedding; pose tokens join after
             # flattening. The resulting token axis and freqs shard identically.
+            # Stock cross-attention ignores a pinned kernel (stock_attention.py).
             from comfy.ldm.wan.model import sinusoidal_embedding_1d
+
+            transformer_options = stock_attention_options(transformer_options)
 
             if reference_latent is not None:
                 x = torch.cat((reference_latent, x), dim=2)
@@ -230,6 +264,8 @@ class WanDancerAdapter(Adapter):
                 )
             from comfy.ldm.wan.model import sinusoidal_embedding_1d
 
+            # Stock cross-attention ignores a pinned kernel (stock_attention.py).
+            transformer_options = stock_attention_options(transformer_options)
             # Non-30 fps selects the global embedding and output head.
             off_30 = int(fps + 0.5) != 30
             x = (self.patch_embedding_global if off_30 else self.patch_embedding)(x.float()).to(x.dtype)
@@ -328,6 +364,8 @@ class WanDancerAdapter(Adapter):
             return x
 
         _bind_usp_self_attention(diffusion_model, attn)
+        for layer in diffusion_model.music_encoder:
+            self.bind(layer.self_attn, "forward", music_self_attention)
         self.bind(diffusion_model, "forward_orig", usp_forward_orig)
         log.info("wan_dancer USP injected: %d blocks, %d audio-inject layers, sp=%d",
                  len(diffusion_model.blocks), len(diffusion_model.music_injector.injector),

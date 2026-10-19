@@ -15,6 +15,11 @@ matching Python, torch, torchmonarch and ComfyUI versions; guided setup also
 requires clean Git ComfyUI checkouts except for the missing example files
 described below. Use the current requirements in
 `pyproject.toml` and `requirements.txt`, not a version copied from another rig.
+Each Worker host also needs `/usr/bin/python3` at Python 3.9 or newer, because
+the Worker lifecycle helpers run on it rather than on the configured `python`;
+`dgxm doctor` checks it on every host ([CLUSTER.md](CLUSTER.md#hosts)).
+FLUX.3 Klein needs ComfyUI 0.41.0 or newer
+([model files](#model-files-required-by-each-template)).
 
 First discover the ComfyUI checkout and the interpreter that actually starts
 it. Inspect its launcher or service configuration without printing credentials
@@ -61,9 +66,12 @@ require a full environment archive or restoration afterward.
 Agree on cache reuse before the first CUDA prerequisite check, since even that
 check can create cache files. Set supported cache locations before importing
 Torch or probing CUDA, and record which existing caches remain in use.
-`~/.cache/dgx-monarch` holds consent and model-family memos by default; these
-paths do not follow `XDG_CACHE_HOME`. Preserve them under the approved test and
-restoration plan rather than assuming a new environment isolates them.
+`~/.cache/dgx-monarch` holds consent and model-family memos by default. On
+each Worker host it also holds `profiles/`, where the Init node's
+`load_profile` option, off by default, writes its reports and keeps the
+newest 20. These paths do not follow `XDG_CACHE_HOME`. Preserve them under the
+approved test and restoration plan rather than assuming a new environment
+isolates them.
 
 Driver exports do not establish Worker cache isolation: Worker services filter
 their inherited environment. They also replace caller `TMPDIR` with private
@@ -150,8 +158,10 @@ The Monarch upgrade preserves the project's existing Torch stack. The
 the tested build and its limits. The dependency canary records native imports
 and Torch build identity because public `monarch.rdma` classes can remain
 importable when native bindings are unavailable. New transitive requirements
-include `numpy>=1.26`, `pyarrow>=17` and `xxhash`; both plain and verified
-updates check the candidate dependency contract before pin installation.
+include `numpy>=1.26`, `pyarrow>=17` and `xxhash`. From 1.2.0 on, both plain
+and verified updates check the candidate dependency contract before pin
+installation; the update from 1.1.0 runs the 1.1.0 updater, which does not
+([Upgrading from 1.1.0](#upgrading-from-110)).
 
 After installation, compare torch version, CUDA version and import location
 with the recorded values, confirm CUDA availability, and run the dependency
@@ -331,12 +341,13 @@ mesh even when every per-host process and listener row is healthy.
 
 `example_workflows/artifacts.toml` lists model files for the public examples
 and generated test fixtures under `tests/fixtures/workflows/generated/`.
-For installation, use the files listed for your selected public workflow.
-Test placeholders are for contributors and are not downloads. Each file has
-a models subfolder, source URL, size and sha256; each workflow lists the files
-it needs. Shared files,
-such as the Flux VAE and UMT5 text encoder, have one row each. Demo image,
-video and audio inputs are excluded.
+For installation, use the files listed for your selected public workflow;
+rows that only test fixtures name are for contributors. Each file has a
+models subfolder, and each workflow lists the files it needs. Each file you
+download also has a source URL, size and sha256. Placeholder rows, described
+below, name files you supply yourself. Shared files, such as the Flux VAE and
+UMT5 text encoder, have one row each. Demo image, video and audio inputs are
+excluded.
 
 Check which files are already installed:
 
@@ -352,17 +363,42 @@ reading each in full, and treats a hash mismatch the same way.
 Without `--models-dir`, it performs CI's repository checks: valid rows, a row
 for every template model file, and a template reference for every row.
 
+Each `url` names a fixed Hugging Face commit, so it serves the bytes the
+row's `sha256` describes even after the vendor replaces the file on its main
+branch. The LTX 2.5 files and the FLUX.3 Klein DiT and INT8 encoder files
+are in gated repos: accept each repo's license on Hugging Face, then download
+its files with a Hugging Face token from that account.
+
+FLUX.3 Klein needs ComfyUI 0.41.0 or newer on the driver and on every Worker.
+An older ComfyUI cannot build a FLUX.3 checkpoint: dgx-monarch names the
+family, and the load fails in ComfyUI's own loader
+([TROUBLESHOOTING #121](TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
+The FLUX.3 Klein templates name the pinned Flux 2 VAE and Qwen3-VL-4B encoder
+rows. The vendor's repository also ships `vae/flux2-vae.safetensors` and
+`text_encoders/qwen3vl_4b_bf16.safetensors`: the encoder holds the same
+tensors as the pinned file with different header metadata, and the VAE holds
+the same weights in another key layout. Their bytes differ from the pinned
+files, so `check_artifacts.py --models-dir` reports a vendor copy staged under
+either name as a mismatch. Stage the files the manifest pins.
+
 A row with a blank `url` or `sha256`, or a `size` of 0, is pending. The check
 reports pending rows and passes; `--pending` names them, and `--strict` fails
-on them once the set is filled. `--capture` with the same `--models-dir` first
-syncs, then sets `size` and `sha256` from each staged file, replacing any value
-already there, and writes the manifest back; it never fills `url`. Rows
-marked `placeholder = true` name example LoRAs to replace with your own files;
-they remain placeholders and do not count as pending.
+on them. Every committed row is filled or a placeholder, and CI runs the check
+with `--strict`. `--capture` with the same `--models-dir` first syncs, then
+sets `size` and `sha256` from each staged file, replacing any value already
+there, and writes the manifest back; it never fills `url`. Rows marked
+`placeholder = true` name files you supply yourself: the example and sweep
+LoRA names, and local conversions with no public download, such as the
+ComfyUI-layout CogVideoX checkpoints and the Kroma INT8 file. Each such row's
+`note` says who supplies the file. They carry no url, size or sha256 and do
+not count as pending.
 
 After a template changes which files it loads, rebuild the rows and
-per-template lists with `python tools/check_artifacts.py --sync` and commit
-the result.
+per-template lists with `python tools/check_artifacts.py --sync`. Before you
+commit the result, fill each new row's `url`, `size` and `sha256` from a
+public file that matches the tested file byte for byte, or mark the row
+`placeholder = true` with a `note`. CI runs the check with `--strict`, so a
+new row left pending fails it.
 
 ## Multi-node source installation
 
@@ -960,9 +996,85 @@ old Python modules while restarted workers load the new ones. Start ComfyUI
 again afterwards; that restart loads the updated modules, so the node set on
 the canvas matches the tree.
 
+### Upgrading from 1.1.0
+
+Read this before the first update from 1.1.0, in this order.
+
+1. The first update from 1.1.0 runs the 1.1.0 updater, the `dgxm` installed
+   now. The checks this release adds to both update modes apply from the next
+   update on, so check the points below yourself.
+2. If your Workers run from release slots, update only with
+   `dgxm update --verify`. A Worker runs from a slot when its host's
+   `~/.local/share/dgx-monarch/src` resolves into
+   `~/.local/share/dgx-monarch/releases/` (`readlink -f` shows it). That is
+   true on every remote host of a guided multi-node setup and on every host
+   after a verified update. Plain update leaves those Workers on 1.1.0 while
+   the driver moves on, and
+   [TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)
+   is the repair. If `--verify` refuses with `prior_worker_drift`, the Workers
+   already differ from the driver, as after a guided setup followed by a plain
+   update; repair that first with the same entry. The 1.1.0 verified updater
+   has no `--privileged-process-inspection`, so where protected process
+   environments are unreadable it refuses with `activity_unknown`; run the
+   update from a checkout of this release with the
+   [recovery procedure](TROUBLESHOOTING.md#recover-an-installation-with-an-older-verifier)
+   and that flag instead.
+3. If cluster.toml sets `rdma_latent_return = true`, set it to `false` before
+   you update, in either mode. This release needs a `nic:` target in
+   `[monarch.rdma]` for native return, and the 1.1.0 loader rejects that
+   table. After the update, add the target
+   ([CLUSTER.md](CLUSTER.md#monarchrdma)), turn native return back on, and
+   make the Workers start with the new policy. On an install whose Workers
+   run from release slots, run `dgxm update --verify --target HEAD`, as
+   [Changing policy after install](CLUSTER.md#changing-policy-after-install)
+   describes. With plain systemd Worker units, run `dgxm install-service`,
+   which rewrites them. With `nohup` Workers, run `dgxm restart`.
+4. Do not add a `[monarch]` table before you update: the 1.1.0 loader rejects
+   it. If a plain update stopped with "unsupported key(s): monarch", install
+   `xxhash` as point 6 says, then rerun `dgxm update` to finish it; on an
+   install whose Workers run from release slots, follow TROUBLESHOOTING #118
+   instead. Remove the table again before any return to 1.1.0.
+5. This release refuses to build a mesh on three kinds of ambient environment
+   variable: `OTEL_EXPORTER_OTLP_ENDPOINT` while export is off, a
+   `MONARCH_RDMA_*` name the policy does not set, and a variable the policy
+   sets, such as `DGXM_RDMA_QP_SPLIT` or a `MONARCH_RDMA_*` name, set to
+   another value. 1.1.0 read `DGXM_RDMA_QP_SPLIT` as a user setting, and a
+   Worker of this release refuses to start on a value that differs from the
+   policy, so the update's own Worker start would fail. Clear
+   `DGXM_RDMA_QP_SPLIT` from each Worker's environment before you update: the
+   systemd user manager (`systemctl --user show-environment`), any hand edit
+   to the unit, and the shell that starts a `nohup` Worker. Clear the others
+   before the first render
+   ([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+6. The torchmonarch pin this release installs requires `xxhash`, `pyarrow` 17
+   or newer and `numpy` 1.26 or newer. The 1.1.0 updater installs the pin with
+   `--no-deps` and checks none of them, so `pip check` and
+   `tools/check_dependencies.py` then name any that is missing or too old; on
+   the tested stack only `xxhash` was. Install what they name on the driver,
+   reviewing `"$COMFY_PYTHON" -m pip install --dry-run xxhash` before you run
+   it without `--dry-run`, and on each Worker host with the `python` path from
+   cluster.toml's `[cluster]` table in place of `COMFY_PYTHON`. Until you do,
+   the next update in either mode refuses, because from 1.2.0 on both modes
+   check these requirements on every interpreter. Nothing on the render path
+   imports `xxhash`, so renders do not depend on it.
+7. After a verified update, the driver's editable install metadata still
+   reads the earlier version, so `pip show` and `pip check` report it, until
+   the next `"$COMFY_PYTHON" -m pip install -e "$REPO_DIR" --no-deps`. Run that
+   once after the update; the code that runs is already the new release.
+8. Run the driver and the Workers on the same release. A driver on this
+   release refuses Workers still on 1.1.0 before it dials, with an error that
+   starts `no attach ran`, and `dgxm doctor` fails each such host's
+   `listener generation` row. A ComfyUI started on 1.1.0 cannot attach to
+   Workers on this release; restart it
+   ([TROUBLESHOOTING #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)).
+
+### Update commands
+
 ```bash
-dgxm update    # git pull, the repo's exact torchmonarch pin on the driver and
-               # workers, package install and sync, restart, doctor
+dgxm update    # Workers outside release slots only: fetch,
+               # dependency check, fast-forward, the repo's exact torchmonarch
+               # pin on the driver and workers, package install and sync,
+               # restart, doctor
 dgxm update --verify --help  # transactional cluster path and exact target options
 ```
 
@@ -981,8 +1093,15 @@ Plain `dgxm update` is the compatibility path. It installs both torchmonarch
 and dgx-monarch with `--no-deps`. Neither mode resolves or replaces torch,
 NCCL, xfuser, yunchang, or optional extras; each moves only torchmonarch, to
 the repository's exact pin. Upgrade other dependencies separately.
-Before any pin install or Worker change, plain update checks the candidate's
-dependency requirements on the driver and every configured host. A changed
+From 1.2.0 on, plain update first reads every configured host's
+`~/.local/share/dgx-monarch/src` link and, before it fetches, refuses with
+`release_slot_worker` when one resolves into a release slot, or with
+`release_slot_unknown` when a host's link cannot be read
+([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
+A link that guided setup made to a colocated checkout follows the update and
+passes. Also from 1.2.0 on, before any pin install or Worker change, plain
+update checks the candidate's dependency requirements on the driver and every
+configured host. A changed
 pin downloads a compatible wheel into a temporary directory for metadata
 inspection; an unchanged pin uses installed metadata and needs no download.
 Missing or incompatible prerequisites refuse the update with bounded package
@@ -994,9 +1113,15 @@ one with local commits does, stays where it is and plain update checks its
 HEAD. A checkout that has diverged from its upstream, or a branch with no
 upstream, refuses. So does a staged, unstaged or index-hidden edit to
 `pyproject.toml`, before the fetch, because the fast-forward would install it
-without checking it; commit or discard the edit first. A linked worktree or
-submodule, whose `.git` is a file, and a copy without Git skip the fetch and
-check the working tree's requirements instead. This check does not add
+without checking it; commit or discard the edit first. Plain update acts on
+the checkout `dgxm` was installed from, not on the current directory. When
+that checkout is a linked worktree, whose `.git` is a file, plain update
+refuses with a message that names it, because it fetches and fast-forwards
+only a main checkout. Run `dgxm update --verify`, which fetches origin itself
+and fast-forwards that worktree to a verified release, or reinstall
+dgx-monarch from the main checkout and run plain update from that install. A
+submodule, whose `.git` is also a file, and a copy without Git skip the fetch
+and check the working tree's requirements instead. This check does not add
 verified update's rollback or receipt guarantees to the plain path.
 Plain and verified updates share one file lock per driver checkout, so a second
 update from any process, in either mode, refuses before it changes anything.
@@ -1127,8 +1252,13 @@ or interrupted runs retain it and print its recovery location. Preserve it
 with the installation journals until the transaction is understood; retained
 state is not permission to restart services or delete prior releases.
 
-Source activation invalidates Gate results tied to the previous source. The next use
-runs the check again; sticky FAIL evidence remains authoritative.
+Source activation invalidates Gate results tied to the previous source, and the
+next use runs the check again. A FAIL keeps its quarantine across a source change
+within one package version. A release update changes the package version, and
+that expires context-scoped FAIL rows too (DESIGN.md, invariant 2 under
+"Consent, waivers, and what they can never buy"), so keep
+`auto_gate=first_use`: a combination that failed before then proves itself
+again before it renders.
 Once it holds the per-checkout lock, every verified attempt that returns
 normally writes a sanitized receipt, including a planned refusal or a partial
 or fail-closed settlement. `KeyboardInterrupt` and `SystemExit` are

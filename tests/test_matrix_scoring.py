@@ -4,17 +4,24 @@ The gate itself lives in benchmark/gates.py and is covered in test_gates.py.
 This file covers the runner's own scorer: which cell it reads, what it does
 when that cell is missing, and the order in which run_case reduces a returned
 cond/uncond pair. run_case needs comfy and a live mesh, so the order is read
-from the source rather than run.
+from the source rather than run. The sampler-return tests at the end run
+run_case on CPU with stand-ins for everything but the sampler's return value.
 """
 from __future__ import annotations
 
 import ast
 import importlib.util
 import sys
+import types
 from pathlib import Path
 
 import pytest
 import torch
+
+from dgx_monarch.accuracy_waiver import STAMPED_RESULT_KEY
+from dgx_monarch.attention_pins import RECORD_FIELDS
+from dgx_monarch.nodes import common, guiders, loaders, samplers
+from dgx_monarch.telemetry import render_progress
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "benchmark"))
@@ -101,3 +108,117 @@ def test_run_case_reduces_a_cfg_pair_before_it_attests_the_latent(reader: str):
     # names, so a cfg pair cannot reach the statistics or the hash unreduced.
     body = _run_case_body()
     assert _first_call_line(body, "scored_latent") < _first_call_line(body, reader)
+
+
+def test_run_case_labels_the_topology_the_tagged_ksampler_render_resolves():
+    # DGXMonarchKSampler tags a cfg++ latent, so its render may keep a cfg row
+    # at CFG 1. The provenance label must ask resolve_topology the same
+    # question, and only on the KSampler path: a dropped or inverted keyword
+    # would label an a03-style Krea2 leg uly2 while the render resolves cfg2.
+    calls = [
+        node
+        for statement in _run_case_body()
+        for node in ast.walk(statement)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id == "resolve_topology"
+    ]
+    assert len(calls) == 1, "run_case resolves its provenance topology once"
+    keyword = next((kw for kw in calls[0].keywords if kw.arg == "keeps_uncond"), None)
+    assert keyword is not None, "run_case never passes keeps_uncond"
+    assert ast.unparse(keyword.value) == (
+        "sampling_path == 'ksampler' and sampler_keeps_uncond_at_cfg1(merged['sampler'])")
+
+
+# A plain sampler return leaves the row with exactly these fields; a render
+# under an accuracy waiver adds `waiver_runs` and changes nothing else.
+_ROW_FIELDS = {
+    "name", "topology", "world_size", "median_s", "times_s", "latent_form",
+    "latent_stats", "latent_sha256", "settings", "effective_topology",
+    "effective_worker_args", *RECORD_FIELDS, "status", "latent",
+}
+_RENDERED = torch.arange(16, dtype=torch.float32).reshape(1, 4, 2, 2)
+
+
+def _render_output(run_id: str | None) -> dict:
+    output = {"samples": _RENDERED.clone()}
+    if run_id is not None:
+        output[STAMPED_RESULT_KEY] = [{"run_id": run_id, "guard": "sol_attn"}]
+    return output
+
+
+def _run_case_with_sampler(monkeypatch, sampling_path: str, run_ids: list[str | None]) -> dict:
+    """Run one two-repeat case whose sampler node returns what samplers.py returns.
+
+    Each repeat's return is built by the real ``_sampler_result``: the plain
+    output tuple without a stamp, the ``{"ui": ..., "result": ...}`` dict with
+    one. Everything else run_case touches is a CPU stand-in.
+    """
+    returns = iter(run_ids)
+
+    def ksampler(self, model, seed, steps, cfg, sampler_name, scheduler,
+                 positive, negative, latent_image, denoise=1.0):
+        return samplers._sampler_result(_render_output(next(returns)))
+
+    def sampler_custom(self, noise, guider, sampler, sigmas, latent_image):
+        return samplers._sampler_result(_render_output(next(returns)), {"samples": _RENDERED.clone()})
+
+    def stub(name: str, **members) -> None:
+        monkeypatch.setitem(sys.modules, name, types.SimpleNamespace(**members))
+
+    stub("node_helpers", conditioning_set_values=lambda conditioning, values: conditioning)
+    stub("comfy_extras")
+    stub("comfy_extras.nodes_custom_sampler",
+         RandomNoise=types.SimpleNamespace(execute=lambda noise_seed: ("noise",)),
+         KSamplerSelect=types.SimpleNamespace(execute=lambda sampler_name: ("sampler",)))
+    stub("comfy_extras.nodes_flux",
+         Flux2Scheduler=types.SimpleNamespace(execute=lambda steps, width, height: ("sigmas",)))
+    monkeypatch.setattr(samplers.DGXMonarchKSampler, "sample", ksampler)
+    monkeypatch.setattr(samplers.DGXMonarchSamplerCustom, "sample", sampler_custom)
+    monkeypatch.setattr(guiders.DGXMonarchBasicGuider, "get_guider",
+                        lambda self, model, conditioning: ("guider",))
+    monkeypatch.setattr(loaders.DGXMonarchUNETLoader, "load",
+                        lambda self, mesh, unet, weight_dtype: ("model",))
+    topology = types.SimpleNamespace(
+        describe=lambda: "single", ulysses=1, ring=1, cfg=1, dp=1, fsdp=False, world=1)
+    monkeypatch.setattr(common, "resolve_topology",
+                        lambda *args, **kwargs: (topology, False, "fake"))
+    monkeypatch.setattr(render_progress, "snapshot", lambda: {})
+    mesh = types.SimpleNamespace(
+        world=1, attention="TORCH", worker_args={},
+        handle=types.SimpleNamespace(active_worker_args={"attention": "TORCH"}))
+    monkeypatch.setattr(run_matrix, "_init_tracked_mesh", lambda settings, handles: mesh)
+    monkeypatch.setattr(run_matrix, "encode_prompts",
+                        lambda te, prompt, negative, encode_negative=True: ("pos", "neg"))
+    case = {
+        "name": "cell", "topology": "single", "sampling_path": sampling_path,
+        "unet": "model.safetensors", "te": {"name": "te.safetensors", "type": "flux"},
+        "prompt": "p", "negative": "", "seed": 1, "steps": 2, "cfg": 1.0,
+        "sampler": "euler", "scheduler": "simple", "width": 16, "height": 16,
+        "repeats": len(run_ids),
+    }
+    row = run_matrix.run_case(case, {}, {}, mesh_handles=[])
+    assert next(returns, None) is None, "every repeat reached the sampler"
+    return row
+
+
+@pytest.mark.parametrize("sampling_path", ("ksampler", "flux2"))
+def test_run_case_records_a_waiver_stamped_render_and_its_latent(monkeypatch, sampling_path):
+    # A render under an accuracy waiver returns the UI-bearing dict. The row
+    # keeps the latent and names every repeat's dispatch id, so a waived render
+    # is never read as exact output.
+    row = _run_case_with_sampler(monkeypatch, sampling_path, ["run-b", "run-a"])
+    assert row["status"] == "ok"
+    assert torch.equal(row["latent"], _RENDERED)
+    assert row["latent_sha256"] == run_matrix._latent_sha256(_RENDERED)
+    assert row["waiver_runs"] == ["run-a", "run-b"]
+    assert set(row) == _ROW_FIELDS | {"waiver_runs"}
+
+
+@pytest.mark.parametrize("sampling_path", ("ksampler", "flux2"))
+def test_run_case_keeps_the_plain_tuple_row_unchanged(monkeypatch, sampling_path):
+    row = _run_case_with_sampler(monkeypatch, sampling_path, [None, None])
+    assert row["status"] == "ok"
+    assert torch.equal(row["latent"], _RENDERED)
+    assert row["latent_sha256"] == run_matrix._latent_sha256(_RENDERED)
+    assert set(row) == _ROW_FIELDS

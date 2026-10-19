@@ -28,11 +28,15 @@ cluster defaults or authorize a model or full sampling gate.
 owner and cycle, one first-use return at the threshold, then --timing-repeats
 warm returns at each --timing-sizes-mib size. A timed span is the pack RPC
 (with seeded CPU generation) plus read/drop/ACK; verification, evidence writes
-and status checks stay outside it. Measure both orders in fresh processes:
-message then native, then native then message, stamping each run with
---timing-position first|second. --timing-summary REPORT... pairs the four PASS
-reports by order and prints warmed medians, savings and ratios per stratum;
-it refuses a set that lacks either order and imports neither Torch nor Monarch.
+and status checks stay outside it. Each native call also records its phase
+split (dgx_monarch.return_phases): the Worker pack's preflight, registration,
+any rollback drops and the rest, and the driver read's read, drops, ACK and the
+rest; the summary carries the first-use split per stratum. Measure both orders
+in fresh processes: message then native, then native then message, stamping
+each run with --timing-position first|second. --timing-summary REPORT... pairs
+the four PASS reports by order and prints warmed medians, savings and ratios
+per stratum; it refuses a set that lacks either order and imports neither Torch
+nor Monarch.
 Timing evidence carries no host name, IP, PID or home path, and refuses to
 write one. A plan that would stage more than --timing-budget-gib (default 8)
 across both cycles and owners refuses before any process starts, and a timed
@@ -369,6 +373,8 @@ def timing_summary(cycles):
             require(len(first) == 1, "timing stratum lacks exactly one first-use return")
             entry = {"cycle": row["cycle"], "owner_rank": owner, "warm": {},
                      "first_use_total_s": first[0]["pack_rpc_s"] + first[0]["read_drop_ack_s"]}
+            if "return_phases" in first[0]:  # the Worker pack and driver read splits
+                entry["first_use_phases"] = first[0]["return_phases"]
             for size in sorted({call["size_mib"] for call in calls if call["phase"] == "warm"}):
                 totals = [call["pack_rpc_s"] + call["read_drop_ack_s"] for call in calls
                           if call["phase"] == "warm" and call["size_mib"] == size]
@@ -406,7 +412,7 @@ def run(args, evidence, cfg, driver_facts):
         unregister_proc_mesh_spawn_callback,
     )
 
-    from dgx_monarch import transfer
+    from dgx_monarch import return_phases, transfer, worker_proc_id
     from dgx_monarch.mesh_factory import (
         FleetHandoff,
         _isolated_spawn_host,
@@ -427,8 +433,9 @@ def run(args, evidence, cfg, driver_facts):
         evidence.data["stage"] = "attach"
         row = {"cycle": cycle, "cases": [], "owned_stop_confirmed": False}
         evidence.data["cycles"].append(row)
+        # Each Worker loop serves a per-start id; dial what the probe reads now.
         hosts = attach_to_workers(ca="trust_all_connections",
-            workers=[host.address for host in cfg.hosts], name=f"native-return-{cycle}")
+            workers=worker_proc_id.read_dial(cfg), name=f"native-return-{cycle}")
         OWNED.append(hosts)
         hosts.initialized.get(timeout=90)
         evidence.data["stage"] = "spawn_owned_procs"
@@ -492,19 +499,23 @@ def run(args, evidence, cfg, driver_facts):
                     guard._bind_future_locked(future)
                 result = guard.get(timeout=90)
                 roots.append(result)
-                return guard, result["latent"], size, seed, time.monotonic() - started
+                return (guard, result["latent"], size, seed, time.monotonic() - started,
+                        result.get(return_phases.RESULT_KEY))
 
             def consume(item, expected_kind, label, bucket="cases", extra=None,
                         _rank=rank, _row=row, _all_rows=all_rows):
                 evidence.data["stage"] = "read_drop_ack"
                 evidence.data["active_case"] = {"label": label, "owner_rank": _rank}
                 evidence.save()
-                guard, descriptor, size, seed, pack_s = item
+                guard, descriptor, size, seed, pack_s, worker_phases = item
                 require(descriptor.get("kind") == expected_kind,
                         "descriptor kind mismatch: native fallback is not PASS")
+                marked = return_phases.mark()
                 started = time.monotonic()
                 value = transfer.read_latent_result(descriptor, read_guard=guard)
                 read_s = time.monotonic() - started
+                driver_phases = return_phases.split(
+                    marked, return_phases.DRIVER_PHASES, always=expected_kind == "rdma")
                 expected = torch.randint(0, 256, (size,), dtype=torch.uint8,
                     device="cpu", generator=torch.Generator(device="cpu").manual_seed(seed))
                 require(value.device.type == "cpu" and value.dtype == torch.uint8
@@ -517,11 +528,13 @@ def run(args, evidence, cfg, driver_facts):
                     duplicate = _all_rows("ack_latent_handoff", 1, descriptor["owner_token"])
                     require(sorted(r["status"] for r in duplicate) ==
                             ["already_released", "unknown"], "duplicate ACK not idempotent")
+                phases = ({"return_phases": {"worker": worker_phases, "driver": driver_phases}}
+                          if worker_phases is not None or driver_phases is not None else {})
                 _row.setdefault(bucket, []).append({"label": label, "owner_rank": _rank,
                     "bytes": size, "kind": expected_kind, "exact_equal": True,
                     "pack_rpc_s": pack_s, "read_drop_ack_s": read_s,
                     "tensor_sha256": hashlib.sha256(value.numpy().tobytes()).hexdigest(),
-                    "receiver_jobs": 0, "reader_tokens": 0, **(extra or {})})
+                    "receiver_jobs": 0, "reader_tokens": 0, **phases, **(extra or {})})
                 evidence.save()
 
             if args.timing:  # first use leads, before any canonical case touches this owner
@@ -675,6 +688,8 @@ def compare_timing(reports):
                    "first_use_s": {"message": message["first_use_total_s"],
                                    "native": native["first_use_total_s"]}}
             first_use.append(native["first_use_total_s"])
+            if "first_use_phases" in native:
+                row["native_first_use_phases"] = native["first_use_phases"]
             for size in sorted(set(message["warm"]) & set(native["warm"]), key=int):
                 slow, fast = message["warm"][size]["median_total_s"], native["warm"][size]["median_total_s"]
                 row["warm"][size] = {"message_median_s": slow, "native_median_s": fast,

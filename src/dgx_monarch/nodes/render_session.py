@@ -9,6 +9,7 @@ from ..mesh_session import (  # noqa: F401  # Public render_session compatibilit
     ConcurrentRenderSessionError,
     RenderSession,
     RetiredRenderHandleError,
+    active_render_session,
     claim_render_session,
     mutation_render_session,
     require_mutation_authority,

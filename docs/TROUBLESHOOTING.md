@@ -85,9 +85,13 @@ Monarch worker endpoint (docs/VALIDATION.md). If an attach fails anyway, the
 driver retries once in-process (the current pin evicts the stale attach
 session, meta-pytorch/monarch#4067). When the retry also fails, it restarts the
 Worker services so the next attempt starts clean, and that ComfyUI session
-refuses further attaches: restart ComfyUI (the fleet is already healthy). One
-case skips the in-process retry: see
-[#2](#2-every-attach-times-out-after-one-failed-attach). Set `auto_heal = false` in cluster.toml to opt out.
+refuses further attaches: restart ComfyUI (the fleet is already healthy). The
+retry dials each loop's id as read again after the first failure. It does not
+run when that reading finds no id, or when the attach is a released fleet's
+replacement and no loop moved: see
+[#2](#2-every-attach-times-out-after-one-failed-attach). A refusal that starts `no attach ran`
+dialed nothing and leaves the session usable ([#2](#2-every-attach-times-out-after-one-failed-attach)).
+Set `auto_heal = false` in cluster.toml to opt out.
 
 ## 2. Every attach times out after one failed attach
 
@@ -107,18 +111,239 @@ listeners before the first attach. A failed attach retries once in-process; a
 second failure restarts the Worker services so the next attempt starts clean.
 `dgxm restart` remains the manual fallback. One residual case needs more: [#15](#15-attaches-still-time-out-after-dgxm-restart-driver-side-wedge).
 
+**A Worker service restarted under a live driver.** Each Worker loop start
+serves a new Monarch proc id: it listens on `<proc-id>@tcp://<ip>:<port>`,
+with an id derived from the boot id, its pid and its start time. The address
+in cluster.toml, the systemd unit and the firewall rules stay the bare URL.
+The loop writes the id into its actor ledger record before it listens, and
+the listener-generation probe, which the driver runs on every host before
+every attach, reads it back. The driver dials only that id. So after `dgxm
+restart`, a crash that systemd restarts, or a hand restart of the service, a
+ComfyUI that stayed up can attach again without a restart of its own. A loop
+that served the bare URL kept Monarch's singleton proc identity across
+restarts, and the driver's next attach stalled until its config push timed
+out.
+
+**A render after the restart.** The first render after the restart meets the
+old actors. A message to one of them comes back to the driver's fault hook as
+undeliverable, and never to the call that sent it, so before 1.2.0 the
+render's cross-rank price request
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
+waited its whole 30 s deadline and refused with `did not answer in time`,
+naming Reset attached mesh. Now the price wait ends within half a second of
+the first delivery failure that names a fleet host and the mesh the price
+waits on, and the refusal says the message was undeliverable. A late failure
+from a mesh that Recycle, Reset or an earlier re-attach retired names the same
+address under another mesh id, so it never ends a later wait.
+
+When nothing has reached a restarted loop since its restart, the render's own
+price request is the message the old channel session loses (below), and no
+failure comes back for it. So the wait asks a rank that has not answered once
+more after 2 s; that second request comes back undeliverable at once, and the
+wait ends about 2.5 s in.
+
+**A sampler render attaches again by itself.** A render through KSampler,
+KSampler Advanced or Sampler Custom (DGX Monarch) that owns its render
+session, and whose topology, attention and worker settings are unchanged
+since the last render, carries on after that refusal. So does the eager load
+of a Load Diffusion Model (DGX Monarch) node with an explicit topology, on the
+same condition:
+
+1. It reads every loop's id, the reading every attach takes, and compares it
+   with the id this driver dialed.
+2. When every loop serves a new id, it stops the stale mesh through the
+   deliberate teardown, giving each of the teardown's two waits 2 s. In CPU
+   runs a stop sent to the old ids was never acknowledged, so each wait ran
+   out its 2 s; the old processes died with their loops. On the pair,
+   Monarch later reported the old actors stopped; the recheck of this step
+   is pending. As after any stop that times out, the liveness proof in
+   [#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)
+   releases the stale mesh only when every host reports its old processes
+   gone.
+3. It attaches by the new ids, through the ordinary attach and its budgets,
+   and dispatches once more on the new mesh.
+
+No click is needed. The driver log prints one line for it, `restart_reattach
+outcome=attached: every Worker loop serves a new proc id (...); this render
+retired the stale mesh (liveness_release) and attached again by the new ids in
+<n> s, with no reset`. The replacement attach's trace opens with
+`released_predecessor=true` after a liveness release and adds one
+`event=restart_reattach` line
+([#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)). The
+render's finish record in `/dgxm/telemetry` carries `reattach=restart_reattach`
+and `reattach_s`, the seconds the detour took, and the `dgxm top` ticker shows
+a `restart_reattach` event with its `outcome`, `verdict`, `moved`, `teardown`
+and `wall_s`. The undeliverable messages and late faults from the stale mesh
+(`cluster fault`), and a stale-mesh stop that times out (`proc stop on detach
+timed out`), still log at ERROR and can raise browser toasts; next to
+`outcome=attached` they are expected.
+
+The render refuses at once instead, with a class C `cross_rank_capacity`
+refusal that names the remedy, when the reading finds:
+
+| what the reading found | remedy |
+|---|---|
+| some loops serve a new id and others still serve the id this mesh dialed | `dgxm restart`, so every loop restarts together, then queue again |
+| no loop serves a new id: the actor is gone or unreachable for another reason | Reset attached mesh, then queue again |
+| a loop whose id it cannot read | the id gate's remedies below, then queue again |
+| a host where the liveness proof does not find the old processes gone | the after-death cause in [#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn); `dgxm restart` sweeps survivors ([#51](#51-a-worker-actor-outlives-its-client-and-holds-tens-of-gib)) |
+
+**Paths that do not attach again by themselves.**
+
+- KSampler Pipeline (DGX Monarch) renders and the Identity Gate (DGX Monarch)
+  node run in a session pinned to the mesh they started on. They stop at the
+  fast refusal, and queuing them again, or running `dgxm restart` again, does
+  not clear the stale mesh. Run one render through KSampler (DGX Monarch)
+  with the loader and Init inputs unchanged, which attaches again by the new
+  ids, then queue the workflow again.
+- An automatic first-use identity gate stops at the fast refusal too. Its
+  abort turns that combination's residency levers off, as for any abort, but
+  sends no stock policy to the gone actors, and the combination's next Gate
+  run can restore the levers. The render it was proving then runs under stock
+  residency, and attaches again by itself only when that leaves its worker
+  settings as the last render's were (the next item). Under FSDP the gate's
+  refusal ends the render instead.
+- Fleet KSampler (DGX Monarch) dispatches without a cross-rank price, a
+  one-host fleet prices nothing, and a render whose topology, attention or
+  worker settings differ from the last render's sends that setup to the old
+  actors before it prices. A gate's own policy changes can do the same.
+  These meet the old actors directly.
+- A render that reaches the stale mesh after Monarch's supervision already
+  reported the old actors dead takes the supervision path. On the pair the
+  panel's status poll drew that report about a minute after the restart. A
+  render that arrives while the supervision stop is still running refuses
+  with `the cached mesh cannot be used or replaced`; queue again once it ends.
+
+On those paths the fallback is the one from before 1.2.0. The call fails on
+the old actors (a `SupervisionError`,
+[#4](#4-supervisionerror--process-exited-with-non-zero-code), or a call
+timeout), and the driver retires the old fleet; when the stop of the old
+fleet does not confirm, the liveness proof in
+[#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)
+releases it. The next render or Recycle then attaches a replacement and reads
+the new id first; after a release the trace's `open` line carries
+`released_predecessor=true`. That replacement attach is the path the first
+CPU test below covers.
+
+The Worker log prints the id in Monarch's own spelling and then in hex:
+`worker service listening on service<...>@tcp://<ip>:<port> (proc_id=<16 hex
+digits>)`. The probe, the attach trace and doctor print the same value as the
+16 hex digits.
+
+The first message this driver sends to a restarted loop's address is lost:
+it rides the channel session the old process accepted, the new process
+refuses that session, and only the next message opens a fresh one. A lost
+config push would leave the new host agent waiting for it forever. So before
+the first dial to a loop whose id changed since this driver last dialed it,
+the driver sends that address one throwaway message and waits 2 s; the trace
+writes a `proc_id_prime` line naming those loops. That first attach after a
+restart therefore takes about 2 s.
+
+That holds when the loop came back within Monarch's message delivery timeout
+(`HYPERACTOR_MESSAGE_DELIVERY_TIMEOUT`, 30 s by default in the pinned release).
+After a longer outage, such as a stop, a crash loop or a reboot, the driver's
+channel to that address stays closed and its attach fails at the config-push
+budget, the attach within a render included: restart ComfyUI. dgx-monarch
+leaves the delivery timeout at its default.
+
+**The id gate.** When the first reading of an attach carries no id for a
+loop, the attach refuses before anything dials, and the ComfyUI session stays
+usable:
+
+```
+no attach ran: the id each Worker loop serves on this start is unknown for <host> (tcp://<ip>:26600): <reason>; <remedy>. This ComfyUI session stays usable (docs/TROUBLESHOOTING.md #2).
+```
+
+| reason | remedy |
+|---|---|
+| nothing holds its listener | start the Worker services (`dgxm up`), then render again |
+| its loop runs an older release that serves the bare address | run the Worker services on this driver's release (`dgxm update`, or `dgxm restart` on a plain install; for Workers in release slots see [#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)), then render again |
+| no loop record publishes the id of the process holding its listener (`unpublished` or `malformed`) | render again, which reads the id again; if it repeats, `dgxm restart` |
+| its actor ledger file would not read (`unreadable`) | check that `~/.local/state/dgx-monarch/actor-procs.json` on that host is a readable JSON file, then render again; if it repeats, `dgxm restart` |
+| the probe did not read it (`unknown`, or the probe's own error) | fix the host or ssh fault, then render again |
+
+`dgxm doctor` fails the `<host> listener generation` row for the second and
+third reasons and warns for the last two
+([#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)).
+
+A loop that cannot write its record says so in its log:
+
+```
+worker service could not publish its id in the actor ledger; driver attaches refuse until it can (docs/TROUBLESHOOTING.md #2)
+```
+
+Check that `~/.local/state/dgx-monarch/` on that host is writable by the
+user the Worker service runs as. The loop's tracker writes the record again
+every 5 s, so the next render after the fix attaches.
+
+A loop that restarts between the read and the dial costs one attempt: the
+host bounces the old id at once, but the attempt still waits out the config
+push. The driver then reads the ids again, and a loop that serves a new id
+gets one more attempt with it. When that reading after a failed first attempt
+finds no id, no second attempt runs. The first dial already ran, so the
+session is poisoned: the error names the first failure and the loops the
+reading found no id for (`no second attempt ran, because the id reading after
+it found none for <host> (...)`; a released fleet's error says `the id reading
+after it found none for`), and the trace closes `attach_1_reread_refused` (a
+released fleet closes `attach_1_released`;
+[#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)).
+
+**Upgrading.** A ComfyUI started before the update that brought per-start ids
+dials the bare address. `dgxm update` refuses in either mode while ComfyUI
+runs, so this case arises only when the Workers restart on the new code under
+a running ComfyUI: `dgxm restart` after a pull, or a hand restart of the
+service. Its next attach then fails at the config-push budget, retries once,
+and names `dgxm doctor` and a ComfyUI restart (older builds end that message
+`the in-process retry already ran`): restart ComfyUI. A new driver against
+Worker services still on an older release refuses before dialing, as the
+table above says; Workers left in release slots by a plain update from 1.1.0
+need [#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update).
+
 One case fails fast instead of retrying. When the driver has just retired a
 dead fleet's replacement latch on positive proof that its worker processes are
-gone, and the attach to the replacement then fails, that driver process cannot
-attach again in the tested configuration with the pinned Monarch runtime
-(see the hardware finding below). That attach therefore makes exactly one
-attempt, and its error says no
-in-process retry ran, names the recovery that works, and sends the operator to
-restart ComfyUI
+gone, its attach to the replacement makes one attempt, plus one more only when
+a loop came back with a new id after that attempt dialed. When it fails, the
+error says no in-process retry ran and names the restart fallback above
 ([#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out)). Every
 other attach keeps two attempts, and its second failure poisons the session.
 
-**What the hardware tests showed.** With the pinned Monarch runtime, changing
+**What the CPU test shows (2026-10-15).**
+`tests/test_worker_proc_id_integration.py` starts two real Worker loops on one
+machine and attaches from a driver process. After the driver's traffic has
+been acknowledged, it restarts one loop, and the same process attaches again
+through the replacement path at once, with nothing else sent to that loop
+first: about 2.1 s, of which 2 s is the wait after the throwaway message. In
+mutation runs of that test, serving the bare URL, reusing an id, or skipping
+the throwaway message each made the same re-attach time out at its
+config-push budget. In review runs with the loop held down 15 s and 25 s, the
+re-attach still took about 2.1 s; held down 40 s, past the delivery timeout,
+it failed at its budget with the restart fallback.
+
+A third case in the same file restarts both loops under a live mesh, with
+nothing sent to the loops first, then sends a render's capacity price and
+calls the same re-attach that `submit_render` calls; it does not run
+`submit_render` itself. The liveness scan, policy admission and client lease
+are stood in, and the liveness stand-in answers gone at once. The price wait
+ended 2.5 s in, on the second request's delivery failure, which named the
+mesh the price waited on. The detour took 6.6 s (the id reading, the two 2 s
+teardown waits and a 2.1 s attach, with no real liveness probe), and the
+price answered on the new mesh 9.1 s after it was first sent, where the same
+price had waited 30 s. On hardware the liveness release reads every host
+under its 20 s budget; that cost is not measured yet. In mutation runs,
+removing the wait's short circuit made the price wait 30.1 s, and removing
+the re-attach left it refused.
+
+**What the two-Spark recheck showed (2026-10-15).** With per-start ids and
+both loops restarted together under a live driver, the first render waited
+the 30 s price deadline and refused, the failure this release removes. The
+render after it attached by the new ids in 2.8 s and rendered with no ComfyUI
+restart. After a 15 s outage the next render also rendered. After a 40 s
+outage the attach timed out at its config-push budget and poisoned the
+session, and a relaunched driver rendered. The pair recheck of the attach
+within the render is pending; it adds a render 45 to 90 s after `dgxm
+restart` with the panel open, which may meet the supervision path instead.
+
+**What the hardware tests showed before per-start ids (2026-10-01).** Changing
 the fleet under a live driver left that driver unable to attach again. The
 tests covered four failure cases and a successful recovery:
 
@@ -130,10 +355,11 @@ tests covered four failure cases and a successful recovery:
 | `HostMesh.stop()` on the retired fleet | Timed out |
 | Both loops restarted together (`restart_after_failed_attach`, auto-heal on), then a fresh driver process (ComfyUI restart) | Attached in 0.75 s |
 
-The rule: **restart worker loops together (`dgxm restart`), never one loop
-alone while a ComfyUI session is attached.** Any restart with no driver alive
-is fine. Recovery is both loops restarting together, then a fresh driver
-process.
+The rule stands: **restart worker loops together (`dgxm restart`), not one
+loop alone while a ComfyUI session is attached.** A render after one loop
+restarted alone refuses and names this remedy. Any restart with no driver
+alive is fine. When a re-attach still fails, recovery is both loops
+restarting together, then a fresh driver process.
 
 ## 3. Next render hangs at NCCL rendezvous after a crash
 
@@ -162,11 +388,13 @@ for nohup-started Worker services (`dgxm up`), `journalctl --user -u
 dgxm-worker` for systemd-managed Worker services. On UMA boxes the usual cause
 is OOM; see [#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc). The driver
 evicts the poisoned mesh automatically, and the next Init or render respawns
-the actors. That needs no ComfyUI restart, with two exceptions: the Worker
-service died, or the stop after the death timed out and the one attach to the
-replacement fleet then fails. Either way that driver process cannot attach
-again ([#2](#2-every-attach-times-out-after-one-failed-attach)):
-run `dgxm restart` so both Worker services restart together, unless the error
+the actors. That needs no ComfyUI restart. A Worker service that died and came
+back within the delivery timeout serves a new id. When every service
+restarted, the first sampler render attaches again by itself (CPU-tested; the
+pair recheck is pending). When only one did, that render refuses and names
+`dgxm restart` ([#2](#2-every-attach-times-out-after-one-failed-attach)). When
+the attach to the replacement fleet fails anyway, after a longer outage, run
+`dgxm restart` so both Worker services restart together, unless the error
 says they already did, then restart ComfyUI.
 
 ## 5. Loads fail / OOM on UMA boxes (DGX Spark etc.)
@@ -267,9 +495,15 @@ mid-attach.
 the driver and every worker environment; doctor treats the skew as a failure
 because serialized objects and distributed kernels cross that boundary.
 `dgxm update` uses `--no-deps`, so it does not replace torch.
-For torchmonarch skew, run `dgxm update` (synchronize the repo's exact pin with
-`--no-deps`, install/sync dgx-monarch with `--no-deps`, restart, then doctor).
-This does not resolve or replace torch, NCCL, xfuser, or optional extras.
+For torchmonarch skew on plain source directories, run `dgxm update`
+(synchronize the repo's exact pin with `--no-deps`, install/sync dgx-monarch
+with `--no-deps`, restart, then doctor). When a host's
+`~/.local/share/dgx-monarch/src` links into a release slot, as after guided
+setup or a verified update, run `dgxm update --verify` instead: plain update
+never changes a release slot. If the driver has already moved without those
+Workers, repair that first
+([#118](#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
+Neither path resolves or replaces torch, NCCL, xfuser, or optional extras.
 torchmonarch is pinned; bump it on all hosts at once.
 
 ## 9. Worker host death mid-render
@@ -280,7 +514,9 @@ result does not establish general same-driver recovery. The later 0.7.0
 single-Worker stop/start check on 2026-10-13 (UTC) reproduced a replacement-attach
 timeout and a poisoned driver transport; see [the dated lifecycle results](VALIDATION.md#lifecycle).
 A poisoned transport requires a fresh driver after confirmed owned cleanup;
-resetting its attached mesh does not clear that transport state.
+resetting its attached mesh does not clear that transport state. That check
+came before per-start Worker ids; see [#2](#2-every-attach-times-out-after-one-failed-attach) for
+re-attach after a Worker restart within the delivery timeout.
 
 ## 10. First RDMA latent return is slow
 
@@ -856,6 +1092,12 @@ re-renders the Worker units (#113). Do not infer a model or
 distributed-math failure from this transport error; verify the per-rank latent
 signatures separately.
 
+**A failed native read also switches native return off.** Any native read that
+fails on the driver latches native return off for that ComfyUI process: later
+renders return their latents by actor messaging, and only a ComfyUI restart
+turns native return back on
+([#115](#115-a-render-fails-with-nativereturnlatchederror-and-later-renders-return-by-messaging)).
+
 **If a started native read is incomplete.** dgx-monarch performs zero native
 drops and sends zero ACK; it retains the destination and every part because the
 operation may still be live. If a read completed, or an off-loop contender
@@ -1250,9 +1492,10 @@ through a pipeline sampler.
 **Symptom:** after a ComfyUI update, a rewritten forward raises an argument
 count `TypeError`, such as
 `Krea2Adapter.inject_usp.<locals>.usp_forward() takes from 4 to 6 positional arguments but 7 were given`.
-Gate may then abort and stock fallback may report
-`LifecycleBusyError: 1 abandoned sample(s) may still be running`. Diagnose the
-original `TypeError`; the lease refusal is a consequence.
+Gate may then abort and stock fallback may report a `LifecycleBusyError`
+saying
+`1 abandoned sample(s) may still own a result or RDMA descriptor of their setup generation`.
+Diagnose the original `TypeError`; the lease refusal is a consequence.
 
 **What to do:** update dgx-monarch to match ComfyUI. Doctor checks
 infrastructure and may remain green. Until a compatible release is available,
@@ -1554,7 +1797,15 @@ without renewal by default, the actor logs `dgxm-reap:` and exits. Inspect
 `journalctl --user -u dgxm-worker` for that line.
 `dgxm down` sweeps after stopping the service, including its children;
 `dgxm up` sweeps only orphans. `dgxm restart` uses both. A host is not reported
-successful before its sweep finishes.
+successful before its sweep finishes. The Worker service records its actors in
+`~/.local/state/dgx-monarch/actor-procs.json`. A writer killed mid-write leaves
+an `actor-procs.json.<pid>.<starttime>.<thread id>.tmp` file beside it, and the
+next ledger write removes each such file once no process holds that pid with
+that start time. Earlier releases wrote `actor-procs.json.<pid>.<thread id>.tmp`.
+The sweep removes such a file once no process holds its pid, so a file whose pid
+a later process took stays until that process exits. `nostat` in place of the
+start time means the writer could not read its own `/proc` entry, and no sweep
+removes that file.
 
 Doctor's orphan row covers only its local host. It names PID, size, dwell, and
 remedy for marked actors holding at least 4 GiB with no live owner able to stop
@@ -2319,10 +2570,11 @@ unverified does not measure stock for every cell after it. Three exceptions.
 The combination that failed keeps its residency settings off until its own next
 check. A measured FAIL is written to the ledger and carried into every later
 session for those bytes
-([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)), and
-that carry is written to the graph, not to one combination, so a persisted FAIL
-for one model costs the next model on the same graph its optimized residency
-until you reload the graph. And a check that a measured class-K guard stopped
+([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)), but
+only that combination's renders read it: other checkpoints on the same Init
+node keep the `lora_low_rss` and `slab_weights` settings the graph asked for.
+A FAIL does turn `comfy_managed` off for the whole Init node
+([#67](#67-what-auto_gateoff-costs-and-what-it-does-not)). And a check that a measured class-K guard stopped
 disables no residency setting;
 [#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora) has that line and
 what to do about it.
@@ -2646,7 +2898,7 @@ Neither touches the Worker services, so no per-host probe can see them.
 and print what it says:
 
     mesh: ok (cached, 0 active leases)
-    mesh: DIRTY (1 abandoned sample may still be running); reset the attached mesh...
+    mesh: DIRTY (1 abandoned sample may still own worker-side latent backing); reset the attached mesh...
     mesh: POISONED (the driver's Monarch transport cannot be reused...); restart ComfyUI...
     mesh: idle (no attached mesh; the next render session creates one)
     mesh: busy (load_model RPC completion in flight); wait for it, nothing to fix
@@ -2832,6 +3084,9 @@ gets under `first_use`. So, with `auto_gate=off` on a single-model render:
    `lora_low_rss` and `slab_weights`; `comfy_managed`, if the graph sets it,
    goes off for the whole Init node (DESIGN.md, "What a FAIL takes, and from
    whom"). [#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass) is the way back.
+   The FAIL holds within one package version. A release update expires
+   context-scoped FAILs, so `first_use` retests the combination and `off`
+   treats it as untested.
 3. **`comfy_managed=on` refuses LoRA stacks.** That widget sits in the same
    Init advanced block, so its refusal is easy to blame on `auto_gate`.
    Different lever, different reason ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)), and `auto_gate` neither causes
@@ -3360,13 +3615,39 @@ Three shapes tell the cases apart:
 
 ## Power-user escape hatch
 
-When the node surface is not enough, start with `dgxm top` ([TUI.md](TUI.md)),
-the DGX Monarch sidebar panel and a bounded `dgxm diagnostics` capture
-([CLUSTER.md](CLUSTER.md#monarchdiagnostics)). `monarch-tui` (ships with
-torchmonarch) does not attach to a running mesh by itself: it needs `--addr`
-of a mesh admin server, and dgx-monarch never starts one. Using it needs an
-inspector session whose admin server you can stop, which the integration does
-not provide; [CLUSTER.md](CLUSTER.md#monarchdiagnostics) explains why.
+When the node surface is not enough, use what the integration owns and can
+stop:
+
+* `dgxm top` ([TUI.md](TUI.md)) and the DGX Monarch sidebar panel;
+* `/dgxm/telemetry` and `/dgxm/metrics` on the ComfyUI port, which include
+  the live handoffs, leases, poisoned owners and the native-return latch;
+* a bounded `dgxm diagnostics` capture
+  ([CLUSTER.md](CLUSTER.md#monarchdiagnostics));
+* with `[monarch.diagnostics] metrics = true` and an `otlp_endpoint`, the phase
+  metrics and the ownership occupancy counters in your own collector
+  ([CLUSTER.md](CLUSTER.md#monarchdiagnostics));
+* for each completed native return in a normal render, the `native return:`
+  log line, which splits the Worker's pack and the driver's read into phases.
+
+Monarch's own services stay blocked: `enable_telemetry`, `Job.profile`,
+`monarch query`, the Monarch dashboard and the mesh admin agent that
+`monarch tui --addr` reads. All but the admin agent need a Job around the
+persistent Workers, which would make a second Monarch client attach to them
+and push its config to their host agents. Telemetry also spawns a proc mesh on
+every Worker host and stops it only on a best-effort basis, and the dashboard,
+when enabled, binds every interface. The admin agent needs no Job and can bind
+loopback, but it has no stop handle and, as far as the 0.7.0 Python surface
+shows, ends only with the process that started it. The periodic snapshot actor
+has no stop handle and runs until its procs stop. So dgx-monarch has no
+inspector mode for them, and you should not start them by hand against a live
+fleet. [DESIGN.md section 5.8](DESIGN.md#58-progress-logging-observability)
+cites each fact in the 0.7.0 wheel.
+
+An inspector session that dgx-monarch can own needs four upstream changes: a
+stop on the admin agent's handle, an abort handle for periodic snapshots
+(upstream already marks it as a TODO), telemetry that does not spawn procs on
+the hosts, and an attach that does not push the client's config. A bind host
+for the dashboard would also let that session include it.
 
 ## Never disable DynamicVRAM in stock ComfyUI on a Spark
 
@@ -3678,7 +3959,19 @@ A ring or hybrid topology refuses: the kernel returns no log-sum-exp for ring
 ranks to merge. A family other than MiniMax H3 refuses with its own reason. A
 box without the package refuses naming that box: the driver checks every rank
 before it dispatches, because a rank raising inside a collective abandons the
-render and strands its peers.
+render and strands its peers. A checkpoint that pins `comfy_kitchen_sol` on
+its attention modules raises no card under sequence parallelism, because no
+attention call runs the pin there: the sharded attention uses the widget's kernel, and
+the stock attention the pack leaves in place (cross-attention, and the
+refiners and encoders every rank runs whole) uses ComfyUI's default exact
+backend ([ADAPTERS.md](ADAPTERS.md) lists each site). Under sequence
+parallelism the card appears only when the widget selects Sol. A topology
+without sequence parallelism keeps every stock attention call, so a pin runs
+there as it does in stock ComfyUI, and the render refuses with this same card
+until the operator grants it
+([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel),
+which also covers the FSDP launch check a bf16 or fp16 checkpoint that pins
+meets first).
 
 **The kernel is optional and is not a dependency of this project.** The opt-in
 installer plans every configured Worker interpreter. First stop ComfyUI and
@@ -3883,6 +4176,20 @@ cold model load.
 The automatic reset addresses abandoned state, not the underlying defect. If
 the retry also fails, follow the reported recovery; it does not loop.
 
+**Why the lease stays abandoned:** a sample whose rank raised an error has
+stopped. A collective call in Monarch 0.7.0 gathers a reply from every rank
+before it returns, so the driver sees an actor error only after every rank has
+replied (traced in the 0.7.0 source on 2026-10-14). A rank that raised after
+packing its latent can still own the RDMA backing for it, so the driver keeps
+the lease abandoned rather than released. The mesh row and
+`SampleResultBusyError` say the sample may still own worker-side latent
+backing, and `LifecycleBusyError` says it may still own a result or RDMA
+descriptor of its setup generation. In three other cases the sample may still
+be running: the driver stopped waiting after a collection timeout, an
+interrupt abandoned the render, or a worker died. Monarch reports a worker
+death at once, while the other ranks may still be inside the sample, for
+example blocked in NCCL (DESIGN.md section 5.2).
+
 **Automatic reset is limited:** it runs at most once per submit, only when
 abandonment is the sole obstruction, with no active sample lease or pending
 RDMA read. A Fleet queue now runs the same reset, once per queue and before its
@@ -3920,10 +4227,12 @@ replacement. The check runs at Init attach, render liveness, and Reset:
 
 A fleet-wide gone result retires the cached handle and permits one fresh fleet;
 it never issues a second stop. If replacement setup fails, the new handle is
-blocked and the error identifies its liveness-proven predecessor. Hardware
-found that the pinned Monarch driver could not reattach after its fleet
-changed; that replacement attach therefore tries once and names the restart
-recovery in [#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out).
+blocked and the error identifies its liveness-proven predecessor. The
+replacement attach dials each loop's current id, so a loop that restarted
+within the delivery timeout attaches at once
+([#2](#2-every-attach-times-out-after-one-failed-attach)). It tries once, plus
+once more if a loop moved to a new id during that try, and otherwise names the
+restart recovery in [#101](#101-reading-the-attach-trace-after-a-cluster-attach-times-out).
 
 Logs show every result as `liveness probe host=... answer=...` and
 `liveness fold answer=...`. Release adds
@@ -4109,6 +4418,9 @@ Comfy-Org/ComfyUI#14055) and this release carries the L2P forward. The driver
 log carries one INFO line per file, opening `upstream gate:`, that names the
 matched key paths, so a record can confirm which spelling the gate read.
 
+The same gate refuses a checkpoint whose weight scales ComfyUI would drop; see
+[#120](#120-a-render-refuses-because-comfyui-would-drop-the-checkpoints-weight-scales).
+
 ## 92. A render refuses with `FsdpGateProofError`, and the retry says the same thing
 
 **What happened.** `auto_gate=first_use` on an fsdp topology runs a clean-reload
@@ -4187,16 +4499,18 @@ superseded by a repair row landing later and would have to prove itself again.
 ## 93. A multi-rank render refuses before any rank loads, and names a rank
 
 **Symptom:** a world-2 render stops with a class C refusal that names one rank
-and its numbers, or says a rank did not answer within 30 s. No worker journal
-shows a load starting, nothing is quarantined, the fleet is still up, and the
-next queue dispatches on the same fleet with no recycle.
+and its numbers, says a rank did not answer within 30 s, or says a message to
+a rank's Worker actor was undeliverable. No worker journal shows a load
+starting and the refusal quarantines nothing. Except after an undeliverable
+message, the fleet is still up and the next queue dispatches on the same fleet
+with no recycle.
 
 **Cause:** every rank prices the load before any rank allocates. The driver
 asks each rank one bounded question on a read-only endpoint that takes no GPU
 lock and mutates nothing, collects the rows, and decides once. The leanest
 answer governs, because the load runs everywhere: a rank that cannot hold the
 model refuses the render for the fleet rather than letting its peers load first
-and meet the refusal sixty seconds in. Four shapes reach the operator:
+and meet the refusal sixty seconds in. Five shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.
@@ -4209,6 +4523,15 @@ and meet the refusal sixty seconds in. Four shapes reach the operator:
   that cannot answer a memory question in thirty seconds is starved or gone,
   and it has not said it cannot load anything. Nothing is torn down and no rank
   is evicted.
+* **A rank's actor is gone.** When Monarch reports a message to a rank's
+  Worker actor undeliverable while the price waits, which is what a Worker
+  loop restart under the attached mesh produces, the wait ends within half a
+  second of the report rather than at 30 s (about 2.5 s in when the first
+  request is lost; see #2), and the refusal says the message was
+  undeliverable. A sampler render whose setup is unchanged then reads the
+  loops' ids and, when every loop restarted, attaches again by itself and
+  renders; otherwise the refusal names the remedy
+  ([#2](#2-every-attach-times-out-after-one-failed-attach)).
 * **A rescue is on offer.** One rank needs slab residency and no rank refuses,
   so the ordinary consent card is raised before any rank loads, carrying the
   leanest rescuing rank's numbers.
@@ -4226,6 +4549,8 @@ and draws no conclusion from them.
 run the checkpoint slab-resident on every rank, use a pruned or quantized
 artifact, or free unified memory on the short box. For a silent rank, recycle
 the fleet from the DGX Monarch panel, or check that box, then queue again. For
+an undeliverable one, follow the remedy the refusal names
+([#2](#2-every-attach-times-out-after-one-failed-attach)). For
 disagreeing bytes the two boxes are looking at different files: confirm the
 checkpoint is the same artifact on both, then queue again.
 
@@ -4427,8 +4752,15 @@ dispatch one seam further out instead.
 
 **Fix:** the card names it. Raise CFG above 1.0, or pick a `cfg_pp` sampler.
 Where neither fits the workflow, use a ulysses or ring topology, as the card
-says. Topology `auto` also avoids it at CFG 1.0, because it skips cfg-parallel
-rows there.
+says. Topology `auto` skips cfg-parallel rows at CFG 1.0 only when the sampler
+drops the unconditional pass: any sampler without the `cfg_pp` suffix, and
+every Sampler Custom (DGX Monarch) render, whose SAMPLER input carries no name.
+Under a `cfg_pp` sampler set on a DGX Monarch KSampler node, auto can still
+take a cfg row at CFG 1.0, because ComfyUI then folds both passes into one
+call of batch 2. If such a render meets this refusal, ComfyUI ran the pair as
+separate calls, for example because a conditioning carries an area, a mask, a
+hook or a timestep range. Pick an explicit ulysses or ring topology for that
+render.
 
 **Unequal prompts render through the dispatch.** The per-cond
 dispatch at the sampler's `CALC_COND_BATCH` seam installs for every family on a
@@ -4567,15 +4899,19 @@ the shard build), entry 92 (an FSDP gate proof that refuses).
 ## 101. Reading the attach trace after a cluster attach times out
 
 **Symptom:** a render refuses with `attach to workers [...] failed
-(TimeoutError()); the in-process retry already ran`, and every later render in
+(TimeoutError()); no further in-process retry runs` (older builds: `the
+in-process retry already ran`), and every later render in
 that ComfyUI process refuses at once with `this ComfyUI session's Monarch
 transport is not reusable after a partial bring-up failure`. Both worker loops
 are up, `dgxm doctor` reads clean, and a fresh driver attaches on its first
-try. Known triggers include a manual restart
-of one loop, `dgxm restart` followed immediately by a render, and
-dead-rank recovery releasing its latch. In the third case the attach
-stops after its first attempt, and its refusal says that no in-process retry
-ran; its trace reads differently (below).
+try. Known triggers include a Worker outage longer than the delivery timeout,
+`dgxm restart` followed immediately by a render, and dead-rank recovery
+releasing its latch. In the third case the attach stops after its first
+attempt, and its refusal says that no in-process retry ran; its trace reads
+differently (below). A refusal that starts `no attach ran` is the id gate in
+[#2](#2-every-attach-times-out-after-one-failed-attach): nothing dialed, the
+session stays usable, and its trace ends at `close outcome=refused
+stage=proc_id`.
 
 **What the driver writes.** Every cluster attach writes one line per phase
 into the driver log, all sharing a sequence number. Grep the ComfyUI log:
@@ -4591,11 +4927,12 @@ work on them.
 
 Every attach ends in one `close` line carrying an `outcome` and, unless it
 attached, the `stage` it stopped at. Grep `event=close` rather than reading
-the tail of the sequence, because one line can land after it: when auto-heal
+the tail of the sequence, because a line can land after it: when auto-heal
 is on and the attach failed for good (after its retry, or after a released
 fleet's one attempt), the best-effort Worker restart for the next session
-writes `post_fail_restart` after the close. A sequence with no `close`
-is an attach still running, or a driver process that died during one.
+writes `post_fail_restart` after the close, and a render that attached again
+after a Worker restart writes `restart_reattach` after it. A sequence with no
+`close` is an attach still running, or a driver process that died during one.
 
 **The events.**
 
@@ -4605,11 +4942,14 @@ is an attach still running, or a driver process that died during one.
 | `heal_probe` | which loops the pre-attach probe read as down, and which ones it never observed |
 | `heal_restart` | the loops read as down, and the loops the restart touched (every configured loop) |
 | `heal_settled` | whether worker health settled after that restart, and how long it took |
-| `loop_generation` | one line per loop before every attach attempt: the generation `gen`, the process that holds the loop's LISTEN socket and how long that process has been up, the unit restart count, and `changed=true` when that process is not the one this driver read last time |
+| `loop_generation` | one line per loop before every attach attempt: the generation `gen`, the process that holds the loop's LISTEN socket and how long that process has been up, the unit restart count, `proc_id`, the id that process serves and the attempt dials (or why there is none: `bare`, `unpublished`, `malformed`, `unreadable`, `none`, `unknown`), and `changed=true` when that process is not the one this driver read last time. A failed first attempt is followed by one more reading, `phase=before_attach_2`, even when no second attempt runs |
+| `proc_id_moved` | the loops whose id changed between the dial of the first attempt and the reading after it failed: they restarted during that attempt, so the second attempt dials their new ids |
+| `proc_id_prime` | the loops whose id changed since this driver last dialed them, sent one throwaway message before this `attempt` dials ([#2](#2-every-attach-times-out-after-one-failed-attach)), and any of them the message could not reach (`unprimed`) |
 | `phase` | one timed step. `phase=transport_enable`, `phase=auto_heal`, or `phase=attach attempt=1..2`, each with `wall_s` and an `outcome` of `ok` or the exception class |
 | `attach_call` | the two halves of one monarch attach: `half=attach_to_workers` is the worker config push, `half=initialized_get` is the wait on the mesh, bounded by its `bound_s` (70 s under the shipped 60 s config-push budget) |
-| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, and `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to. `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
-| `post_fail_restart` | the loops the post-failure Worker restart touched and the failure class that prompted it. It is the one line that lands after the `close` |
+| `close` | the terminal line, one per attach, with the total duration. `outcome=attached` is the good end. `outcome=poisoned` names the stage that poisoned this session: `transport_enable`; `attach_1_released`, a released fleet's one attempt failing; `attach_1_reread_refused`, an ordinary attach whose first attempt failed and whose reading after it found no id, so no second attempt ran (a released fleet in that case closes as `attach_1_released`); `attach_2_failed`, any other attach failing both attempts (older builds named it `listener_wait`); or `attach_1` or `attach_2`, the first or second attempt cut short by an exception that does not subclass `Exception`, such as `KeyboardInterrupt`, after which no retry runs. `outcome=refused` means no attach ran: `stage=transport_poisoned reason=earlier_attempt` for a session an earlier attach already poisoned, `stage=transport_bind reason=client_bind_mismatch` for a `client_bind` this process cannot switch to, and `stage=proc_id` for a loop whose id the first reading did not carry, which leaves the session usable. `outcome=failed stage=auto_heal` is a pre-attach heal that raised, so no attach ran; `stage=unexpected` is any other escape, carrying the exception class as `evidence` |
+| `post_fail_restart` | the loops the post-failure Worker restart touched and the failure class that prompted it. It lands after the `close`, as `restart_reattach` does |
+| `restart_reattach` | a render, or an explicit loader's eager load, that met Worker loops restarted under its mesh ([#2](#2-every-attach-times-out-after-one-failed-attach)). `outcome=attached` carries the replacement attach's `seq` and lands after its `close`, with `verdict=all`, the loops that `moved`, the `teardown` that retired the stale mesh (`stop_confirmed` or `liveness_release`) and the detour's `wall_s`. `outcome=refused` carries `seq=0`, since no attach ran, and a `reason`: `partial`, `none` or `unknown` for what the id reading found, or `not_retired` for a stale mesh the liveness proof did not release. `outcome=failed` carries the exception class as its `reason`: a replacement attach that raised, whose own `close` names the stage, or an explicit loader's capacity price that refused before that attach ran, which writes no new `close` |
 
 **Read the attach timings first.** Each `phase=attach` line follows the `attach_call`
 lines of its attempt, which split its duration between the config push and the
@@ -4621,9 +4961,10 @@ about the driver's own transport.
 
 **Then read the generations.** Each reading is compared with the last one
 this driver process took of that loop, in this attach or an earlier one.
-`changed=true` before an attach that fails says the driver and the loop
-disagree about which listener is live, the suspected cause of the
-hand restart case. `changed=unknown` means there is nothing to compare: this
+`changed=true` says the process holding the loop's listener is not the one
+this driver read last time: the loop restarted. With per-start ids that is
+expected after a restart, and the reading's `proc_id` is the new id the
+attach dials ([#2](#2-every-attach-times-out-after-one-failed-attach)). `changed=unknown` means there is nothing to compare: this
 is the driver's first reading of that loop, or this reading did not come back.
 `gen=none` means nothing holds the loop's LISTEN socket; that is a reading, so
 a loop that goes from a generation to `none` reads `changed=true`.
@@ -4634,11 +4975,16 @@ that comes back is still compared against something.
 
 **What each of the three cases should look like.**
 
-*After a hand restart of one loop.* The failing attach is the first one after
-the restart, so read its first `loop_generation` line per loop. The restarted
-loop should read `changed=true previous=<the generation the last attach talked
-to>`. If the untouched loop also reads `changed=true`, something moved a loop
-without a recorded request. The `heal_probe` line names the loops the probe found
+*After a Worker outage longer than the delivery timeout.* The restarted loop's
+first `loop_generation` line reads `changed=true` with a new `proc_id`, and a
+`proc_id_prime` line names it. Attempt 1 spends its whole window in
+`half=attach_to_workers`: the config push never lands, because the driver's
+channel to that address closed during the outage. The `before_attach_2`
+reading shows the same `proc_id`. On a released fleet the `close` line names
+`stage=attach_1_released`; on an ordinary attach, attempt 2 fails the same way
+and the `close` names `stage=attach_2_failed`. Restart ComfyUI
+([#2](#2-every-attach-times-out-after-one-failed-attach)). If the untouched loop also reads
+`changed=true`, something moved a loop without a recorded request. The `heal_probe` line names the loops the probe found
 down, and the `heal_restart` line names every configured loop, because the
 restart is fleet-wide even when the probe found one loop down.
 
@@ -4649,11 +4995,13 @@ loop a few seconds old under an attach that spends its window in
 driver's attach window is absorbing a wait the start path should make.
 
 *After the dead-rank recovery released its latch.* The `open` line carries
-`released_predecessor=true`, there is only one `phase=attach attempt=1` line,
-and the `close` line names `stage=attach_1_released`. Hardware tests with the
-pinned Monarch runtime found that the existing driver could not attach to the
-replacement fleet. Neither a second attempt nor a 70 s wait changed the
-outcome, so neither runs.
+`released_predecessor=true`. With per-start ids the first attempt normally
+attaches. When it fails, there is only one `phase=attach attempt=1` line, the
+`before_attach_2` readings show the same `proc_id` per loop, and the `close`
+line names `stage=attach_1_released`: no loop moved, so a second attempt with
+the same ids cannot win, and the likely cause is an outage longer than the
+delivery timeout. A `proc_id_moved` line instead means a loop restarted during
+the attempt, and a second attempt runs with its new id.
 The recovery is the restart path: both worker loops restarting together, then
 a fresh driver process, which attached in 0.75 s in the recovery test
 ([docs/TROUBLESHOOTING.md #2](#2-every-attach-times-out-after-one-failed-attach)).
@@ -4662,7 +5010,7 @@ a fresh driver process, which attached in 0.75 s in the recovery test
 loop, among that host's rows after its Worker service row:
 
 ```
-  [ ok ] <host> listener generation: gen=<generation> pid=4242 age_s=612 restarts=0 started=<timestamp> marker=match
+  [ ok ] <host> listener generation: gen=<generation> pid=4242 age_s=612 restarts=0 started=<timestamp> marker=match proc_id=<16 hex digits>
 ```
 
 `gen` is a short digest of the boot id, the process holding the LISTEN socket,
@@ -4673,7 +5021,12 @@ unit's `NRestarts`, and `marker` compares the process with the generation
 marker that a start by `dgxm update` or `dgxm setup` writes. `marker=absent` is
 the normal reading after a plain `dgxm up` or a hand `systemctl --user
 restart`: neither writes the marker, and the unit clears it before every start.
-The row is advisory and never moves doctor's exit code.
+`proc_id` is the id that process serves on this start, which the driver dials;
+it normally starts with the 12 digits of `gen`. The row fails when a listening
+loop definitely publishes no id (`bare`, `unpublished` or `malformed`),
+because the driver refuses to attach to it, and names the remedy from
+[#2](#2-every-attach-times-out-after-one-failed-attach). An id the probe could
+not read (`unreadable`, `unknown`) warns as unobserved. Nothing else in the row moves doctor's exit code.
 
 A host doctor could not read still gets its row:
 
@@ -4718,9 +5071,33 @@ is a name only: ComfyUI detects CogVideoX from
 family, so no loader can build that file.
 
 **Fix:** read the header keys of the file the template names. Dotted embedding
-names mean the diffusers layout: convert it with a rename pass over the state
-dict, or fetch an export already in the ComfyUI layout, then point the template
-at that file. A converted file usually carries `converted_from` in its header
+names mean the diffusers layout. Convert the file by renaming its keys, then
+point the template at the converted file. The rename is the whole conversion:
+every tensor keeps its dtype, shape and bytes, and the key count stays the
+same (1028 keys in the 1.5 image-to-video file, 1024 in text-to-video).
+Rename each diffusers key by the first prefix below that matches it, where `N`
+is the block index and does not change:
+
+| Diffusers prefix | ComfyUI prefix |
+|---|---|
+| `transformer_blocks.N.attn1.to_q.` | `blocks.N.q.` |
+| `transformer_blocks.N.attn1.to_k.` | `blocks.N.k.` |
+| `transformer_blocks.N.attn1.to_v.` | `blocks.N.v.` |
+| `transformer_blocks.N.attn1.to_out.0.` | `blocks.N.attn_out.` |
+| `transformer_blocks.N.attn1.norm_q.` | `blocks.N.norm_q.` |
+| `transformer_blocks.N.attn1.norm_k.` | `blocks.N.norm_k.` |
+| `transformer_blocks.N.ff.net.0.proj.` | `blocks.N.ff_proj.` |
+| `transformer_blocks.N.ff.net.2.` | `blocks.N.ff_out.` |
+| `transformer_blocks.N.` (only the `norm1.` and `norm2.` keys remain) | `blocks.N.` |
+| `time_embedding.linear_` | `time_embedding_linear_` |
+| `ofs_embedding.linear_` | `ofs_embedding_linear_` |
+
+Keys under `patch_embed.`, `norm_final.`, `norm_out.` and `proj_out.` keep
+their names. Rename every key the table covers: a partial rename loads without
+an error. ComfyUI detects CogVideoX from `blocks.0.norm1.linear.weight` alone
+and loads the state dict with `strict=False`, so a weight left under its
+diffusers name is never loaded, and only an `unet missing` warning in the log
+says so. A converted file usually carries `converted_from` in its header
 metadata, which is a quick way to tell two staged copies apart when both sit
 under nearly the same name. A missing OFS pair is not a fault: it says the file
 is text-to-video, since only the image-to-video and inpaint surfaces carry the
@@ -5089,6 +5466,19 @@ the default policy with native return off. Any other difference from the
 generated unit, including a malformed policy argument, still reads
 `FAILED_SOURCE_LAYOUT`.
 
+The same source check names three other failures, none of them a stale
+policy. `dgxm restart`, a syncing `dgxm up` and the `dgxm doctor` env row
+print them with the host, the exit code and, when there is one, the last
+stderr line:
+`FAILED_WORKER_INTERPRETER` (exit 126 or 127: the shell could not run
+`cluster.python` on that host), `FAILED_LIFECYCLE_LOCK` (the lifecycle lock
+wrapper failed before the check gave a verdict, for example on an unsafe
+`~/.local/state/dgx-monarch`) and `FAILED_SOURCE_PROBE` (the check exited
+without a verdict). Doctor runs the check without the lock, so it never
+reports `FAILED_LIFECYCLE_LOCK`; an exit without a verdict reads
+`FAILED_SOURCE_PROBE` there. Fix the cause the line names on that
+host, then run the command again; the remedy below is for `POLICY_STALE` only.
+
 **Remedy:** stop ComfyUI, then run a verified update to the commit the driver
 checkout already has:
 
@@ -5186,6 +5576,20 @@ next setup requests native return again. To stay on messaging across restarts,
 set `rdma_latent_return = false`; on a managed installation, follow
 [#113](#113-lifecycle-commands-refuse-with-policy_stale-after-a-policy-edit).
 
+**Held latents:** each native read that failed after it started holds its
+destination latent in the driver process until ComfyUI exits. The latch changes
+only what the next setup requests, so work already dispatched on the native
+fleet when the fault hit still reads its latents natively: the rest of a Fleet
+wave, or the other renders in flight under `pipeline_depth`. Each of those
+reads that fails after it starts holds one more. Fleet keeps at most one job
+per GPU in flight and stops after the failed wave, and the pipeline sampler
+keeps at most `pipeline_depth` renders in flight and stops after a failure, so
+one fault holds at most one wave or one pipeline window of latents. There is
+deliberately no per-process cap and no operator release for them. Native
+return is opt-in (`rdma_latent_return` defaults to false), the latch sends
+every later render to messaging, and the count is bounded, so one ComfyUI
+restart frees them all.
+
 ## 116. An Anima render refuses because ComfyUI passed an argument to the attention op
 
 **Symptom:** an Anima render on a sequence-parallel topology (ring, uly or
@@ -5207,3 +5611,425 @@ gpus_per_host=1) for a stock one-GPU render, or run a ComfyUI build this
 release supports. Report the argument name: a dgx-monarch release has to
 adopt it, either applying it under sequence parallelism or refusing it for a
 stated reason. No consent or waiver bypasses this refusal.
+
+## 117. A render refuses because the checkpoint or a LoRA pins an attention kernel
+
+The refusal reads "this model pins an approximate kernel on its attention
+modules" and carries the Sol-Attn waiver card. ComfyUI lets a checkpoint, or a
+LoRA with `.comfy_attention.config` keys, pin an attention kernel on each
+attention module. It ships two such kernels, `comfy_kitchen_sol` (sparse
+attention, with a tau) and `comfy_kitchen_int8` (q, k, v and the attention
+weights rounded to 8 bits), and both are approximate by construction. On a
+topology without sequence parallelism (on a two-rank pair: single, cfg2, dp2,
+cfg2+fsdp and dp2+fsdp) ComfyUI runs the pinned kernel as it does on one GPU,
+so dgx-monarch refuses before any sampling unless the operator has granted the
+waiver. The message names the kernels, the number of attention modules and
+the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. On cfg2+fsdp and
+dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask too. A bf16 or
+fp16 checkpoint whose own header pins never gets that far: its uint8 config
+tensors leave the FSDP launch check unable to prove the file's precision, so
+every `+fsdp` preset refuses it class P with "The detector could not prove the
+checkpoint's precision". Render that file on a topology without fsdp; uly2
+drops the pins.
+
+The FLUX.3 Image Klein INT8 ConvRot files are the first shipped checkpoints
+that pin a kernel: comfy-kitchen's INT8 attention on 33 attention modules, the
+five image blocks and the 28 single blocks. Their testing graphs ask for the
+waiver on single, cfg2 and dp2 and render without it on uly2, which drops the
+pins and runs exact attention, so a uly2 render differs from stock INT8 on one
+GPU by construction. The BF16 and NVFP4 files pin nothing, and the shipped
+FLUX.3 templates use BF16.
+
+**What to do:** either accept the card and queue the render again, or pick a
+sequence-parallel topology such as uly2, where dgx-monarch drops every pin and
+the Init widget's kernel runs (exact under TORCH_FLASH; the Sol card appears
+there only if the widget selects Sol). The card grants the Sol-Attn waiver
+for this checkpoint, topology and world; headless, set
+`DGXM_WAIVE_KNOWN_WRONG=sol_attn` on the driver or follow the consent recipe
+in [#84](#84-a-sol-attn-render-refuses-with-a-waiver-card-or-stalls-on-its-first-call).
+Under the waiver each rank whose pins would run logs KNOWN-WRONG MATH
+PROCEEDING UNDER WAIVER, dgx-monarch stamps the output rendered-under-waiver,
+and the gate ledger gets a use row under the guard `sol_attn:checkpoint_pin`.
+Removing the LoRA that carries the pin also clears the refusal. Under
+dual-model cfg2 the card names the conditional checkpoint even when only the
+unconditional one pins, because the driver keys every grant of that render on
+the conditional checkpoint; the card's detail line names the checkpoint that
+pins.
+
+**On cfg2+fsdp and dp2+fsdp under `auto_gate=first_use` the grant is not
+enough.** FSDP has no stock residency to fall back to, so such a render needs
+a Gate PASS, and the first-use ceremony that would earn one renders without
+waivers and ends on this guard. A pin that runs there (a LoRA's, or an fp8 or
+int8 checkpoint's) therefore refuses even after the grant. Render it on
+uly2+fsdp, where dgx-monarch drops the pin, with `auto_gate=off`
+([#67](#67-what-auto_gateoff-costs-and-what-it-does-not)), or on a topology
+without fsdp. On a resident topology such as cfg2 the ceremony ends on this
+guard too and changes no residency setting. Under `auto_gate=first_use` every
+new combination there runs that ceremony before it renders, because the
+default `slab_weights=auto` makes it risky, so a checkpoint that pins pays
+for it even with no LoRA. After the ceremony the combination renders
+under stock residency, and that answer stands for the rest of the ComfyUI
+session: the grant does not run the ceremony again, and each new session
+runs it once more. To keep the slab and low-RSS levers, grant the card and
+set `auto_gate=off` for that graph
+([#66](#66-the-gate-says-inconclusive-on-a-graph-with-no-lora),
+[#67](#67-what-auto_gateoff-costs-and-what-it-does-not)).
+
+**Reading the record.** The `render.last` block of `/dgxm/telemetry` and
+`benchmark/run_matrix.py` result rows carry `attention_pins` (pinned attention
+modules per kernel), `attention_pins_ran` and `attention_pins_dropped`
+(modules per reason). The sidebar's last-render line, the run_matrix console
+and the driver log print one line, for example "render pinned:
+comfy_kitchen_sol tau=0.7 x 40 modules, ran". Under dual-model cfg2 each cfg
+rank renders its own checkpoint, so the three fields add the two models'
+modules. When both models pin, `attention_pins_models` carries each model's
+own fields under `cond` and `uncond`, and the line gives one clause per
+model, for example "pinned: cond model: comfy_kitchen_sol tau=0.7 x 20
+modules, ran; uncond model: comfy_kitchen_sol tau=0.7 x 10 modules, dropped
+(kernel unavailable on this host)". The count is per attention
+module, so a block whose self- and cross-attention are both pinned counts
+twice. "ran" means ComfyUI dispatched each pinned module to its pinned kernel,
+as on one GPU; the kernel itself still runs exact attention on a masked call
+(Sol) or on a float32 call with `low_precision_attention` off (int8). A pin
+does not run for one of three reasons: `sequence parallelism`; `FSDP shard
+build`, for a pin the shard build of a bf16 or fp16 checkpoint cleared, though
+no checkpoint whose own header pins reaches that build today, because the FSDP
+launch check refuses it class P first; and `kernel unavailable on this host`,
+where ComfyUI could not bind the kernel and runs its default backend.
+A render on more than one rank still refuses for an unbound pin, because every
+rank must reach the same verdict and a peer may bind the kernel; a render on
+one GPU asks nothing for it. The `attention` fact keeps naming the Init
+widget's kernel.
+
+**Probing it on hardware without patching a checkpoint.**
+`tools/make_pin_probe_lora.py` reads a checkpoint's safetensors header, finds
+one family's attention modules from their query projection keys, and writes a
+small LoRA that holds only `diffusion_model.<module>.comfy_attention.config`
+tensors:
+
+```bash
+python tools/make_pin_probe_lora.py \
+  ComfyUI/models/diffusion_models/wan2.1_t2v_14B_fp8_scaled.safetensors \
+  ComfyUI/models/loras/pin_probe_wan21_sol.safetensors \
+  --family wan21 --kernel comfy_kitchen_sol --tau 0.7
+```
+
+It knows krea2, anima, kandinsky5, wan21, qwen_image21, flux3 and
+flux3_early, and its docstring lists the key pattern for each. `flux3` pins
+every FLUX.3 block; `flux3_early` pins only the five text and five reference
+blocks, which every rank runs whole before the sharded blocks. It pins
+self-attention by default. `--cross`
+adds cross-attention, for int8 only: Sol needs q, k and v of one shape with a
+head dimension of 128, and cross-attention gives its keys and values the
+text's length, not the image's. `--blocks N` pins only the first N modules.
+Load the file with a LoRA loader at strength 1.0, since strength 0 stages no
+pin. On cfg2 under `auto_gate=first_use` the first queue runs the first-use
+ceremony above, then shows the card; after the grant expect a stamped render
+on stock residency whose record reads "ran". On uly2 expect no card and a
+record that reads "dropped (sequence parallelism)"; on cfg2+fsdp or dp2+fsdp
+under `auto_gate=first_use` expect the refusal above even after the grant. The file
+patches no weight, and slab residency prices it as no bake.
+
+## 118. Workers in release slots still run the previous version after a plain update
+
+**Symptom:** after a plain `dgxm update`, one of these appears:
+
+- `dgxm doctor` fails a host's `worker release version` row: the host "runs
+  dgx-monarch X from release slot ..., but the driver runs Y";
+- a host's `env` row ends in `version skew vs driver pin`;
+- `dgxm update --verify` refuses with `prior_worker_drift` ("worker hosts do
+  not exactly match the current driver release");
+- the first-use Gate refuses with "Gate pre provenance package source does not
+  match driver";
+- with a driver on 1.2.0 or later and a slot on a release before 1.2.0, a
+  render refuses before dialing with `no attach ran: ... its loop runs an older
+  release that serves the bare address` ([#2](#2-every-attach-times-out-after-one-failed-attach)),
+  and `dgxm doctor` fails that host's `listener generation` row.
+
+From 1.2.0 on, plain update refuses this case before it fetches, with
+`release_slot_worker`, and names the host. It refuses with
+`release_slot_unknown` when it cannot read a host's source link: the host gave
+no SSH answer, or the Python that cluster.toml names failed there. Nothing was
+fetched; fix that host, then rerun the update.
+
+**Cause:** guided setup puts each remote Worker in a release slot, and a
+verified update puts every Worker in one: the host's
+`~/.local/share/dgx-monarch/src` is then a link into
+`~/.local/share/dgx-monarch/releases/`. Plain update pulls the driver's
+checkout, installs the new torchmonarch pin, and restarts the Workers, but it
+never changes a release slot, so those Workers keep the earlier package. A
+slot that a verified update wrote also carries its own torchmonarch, which
+the env row then reports as skew. A slot that guided setup wrote holds only
+the package, so its Worker runs the earlier package on the new torchmonarch
+and only the release version row and the Gate name it. The verified update
+then refuses, because it accepts only Workers that match the driver exactly.
+A guided-setup install that ever ran plain update has been in this state
+since that update.
+
+Check each host first. A link into `releases/` means a slot; `u-` slots come
+from a verified update and `s-` slots from guided setup:
+
+```bash
+readlink -f ~/.local/share/dgx-monarch/src
+```
+
+Both routes below use `REPO_DIR` and `COMFY_PYTHON`, the paths from
+[INSTALL.md](INSTALL.md#install-the-node-pack). To see which release the
+driver runs:
+
+```bash
+"$COMFY_PYTHON" -c 'import dgx_monarch; print(dgx_monarch.__version__)'
+```
+
+**Repair forward** (works for every slot): move the Workers onto plain source
+directories at the driver's version, then return them to release slots. It
+works with a driver on this release or still on 1.1.0; steps 5 and 6 say where
+the two differ.
+
+1. Stop ComfyUI.
+2. Remove the Worker units and keep the config. Answer `N` when uninstall asks
+   whether to remove the config file:
+
+   ```bash
+   dgxm uninstall
+   ```
+
+   Ignore its closing hint to remove the `custom_nodes/dgx-monarch` checkout;
+   the next steps run from it.
+3. On every configured host, the driver's own host included, remove the source
+   link. Uninstall leaves it in place, and both installers refuse a link
+   without its unit. The test leaves a plain directory alone:
+
+   ```bash
+   if [ -L ~/.local/share/dgx-monarch/src ]; then rm ~/.local/share/dgx-monarch/src; fi
+   ```
+
+4. Install the driver's torchmonarch pin on every configured host. A plain
+   Worker reads torchmonarch from the interpreter that cluster.toml names, and
+   a plain update that stopped early, as on "unsupported key(s): monarch",
+   never moved it. Read the pin from the driver's checkout:
+
+   ```bash
+   PIN=$(grep -o 'torchmonarch==[0-9A-Za-z.+-]*' "$REPO_DIR/pyproject.toml")
+   echo "$PIN"
+   ```
+
+   Then on each host install that pin, with the version `echo` printed after
+   `torchmonarch==` and the `python` path from cluster.toml's `[cluster]`
+   table. Where the pin is already installed, pip changes nothing:
+
+   ```bash
+   <python from cluster.toml> -m pip install --no-deps torchmonarch==<version>
+   ```
+
+5. Install plain Worker units. This syncs the driver's package to each remote
+   host and starts the services (the
+   [Worker services](INSTALL.md#worker-services) section covers lingering and
+   the alternative of rerunning guided setup):
+
+   ```bash
+   dgxm install-service
+   dgxm doctor
+   ```
+
+   Every `worker release version` row should now read "plain source directory".
+   A 1.1.0 doctor prints neither that row nor a `worker policy` row; check
+   instead that no host's `env` row ends in `version skew vs driver pin`.
+6. Put the Workers back in release slots. From now on, update this install
+   only with `dgxm update --verify`. On a driver that runs this release, verify
+   the commit it runs:
+
+   ```bash
+   dgxm update --verify --target HEAD
+   ```
+
+   On a driver still on 1.1.0, the Workers now match it, so skip
+   `--target HEAD`: read
+   [Upgrading from 1.1.0](INSTALL.md#upgrading-from-110), then run
+   `dgxm update --verify` to update to the new release in one step.
+
+   The usual [verified-update conditions](INSTALL.md#updating) apply: a clean
+   checkout, a reachable `origin`, and no ComfyUI, Render session or actor
+   running. Where protected process environments are unreadable, start the
+   [read-only process inspectors](INSTALL.md#protected-process-inspection) and
+   add `--privileged-process-inspection`. The 1.1.0 updater has no such flag;
+   where it refuses with `activity_unknown`, run the update with
+   [the recovery procedure in #110](#recover-an-installation-with-an-older-verifier)
+   and that flag, as step 5 of the rollback below says. If it refuses because
+   a candidate dependency such as `xxhash` is missing, install it as INSTALL
+   describes, then rerun it.
+
+**Roll back** (for `u-` slots, or an `s-` slot whose commit you know): return
+the driver to the commit its Workers run, then make the verified update from
+there.
+
+1. Stop ComfyUI. Remove any `[monarch]` table from cluster.toml: the earlier
+   release's config loader rejects it.
+2. Find the Workers' commit. A `u-` slot name carries its first 12 hex digits
+   (`u-<commit>-<random>`); an `s-` slot carries none, so use the commit guided
+   setup ran at. Reset the checkout's branch to it, which refuses rather than
+   drop local changes:
+
+   ```bash
+   git -C "$REPO_DIR" reset --keep <commit>
+   ```
+
+3. Reinstall that commit's torchmonarch pin on the driver, without
+   dependencies:
+
+   ```bash
+   PIN=$(grep -o 'torchmonarch==[0-9A-Za-z.+-]*' "$REPO_DIR/pyproject.toml")
+   echo "$PIN"
+   "$COMFY_PYTHON" -m pip install --no-deps "$PIN"
+   ```
+
+   Run the same install on each Worker host too, with the value `echo`
+   printed and the `python` path from cluster.toml's `[cluster]` table in
+   place of `COMFY_PYTHON`. The plain update moved that interpreter's
+   torchmonarch as well: an `s-` slot runs on it, and the earlier release's
+   Doctor reads it even for a `u-` slot, which carries its own copy.
+4. Reinstall the package from the reset checkout, restart the Workers and
+   check them:
+
+   ```bash
+   "$COMFY_PYTHON" -m pip install -e "$REPO_DIR" --no-deps
+   dgxm restart
+   dgxm doctor
+   ```
+
+5. Update with the verified path only, after reading
+   [Upgrading from 1.1.0](INSTALL.md#upgrading-from-110) when the Workers run
+   that release:
+
+   ```bash
+   dgxm update --verify
+   ```
+
+   The earlier release's updater runs this step. If it refuses with
+   `activity_unknown` because protected process environments are unreadable,
+   that updater has no `--privileged-process-inspection`; run the same update
+   from a checkout of the target release with
+   [the recovery procedure in #110](#recover-an-installation-with-an-older-verifier),
+   adding that flag to `tools/update_from_checkout.py`, with the inspectors
+   running.
+
+If that update still refuses with `prior_worker_drift`, the Workers run a
+different commit from the one you reset to, as after a guided setup followed
+by plain updates. Use the forward repair instead.
+
+## 119. A mesh build or Worker start refuses on an ambient environment variable
+
+**Symptom:** a render's mesh build, or a Worker service start, refuses with
+one of these messages, each ending in a pointer to this entry:
+
+- "ambient OTLP endpoint conflicts with disabled diagnostic export";
+- "unmanaged MONARCH_RDMA_ environment setting", followed by the names it
+  found;
+- "`NAME` conflicts with the validated Monarch policy", for example
+  `DGXM_RDMA_QP_SPLIT`.
+
+A Worker that refuses exits at start, and its systemd unit keeps restarting
+it; on that host, `journalctl --user -u dgxm-worker.service` shows the
+message.
+
+**Cause:** dgx-monarch sets Monarch's transport and diagnostic settings from
+cluster.toml's `[monarch]` table before Monarch loads, in the driver, each
+Worker and each actor. A variable already set in the environment would
+override those settings without any record, so the process refuses it
+instead. The driver checks on every mesh build, in local mode too; with no
+cluster.toml the default policy applies, so a single box with no cluster
+config can see this. The Worker loop drops
+every variable outside a short allowlist before it checks, so of these only
+`DGXM_RDMA_QP_SPLIT` can stop a Worker start; the other two come from the
+environment that starts ComfyUI.
+
+**Remedy**, per variable:
+
+- `OTEL_EXPORTER_OTLP_ENDPOINT` with export off: unset it in the environment
+  that starts ComfyUI (the shell, its profile, or the launcher), then restart
+  ComfyUI. Setting `[monarch.diagnostics] otlp_endpoint` to the same URL with
+  `otlp_logs = true` also clears it, but that turns on export of Monarch's
+  upstream logs as well as metrics; choose it only on purpose
+  ([CLUSTER.md](CLUSTER.md#monarchdiagnostics)).
+- A `MONARCH_RDMA_*` name the policy does not set: unset it. `[monarch.rdma]`
+  sets every RDMA option this release supports
+  ([CLUSTER.md](CLUSTER.md#monarchrdma)). A managed `MONARCH_RDMA_*` name set
+  to the policy's own value is accepted; any other value refuses with the
+  conflict message below.
+- `DGXM_RDMA_QP_SPLIT`, or another variable named in the conflict message:
+  unset it where the process starts. The policy sets each of them;
+  `DGXM_RDMA_QP_SPLIT` follows `[monarch.rdma] application_chunks`. For a
+  Worker, look in the systemd user manager's environment
+  (`systemctl --user show-environment`), in any hand edit to its unit, and in
+  the shell environment `dgxm up` starts a `nohup` Worker from.
+
+## 120. A render refuses because ComfyUI would drop the checkpoint's weight scales
+
+**Symptom:** a render stops before any load with a class P refusal saying the
+checkpoint stores quantized layers whose weight scale ComfyUI does not read.
+The message gives the number of such layers and the first one. It names no
+guard and offers no card and no waiver. The driver log carries one INFO line
+per file, opening `upstream gate:`, that names up to four of the layers.
+Stock ComfyUI loads an fp8 or int8 file of this kind and logs a
+`unet unexpected:` warning that lists the dropped `weight_scale` or
+`scale_weight` keys.
+
+**Cause:** ComfyUI learns how a layer is quantized from a
+`<layer>.comfy_quant` record. The record is a tensor in the file, an entry in
+the `layers` table of the header's `_quantization_metadata`, or one that
+ComfyUI's legacy conversion writes: in a file with a `scaled_fp8` tensor and
+no `_quantization_metadata`, it renames each `<layer>.scale_weight` to
+`weight_scale` and records that layer, and no other. ComfyUI's
+diffusion-model load also strips one key prefix, such as
+`model.diffusion_model.`, and drops every key outside it. So a `comfy_quant`
+tensor must sit under the same prefix as its weight, and a
+`_quantization_metadata` entry must name the layer with no prefix or with
+exactly that one. A layer that stores an fp8, fp4, int8 or packed 4-bit
+(`U8`) weight beside a scale with no record loads into a plain Linear, and
+ComfyUI drops the scale as an unexpected key. That includes a `weight_scale`
+in a `scaled_fp8` file, and a `scale_weight` in a file that has
+`_quantization_metadata`. An fp8 or int8 file then loads without an error and
+computes with its scales ignored, so the image is wrong. A packed 4-bit file
+fails at load or at the first step. The gate refuses an fp4 layer by the same
+header rule. The known cases are in Black Forest Labs' FLUX.3 Image Klein
+diffusers repositories: `variants/fp8r/model.safetensors` stores per-row fp32
+scales and names its format only in header fields ComfyUI does not read, and
+`variants/nvfp4/model.safetensors` stores 198 packed 4-bit layers with scales
+and no record, so stock ComfyUI fails at the first step.
+The gate reads the header alone, on the driver before capacity or mesh work
+and again at every Worker's load entry point, and replays ComfyUI's load
+steps on the key names.
+
+**Fix:** use an export of the same model in ComfyUI's quantized layout, whose
+quantized layers carry `comfy_quant` keys or a `_quantization_metadata` table,
+or the model's bf16 file. For FLUX.3 Image Klein, use the files in the
+vendor's ComfyUI-layout repository, `black-forest-labs/flux-3-image-klein-comfy`,
+which the artifact manifest pins ([MODELS](MODELS.md#model-flux-3-klein)).
+There is no waiver and no env var: no setting can make ComfyUI read these
+scales.
+
+## 121. A FLUX.3 checkpoint fails to load on ComfyUI older than 0.41.0
+
+**Symptom:** a FLUX.3 Image Klein template is refused before it runs:
+ComfyUI's prompt check reports `Value not in list` for the CLIPLoader type
+`flux3`. A graph that loads a `flux3_image_klein_*` file another way stops at
+the model load, where ComfyUI's loader raises `Could not detect model type`,
+while dgx-monarch's own header read still names the family `flux3`. A ComfyUI
+that loads the file as some other model class leaves the render refused with
+`has no dgx-monarch adapter`.
+
+**Cause:** ComfyUI added the FLUX.3 model, its detection, the `flux3` text
+encoder type and the LoRA key map in one change, first released in
+ComfyUI 0.41.0. dgx-monarch reads the family from the checkpoint header
+without asking ComfyUI, so it names `flux3` on any ComfyUI, but only a
+ComfyUI that defines `comfy.model_base.Flux3` can build the model, and the
+adapter binds that exact class. The driver needs it for the `flux3`
+CLIPLoader type too.
+
+**Fix:** update ComfyUI to 0.41.0 or newer on the driver and on every Worker,
+through the procedure you use for ComfyUI, then restart the driver and the
+Workers. `dgxm update` moves dgx-monarch and torchmonarch only, never
+ComfyUI. Every other family keeps working on the older ComfyUI meanwhile.
+Every Gate PASS goes stale with the ComfyUI change, so each combination runs
+its first-use Gate again
+([#114](#114-every-combination-runs-its-first-use-gate-again-after-an-update)).

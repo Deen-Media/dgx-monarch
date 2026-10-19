@@ -51,11 +51,25 @@ Illustrative dashboard using sample data, not a benchmark result.
   device with one cabled port shows under its own name. A device with more
   than one shows each port as `<device>/<port>`, the same key the link state
   and the `/dgxm/metrics` rail label use. During a sequence-parallel render,
-  the all-to-all traffic shows as one pulse per denoise step.
+  the all-to-all traffic shows as one pulse per denoise step. In
+  `/dgxm/telemetry`, each box's readings (the driver's `driver_host` block and
+  each worker's `host` block) carry `rails`, the cumulative RX and TX bytes per
+  rail; `rail_state`, the port state and physical state per rail; `rails_m`,
+  the box's monotonic time of the reading, which readers use to time a rate; and
+  `rails_t`, the wall-clock time of the same reading, for display only.
 * **Render line:** live step progress (fed by the driver's own progress
   channel), s/it and ETA, or the last render's duration when idle, then the
   gate ledger's count of each verdict. The label names the active stage, such as
   `gate proof 2 of 2-4`, `cross-residency check`, or `render`.
+* **Driver phases:** under the render line, in `dgxm top` and in the sidebar,
+  `Recent driver phases:` names the driver's last four completed phases, such
+  as `attach`, `readiness`, `collect` or `recycle`, each with its seconds, and
+  in parentheses any outcome other than `ok`. The timings come from the
+  `diagnostics` block of `/dgxm/telemetry`. The line reads
+  `No completed driver phases recorded` before the first one,
+  `Phase timings unavailable` when the driver sends no usable block, and
+  `Phase timings unavailable or stale` without a fresh driver report. The
+  timings are advisory and never decide health or readiness.
 * **Run summary:** a first-use request runs NCCL setup, loads the model, and
   performs the gate's reference and residency checks before rendering. The
   summary lists each stage, its duration, and the total until the
@@ -93,12 +107,35 @@ carries traffic, or when its link is physically up but its port is down. An
 unused or uncabled port stays off the line, and so does a rail that never
 trained at boot, because sysfs reads it the same as an uncabled port;
 `dgxm doctor` reports that rail. When the panel is idle, the last render's
-line also names the topology it ran, its auto table row, and its last seconds
-per step. Each render times a step against its own previous step, so the
+line also names the topology it ran, its auto table row, its last seconds per
+step, and any attention kernel the model pinned per attention module, with
+whether it ran
+([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+When both models of a dual-model cfg2 render pin, that part gives one clause
+per model, such as
+`pinned: cond model: ..., ran; uncond model: ..., dropped (...)`.
+Each render times a step against its own previous step, so the
 second leader of a dp>1 render, or another render in the same Fleet wave,
 cannot shrink that number to the gap between two messages. `dgxm top` does not
 draw these facts yet; they are in the `render.last` block of
 `/dgxm/telemetry`.
+
+That block holds `model`, `steps`, `wall_s` (the whole render, cold load and
+any gate included), `ended_at`, `ceremony` (whether the render paid a
+first-use identity gate), `topology`, `attention` (the Init widget's kernel)
+and `sec_per_step` (the last step's time). `sample_s` is the slowest rank's
+sampler time and `mean_step_s` is `sample_s` over the render's own steps, so
+neither holds load or gate time. The auto facts are `auto_row`, `family`,
+`quant`, `megapixels`, `cfg`, `keeps_uncond` (whether the sampler keeps the
+negative pass at CFG 1, as the cfg++ samplers do), `evidence_row` (the record
+that admitted cfg2), `skipped_cfg_row` (a cfg row auto passed over for want of
+evidence) and `batch`. A preset leaves them null, and a one-GPU render has no
+`auto_row`. When the render re-attached after a Worker restart, `reattach`
+reads `restart_reattach` and `reattach_s` gives the re-attach seconds; both
+are null otherwise. The pin fields `attention_pins`, `attention_pins_ran` and
+`attention_pins_dropped`, plus `attention_pins_models` when both models of a
+dual-model cfg2 render pin, are described in
+[TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel).
 
 ## Butterfly header
 

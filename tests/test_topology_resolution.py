@@ -67,7 +67,9 @@ def test_fp16_header_kind_preserved_unless_loader_requests_fp8(
         unet_name="model.safetensors",
         options={"weight_dtype": weight_dtype},
     )
-    latent = torch.zeros(1, 4, 192, 192)
+    # 1600 square is 2.56 MP, above the krea2 cfg2 band (row 15 ends at 2.36),
+    # so the fp8 load reaches row 11 and its sage bracket.
+    latent = torch.zeros(1, 4, 200, 200)
 
     topology, selected_sage, reason = common.resolve_topology(model, latent, cfg_value=4.0)
 

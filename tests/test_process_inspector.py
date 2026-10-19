@@ -246,8 +246,12 @@ def _request(path: Path, payload: bytes) -> bytes:
                 if time.monotonic() >= deadline:
                     raise
                 time.sleep(0.005)
-        client.sendall(payload)
-        client.shutdown(socket.SHUT_WR)
+        # A server that rejects the peer may close before the payload lands.
+        try:
+            client.sendall(payload)
+            client.shutdown(socket.SHUT_WR)
+        except (BrokenPipeError, ConnectionResetError):
+            return b""
         try:
             return client.recv(inspector.MAX_REPLY)
         except ConnectionResetError:

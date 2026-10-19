@@ -33,6 +33,12 @@ def next_sequence() -> int:
         return _SEQ
 
 
+def last_sequence() -> int:
+    """The sequence the latest attach took, 0 before any: a later line joins on it."""
+    with _SEQ_LOCK:
+        return _SEQ
+
+
 def token(value: Any) -> str:
     """Render one field value as a single bounded, space-free token."""
     if value is None:

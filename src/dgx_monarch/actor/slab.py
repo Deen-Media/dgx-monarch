@@ -490,5 +490,10 @@ class WeightSlab:
 
 
 def _slab_tensor_uses_cuda(name: str) -> bool:
-    """Keep Comfy's U8 quant JSON markers CPU-readable for Tensor.numpy()."""
-    return name != "comfy_quant" and not name.endswith(".comfy_quant")
+    """Keep Comfy's U8 JSON markers CPU-readable for Tensor.numpy().
+
+    The quant markers, and the per-block attention config a checkpoint can
+    carry at ``<block>.comfy_attention.config``.
+    """
+    return (name != "comfy_quant" and not name.endswith(".comfy_quant")
+            and not name.endswith(".comfy_attention.config"))

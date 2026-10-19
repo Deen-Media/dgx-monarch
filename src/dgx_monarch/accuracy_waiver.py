@@ -279,13 +279,17 @@ def _context_fingerprint(context: Mapping[str, str]) -> str:
 def activate(request: Mapping[str, Any] | None) -> int:
     """Install this dispatch's thread-local grants and return their count.
 
-    Each sample clears the previous scope first, so authorization cannot outlive
-    its dispatch. Malformed stamps install nothing and leave guards refusing.
+    Each sample clears the previous scope first, binding included, so neither
+    authorization nor a card's checkpoint can outlive its dispatch. Malformed
+    stamps install nothing and leave guards refusing.
     """
     scope = _scope()
     scope.grants = {}
     scope.fired = {}
     scope.run_id = ""
+    # The binding goes too: this dispatch's own load binds again, so a card
+    # can never name a checkpoint an earlier dispatch bound on this thread.
+    scope.bound = None
     if not isinstance(request, Mapping):
         return 0
     scope.run_id = str(request.get("_dgxm_render_id", "") or "")
@@ -356,21 +360,23 @@ def clear() -> None:
     _LOCAL.scope = _Scope()
 
 
-def card_tail(guard: str, *, family_hint: str | None = None) -> str:
+def card_tail(guard: str, *, family_hint: str | None = None,
+              detail: str | None = None) -> str:
     """Return the bounded descriptor appended after the refusal text.
 
-    An unwaivable guard, missing binding, or encoding error returns an empty tail
-    and leaves the refusal in force.
+    ``detail`` is one line about this refusal, which the card shows beside the
+    checkpoint's name. An unwaivable guard, missing binding, or encoding error
+    returns an empty tail and leaves the refusal in force.
     """
     try:
-        descriptor = _descriptor(guard, family_hint=family_hint)
+        descriptor = _descriptor(guard, family_hint=family_hint, detail=detail)
         return "" if descriptor is None else "\n" + consent_descriptor.encode(descriptor)
     except Exception as exc:  # an un-carded refusal is still a refusal
         log.warning("accuracy-waiver card descriptor not encoded for %s (%r)", guard, exc)
         return ""
 
 
-def _descriptor(guard: str, *, family_hint: str | None
+def _descriptor(guard: str, *, family_hint: str | None, detail: str | None = None
                 ) -> consent_descriptor.ConsentDescriptor | None:
     kind = KNOWN_WRONG_GUARDS.get(guard)
     bound = _scope().bound
@@ -380,6 +386,7 @@ def _descriptor(guard: str, *, family_hint: str | None
     if not spec.wired:
         return None
     scoped = check_guard(kind, guard) or guard
+    measured = spec.measured_for(scoped)
     fingerprint = _context_fingerprint(bound.memo_context)
     return consent_descriptor.ConsentDescriptor(
         version=consent_descriptor.CONSENT_DESCRIPTOR_VERSION,
@@ -390,11 +397,11 @@ def _descriptor(guard: str, *, family_hint: str | None
         context_fingerprint=fingerprint,
         family_hint=family_hint,
         # Preserve the scoped guard so the audit row names the affected family.
-        measured={"probe": scoped, "measured": str(spec.measured or ""),
+        measured={"probe": scoped, "measured": str(measured or ""),
                   "topology": bound.memo_context.get("topology", ""),
-                  "world": bound.world},
+                  "world": bound.world, **({"detail": detail} if detail else {})},
         memo_context=dict(bound.memo_context),
-        human_reason=f"{spec.risk} Measured: {spec.measured}.",
+        human_reason=f"{spec.risk} Measured: {measured}.",
         evidence=spec.evidence or "",
         panel_action=spec.primary_label,
         env_fallback=spec.env_var,

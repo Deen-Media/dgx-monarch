@@ -397,10 +397,26 @@ def test_a_cfg_topology_on_a_cfg_one_graph_is_a_refusal(tmp_path):
     # topology installs never gets the two slices it splits.
     cells, _pruned, _unmatched = matrix.build_cells(_rig(tmp_path))
     assert _pick(cells, "cfgone", "cfg2")["label"] == "refuse:P"
-    # The same graph under fsdp keeps the untagged label: the FSDP gate denies
-    # the run before the cfg-one check can tag it.
-    assert _pick(cells, "cfgone", "cfg2+fsdp")["label"] == "refuse:untyped"
     assert _pick(cells, "krea2", "cfg2", artifact_quant="bf16")["label"] == "render"
+
+
+def test_a_cfg_one_graph_on_cfg2_fsdp_refuses_class_p_under_either_gate(tmp_path):
+    """FSDP leaves the cfg-one refusal typed. At auto_gate first_use the
+    clean-reload proof's own render meets the cfg wrapper's class P guard, and
+    the ceremony passes a settled typed refusal through with its class
+    (nodes/gate_ceremony.py). At auto_gate off no proof runs, and the render
+    meets the same guard. Measured 2026-10-16: FLUX.3 Klein cell 2d2d694eef15
+    (cfg2+fsdp, BF16, CFG 1, Euler) answered refuse:P where the matrix had
+    labelled it refuse:untyped."""
+    config = _rig(tmp_path)
+    config.update(toggles={"auto_gate": ["off"]}, toggle_presets={"auto_gate": ["cfg2+fsdp"]})
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    for gate in ("first_use", "off"):
+        cell = _pick(cells, "cfgone", "cfg2+fsdp", artifact_quant="bf16", auto_gate=gate)
+        assert (cell["label"], cell["basis"], cell["waiver"]) == (
+            "refuse:P", "guard", False), gate
+    # A cfg++ sampler keeps the uncond pass, so the same preset renders.
+    assert _pick(cells, "cfgonepp", "cfg2+fsdp", artifact_quant="bf16")["label"] == "render"
 
 
 def test_a_cfg_pp_sampler_at_cfg_one_still_renders_on_a_cfg_topology(tmp_path):
@@ -825,10 +841,12 @@ def test_kernels_that_resolve_to_one_collapse_to_one_cell(tmp_path):
     config = _rig(tmp_path)
     _checkpoint(config["model_dir"], "krea2_raw_fp8_scaled.safetensors", "krea2",
                 torch.float8_e4m3fn)
+    # 1600 square is above the krea2 cfg2 band (row 15 ends at 2.36 MP), so
+    # auto lands on row 11, the one with sage on.
     (config["out_dir"] / "graphs" / "big.json").write_text(json.dumps(
         _graph("krea2_raw_fp8_scaled.safetensors") | {"3": {
             "class_type": "EmptySD3LatentImage",
-            "inputs": {"width": 1536, "height": 1536, "batch_size": 1}}}))
+            "inputs": {"width": 1600, "height": 1600, "batch_size": 1}}}))
     config["image_attention"] = ["TORCH_FLASH", "TORCH_CUDNN", "SAGE_AUTO"]
     config["sol_families"] = []
     cells, pruned, _unmatched = matrix.build_cells(config)
@@ -845,6 +863,129 @@ def test_kernels_that_resolve_to_one_collapse_to_one_cell(tmp_path):
     # A reference never points at a cell the collapse removed.
     ids = {cell["id"] for cell in cells}
     assert all(cell["reference"].get("cell", next(iter(ids))) in ids for cell in cells)
+
+
+def _krea2_fp8_square(config: dict, stem: str, graph: dict, side: int = 1536) -> None:
+    """Write ``graph`` at ``side`` square beside a krea2 FP8 checkpoint."""
+    _checkpoint(config["model_dir"], "krea2_raw_fp8_scaled.safetensors", "krea2",
+                torch.float8_e4m3fn)
+    graph["3"] = {"class_type": "EmptySD3LatentImage",
+                  "inputs": {"width": side, "height": side, "batch_size": 1}}
+    (config["out_dir"] / "graphs" / f"{stem}.json").write_text(json.dumps(graph))
+
+
+def _auto_fp8(cells: list[dict], stem: str) -> list[tuple[int, str]]:
+    return sorted((int(cell["resolved_cfg"]), cell["resolved_attention"])
+                  for cell in cells if cell["template"] == stem
+                  and cell["preset"] == "auto" and cell["session"] == "cluster"
+                  and not cell["levers"] and "fp8" in cell["artifact_quant"]
+                  and cell["label"] == "render")
+
+
+def test_a_cfg_pp_auto_cell_resolves_the_cfg_row_the_tagged_render_takes(tmp_path):
+    # The sampler node tags a cfg++ latent, so at CFG 1 auto keeps krea2 FP8
+    # at 1536 square on row 15 (cfg2, sage off). The sweep's three auto sites
+    # forward that answer; dropping it labels these cells row 11 (uly2 with
+    # SAGE), a render the runtime no longer picks for the shipped template.
+    config = _rig(tmp_path)
+    _krea2_fp8_square(config, "pp", _graph("krea2_raw_fp8_scaled.safetensors", cfg=1.0,
+                                           sampler="euler_cfg_pp"))
+    _krea2_fp8_square(config, "plain", _graph("krea2_raw_fp8_scaled.safetensors",
+                                              cfg=1.0))
+    config["image_attention"] = ["TORCH_FLASH", "SAGE_AUTO"]
+    config["sol_families"] = []
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    # cfg2 keeps stock per-rank attention, so both kernels stay distinct cells.
+    assert _auto_fp8(cells, "pp") == [(2, "SAGE_AUTO"), (2, "TORCH_FLASH")]
+    # A plain sampler drops the pass, row 15 is skipped, and row 11's sage
+    # rewrite collapses both kernels onto one cell.
+    assert _auto_fp8(cells, "plain") == [(1, "SAGE_AUTO")]
+
+
+def _krea2_bf16_square(config: dict, stem: str, unet: str, merge_record: bool,
+                       side: int) -> None:
+    """Write a krea2 BF16 header, with or without Kroma's merge record, and its
+    CFG 1.5 graph at ``side`` square."""
+    metadata = {"base": "raw.safetensors", "copy_prefixes": "txtfusion.,txtmlp.",
+                "finetune": "kroma.safetensors", "target": "turbo.safetensors"}
+    save_file({key: torch.zeros(2, 2, dtype=torch.bfloat16) for key in FAMILY_KEYS["krea2"]},
+              str(config["model_dir"] / unet), metadata=metadata if merge_record else None)
+    graph = _graph(unet, cfg=1.5)
+    graph["3"] = {"class_type": "EmptySD3LatentImage",
+                  "inputs": {"width": side, "height": side, "batch_size": 1}}
+    (config["out_dir"] / "graphs" / f"{stem}.json").write_text(json.dumps(graph))
+
+
+@pytest.mark.parametrize("side", [1152, 1536])
+def test_a_kroma_auto_cell_resolves_the_ulysses_row_the_runtime_takes(tmp_path, side):
+    # Krea2's cfg2 row 15 excludes Kroma, which the runtime reads from the
+    # header's merge record (topology_cfg_evidence.checkpoint_variant). The
+    # sweep reads that variant once per artifact and hands it to its three auto
+    # sites, so a Kroma BF16 auto cell at CFG 1.5 records uly2 where a plain
+    # Krea2 BF16 header at the same size keeps cfg2. Explicit cfg2 still runs.
+    config = _rig(tmp_path)
+    _krea2_bf16_square(config, "kroma", "kroma_bf16.safetensors", True, side)
+    _krea2_bf16_square(config, "turbo", "krea2_turbo_bf16.safetensors", False, side)
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    kroma = _pick(cells, "kroma", "auto", attention="TORCH_FLASH")
+    turbo = _pick(cells, "turbo", "auto", attention="TORCH_FLASH")
+    assert (kroma["variant"], turbo["variant"]) == ("kroma", None)
+    assert (kroma["label"], kroma["resolved_cfg"], kroma["cfg_path"]) == ("render", 1, "none")
+    assert (turbo["label"], turbo["resolved_cfg"]) == ("render", 2)
+    explicit = _pick(cells, "kroma", "cfg2", attention="TORCH_FLASH")
+    assert (explicit["label"], explicit["resolved_cfg"]) == ("render", 2)
+
+
+def test_a_sampler_custom_cfg_pp_graph_keeps_the_cfg_one_skip_under_auto(tmp_path):
+    # Sampler Custom (DGX Monarch) takes a SAMPLER object with no name, so its
+    # latent stays untagged and auto keeps the CFG-1 skip, even when the stock
+    # KSamplerSelect feeding it names a cfg++ sampler. The sweep reads the name
+    # off KSamplerSelect, so its auto label must not take that name as the tag.
+    config = _rig(tmp_path)
+    unet = "krea2_raw_fp8_scaled.safetensors"
+    graph = {
+        "1": {"class_type": "DGXMonarchInit", "inputs": {"topology": "auto", "mode": "auto"}},
+        "2": {"class_type": "DGXMonarchUNETLoader",
+              "inputs": {"unet_name": unet, "mesh": ["1", 0]}},
+        "4": {"class_type": "KSamplerSelect", "inputs": {"sampler_name": "euler_cfg_pp"}},
+        "5": {"class_type": "DGXMonarchCFGGuider",
+              "inputs": {"model": ["2", 0], "cfg": 1.0}},
+        "6": {"class_type": "ManualSigmas", "inputs": {"sigmas": "1.0, 0.5, 0.0"}},
+        "7": {"class_type": "RandomNoise", "inputs": {"noise_seed": 1}},
+        "8": {"class_type": "DGXMonarchSamplerCustom",
+              "inputs": {"noise": ["7", 0], "guider": ["5", 0], "sampler": ["4", 0],
+                         "sigmas": ["6", 0], "latent_image": ["3", 0]}},
+        "9": {"class_type": "SaveImage",
+              "inputs": {"filename_prefix": "t", "images": ["8", 0]}},
+    }
+    _krea2_fp8_square(config, "custom", graph)
+    facts = matrix.graph_facts(json.loads(
+        (config["out_dir"] / "graphs" / "custom.json").read_text()))
+    assert (facts["sampler"], facts["cfg"]) == ("euler_cfg_pp", 1.0)
+    assert facts["sampler_keeps_uncond"] and not facts["auto_keeps_uncond"]
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    # Row 11, as the untagged render resolves: uly2 with SAGE, not row 15.
+    assert _auto_fp8(cells, "custom") == [(1, "SAGE_AUTO")]
+    # comfy still keeps the pass under Sampler Custom, so an explicit cfg2
+    # cell renders rather than refusing class P.
+    assert _pick(cells, "custom", "cfg2", artifact_quant="fp8")["label"] == "render"
+
+
+def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
+    # The sweep's set must name exactly the node classes whose sample call
+    # hands sampler_latent a sampler name. Sampler Custom passes None.
+    tagging, untagged = set(), set()
+    for path in sorted((REPO / "src" / "dgx_monarch" / "nodes").glob("*.py")):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for klass in (node for node in tree.body if isinstance(node, ast.ClassDef)):
+            for call in ast.walk(klass):
+                if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) \
+                        and call.func.id == "sampler_latent" and len(call.args) == 2:
+                    named = not (isinstance(call.args[1], ast.Constant)
+                                 and call.args[1].value is None)
+                    (tagging if named else untagged).add(klass.name)
+    assert tagging == set(matrix.UNCOND_TAGGING_SAMPLERS)
+    assert untagged == {"DGXMonarchSamplerCustom"}
 
 
 def test_an_artifact_groups_array_names_the_base_loaders_extras(tmp_path):
@@ -2076,3 +2217,356 @@ def test_a_head_dimension_no_kernel_carries_still_refuses(tmp_path, monkeypatch)
         cell = _pick(cells, "ig4", "uly2", attention=kernel)
         assert (cell["label"], cell["basis"]) == ("refuse:P", "guard"), kernel
     assert _pick(cells, "ig4", "cfg2", attention="TORCH_CUDNN")["label"] == "render"
+
+
+# The kernel ComfyUI's int8 checkpoints pin, as the header carries it.
+PIN_INT8 = {"attention": "comfy_kitchen_int8"}
+# Every two-rank preset the pin rule sorts, dp2 and dp2+fsdp among them.
+PIN_PRESETS = ["auto", "uly2", "ring2", "cfg2", "dp2", "uly2+fsdp", "cfg2+fsdp", "dp2+fsdp"]
+NON_SP_PRESETS = ("cfg2", "dp2", "cfg2+fsdp", "dp2+fsdp")
+
+
+def _config_tensor(config: object) -> torch.Tensor:
+    """The uint8 JSON tensor ComfyUI's ``ComfyAttention._save_to_state_dict`` writes."""
+    return torch.tensor(list(json.dumps(config).encode("utf-8")), dtype=torch.uint8)
+
+
+def _pinned_checkpoint(path: Path, pins: dict[str, object], dtype=torch.int8,
+                       extra: dict[str, torch.Tensor] | None = None) -> None:
+    """A tiny Krea2 file whose attention modules carry ``pins``.
+
+    Each config is the tensor ComfyUI writes at
+    ``<module>.comfy_attention.config``; ``extra`` adds raw tensors as given.
+    """
+    tensors = {key: torch.zeros(2, 2, dtype=dtype)
+               for key in ("txtfusion.a.weight", "blocks.0.attn.wq.weight",
+                           "blocks.1.attn.wq.weight")}
+    for module, config in pins.items():
+        tensors[f"{module}.comfy_attention.config"] = _config_tensor(config)
+    tensors.update(extra or {})
+    save_file(tensors, str(path))
+
+
+def _pin_rig(tmp_path: Path, checkpoints: dict[str, tuple[dict, object]],
+             cfg: float = 3.5, sampler: str = "euler") -> dict:
+    """One template per checkpoint, named by ``checkpoints``: (pins, dtype).
+
+    Each graph renders a batch of two, so dp2 divides it and its cells reach
+    the sample path the pin guard sits on.
+    """
+    models = tmp_path / "comfy" / "models" / "diffusion_models"
+    graphs = tmp_path / "out" / "graphs"
+    models.mkdir(parents=True)
+    graphs.mkdir(parents=True)
+    for template, (pins, dtype) in checkpoints.items():
+        quant = "int8" if dtype == torch.int8 else "bf16"
+        unet = f"{template}_{quant}.safetensors"
+        _pinned_checkpoint(models / unet, pins, dtype)
+        graph = _graph(unet, cfg=cfg, sampler=sampler)
+        graph["3"]["inputs"]["batch_size"] = 2
+        (graphs / f"{template}.json").write_text(json.dumps(graph))
+    config = dict(matrix.DEFAULTS)
+    config.update(out_dir=tmp_path / "out", comfy_dir=tmp_path / "comfy", model_dir=models,
+                  template_dirs=[], exclude=[], toggles={}, toggle_presets={},
+                  toggle_combos=[], loras={}, lora_off={}, artifact_groups={},
+                  image_presets=PIN_PRESETS, video_presets=PIN_PRESETS,
+                  image_attention=["TORCH_FLASH"], video_attention=["TORCH_FLASH"],
+                  sol_families=[])
+    return config
+
+
+def _pinned_int8(tmp_path: Path, **graph) -> dict:
+    return _pin_rig(tmp_path, {
+        "pinned": ({"blocks.0.attn": PIN_INT8, "blocks.1.attn": PIN_INT8}, torch.int8),
+        "plain": ({}, torch.int8)}, **graph)
+
+
+def _local(cells: list[dict], template: str) -> dict:
+    hits = [cell for cell in cells if cell["template"] == template
+            and cell["session"] == "local"]
+    assert len(hits) == 1, hits
+    return hits[0]
+
+
+def test_the_pin_read_takes_comfys_config_tensors_through_the_runtime_reader(tmp_path):
+    """ComfyUI binds the first kernel a config names that it knows, and only on
+    a comfy_attention module; a config naming none pins nothing."""
+    path = tmp_path / "pins_int8.safetensors"
+    _pinned_checkpoint(path, {
+        "blocks.0.attn": PIN_INT8,
+        "blocks.1.attn": [{"attention": "flash_unknown"},
+                          {"attention": "comfy_kitchen_sol", "tau": 0.7}],
+        "blocks.2.attn": {"attention": "flash_unknown"},
+        # ComfyUI stops at the bound kernel and never reads the entry after it.
+        "blocks.3.attn": [PIN_INT8, 5]},
+        # A config tensor on any other module binds nothing in ComfyUI.
+        extra={"blocks.0.attn.norm.config": _config_tensor(PIN_INT8)})
+    pins = matrix.checkpoint_pins([path])
+    assert sorted(pin.label for pin in pins.values()) == [
+        "comfy_kitchen_int8", "comfy_kitchen_int8", "comfy_kitchen_sol tau=0.7"]
+    assert not [key for key in pins if "norm" in key]
+    # The rig's GPUs bind both kernels, which a render on one GPU reads.
+    assert all(pin.bound and not pin.cleared for pin in pins.values())
+    assert matrix.checkpoint_pins([tmp_path / "missing.safetensors"]) == {}
+
+
+@pytest.mark.parametrize(("tensor", "reason"), [
+    (torch.tensor(list(b"not json"), dtype=torch.uint8), "is not JSON"),
+    (_config_tensor([5, PIN_INT8]), "not an object ahead of every kernel"),
+    (_config_tensor(None), "not an object ahead of every kernel"),
+    (_config_tensor("comfy_kitchen_int8"), "not an object ahead of every kernel"),
+    (torch.tensor(list(json.dumps(PIN_INT8).encode()), dtype=torch.int8),
+     "is I8, not the uint8 JSON ComfyUI writes"),
+])
+def test_a_pin_config_whose_load_the_matrix_cannot_predict_is_named(tmp_path, tensor, reason):
+    """ComfyUI's load raises on a config that is not JSON, and on an entry that
+    is not an object ahead of the kernel it binds, so no guard runs and no
+    label holds; ComfyUI writes uint8 alone, so another dtype is no config it
+    wrote."""
+    path = tmp_path / "odd_int8.safetensors"
+    _pinned_checkpoint(path, {}, extra={"blocks.0.attn.comfy_attention.config": tensor})
+    with pytest.raises(matrix.PinConfigError, match=reason) as caught:
+        matrix.checkpoint_pins([path])
+    assert "odd_int8.safetensors: blocks.0.attn.comfy_attention.config" in str(caught.value)
+
+
+def test_the_pin_read_stops_at_its_bound(tmp_path, monkeypatch):
+    path = tmp_path / "pins_int8.safetensors"
+    _pinned_checkpoint(path, {"blocks.0.attn": PIN_INT8})
+    size = len(json.dumps(PIN_INT8).encode())
+    monkeypatch.setattr(matrix, "PIN_CONFIG_MAX_BYTES", size)
+    assert len(matrix.checkpoint_pins([path])) == 1
+    monkeypatch.setattr(matrix, "PIN_CONFIG_MAX_BYTES", size - 1)
+    with pytest.raises(matrix.PinConfigError, match=f"holds {size} bytes"):
+        matrix.checkpoint_pins([path])
+
+
+def test_a_checkpoint_comfy_cannot_load_drops_its_set_with_a_note(tmp_path):
+    config = _pin_rig(tmp_path, {"broken": ({"blocks.0.attn": [5, PIN_INT8]}, torch.int8),
+                                 "plain": ({}, torch.int8)})
+    cells, pruned, _unmatched = matrix.build_cells(config)
+    assert not [cell for cell in cells if cell["template"] == "broken"]
+    assert [line for line in pruned if line.startswith("broken: broken_int8.safetensors: ")
+            and line.endswith("so the set is dropped")]
+    assert _local(cells, "plain")["label"] == "render"
+
+
+def test_a_pinned_checkpoint_refuses_class_k_wherever_its_pins_run(tmp_path):
+    """Without sequence parallelism a pinned approximate kernel runs as on one
+    GPU, so the worker's guard refuses class K under the Sol-Attn waiver on
+    single (alone, reading the binding), cfg2, dp2, cfg2+fsdp and dp2+fsdp."""
+    config = _pinned_int8(tmp_path)
+    config.update(toggles={"auto_gate": ["off"]},
+                  toggle_presets={"auto_gate": ["cfg2+fsdp", "dp2+fsdp"]})
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    guard = "sol_attn:checkpoint_pin"
+    local = _local(cells, "pinned")
+    assert (local["preset"], local["label"], local["basis"]) == ("single", "refuse:K", "header")
+    assert (local["waiver"], local["waiver_guards"]) == (True, [guard])
+    assert local["checkpoint_pins"] == {"comfy_kitchen_int8": 2}
+    for preset in ("cfg2", "dp2"):
+        cell = _pick(cells, "pinned", preset)
+        assert (cell["label"], cell["basis"], cell["waiver"], cell["waiver_guards"]) == (
+            "refuse:K", "header", True, [guard]), preset
+    for preset in ("cfg2+fsdp", "dp2+fsdp"):
+        # An int8 file takes the direct wrap, which keeps its pins.
+        waivable = _pick(cells, "pinned", preset, auto_gate="off")
+        assert (waivable["label"], waivable["basis"], waivable["waiver"],
+                waivable["waiver_guards"]) == ("refuse:K", "header", True, [guard]), preset
+        # At auto_gate=first_use the ceremony that would earn the Gate PASS
+        # carries no waiver and ends on the guard, so no grant can clear it:
+        # the runner must not try one.
+        gated = _pick(cells, "pinned", preset, auto_gate="first_use")
+        assert (gated["label"], gated["basis"], gated["waiver"],
+                gated["waiver_guards"]) == ("refuse:K", "header", False, []), preset
+    # The same file without pins renders everywhere.
+    assert _local(cells, "plain")["label"] == "render"
+    assert _local(cells, "plain")["checkpoint_pins"] == {}
+    for preset in NON_SP_PRESETS:
+        assert _pick(cells, "plain", preset)["label"] == "render", preset
+
+
+def test_a_pinned_checkpoint_renders_under_sequence_parallelism_at_the_waived_bar(tmp_path):
+    """uly2 and ring2 drop the pins and run exact attention, while the one-GPU
+    reference renders only under the waiver, on the pinned kernel. The two
+    differ however exact the cell is, so its number is measured and never
+    scored."""
+    cells, _pruned, _unmatched = matrix.build_cells(_pinned_int8(tmp_path))
+    local = _local(cells, "pinned")
+    for preset in ("uly2", "ring2"):
+        cell = _pick(cells, "pinned", preset)
+        assert (cell["label"], cell["waiver"]) == ("render", False), preset
+        assert "sol_attn:checkpoint_pin" not in cell["waiver_guards"], preset
+        assert cell["reference"] == {"kind": "cell", "cell": local["id"],
+                                     "bar": matrix.WAIVED_BAR, "probe_steps": 1}, preset
+    # Every cell scored against that reference takes the bar: cfg2 and dp2
+    # render the pinned kernel under the waiver on both sides, and the auto
+    # cell takes the label and bar of the preset it resolves to (uly2 here).
+    for preset in ("cfg2", "dp2", "auto"):
+        assert _pick(cells, "pinned", preset)["reference"]["bar"] == matrix.WAIVED_BAR, preset
+    assert _pick(cells, "pinned", "auto")["label"] == "render"
+    # A cell with no single-GPU reference keeps its bar: the FSDP twin is the
+    # same render at another residency and is held to the pixel.
+    fsdp = _pick(cells, "pinned", "uly2+fsdp")
+    assert fsdp["label"] == "render"
+    assert fsdp["reference"]["bar"] == "bit-identical"
+
+
+def test_an_unpinned_int8_checkpoint_keeps_its_numeric_bar(tmp_path):
+    cells, _pruned, _unmatched = matrix.build_cells(_pinned_int8(tmp_path))
+    local = _local(cells, "plain")
+    for preset in ("uly2", "ring2", "cfg2", "dp2"):
+        cell = _pick(cells, "plain", preset)
+        assert cell["label"] == "render", preset
+        assert cell["reference"] == {"kind": "cell", "cell": local["id"],
+                                     "bar": "step-nrms", "probe_steps": 1}, preset
+
+
+def test_a_pinned_bf16_checkpoint_meets_the_fsdp_launch_contract_first(tmp_path):
+    """The FSDP shard build of a bf16 file would clear its pins, but a header
+    that pins one never reaches it: the uint8 config tensors leave the launch
+    precision unproven, and the launch contract refuses class P above the pin
+    rule. Its resident cells still meet the pin guard."""
+    config = _pin_rig(tmp_path, {
+        "pinnedbf": ({"blocks.0.attn": PIN_INT8}, torch.bfloat16),
+        "plainbf": ({}, torch.bfloat16)})
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    assert _pick(cells, "pinnedbf", "cfg2")["label"] == "refuse:K"
+    for preset in ("cfg2+fsdp", "dp2+fsdp"):
+        pinned = _pick(cells, "pinnedbf", preset)
+        assert (pinned["launch_quant"], pinned["label"], pinned["basis"]) == (
+            "unknown", "refuse:P", "guard"), preset
+        assert _pick(cells, "plainbf", preset)["launch_quant"] == "bf16", preset
+
+
+@pytest.mark.parametrize(("sampler", "waivable"), [("euler", False), ("euler_cfg_pp", True)])
+def test_a_pinned_cfg_cell_at_cfg_one_is_waivable_only_where_the_grant_renders(
+        tmp_path, sampler, waivable):
+    """The pin guard fires at load, ahead of the cfg wrapper's batch-of-one
+    refusal, so a pinned cfg2 cell at cfg 1.0 refuses class K. A grant clears
+    only the pin guard, and the waived leg then meets the cfg refusal, so the
+    cell carries no waiver for the runner to grant. A cfg++ sampler keeps the
+    uncond pass, so there the grant renders."""
+    config = _pinned_int8(tmp_path, cfg=1.0, sampler=sampler)
+    config.update(toggles={"auto_gate": ["off"]}, toggle_presets={"auto_gate": ["cfg2+fsdp"]})
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    guard = "sol_attn:checkpoint_pin"
+    for preset, over in (("cfg2", {}), ("cfg2+fsdp", {"auto_gate": "off"})):
+        cell = _pick(cells, "pinned", preset, **over)
+        assert (cell["label"], cell["basis"], cell["waiver"], cell["waiver_guards"]) == (
+            "refuse:K", "header", waivable, [guard] if waivable else []), preset
+        # Without the pins the same cell answers the cfg rule (or renders).
+        plain = _pick(cells, "plain", preset, **over)["label"]
+        assert plain == ("render" if waivable else "refuse:P"), preset
+    # dp2 and single run no cfg wrapper, so the grant renders there.
+    for cell in (_pick(cells, "pinned", "dp2"), _local(cells, "pinned")):
+        assert (cell["label"], cell["waiver"], cell["waiver_guards"]) == (
+            "refuse:K", True, [guard]), cell["preset"]
+
+
+def test_a_sol_kernel_without_sequence_parallelism_refuses_class_p_before_the_pins(tmp_path):
+    """The worker configures a sol kernel before any load, and the sol factory
+    refuses class P at a sequence-parallel degree of 1, so the pin guard never
+    runs there."""
+    config = _pinned_int8(tmp_path)
+    config.update(sol_families=["krea2"], sol_kernels=["SOL_ATTN_TAU0.7"])
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    for preset in ("single", "cfg2", "dp2"):
+        cell = next(c for c in cells if c["template"] == "pinned" and c["preset"] == preset
+                    and c["attention"] == "SOL_ATTN_TAU0.7" and not c["levers"])
+        assert (cell["label"], cell["basis"], cell["waiver"]) == (
+            "refuse:P", "guard", False), preset
+    # The base kernel on the same topology still meets the pin guard.
+    assert _pick(cells, "pinned", "cfg2", attention="TORCH_FLASH")["label"] == "refuse:K"
+
+
+def test_a_lora_that_pins_drops_its_lora_arm(tmp_path):
+    """ComfyUI lays a LoRA's comfy_attention config over the checkpoint's pin,
+    and the runtime guard reads it, but the matrix reads checkpoint pins only,
+    so the arm is dropped rather than labelled."""
+    config = _pinned_int8(tmp_path)
+    loras = config["comfy_dir"] / "models" / "loras"
+    loras.mkdir(parents=True)
+    save_file({"diffusion_model.blocks.0.attn.comfy_attention.config":
+               _config_tensor(PIN_INT8)}, str(loras / "probe.safetensors"))
+    save_file({"diffusion_model.blocks.0.attn.wq.lora_down.weight": torch.zeros(1, 2),
+               "diffusion_model.blocks.0.attn.wq.lora_up.weight": torch.zeros(2, 1)},
+              str(loras / "style.safetensors"))
+    for template in ("probed", "styled"):
+        graph = _graph("plain_int8.safetensors")
+        graph["6"] = {"class_type": "DGXMonarchLoraLoader",
+                      "inputs": {"model": ["2", 0], "lora_name": "placeholder.safetensors",
+                                 "strength_model": 0.8}}
+        (config["out_dir"] / "graphs" / f"{template}.json").write_text(json.dumps(graph))
+    config["loras"] = {"probed": ["probe.safetensors"], "styled": ["style.safetensors"]}
+    cells, pruned, _unmatched = matrix.build_cells(config)
+    assert not [cell for cell in cells if cell["template"] == "probed" and cell["loras"]]
+    assert _local(cells, "probed")["label"] == "render"
+    assert [line for line in pruned if line.startswith("probed: probe.safetensors pins")
+            and line.endswith("so the lora-on arm is dropped")]
+    assert [cell for cell in cells if cell["template"] == "styled" and cell["loras"]]
+    assert not [line for line in pruned if line.startswith("styled: ")]
+
+
+@pytest.mark.parametrize("method", [["comfy_kitchen_int8"], {"attention": "comfy_kitchen_int8"}, 5],
+                         ids=["list", "dict", "number"])
+def test_an_attention_value_that_is_not_a_string_names_no_kernel(tmp_path, method):
+    """ComfyUI compares the value with the two kernel names it binds, logs any
+    other value as an unknown method and reads the next entry, so a list, an
+    object or a number pins nothing and a known kernel after it still binds.
+    The runtime reader skips the value the same way, and the matrix build goes
+    on."""
+    path = tmp_path / "odd_int8.safetensors"
+    _pinned_checkpoint(path, {"blocks.0.attn": {"attention": method},
+                              "blocks.1.attn": [{"attention": method}, PIN_INT8]})
+    pins = matrix.checkpoint_pins([path])
+    assert {key: pin.label for key, pin in pins.items()} == {
+        "odd_int8.safetensors:blocks.1.attn.comfy_attention.config": "comfy_kitchen_int8"}
+    config = _pin_rig(tmp_path / "rig", {
+        "odd": ({"blocks.0.attn": {"attention": method}}, torch.int8),
+        "plain": ({}, torch.int8)})
+    cells, pruned, _unmatched = matrix.build_cells(config)
+    assert not [line for line in pruned if line.startswith("odd: ")]
+    odd = _local(cells, "odd")
+    assert (odd["label"], odd["checkpoint_pins"]) == ("render", {})
+    for preset in NON_SP_PRESETS:
+        assert _pick(cells, "odd", preset)["label"] == "render", preset
+
+
+def test_a_pinned_nvfp4_cell_on_cfg2_carries_no_shard_quant_waiver(tmp_path):
+    """On cfg2 the sharded nvfp4 bar of a measured family refuses class K, and
+    the pin guard reads right after it on the same sample path. The runner
+    grants one card and retries once, so a leg granted the shard-quant card
+    would meet the pin guard and file a finding: the cell carries no waiver.
+    Sequence parallelism drops the pins, so uly2 and ring2 keep the card."""
+    config = _rig(tmp_path)
+    models = config["model_dir"]
+    _prompt_template(config, "chromapin", "chroma", "chromapin_bf16.safetensors",
+                     "x" * 44, "y" * 44)
+    save_file({**{key: torch.zeros(2, 2) for key in FAMILY_KEYS["chroma"]},
+               "blocks.0.attn.comfy_attention.config": _config_tensor(PIN_INT8)},
+              str(models / "chromapin_nvfp4.safetensors"))
+    _prompt_template(config, "chromaplain", "chroma", "chromaplain_bf16.safetensors",
+                     "x" * 44, "y" * 44)
+    _checkpoint(models, "chromaplain_nvfp4.safetensors", "chroma")
+    cells, _pruned, _unmatched = matrix.build_cells(config, count_tokens=_characters)
+    shard, pin = "shard_quant_scale:chroma", "sol_attn:checkpoint_pin"
+    pinned = _pick(cells, "chromapin", "cfg2", artifact_quant="nvfp4")
+    assert pinned["checkpoint_pins"] == {"comfy_kitchen_int8": 1}
+    assert (pinned["label"], pinned["basis"], pinned["waiver"], pinned["waiver_guards"]) == (
+        "refuse:K", "guard", False, [])
+    for preset in ("uly2", "ring2"):
+        cell = _pick(cells, "chromapin", preset, artifact_quant="nvfp4")
+        assert (cell["label"], cell["waiver"]) == ("refuse:K", True), preset
+        assert shard in cell["waiver_guards"] and pin not in cell["waiver_guards"], preset
+    # One GPU runs no shard bar, so the pin guard answers there and its grant renders.
+    single = [cell for cell in cells if cell["template"] == "chromapin"
+              and cell["session"] == "local" and "nvfp4" in cell["artifact_quant"]]
+    assert [(cell["label"], cell["basis"], cell["waiver"], cell["waiver_guards"])
+            for cell in single] == [("refuse:K", "header", True, [pin])]
+    # The same cell without the pins keeps the shard-quant card, and the
+    # unpinned bf16 artifact of the pinned template renders.
+    plain = _pick(cells, "chromaplain", "cfg2", artifact_quant="nvfp4")
+    assert (plain["label"], plain["basis"], plain["waiver"], plain["waiver_guards"]) == (
+        "refuse:K", "guard", True, [shard])
+    assert _pick(cells, "chromapin", "cfg2", artifact_quant="bf16")["label"] == "render"

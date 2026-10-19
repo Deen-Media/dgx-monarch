@@ -115,6 +115,17 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         ("usp-self-attention",), "self x attention_mask image_rotary_emb", 2,
     ),
     _rebound(
+        "comfy.ldm.flux3.model", "Flux3._forward", ("flux3",), ("usp",),
+        "self x timestep context ref_latents transformer_options txt_states ref_states "
+        "ref_shapes", 3, variadic_keyword="kwargs",
+    ),
+    # A model_base method: the conditioning entry ComfyUI's CFGGuider calls
+    # through process_conds, which the flux3 cond-branch bind wraps whole.
+    _rebound(
+        "comfy.model_base", "Flux3.extra_conds", ("flux3",), ("conds",),
+        "self", 1, variadic_keyword="kwargs",
+    ),
+    _rebound(
         "comfy.ldm.chroma.model", "Chroma.forward_orig", ("chroma",), ("usp",),
         "self img img_ids txt txt_ids timesteps guidance control transformer_options attn_mask",
         6,
@@ -278,6 +289,10 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "self x t context clip_fea clip_fea_ref freqs audio_embed fps audio_inject_scale "
         "transformer_options",
         4, variadic_keyword="kwargs",
+    ),
+    _rebound(
+        "comfy.ldm.wan.model_wandancer", "MusicSelfAttention.forward", ("wan_dancer",),
+        ("usp:music-encoder",), "self x freqs", 3,
     ),
     _rebound(
         "comfy.ldm.wan.model_animate2", "WanAnimate2Model.forward_orig", ("wan_animate2",),

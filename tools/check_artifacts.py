@@ -79,8 +79,9 @@ HEADER = """\
 # A row with a blank url, a zero size or a blank sha256 is pending. Write its
 # url here by hand; `--capture` with `--models-dir` sets size and sha256 from
 # the staged file and replaces any value already there. `placeholder = true`
-# marks an example file name: the reader supplies their own file, so the row
-# stays blank and is never pending.
+# marks a file the reader supplies: an example name, or a local conversion
+# with no public download. Such a row stays blank, its note says who supplies
+# the file, and it is never pending.
 #
 # [templates] lists, per template, the rows that template names, as
 # "<dest>/<file>". `python tools/check_artifacts.py --sync` rebuilds the rows

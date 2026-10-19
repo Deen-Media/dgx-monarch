@@ -79,6 +79,71 @@ TOUCHPOINTS: tuple[MonarchTouchpoint, ...] = (
         "ca",
         "address",
     ),
+    # Each Worker loop start serves "<proc-id>@<address>"; the loop and the
+    # driver build that string with these (worker_proc_id.py).
+    _call(
+        "monarch._src.job.service_identity",
+        "service_proc_addr",
+        positional=("address", "proc_id"),
+    ),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.proc",
+        "ProcId",
+        positional=("uid",),
+        require_class=True,
+    ),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.proc",
+        "Uid.instance_from_value",
+        positional=("value", "label"),
+    ),
+    # The throwaway message sent before the first dial to a restarted loop
+    # (worker_proc_id.prime).
+    _call("monarch._src.actor.actor_mesh", "context"),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.proc",
+        "ActorAddr",
+        "addr",
+        "proc_name",
+        "actor_name",
+        require_class=True,
+    ),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.mailbox",
+        "PortId",
+        "actor_id",
+        "port",
+        require_class=True,
+    ),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.mailbox",
+        "PortRef",
+        positional=("port",),
+        require_class=True,
+    ),
+    _attr("monarch._rust_bindings.monarch_hyperactor.mailbox", "PortRef.return_undeliverable"),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.mailbox",
+        "PortRef.send",
+        positional=("self", "instance", "message"),
+    ),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.actor",
+        "PythonMessage",
+        positional=("kind", "message", "refs"),
+        require_class=True,
+    ),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.actor",
+        "PythonMessageKind.Result",
+        positional=("rank",),
+    ),
+    _call("monarch._rust_bindings.monarch_hyperactor.buffers", "Buffer", require_class=True),
+    _call(
+        "monarch._rust_bindings.monarch_hyperactor.buffers",
+        "Buffer.freeze",
+        positional=("self",),
+    ),
     _attr("monarch.actor", "unhandled_fault_hook"),
     _class("monarch.actor", "HostMesh"),
     _attr("monarch.actor", "HostMesh.initialized"),
@@ -132,6 +197,9 @@ TOUCHPOINTS: tuple[MonarchTouchpoint, ...] = (
     # ProcMesh.spawn returns this implementation object even though ActorMesh
     # is not re-exported from monarch.actor.
     _attr("monarch._src.actor.actor_mesh", "ActorMesh.extent"),
+    # restart_reattach.watched_mesh reads the mesh's name, which a delivery
+    # failure spells as dgxm_worker<uid> (issue #47).
+    _attr("monarch._src.actor.actor_mesh", "ActorMesh._name"),
     _call(
         "monarch._src.actor.actor_mesh",
         "ActorMesh.slice",

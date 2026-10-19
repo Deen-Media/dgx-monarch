@@ -190,6 +190,12 @@ STOCK = {
     "MaskToImage": [],
     "LatentCutToBatch": ["dim", "slice_size"],
     "VAEEncode": [],
+    # The FLUX.3 edit graphs spell ReferenceMultiLatent out in these three
+    # stock nodes; _flux3_template says why. resolution_steps is an advanced
+    # widget the frontend still serializes.
+    "ImageScaleToTotalPixels": ["upscale_method", "megapixels", "resolution_steps"],
+    "ReferenceLatent": [],
+    "LatentMultiply": ["multiplier"],
     "LTXVScheduler": ["steps", "max_shift", "base_shift", "stretch", "terminal"],
     "ManualSigmas": ["sigmas"],
     "Ideogram4Scheduler": ["steps", "width", "height", "mu", "std"],
@@ -294,6 +300,9 @@ STOCK_OUTPUTS = {
     "MaskToImage": [("IMAGE", "IMAGE")],
     "LatentCutToBatch": [("LATENT", "LATENT")],
     "VAEEncode": [("LATENT", "LATENT")],
+    "ImageScaleToTotalPixels": [("IMAGE", "IMAGE")],
+    "ReferenceLatent": [("CONDITIONING", "CONDITIONING")],
+    "LatentMultiply": [("LATENT", "LATENT")],
     "LTXVScheduler": [("SIGMAS", "SIGMAS")],
     "ManualSigmas": [("SIGMAS", "SIGMAS")],
     "Ideogram4Scheduler": [("SIGMAS", "SIGMAS")],
@@ -396,6 +405,11 @@ def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
                 "MaskToImage": [("mask", "MASK")],
                 "LatentCutToBatch": [("samples", "LATENT")],
                 "VAEEncode": [("pixels", "IMAGE"), ("vae", "VAE")],
+                "ImageScaleToTotalPixels": [("image", "IMAGE")],
+                # latent is optional and keeps its slot.
+                "ReferenceLatent": [("conditioning", "CONDITIONING"),
+                                    ("latent", "LATENT")],
+                "LatentMultiply": [("samples", "LATENT")],
                 "LTXVConditioning": [("positive", "CONDITIONING"),
                                      ("negative", "CONDITIONING")],
                 "LTXVEmptyLatentAudio": [("audio_vae", "VAE")],
@@ -794,9 +808,11 @@ TEMPLATES = {
              "topology=auto picks the split from the auto table by resolution and "
              "CFG. This graph renders Flux 1 Dev at 1536x1536 and cfg 1.0, because "
              "the checkpoint is guidance distilled, so auto picks sequence-parallel "
-             "(Ulysses). cfg-parallel needs a CFG above 1.0, and auto picks it only "
-             "below 1.2 MP on a family whose table has a cfg2 row (Chroma, "
-             "LongCat). Nothing else changes from the one-box workflow. dgxm top "
+             "(Ulysses). Auto picks cfg-parallel only where the auto table has a "
+             "measured cfg2 row for the family, size and precision, such as Chroma "
+             "BF16 below 1.64 MP; Flux 1 has none. It also needs a CFG above 1.0, or "
+             "a cfg_pp sampler, which keeps the unconditional pass at cfg 1.0. "
+             "Nothing else changes from the one-box workflow. dgxm top "
              "shows one burst of rail traffic per denoise step."},
             {"key": "ks", "type": "DGXMonarchKSampler", "pos": (3, 1),
              "widgets": {"steps": 20, "cfg": 1.0},
@@ -817,12 +833,15 @@ TEMPLATES = {
             {"key": "note", "type": "Note", "pos": (0, 1), "note":
              "Krea 2 text to image at 1536x1536 through the turbo checkpoint: 8 steps "
              "at cfg 1.0 with euler_cfg_pp. topology=auto runs it on one Spark and "
-             "splits it across the pair once a cluster.toml is configured. At 1.2 MP "
-             "and above, which this canvas is, auto also turns SAGE on for an fp8 "
-             "checkpoint, so the kernel the Init widget shows is replaced at "
-             "dispatch. The Krea2 table in docs/VALIDATION.md records fp8 uly2 with "
-             "SAGE as HW (2026-08-21); the 2026-10-06 uly2 comparison with equal output values ran "
-             "Torch Flash, not SAGE. sageattention must be installed on every worker, "
+             "splits it across the pair once a cluster.toml is configured. On a pair "
+             "auto picks cfg2 for this graph: auto table row 15 covers an fp8 or "
+             "bf16 checkpoint from 1.2 to 2.36 MP, and euler_cfg_pp keeps the "
+             "unconditional pass at cfg 1.0, so cfg2 has two halves to split. "
+             "Campaign K (2026-10-14) read this graph on cfg2 bit-identical to one "
+             "GPU and faster than Ulysses. Above 2.36 MP, or under a plain sampler "
+             "such as euler at cfg 1.0, auto picks Ulysses and turns SAGE on for an "
+             "fp8 checkpoint, so the kernel the Init widget shows is replaced at "
+             "dispatch. sageattention must then be installed on every worker, "
              "because a first configure that cannot import it raises instead of "
              "falling back. The first render of a new model runs the identity gate: "
              "before any pixels, a few minutes of proof renders check that the mesh "
@@ -833,7 +852,7 @@ TEMPLATES = {
              "qwen_image_vae.safetensors in models/vae, the VAE the official Krea 2 "
              "graphs name. The gate fixture tests/fixtures/workflows/krea2_uly2_api.json "
              "names wan_2.1_vae.safetensors because it records what one gate run "
-             "loaded. VAE decode runs after the sequence-parallel gather, so no "
+             "loaded. VAE decode runs after the ranks' results are gathered, so no "
              "cross-rank or NRMS result depends on which VAE is used."},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name": "krea2_turbo_fp8_scaled.safetensors"},
@@ -2475,9 +2494,15 @@ TEMPLATES = {
              "official template asks for 1280x720 and lands on this same latent, "
              "because Empty LTXV Latent Video builds height//32 rows and the model "
              "card wants both dimensions divisible by 32. Needs ComfyUI at "
-             "bd34f338 or newer. The LTX 2.5 files sit behind a gated Hugging Face "
-             "repo, so accept the license on Lightricks/LTX-2.5 first or the "
-             "downloads fail. " + FRAMES + " " + GATE + " Expects "
+             "bd34f338 or newer. The LTX 2.5 files are in a gated Hugging Face "
+             "repo: accept the license on Lightricks/LTX-2.5, then download with a "
+             "Hugging Face token from that account, or the downloads fail. The "
+             "Gemma 4 encoder row in example_workflows/artifacts.toml pins the current "
+             "vendor revision of that file, the one these templates were last "
+             "tested with. The vendor replaced the earlier revision in August 2026 "
+             "to align it with the LTX-2.5 checkpoints, so a copy downloaded "
+             "before then has a different sha256 and gives different output. "
+             + FRAMES + " " + GATE + " Expects "
              "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors in "
              "models/diffusion_models, "
              "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors in "
@@ -3237,7 +3262,10 @@ TEMPLATES = {
              "raises no error. " + FRAMES + " " + GATE +
              " Expects CogVideoX_1_5_5b_T2V_bf16.safetensors in "
              "models/diffusion_models, t5xxl_fp16.safetensors in "
-             "models/text_encoders, and cogvideox_vae_bf16.safetensors in models/vae. " +
+             "models/text_encoders, and cogvideox_vae_bf16.safetensors in models/vae. "
+             "The checkpoint must be in the ComfyUI layout: the diffusers-layout file "
+             "of the same name on Kijai/CogVideoX-comfy does not load, and "
+             "docs/TROUBLESHOOTING.md #102 gives the key rename that converts it. " +
              DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name": "CogVideoX_1_5_5b_T2V_bf16.safetensors"},
@@ -3299,7 +3327,10 @@ TEMPLATES = {
              "covered. " + FRAMES +
              " " + GATE + " Expects CogVideoX_1_5_5b_I2V_bf16.safetensors in "
              "models/diffusion_models, t5xxl_fp16.safetensors in "
-             "models/text_encoders, and cogvideox_vae_bf16.safetensors in models/vae. " +
+             "models/text_encoders, and cogvideox_vae_bf16.safetensors in models/vae. "
+             "The checkpoint must be in the ComfyUI layout: the diffusers-layout file "
+             "of the same name on Kijai/CogVideoX-comfy does not load, and "
+             "docs/TROUBLESHOOTING.md #102 gives the key rename that converts it. " +
              DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name": "CogVideoX_1_5_5b_I2V_bf16.safetensors"},
@@ -3622,7 +3653,9 @@ TEMPLATES = {
              "negative is a real prompt: cfg-parallel pads the shorter side and "
              "masks the appended rows, aligning the masked key extent to a multiple "
              "of 8, so unequal prompt lengths batch cleanly on "
-             "cfg2. At 1.2 MP and above auto selects uly2, requalified on hardware "
+             "cfg2. From 1.2 to 1.64 MP auto keeps cfg2 for bf16, fp8 and int8 "
+             "checkpoints (Campaign K, 2026-10-14). Above 1.64 MP auto selects "
+             "uly2, requalified on hardware "
              "2026-08-21 for streams that divide the sequence-parallel degree "
              "exactly. A Chroma stream that does not divide it is "
              "padded and its pad rows are dropped from every attention call, so an "
@@ -3705,10 +3738,13 @@ TEMPLATES = {
              "an unequal prompt pair typed-refuses before dispatch; the zeroed "
              "negative keeps the token counts equal. Megapixels count the pixel "
              "grid here, so 1024x1024 prices as about 1.0 MP and topology=auto "
-             "picks cfg-parallel on a configured pair; at 1.2 MP and above auto asks "
-             "for Ulysses. A stream that does not divide the split is padded there "
-             "and its pad rows are dropped from every attention call: Radiance runs "
-             "the Chroma adapter, which excludes them. No "
+             "picks cfg-parallel on a configured pair. Radiance shares Chroma's auto "
+             "rows, so auto keeps cfg-parallel up to 1.64 MP and asks for Ulysses "
+             "above it; on cfg-parallel the zeroed negative must keep the two token "
+             "counts equal at every size. Under Ulysses a stream that does not "
+             "divide the split is padded and its pad rows are dropped from every "
+             "attention call: Radiance runs the Chroma adapter, which excludes "
+             "them. No "
              "Radiance render above 1.2 MP has been measured, so keep the canvas at "
              "1024x1024. " + GATE +
              " Expects chroma-radiance-x0.safetensors in models/diffusion_models and "
@@ -3848,10 +3884,14 @@ TEMPLATES = {
              "sampling node here: the official ComfyUI example sets shift 3.1 "
              "through a multiplier 1.0 AuraFlow patch this repo has no node for, so "
              "the render runs the checkpoint's own shift of 1.15, the value the "
-             "recorded legs ran. On a configured pair topology=auto picks Ulysses at "
-             "1.2 MP and above and the generic uly2 fallback below it, so cfg2 runs "
-             "only as an explicit preset; docs/MODELS.md records Ulysses and cfg2 "
-             "evidence for the base 2512 FP8 file. Qwen-Image-Edit 2511 is out of "
+             "recorded legs ran. On a configured pair topology=auto picks cfg2 for "
+             "an FP8 checkpoint from 1.2 to 1.77 MP (auto table row 68), which "
+             "covers this 1328x1328 canvas: Campaign K (2026-10-14) read the base "
+             "2512 FP8 file on cfg2 bit-identical to one GPU and faster than "
+             "Ulysses. Above 1.77 MP, and for other precisions from 1.2 MP, auto "
+             "picks Ulysses, and below 1.2 MP it takes the generic uly2 fallback; "
+             "docs/MODELS.md records Ulysses and cfg2 evidence for the base 2512 "
+             "FP8 file. Qwen-Image-Edit 2511 is out of "
              "scope, and under Ulysses the sharded forward refuses any render that "
              "carries a text attention mask. Auto keeps the Init node's attention "
              "kernel on this family and does not switch it to SAGE: on this graph "
@@ -4532,9 +4572,11 @@ TEMPLATES = {
              "out as noise instead of refusing. The negative is an empty text "
              "encode on purpose, because Boogu turns an empty prompt into its own "
              "drop-prompt unconditional, and at cfg 4.0 that pass reaches the "
-             "pixels. On a configured pair auto picks uly2 for this family at every "
-             "canvas size; cfg2 stays an explicit preset and "
-             "takes two prompts of different lengths by sending one to each rank. "
+             "pixels. On a configured pair auto picks cfg2 for an fp8 checkpoint "
+             "below 1.2 MP (auto table row 79), which covers this 1024x1024 canvas, "
+             "and uly2 elsewhere. cfg2 takes two prompts of different lengths by "
+             "sending one to each rank; Campaign K (2026-10-14) read this graph's "
+             "unequal pair that way bit-identical to one GPU. "
              "Under uly2 the conditional and unconditional text streams are sharded "
              "separately and their pad rows are dropped from attention: on "
              "2026-10-06 this graph's uly2 render matched the single-GPU output exactly. "
@@ -4939,6 +4981,212 @@ for _mage_edit in (False, True):
         TEMPLATES[_mage_name] = _mage_flow_template(edit=_mage_edit, turbo=_mage_turbo)
 
 
+# FLUX.3 Image Klein. Two checkpoints share one family: the step-distilled
+# model (the `_sd_` files) runs 16 Euler steps at CFG 1, and the base model 25
+# Euler steps at CFG 3.5. Both step counts divide the 10000-row sigma table
+# ModelSamplingFlux builds, so the simple scheduler lands on the vendor's own
+# schedule; the vendor's distilled template promotes 15, which does not.
+#
+# The vendor's edit graphs feed references through ReferenceMultiLatent, whose
+# `resize` choice reveals a nested `resolution.megapixels` widget. The template
+# widget canary and the sweep converter read one slot per declared widget, and
+# ComfyUI requires that nested input once `resize` is chosen, so no committed
+# graph can carry the node with `resize`, and `keep resolution` leaves the
+# reference size unbounded. The edit graphs therefore spell it out in stock
+# nodes with the same arithmetic: Scale Image to Total Pixels at 1.0 MP with
+# lanczos and step 1 rounds each side as ReferenceMultiLatent's resize does,
+# VAE Encode encodes the reference, one Set Reference Latent per prompt appends
+# it in order, and LatentMultiply at 0.0 is the node's empty_latent output, the
+# first reference times zero.
+FLUX3_PROMPT = (
+    "A color photograph of a white lighthouse on a granite headland at dusk. "
+    "Waves break against the dark rocks below it, and the lamp glows amber "
+    "against a deep blue sky with thin pink clouds near the horizon. A narrow "
+    "stone path climbs from the lower left toward the tower. Wide angle, soft "
+    "natural light, fine detail.")
+FLUX3_BASE_PROMPT = (
+    "A color photograph taken at eye level with a 50 mm lens. A small ceramics "
+    "studio in late afternoon: sunlight falls through a tall window on the "
+    "left and lights a scarred wooden workbench. On the bench sit three "
+    "hand-thrown bowls with a speckled oatmeal glaze, a wire cutting tool and a "
+    "folded grey cloth. A potter's wheel stands in soft shadow behind them, its "
+    "tray streaked with dried clay. Shelves on the back wall hold rows of "
+    "unglazed cups. Warm tones, gentle contrast, shallow depth of field, the "
+    "bowls in sharp focus.")
+FLUX3_EDIT_PROMPT = (
+    "The same photograph as <ref_image_0>, with the background replaced by a "
+    "sunlit garden of green hedges and white roses in soft morning light. The "
+    "subject, pose, clothing and framing stay exactly as in <ref_image_0>.")
+FLUX3_LICENSE = (
+    "The FLUX.3 Image Klein weights are under the FLUX Kommunity License v1.0; "
+    "read its terms before commercial use. The Qwen3-VL encoder is Apache-2.0.")
+
+
+# What the 2026-10-15 hardware tests showed for the shipped graphs, keyed by edit.
+FLUX3_HW_TESTS = {
+    False: ("In the 2026-10-15 hardware tests, uly2 renders of this graph "
+            "matched stock ComfyUI on one GPU exactly; see "
+            "docs/VALIDATION.md#evidence-flux-3-klein for the scope. "),
+    True: ("In the 2026-10-15 hardware tests, uly2 edits with one reference "
+           "stayed within the 0.10 one-step NRMS floor against stock ComfyUI "
+           "on one GPU but were not identical; see "
+           "docs/VALIDATION.md#evidence-flux-3-klein for the scope. "),
+}
+
+
+def _flux3_template(*, base: bool, edit: bool) -> dict:
+    """A FLUX.3 Image Klein graph: stock conditioning, DGX Monarch DiT only."""
+    artifact = ("flux3_image_klein_bf16.safetensors" if base
+                else "flux3_image_klein_sd_bf16.safetensors")
+    title = "FLUX.3 Klein " + ("Base " if base else "")
+    title += "image editing" if edit else "text to image"
+    steps, cfg = (25, 3.5) if base else (16, 1.0)
+    # An edit takes its size from the first reference; text to image sets it.
+    size = "about 1 MP, sized from the first reference" if edit else "1024x1024"
+    if base:
+        note = (f"{title}: {size}, 25 steps, CFG 3.5, Euler and the simple "
+                "scheduler, the vendor's ComfyUI settings. Try 50 steps for "
+                "more detail, the model card's default; 25 and 50 both divide "
+                "the sigma table ComfyUI builds, so the schedule stays on the "
+                "vendor's. ")
+    else:
+        note = (f"{title}: {size}, 16 steps, CFG 1, Euler and the simple "
+                "scheduler, as the model card and the reference code set them. "
+                "The step-distilled model was trained for 4 to 16 steps: never "
+                "go above 16, and pick a count that divides 10000 (4, 5, 8, 10 "
+                "or 16) so the simple scheduler stays on the vendor's schedule. "
+                "Keep Euler: the model reads its next sigma off the schedule, so "
+                "a sampler that evaluates between steps leaves what it was "
+                "distilled on. ")
+    note += "ComfyUI's native shift is the vendor's; add no shift node. "
+    if not edit:
+        note += ("Dimensions must be multiples of 16, and multiples of 32 keep "
+                 "both grid axes even. ")
+    if edit:
+        note += (
+            "Load your reference in Load Image. Scale Image to Total Pixels "
+            "sizes it to about 1 MP, VAE Encode turns it into a latent, and "
+            "Set Reference Latent adds it to both prompts; LatentMultiply at "
+            "0.0 hands the sampler an empty latent of the first reference's "
+            "size, so the render takes its size from that reference, cropped "
+            "to a multiple of 16. The vendor graph does the same with one Set "
+            "Reference Multi Latent node in resize mode; these stock nodes "
+            "carry the same arithmetic. Keep the scale node: an unscaled "
+            "reference sizes the render from the source file with no limit. "
+            "To add a reference, chain another Load Image, scale, encode and "
+            "Set Reference Latent on both prompts. Cite references in the "
+            "prompt as <ref_image_0>, <ref_image_1> and so on, in chain order, "
+            "and describe the target as a full caption of the reference with "
+            "the change folded in. The first reference's aspect decides the "
+            "image grid, and an odd grid pads the image rows; a later "
+            "reference can make the joint stream odd. Either pad renders on "
+            "uly2 and single, and padded ring or hybrid refuses unless waived, "
+            "so run edits on uly2 or single. ")
+        note += ("Conditioning Zero Out supplies the negative and carries the "
+                 "references, as in the vendor graph; CFG 1 never evaluates it. "
+                 if not base else
+                 "The negative is an empty prompt carrying the same references, "
+                 "as the vendor's reference code builds it. ")
+    elif base:
+        note += ("The negative is the encoding of an empty prompt, as the "
+                 "vendor's reference code uses. FLUX takes no negative prompt: "
+                 "describe what you want instead of what to leave out. ")
+    else:
+        note += "Plain Euler at CFG 1 never evaluates the empty negative. "
+    note += (
+        "The vendor's prompt guide asks for a full caption of about 100 to 350 "
+        "words: medium and style first, then scene, lighting and camera, then "
+        "each subject with its colors, materials and place in the frame. "
+        "Describe what is there, not what is absent, and put any text to "
+        "render in double quotes. The sample prompt is shorter than that "
+        "guide asks; write a full caption for your own renders. The vendor's "
+        "own graphs can run an optional "
+        "prompt upsampler, "
+        "qwen3.5_9b_flux3_prompt_upsampler_int8_convrot.safetensors, which "
+        "rewrites a short request into such a caption on the driver; its 9.7 "
+        "GB is outside dgx-monarch's driver memory estimate. The stock Flux3 "
+        "Layout Prompt node turns bounding boxes into prompt text. Either can "
+        "feed CLIP Text Encode with no change to this graph. "
+        "The INT8 ConvRot files pin an approximate attention kernel: single, "
+        "cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. "
+        "This graph uses the BF16 files, which ask nothing. Auto picks Ulysses "
+        "on a configured pair. " + FLUX3_HW_TESTS[edit]
+        + f"Expects {artifact} in models/diffusion_models, "
+        "qwen3vl_4b_bf16.safetensors in models/text_encoders (CLIP type flux3) "
+        "and flux2-vae.safetensors in models/vae; the vendor's "
+        "vae/flux2-vae.safetensors holds the same weights in another key "
+        "layout. Needs ComfyUI 0.41.0 or newer on the driver and every "
+        "Worker. " + FLUX3_LICENSE + " " + GATE + " " + DERIVED)
+    nodes = [
+        {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
+         "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
+        {"key": "note", "type": "Note", "pos": (0, 1), "note": note},
+        {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
+         "widgets": {"unet_name": artifact, "weight_dtype": "default"},
+         "wire": {"mesh": ("init", 0)}},
+        {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
+         "widgets": {"clip_name": "qwen3vl_4b_bf16.safetensors", "type": "flux3",
+                     "device": "default"}},
+        {"key": "vae", "type": "VAELoader", "pos": (0, 3),
+         "widgets": {"vae_name": "flux2-vae.safetensors"}},
+        {"key": "pos", "type": "CLIPTextEncode", "pos": (1, 2),
+         "widgets": {"text": FLUX3_EDIT_PROMPT if edit
+                     else FLUX3_BASE_PROMPT if base else FLUX3_PROMPT},
+         "wire": {"clip": ("clip", 0)}},
+    ]
+    if edit and not base:
+        # The vendor order: zero the encoded positive, then add the references.
+        nodes.append({"key": "neg", "type": "ConditioningZeroOut", "pos": (1, 3),
+                      "wire": {"conditioning": ("pos", 0)}})
+    else:
+        nodes.append({"key": "neg", "type": "CLIPTextEncode", "pos": (1, 3),
+                      "widgets": {"text": ""}, "wire": {"clip": ("clip", 0)}})
+    positive, negative, latent = ("pos", 0), ("neg", 0), ("latent", 0)
+    if edit:
+        nodes.extend([
+            {"key": "reference", "type": "LoadImage", "pos": (0, 4),
+             "widgets": {"image": "reference.png", "upload": "image"}},
+            {"key": "scale", "type": "ImageScaleToTotalPixels", "pos": (1, 4),
+             "widgets": {"upscale_method": "lanczos", "megapixels": 1.0,
+                         "resolution_steps": 1},
+             "wire": {"image": ("reference", 0)}},
+            {"key": "enc", "type": "VAEEncode", "pos": (2, 4),
+             "wire": {"pixels": ("scale", 0), "vae": ("vae", 0)}},
+            {"key": "refpos", "type": "ReferenceLatent", "pos": (2, 2),
+             "wire": {"conditioning": ("pos", 0), "latent": ("enc", 0)}},
+            {"key": "refneg", "type": "ReferenceLatent", "pos": (2, 3),
+             "wire": {"conditioning": ("neg", 0), "latent": ("enc", 0)}},
+            {"key": "latent", "type": "LatentMultiply", "pos": (2, 5),
+             "widgets": {"multiplier": 0.0}, "wire": {"samples": ("enc", 0)}},
+        ])
+        positive, negative = ("refpos", 0), ("refneg", 0)
+    else:
+        nodes.append({"key": "latent", "type": "EmptyFlux2LatentImage", "pos": (2, 3),
+                      "widgets": {"width": 1024, "height": 1024, "batch_size": 1}})
+    prefix = "dgx_monarch_flux3_klein" + ("_base" if base else "")
+    prefix += "_edit" if edit else ""
+    nodes.extend([
+        {"key": "ks", "type": "DGXMonarchKSampler", "pos": (3, 1),
+         "widgets": {"seed": 42, "steps": steps, "cfg": cfg, "sampler_name": "euler",
+                     "scheduler": "simple", "denoise": 1.0},
+         "wire": {"model": ("unet", 0), "positive": positive,
+                  "negative": negative, "latent_image": latent}},
+        {"key": "dec", "type": "VAEDecode", "pos": (4, 1),
+         "wire": {"samples": ("ks", 0), "vae": ("vae", 0)}},
+        {"key": "save", "type": "SaveImage", "pos": (5, 1),
+         "widgets": {"filename_prefix": prefix},
+         "wire": {"images": ("dec", 0)}},
+    ])
+    return {"title": title, "nodes": nodes}
+
+
+for _flux3_base in (False, True):
+    for _flux3_edit in (False, True):
+        _flux3_name = "dgx-monarch-flux3-klein" + ("-base" if _flux3_base else "")
+        _flux3_name += "-edit" if _flux3_edit else "-t2i"
+        TEMPLATES[_flux3_name] = _flux3_template(base=_flux3_base, edit=_flux3_edit)
+
+
 # dual-spark-split shares FLUX_STACK, whose latent is 1024. Override it here to
 # 1536 so the split has enough tokens to be worth splitting.
 TEMPLATES["dgx-monarch-dual-spark-split"]["nodes"] = [
@@ -5174,6 +5422,11 @@ TEST_IMAGE_MASK = "dgxm_test_portrait_mask.png"
 TEST_VIDEO = "dgxm_test_video.mp4"
 TEST_VIDEO_MASK = "dgxm_test_mask.mp4"
 TEST_AUDIO = "dgxm_test_audio.wav"
+# Two 4:3 references for the FLUX.3 edit leg. At about 1 MP each scales to
+# 1182x887, which the Flux2 VAE crops to a 73 by 55 grid: an odd grid, where
+# the portrait above scales to an even 48 by 84.
+TEST_IMAGE_LANDSCAPE = "dgxm_test_landscape.png"
+TEST_IMAGE_LANDSCAPE_SMALL = "dgxm_test_landscape_small.png"
 
 # The official two stage LTX 2.5 graph adds this three-step stage 2 schedule
 # after the eight-step distilled one the shipped templates already carry.
@@ -5234,6 +5487,13 @@ H3_TWO_GUIDE_PROMPT = (
     "tone under all of it.\n\n"
     "No text, subtitles, logos or watermarks, no cartoon or CG rendering, "
     "keep the live-action texture.")
+
+# Cites both references in chain order and stays inside one 80-row text block,
+# so the joint stream of the two-reference leg is 4015 + 8030 + 80 rows.
+FLUX3_TWO_REFERENCE_PROMPT = (
+    "The subject of <ref_image_0> placed in the setting of <ref_image_1>, lit "
+    "by the light of that scene and standing in the center of the frame. The "
+    "subject's shape, colors and pose stay as in <ref_image_0>.")
 
 _MEDIA_PURPOSE = ("The media widgets name the synthetic files "
                   "benchmark/sweep/media.py writes into comfy's input folder.")
@@ -5514,6 +5774,68 @@ TESTING_TEMPLATES = {
              "widgets": {"frame_idx": 82},
              "wire": {"positive": ("guide", 0), "latent": ("latent", 0),
                       "vae": ("vvae", 0), "image": ("image2", 0)}},
+        )),
+    # FLUX.3 Klein: the vendor's quantized files, an odd grid, and a
+    # two-reference edit whose streams pad in both phases.
+    "dgx-monarch-test-flux3-klein-int8": _testing_spec(
+        "dgx-monarch-flux3-klein-t2i", "FLUX.3 Klein INT8 ConvRot",
+        "The vendor's file recipe without the prompt upsampler: the "
+        "step-distilled INT8 ConvRot DiT and the INT8 ConvRot text encoder. The "
+        "DiT pins comfy-kitchen's INT8 attention on 33 blocks, so single, cfg2 "
+        "and dp2 ask for the Sol-Attn waiver and uly2 drops the pins. The text "
+        "encoder stores INT8 weights and ComfyUI runs its matmuls at full "
+        "precision.",
+        widgets={"unet": {"unet_name": "flux3_image_klein_sd_int8_convrot.safetensors"},
+                 "clip": {"clip_name": "qwen3vl_4b_int8_convrot.safetensors"}}),
+    "dgx-monarch-test-flux3-klein-nvfp4": _testing_spec(
+        "dgx-monarch-flux3-klein-t2i", "FLUX.3 Klein NVFP4",
+        "The vendor's step-distilled NVFP4 DiT. Every NVFP4 layer carries a "
+        "static input scale, so a row shard quantizes each row as one GPU "
+        "does; FSDP refuses the block-scaled layout.",
+        widgets={"unet": {"unet_name": "flux3_image_klein_sd_nvfp4.safetensors"}}),
+    "dgx-monarch-test-flux3-klein-base-int8": _testing_spec(
+        "dgx-monarch-flux3-klein-base-t2i", "FLUX.3 Klein Base INT8 ConvRot",
+        "The vendor's base INT8 ConvRot DiT at CFG 3.5 with the BF16 text "
+        "encoder: the pinned kernel on the model that evaluates the negative.",
+        widgets={"unet": {"unet_name": "flux3_image_klein_int8_convrot.safetensors"}}),
+    "dgx-monarch-test-flux3-klein-base-nvfp4": _testing_spec(
+        "dgx-monarch-flux3-klein-base-t2i", "FLUX.3 Klein Base NVFP4",
+        "The vendor's base NVFP4 DiT at CFG 3.5.",
+        widgets={"unet": {"unet_name": "flux3_image_klein_nvfp4.safetensors"}}),
+    "dgx-monarch-test-flux3-klein-odd": _testing_spec(
+        "dgx-monarch-flux3-klein-t2i", "FLUX.3 Klein on an odd grid",
+        "1040x1040 is a 65 by 65 grid, 4225 image rows, and with the 80-row "
+        "prompt a 4305-row joint stream, so both phases of the sharded forward "
+        "pad at uly2.",
+        widgets={"latent": {"width": 1040, "height": 1040},
+                 "save": {"filename_prefix": "dgx_monarch_flux3_klein_odd"}}),
+    "dgx-monarch-test-flux3-klein-edit-2ref": _testing_spec(
+        "dgx-monarch-flux3-klein-edit", "FLUX.3 Klein edit with two references",
+        "Two 4:3 references, 1600x1200 then 1024x768, each scaled to about "
+        "1 MP and cropped to a 73 by 55 grid. The render has 4015 image rows "
+        "and a joint stream of 4015 + 8030 + 80 = 12125 rows, so both phases "
+        "pad at uly2, the shard boundary falls inside the reference rows, and "
+        "the second reference takes the next reference index. "
+        + _MEDIA_PURPOSE,
+        widgets={"pos": {"text": FLUX3_TWO_REFERENCE_PROMPT},
+                 "reference": {"image": TEST_IMAGE_LANDSCAPE},
+                 "save": {"filename_prefix": "dgx_monarch_flux3_klein_edit_2ref"}},
+        rewire={"ks": {"positive": ("refpos2", 0), "negative": ("refneg2", 0)}},
+        add=(
+            {"key": "reference2", "type": "LoadImage", "pos": (0, 6),
+             "widgets": {"image": TEST_IMAGE_LANDSCAPE_SMALL, "upload": "image"}},
+            {"key": "scale2", "type": "ImageScaleToTotalPixels", "pos": (1, 6),
+             "widgets": {"upscale_method": "lanczos", "megapixels": 1.0,
+                         "resolution_steps": 1},
+             "wire": {"image": ("reference2", 0)}},
+            {"key": "enc2", "type": "VAEEncode", "pos": (2, 6),
+             "wire": {"pixels": ("scale2", 0), "vae": ("vae", 0)}},
+            # Chained after the first pair, so each prompt holds both
+            # references in order; the render size still follows the first.
+            {"key": "refpos2", "type": "ReferenceLatent", "pos": (3, 2),
+             "wire": {"conditioning": ("refpos", 0), "latent": ("enc2", 0)}},
+            {"key": "refneg2", "type": "ReferenceLatent", "pos": (3, 3),
+             "wire": {"conditioning": ("refneg", 0), "latent": ("enc2", 0)}},
         )),
     "dgx-monarch-test-hunyuan-image-refiner": _testing_spec(
         "dgx-monarch-hunyuan-image",

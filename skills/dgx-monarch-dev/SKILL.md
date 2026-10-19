@@ -44,13 +44,24 @@ Read `docs/ADAPTERS.md` first. Summary:
 3. Route self-attention through USP: `usp_options()` for pure-self-attn block
    loops, module bind for mixed blocks. Cross-attention stays stock.
 4. Declare padding and mask rules; raise typed errors for unsupported USP behavior.
-5. Register in `ADAPTERS` (most specific first); a subclass whose forward
+5. Keep every fused-kernel call on stock's kernel branch. A sharded span's call
+   to a fused kernel must land on the same branch as stock's call for the same
+   rows: comfy-kitchen's fused AdaLN switches kernels at 1024 kernel rows
+   (batch times rows) per call, and the two round a few outputs differently.
+   Route clipped span calls through the parity helper `at_stock_rows` in
+   `adapters/flux3_adaln_parity.py` (FLUX.3 wires it in with
+   `bind_adaln_parity`), which fills the call with zero rows to stock's row
+   count and keeps the piece's rows. The proof is the GPU seam test
+   (`tests/test_flux3_adaln_parity.py`) plus a one-step hardware comparison
+   at a small size (704 square or below) and a one-reference edit, both
+   expected bit-identical to one GPU.
+6. Register in `ADAPTERS` (most specific first); a subclass whose forward
    contract differs raises `UnsupportedModelError` from `matches()`.
-6. Complete the acceptance gates in `docs/ADAPTERS.md`: cross-rank latent
+7. Complete the acceptance gates in `docs/ADAPTERS.md`: cross-rank latent
    identity, single-GPU reference fidelity, execution or typed refusal for
    every auto-table topology, a logged `hot-swap` after a LoRA tweak, and a
    passing lazy-swap identity gate for a LoRA stack.
-7. Hardware gate before shipping: the template's derived cells run through the
+8. Hardware gate before shipping: the template's derived cells run through the
    sweep harness on the pair at every preset and quant the matrix derives,
    scored against the single-GPU reference. Attach cell IDs, verdicts and
    elapsed times to the PR. `docs/SWEEP.md` section 2 gives the commands.
@@ -179,20 +190,31 @@ setup-service script modules. Review both sets on a bump.
 
 ## Release checklist
 
-1. `ruff`, mypy, pytest, and template generation pass. Smoke-test a
-   fresh Git checkout directly under ComfyUI `custom_nodes`: install it with an
-   explicit `COMFY_PYTHON` and the docs/INSTALL.md recipe, which builds the
-   xFuser compatibility wheel, then runs `"$COMFY_PYTHON" -m pip install -e` on
-   the checkout with that wheel and the torch constraint.
-2. Use this repository's current runbook and tools to run the authorized
-   hand-run hardware checks against the exact public source SHA, including each
-   feature-specific validation. Do not arm a source-repository hardware route.
-   Record unperformed checks as **NOT RUN**. Keep raw evidence private and attach
-   only reviewed, sanitized conclusions to release notes. Compare manually
-   maintained tables with those results; operator checks do not validate model
-   families.
-3. Write the CHANGELOG section and bump `__version__` in
-   `src/dgx_monarch/__init__.py` (pyproject reads the version from it).
+1. `ruff`, mypy, pytest, template generation and `python -m build` pass.
+   Smoke-test a fresh Git checkout directly under ComfyUI `custom_nodes`:
+   install it with an explicit `COMFY_PYTHON` and the docs/INSTALL.md recipe,
+   which builds the xFuser compatibility wheel, then runs
+   `"$COMFY_PYTHON" -m pip install -e` on the checkout with that wheel and the
+   torch constraint.
+2. Run the authorized hand-run hardware checks against the exact public source
+   SHA, including each feature-specific validation, under the
+   [hardware-smoke contract](../../docs/THREAT_MODEL.md#github-actions-to-trusted-hardware).
+   Follow the [comparison method](../../docs/VALIDATION.md#comparison-method)
+   in VALIDATION, and use this repository's
+   [sweep harness](../../docs/SWEEP.md) for template cells and the scripts
+   under `benchmark/` and `tools/`. Do not arm a source-repository hardware
+   route. Record unperformed checks as **NOT RUN**. Keep raw evidence private
+   and attach only reviewed, sanitized conclusions to release notes. Add a
+   dated VALIDATION section that names the tested source commit, as the v1.1.0
+   [operator acceptance record](../../docs/VALIDATION.md#onboarding-and-operator-acceptance)
+   does. Compare manually maintained tables with those results; operator checks
+   do not validate model families.
+3. Move the CHANGELOG `[Unreleased]` entries under a new
+   `## [X.Y.Z] - YYYY-MM-DD` heading, leaving `[Unreleased]` empty above it.
+   Bump `__version__` in `src/dgx_monarch/__init__.py` (pyproject reads the
+   version from it) and the version assertion in `tests/test_cli.py`, unless a
+   torchmonarch bump already did. Update the version sentence at the top of
+   docs/DESIGN.md and the README's example-workflow count.
 4. Node API diff review: mapping keys and ordered input names/types/defaults
    are semver-governed and snapshotted in `tests/node_input_contract.json`.
    New inputs remain optional or hidden and append-only.

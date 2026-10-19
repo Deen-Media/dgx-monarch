@@ -13,6 +13,8 @@ from typing import Protocol
 from ..config import ClusterConfig
 from . import lifecycle, probe_certainty
 from .legacy_update_dependencies import preflight as dependency_preflight
+from .release_slot import TROUBLESHOOTING as SLOT_TROUBLESHOOTING
+from .release_slot import release_slot_hosts
 from .update_lock import UpdateLock, UpdateLockUnavailable
 
 DriverProbe = Callable[[str | None], tuple[str | None, bool]]
@@ -51,6 +53,23 @@ def run(
     except (OSError, UpdateLockUnavailable):
         print("another dgxm update is already active", file=sys.stderr)
         return 2
+
+
+def _linked_worktree(repo: Path) -> bool:
+    """Whether ``repo`` is a linked worktree, as `git worktree add` makes one.
+
+    Its .git is a file naming a private git directory that holds a
+    ``commondir`` file. A submodule or a separate git directory also has a
+    .git file, but no ``commondir``, so it keeps the plain path's old behavior.
+    """
+    try:
+        text = (repo / ".git").read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        return False
+    if not text.startswith("gitdir: "):
+        return False
+    # The join keeps an absolute gitdir as it is and reads a relative one from ``repo``.
+    return (repo / text.removeprefix("gitdir: ").strip() / "commondir").is_file()
 
 
 # The file admission reads, and the one `pip install -e` builds metadata from.
@@ -126,6 +145,37 @@ def _fetch_candidate(repo: Path) -> tuple[str, bool] | None:
     return heads[0], True
 
 
+def _release_slot_refusal(config: ClusterConfig) -> int | None:
+    """Refuse before the fetch when any Worker runs from a release slot, or when one went unread.
+
+    Plain update pulls the driver forward and leaves every slot where it was,
+    so it would split the cluster. A source link that resolves outside
+    releases/, as guided setup's link to a colocated checkout does, follows
+    the pull and does not refuse.
+    """
+    slots, unobserved = release_slot_hosts(config)
+    for host, token in slots:
+        print(
+            f"refusing to update: {host.name} runs its Worker from release slot {token} "
+            "(release_slot_worker). Its ~/.local/share/dgx-monarch/src links into releases/, and "
+            "plain `dgxm update` cannot refresh a release slot: the driver would move while that "
+            "Worker stays on its old release. Run `dgxm update --verify --target <ref>` instead "
+            f"({SLOT_TROUBLESHOOTING}). Nothing was fetched or changed.",
+            file=sys.stderr,
+        )
+    if slots:
+        return 2
+    for host in unobserved:
+        print(
+            f"refusing to update: the source link on {host.name} could not be read "
+            "(release_slot_unknown), so whether its Worker runs from a release slot, which plain "
+            "`dgxm update` cannot refresh, is unknown. Rerun once that host answers "
+            f"({SLOT_TROUBLESHOOTING}). Nothing was fetched or changed.",
+            file=sys.stderr,
+        )
+    return probe_certainty.UNKNOWN_EXIT if unobserved else None
+
+
 def _run_locked(
     args: _Args,
     *,
@@ -157,6 +207,11 @@ def _run_locked(
             file=sys.stderr,
         )
         return probe_certainty.UNKNOWN_EXIT
+    config = load_config(args)
+    if config is not None and config.hosts:
+        refused = _release_slot_refusal(config)
+        if refused is not None:
+            return refused
     candidate: str | None = None
     merge = False
     if (repo / ".git").is_dir():
@@ -166,6 +221,17 @@ def _run_locked(
         if fetched is None:
             return 1
         candidate, merge = fetched
+    elif _linked_worktree(repo):
+        print(
+            f"{repo} is a linked git worktree: its .git is a file, not a directory. Plain "
+            "`dgxm update` updates the checkout this dgxm was installed from, and it fetches "
+            "and fast-forwards only a main checkout, so it refuses here rather than skip the "
+            "fetch. Run `dgxm update --verify`, which fetches origin itself and fast-forwards "
+            "this checkout to a verified release, or reinstall dgx-monarch from the main "
+            "checkout and run plain `dgxm update` from that install (docs/INSTALL.md).",
+            file=sys.stderr,
+        )
+        return 1
     else:
         print(f"{repo} is not a plain git checkout (no .git directory); skipping the fetch "
               "and checking the working tree's pyproject.toml")
@@ -187,7 +253,6 @@ def _run_locked(
         print(f"cannot determine the exact torchmonarch pin: {exc}", file=sys.stderr)
         return 1
 
-    config = load_config(args)
     if not dependency_preflight(pin, dependencies, config):
         unmoved = (" The checkout stays at its current commit; the fetch moved only "
                    "remote-tracking refs." if candidate is not None else "")

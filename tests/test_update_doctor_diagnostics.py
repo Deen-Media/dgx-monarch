@@ -35,6 +35,20 @@ def test_private_host_names_and_probe_details_never_reach_diagnostics(capsys):
     }
 
 
+def test_release_slot_version_row_has_its_own_category(capsys):
+    """A verified update whose Doctor step fails on a slot left behind names the row, not "other"."""
+    diagnostics.report_doctor_result(1, report([
+        {"check": "secret-host worker release version", "state": "fail", "detail": "secret slot path"},
+        {"check": "secret-host worker policy", "state": "warn", "detail": "secret"},
+    ]), ("secret-host",))
+    output = capsys.readouterr()
+    assert "secret" not in output.err
+    assert output.err.splitlines() == [
+        "doctor diagnostics: worker_release_version fail (1)",
+        "doctor diagnostics: worker_policy warn (1)",
+    ]
+
+
 @pytest.mark.parametrize("payload", [None, "secret raw traceback", "x" * (128 * 1024 + 1),
     "[", "[]", '{"checks":{}}', '{"checks":[null]}',
     '{"checks":[{"check":"torch CUDA","state":"secret"}]}',

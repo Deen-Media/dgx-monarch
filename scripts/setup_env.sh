@@ -31,11 +31,13 @@ setup_base() {
 setup_comfy_layer() {
   # Install ComfyUI requirements, diffusers and xFuser without replacing torch.
   # torchvision is not pinned here; its explicit install uses --no-deps and
-  # is skipped when requirements already installed it. On aarch64, the cu132
-  # index lacks a compatible torchaudio build, so copy one from
-  # DGXM_TORCHAUDIO_DONOR. The tested donor build is 2.11.0+cu132 with torch 2.12.
-  # ComfyUI before v0.38.0 imports torchaudio at startup; refuse a missing donor
-  # rather than leave that installation unable to import ComfyUI.
+  # is skipped when requirements already installed it. ComfyUI before v0.38.0
+  # lists torchaudio in requirements.txt and imports it at startup; v0.38.0 and
+  # later need none. Only for an older ComfyUI: on aarch64 the cu132 index lacks
+  # a compatible torchaudio build, so copy one from DGXM_TORCHAUDIO_DONOR (the
+  # tested donor build is 2.11.0+cu132 with torch 2.12), and refuse a missing
+  # donor rather than leave that ComfyUI unable to start. A newer ComfyUI only
+  # gets a warning when torchaudio is missing.
   local PY="$HOME/monarch-env/bin/python"
   local P="$HOME/monarch-env/bin/pip"
   local SP XFUSER_WHEELS TORCH_CONSTRAINT TORCH_DIST_VERSION
@@ -68,7 +70,19 @@ setup_comfy_layer() {
     xfuser==0.7.0+dgxm.npuimport1 yunchang==0.6.4
   rm -rf "$XFUSER_WHEELS"
   "$P" install -q --no-deps torchvision --index-url https://download.pytorch.org/whl/cu132
-  if ! "$PY" -c "import torchaudio" 2>/dev/null; then
+  local NEEDS_TORCHAUDIO=0
+  if grep -Eiq '^[[:space:]]*torchaudio([^A-Za-z0-9_.-]|$)' "$HOME/ComfyUI/requirements.txt"; then
+    NEEDS_TORCHAUDIO=1
+  elif "$PY" -c 'import re,sys
+try: text = open(sys.argv[1], encoding="utf-8").read()
+except OSError: sys.exit(1)
+m = re.search(r"__version__\s*=\s*[\x27\x22](\d+)\.(\d+)", text)
+sys.exit(0 if m and (int(m[1]), int(m[2])) < (0, 38) else 1)' "$HOME/ComfyUI/comfyui_version.py"; then
+    NEEDS_TORCHAUDIO=1
+  fi
+  if [ "$NEEDS_TORCHAUDIO" = 0 ] && ! "$PY" -c "import torchaudio" 2>/dev/null; then
+    echo "WARNING: no working torchaudio; this ComfyUI does not list it (v0.38.0 and later need none), so the donor step is skipped" >&2
+  elif ! "$PY" -c "import torchaudio" 2>/dev/null; then
     local DONOR_PY="$TORCHAUDIO_DONOR/bin/python"
     local DONOR_SP=""
     if [ -n "$TORCHAUDIO_DONOR" ] && [ -x "$DONOR_PY" ]; then

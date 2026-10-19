@@ -628,7 +628,7 @@ def test_a_creation_block_never_poisons_a_handle_whose_stop_confirmed():
 
 
 def _publish(handle, text, **kwargs):
-    mesh_helpers._publish_supervision_failure_state(
+    mesh_helpers.publish_supervision_failure_state(
         handle, RuntimeError(text), text, **kwargs)
 
 
@@ -788,7 +788,8 @@ def attach_rig(monkeypatch):
         listener_generation, "fleet",
         lambda config, **_kwargs: {
             host.address: {"gen": "aaaaaaaaaaaa", "loop_pid": "111",
-                           "age_s": "9", "listening": "true", "marker": "match"}
+                           "age_s": "9", "listening": "true", "marker": "match",
+                           "proc_id": "aaaaaaaaaaaa0001"}
             for host in config.hosts})
     monkeypatch.setattr(mesh_teardown, "_RELEASED_PREDECESSOR", None)
     monkeypatch.setattr(mesh_teardown, "_RELEASED_ADDRESSES", None)
@@ -832,9 +833,9 @@ def _release_the_latch(monkeypatch, *addresses: str):
 
 def test_a_released_replacement_fails_fast_after_exactly_one_attempt(
         monkeypatch, attach_rig):
-    """A released fleet gets exactly one try, since a second cannot succeed
-    (the comment above `_cluster_config`), and the error says why no retry
-    ran."""
+    """A released fleet whose loops serve the same id after the failed
+    attempt gets exactly one try, since a second with that id cannot succeed,
+    and the error says why no retry ran and names the restart fallback."""
     _release_the_latch(monkeypatch, ADDRESS_A)
     mesh_mod = attach_rig.rig([RuntimeError("worker gone")], _Listeners([True]))
     with pytest.raises(mesh_mod.MeshAttachError) as raised:
@@ -842,8 +843,9 @@ def test_a_released_replacement_fails_fast_after_exactly_one_attempt(
     assert len(attach_rig.attempts) == 1
     assert raised.value.__cause__ is attach_rig.attempts[0]
     text = str(raised.value)
-    assert "reproduced on hardware, 2026-10-01" in text
-    assert "docs/TROUBLESHOOTING.md #101" in text
+    assert "no loop came back with a new id" in text
+    assert "delivery timeout" in text and "Restart ComfyUI" in text
+    assert "docs/TROUBLESHOOTING.md #2, #101" in text
     assert mesh_mod._TRANSPORT_POISON == "cluster attach failed: RuntimeError('worker gone')"
     assert attach_rig.slept == []          # no wait ran either
 

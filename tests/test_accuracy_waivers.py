@@ -40,6 +40,7 @@ SOL_ATTN = "sol_attn"
 SHARD_QUANT = "shard_quant_scale"
 CHROMA_SHARD_QUANT = "shard_quant_scale:chroma"
 H3_SOL_ATTN = "sol_attn:minimax_h3"
+PIN_SOL_ATTN = "sol_attn:checkpoint_pin"
 RING_KIND = "waive-known-wrong:ring-pad"
 PIXELDIT_KIND = "waive-known-wrong:pixeldit-sp"
 UNET = "model.safetensors"
@@ -532,7 +533,8 @@ def test_the_waiver_topology_label_is_the_operators_own_preset_spelling():
 
 def test_the_live_class_k_guards_are_wired_and_agree_with_the_registry():
     assert set(accuracy_waiver.KNOWN_WRONG_GUARDS) == {
-        RING_PAD, H3_RING_PAD, SOL_ATTN, H3_SOL_ATTN, SHARD_QUANT, CHROMA_SHARD_QUANT}
+        RING_PAD, H3_RING_PAD, SOL_ATTN, H3_SOL_ATTN, PIN_SOL_ATTN, SHARD_QUANT,
+        CHROMA_SHARD_QUANT}
     for guard, kind in accuracy_waiver.KNOWN_WRONG_GUARDS.items():
         spec = GUARDS[guard]
         assert spec.refusal_class is RefusalClass.KNOWN_WRONG
@@ -1314,3 +1316,27 @@ def test_a_class_k_memo_does_not_reach_another_topology_or_world(rig):
     consent_waiver.retire_audit("r-b")
     assert accuracy_waiver.REQUEST_KEY not in _worker_request(
         rig, model, topology=CFG2, world=4, render_id="r-c")
+
+
+def test_a_checkpoint_pin_grant_and_its_use_row_carry_the_pin_guard(rig):
+    """The pin route's scoped guard survives the audit vocabulary end to end (issue #30).
+
+    A guard the ledger rejected would fail after a stamped render had already
+    run, so the grant, the dispatch stamp, the worker's proceed and the
+    driver's permanent use row are driven through the real modules here.
+    """
+    from dgx_monarch import attention_pins
+
+    _grant_from_the_panel(rig, SOL_KIND, topology=CFG2, guard=PIN_SOL_ATTN)
+    accuracy_waiver.activate(_worker_request(rig, _model(), topology=CFG2, render_id="r-pin"))
+    _bind_worker(topology=CFG2)
+    pinned = {"comfy_kitchen_sol tau=0.7": 40}
+    attention_pins.assert_waived(attention_pins.PinSummary(pinned, pinned, {}), CFG2)
+    consent_waiver.stamp_result({}, [{"waived": accuracy_waiver.stamps()}])
+    rows = [json.loads(line) for line in
+            open(rig.ledger.path, encoding="utf-8").read().splitlines()]
+    grant = next(row for row in rows if row.get("action") == "grant")
+    use = next(row for row in rows if row.get("action") == "use")
+    assert grant["target_guard"] == PIN_SOL_ATTN and grant["waiver_kind"] == SOL_KIND
+    assert use["target_guard"] == PIN_SOL_ATTN and use["verdict"] == "WAIVER"
+    assert use["run_id"] == "r-pin" and use["stamp"].startswith("rendered-under-waiver")

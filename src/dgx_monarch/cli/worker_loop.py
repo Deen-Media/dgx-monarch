@@ -46,6 +46,7 @@ def main() -> None:
     prepare_worker_process_environment(Path(__file__).resolve().parents[2])
 
     import os
+    import sys
 
     from ..monarch_diagnostics import configure_policy_logged
     from ..monarch_launch import NATIVE_ENV
@@ -56,11 +57,21 @@ def main() -> None:
     os.environ[NATIVE_ENV] = "1" if args.native_rdma else "0"
     configure_policy_logged(policy.diagnostics, "worker")  # an ERROR; the loop still serves
 
-    # Persist actor identities for later loops and lifecycle sweeps. Use a
-    # daemon thread because run_worker_loop_forever blocks in native code.
-    from .actor_ledger import start_tracker
+    # Serve a new Monarch ProcId on every start (worker_proc_id.py), and
+    # publish it in the loop record before the listener exists, so the probe
+    # the driver runs before each attach reads the id this process serves. A
+    # daemon thread then keeps the record and the actor identities current
+    # for later loops and lifecycle sweeps: run_worker_loop_forever blocks
+    # in native code.
+    from .. import worker_proc_id
+    from .actor_ledger import publish_loop, start_tracker
 
-    start_tracker(args.address)
+    proc_id = worker_proc_id.current()
+    if not publish_loop(args.address, proc_id=proc_id):
+        print("[dgx-monarch] worker service could not publish its id in the actor "
+              "ledger; driver attaches refuse until it can "
+              f"({worker_proc_id.ENTRY})", file=sys.stderr, flush=True)
+    start_tracker(args.address, proc_id=proc_id)
 
     from monarch.actor import enable_transport, run_worker_loop_forever
 
@@ -69,6 +80,7 @@ def main() -> None:
 
     assert_supported_runtime()
     activate_native_policy()
+    served = worker_proc_id.proc_addr(args.address, proc_id)
 
     # Secondary channels must advertise the same fabric IP as the loop bind, and
     # their ports are dynamic, so SECURITY.md asks for a rule on the whole
@@ -77,8 +89,9 @@ def main() -> None:
     # through the 127.0.1.1 /etc/hosts line). Port 0 keeps the loop's own port free.
     host_part = args.address.rsplit(":", 1)[0]  # tcp://<fabric-ip>
     enable_transport(f"{host_part}:0")
-    print(f"[dgx-monarch] worker service listening on {args.address}", flush=True)
-    run_worker_loop_forever(address=args.address, ca="trust_all_connections")
+    # Monarch spells the id in base58; doctor and the attach trace print hex.
+    print(f"[dgx-monarch] worker service listening on {served} (proc_id={proc_id})", flush=True)
+    run_worker_loop_forever(address=served, ca="trust_all_connections")
 
 
 if __name__ == "__main__":

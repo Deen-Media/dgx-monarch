@@ -16,8 +16,9 @@ from contextlib import contextmanager
 from typing import Any
 
 PHASES = frozenset({
-    "attach", "setup", "queue_wait", "compute", "collect", "rdma_register",
-    "rdma_read", "rdma_drop", "ack", "recycle", "spawn", "readiness", "cancel",
+    "attach", "setup", "queue_wait", "compute", "collect", "rdma_preflight",
+    "rdma_register", "rdma_read", "rdma_drop", "ack", "recycle", "spawn",
+    "readiness", "cancel",
 })
 OUTCOMES = frozenset({"ok", "error", "timeout", "cancelled", "unknown"})
 RETURN_MODES = frozenset({"none", "message", "rdma"})
@@ -79,9 +80,12 @@ class PhaseMeasurements:
             # expose a half-updated count/bucket pair to the next snapshot.
             self._series[key] = row
             self._sequence += 1
+            # finished_at is wall time for display. Spans built from
+            # duration_s end at finished_monotonic_s, which shares its clock.
             event = {"sequence": self._sequence, "phase": phase_name,
                      "outcome": outcome, "return_mode": return_mode,
-                     "duration_s": duration, "finished_at": time.time()}
+                     "duration_s": duration, "finished_at": time.time(),
+                     "finished_monotonic_s": time.monotonic()}
             self._recent.append(event)
             return dict(event)
         finally:
@@ -130,6 +134,14 @@ def record_phase(phase_name: str, duration_s: float, *, outcome: str = "ok",
         # Includes interruptions in diagnostic code. The caller's operation
         # and any exception already escaping it retain their original result.
         pass
+
+
+def sequence() -> int:
+    """The last accepted record's number, read without the store lock.
+
+    A later ``events_since(sequence())`` returns the records accepted after it.
+    """
+    return _STORE._sequence
 
 
 def snapshot() -> dict[str, Any]:

@@ -208,7 +208,9 @@ def run_sample(
     # the ready flag would make the peer refuse.
     readiness = _post_load_readiness(worker)
     primary_sampling = model_sampling
+    from .. import accuracy_waiver, attention_pins
     from ..adapters import quant_activation_scale
+    pins = None
     try:
         dm2_slot = dual_model_cfg2_slot(worker, request)
         if dm2_slot == "uncond":
@@ -219,6 +221,12 @@ def run_sample(
                 rescue_consent=worker_env.sample_rescue_consent(request))
             worker_env.assert_resident_artifact_identity(
                 worker, "uncond", expected_artifacts[1])
+            # The driver keys every grant of a dual-model render on the
+            # conditional checkpoint (consent_waiver.stamp_request), so a card
+            # this rank raises names that checkpoint, not the one it holds.
+            accuracy_waiver.bind_model(
+                model_spec["unet_name"], model_spec.get("options"), model_spec.get("loras"),
+                getattr(worker, "topology", {}), getattr(worker, "world", 0), dispatch=True)
             primary_sampling = uncond_sampling
             raise_if_sample_cancelled(cancel_event)
             worker._check_uma_reserve()
@@ -257,6 +265,15 @@ def run_sample(
                 if loaded is not None:
                     quant_activation_scale.assert_shard_quant_scale_covered(
                         loaded.model.diffusion_model)
+        # Class K too, under the same rules: a block pin the checkpoint or a
+        # LoRA sets runs where no sequence parallelism drops it, and an
+        # approximate one needs the Sol-Attn waiver (attention_pins.py).
+        pins = attention_pins.render_summary(worker, (patcher, uncond_patcher))
+        resident = getattr(worker.store, "uncond" if dm2_slot == "uncond" else "current", None)
+        attention_pins.assert_waived(
+            pins, worker.topology, family=getattr(resident, "family", None),
+            alone=int(getattr(worker, "world", 0) or 0) < 2,
+            pinned_by=request["uncond_model"]["unet_name"] if dm2_slot == "uncond" else None)
         if worker.topology.get("ring", 1) > 1:
             # cuDNN Ring prepares here, inside the load guard, before the exchange.
             worker._attn.prepare_native_attention()
@@ -394,6 +411,10 @@ def run_sample(
     }
     if resident_adoption_evidence is not None:
         result["resident_adoption_evidence"] = resident_adoption_evidence
+    if pins is not None:
+        # Under dm-cfg2 the row names this rank's slot, so the driver keeps
+        # each model's counts together (attention_pins.merge).
+        result[attention_pins.RESULT_KEY] = pins.public(model=dm2_slot)
     if out is not None:
         return worker._pack_latent_result(result, out, request)
     return result

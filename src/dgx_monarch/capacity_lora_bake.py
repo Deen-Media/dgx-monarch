@@ -9,7 +9,8 @@ checkpoint headers and the LoRA path resolver, avoiding torch/Comfy imports.
 
 Mapped quantized weights retain their stored width; plain weights cost two
 bytes per element. An unmapped target, unreadable LoRA, or resolution failure
-charges the whole checkpoint file as a conservative bound.
+charges the whole checkpoint file as a conservative bound. A LoRA that holds
+only per-block attention configs patches no weight and charges nothing.
 
 See docs/VALIDATION.md, "The LoRA bake's unpriced slab stray" (2026-09-28),
 for the derivation and checks against campaign LoRA/checkpoint pairs.
@@ -34,6 +35,9 @@ _LORA_SUFFIXES: tuple[tuple[str, str], ...] = (
     (".diff", ".weight"),
     (".diff_b", ".bias"),
 )
+
+# A per-block attention pin a LoRA can carry; it patches no weight.
+_ATTENTION_CONFIG_SUFFIX = ".comfy_attention.config"
 
 _TEXT_ENCODER_MARKERS = (   # never reaches the diffusion checkpoint priced here
     "lora_te", "text_encoder", "text_encoders", "clip_l", "clip_g",
@@ -86,9 +90,14 @@ def _lora_targets(lora_keys: Mapping[str, object]) -> set[tuple[str, str]] | Non
     """This LoRA's own (module stem, base suffix) pairs, or ``None`` when not
     one key named a recognized suffix (an unrecognized container, priced like
     any unmapped target, never as a free empty stack). A file whose recognized
-    keys are all text-encoder ones returns a real empty set."""
+    keys are all text-encoder ones returns a real empty set, and so does a file
+    of per-block attention configs alone: ComfyUI stages each as an object
+    patch, a new ``ComfyAttention`` module that holds no weight, so it bakes
+    nothing (attention_pins.py)."""
     targets: set[tuple[str, str]] = set()
     saw_recognized_suffix = False
+    if lora_keys and all(key.endswith(_ATTENTION_CONFIG_SUFFIX) for key in lora_keys):
+        return targets
     for key in lora_keys:
         for suffix, base_suffix in _LORA_SUFFIXES:
             if key.endswith(suffix):

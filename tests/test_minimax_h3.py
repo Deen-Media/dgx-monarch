@@ -488,8 +488,10 @@ def test_inject_usp_binds_only_the_inner_forward():
     MiniMaxH3Adapter().inject_usp(model, InjectionContext(topology_sp=2, usp_attention=object()))
     assert model._forward is not _STOCK      # the sharded forward
     assert model.forward is _STOCK           # stock wrapper-executor shell
-    # No attention module is patched: H3 threads transformer_options into
-    # comfy's dispatcher, so the usp_options override reaches every block.
+    # No DiT attention module is patched: H3 threads transformer_options into
+    # comfy's dispatcher, so the usp_options override reaches every block. Only
+    # the token refiner's own attention modules get a bound forward, which
+    # drops a pinned kernel (adapters/stock_attention.py).
     assert model.token_refiner is _STOCK
     assert model.final_layer is _STOCK
 

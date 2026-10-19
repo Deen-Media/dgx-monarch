@@ -184,17 +184,21 @@ def sol_ceremony_skip_reason(resolved_attention: object) -> str | None:
 
 
 def is_sol_waiver_refusal(exc: object) -> bool:
-    """Whether an aborted ceremony aborted on this lever's class-K guard.
+    """Whether an aborted ceremony aborted on a Sol-Attn waiver guard.
 
-    Read from the tag, never the message: a name cannot claim the exemption.
+    The widget's family guards and the checkpoint pin guard both count: a
+    kernel choice never implicates residency. Read from the tag, never the
+    message: a name cannot claim the exemption.
     """
+    from ..attention_pins import SOL_ATTN_PIN_GUARD
     from ..refusal import parse_leading_refusal_tag
 
     text = getattr(exc, "args", (None,))[0] if getattr(exc, "args", None) else None
     for candidate in (text, str(exc)):
         tag = parse_leading_refusal_tag(candidate) if isinstance(candidate, str) else None
         guard = getattr(tag, "guard", None)
-        if isinstance(guard, str) and guard in SOL_WAIVER_GUARDS.values():
+        if isinstance(guard, str) and (
+                guard in SOL_WAIVER_GUARDS.values() or guard == SOL_ATTN_PIN_GUARD):
             return True
     return False
 

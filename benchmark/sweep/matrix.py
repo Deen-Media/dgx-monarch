@@ -6,7 +6,7 @@ and its basis:
 * ``guard``: a runtime refusal;
 * ``disk``: a missing checkpoint or unidentified family;
 * ``name-token``: block-scaled layout inferred from the filename;
-* ``header``: checkpoint and LoRA metadata;
+* ``header``: checkpoint and LoRA metadata, the attention pins among them;
 * ``config``: a template excluded by configuration;
 * ``token-count`` or ``token-count-unavailable``: prompt divisibility;
 * ``per-cond-dispatch`` or ``cond-fold-unknown``: the expected CFG path for
@@ -28,6 +28,8 @@ import re
 import sys
 import tomllib
 from collections import Counter
+from collections.abc import Iterable
+from dataclasses import asdict, replace
 from pathlib import Path
 from types import SimpleNamespace
 from typing import NamedTuple
@@ -36,7 +38,7 @@ REPO = Path(__file__).resolve().parents[2]
 if str(REPO / "src") not in sys.path:
     sys.path.insert(0, str(REPO / "src"))
 
-from dgx_monarch import upstream_gate  # noqa: E402
+from dgx_monarch import attention_pins, upstream_gate  # noqa: E402
 from dgx_monarch.adapters import (  # noqa: E402
     ADAPTERS,
     DUAL_MODEL_CFG_FAMILIES,
@@ -69,7 +71,13 @@ from dgx_monarch.nodes.render_validation import (  # noqa: E402
 )
 from dgx_monarch.refusal import parse_refusal_tag  # noqa: E402
 from dgx_monarch.safetensors_header import read_safetensors_header  # noqa: E402
-from dgx_monarch.topology import choose_auto_topology, topology_from_preset  # noqa: E402
+from dgx_monarch.topology import (  # noqa: E402
+    Topology,
+    choose_auto_topology,
+    sampler_keeps_uncond_at_cfg1,
+    topology_from_preset,
+)
+from dgx_monarch.topology_cfg_evidence import sniffed_checkpoint_variant  # noqa: E402
 
 from .convert import probe_support  # noqa: E402
 
@@ -78,6 +86,14 @@ LORA_CLASS, INIT_CLASS = "DGXMonarchLoraLoader", "DGXMonarchInit"
 PACKED_CLASSES = frozenset({"LTXVConcatAVLatent", "EmptyMiniMaxH3LatentAV",
                             "MiniMaxH3ImageToVideo", "MiniMaxH3AddGuide"})
 LENGTH_WIDGETS = ("length", "video_frames", "frames_number")
+# The nodes that tag the latent with the sampler's cfg++ answer at runtime
+# (nodes/render_preflight.sampler_latent, called with the sampler name). Auto
+# reads only that tag, so a cfg++ name on any other node, such as the stock
+# KSamplerSelect feeding Sampler Custom (DGX Monarch), leaves the CFG-1 skip
+# on. test_the_auto_tagging_samplers_match_the_nodes_that_tag pins the set.
+UNCOND_TAGGING_SAMPLERS = frozenset({
+    "DGXMonarchKSampler", "DGXMonarchKSamplerAdvanced",
+    "DGXMonarchKSamplerPipeline", "DGXMonarchIdentityGate"})
 RESIDENCY_TOGGLES = frozenset({"slab_weights", "lora_low_rss", "comfy_managed"})
 # The stock CLIP loaders and the widgets on each that name a text-encoder file.
 # test_text_encoder_loader_classes_pin_against_the_artifact_manifest_widgets
@@ -163,6 +179,15 @@ TEXT_WIDGETS = ("text", "prompt")
 # tokenizes each apart, which this reader does not do, so a prompt carrying
 # either is left uncounted rather than counted wrong.
 WEIGHT_SYNTAX = re.compile(r"[()\[\]]|embedding:")
+
+# The tensor ComfyUI reads one attention module's pin from, by the runtime's own
+# names for it (canary seam 39 holds both against the tree).
+PIN_CONFIG_SUFFIX = f".{attention_pins.PIN_MODULE}.{attention_pins.CONFIG_ATTR}"
+# ComfyUI writes a pin config as uint8 JSON bytes, a few dozen of them. No
+# config it writes comes near this bound, which only keeps a mislabelled weight
+# off the read; a tensor past it is pruned rather than read (PinConfigError).
+PIN_CONFIG_DTYPE = "U8"
+PIN_CONFIG_MAX_BYTES = 16 * 1024 * 1024
 
 # The basis for a known runtime defect the matrix carries until its fix lands.
 # No rule uses it. A rule that does names the defect, and is deleted when the
@@ -339,14 +364,13 @@ def split_quant(stem: str) -> tuple[str, str]:
 def sampler_keeps_uncond(sampler_name: str) -> bool:
     """Whether this sampler still runs the unconditional pass at CFG 1.0.
 
-    comfy drops that pass at CFG 1.0 unless ``disable_cfg1_optimization`` is
-    set (comfy/samplers.py), and at comfy a7169322 every sampler that sets it
-    is a cfg++ sampler, named with a ``cfg_pp`` suffix
-    (comfy/k_diffusion/sampling.py). Keeping the pass means comfy folds cond
-    and uncond into one call of batch 2, which a cfg topology splits across
-    its two ranks (krea2 at cfg2, 2026-09-02).
+    The runtime's rule (topology.sampler_keeps_uncond_at_cfg1) is the one
+    home, so a sweep label and the render it predicts read the same sampler
+    the same way. Keeping the pass means comfy folds cond and uncond into one
+    call of batch 2, which a cfg topology splits across its two ranks (krea2
+    at cfg2, 2026-09-02).
     """
-    return isinstance(sampler_name, str) and sampler_name.endswith("cfg_pp")
+    return sampler_keeps_uncond_at_cfg1(sampler_name)
 
 
 def _prompt_behind(graph: dict, link: object, seen: frozenset = frozenset()) -> str | None:
@@ -441,11 +465,11 @@ def graph_facts(graph: dict) -> dict:
     classes = {node["class_type"] for node in graph.values()}
     width = height = 0
     cfg, batch, video = None, 1, False
-    batch_node, sampler = "", ""
+    batch_node, sampler, sampler_class = "", "", ""
     for node_id, node in graph.items():
         inputs = node["inputs"]
         if isinstance(inputs.get("sampler_name"), str):
-            sampler = inputs["sampler_name"]
+            sampler, sampler_class = inputs["sampler_name"], node["class_type"]
         if isinstance(inputs.get("width"), int) and isinstance(inputs.get("height"), int) \
                 and inputs["width"] * inputs["height"] > width * height:
             width, height = inputs["width"], inputs["height"]
@@ -468,6 +492,11 @@ def graph_facts(graph: dict) -> dict:
         "packed": bool(classes & PACKED_CLASSES), "audio": "SaveAudioAdvanced" in classes,
         "cfg": cfg, "batch": batch, "probe": probe, "probe_reason": probe_reason,
         "sampler": sampler, "sampler_keeps_uncond": sampler_keeps_uncond(sampler),
+        # What auto reads: the runtime tags the latent only from a sampler
+        # node that names the sampler (UNCOND_TAGGING_SAMPLERS). The refuse:P
+        # rule keeps the raw fact, since comfy keeps the pass on every path.
+        "auto_keeps_uncond": (sampler_keeps_uncond(sampler)
+                              and sampler_class in UNCOND_TAGGING_SAMPLERS),
         "batch_node": batch_node, "batch_widget": bool(batch_node),
         "klass": "video" if video else "image",
         "prompts": prompt_texts(graph),
@@ -570,6 +599,157 @@ def _guard(call, *args, **kwargs) -> str | None:
     return None
 
 
+class PinConfigError(ValueError):
+    """A checkpoint pin config whose load the matrix cannot predict, by file and key."""
+
+
+def _comfy_load_fails(config: object) -> bool:
+    """Whether ComfyUI's own walk over this decoded config raises at load.
+
+    ``ComfyAttention._load_from_state_dict`` (comfy/ldm/modules/attention.py)
+    calls ``.get`` on each entry in order and stops at the first kernel it
+    binds, and both kernels it knows bind on the pair this harness drives. An
+    entry that is not an object before that point raises, and so does a config
+    that is not an object or a list at all. An ``attention`` value that is not
+    a string (a list, an object, a number) fails nothing: ComfyUI compares it
+    with the two kernel names, logs it as an unknown method and reads the next
+    entry, and the runtime reader (``attention_pins._declared``) skips it too.
+    """
+    for entry in config if isinstance(config, list) else [config]:
+        if not isinstance(entry, dict):
+            return True
+        method = entry.get("attention")
+        if isinstance(method, str) and method in attention_pins.KNOWN_KERNELS:
+            return False
+    return False
+
+
+def _pin_config(handle, path: Path, key: str, tensor) -> object:
+    """One config tensor decoded as ComfyUI decodes it, or PinConfigError."""
+    where = f"{path.name}: {key}"
+    if tensor.dtype != PIN_CONFIG_DTYPE:
+        raise PinConfigError(f"{where} is {tensor.dtype}, not the uint8 JSON ComfyUI writes")
+    if tensor.nbytes > PIN_CONFIG_MAX_BYTES:
+        raise PinConfigError(f"{where} holds {tensor.nbytes} bytes, past the "
+                             f"{PIN_CONFIG_MAX_BYTES} the matrix reads")
+    handle.seek(tensor.start)
+    try:
+        config = json.loads(handle.read(tensor.nbytes))
+    except ValueError:
+        raise PinConfigError(f"{where} is not JSON, so ComfyUI's load fails on it") from None
+    if _comfy_load_fails(config):
+        raise PinConfigError(f"{where} holds an entry that is not an object ahead of "
+                             "every kernel ComfyUI binds, so ComfyUI's load fails on it")
+    return config
+
+
+def checkpoint_pins(paths: Iterable[Path]) -> dict[str, attention_pins.BlockPin]:
+    """The attention pins these checkpoint files declare, read from their headers.
+
+    ComfyUI decodes each ``<module>.comfy_attention.config`` tensor's bytes as
+    JSON when the checkpoint loads (comfy/ldm/modules/attention.py,
+    ``ComfyAttention._load_from_state_dict``), and binds a config only on that
+    module, the one ``ConfigurableModule`` it builds. The runtime's own reader
+    (``attention_pins.block_pin``) turns that JSON into the kernel it names, so
+    a config naming no kernel ComfyUI knows pins nothing here either.
+
+    The header cannot say whether a host binds the kernel. ComfyUI binds one
+    where comfy-kitchen can run it on the device, and both kernels it knows run
+    on the pair this harness drives (GB10, compute capability 12.1), so every
+    pin reads as bound. Only a render on one GPU reads that binding
+    (``attention_pins.assert_waived``); every other topology decides from the
+    pins alone.
+
+    A file the reader cannot parse pins nothing, as ``fp32_patched_count``
+    counts nothing. A config whose load the matrix cannot predict raises
+    PinConfigError, and build_cells drops the artifact set with that note: one
+    that is not uint8, one past the read bound, and one ComfyUI's own load
+    fails on (not JSON, or an entry that is not an object ahead of every kernel
+    it binds). A load that fails runs no guard, so no label would hold.
+    """
+    pins: dict[str, attention_pins.BlockPin] = {}
+    for path in paths:
+        try:
+            tensors = read_safetensors_header(str(path)).tensors
+        except (OSError, ValueError):
+            continue
+        wanted = sorted((key, tensor) for key, tensor in tensors.items()
+                        if key.endswith(PIN_CONFIG_SUFFIX))
+        if not wanted:
+            continue
+        try:
+            with open(path, "rb") as handle:
+                for key, tensor in wanted:
+                    config = _pin_config(handle, path, key, tensor)
+                    pin = attention_pins.block_pin(SimpleNamespace(config=config))
+                    if pin is not None:
+                        pins[f"{path.name}:{key}"] = replace(pin, bound=True)
+        except OSError:
+            continue
+    return pins
+
+
+def pinning_loras(config: dict, lora_names: list[str]) -> list[str]:
+    """The named LoRA files that carry a ``comfy_attention`` config, from headers only.
+
+    ComfyUI turns each such key into an object patch that re-pins or unpins the
+    module at a nonzero strength (comfy/lora.py, comfy/model_patcher.py), and
+    the runtime guard reads those patches (``attention_pins.effective_pins``).
+    The matrix reads checkpoint pins only, so build_cells drops a LoRA arm that
+    carries one rather than label it.
+    """
+    loras = config["comfy_dir"] / "models" / "loras"
+    found = []
+    for name in lora_names:
+        try:
+            tensors = read_safetensors_header(str(loras / name)).tensors
+        except (OSError, ValueError):
+            continue
+        if any(key.endswith(PIN_CONFIG_SUFFIX) for key in tensors):
+            found.append(name)
+    return found
+
+
+def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
+                topo: Topology) -> attention_pins.PinSummary | None:
+    """What one rank of this topology renders of these pins, by the runtime's summary.
+
+    ``attention_pins.summarize`` decides which pins run: sequence parallelism
+    drops every one. The stand-in carries the pins where the load scan caches
+    them on a loaded model, which is all ``summarize`` reads. That attribute's
+    name is private to attention_pins (``_SCAN_ATTR``), and the harness reads
+    it on purpose so the src tree stays untouched: a rename there breaks the
+    pinned tests here at once, with an AttributeError.
+
+    No pin reads as cleared by the FSDP shard build. That build reloads only a
+    bf16 or fp16 file, and a header that pins one never reaches it: its uint8
+    config tensors leave the launch precision unproven, so the launch contract
+    refuses the cell class P first (``validate_fsdp_launch_quant``, above the
+    pin rule in label_cell). An fp8 or int8 file takes the direct wrap, which
+    keeps its pins (adapters/fsdp.py).
+    """
+    if not pins:
+        return None
+    loaded = SimpleNamespace(model=SimpleNamespace(**{attention_pins._SCAN_ATTR: dict(pins)}))
+    return attention_pins.summarize([loaded], sequence_parallel=topo.sequence_parallel > 1)
+
+
+def pin_refusal(pins: dict[str, attention_pins.BlockPin] | None, topo: Topology,
+                family: str, world: int) -> BaseException | None:
+    """The refusal the pin guard raises for these pins on this topology, or None.
+
+    The worker's own call (actor/sample_protocol.py): the guard reads the
+    running pins when a rank renders alone, at world below 2, and the live
+    ones on every other topology.
+    """
+    try:
+        attention_pins.assert_waived(pin_summary(pins, topo), asdict(topo),
+                                     family=family, alone=world < 2)
+    except Exception as exc:
+        return exc
+    return None
+
+
 def loader_mesh(preset: str, world: int) -> SimpleNamespace:
     """What the loader node's own preflight reads off a live mesh.
 
@@ -601,7 +781,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     if cell.get("upstream_refusal"):
         # This is the loader's actual header predicate, ahead of every
         # topology and capacity question. A Z-Image family word does not
-        # decide it: only the L2P layout (local_decoder and no dec_net) does.
+        # decide it: only the L2P layout (local_decoder and no dec_net), or a
+        # weight scale ComfyUI would drop, does.
         return "refuse:P", "guard", False, []
     if cell.get("upstream_gated"):
         # The adapter cannot run this artifact and the current comfy admits it
@@ -621,7 +802,9 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     try:
         topo = (choose_auto_topology(family, quant, facts["megapixels"], world,
                                      cfg_value=facts["cfg"],
-                                     batch_size=cell["batch"]).topology
+                                     batch_size=cell["batch"],
+                                     keeps_uncond=bool(facts.get("auto_keeps_uncond")),
+                                     variant=cell.get("variant")).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception as exc:
         return _label_from(exc), "guard", False, []
@@ -727,25 +910,72 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     # shared scale reduces across, which is sp or cfg and never dp or dm-cfg2.
     # The guard name comes from the runtime's own table, so a second measured
     # family needs no edit here.
+    #
+    # The checkpoint's attention pins are read right after that bar on the same
+    # sample path (actor/sample_protocol.py). The pins come from the header and
+    # the verdict from the guard: an approximate pin that runs on this topology
+    # refuses class K under the Sol-Attn waiver, and one that sequence
+    # parallelism drops asks nothing. A sol kernel without sequence parallelism
+    # never reaches the guard: the worker configures the render's kernel before
+    # any load, and sol_attention.make_sol_usp_attention refuses class P there,
+    # which the sol block below answers.
+    sol_first = sol_attention.is_sol_kernel(cell["attention"]) and topo.ulysses * topo.ring < 2
+    exc = None if sol_first else pin_refusal(facts.get("pins"), topo, family, world)
     shard_quant_guard = quant_activation_scale.SHARD_QUANT_GUARDS.get(family)
     if shard_quant_guard and "nvfp4" in cell["artifact_quant"] \
             and quant_activation_scale.plan_for_topology(
                 {"ulysses": topo.ulysses, "ring": topo.ring, "cfg": topo.cfg},
                 dual_model_cfg=dual):
+        if exc is not None:
+            # A grant clears this bar and no other, and the runner grants one
+            # card and retries once (benchmark/sweep/run.py), so the waived leg
+            # would meet the pin guard and file a finding: the cell carries no
+            # waiver. Only cfg2 reaches this return: sequence parallelism drops
+            # the pins, dp and dm-cfg2 take no bar, and the FSDP launch contract
+            # refuses an nvfp4 file first.
+            return "refuse:K", "guard", False, guards
         return "refuse:K", "guard", True, [*guards, shard_quant_guard]
-    # At cfg 1.0 comfy runs no uncond pass, so the batched wrapper a cfg
-    # topology installs never gets the two slices it splits. A cfg++ sampler
-    # keeps the pass (sampler_keeps_uncond), so both ranks work. An fsdp cell
-    # answers untagged before that tag is ever read: the FSDP authorization
-    # gate refuses first, and under auto_gate=first_use the render that meets
-    # this guard is that gate's own proof, whose abort denies every later cell
-    # in the process.
-    if topo.cfg > 1 and not dual and facts["cfg"] is not None \
-            and abs(facts["cfg"] - 1.0) < 1e-6 and not facts["sampler_keeps_uncond"]:
-        return "refuse:untyped" if topo.fsdp else "refuse:P", "guard", False, guards
+    if exc is not None:
+        tag = parse_refusal_tag(str(exc))
+        if tag is None or not tag.waivable or tag.guard is None:
+            return _label_from(exc), "header", False, guards
+        if topo.fsdp and cell["auto_gate"] == "first_use":
+            # A render on an FSDP preset needs a Gate PASS here, and the
+            # first-use ceremony that would earn one carries no waiver, so it
+            # ends on this guard and the grant cannot clear it
+            # (docs/ADAPTERS.md, the pin waiver section). Listing the guard
+            # would have the runner grant a card that changes nothing.
+            return _label_from(exc), "header", False, guards
+        if label_cell(cell, {**facts, "pins": None}, world)[0] != "render":
+            # A grant clears this guard and no other, so the cell is waivable
+            # only where the same cell without the pins renders. Where a later
+            # rule refuses (cfg 1.0 on a cfg topology, say), the waived leg
+            # meets that refusal, and a grant would only file a finding.
+            return _label_from(exc), "header", False, guards
+        return _label_from(exc), "header", True, [*guards, tag.guard]
+    # A dual-model render under FSDP at auto_gate=first_use runs no ceremony
+    # (nodes/auto_gate.py maybe_auto_gate), and the render submit's
+    # authorization refuses it untagged (nodes/gate_identity.py
+    # authorize_normal_render) before the sampler runs, so it answers ahead of
+    # the sample-time cfg rule below.
     if topo.fsdp and facts["dual_model"] and not cell["loras"] \
             and cell["auto_gate"] == "first_use":
         return "refuse:untyped", "guard", False, guards
+    # At cfg 1.0 comfy runs no uncond pass, so the batched wrapper a cfg
+    # topology installs never gets the two slices it splits, and it refuses
+    # class P (adapters/cfg_parallel.py). A cfg++ sampler keeps the pass
+    # (sampler_keeps_uncond), so both ranks work. FSDP keeps the class. At
+    # auto_gate=first_use the auto gate finds no FSDP PASS and runs the
+    # clean-reload proof, whose own render meets this guard first. The ceremony
+    # passes a settled typed refusal through with its class and withdraws its
+    # provisional denial (nodes/gate_ceremony.py, nodes/gate_abort.py
+    # close_aborted_proof), so a later cell meets the same guard. At
+    # auto_gate=off no proof runs and the render meets the guard directly
+    # (2026-10-16: FLUX.3 Klein cfg2+fsdp cell 2d2d694eef15 answered class P
+    # where this rule had labelled it untyped).
+    if topo.cfg > 1 and not dual and facts["cfg"] is not None \
+            and abs(facts["cfg"] - 1.0) < 1e-6 and not facts["sampler_keeps_uncond"]:
+        return "refuse:P", "guard", False, guards
     # One rule reads the encoded prompt, which the graph does not carry: a
     # family that shards its text stream apart from its image stream needs
     # every text stream to divide the SP degree. It refuses typed, under FSDP
@@ -884,7 +1114,9 @@ def resolved_kernel(cell: dict, facts: dict, world: int) -> str:
         if cell["preset"] == "auto":
             row = choose_auto_topology(cell["family"], cell["quant"], facts["megapixels"],
                                        world, cfg_value=facts["cfg"],
-                                       batch_size=cell["batch"])
+                                       batch_size=cell["batch"],
+                                       keeps_uncond=bool(facts.get("auto_keeps_uncond")),
+                                       variant=cell.get("variant"))
             sage, topo = row.sage, row.topology
         else:
             topo = topology_from_preset(cell["preset"], world)
@@ -908,7 +1140,9 @@ def resolved_cfg_degree(cell: dict, facts: dict, world: int) -> int:
     try:
         topo = (choose_auto_topology(cell["family"], cell["quant"], facts["megapixels"],
                                      world, cfg_value=facts["cfg"],
-                                     batch_size=cell["batch"]).topology
+                                     batch_size=cell["batch"],
+                                     keeps_uncond=bool(facts.get("auto_keeps_uncond")),
+                                     variant=cell.get("variant")).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception:
         return 1
@@ -1010,9 +1244,26 @@ def known_wrong_kernel(cell: dict) -> bool:
                 or "sol_attn" in (cell.get("waiver_guards") or []))
 
 
-def _numeric_bar(cell: dict, steps: int) -> str:
-    """The bar for a comparison whose two sides may hold different numbers."""
-    if known_wrong_kernel(cell):
+def known_wrong_reference(reference_cell: dict | None) -> bool:
+    """Whether the cell this one is scored against renders a pinned approximate kernel.
+
+    The second reading beside ``known_wrong_kernel``, of the other side of the
+    comparison. The reference refuses class K under the checkpoint pin guard,
+    so it renders only under that waiver, running the pinned kernel. A cell of
+    the same checkpoint on uly2 or ring2 drops the pins and runs the Init
+    widget's kernel instead, so the two differ however exact this cell is.
+    """
+    return bool(reference_cell) and attention_pins.SOL_ATTN_PIN_GUARD in (
+        reference_cell.get("waiver_guards") or [])
+
+
+def _numeric_bar(cell: dict, steps: int, reference_cell: dict | None = None) -> str:
+    """The bar for a comparison whose two sides may hold different numbers.
+
+    ``reference_cell`` is the labelled cell this one is compared against,
+    where the matrix has it.
+    """
+    if known_wrong_kernel(cell) or known_wrong_reference(reference_cell):
         # The waiver admits the deviation, so measuring it is the whole cell.
         return WAIVED_BAR
     # A template the probe rewrite cannot cut renders a full trajectory, which
@@ -1021,7 +1272,7 @@ def _numeric_bar(cell: dict, steps: int) -> str:
 
 
 def _reference(cell: dict, auto_id: str, local_id: str, probe_steps: int,
-               inert: frozenset = frozenset()) -> dict:
+               inert: frozenset = frozenset(), labelled: dict | None = None) -> dict:
     """What this cell is scored against, and at which bar.
 
     The bar follows what the comparison can prove, and every lever cell earns
@@ -1037,9 +1288,12 @@ def _reference(cell: dict, auto_id: str, local_id: str, probe_steps: int,
     cell's, at the floor the null A/B calibrated for one step. A cell holding
     both kinds takes that numeric bar; ``bit-identical`` needs every lever it
     holds to be inert or residency. Where a numeric bar applies, a sol kernel
-    takes WAIVED_BAR.
+    takes WAIVED_BAR, and so does a cell whose reference renders a pinned
+    approximate kernel. ``labelled`` maps a cell id to every cell labelled so
+    far, the reference among them.
     """
     steps = probe_steps if cell["probe"] else 0
+    labelled = labelled or {}
     if "+fsdp" in cell["preset"]:
         return {"kind": "resident-leg", "preset": cell["preset"].replace("+fsdp", ""),
                 "bar": "bit-identical"}
@@ -1048,16 +1302,16 @@ def _reference(cell: dict, auto_id: str, local_id: str, probe_steps: int,
             # Held to the pixel, so no probe leg: the full warm render is the
             # comparison, and one step would prove less of it.
             return {"kind": "cell", "cell": auto_id, "bar": "bit-identical"}
-        return {"kind": "cell", "cell": auto_id, "bar": _numeric_bar(cell, steps),
-                "probe_steps": steps}
+        return {"kind": "cell", "cell": auto_id,
+                "bar": _numeric_bar(cell, steps, labelled.get(auto_id)), "probe_steps": steps}
     if cell["batch_toggled"]:
         # No cell renders the same frame count, so there is nothing to score.
         return {"kind": "none", "bar": "reference"}
     if cell["session"] == "local":
         # The reference renders the probe leg the cluster cells compare to.
         return {"kind": "none", "bar": "reference", "probe_steps": steps}
-    return {"kind": "cell", "cell": local_id, "bar": _numeric_bar(cell, steps),
-            "probe_steps": steps}
+    return {"kind": "cell", "cell": local_id,
+            "bar": _numeric_bar(cell, steps, labelled.get(local_id)), "probe_steps": steps}
 
 
 def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str], list[str]]:
@@ -1077,6 +1331,10 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
     probe_steps = int(config["reference"].get("probe_steps", 1))
     inert = frozenset(config["inert_levers"])
     shadowed: dict[tuple[str, str], list[str]] = {}
+    # Every cell labelled so far, by id, so a cell's bar can read the label of
+    # the reference it is scored against: the local and auto cells label first
+    # in their batch, and a sol cell's anchor in an earlier kernel's batch.
+    labelled: dict[str, dict] = {}
     for path in files:
         shadowed.setdefault(split_quant(path.stem), []).append(path.name)
     pruned += [f"{names[-1]} shadows {', '.join(names[:-1])} at the same base and quant"
@@ -1143,6 +1401,13 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
                           f"{len(lora_names)} configured name(s), so the lora-on arm "
                           "is dropped: " + ", ".join(lora_names))
             lora_names = []
+        if pinning := pinning_loras(config, lora_names):
+            # The pin rule reads checkpoint headers only, so a stack that pins
+            # or unpins an attention kernel would be labelled as if it did not.
+            pruned.append(f"{template}: {', '.join(pinning)} pins attention kernels "
+                          "through comfy_attention config keys, which the matrix does "
+                          "not model, so the lora-on arm is dropped")
+            lora_names = []
         stack = [{"node": nid, "name": name, "strength": 0.8}
                  for nid, name in zip(facts["loras"], lora_names, strict=True)] \
             if facts["loras"] and lora_names else []
@@ -1162,6 +1427,16 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
         for names in sets:
             cond = config["model_dir"] / names.get(facts["cond_node"], "")
             row = dict(facts)
+            # Every checkpoint the graph loads, as the worker summarizes the
+            # conditional and unconditional models together. The pins ride in
+            # the row, beside the graph, and the cell keeps their counts.
+            try:
+                row["pins"] = checkpoint_pins(
+                    config["model_dir"] / name for name in sorted(set(names.values())))
+            except PinConfigError as exc:
+                pruned.append(f"{template}: {exc}; the matrix cannot say what that load "
+                              "answers, so the set is dropped")
+                continue
             common = {
                 "family": family,
                 "quant": sniff_checkpoint_for_topology(cond)[1] if cond.is_file() else "bf16",
@@ -1182,15 +1457,25 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
                 # no marker of its own.
                 "fsdp_lora_admission": fsdp_lora_admission_property(cond)
                 if cond.is_file() else None,
+                # The checkpoint variant a cfg record can exclude, read from
+                # the header the way auto resolution reads it on the driver
+                # (nodes/common.resolve_topology), so the three auto sites
+                # resolve the row the runtime takes. Out of ID_KEYS too.
+                "variant": sniffed_checkpoint_variant(str(cond), family)
+                if cond.is_file() else None,
                 # How many fp32-stored weights the template's LoRA stack patches:
                 # the worker's in-bake check refuses those class P under FSDP.
                 "fsdp_lora_f32_patched": fp32_patched_count(cond, config, lora_names),
+                # The attention modules the checkpoints pin, by kernel, which
+                # the pin rule in label_cell reads in full from the row. Out of
+                # ID_KEYS too.
+                "checkpoint_pins": dict(Counter(pin.label for pin in row["pins"].values())),
                 # Also out of ID_KEYS, so a new count moves no settled cell id.
                 "text_tokens": text_tokens,
                 # Read the exact header predicate the loader calls. Retain
                 # only its boolean answer in the journal: local model paths
                 # do not belong in sweep records.
-                "upstream_refusal": upstream_gate.refuses(str(cond)),
+                "upstream_refusal": upstream_gate.refusal_for(str(cond)) is not None,
                 "upstream_gated": gated,
             }
             base_local = [_make(template, row, names, kernels[0], "single", "local",
@@ -1237,8 +1522,9 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
                         world_here = 1 if cell["session"] == "local" else world
                         cell["label"], cell["basis"], cell["waiver"], \
                             cell["waiver_guards"] = label_cell(cell, row, world_here)
+                        labelled[cell["id"]] = cell
                         cell["reference"] = _reference(cell, auto["id"], anchor,
-                                                       probe_steps, inert)
+                                                       probe_steps, inert, labelled)
                         cell["resolved_attention"] = resolved_kernel(cell, row, world_here)
                         cell["resolved_cfg"] = resolved_cfg_degree(cell, row, world_here)
                         cell["cfg_path"] = resolved_cfg_path(cell, row, world_here)

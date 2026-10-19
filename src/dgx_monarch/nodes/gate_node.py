@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from ..constants import MODEL_TYPE, NODE_CATEGORY
+from .render_preflight import sampler_latent
 from .samplers import _sampler_names, _scheduler_names
 
 
@@ -120,7 +121,9 @@ class DGXMonarchIdentityGate:
         result = runtime.run_identity_ceremony(
             model,
             request,
-            dict(latent_image),
+            # Tagged as the samplers tag it, so this proof binds the topology
+            # a later render of the same sampler resolves.
+            sampler_latent(latent_image, sampler_name),
             float(cfg),
             int(steps),
             origin="explicit",

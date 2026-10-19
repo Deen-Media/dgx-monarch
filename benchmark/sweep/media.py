@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the five synthetic inputs used by testing-only workflows.
+"""Write the seven synthetic inputs used by testing-only workflows.
 
 Use the workflows' dimensions and ComfyUI input directory. Preserve existing
 files unless --force is set.
@@ -27,6 +27,12 @@ FPS = 16
 AUDIO_RATE = 24000
 AUDIO_SECONDS = 5
 BLOB = [PORTRAIT[0] * 0.22, PORTRAIT[1] * 0.18, PORTRAIT[0] * 0.78, PORTRAIT[1] * 0.72]  # the soft shape both portraits carry
+# The FLUX.3 two-reference edit leg needs references whose grid is odd after
+# the edit graph scales each to about 1 MP: both 4:3 sizes become 1182x887,
+# which the VAE crops to 73 by 55. The portrait above scales to an even 48 by
+# 84, so it would pad nothing.
+LANDSCAPE = (1600, 1200)
+LANDSCAPE_SMALL = (1024, 768)
 
 
 def _portrait(path: str) -> None:
@@ -37,6 +43,20 @@ def _portrait(path: str) -> None:
     image = Image.fromarray(canvas)
     ImageDraw.Draw(image).ellipse(BLOB, fill=(240, 235, 225))
     image.filter(ImageFilter.GaussianBlur(6)).save(path)
+
+
+def _landscape(size: tuple[int, int], path: str) -> None:
+    """A horizon gradient with one soft disc, its place set by the size, so
+    the two references differ."""
+    width, height = size
+    rows, columns = np.mgrid[0:height, 0:width]
+    canvas = np.stack([(1 - rows / height) * 150 + 60, columns / width * 120 + 80,
+                       rows / height * 200 + 40], axis=-1).astype(np.uint8)
+    image = Image.fromarray(canvas)
+    left = width * (0.15 if size == LANDSCAPE else 0.55)
+    ImageDraw.Draw(image).ellipse([left, height * 0.3, left + width * 0.3,
+                                   height * 0.7], fill=(235, 200, 120))
+    image.filter(ImageFilter.GaussianBlur(8)).save(path)
 
 
 def _portrait_mask(path: str) -> None:
@@ -103,6 +123,8 @@ JOBS = (
     ("dgxm_test_video.mp4", lambda path: _encode(path, _gradient_frames())),
     ("dgxm_test_mask.mp4", lambda path: _encode(path, _mask_frames())),
     ("dgxm_test_audio.wav", _audio),
+    ("dgxm_test_landscape.png", lambda path: _landscape(LANDSCAPE, path)),
+    ("dgxm_test_landscape_small.png", lambda path: _landscape(LANDSCAPE_SMALL, path)),
 )
 
 

@@ -18,6 +18,7 @@ _PUBLIC_EVENT_FIELDS = {
     "load": ("model", "quant", "total_s"),
     "notice": ("phase", "note"),
     "quarantine": ("model", "lever", "origin"),
+    "restart_reattach": ("outcome", "verdict", "moved", "teardown", "wall_s"),
     "swap": ("model", "from", "to", "total_s"),
     "uma_reserve_breach": ("available_gib", "reserve_gib"),
     "verify": ("checked", "of"),

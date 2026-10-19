@@ -48,6 +48,7 @@ OTHER_CONFIG_RATIO = {
     "Ideogram4": 16, "ErnieImage": 16, "MageFlow": 16, "QwenImage21": 16,
     "HunyuanImage21": 32, "HunyuanVideo15": 16, "LTXV": 32, "LTXAV": 32,
     "MiniMaxH3": 16, "WAN22_T2V": 16, "WAN21_T2V": 8, "PixelDiTT2I": 1,
+    "Flux3": 16,
 }
 # Every shipped template whose family has a finite megapixel row, with the
 # auto family and the comfy config its checkpoint detects as (read from the
@@ -256,13 +257,13 @@ def _resolve(monkeypatch, family, quant, ratio, samples, cfg=4.0, **kwargs):
 @pytest.mark.parametrize(("family", "quant", "grid", "row", "sage", "megapixels"), [
     # The shipped Lens graph, 1344x1344: the rows comfy's 16x ratio makes
     # reachable. Both keep uly2 and the declared kernel, as the fallback row does.
-    ("lens", "fp8", 84, 74, False, "1.8 MP"),
-    ("lens", "bf16", 84, 75, False, "1.8 MP"),
+    ("lens", "fp8", 84, 74, False, "1.81 MP"),
+    ("lens", "bf16", 84, 75, False, "1.81 MP"),
     # The shipped Flux2 graph, 1024x1024: 1.05 MP stays under row 27's 1.2.
-    ("flux2", "fp8", 64, 99, False, "1.0 MP"),
-    ("flux2", "bf16", 64, 99, False, "1.0 MP"),
+    ("flux2", "fp8", 64, 99, False, "1.05 MP"),
+    ("flux2", "bf16", 64, 99, False, "1.05 MP"),
     # Flux2 at 1536x1536 reaches its row.
-    ("flux2", "fp8", 96, 27, False, "2.4 MP"),
+    ("flux2", "fp8", 96, 27, False, "2.36 MP"),
 ])
 def test_auto_reads_16x_latents_at_their_rendered_size(
         monkeypatch, family, quant, grid, row, sage, megapixels):
@@ -293,36 +294,36 @@ def test_without_a_comfy_ratio_lens_keeps_the_pre_516_reading(monkeypatch):
     _topology, sage, reason, chosen = _resolve(
         monkeypatch, "lens", "fp8", None, torch.zeros(1, 128, 84, 84))
     assert (chosen, sage) == (99, False)
-    assert "lens fp8 at 0.5 MP" in reason
+    assert "lens fp8 at 0.45 MP" in reason
 
 
 def test_pixel_space_and_video_latents_resolve_at_their_ratio(monkeypatch):
     _t, _s, reason, _row = _resolve(
         monkeypatch, "chroma", "bf16", 1, torch.zeros(1, 3, 1024, 1024))
-    assert "chroma bf16 at 1.0 MP" in reason
+    assert "chroma bf16 at 1.05 MP" in reason
     _t, _s, reason, _row = _resolve(
         monkeypatch, "chroma", "bf16", None, torch.zeros(1, 3, 1024, 1024))
-    assert "chroma bf16 at 1.0 MP" in reason   # the legacy RGB case still holds
+    assert "chroma bf16 at 1.05 MP" in reason   # the legacy RGB case still holds
     _t, _s, reason, row = _resolve(
         monkeypatch, "wan", "fp8", 8, torch.zeros(1, 16, 21, 60, 104))
-    assert (row, "wan fp8 at 0.4 MP" in reason) == (50, True)
+    assert (row, "wan fp8 at 0.40 MP" in reason) == (50, True)
     _t, _s, reason, row = _resolve(
         monkeypatch, "minimax_h3", "int8", 16, _Nested(_h3_latent()), cfg=1.0)
-    assert (row, "minimax_h3 int8 at 1.0 MP" in reason) == (53, True)
+    assert (row, "minimax_h3 int8 at 1.03 MP" in reason) == (53, True)
 
 
 def test_the_private_override_beats_the_comfy_ratio(monkeypatch):
     samples = torch.zeros(1, 16, 64, 64)
     _t, _s, reason, _row = _resolve(
         monkeypatch, "flux", "bf16", 8, samples, latent_downscale=16)
-    assert "flux bf16 at 1.0 MP" in reason
+    assert "flux bf16 at 1.05 MP" in reason
     _t, _s, reason, _row = _resolve(monkeypatch, "flux", "bf16", 8, samples)
-    assert "flux bf16 at 0.3 MP" in reason
+    assert "flux bf16 at 0.26 MP" in reason
     # And through the sampler-latent entry point that reads the metadata key.
     latent = {"samples": samples, common.LATENT_DOWNSCALE_METADATA_KEY: 16}
     _topology, _sage, reason = common._resolve_topology_for_latent(
         _auto_model(), latent, 4.0)
-    assert "flux bf16 at 1.0 MP" in reason
+    assert "flux bf16 at 1.05 MP" in reason
 
 
 def _latent_from_graph(graph: dict) -> torch.Tensor:
@@ -501,10 +502,10 @@ def test_a_flux2_header_resolves_end_to_end(real_comfy, monkeypatch, tmp_path):
     model = _auto_model("fp8_e4m3fn")
     _topology, _sage, reason = common.resolve_topology(
         model, torch.zeros(1, 128, 64, 64), cfg_value=4.0)
-    assert "flux2 fp8 at 1.0 MP" in reason and "table row 99" in reason
+    assert "flux2 fp8 at 1.05 MP" in reason and "table row 99" in reason
     _topology, _sage, reason = common.resolve_topology(
         model, torch.zeros(1, 128, 96, 96), cfg_value=4.0)
-    assert "flux2 fp8 at 2.4 MP" in reason and "table row 27" in reason
+    assert "flux2 fp8 at 2.36 MP" in reason and "table row 27" in reason
 
 
 def test_a_lens_header_reaches_row_74_at_the_shipped_size(real_comfy, monkeypatch, tmp_path):
@@ -519,7 +520,7 @@ def test_a_lens_header_reaches_row_74_at_the_shipped_size(real_comfy, monkeypatc
                         lambda _path: ("lens", "fp8"))
     _topology, sage, reason = common.resolve_topology(
         _auto_model(), torch.zeros(1, 128, 84, 84), cfg_value=4.0)
-    assert (sage, "lens fp8 at 1.8 MP" in reason, "table row 74" in reason) \
+    assert (sage, "lens fp8 at 1.81 MP" in reason, "table row 74" in reason) \
         == (False, True, True)
 
 

@@ -30,6 +30,7 @@ from .driver import (
     cached_nodes,
     classify_history,
     clear_graph,
+    dismiss_pending_consent,
     drain,
     error_text,
     free_cache,
@@ -39,7 +40,15 @@ from .driver import (
     recycle,
     waiver_run_ids,
 )
-from .matrix import FULL_RENDER_BAR, INIT_CLASS, LORA_CLASS, REPO, WAIVED_BAR, load_config
+from .matrix import (
+    FULL_RENDER_BAR,
+    INIT_CLASS,
+    LORA_CLASS,
+    REPO,
+    WAIVED_BAR,
+    known_wrong_kernel,
+    load_config,
+)
 
 SEED_KEYS, SAVE_CLASSES = ("seed", "noise_seed"), ("SaveImage", "SaveAudioAdvanced")
 # mesh_safety.py raises the activation wall (docs/TROUBLESHOOTING.md #47)
@@ -602,17 +611,31 @@ def _fidelity(record: dict, cell: dict, output_dir: Path, floor: float,
         # A render known wrong on purpose is the PASS, and this number is what
         # the cell measures. No floor answers for a deviation that was asked
         # for, and a CHECK would file the result as a doubt. The line names the
-        # cause: an approximate kernel the matrix named before the run, or the
-        # guard a granted card waived.
+        # cause: an approximate kernel the matrix named before the run, a
+        # reference that renders a checkpoint's pinned approximate kernel, or
+        # the guard a granted card waived.
+        from dgx_monarch.attention_pins import SOL_ATTN_PIN_GUARD
+
         if bar != reference["bar"] and carried_grant_render(record, cell):
             why = (f"a class K grant for {'/'.join(cell['waiver_guards'])} was "
                    "already live and this leg rendered under it")
         elif bar != reference["bar"]:
             why = (f"the runner granted the class K card for "
                    f"{'/'.join(cell['waiver_guards'])} and this leg rendered under it")
-        else:
+        elif known_wrong_kernel(cell):
             why = (f"{cell.get('attention') or 'this kernel'} is an approximation "
                    "the class K waiver admits")
+        elif SOL_ATTN_PIN_GUARD in (cell.get("waiver_guards") or []):
+            # A cell without sequence parallelism runs the pins too, under its
+            # own grant, against a reference that runs them under its own.
+            why = ("this cell and its reference both render the checkpoint's pinned "
+                   f"approximate attention kernel under the {SOL_ATTN_PIN_GUARD} waiver")
+        else:
+            # The matrix's other reading (matrix.known_wrong_reference): the
+            # reference renders the checkpoint's pinned kernel under the
+            # waiver, whatever this cell runs.
+            why = ("the reference renders the checkpoint's pinned approximate attention "
+                   f"kernel under the {SOL_ATTN_PIN_GUARD} waiver")
         record["waived_render"] = line = (
             f"{WAIVED_BAR} {fidelity.get('nrms')} against "
             f"{fidelity.get('reference_file', 'the reference')}: {why}, so the "
@@ -1045,6 +1068,11 @@ def run_cell(cell: dict, config: dict, pin: dict, client_id: str, args,
             # A waivable guard refused and offered a consent card: grant it,
             # free the execution cache, and queue the same graph.
             if not waivable(cell, observed):
+                if observed == "refuse:K":
+                    # A class K refusal raises a card this cell will not grant.
+                    # Left pending, it makes the next grant of its kind
+                    # ambiguous (dismiss_pending_consent says why).
+                    record["consent_dismissed"] = dismiss_pending_consent(driver)
                 break
             record["consent"] = grant_pending_consent(driver, cell)
             record.setdefault("cache_bust", {})["waived"] = free_cache(driver)
@@ -1055,6 +1083,8 @@ def run_cell(cell: dict, config: dict, pin: dict, client_id: str, args,
                 waived_prefix, timeout, sampled, out)
             rendered = waived["outcome"] == "render"
             if not rendered:
+                if waived["outcome"] == "refuse:K":
+                    record["consent_dismissed"] = dismiss_pending_consent(driver)
                 granted = record["consent"].get("granted")
                 record["findings"].append(
                     f"waiver {'granted' if granted else 'not granted'}, "
@@ -1232,16 +1262,17 @@ def recoverable_crash(record: dict) -> bool:
 
     These types name a mesh the previous cell left dirty rather than anything
     this cell asked for: the cached mesh cannot be used or replaced, an
-    abandoned sample may still be running, or, on an FSDP cell, the
-    clean-reload proof ran on such a mesh and raised FsdpGateProofError in
-    place of the fault that stopped it. Since 2026-09-03 driver.py labels that
-    abort refuse:untyped by its opening, so FsdpGateProofError reaches this
-    check only when no untagged prefix matches its message. In the first W0
-    wave (2026-09-01) two MeshAttachError crashes and two SampleResultBusyError
-    crashes ran again the same day on a replaced fleet, and each answered the
-    untyped refusal its label predicted. The one FsdpGateProofError crash that
-    ran again answered the driver's process-local INCONCLUSIVE denial, which
-    the fleet replacement before it did not clear.
+    abandoned sample may still own worker-side latent backing, or, on an FSDP
+    cell, the clean-reload proof ran on such a mesh and raised
+    FsdpGateProofError in place of the fault that stopped it. Since 2026-09-03
+    driver.py labels that abort refuse:untyped by its opening, so
+    FsdpGateProofError reaches this check only when no untagged prefix matches
+    its message. In the first W0 wave (2026-09-01) two MeshAttachError crashes
+    and two SampleResultBusyError crashes ran again the same day on a replaced
+    fleet, and each answered the untyped refusal its label predicted. The one
+    FsdpGateProofError crash that ran again answered the driver's
+    process-local INCONCLUSIVE denial, which the fleet replacement before it
+    did not clear.
     """
     cold = (record.get("legs") or {}).get("cold") or {}
     if cold.get("outcome") != "crash":

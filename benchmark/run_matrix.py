@@ -306,6 +306,25 @@ def _flux2_schedule(get_schedule, *, steps: int, width: int, height: int):
     return get_schedule(steps=int(steps), width=int(width), height=int(height))[0]
 
 
+def _node_outputs(returned) -> tuple[tuple, list[str]]:
+    """Split a direct node call's return into its outputs and waiver run ids.
+
+    ComfyUI unwraps a node's UI-bearing return itself, but this runner calls
+    the nodes directly. A DGX Monarch sampler returns its plain output tuple,
+    or, for a render under an accuracy waiver,
+    ``{"ui": {"dgxm_waiver_runs": [...]}, "result": outputs}``
+    (``_sampler_result`` in src/dgx_monarch/nodes/samplers.py). The run ids
+    keep only non-empty strings, as the sweep driver's ``waiver_run_ids`` does.
+    """
+    if not isinstance(returned, dict):
+        return tuple(returned), []
+    ui = returned.get("ui")
+    runs = ui.get("dgxm_waiver_runs") if isinstance(ui, dict) else None
+    if not isinstance(runs, list):
+        runs = []
+    return tuple(returned["result"]), sorted({r for r in runs if isinstance(r, str) and r})
+
+
 def _topology_provenance(topology, *, sage: bool, reason: str, attention: str) -> dict:
     return {
         "name": topology.describe(),
@@ -523,6 +542,50 @@ def _latent_statistics(samples) -> dict[str, float]:
     return values
 
 
+def _refusal_fields(error: BaseException) -> dict[str, str]:
+    """The refusal class, guard and consent kind an exception's text carries.
+
+    A Worker refusal reaches the driver as Monarch's ActorError: the inner
+    exception's message, then the whole wrapper with its remote traceback,
+    are read for a refusal tag and a consent card. Only values from frozen
+    vocabularies are returned: the class letter, a guard listed in
+    ``refusal.GUARDS`` for that class, and a consent kind listed in
+    ``gate_audit_vocab.KIND_CLASS`` for that class. A card without a tag
+    gives its kind's class. Text that carries neither returns nothing.
+    """
+    try:
+        from dgx_monarch import consent_descriptor
+        from dgx_monarch.consent_observe import refusal_text
+        from dgx_monarch.gate_audit_vocab import KIND_CLASS
+        from dgx_monarch.refusal import GUARDS, parse_refusal_tag
+    except ImportError:
+        return {}
+    try:
+        whole = str(error)
+    except Exception:  # an unreadable message carries no class
+        whole = ""
+    tag = kind = None
+    for text in dict.fromkeys((refusal_text(error), whole)):
+        tag = parse_refusal_tag(text)
+        card = consent_descriptor.parse(text)
+        kind = card.kind if card is not None and card.kind in KIND_CLASS else None
+        if tag is not None or kind is not None:
+            break
+    if tag is not None:
+        refusal_class = tag.refusal_class.value
+    elif kind is not None:
+        refusal_class = KIND_CLASS[kind]
+    else:
+        return {}
+    fields = {"refusal_class": refusal_class}
+    spec = GUARDS.get(tag.guard) if tag is not None and tag.guard else None
+    if spec is not None and spec.refusal_class.value == refusal_class:
+        fields["refusal_guard"] = tag.guard
+    if kind is not None and KIND_CLASS[kind] == refusal_class:
+        fields["consent_kind"] = kind
+    return fields
+
+
 def _not_available_result(
     name: str,
     case: dict,
@@ -533,6 +596,11 @@ def _not_available_result(
 
     The raise site (the innermost frame's file name and line) rides beside the
     type: it names where to look without carrying the exception's message.
+    A typed refusal also records ``refusal_class``, with ``refusal_guard`` and
+    ``consent_kind`` when its tag or consent card names them, and its reason
+    reads "refused". Those values come from the frozen refusal and consent
+    vocabularies, so no free text from the exception reaches the row; a row
+    without a tag or card keeps the fields above and nothing more.
     """
     site = ""
     tb = error.__traceback__
@@ -540,12 +608,14 @@ def _not_available_result(
         tb = tb.tb_next
     if tb is not None:
         site = f"{Path(tb.tb_frame.f_code.co_filename).name}:{tb.tb_lineno}"
+    refused = _refusal_fields(error)
     return {
         "name": name,
         "status": "N/A",
-        "reason": "case execution failed",
+        "reason": "refused" if refused else "case execution failed",
         "error_type": type(error).__name__,
         "error_site": site,
+        **refused,
         "settings": _case_settings(case, defaults),
     }
 
@@ -677,6 +747,7 @@ def run_case(
     )
     from dgx_monarch.nodes.loaders import DGXMonarchUNETLoader
     from dgx_monarch.nodes.samplers import DGXMonarchKSampler
+    from dgx_monarch.topology import sampler_keeps_uncond_at_cfg1
 
     name = merged["name"]
     print(f"\n=== {name} ===", flush=True)
@@ -697,19 +768,26 @@ def run_case(
         metadata_key=LATENT_DOWNSCALE_METADATA_KEY,
     )
     sampling_cfg = float(merged["cfg"]) if sampling_path == "ksampler" else 1.0
+    # The KSampler node tags its latent the same way, so the provenance label
+    # names the topology the render resolves (a cfg++ sampler at cfg 1.0).
     effective_topology, sage, topology_reason = resolve_topology(
         model,
         latent["samples"],
         sampling_cfg,
         latent_downscale=latent_downscale,
+        keeps_uncond=(sampling_path == "ksampler"
+                      and sampler_keeps_uncond_at_cfg1(merged["sampler"])),
     )
 
+    waiver_runs: set[str] = set()
+
     def sample_ksampler():
-        (out,) = DGXMonarchKSampler().sample(
+        (out,), runs = _node_outputs(DGXMonarchKSampler().sample(
             model, int(merged["seed"]), int(merged["steps"]), float(merged["cfg"]),
             merged["sampler"], merged["scheduler"], positive, negative, latent,
             denoise=1.0,
-        )
+        ))
+        waiver_runs.update(runs)
         return out
 
     def sample_flux2():
@@ -732,9 +810,10 @@ def run_case(
             height=int(merged["height"]),
         )
         (guider,) = DGXMonarchBasicGuider().get_guider(model, guided_positive)
-        out, _denoised = DGXMonarchSamplerCustom().sample(
+        (out, _denoised), runs = _node_outputs(DGXMonarchSamplerCustom().sample(
             noise, guider, sampler, sigmas, latent
-        )
+        ))
+        waiver_runs.update(runs)
         return out
 
     times = []
@@ -753,6 +832,17 @@ def run_case(
     # one form the row names.
     samples, latent_form = scored_latent(samples, batch, sampling_cfg)
     latent_stats = _latent_statistics(samples)
+    # The last repeat's finish record: the kernels the model pins per block
+    # and whether they ran, beside the widget's attention (attention_pins.py).
+    from dgx_monarch.attention_pins import MODELS_FIELD, RECORD_FIELDS, describe
+    from dgx_monarch.telemetry import render_progress
+
+    last = render_progress.snapshot().get("last") or {}
+    pins = {field: last.get(field) for field in RECORD_FIELDS}
+    if last.get(MODELS_FIELD):  # dual-model cfg2: each model's own fields
+        pins[MODELS_FIELD] = last[MODELS_FIELD]
+    if pins["attention_pins"]:
+        print(f"  {describe(pins)}", flush=True)
     row = {
         "name": name,
         "topology": merged["topology"],
@@ -773,8 +863,11 @@ def run_case(
             mesh.handle.active_worker_args
             or mesh.handle.effective_worker_args(mesh.worker_args)
         ),
+        **pins,
         "status": "ok",
     }
+    if waiver_runs:  # rendered under an accuracy waiver: never exact output
+        row["waiver_runs"] = sorted(waiver_runs)
 
     ref_name = merged.get("reference")
     if ref_name:

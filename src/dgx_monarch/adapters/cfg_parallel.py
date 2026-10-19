@@ -328,11 +328,12 @@ def make_cfg_parallel_wrapper(adapter: Adapter):
             # splits a concatenable pair on one rank only (docs/VALIDATION.md).
             #
             # A batch of one comes from a CFG 1.0 sampler that drops the
-            # unconditional pass, from that memory split, or from a pair that
-            # cfg_dispatch.conds_fold leaves on this path unread (a default
-            # cond, an area, mask, gligen patch, timestep window, hook group,
-            # different control objects, or conds it cannot read) when comfy
-            # runs it as separate calls.
+            # unconditional pass (topology.sampler_keeps_uncond_at_cfg1 is the
+            # one home of which samplers keep it), from that memory split, or
+            # from a pair that cfg_dispatch.conds_fold leaves on this path
+            # unread (a default cond, an area, mask, gligen patch, timestep
+            # window, hook group, different control objects, or conds it
+            # cannot read) when comfy runs it as separate calls.
             raise UnsupportedModelError(refusal(
                 RefusalClass.PHYSICS,
                 f"cfg-parallel got a model call of batch={batch}, which does not split into "

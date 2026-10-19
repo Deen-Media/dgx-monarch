@@ -153,7 +153,7 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         True,
         "waive-known-wrong:sol-attn",
         "the unscoped spelling the card and the headless env var use; every "
-        "raise site is family scoped",
+        "raise site is scoped, to a family or to the checkpoint pin route",
     ),
     "sol_attn:minimax_h3": GuardSpec(
         RefusalClass.KNOWN_WRONG,
@@ -161,6 +161,15 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         "waive-known-wrong:sol-attn",
         "the sol-attn sparse kernel is not identity preserving; the waiver is "
         "wired and every render under it is stamped",
+    ),
+    "sol_attn:checkpoint_pin": GuardSpec(
+        RefusalClass.KNOWN_WRONG,
+        True,
+        "waive-known-wrong:sol-attn",
+        "a checkpoint or LoRA pins an approximate attention kernel on its "
+        "attention modules and neither sequence parallelism nor the FSDP shard "
+        "build drops the pin, so it would run; it shares the Sol-Attn card, and "
+        "the scope names the route, not a family",
     ),
     "shard_quant_scale": GuardSpec(
         RefusalClass.KNOWN_WRONG,

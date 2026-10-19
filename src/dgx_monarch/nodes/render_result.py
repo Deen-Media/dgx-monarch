@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import native_return_latch
+from .. import attention_pins, native_return_latch, return_phases
 from ..adoption_evidence import (
     RESULT_KEY as _ADOPTION_EVIDENCE_RESULT_KEY,
 )
@@ -44,6 +44,7 @@ def _finish_render(
     expected_adoption_request_sha256: str | None = None,
     expected_adoption_render_id_sha256: str | None = None,
     expected_adoption_setup_generation: int | None = None,
+    telemetry_token: object | None = None,
 ) -> dict:
     """Cross-rank identity gate plus leader latent materialization."""
     verify_cross_rank_signatures(results, topo)
@@ -70,22 +71,39 @@ def _finish_render(
             "incomplete or duplicate DP leader results: expected dp ranks "
             f"{expected_dp_ranks}, got {leader_dp_ranks}"
         )
+    walls = []
     for r in results:
         phases = (f" gpu_load {r['gpu_load_s']:.1f}s" if r.get("gpu_load_s", 0) > 1 else "")
         log.info("rank %s/%s: sample %.2fs (%s%s) stats=%s", r.get("rank"), r.get("host"),
                  r.get("sample_s", -1), r.get("transition"), phases, r.get("latent_stats"))
+        if isinstance(r.get("sample_s"), (int, float)):
+            walls.append(float(r["sample_s"]))
+    from ..telemetry import render_progress
+
+    if walls:  # observed only: the finish record's sampler wall is the slowest rank's
+        render_progress.note_sample(max(walls), token=telemetry_token)
+    # Which kernels the model pins per block and whether they ran, beside the
+    # widget's "attention" fact, which stays as it was (attention_pins.py).
+    pins = attention_pins.merge(results)
+    if pins is not None:
+        log.info("render %s", attention_pins.describe(pins))
+        render_progress.note_pins(pins, token=telemetry_token)
 
     native_failed: list[bool] = []  # this render's lifetime: did a native read fail?
 
     def materialize(descriptor):
+        started = return_phases.mark()
         try:
             if hasattr(read_guard, "begin_read"):
-                return read_latent_result(descriptor, read_guard)
-            return read_latent_result(descriptor)
+                value = read_latent_result(descriptor, read_guard)
+            else:
+                value = read_latent_result(descriptor)
         except Exception:
             if isinstance(descriptor, dict) and descriptor.get("kind") == "rdma":
                 native_failed.append(True)
             raise
+        return_phases.log_read(log, descriptor, leaders, started)
+        return value
 
     try:
         samples, tensors = materialize_leader_samples(

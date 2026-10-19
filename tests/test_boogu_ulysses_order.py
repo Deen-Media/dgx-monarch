@@ -24,6 +24,7 @@ from dgx_monarch.adapters.attention_patches import assert_no_foreign_attention_o
 from dgx_monarch.adapters.base import InjectionContext
 from dgx_monarch.adapters.boogu import BooguAdapter
 from dgx_monarch.adapters.boogu_ulysses import double_block_options
+from dgx_monarch.adapters.stock_attention import default_attention_override
 from test_flux_pad_exclusion import (
     _CONTEXT,
     _LOCAL,
@@ -75,13 +76,14 @@ class _ToyStream(_ToyBlock):
 
 
 class _ToyContext:
-    """The replicated caption refiner: per row, and it must see no USP override."""
+    """The replicated caption refiner: per row, and it must see no USP override,
+    only the one that drops a block's kernel pin (adapters/stock_attention.py)."""
 
     def __init__(self):
         self.seen = []
 
     def __call__(self, x, mask, rope, transformer_options):
-        self.seen.append(("optimized_attention_override" in transformer_options, mask))
+        self.seen.append((transformer_options.get("optimized_attention_override"), mask))
         return _keep_tag(_channel_map(x, 6) + rope.sum(-1, keepdim=True), x[..., :1])
 
 
@@ -318,7 +320,7 @@ def test_the_caption_refiner_stays_replicated_and_unrouted(monkeypatch, comfy_le
     _outputs, harness = drive(monkeypatch, 5, (3, 3), world=WORLD, pure_ulysses=True,
                               strict=False)
     for model in harness.models:
-        assert model.context_refiner[0].seen == [(False, None)]
+        assert model.context_refiner[0].seen == [(default_attention_override, None)]
 
 
 def test_a_query_length_neither_call_owns_refuses(monkeypatch, comfy_leaves):

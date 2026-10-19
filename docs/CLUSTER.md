@@ -69,7 +69,7 @@ clears it.
 | `rdma_latent_return` | `false` | leader latents return via one-sided RDMA read, size-gated by `rdma_min_bytes`. Keep it off by default; selected-rail qualification is limited to the [recorded scope](VALIDATION.md#native-rdma), with native cancellation and fabric-failure recovery untested; [DESIGN.md](DESIGN.md) §5.6 and [TROUBLESHOOTING #75](TROUBLESHOOTING.md#75-native-rdma-fails-at-qp-rtr-because-the-two-ends-selected-different-rails) are canonical. |
 | `rdma_min_bytes` | `8388608` (8 MiB) | RDMA size gate: latents smaller than this return via messaging, not RDMA. |
 | `ssh_key` | agent default | key for `dgxm` lifecycle commands |
-| `auto_heal` | `true` | Before each attach, restart every Worker service when a probe sees one down; a host the probe cannot reach stops the attach instead. After the last attach attempt fails, restart them so the next ComfyUI session starts clean. The one in-process attach retry does not depend on this key ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout), [#2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)). Set `false` to leave every restart to you. |
+| `auto_heal` | `true` | Before each attach, restart every Worker service when a probe sees one down; a host the probe cannot reach stops the attach instead. After the last attach attempt fails, restart them so the next ComfyUI session starts clean. The one in-process attach retry does not depend on this key ([TROUBLESHOOTING #1](TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout), [#2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)). Set `false` to leave every restart to you. The driver still reaches every host over ssh before each attach, to read the id that host's Worker serves. |
 
 ## `[monarch]` (optional)
 
@@ -141,7 +141,13 @@ equals the `client_bind` IP, the rule the qualifier also applies; when none
 matches, as on a driver box without a Worker, it uses `target` and logs one
 WARNING. With native return on, the driver checks every host's resolved target
 before it starts any process. Conflicting ambient
-environment variables are refused. A transport-policy change requires a fresh
+environment variables are refused on every mesh build, in local mode too:
+`OTEL_EXPORTER_OTLP_ENDPOINT` while export is off, a `MONARCH_RDMA_*` name the
+policy does not set, and `DGXM_RDMA_QP_SPLIT` or another policy variable set to
+a value other than the policy's. A Worker refuses to start on a mismatched
+`DGXM_RDMA_QP_SPLIT`, the only one of these its environment filter keeps
+([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+A transport-policy change requires a fresh
 process; it cannot change an already initialized RDMA manager safely. Preserve
 Worker ownership and follow the reviewed update/restart procedure in
 [Changing policy after install](#changing-policy-after-install). A failed native
@@ -153,8 +159,12 @@ messaging
 
 `metrics = false` is the default. Enabling it publishes supported counters and
 histograms through Monarch; gauges and observable instruments are unavailable
-in this release. Local bounded phase timings remain advisory and never prove
-transfer completion, cleanup or readiness.
+in this release. With it on, the driver, each actor and each Worker loop
+publish two phase instruments, the counter `dgxm.phase.completed` and the histogram
+`dgxm.phase.duration.seconds`, both labelled `phase`, `outcome` and
+`return_mode` with the values in [Metrics reference](#metrics-reference), and
+the occupancy counters below. Local bounded phase timings remain advisory and
+never prove transfer completion, cleanup or readiness.
 
 `otlp_endpoint = ""` disables export. A configured HTTP(S) endpoint must have no
 credentials, query, fragment or path other than a bare trailing `/` (the
@@ -174,8 +184,10 @@ refuses with a typed error that names the reason, before any process starts.
 happens when you add or change the endpoint after a mesh was built: restart
 ComfyUI. `ambient_otlp_endpoint_conflict` means `OTEL_EXPORTER_OTLP_ENDPOINT` in
 the ComfyUI environment names another endpoint: make `otlp_endpoint` match it,
-or unset the variable and restart ComfyUI. Removing a configured endpoint also
-needs a restart. An actor or Worker that cannot start a requested export logs
+or unset the variable and restart ComfyUI. With export off, the same variable
+refuses every mesh build
+([TROUBLESHOOTING #119](TROUBLESHOOTING.md#119-a-mesh-build-or-worker-start-refuses-on-an-ambient-environment-variable)).
+Removing a configured endpoint also needs a restart. An actor or Worker that cannot start a requested export logs
 an ERROR with the reason and keeps running. A refused edit leaves the driver's
 running export alone. When the driver accepts an edit but cannot stop the old
 workers, for example because a render still holds them, it puts back that
@@ -185,6 +197,35 @@ backend call, it cannot restart, the driver logs an ERROR, and
 `/dgxm/telemetry` reports the driver's export state as `monarch_diagnostics`,
 beside the requested policy in `monarch_policy`.
 
+The same `metrics = true` switch also exports ownership occupancy as Monarch
+up-down counters. With `metrics = false`, the default, they do nothing: they
+make no instrument and read no source. Each counter reads the source of the
+`/dgxm/metrics` series with the matching name:
+
+| Counter | `/dgxm/metrics` series | What it counts | Process |
+| --- | --- | --- | --- |
+| `dgxm.return.live_handoffs` | `dgxm_return_live_handoffs` | native handoffs a Worker actor still owns | actor |
+| `dgxm.return.pending_read_jobs` | `dgxm_return_pending_read_jobs` | read leases: unresolved native reads; each pins its sample lease with read tokens until it settles | driver (actors report 0) |
+| `dgxm.return.poison_owners` | `dgxm_return_poison_owners` | poisoned RDMA registration owners | driver, actor |
+| `dgxm.mesh.active_leases` | `dgxm_mesh_active_leases` | sample leases on the reported fleet | driver |
+| `dgxm.mesh.abandoned_samples` | `dgxm_mesh_abandoned_samples` | abandoned sample leases on the reported fleet | driver |
+| `dgxm.native_return.latched` | `dgxm_native_return_latched` | 1 once native return is latched off; it never falls, and the latch clears only with a driver restart | driver (actors report 0) |
+
+The thread that already exports phase metrics reads these levels at most once
+a second and adds the change since its last export, so a collector reads the
+current level; the first export sends the whole level. No new thread, timer or
+service starts. A process that has not loaded a source exports nothing for it.
+A return-ownership reading whose lock is busy, or a mesh state that is unknown,
+leaves that level as it was until the next sample. The mesh reading does not
+skip a busy lock: it waits for the mesh registry lock, as the telemetry route
+does. When metrics turn off, the counters keep their last exported level. When
+they turn on again in the same process, a new instrument with the same name
+continues from that level, provided Monarch merges same-name instruments into
+one stream, as OpenTelemetry requires; nobody has checked this in the pinned
+Monarch binding. A meter without up-down counters, or a counter that fails,
+logs one DEBUG line and leaves the phase metrics and renders running. The
+counters reach a collector only through `otlp_endpoint`.
+
 `dgxm diagnostics --capabilities` explains the exact runtime's diagnostic
 limits. A finite capture reads existing telemetry only:
 
@@ -193,12 +234,76 @@ dgxm diagnostics --host 127.0.0.1:8188 --duration-s 30 --output /absolute/privat
 ```
 
 The destination directory must already exist; the command creates a new
-mode-0600 file and refuses overwrites and symlinks. Captures are bounded by
-duration, event count and byte count; incomplete coverage stays explicit.
+mode-0600 file and refuses overwrites and symlinks. `--output` is required.
+Captures are bounded by duration (`--duration-s`, default 30, 0.1 to 300
+seconds), retained phase events (`--max-events`, default 4096, 1 to 20000) and
+file size (`--max-bytes`, default 1048576, 65536 to 8388608); incomplete
+coverage stays explicit. The command exits 0 for a complete capture, 3 for a
+partial one, whose `capture.gaps` names what it missed, and 2 when it refuses
+or cannot finish.
 Attached-cluster admin, SQL and process-stack capture
 remain unavailable because the upstream admin API does not return a stoppable
 owned handle. The integration does not manufacture a Job around persistent
-Workers to obtain those features.
+Workers to obtain those features; [DESIGN.md section 5.8](DESIGN.md#58-progress-logging-observability)
+records the 0.7.0 facts behind that decision.
+
+### Metrics reference
+
+`GET /dgxm/metrics` on the ComfyUI port serves Prometheus text drawn from the
+same cached snapshot as `/dgxm/telemetry`, whatever `[monarch.diagnostics]`
+says. A value that is missing or not a finite number is left out, not written
+as zero. Phase and return series carry `scope="driver"` for the ComfyUI
+process, or `scope="worker"` and `worker_index` for a Worker actor, its
+position in the telemetry `workers` list counting from 0. Host series carry,
+as `host`, the host name each actor reports.
+
+| Series | Labels | Value |
+| --- | --- | --- |
+| `dgxm_render_active` | none | 1 while a render runs, else 0 |
+| `dgxm_render_step` | none | the latest sampler step the running render reported |
+| `dgxm_render_sec_per_step` | none | seconds the latest counted sampler step took |
+| `dgxm_telemetry_stale` | none | 1 when the route served its last good snapshot after a failed refresh |
+| `dgxm_native_return_latched` | none | 1 once a failed native read has latched native return off until ComfyUI restarts |
+| `dgxm_native_return_fault_count` | none | failed native reads the latch has counted |
+| `dgxm_mesh_state` | `state` | 1, with `state` one of `ok`, `busy`, `dirty`, `poisoned`, `idle` or `unknown` |
+| `dgxm_mesh_active_leases` | none | sample leases on the reported fleet |
+| `dgxm_mesh_abandoned_samples` | none | abandoned sample leases, which may still own Worker-side latent memory |
+| `dgxm_mesh_pending` | none | 1 when a fleet was created but never published to the attached-mesh cache |
+| `dgxm_mesh_poisoned` | none | 1 when the driver's Monarch transport cannot be reused until ComfyUI restarts |
+| `dgxm_diagnostics_available` | `scope`, `worker_index` | 1 when that process's phase timings are present and fresh |
+| `dgxm_phase_duration_seconds_count`, `_sum`, `_bucket` | `scope`, `worker_index`, `phase`, `outcome`, `return_mode`, and `le` on buckets | histogram of phase durations |
+| `dgxm_return_ownership_available` | `scope`, `worker_index` | 1 when that process's return-ownership counts are present and fresh |
+| `dgxm_return_live_handoffs` | `scope`, `worker_index` | native latent handoffs a Worker actor still owns |
+| `dgxm_return_tombstones` | `scope`, `worker_index` | released handoffs kept, at most 64, so a lost reply can be retried |
+| `dgxm_return_poison_owners` | `scope`, `worker_index` | poisoned RDMA registration owners |
+| `dgxm_return_pending_read_jobs` | `scope`, `worker_index` | native reads not yet settled |
+| `dgxm_return_descriptor_total` | `scope`, `worker_index`, `kind`, `reason` | latent returns a Worker actor packed, by path |
+| `dgxm_gpu_util_pct` | `host` | GPU use in percent |
+| `dgxm_gpu_power_w` | `host` | GPU power in watts |
+| `dgxm_mem_available_gib` | `host` | `MemAvailable` in GiB |
+| `dgxm_rail_rx_bytes_total`, `dgxm_rail_tx_bytes_total` | `host`, `rail` | bytes received and sent on each cabled RDMA port; `rail` is the device name, or `<device>/<port>` on a device with more than one cabled port |
+| `dgxm_swap_verify_failures` | `host` | LoRA swap bakes that did not match ComfyUI's own computation |
+| `dgxm_unbake_file_backed_gib` | `host` | LoRA restore data the Worker reads back from the checkpoint file, in GiB |
+
+`phase` is one of `attach`, `setup`, `queue_wait`, `compute`, `collect`,
+`rdma_preflight`, `rdma_register`, `rdma_read`, `rdma_drop`, `ack`, `recycle`,
+`spawn`, `readiness` or `cancel`; `outcome` is `ok`, `error`, `timeout`,
+`cancelled` or `unknown`; `return_mode` is `none`, `message` or `rdma`. The
+OTLP phase instruments use the same three labels. The bucket bounds are 0.001,
+0.01, 0.1, 1, 10, 60, 300 and 1800 seconds, plus `+Inf`.
+`dgxm_return_descriptor_total` pairs `kind="rdma"` with `reason="native"`, and
+`kind="message"` with `configured_message` (native return off),
+`registry_capacity` (the handoff registry was full), `below_threshold`
+(smaller than `rdma_min_bytes`), `nested_tensor` or `pack_fallback` (the
+native pack fell back for another reason).
+
+A stale snapshot leaves out the mesh series and reads both availability series
+as 0, with no detail series under them. An actor whose status poll failed or
+is not fresh does the same for its own labels. When a stale snapshot's latch
+reads 0, both latch series are left out, because that 0 may be out of date; a
+latched 1 stays, because the latch never clears in a running driver. The
+route reports at most 256 actors and 64 rails per actor. These numbers describe what each process reported; they
+do not prove that a lease, a native read or a teardown has settled.
 
 ### Changing policy after install
 
@@ -311,7 +416,7 @@ reserve_vram_gb = 8.0
 | key | default | meaning |
 |---|---|---|
 | `name` | none | ssh-reachable hostname or literal IP. `dgxm` reaches the host over ssh by this name. The driver also resolves the first host's name to tell whether rank 0 shares its box. Only when the name resolves to the driver's own box do the loader and render preflights charge rank 0's checkpoint weights to the driver's memory, and only then does the MiniMax H3 activation preflight run. A name the driver cannot resolve, such as an alias only `~/.ssh/config` knows, counts as remote, so the driver skips that charge and that preflight. `@` is rejected; `:` is accepted only in a literal IPv6 address, so SSH/rsync destination syntax cannot be rewritten. |
-| `address` | **required** unless `name` is a literal IP (then `tcp://<name>:26600`) | Worker service bind. It must be the fabric IP. A hostname-derived bind is refused at config load: Ubuntu's `127.0.1.1 <hostname>` /etc/hosts line would bind the service to loopback (DESIGN §5.1). |
+| `address` | **required** unless `name` is a literal IP (then `tcp://<name>:26600`) | Worker service bind. It must be the fabric IP. A hostname-derived bind is refused at config load: Ubuntu's `127.0.1.1 <hostname>` /etc/hosts line would bind the service to loopback (DESIGN §5.1). Write the bare URL: each Worker start serves its own new proc id on it, and the driver reads that id before every attach ([TROUBLESHOOTING #2](TROUBLESHOOTING.md#2-every-attach-times-out-after-one-failed-attach)). |
 | `gpus` | `1` | GPUWorker actors to spawn on this host (1..64); every host must declare the same count |
 | `ssh_user` | current user | lifecycle ssh user. `@` and `:` are rejected as destination delimiters. |
 | `comfy_dir` | cluster default | per-host ComfyUI root |
