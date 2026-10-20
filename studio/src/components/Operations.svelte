@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { restoreSession, validOperation } from '../sessionRecovery';
+  import RecoveryNotice from './RecoveryNotice.svelte';
   import { ApiError, requireRecordIdentity, type StudioClient } from '../api';
   import type { Capabilities, OperationRecord } from '../contracts';
   import OperationReceipt from './OperationReceipt.svelte';
@@ -27,7 +29,8 @@
   let options = $derived(capabilities.operations ?? []);
   let current = $derived(options.find((o) => o.id === action));
   let requestKey = '';
-  let pending = $state(false);
+  let pending = $state(false),
+    recoveryBlocked = $state(false);
   let appliedInitial = '';
   let openReceipt = $state('');
   const reviewStorageKey = 'dgxm.studio.operation-review.v1';
@@ -44,23 +47,16 @@
     }
   }
   onMount(() => {
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(reviewStorageKey) ?? 'null');
-      if (
-        saved &&
-        (saved.pending || !initialAction || initialAction === saved.action) &&
-        (saved.pending || options.some((o) => o.id === saved.action))
-      ) {
-        action = saved.action;
-        parameters = saved.parameters;
-        preview = saved.preview;
-        requestKey = saved.requestKey;
-        pending = saved.pending ?? false;
-        appliedInitial = initialAction;
-      }
-    } catch {
-      error =
-        'A saved operation review could not be restored. Inspect durable receipts before retrying.';
+    const restored = restoreSession(reviewStorageKey, validOperation);
+    recoveryBlocked = restored.blocked;
+    const saved = restored.value;
+    if (
+      saved &&
+      (saved.pending || !initialAction || initialAction === saved.action) &&
+      (saved.pending || options.some((o) => o.id === saved.action))
+    ) {
+      ({ action, parameters, preview, requestKey, pending } = saved);
+      appliedInitial = initialAction;
     }
   });
   $effect(() => {
@@ -77,7 +73,7 @@
     }
   });
   async function review() {
-    if (pending || busy) return;
+    if (recoveryBlocked || pending || busy) return;
     busy = true;
     error = '';
     preview = null;
@@ -93,7 +89,8 @@
     }
   }
   async function apply() {
-    if (!preview || busy || (preview.requires_confirmation && !confirmed)) return;
+    if (recoveryBlocked || !preview || busy || (preview.requires_confirmation && !confirmed))
+      return;
     busy = true;
     error = '';
     const wasPending = pending;
@@ -155,9 +152,14 @@
     Review the authoritative plan, guards and exact digest before applying a host operation. Driver
     and companion have separate lifecycles.
   </p>
+  {#if recoveryBlocked}<RecoveryNotice
+      storageKey={reviewStorageKey}
+      check="Inspect durable operation receipts and actual host state"
+      onclear={() => (recoveryBlocked = false)}
+    />{/if}
   <div class="operation-grid">
     <div class="surface">
-      <fieldset disabled={busy || pending}>
+      <fieldset disabled={recoveryBlocked || busy || pending}>
         <label for="operation">Supported operation</label>
         <select
           id="operation"
@@ -203,7 +205,7 @@
       </fieldset>
       <button
         class="primary"
-        disabled={pending || !action || current?.available === false || busy}
+        disabled={recoveryBlocked || pending || !action || current?.available === false || busy}
         onclick={review}>{busy ? 'Checking…' : 'Review operation'}</button
       >
       {#if pending}<p role="status">
@@ -224,7 +226,8 @@
           >{/if}
         <button
           class="primary"
-          disabled={(preview.requires_confirmation && !confirmed) ||
+          disabled={recoveryBlocked ||
+            (preview.requires_confirmation && !confirmed) ||
             busy ||
             preview.available === false}
           onclick={apply}>{pending ? 'Reconcile retained operation' : 'Apply reviewed plan'}</button

@@ -14,6 +14,19 @@
   background: #14161c;
   padding: 19px 8px;
   gap: 5px;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.nav-rail > * {
+  flex-shrink: 0;
+}
+.identity {
+  min-width: 0;
+}
+.host-line > span:nth-child(2) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .brand-mark {
   width: 43px;
@@ -51,7 +64,7 @@
   line-height: 1.1;
 }
 .nav-rail button small {
-  font-size: 9px;
+  font-size: 10px;
   color: inherit;
   letter-spacing: 0.1px;
 }

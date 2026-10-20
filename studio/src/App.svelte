@@ -364,6 +364,7 @@
   <main id="main-heading" tabindex="-1">
     {#if !connection.connected}<Connect bind:token={connection.token} {busy} {connect} />
     {:else if presentation}<Viewer
+        activeCount={activeJobs.length}
         artifact={displayedArtifact}
         compare={displayedComparison}
         client={connection.client}
@@ -411,7 +412,7 @@
       </div>
     {:else if view === 'gallery'}<Gallery
         client={connection.client}
-        allArtifacts={connection.snapshot.artifacts}
+        projectSummaries={connection.snapshot.records.projects ?? []}
         {jobs}
         projectId={draft.project_id}
         {selected}

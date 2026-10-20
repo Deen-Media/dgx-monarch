@@ -28,7 +28,7 @@
   const visible = $derived(
     records.filter((row) => !projectId || recordProjects(row.data).includes(projectId)),
   );
-  const record = $derived(records.find((row) => row.id === selected));
+  const record = $derived(visible.find((row) => row.id === selected));
   async function refresh() {
     records = [];
     records = await loadRecordCatalog(client, 'experiments');
@@ -60,8 +60,12 @@
     notice = 'Saved the grid definition and observed outcomes in the project library.';
   }
   onMount(() => {
-    selected = sessionStorage.getItem('dgxm.studio.experiment.selection') ?? '';
-    sessionStorage.removeItem('dgxm.studio.experiment.selection');
+    try {
+      selected = sessionStorage.getItem('dgxm.studio.experiment.selection') ?? '';
+      sessionStorage.removeItem('dgxm.studio.experiment.selection');
+    } catch {
+      // The library remains available without cross-view selection persistence.
+    }
     void run(refresh);
   });
 </script>

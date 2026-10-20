@@ -5,6 +5,7 @@
 @import url('./styles/viewer.css');
 @import url('./styles/pages.css');
 @import url('./styles/dialogs.css');
+@import url('./styles/motion.css');
 @import url('./styles/responsive.css');
 .unresolved-field {
   padding: 10px;

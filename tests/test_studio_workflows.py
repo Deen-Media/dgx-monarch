@@ -95,6 +95,28 @@ def test_missing_and_custom_widget_are_preserved_and_rebound(workflow, info):
     assert "unsupported" in inspect_workflow(workflow, info)["bindings"][-1]["reason"]
 
 
+@pytest.mark.parametrize("selection", [[99, "removed"], [1, "custom_widget"], [2, "text"]])
+def test_hiding_unresolved_app_mode_selection_cannot_bypass_rebinding(workflow, info, selection):
+    workflow["extra"]["linearData"]["inputs"] = [selection]
+    unresolved = inspect_workflow(workflow, info)["bindings"][-1]
+    workflow["extra"]["dgxm_studio"] = {"bindings": {
+        unresolved["id"]: {"prominent": False, "label": "Hidden", "order": 999, "requires_resolution": False}}}
+    hidden = next(item for item in inspect_workflow(workflow, info)["bindings"] if item["id"] == unresolved["id"])
+    assert hidden["prominent"] is False and hidden["requires_resolution"] is True
+    with pytest.raises(WorkflowError, match="Resolve App Mode"):
+        compile_workflow(workflow, info)
+    repaired = rebind_workflow(workflow, unresolved["id"], "main:1:text", info)
+    assert compile_workflow(repaired, info)["1"]["inputs"]["text"] == "original"
+    assert repaired["extra"]["linearData"]["inputs"] == [selection]
+
+
+def test_hiding_valid_binding_and_unselected_connected_inputs_still_compile(workflow, info):
+    workflow["extra"]["dgxm_studio"] = {"bindings": {"main:1:text": {"prominent": False}}}
+    inspection = inspect_workflow(workflow, info)
+    assert any(not item["resolved"] and not item["prominent"] for item in inspection["bindings"])
+    assert compile_workflow(workflow, info, {"main:1:text": "changed"})["1"]["inputs"]["text"] == "changed"
+
+
 def test_nested_graph_resolution_preserves_source_binding(workflow, info):
     child = {"id": "nested", "nodes": [{"id": 1, "type": "Text", "widgets_values": ["child"]}]}
     workflow["definitions"] = {"subgraphs": [child]}

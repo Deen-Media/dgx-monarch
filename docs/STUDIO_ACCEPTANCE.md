@@ -16,7 +16,7 @@ Unimplemented work below is not a proposed reduction of that scope.
 | Workspace features | Mask/input uploads, bounded thumbnails, virtualized gallery, paginated queue, synchronized comparisons and telemetry charts are implemented. Durable grids include frozen named-style axes, per-cell inspection and selective retry. LoRA chains support typed insertion and extension. Saved records and artifacts have project membership; reviewed library import/export preserves definitions and source references. Complete end-to-end acceptance remains **NOT RUN**. |
 | App Mode | Canonical/legacy identities, metadata preservation, primitive/reroute conversion, nested virtual interfaces and separate repeated-instance bindings have fixtures. Nested promoted scalar widgets resolve through explicit serialized mappings. Ambiguous legacy references, duplicate mappings and unsupported custom serialization refuse with a repair reason. Broader source-version fixtures remain an acceptance requirement; arbitrary widget JavaScript is outside the agreed scope. |
 | Security | Token/Host/Origin/content-type checks, body limits, fixed driver routes, safe artifact descriptors, typed confirmed actions and stale-plan rejection have CPU tests. Full abuse testing and deployment review remain required. |
-| Accessibility | Typed labels, focus styling, responsive layouts, reduced motion and keyboard actions implemented. Browser smoke is recorded in the PR; comprehensive keyboard/screen-reader/contrast/hidden-tab acceptance is **NOT RUN**. |
+| Accessibility | Typed labels, focus styling, responsive layouts, reduced motion and keyboard actions implemented. The [interface QA record](STUDIO_INTERFACE_QA.md) separates authored-control inspection from scoped browser checks. Comprehensive keyboard/screen-reader/contrast/hidden-tab acceptance is **NOT RUN**. |
 | Performance and retention | Explicit event, console and media limits implemented. Spark/browser overhead, long-session growth and variance-based regression budgets are **NOT RUN**. No zero-overhead or fastest-performance claim is made. |
 
 Completed local feature work includes:
@@ -164,3 +164,46 @@ byte; both installed formats passed their startup check. The installed wheel
 passed the synthetic HTTP smoke without Node on PATH, and 20 focused tests
 passed from the extracted source archive. No protected tests changed in this
 follow-up. Hosted checks and the unrun acceptance gates remain separate.
+
+The additional independent review on 2026-10-20 fixed oversized driver-history
+recovery, invalid acceptance identities, skipped event replay pages, unreadable
+operation/grid/import state, malformed draft controls, telemetry append files
+without a final newline and hidden unresolved App Mode selections. Browser
+media decoding errors are explicit; frame stepping requires valid metadata.
+
+Compiled-browser checks against a disposable CPU fixture verified the three
+request quarantine screens, explicit clearing, invalid draft refusal, corrupt
+image/video errors, disabled frame controls for undecodable video, successful
+image selection after an error, and palette keyboard entry/Escape focus
+restoration. The inspected freshness label improved from 3.90:1 to 6.23:1
+contrast. No browser console errors were observed. These are scoped checks,
+not comprehensive accessibility, video playback or responsive-layout acceptance.
+
+The complete CPU harness passed 13,692 tests with 39 skipped in 317.05 seconds
+(319 seconds including the wrapper; the 120-second warning remains advisory).
+All 129 frontend tests passed with zero Svelte/TypeScript diagnostics. Ruff and
+whole-package mypy passed for 480 source files. The final Studio suite passed
+all 890 tests. A final cross-check also fixed loss of import uncertainty when
+saving the retained retry identity fails; the actual apply handler has a
+storage-denial regression. The previously reviewed head
+`78450a7899bdaf79872801f992a809b4ed8b7b96` passed every hosted check, including
+Python 3.11/3.12, ARM64, frontend builds and the ComfyUI canary. Hosted results
+for subsequent commits must be checked separately.
+
+The interface follow-up fixed saved-record content replacement, stale grid and
+library reviews, incomplete project selectors, multiline editing, workflow
+layout repair and repeated file selection. It added full-frame generation
+activity, reduced-motion support, responsive control sizing and aspect-correct
+input/mask previews. The [interface QA record](STUDIO_INTERFACE_QA.md) records
+the complete authored-control inspection and scoped browser execution, including
+all eight routes at four phone/tablet viewport sizes, five source-image shapes,
+exact uploaded pixels and mask alignment. Physical mobile devices and Safari
+remain untested.
+
+The final wheel and source archive matched all 483 runtime/resource files.
+Both fresh installations passed startup checks; 56 focused tests passed from
+the extracted source archive. The installed wheel passed synthetic HTTP
+generation, request reconciliation, idempotency, immutable workflow and image
+transport checks with Node absent from PATH. Generated inventory, protected-test
+inventory, trust citations and the leak check passed. No protected tests changed
+in this follow-up, and no live hardware or production service was exercised.

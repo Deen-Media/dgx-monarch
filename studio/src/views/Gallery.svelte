@@ -8,8 +8,10 @@
   import { galleryEntries, virtualRows, type GalleryFilter, type GalleryEntry } from '../gallery';
   import Thumbnail from '../components/Thumbnail.svelte';
   import ArtifactProjects from '../components/ArtifactProjects.svelte';
+  import ProjectSelect from '../components/ProjectSelect.svelte';
+  import type { StoredRecord } from '../contracts';
   let {
-    allArtifacts,
+    projectSummaries,
     jobs,
     projectId,
     selected,
@@ -20,7 +22,7 @@
     setNotice,
     client,
   }: {
-    allArtifacts: Artifact[];
+    projectSummaries: StoredRecord[];
     jobs: Job[];
     projectId: string;
     selected: Artifact | null;
@@ -203,13 +205,12 @@
         >Through<input type="date" bind:value={filter.until} /></label
       >
       <label><input type="checkbox" bind:checked={currentProject} /> Current project</label>
-      {#if !currentProject}<label
-          >Project<select bind:value={filter.project}
-            ><option value="">All projects</option>{#each [...new Set(allArtifacts
-                  .map((e) => String(e.project_id ?? ''))
-                  .filter(Boolean))] as value}<option>{value}</option>{/each}</select
-          ></label
-        >{/if}
+      {#if !currentProject}<ProjectSelect
+          {client}
+          summaries={projectSummaries}
+          value={filter.project}
+          onchange={(id) => (filter.project = id)}
+        />{/if}
     </div>
   </details>
   {#if loadError}<p class="error" role="alert">{loadError}</p>{/if}

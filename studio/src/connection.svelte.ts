@@ -1,4 +1,5 @@
 import { StudioClient } from './api';
+import { savedToken } from './sessionRecovery';
 import { consumeEvents, boundedLog, formatTime } from './model';
 import type { Capabilities, Catalog, Snapshot, WorkflowEntry } from './contracts';
 
@@ -8,7 +9,7 @@ const TOKEN_KEY = 'dgxm.studio.token.v1';
 
 /** Owns companion transport and reconciled host state, never unsent draft edits. */
 export class Connection {
-  token = $state(sessionStorage.getItem(TOKEN_KEY) ?? '');
+  token = $state(savedToken(TOKEN_KEY));
   client = $state(new StudioClient(this.token));
   connected = $state(false);
   state = $state('unavailable');
@@ -49,6 +50,7 @@ export class Connection {
       Number(result.server_time) < Number(this.snapshot.server_time)
     )
       return;
+    const newInstance = result.instance_id !== this.instance;
     if (this.instance && result.instance_id !== this.instance) {
       this.cursor = 0;
       this.logs = [];
@@ -64,7 +66,9 @@ export class Connection {
       result.telemetry,
       this.capabilities.presentation?.metrics ?? [],
     );
-    this.cursor = Math.max(this.cursor, result.cursor ?? 0);
+    // A snapshot reconciles state, but does not consume the event pages between
+    // the last replay cursor and its latest cursor.
+    if (newInstance) this.cursor = result.cursor ?? 0;
     this.lastSeen = formatTime(result.server_time);
     this.state = 'connected';
     this.connected = true;
@@ -96,7 +100,11 @@ export class Connection {
         if (generation !== this.generation) return;
         this.catalog = {};
       }
-      sessionStorage.setItem(TOKEN_KEY, this.client.token);
+      try {
+        sessionStorage.setItem(TOKEN_KEY, this.client.token);
+      } catch {
+        // Authentication works in memory; mutation owners separately require durable identities.
+      }
       await this.refresh();
       if (generation !== this.generation) return;
       this.backoff = 1500;
@@ -120,10 +128,13 @@ export class Connection {
       try {
         const result = await client.request('/events?after=' + this.cursor);
         if (generation !== this.generation) return;
-        const accepted = consumeEvents(this.cursor, result.events ?? []);
+        const accepted = consumeEvents(result.reset ? 0 : this.cursor, result.events ?? []);
         this.cursor = Math.max(accepted.cursor, Number(result.cursor) || 0);
         this.logs = boundedLog([
           ...this.logs,
+          ...(result.reset
+            ? ['Event replay gap: some earlier events are no longer retained.']
+            : []),
           ...accepted.events.map(
             (event) =>
               `${event.timestamp ?? event.server_time ?? ''} ${event.kind ?? event.type ?? 'event'} ${JSON.stringify(event.data ?? event.payload ?? event)}`,
@@ -166,7 +177,11 @@ export class Connection {
   }
   disconnect() {
     this.stop();
-    sessionStorage.removeItem(TOKEN_KEY);
+    try {
+      sessionStorage.removeItem(TOKEN_KEY);
+    } catch {
+      // Always disconnect this tab even if token persistence is unavailable.
+    }
     this.token = '';
     this.client = new StudioClient('');
     this.connected = false;

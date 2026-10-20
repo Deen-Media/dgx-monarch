@@ -67,3 +67,34 @@ test('restoration preserves unknown metadata without treating malformed stacks a
   assert.deepEqual(result.lora_stack, []);
   assert.deepEqual((result as any).extension, { kept: true });
 });
+test('malformed nested draft controls are rejected before a render can replace the working draft', () => {
+  for (const value of [
+    { styles: [null] },
+    { styles: ['saved-id'] },
+    { lora_stack: [null] },
+    { lora_stack: [7] },
+    { parent_artifact_ids: [{}] },
+    { lora_insertion: { loader: 'LoraLoader', model_targets: 'not-a-list' } },
+    { lora_insertion: { loader: 'LoraLoader', clip_targets: [null] } },
+    { lora_insertion: { loader: 'LoraLoader', model_targets: [{ node_id: '1' }] } },
+    { style_bindings: [] },
+    { style_bindings: { prompt: {} } },
+    { workflow: [] },
+    { workflowName: {} },
+    { project_id: 3 },
+  ])
+    assert.throws(() => restoreDraft(value), /Invalid draft/);
+});
+test('optional legacy insertion targets default to empty without dropping extensions', () => {
+  const value = restoreDraft({
+    lora_insertion: {
+      loader: 'LoraLoaderModelOnly',
+      model_targets: [{ node_id: '1', input_name: 'model' }],
+    },
+    extension: { retained: true },
+  });
+  assert.deepEqual(value.lora_insertion?.clip_targets, []);
+  assert.deepEqual((value as any).extension, { retained: true });
+  assert.deepEqual(restoreDraft({ values: [] }).values, {});
+  assert.equal(restoreDraft({ lora_insertion: null }).lora_insertion, undefined);
+});

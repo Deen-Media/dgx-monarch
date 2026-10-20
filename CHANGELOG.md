@@ -14,6 +14,19 @@
 - Preserve pending requests through malformed acknowledgements and local draft
   recovery, replay effective seeds without reapplying styles, bind saved state
   to its driver, and bound template/grid expansion before allocation.
+- Keep queue tracking available when driver history exceeds its byte budget;
+  retain every unread event page and quarantine unreadable operation, grid and
+  import requests. Reject malformed draft controls and unresolved App Mode
+  selections even when hidden. Preserve valid telemetry append files and show
+  media decoding failures with guarded frame controls.
+- Refine Studio phone and tablet layouts, touch controls, dialog/disclosure
+  motion and generation activity feedback, with reduced-motion support. Keep
+  image previews proportional and mask painting aligned with the source image.
+- Preserve saved content when renaming records, invalidate grid reviews after
+  definition edits, keep workflow layout and repair text synchronized, and show
+  complete project choices. Fix multiline editing and repeated file selection.
+  Scoped browser evidence and remaining device checks are recorded in
+  [interface QA](docs/STUDIO_INTERFACE_QA.md).
 
 ## [1.2.0] - 2026-10-16
 

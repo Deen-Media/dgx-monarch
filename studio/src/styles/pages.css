@@ -70,9 +70,11 @@
 .record > summary:before {
   content: '›';
   color: #738099;
+  display: inline-block;
+  transition: transform var(--motion-reveal) var(--ease-out);
 }
 .record[open] > summary:before {
-  content: '⌄';
+  transform: rotate(90deg);
 }
 .record > summary > span:last-child {
   margin-left: auto;

@@ -60,7 +60,9 @@
   <TelemetryCharts {history} {presentation} />
   <h2>Durable Fleet execution</h2>
   <label
-    >Graph task<select bind:value={selected}
+    >Graph task<select
+      value={selectedJob?.id ?? ''}
+      onchange={(event) => (selected = event.currentTarget.value)}
       >{#each fleetJobs as job}<option value={job.id}>{job.id} · {job.state}</option>{/each}</select
     ></label
   >

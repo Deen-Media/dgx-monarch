@@ -45,7 +45,7 @@
 }
 .workflow-actions button,
 .workflow-actions .button {
-  font-size: 10px;
+  font-size: 11px;
   padding: 6px 8px;
 }
 .import-label {
@@ -81,8 +81,11 @@
   border-bottom: 1px solid var(--border);
   margin: 0 0 20px;
   flex-shrink: 0;
+  overflow-x: auto;
+  scrollbar-width: thin;
 }
 .tabs button {
+  flex-shrink: 0;
   border: none;
   border-radius: 0;
   background: none;

@@ -23,7 +23,7 @@
     >{field.name}<textarea
       rows="3"
       value={Array.isArray(value) ? value.join('\n') : ''}
-      oninput={(event) =>
+      onchange={(event) =>
         onchange(
           event.currentTarget.value
             .split('\n')

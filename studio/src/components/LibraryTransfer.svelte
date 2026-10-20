@@ -4,22 +4,8 @@
   import { requireLibraryReceipt } from '../libraryImport';
   import type { StudioClient } from '../api';
   import { exportJSON } from '../files';
-  interface Conflict {
-    key: string;
-    kind: string;
-    id: string;
-    revision: number;
-    current: unknown;
-    incoming: unknown;
-  }
-  interface Plan {
-    id: string;
-    digest: string;
-    ready: boolean;
-    changes: Array<{ action: string }>;
-    conflicts: Conflict[];
-    repair_list: unknown[];
-  }
+  import { restoreSession, validLibrary, type LibraryPlan as Plan } from '../sessionRecovery';
+  import RecoveryNotice from './RecoveryNotice.svelte';
   let {
     client,
     projectId = '',
@@ -32,28 +18,26 @@
   let choices = $state<Record<string, { action: string; revision: number }>>({}),
     confirmed = $state(false),
     busy = $state(false),
+    reading = $state(false),
     error = $state(''),
     notice = $state('');
   let key = '';
   let sourceGeneration = 0;
-  let uncertain = $state(false);
+  let uncertain = $state(false),
+    recoveryBlocked = $state(false);
   const storage = 'dgxm.studio.library.pending.v1';
   onMount(() => {
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(storage) ?? 'null');
-      if (saved?.plan && saved?.key) {
-        plan = saved.plan;
-        key = saved.key;
-        name = saved.name;
-        uncertain = true;
-      }
-    } catch {
-      error = 'The pending import receipt could not be restored.';
+    const restored = restoreSession(storage, validLibrary);
+    recoveryBlocked = restored.blocked;
+    if (restored.value) {
+      ({ plan, key, name } = restored.value);
+      uncertain = true;
     }
   });
   async function read(file?: File) {
-    if (!file || uncertain) return;
+    if (recoveryBlocked || !file || uncertain) return;
     const ticket = ++sourceGeneration;
+    reading = true;
     try {
       if (file.size > 4 * 1024 * 1024) throw new Error('Library imports are limited to 4 MiB.');
       const incoming = JSON.parse(await file.text());
@@ -66,18 +50,24 @@
       error = '';
     } catch (cause) {
       error = String(cause);
+    } finally {
+      if (ticket === sourceGeneration) reading = false;
     }
   }
   async function review() {
+    if (recoveryBlocked || uncertain || busy || reading) return;
+    const ticket = sourceGeneration;
     busy = true;
     error = '';
     confirmed = false;
     try {
-      plan = await client.request<Plan>('/library/import/preview', {
+      const reviewed = await client.request<Plan>('/library/import/preview', {
         library: $state.snapshot(document),
         mode,
         choices: $state.snapshot(choices),
       });
+      if (ticket !== sourceGeneration) return;
+      plan = reviewed;
       key = crypto.randomUUID();
     } catch (cause) {
       error = String(cause);
@@ -86,18 +76,17 @@
     }
   }
   async function apply() {
-    if (!plan || !confirmed || !plan.ready) return;
+    if (recoveryBlocked || reading || !plan || !confirmed || !plan.ready) return;
     busy = true;
     error = '';
-    uncertain = true;
     try {
       sessionStorage.setItem(storage, JSON.stringify({ plan: $state.snapshot(plan), key, name }));
     } catch {
-      uncertain = false;
       busy = false;
       error = 'The import was not sent because its retry identity could not be saved locally.';
       return;
     }
+    uncertain = true;
     try {
       const result = await client.request<{ imported: number; repair_list: unknown[] }>(
         '/library/import',
@@ -137,6 +126,11 @@
 
 <section class="surface" aria-label="Library import and export">
   <h2>Portable library</h2>
+  {#if recoveryBlocked}<RecoveryNotice
+      storageKey={storage}
+      check="Inspect the project library and import receipts"
+      onclear={() => (recoveryBlocked = false)}
+    />{/if}
   <div class="workflow-actions">
     <button onclick={() => void download(false)}>Export complete library</button>
     <button disabled={!projectId} onclick={() => void download(true)}>Export active project</button>
@@ -144,7 +138,7 @@
       >Import library<input
         type="file"
         accept=".json,application/json"
-        disabled={uncertain || busy}
+        disabled={recoveryBlocked || uncertain || busy || reading}
         onchange={(event) => void read(event.currentTarget.files?.[0])}
       /></label
     >
@@ -158,7 +152,7 @@
     <label
       >Import identities<select
         bind:value={mode}
-        disabled={uncertain || busy}
+        disabled={recoveryBlocked || uncertain || busy || reading}
         onchange={() => {
           plan = null;
           choices = {};
@@ -168,7 +162,9 @@
         ></select
       ></label
     >
-    <button disabled={busy || uncertain} onclick={review}>Review library import</button>
+    <button disabled={recoveryBlocked || busy || uncertain || reading} onclick={review}
+      >Review library import</button
+    >
   {/if}
   {#if plan}
     <p>
@@ -181,7 +177,7 @@
         <label
           >Resolve {conflict.key}<select
             value={choices[conflict.key]?.action ?? ''}
-            disabled={busy || uncertain}
+            disabled={recoveryBlocked || busy || uncertain || reading}
             onchange={(event) => {
               choices = {
                 ...choices,
@@ -203,8 +199,9 @@
         </details>
       </div>
     {/each}
-    {#if plan.conflicts.length}<button disabled={busy} onclick={review}
-        >Review conflict resolutions</button
+    {#if plan.conflicts.length}<button
+        disabled={recoveryBlocked || uncertain || busy || reading}
+        onclick={review}>Review conflict resolutions</button
       >{/if}
     {#if plan.repair_list.length}<details open>
         <summary>Source references requiring repair</summary>
@@ -214,8 +211,10 @@
       ><input type="checkbox" bind:checked={confirmed} disabled={!plan.ready} />I reviewed all
       changes and unresolved source references.</label
     >
-    <button class="primary" disabled={busy || !confirmed || !plan.ready} onclick={apply}
-      >Import reviewed library</button
+    <button
+      class="primary"
+      disabled={recoveryBlocked || busy || reading || !confirmed || !plan.ready}
+      onclick={apply}>Import reviewed library</button
     >
   {/if}
   {#if error}<p role="alert">{error}</p>{/if}{#if notice}<p role="status">{notice}</p>{/if}

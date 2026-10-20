@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Binding, Draft } from '../model';
   import { fieldLabel } from '../model';
+  import { layoutWorkflow, unchangedWorkflow } from '../workflowLayout';
   import type { ChangeDraft, InspectWorkflow, ReportError } from '../contracts';
   let {
     draft,
@@ -20,29 +21,9 @@
   function configureBinding(id: string, change: Partial<Binding>) {
     bindings = bindings.map((b) => (b.id === id ? { ...b, ...change } : b));
     if (draft.workflow) {
-      const workflow = structuredClone($state.snapshot(draft.workflow));
-      workflow.extra = {
-        ...workflow.extra,
-        dgxm_studio: {
-          ...(workflow.extra?.dgxm_studio ?? {}),
-          bindings: {
-            ...(workflow.extra?.dgxm_studio?.bindings ?? {}),
-            ...Object.fromEntries(
-              bindings.map((b) => [
-                b.id,
-                {
-                  ...(workflow.extra?.dgxm_studio?.bindings?.[b.id] ?? {}),
-                  label: b.label,
-                  prominent: b.prominent,
-                  order: b.order,
-                  group: b.group,
-                },
-              ]),
-            ),
-          },
-        },
-      };
-      changeDraft({ workflow });
+      const updated = layoutWorkflow($state.snapshot(draft.workflow), $state.snapshot(bindings));
+      rawWorkflow = updated.rawWorkflow;
+      changeDraft({ workflow: updated.workflow });
     }
   }
   async function rebind(source: string, target: string) {
@@ -109,7 +90,12 @@
     aria-label="Workflow JSON"></textarea><button
     onclick={() => {
       try {
-        void inspect(JSON.parse(rawWorkflow), draft.workflowName);
+        const edited = JSON.parse(rawWorkflow);
+        void inspect(
+          edited,
+          draft.workflowName,
+          unchangedWorkflow($state.snapshot(draft.workflow), edited),
+        );
       } catch (e) {
         fail(e);
       }

@@ -42,6 +42,7 @@ class ComfyClient:
         self.origin = url.rstrip("/")
         self.bearer = bearer
         self.session: aiohttp.ClientSession | None = None
+        self.history_limit = 200
 
     async def start(self) -> None:
         trace = aiohttp.TraceConfig()
@@ -60,6 +61,16 @@ class ComfyClient:
         allowed = GET_PATHS if method == "GET" else POST_PATHS if method == "POST" else frozenset()
         if path not in allowed:
             raise StudioError("driver_endpoint", "The driver endpoint is not allowlisted.")
+        if method == "GET" and path == "/history":
+            # Workflow payloads vary widely: a count bound alone does not fit
+            # the byte budget. Remember the smaller window across polls.
+            while True:
+                try:
+                    return await self._request(method, path, data, history_limit=self.history_limit)
+                except StudioError as exc:
+                    if exc.code != "driver_response_limit" or self.history_limit == 1:
+                        raise
+                    self.history_limit = max(1, self.history_limit // 2)
         return await self._request(method, path, data)
 
     async def execution_events(self, after: int, producer: str | None = None) -> Any:
@@ -108,10 +119,10 @@ class ComfyClient:
         except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
             raise StudioError("driver_events", "Driver event stream disconnected; reconcile snapshots.", 503) from exc
 
-    async def _request(self, method: str, path: str, data: Any = None) -> Any:
+    async def _request(self, method: str, path: str, data: Any = None, *, history_limit: int = 200) -> Any:
         if self.session is None:
             raise StudioError("driver_offline", "The driver connection is not initialized.", 503)
-        params = {"max_items": "200"} if path == "/history" else None
+        params = {"max_items": str(history_limit)} if path == "/history" else None
         try:
             action = {"/dgxm/recycle": "recycle", "/dgxm/consent": "consent"}.get(path)
             headers = {"Origin": self.origin, "X-DGXM-Action": action} if action else None

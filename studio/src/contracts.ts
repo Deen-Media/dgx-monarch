@@ -167,7 +167,11 @@ export interface Snapshot {
   operations: OperationRecord[];
   records: Records;
   telemetry: Telemetry;
-  driver: { state?: string; timestamp?: number };
+  driver: {
+    state?: string;
+    timestamp?: number;
+    history?: { state: string; code?: string };
+  };
 }
 export interface NumberSchema {
   default?: number;

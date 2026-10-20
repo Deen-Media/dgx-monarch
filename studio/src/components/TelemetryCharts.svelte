@@ -25,7 +25,12 @@
 <section class="metric-chart">
   <h3>Metric history</h3>
   {#if history.length}<label
-      >Host and metric<select bind:value={selected} onchange={() => (point = -1)}
+      >Host and metric<select
+        value={series?.id ?? ''}
+        onchange={(event) => {
+          selected = event.currentTarget.value;
+          point = -1;
+        }}
         >{#each history as item}<option value={item.id}>{item.host} · {item.metric.name}</option
           >{/each}</select
       ></label

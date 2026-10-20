@@ -1,4 +1,4 @@
-import { emptyDraft } from './model.ts';
+import { emptyDraft, restoreDraft } from './model.ts';
 import type { Artifact, Job, Workflow } from './contracts';
 import type { Draft } from './model';
 import { effectivePrompt } from './recordedSettings.ts';
@@ -38,5 +38,5 @@ export function artifactDraft(artifact: Artifact, job: Job, operation?: string):
     delete draft.style_bindings;
     delete draft.lora_insertion;
   }
-  return structuredClone(draft);
+  return structuredClone(restoreDraft(draft));
 }

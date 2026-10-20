@@ -68,7 +68,7 @@ dialog::backdrop {
   backdrop-filter: blur(5px);
 }
 .command-dialog {
-  width: 540px;
+  width: min(540px, calc(100vw - 30px));
   padding: 16px;
   margin-top: 15vh;
 }
@@ -82,7 +82,6 @@ dialog::backdrop {
 .palette-search input {
   border: 0;
   background: none;
-  outline: 0;
   padding: 7px 0;
   font-size: 14px;
 }
@@ -141,7 +140,7 @@ dialog::backdrop {
 }
 .brand-mark img.working {
   transform-origin: center;
-  animation: brand-activity 1.7s ease-in-out infinite;
+  animation: brand-activity 2.4s ease-in-out infinite;
 }
 @keyframes brand-activity {
   0%,

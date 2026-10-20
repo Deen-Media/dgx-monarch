@@ -15,6 +15,7 @@ from .contracts import (
     MAX_BODY_BYTES,
     TERMINAL_STATES,
     StudioError,
+    bounded_key,
     canonical,
     digest,
     identifier,
@@ -164,9 +165,11 @@ class Jobs:
                 "extra_data": {"studio": {"job_id": job["id"], "digest": snapshot["digest"]},
                                "extra_pnginfo": {"workflow": snapshot["workflow"]}},
             })
-            if not isinstance(result, dict) or not isinstance(result.get("prompt_id"), str):
-                raise StudioError("submission_unknown", "Driver acceptance did not return a prompt identity.", 503)
-            self.store.update("jobs", job["id"], {"prompt_id": result["prompt_id"], "state": "queued", "accepted_at": timestamp()})
+            try:
+                prompt_id = bounded_key(result.get("prompt_id") if isinstance(result, dict) else None, "prompt id")
+            except StudioError as exc:
+                raise StudioError("submission_unknown", "Driver acceptance did not return a usable prompt identity.", 503) from exc
+            self.store.update("jobs", job["id"], {"prompt_id": prompt_id, "state": "queued", "accepted_at": timestamp()})
         except StudioError as exc:
             # HTTP refusal can be final, but transport failure may follow acceptance.
             current = self.store.get("jobs", job["id"])
@@ -180,11 +183,26 @@ class Jobs:
     async def _reconcile(self) -> None:
         try:
             queue = await self.client.request("GET", "/queue")
-            history = await self.client.request("GET", "/history")
-            if not isinstance(queue, dict) or not isinstance(history, dict):
+            if not isinstance(queue, dict):
                 raise StudioError("driver_schema", "Driver queue snapshot is malformed.", 502)
             self.driver = {"state": "connected", "timestamp": timestamp()}
             known = self.store.jobs_by_prompt()
+            for state, rows in (("running", queue.get("queue_running", [])), ("queued", queue.get("queue_pending", []))):
+                for entry in rows if isinstance(rows, list) else []:
+                    job = self._discover(entry, known)
+                    if job:
+                        self.store.update("jobs", job["id"], {"state": state, "prompt_id": entry[1]})
+            try:
+                history = await self.client.request("GET", "/history")
+                if not isinstance(history, dict):
+                    raise StudioError("driver_schema", "Driver history snapshot is malformed.", 502)
+                self.driver["history"] = {"state": "connected"}
+            except StudioError as exc:
+                # A large or unavailable history must not hide the queue that
+                # was observed successfully. Exact known identities can still
+                # reconcile through the per-prompt route below.
+                history = {}
+                self.driver["history"] = {"state": "unavailable", "code": exc.code}
             lookup = getattr(self.client, "history_prompt", None)
             if callable(lookup):
                 active = {entry[1] for key in ("queue_running", "queue_pending")
@@ -201,11 +219,6 @@ class Jobs:
                     except StudioError:
                         pass
                 self.history_cursor = offset + 32
-            for state, rows in (("running", queue.get("queue_running", [])), ("queued", queue.get("queue_pending", []))):
-                for entry in rows if isinstance(rows, list) else []:
-                    job = self._discover(entry, known)
-                    if job:
-                        self.store.update("jobs", job["id"], {"state": state, "prompt_id": entry[1]})
             for prompt_id, value in history.items():
                 if not isinstance(value, dict):
                     continue

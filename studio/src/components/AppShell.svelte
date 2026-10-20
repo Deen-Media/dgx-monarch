@@ -4,6 +4,7 @@
   import type { Draft } from '../model';
   import type { ChangeDraft } from '../contracts';
   import { navigation } from '../navigation';
+  import ProjectSelect from './ProjectSelect.svelte';
   import monarchMark from '../../../web/brand/monarch-small-dark.svg?url&inline';
   let {
     connection,
@@ -85,19 +86,21 @@
         </div>
       </div>
       {#if !presentation}<div class="context-select">
-          <label for="active-project" class="sr-only">Active project</label><select
-            id="active-project"
+          <ProjectSelect
+            client={connection.client}
+            summaries={connection.snapshot.records.projects ?? []}
             value={draft.project_id}
-            onchange={(e) => changeDraft({ project_id: e.currentTarget.value })}
-            ><option value="">All projects</option
-            >{#each connection.snapshot.records.projects ?? [] as project}<option value={project.id}
-                >{project.data?.name ?? project.id}</option
-              >{/each}</select
-          >
+            label="Active project"
+            compact
+            onchange={(id) => changeDraft({ project_id: id })}
+          />
         </div>{/if}
       <div class="header-actions">
         <span class="activity-pill">{activeCount ? `${activeCount} active` : 'No active jobs'}</span
-        ><button class="icon-button" onclick={() => (presentation = !presentation)}
+        ><button
+          class="icon-button"
+          aria-pressed={presentation}
+          onclick={() => (presentation = !presentation)}
           >{presentation ? 'Exit presentation' : 'Present'}</button
         >{#if !presentation}<button
             class="icon-button"
@@ -115,15 +118,21 @@
           Companion {connection.state}</span
         ><span class="muted">{draft.workflowName || 'No workflow'} · {draft.operation}</span>
         <div>
-          <button onclick={() => (showTelemetry = !showTelemetry)}
+          <button
+            aria-expanded={showTelemetry}
+            aria-controls="studio-telemetry"
+            onclick={() => (showTelemetry = !showTelemetry)}
             >Telemetry {showTelemetry ? '−' : '+'}</button
-          ><button onclick={() => (showConsole = !showConsole)}
-            >Console {showConsole ? '−' : '+'}</button
+          ><button
+            aria-expanded={showConsole}
+            aria-controls="studio-console"
+            onclick={() => (showConsole = !showConsole)}>Console {showConsole ? '−' : '+'}</button
           >
         </div>
       </footer>{/if}
     {#if showConsole && connection.connected && !presentation}<section
         class="console-panel"
+        id="studio-console"
         aria-label="Companion event console"
       >
         <div class="panel-title">

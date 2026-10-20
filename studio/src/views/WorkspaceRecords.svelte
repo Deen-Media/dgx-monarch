@@ -3,6 +3,7 @@
   import LibraryTransfer from '../components/LibraryTransfer.svelte';
   import { retainRecordPage } from '../recordRetention';
   import { recordProjects } from '../recordPersistence';
+  import { recordContent } from '../recordContent';
   import { loadRecordCatalog } from '../recordCatalog';
   import type { Draft } from '../model';
   import type {
@@ -125,23 +126,21 @@
   async function createRecord() {
     busy = true;
     try {
-      let data: RecordData = { ...(selectedRecord?.data ?? {}), name: recordName.trim() };
+      let data: RecordData = {
+        ...recordContent(recordKind, selectedRecord?.data ?? null, {
+          draft: $state.snapshot(draft),
+          selectedArtifactId: selected?.id,
+          activeJobIds: activeJobs.map((job) => job.id),
+          layout: $state.snapshot(layout),
+        }),
+        name: recordName.trim(),
+      };
       data.project_ids = recordKind === 'projects' ? [] : membership;
       if (!data.name) throw new Error('Enter a record name.');
-      if (recordKind === 'presets') data.draft = $state.snapshot(draft);
-      else if (recordKind === 'sessions')
-        data = {
-          ...data,
-          draft: $state.snapshot(draft),
-          selected_artifact_id: selected?.id,
-          active_job_ids: activeJobs.map((j) => j.id),
-          layout,
-        };
-      else if (recordKind === 'workflows') data.workflow = draft.workflow ?? undefined;
-      else if (recordKind === 'styles')
+      if (recordKind === 'styles')
         data = { ...data, prompt: recordText, negative_prompt: negativeText, mode: styleMode };
       else if (recordKind === 'experiments') data = { ...data, notes: recordText, grid_id: gridId };
-      else data.notes = recordText;
+      else if (recordKind === 'projects') data.notes = recordText;
       await saveRecord(recordKind, data, selectedRecord?.id, selectedRecord?.revision ?? 0);
       await load();
       selectedRecord = null;
@@ -185,6 +184,7 @@
     {#each kinds as kind}<button
         disabled={busy}
         class:active={recordKind === kind}
+        aria-pressed={recordKind === kind}
         onclick={() => {
           recordKind = kind;
           selectedRecord = null;
@@ -247,14 +247,19 @@
       <h2>{selectedRecord ? 'Update record' : 'Save a record'}</h2>
       <label for="record-name">Name</label><input
         id="record-name"
+        disabled={busy}
         bind:value={recordName}
       />{#if ['projects', 'styles', 'experiments'].includes(recordKind)}<label for="record-text"
           >{recordKind === 'styles' ? 'Prompt text to append' : 'Notes'}</label
-        ><textarea id="record-text" rows="6" bind:value={recordText}></textarea>{/if}
+        ><textarea id="record-text" rows="6" disabled={busy} bind:value={recordText}
+        ></textarea>{/if}
       {#if recordKind === 'styles'}
-        <label>Negative prompt<textarea rows="3" bind:value={negativeText}></textarea></label>
         <label
-          >Style mode<select bind:value={styleMode}
+          >Negative prompt<textarea rows="3" disabled={busy} bind:value={negativeText}
+          ></textarea></label
+        >
+        <label
+          >Style mode<select disabled={busy} bind:value={styleMode}
             ><option value="append">Append</option><option value="template">Template</option
             ></select
           ></label
@@ -264,7 +269,7 @@
         </p>
       {/if}
       {#if recordKind === 'experiments'}<label
-          >Linked durable grid ID<input bind:value={gridId} /></label
+          >Linked durable grid ID<input disabled={busy} bind:value={gridId} /></label
         >
         <p class="muted">
           A local grid freezes its definition and observed outcomes on save. Imported definitions
@@ -273,6 +278,7 @@
       {#if recordKind !== 'projects'}<label
           >Project membership<select
             multiple
+            disabled={busy}
             bind:value={membership}
             aria-label="Record project membership"
             >{#each projectOptions as project}<option value={project.id}
@@ -284,17 +290,20 @@
           No selected project means a shared record. Membership does not move source assets.
         </p>{/if}
       <p class="muted">
-        {recordKind === 'presets'
-          ? 'Saves the complete current generation draft. Loading replaces its fields and supports undo.'
-          : recordKind === 'sessions'
-            ? 'Saves the draft, selected output, active job references and panel layout. Jobs are reconciled before control actions.'
-            : recordKind === 'workflows'
-              ? 'Saves the original workflow and Studio display configuration.'
-              : 'Records are owned by this companion and use revision checks to prevent stale writes.'}
+        {selectedRecord && ['presets', 'sessions', 'workflows'].includes(recordKind)
+          ? 'Editing the name and membership preserves this record’s saved content. Save a new record to capture the current workspace.'
+          : recordKind === 'presets'
+            ? 'Saves the complete current generation draft. Loading replaces its fields and supports undo.'
+            : recordKind === 'sessions'
+              ? 'Saves the draft, selected output, active job references and panel layout. Jobs are reconciled before control actions.'
+              : recordKind === 'workflows'
+                ? 'Saves the original workflow and Studio display configuration.'
+                : 'Records are owned by this companion and use revision checks to prevent stale writes.'}
       </p>
       <button class="primary" disabled={busy || !recordName.trim()} onclick={createRecord}
         >Save {recordKind}</button
       >{#if selectedRecord}<button
+          disabled={busy}
           onclick={() => {
             selectedRecord = null;
             recordName = '';

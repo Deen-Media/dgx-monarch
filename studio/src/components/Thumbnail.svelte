@@ -32,9 +32,16 @@
   });
 </script>
 
-{#if url}<img src={url} alt={artifact.filename} loading="lazy" decoding="async" />{:else}<span
-    >{artifact.kind === 'video' ? '▷' : '▧'}</span
-  ><small>{status}</small>{/if}
+{#if url}<img
+    src={url}
+    alt={artifact.filename}
+    loading="lazy"
+    decoding="async"
+    onerror={() => {
+      url = '';
+      status = 'Preview unavailable';
+    }}
+  />{:else}<span>{artifact.kind === 'video' ? '▷' : '▧'}</span><small>{status}</small>{/if}
 
 <style>
   img {

@@ -145,7 +145,11 @@ class Management:
                         tick["source_telemetry"] = poller.sample
                     except StudioError:
                         tick = poller.unknown_tick("driver_unavailable")
-                    line = (canonical(tick) + "\n").encode()
+                    # A valid final JSON record may omit its newline. Append
+                    # its separator together with the first new sample so the
+                    # byte budget and retained digest cover the exact write.
+                    separator = "\n" if index == 0 and prior and not prior.endswith(b"\n") else ""
+                    line = (separator + canonical(tick) + "\n").encode()
                     if size + len(line) > RECORD_BYTES:
                         break
                     if os.fstat(stream.fileno()).st_size != size:

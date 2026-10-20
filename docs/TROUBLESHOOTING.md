@@ -6060,3 +6060,10 @@ unbound draft databases bind on their first upgraded start; select the original
 origin then. If a preview reports a 4 MiB expansion limit, reduce the template or
 workflow payload. Grid expansion also has a combined 32 MiB budget. A rejected
 expansion does not partially save its cell previews.
+
+An unreadable saved request blocks its operation, grid or library import
+controls. Inspect the durable records and actual outcome before using the
+explicit clear action; removing an uncertain identity can otherwise permit a
+duplicate request. A recent-history warning does not mean the driver queue is
+offline: Studio continues displaying observed queue state and resolving known
+prompt identities while reducing oversized history windows.

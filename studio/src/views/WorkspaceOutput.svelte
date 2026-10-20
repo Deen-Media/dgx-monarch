@@ -44,6 +44,7 @@
 
 <div class="workspace-center">
   <Viewer
+    {activeCount}
     artifact={selected}
     compare={comparison}
     {client}
@@ -69,7 +70,7 @@
     </div>
   </div>
 </div>
-{#if showTelemetry}<aside class="telemetry-panel">
+{#if showTelemetry}<aside class="telemetry-panel" id="studio-telemetry">
     <div class="panel-title">
       <h2>Spark telemetry</h2>
       <button onclick={() => oncollapse()} aria-label="Collapse telemetry">×</button>

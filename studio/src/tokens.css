@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --bg: #111318;
   --surface: #181b22;
   --surface-raised: #222730;
@@ -17,4 +18,7 @@
   --memory-anonymous: #c084fc;
   --memory-other: #64748b;
   --memory-cache: #facc15;
+  --motion-fast: 140ms;
+  --motion-reveal: 200ms;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
 }

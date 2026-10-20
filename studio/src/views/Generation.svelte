@@ -106,7 +106,14 @@
       >Import JSON<input
         type="file"
         accept=".json,application/json"
-        onchange={(e) => void importWorkflow(e.currentTarget.files?.[0])}
+        onchange={async (event) => {
+          const input = event.currentTarget;
+          try {
+            await importWorkflow(input.files?.[0]);
+          } finally {
+            input.value = '';
+          }
+        }}
       /></label
     ><button
       disabled={!draft.workflow}
@@ -139,6 +146,7 @@
   <div class="tabs" aria-label="Generation sections">
     {#each [{ id: 'inputs', label: 'Inputs' }, { id: 'advanced', label: 'All inputs' }, { id: 'assets', label: 'Assets' }, { id: 'loras', label: 'LoRAs' }, { id: 'workflow', label: 'Layout' }] as tab}<button
         class:active={controlTab === tab.id}
+        aria-pressed={controlTab === tab.id}
         onclick={() => (controlTab = tab.id)}>{tab.label}</button
       >{/each}
   </div>

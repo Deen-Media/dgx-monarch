@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { restoreSession, validGrid } from '../sessionRecovery';
+  import RecoveryNotice from '../components/RecoveryNotice.svelte';
   import type { Binding, Draft } from '../model';
-  import { fieldLabel } from '../model';
   import { requireRecordIdentity, type StudioClient } from '../api';
   import GridCellDetails from '../components/GridCellDetails.svelte';
   import Viewer from '../components/Viewer.svelte';
-  import StyleAxisCatalog from '../components/StyleAxisCatalog.svelte';
+  import GridDefinition from '../components/GridDefinition.svelte';
+  import { GridReviewGuard } from '../gridReview';
   import ExperimentLibrary from '../components/ExperimentLibrary.svelte';
   import { experimentDefinition } from '../experimentRecords';
   import { submissionRefused } from '../submissionRefusal';
@@ -44,7 +46,8 @@
     retryKey = '',
     retryIndices = $state<number[]>([]);
   let loadGeneration = 0;
-  let dispatchPending = $state(false);
+  let dispatchPending = $state(false),
+    recoveryBlocked = $state(false);
   let retryPending = $state(false);
   let savedGrids = $state<Grid[]>([]),
     savedCursor = $state<string | null>(null),
@@ -52,9 +55,38 @@
     cellPage = $state(0),
     output = $state<Artifact | null>(null),
     compare = $state<Artifact | null>(null);
+  const mutationBlocked = $derived(recoveryBlocked || busy || dispatchPending || retryPending);
   const storage = 'dgxm.studio.grid.v1';
   const editable = $derived(bindings.filter((binding) => binding.resolved !== false));
+  const definition = $derived(
+    JSON.stringify({
+      draft,
+      axisA,
+      axisB,
+      valuesA,
+      valuesB,
+      seedPolicy,
+      seedBinding,
+      baseSeed,
+      excluded,
+    }),
+  );
+  const reviewGuard = new GridReviewGuard();
+  $effect(() => {
+    if (reviewGuard.invalidate(definition, dispatchPending) && preview) {
+      preview = null;
+      confirmed = false;
+      requestKey = '';
+      error = 'Grid definition changed. Validate every cell again before submission.';
+      try {
+        remember();
+      } catch (cause) {
+        fail(cause);
+      }
+    }
+  });
   function remember() {
+    if (recoveryBlocked) return;
     sessionStorage.setItem(
       storage,
       JSON.stringify({
@@ -72,7 +104,7 @@
     error = cause instanceof Error ? cause.message : String(cause);
   }
   async function loadExperiment(data: RecordData) {
-    if (dispatchPending || retryPending)
+    if (recoveryBlocked || dispatchPending || retryPending)
       throw new Error('Reconcile the pending grid dispatch before replacing its definition.');
     loadGeneration++;
     const saved = experimentDefinition(data);
@@ -95,7 +127,7 @@
     remember();
   }
   async function prepare() {
-    if (dispatchPending || retryPending) return;
+    if (recoveryBlocked || dispatchPending || retryPending) return;
     loadGeneration++;
     busy = true;
     error = '';
@@ -104,6 +136,7 @@
     grid = null;
     selected = [];
     cellPage = 0;
+    const requestedDefinition = definition;
     try {
       const axes = [{ name: axisA, values: JSON.parse(valuesA) }];
       if (axisB) axes.push({ name: axisB, values: JSON.parse(valuesB) });
@@ -112,13 +145,15 @@
         : [];
       if (exclusions.some((value) => !Number.isInteger(value) || value < 0))
         throw new Error('Excluded cell numbers must be positive integers.');
-      preview = await client.request<Grid>('/grids/preview?summary=true', {
+      const reviewed = await client.request<Grid>('/grids/preview?summary=true', {
         draft: { ...$state.snapshot(draft), seed_policy: 'fixed' },
         axes,
         seed_policy: seedPolicy,
         ...(seedPolicy !== 'fixed' ? { base_seed: baseSeed, seed_binding: seedBinding } : {}),
         excluded: exclusions,
       });
+      reviewGuard.accept(requestedDefinition, definition);
+      preview = reviewed;
       requestKey = crypto.randomUUID();
       remember();
     } catch (cause) {
@@ -128,7 +163,7 @@
     }
   }
   async function dispatch() {
-    if (!preview || !confirmed) return;
+    if (recoveryBlocked || !preview || !confirmed) return;
     loadGeneration++;
     busy = true;
     error = '';
@@ -184,7 +219,7 @@
     }
   }
   async function retry() {
-    if (!grid || (!retryPending && !selected.length)) return;
+    if (recoveryBlocked || !grid || (!retryPending && !selected.length)) return;
     loadGeneration++;
     busy = true;
     error = '';
@@ -249,19 +284,14 @@
   }
   onMount(() => {
     void loadSavedGrids();
-    try {
-      const saved = JSON.parse(sessionStorage.getItem(storage) ?? 'null');
-      if (saved) {
-        preview = gridIdentity(saved.preview);
-        grid = gridIdentity(saved.grid);
-        requestKey = saved.requestKey;
-        retryKey = saved.retryKey ?? '';
-        retryIndices = saved.retryIndices ?? [];
-        dispatchPending = saved.dispatchPending ?? false;
-        retryPending = saved.retryPending ?? !!saved.retryKey;
-      }
-    } catch {
-      error = 'Saved grid could not be restored. Load a durable grid ID.';
+    const restored = restoreSession(storage, validGrid);
+    recoveryBlocked = restored.blocked;
+    if (restored.value) {
+      const saved = restored.value;
+      preview = gridIdentity(saved.preview);
+      grid = gridIdentity(saved.grid);
+      ({ requestKey, retryKey, retryIndices, dispatchPending, retryPending } = saved);
+      if (preview) reviewGuard.restore(definition);
     }
     if (preview) {
       const id = preview.id,
@@ -299,88 +329,49 @@
     Each cell passes normal backend admission. Comfy's queue controls execution; Studio does not run
     a second scheduler. More cells increase total compute and memory residency time.
   </p>
+  {#if recoveryBlocked}<RecoveryNotice
+      storageKey={storage}
+      check="Load durable grid IDs and inspect Queue for accepted cells"
+      onclear={() => (recoveryBlocked = false)}
+    />{/if}
   <ExperimentLibrary
     {client}
     projectId={draft.project_id}
     gridId={grid?.id}
-    disabled={busy || dispatchPending || retryPending}
+    disabled={mutationBlocked}
     onload={loadExperiment}
     onresume={async (id) => {
       cellPage = 0;
       await refresh(id);
     }}
   />
-  <div class="operation-grid">
-    <div class="surface">
-      <h3>Axis A</h3>
-      <select bind:value={axisA} aria-label="First grid axis"
-        ><option value="">Choose a typed input</option><option value="styles"
-          >Named style stack</option
-        >{#each editable as binding}<option value={binding.id}>{fieldLabel(binding)}</option
-          >{/each}</select
-      ><label>Values as JSON array<textarea bind:value={valuesA} rows="3"></textarea></label>
-    </div>
-    <div class="surface">
-      <h3>Axis B (optional)</h3>
-      <select bind:value={axisB} aria-label="Second grid axis"
-        ><option value="">No second axis</option><option value="styles">Named style stack</option
-        >{#each editable as binding}<option value={binding.id}>{fieldLabel(binding)}</option
-          >{/each}</select
-      ><label>Values as JSON array<textarea bind:value={valuesB} rows="3"></textarea></label>
-    </div>
-  </div>
-  <StyleAxisCatalog
+  <GridDefinition
     {client}
-    onchoose={(axis, id) => {
-      if (axis === 'A') {
-        axisA = 'styles';
-        valuesA = JSON.stringify([[id]]);
-      } else {
-        axisB = 'styles';
-        valuesB = JSON.stringify([[id]]);
-      }
-    }}
+    {editable}
+    bind:axisA
+    bind:axisB
+    bind:valuesA
+    bind:valuesB
+    bind:seedPolicy
+    bind:seedBinding
+    bind:baseSeed
+    bind:excluded
   />
-  <div class="filter-bar">
-    <label
-      >Seed policy<select bind:value={seedPolicy}
-        ><option value="fixed">Fixed draft seeds (no randomization)</option><option
-          value="increment">Increment explicit seed per cell</option
-        ></select
-      ></label
-    >
-    {#if savedCursor}<button disabled={savedLoading} onclick={loadSavedGrids}
-        >{savedGrids.length >= 2000 ? 'Next saved-grid window' : 'Load more saved grids'}</button
-      >{/if}
-    {#if seedPolicy === 'increment'}<label
-        >Seed binding<select bind:value={seedBinding}
-          ><option value="">Choose seed input</option
-          >{#each editable.filter( (binding) => ['seed', 'noise_seed'].includes(binding.input_name ?? '') ) as binding}<option
-              value={binding.id}>{fieldLabel(binding)}</option
-            >{/each}</select
-        ></label
-      ><label>Base seed<input type="number" min="0" step="1" bind:value={baseSeed} /></label>{/if}
-    <label
-      >Exclude cell numbers (comma separated)<input
-        bind:value={excluded}
-        placeholder="Example: 2,5"
-      /></label
-    >
-  </div>
+  {#if savedCursor}<button disabled={savedLoading} onclick={loadSavedGrids}
+      >{savedGrids.length >= 2000 ? 'Next saved-grid window' : 'Load more saved grids'}</button
+    >{/if}
   <p>
     Execution target and topology are inherited from the active workflow and shown in each cell's
     backend preview. Maximum 1,024 cells.
   </p>
-  <button
-    class="primary"
-    disabled={busy || dispatchPending || retryPending || !draft.workflow || !axisA}
-    onclick={prepare}>{busy ? 'Working…' : 'Validate every cell'}</button
+  <button class="primary" disabled={mutationBlocked || !draft.workflow || !axisA} onclick={prepare}
+    >{busy ? 'Working…' : 'Validate every cell'}</button
   >
   {#if error}<p class="error" role="alert">{error}</p>
-    <p class="muted">
-      An uncertain dispatch retains its request ID. Retry the same action to reconcile; do not
-      create a new preview merely to retry transport.
-    </p>{/if}
+    {#if dispatchPending || retryPending}<p class="muted">
+        An uncertain dispatch retains its request ID. Retry the same action to reconcile; do not
+        create a new preview merely to retry transport.
+      </p>{/if}{/if}
   {#if dispatchPending}<p role="status">
       Grid dispatch outcome is pending. Retry the same reviewed grid to reconcile its retained
       request identity.
@@ -403,8 +394,10 @@
         ><input type="checkbox" bind:checked={confirmed} /> I reviewed the cells, exclusions, seed policy
         and execution cost.</label
       >
-      <button class="primary" disabled={busy || !confirmed || !preview.ready} onclick={dispatch}
-        >Submit reviewed grid</button
+      <button
+        class="primary"
+        disabled={recoveryBlocked || busy || !confirmed || !preview.ready}
+        onclick={dispatch}>Submit reviewed grid</button
       >
       <button onclick={() => void exportGrid(preview!, true)}>Export complete preview</button>
     </div>{/if}
@@ -412,6 +405,7 @@
     <label
       >Saved experiments<select
         value=""
+        disabled={busy || dispatchPending || retryPending}
         onchange={(event) => {
           resumeId = event.currentTarget.value;
           cellPage = 0;
@@ -431,7 +425,9 @@
       <h2>Grid {grid.id} · {grid.state}</h2>
       <button onclick={() => void refresh()}>Refresh status</button><button
         onclick={() => void exportGrid(grid!)}>Export manifest and outcomes</button
-      ><button disabled={busy || (!retryPending && !selected.length)} onclick={retry}
+      ><button
+        disabled={recoveryBlocked || busy || (!retryPending && !selected.length)}
+        onclick={retry}
         >{retryPending
           ? 'Reconcile retained retry'
           : `Retry ${selected.length} selected failed/cancelled cells`}</button

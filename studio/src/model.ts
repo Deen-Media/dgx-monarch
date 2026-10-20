@@ -163,10 +163,53 @@ export function restoreDraft(value: unknown): Draft {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new Error('Invalid draft record.');
   const source = value as Partial<Draft>;
+  const object = (entry: unknown): entry is Record<string, unknown> =>
+    entry !== null && typeof entry === 'object' && !Array.isArray(entry);
+  const invalid = (field: string): never => {
+    throw new Error(`Invalid draft ${field}.`);
+  };
+  for (const field of ['workflowName', 'operation', 'project_id', 'seed_policy'] as const)
+    if (source[field] !== undefined && typeof source[field] !== 'string') invalid(field);
+  if (source.workflow !== undefined && source.workflow !== null && !object(source.workflow))
+    invalid('workflow');
+  for (const field of ['styles', 'lora_stack'] as const)
+    if (Array.isArray(source[field]) && source[field]!.some((entry) => !object(entry)))
+      invalid(field);
+  if (
+    Array.isArray(source.parent_artifact_ids) &&
+    source.parent_artifact_ids.some((id) => typeof id !== 'string')
+  )
+    invalid('parent_artifact_ids');
+  if (
+    source.style_bindings !== undefined &&
+    (!object(source.style_bindings) ||
+      Object.values(source.style_bindings).some((entry) => typeof entry !== 'string'))
+  )
+    invalid('style_bindings');
+  let insertion = source.lora_insertion ?? undefined;
+  if (insertion !== undefined) {
+    if (!object(insertion) || typeof insertion.loader !== 'string') invalid('lora_insertion');
+    insertion = { ...insertion };
+    for (const field of ['model_targets', 'clip_targets'] as const) {
+      const targets = insertion[field] ?? [];
+      if (
+        !Array.isArray(targets) ||
+        targets.some(
+          (entry) =>
+            !object(entry) ||
+            typeof entry.node_id !== 'string' ||
+            typeof entry.input_name !== 'string',
+        )
+      )
+        invalid(`lora_insertion.${field}`);
+      insertion[field] = targets;
+    }
+  }
   return {
     ...emptyDraft(),
     ...source,
-    values: source.values && typeof source.values === 'object' ? source.values : {},
+    ...(source.lora_insertion !== undefined ? { lora_insertion: insertion } : {}),
+    values: object(source.values) ? source.values : {},
     lora_stack: Array.isArray(source.lora_stack) ? source.lora_stack : [],
     styles: Array.isArray(source.styles) ? source.styles : [],
     parent_artifact_ids: Array.isArray(source.parent_artifact_ids)

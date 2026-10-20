@@ -47,6 +47,24 @@ function setup() {
   submission.confirmed = true;
   return { submission, connection, store };
 }
+test('clearing unreadable request remains visibly blocked when storage removal fails', () => {
+  const { submission, store } = setup();
+  store.set('dgxm.studio.pending', '{');
+  submission.recoveryError = 'Unreadable request';
+  sessionStorage.removeItem = () => {
+    throw new Error('Storage denied');
+  };
+  assert.doesNotThrow(() => submission.clearUnreadableRequest());
+  assert.match(submission.recoveryError, /remain blocked/);
+  assert.equal(store.get('dgxm.studio.pending'), '{');
+  assert.throws(() => submission.review({ id: 'next' }), /remain blocked/);
+  sessionStorage.removeItem = (key) => {
+    store.delete(key);
+  };
+  submission.clearUnreadableRequest();
+  assert.equal(submission.recoveryError, '');
+  assert.equal(store.has('dgxm.studio.pending'), false);
+});
 for (const code of ['preview_expired', 'schema_changed']) {
   test(`a definitive ${code} refusal allows a fresh reviewed submission`, async () => {
     const { submission, connection, store } = setup();

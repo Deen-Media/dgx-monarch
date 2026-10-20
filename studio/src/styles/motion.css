@@ -1,0 +1,68 @@
+/* Keep motion presentational: actions and focus never wait for an animation. */
+dialog[open] {
+  animation: dialog-reveal var(--motion-reveal) var(--ease-out);
+}
+dialog[open]::backdrop {
+  animation: surface-reveal var(--motion-reveal) ease-out;
+}
+.metadata-panel,
+.console-panel,
+.telemetry-panel {
+  animation: surface-reveal var(--motion-reveal) ease-out;
+}
+@keyframes dialog-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes surface-reveal {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+@keyframes generation-activity {
+  0%,
+  100% {
+    opacity: 0.3;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+
+/* Native disclosure behavior remains the fallback in other browsers.
+   https://developer.chrome.com/blog/styling-details */
+@supports (interpolate-size: allow-keywords) and selector(details::details-content) {
+  details {
+    interpolate-size: allow-keywords;
+  }
+  details::details-content {
+    block-size: 0;
+    overflow: clip;
+    opacity: 0;
+    transition:
+      block-size var(--motion-reveal) var(--ease-out),
+      opacity var(--motion-fast) ease-out,
+      content-visibility var(--motion-reveal) allow-discrete;
+  }
+  details[open]::details-content {
+    block-size: auto;
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  details::details-content,
+  dialog::backdrop {
+    animation: none !important;
+    transition: none !important;
+  }
+}

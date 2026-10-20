@@ -52,6 +52,13 @@
     <span>Connection stale. Last sample {connection.lastSeen || 'unknown'}. {connection.error}</span
     ><button onclick={() => void connect()}>Reconnect</button>
   </div>{/if}
+{#if connection.connected && connection.snapshot.driver?.history?.state === 'unavailable'}<div
+    class="notice warning"
+    role="status"
+  >
+    Recent driver history is unavailable. Queue observations and saved records remain visible;
+    completion and new output discovery may be delayed.
+  </div>{/if}
 {#if submission.pending}<div class="notice warning" role="alert">
     <span>A submission has an unresolved outcome. Its request identity is retained.</span><button
       disabled={busy}

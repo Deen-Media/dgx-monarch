@@ -312,7 +312,7 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
             bindings.append({"id": unresolved_id, "source_identity": identity, "graph_id": None,
                              "node_id": None, "input_name": name, "label": name or "Unresolved input",
                              "order": index, "prominent": True, "config": config, "schema": None,
-                             "value": None, "resolved": False, "reason": str(exc)})
+                             "value": None, "resolved": False, "requires_resolution": True, "reason": str(exc)})
     for binding in bindings:
         display = overrides.get(binding["id"], {})
         for field in ("label", "group", "order", "prominent"):
@@ -348,7 +348,8 @@ def compile_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
     inspection = inspect_workflow(workflow, object_info)
     # Compilation validates the resulting values. Existing invalid defaults may be
     # repaired by explicit edits; unresolved selected identities cannot be skipped.
-    unresolved = [item for item in inspection["bindings"] if item["prominent"] and not item["resolved"]]
+    unresolved = [item for item in inspection["bindings"]
+                  if not item["resolved"] and (item.get("requires_resolution") or item["prominent"])]
     if unresolved or any(not item["resolved"] for item in inspection["outputs"]):
         raise WorkflowError("Resolve App Mode bindings before submission")
     editable = {key for item in inspection["bindings"] if item["resolved"] for key in (item["id"], *item.get("aliases", []))}

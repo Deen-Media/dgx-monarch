@@ -1,6 +1,6 @@
 # Studio measurement record
 
-Date: 2026-10-19. Status: partial engineering measurements; performance
+Asset sizes updated: 2026-10-20. Status: partial engineering measurements; performance
 acceptance remains **NOT RUN**.
 
 ## Packaged asset sizes
@@ -11,8 +11,8 @@ not JavaScript execution, browser responsiveness or Spark overhead.
 
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
-| `index-BVIZXrRA.css` | 27,287 | 6,855 |
-| `index-0CNLMZcn.js` | 198,107 | 68,747 |
+| `index-DSKZGroL.css` | 30,825 | 7,621 |
+| `index-Di414Qjj.js` | 209,224 | 72,504 |
 
 ## CPU observer microbenchmark
 
@@ -91,6 +91,10 @@ checks against the synthetic fixture for workflow import, generation
 review/submission, a two-cell grid, durable results, thumbnail gallery and image
 viewer. These checks do not establish video, accessibility or long-session
 performance acceptance.
+
+The [interface QA record](STUDIO_INTERFACE_QA.md) adds scoped responsive,
+image geometry, video controls and reduced-motion checks. Its short disclosure
+animation sample is interaction evidence, not a sustained performance budget.
 
 A release report must record exact source, driver, model, workflow, topology,
 client hardware/browser and baseline variance. Measure wall time, host CPU/GPU,

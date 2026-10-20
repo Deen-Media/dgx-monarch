@@ -13,6 +13,10 @@ evidence of source coverage, not proof of a working Studio operation.
 The [measurement record](STUDIO_PERFORMANCE.md) separates packaged asset sizes
 from unperformed host and browser performance acceptance.
 
+The [interface QA record](STUDIO_INTERFACE_QA.md) distinguishes control-source
+inspection from browser checks, including phone and tablet viewport layouts.
+Physical-device and comprehensive accessibility acceptance remain open.
+
 ## Install and start
 
 Follow [the existing installation procedure](INSTALL.md) with the `studio`
@@ -62,12 +66,36 @@ mappings. Inventory validation rejects missing mappings and mismatched
 advertised defaults or choices. Live availability still depends on the
 selected configuration, permissions and backend guards.
 
+## Workspace controls and media
+
+Use the navigation rail or Ctrl/Cmd+K to open a view. The command palette takes
+keyboard focus immediately; Tab chooses a result and Enter opens it. Escape
+closes dialogs or leaves presentation mode. Project selectors include the full
+bounded project catalog, including projects outside the recent snapshot.
+
+Phone layouts use a scrolling bottom navigation rail, larger touch controls and
+stacked panels. Expanded viewer details remain reachable without clipping the
+output area. Dialogs and disclosures use short transitions; generation adds a
+subtle activity border around the viewer. Reduced-motion preferences disable
+these animations and the activity logo.
+
+Image previews retain their source proportions across portrait, landscape and
+extreme aspect ratios. The mask canvas follows the displayed source bounds, so
+painted positions map to the uploaded mask. Video frame controls wait for valid
+metadata; native playback, mute and loop controls remain available. The
+[interface QA record](STUDIO_INTERFACE_QA.md) describes the tested fixtures and
+browser viewports without extending those results to every device or codec.
+
 ## Working with workflows
 
 Choose one of the 66 packaged workflows or import a ComfyUI UI workflow/API
 prompt. Supported inputs appear as typed controls; connected inputs remain
 graph connections. The advanced view exposes all supported primitive fields.
 App Mode labels and layout can change without changing binding identity.
+Layout edits also update the workflow repair text. Validating unchanged source
+preserves edits made in typed controls; intentional JSON changes use the edited
+workflow's defaults. Multiline fields retain line breaks, and import controls
+allow selecting the same file again after a success or error.
 
 Compilation preserves the original workflow and extension metadata. Unknown
 widgets, ambiguous bindings and unsupported graph constructs refuse execution
@@ -109,6 +137,8 @@ explicit seed binding and base value. Invalid cells remain visible and block
 dispatch until corrected or explicitly excluded. Each accepted cell has its
 own immutable submission and outcome, with selective failed/cancelled retries
 through the existing ComfyUI queue.
+Changing a grid definition invalidates its reviewed preview and confirmation;
+validate the edited cells again before submission.
 
 ## Runtime evidence
 
@@ -181,6 +211,9 @@ records retain unknown metadata. Durable jobs and operation receipts are not
 silently deleted. Expired previews can be recreated; review a new preview after
 capabilities change.
 
+Renaming a saved preset, session or workflow, or changing its membership,
+preserves its saved content. Save a new record to capture the current workspace.
+
 Saved records support explicit project memberships and project filtering;
 artifact memberships have their own revision checks. A record can be shared
 across projects without moving its source assets. Portable library export
@@ -206,6 +239,9 @@ key; never invent a new key and resubmit an uncertain job. The companion
 reconciles its submissions and other interfaces' jobs from driver queue and
 history snapshots. External jobs contain only provenance the driver supplied.
 Driver history eviction can leave an old unknown outcome unresolved.
+The adapter reduces its recent-history window when the response exceeds the
+4 MiB budget and also queries missing known prompts individually. A history
+failure shows a warning while successful queue observations remain available.
 
 Events have durable cursors and server timestamps. A replay gap requires a new
 snapshot. Terminal job state never regresses; a late submission response cannot
@@ -246,6 +282,16 @@ Definitive pre-acceptance refusals release pending review controls. Incomplete
 or malformed acknowledgements, authentication failures and transport timeouts
 retain the exact request identity for reconciliation. Corrupt optional draft or
 layout storage cannot clear that protection.
+Unreadable saved operation, grid or import identities block new requests until
+the user checks durable records and explicitly clears the unreadable entry.
+Storage access failures leave authentication available in memory, but requests
+requiring a saved recovery identity remain blocked. Malformed imported draft
+controls are rejected before replacing the working draft.
+
+Snapshot refreshes preserve the event replay cursor so bursts spanning several
+pages reach the console. Evicted replay gaps are labelled explicitly. Media
+decoding failures retain a download action, and frame stepping waits for valid
+duration and frame-rate metadata.
 
 ## Development
 

@@ -54,13 +54,16 @@
           type="file"
           accept=".json"
           onchange={async (e) => {
+            const input = e.currentTarget;
             try {
-              const file = e.currentTarget.files?.[0];
+              const file = input.files?.[0];
               if (!file) return;
               if (file.size > 8 * 1024 * 1024) throw new Error('Draft exceeds 8 MiB.');
               await onimport(restoreDraft(JSON.parse(await file.text())));
             } catch (error) {
               fail(error);
+            } finally {
+              input.value = '';
             }
           }}
         /></label

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { encodeMaskAlpha } from '../mask';
+  import { encodeMaskAlpha, maskGeometry, maskPoint } from '../mask';
   import { onDestroy } from 'svelte';
   import type { StudioClient } from '../api';
   import type { Binding, Draft } from '../model';
@@ -32,6 +32,7 @@
   let receipt = $state<{ id: string; width: number; height: number; binding_value: string } | null>(
     null,
   );
+  const geometry = $derived(maskGeometry(width, height));
   const limit = 2 * 1024 * 1024;
   const choices = $derived(
     bindings.filter((b) => b.resolved !== false && ['STRING', 'COMBO'].includes(bindingType(b))),
@@ -50,6 +51,11 @@
     name = '';
     receipt = null;
     clear();
+  }
+  function dimensionsChanged() {
+    sourceGeneration++;
+    receipt = null;
+    previous = null;
   }
   async function replace(next: File | undefined) {
     if (!next) return;
@@ -86,8 +92,9 @@
     if (!drawing) return;
     sourceGeneration++;
     const rect = canvas.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) * canvas.width) / rect.width;
-    const y = ((event.clientY - rect.top) * canvas.height) / rect.height;
+    const point = maskPoint(event.clientX, event.clientY, rect, canvas.width, canvas.height);
+    if (!point) return;
+    const { x, y } = point;
     const context = canvas.getContext('2d');
     if (!context) return;
     context.globalCompositeOperation = erase ? 'destination-out' : 'source-over';
@@ -133,6 +140,7 @@
       originalWidth = width,
       originalHeight = height;
     try {
+      if (!geometry.valid) throw new Error('Enter whole dimensions between 1 and 4096 pixels.');
       const blob = originalMode === 'mask' ? await maskBlob() : file;
       if (!blob) throw new Error('Choose an input image first.');
       if (!originalTarget) throw new Error('Choose the actual workflow input binding.');
@@ -215,7 +223,11 @@
     >{source ? 'Replace source image' : 'Choose source image'}<input
       type="file"
       accept="image/png,image/jpeg,image/webp"
-      onchange={(event) => void replace(event.currentTarget.files?.[0])}
+      onchange={(event) => {
+        const selected = event.currentTarget.files?.[0];
+        event.currentTarget.value = '';
+        void replace(selected);
+      }}
     /></label
   >
   <button onclick={reset}>Clear editor</button>
@@ -228,8 +240,26 @@
   </p>
   {#if mode === 'mask'}
     <div class="input-row">
-      <label>Width<input type="number" min="1" max="4096" bind:value={width} /></label><label
-        >Height<input type="number" min="1" max="4096" bind:value={height} /></label
+      <label
+        >Width<input
+          type="number"
+          min="1"
+          max="4096"
+          step="1"
+          disabled={!!source}
+          bind:value={width}
+          oninput={dimensionsChanged}
+        /></label
+      ><label
+        >Height<input
+          type="number"
+          min="1"
+          max="4096"
+          step="1"
+          disabled={!!source}
+          bind:value={height}
+          oninput={dimensionsChanged}
+        /></label
       >
     </div>
     <label
@@ -250,15 +280,25 @@
     >
     <p class="muted">
       Green marks the masked region. Uploaded PNG uses transparent alpha for masked pixels (Comfy
-      LoadImage mask output). Changing dimensions clears paint.
+      LoadImage mask output). {source
+        ? 'Mask dimensions match the source image. Clear the editor to create a different canvas.'
+        : 'Changing blank-canvas dimensions clears paint.'}
     </p>
   {/if}
-  <div class="canvas-wrap" style:aspect-ratio={`${width}/${height}`}>
+  <p class="muted">
+    The complete image is centered and scaled to fit for editing. Upload preserves its pixel
+    dimensions; this editor does not crop or stretch the source.
+  </p>
+  <div
+    class="canvas-wrap"
+    style:aspect-ratio={`${geometry.width}/${geometry.height}`}
+    style:max-width={`${geometry.maxStageWidth}px`}
+  >
     {#if source}<img src={source} alt="Actual source selected for upload" />{/if}
     {#if mode === 'mask'}<canvas
         bind:this={canvas}
-        width={Math.min(4096, Math.max(1, width || 1))}
-        height={Math.min(4096, Math.max(1, height || 1))}
+        width={geometry.width}
+        height={geometry.height}
         aria-label="Paint mask with pointer; Mask all and Clear mask buttons are keyboard accessible"
         onpointerdown={(event) => {
           drawing = true;
@@ -271,8 +311,13 @@
         onpointercancel={() => (drawing = false)}
       ></canvas>{/if}
   </div>
-  <button class="primary" disabled={busy || !target || (mode === 'input' && !file)} onclick={upload}
-    >{busy ? 'Uploading…' : 'Upload and bind asset'}</button
+  {#if !geometry.valid}<p class="error" role="alert">
+      Enter whole dimensions between 1 and 4096 pixels.
+    </p>{/if}
+  <button
+    class="primary"
+    disabled={busy || !geometry.valid || !target || (mode === 'input' && !file)}
+    onclick={upload}>{busy ? 'Uploading…' : 'Upload and bind asset'}</button
   >
   {#if receipt}<p role="status">
       Submitted asset: {receipt.binding_value} · {receipt.width} × {receipt.height} · ID {receipt.id}
@@ -297,7 +342,7 @@
   .canvas-wrap {
     position: relative;
     width: 100%;
-    max-height: 460px;
+    margin-inline: auto;
     overflow: hidden;
     background: repeating-conic-gradient(#333 0% 25%, #20242a 0% 50%) 50% / 20px 20px;
   }
@@ -307,7 +352,7 @@
     inset: 0;
     width: 100%;
     height: 100%;
-    object-fit: fill;
+    object-fit: contain;
   }
   .canvas-wrap canvas {
     opacity: 0.6;

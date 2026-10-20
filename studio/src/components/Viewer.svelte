@@ -4,15 +4,18 @@
   import type { Artifact, ReuseArtifact } from '../contracts';
   import ComparisonDetails from './ComparisonDetails.svelte';
   import { displayUnknown } from '../model';
+  import { frameTarget } from '../mediaPlayback';
   let {
     artifact = null,
     compare = null,
+    activeCount = 0,
     client,
     onreuse,
     onselect,
   }: {
     artifact?: Artifact | null;
     compare?: Artifact | null;
+    activeCount?: number;
     client: StudioClient;
     onreuse: ReuseArtifact;
     onselect: (a: Artifact | null) => void;
@@ -27,12 +30,14 @@
     comparison = $state('side');
   let metadata = $state(false),
     viewport: HTMLDivElement;
+  let mediaDuration = $state(NaN);
   let video = $state<HTMLVideoElement>(),
     secondVideo = $state<HTMLVideoElement>();
   let muted = $state(true),
     loop = $state(true),
     sync = $state(false);
   let frameRate = $derived(artifact?.metadata?.frame_rate ?? artifact?.metadata?.fps);
+  let canStep = $derived(frameTarget(0, mediaDuration, frameRate, 1) !== null);
   const mediaKey = $derived(
     JSON.stringify([
       artifact?.id,
@@ -57,6 +62,7 @@
     url = '';
     compareUrl = '';
     error = '';
+    mediaDuration = NaN;
     zoom = 1;
     mode = 'fit';
     if (selected?.kind === 'video' || secondary?.kind === 'video') comparison = 'side';
@@ -108,13 +114,15 @@
     else if (secondVideo.paused) void secondVideo.play().catch(() => {});
   }
   function stepFrame(direction: number) {
-    if (!video || !frameRate) return;
+    if (!video) return;
+    const target = frameTarget(video.currentTime, video.duration, frameRate, direction);
+    if (target === null) return;
     video.pause();
-    video.currentTime = Math.max(
-      0,
-      Math.min(video.duration, video.currentTime + direction / frameRate),
-    );
+    video.currentTime = target;
     syncPlayback();
+  }
+  function decodeError(comparing = false) {
+    error = `${comparing ? 'Comparison media' : 'Selected media'} cannot be decoded by this browser. Download the file to inspect it or open it in a compatible viewer.`;
   }
   $effect(() => {
     if (sync) syncPlayback();
@@ -129,12 +137,19 @@
         {compare ? 'Compare results' : artifact ? artifact.filename : 'A space for your next idea'}
       </h2>
     </div>
-    <span class="tag">{artifact ? (artifact.kind ?? 'artifact') : 'No output selected'}</span>
+    <span class="tag" class:lime={activeCount > 0} role="status"
+      >{activeCount
+        ? `${activeCount} active ${activeCount === 1 ? 'job' : 'jobs'}`
+        : artifact
+          ? (artifact.kind ?? 'artifact')
+          : 'No output selected'}</span
+    >
   </div>
   <div class="viewer-toolbar" aria-label="Viewer controls">
     <button
       disabled={!url}
       class:active={mode === 'fit'}
+      aria-pressed={mode === 'fit'}
       onclick={() => {
         mode = 'fit';
         zoom = 1;
@@ -143,6 +158,7 @@
     <button
       disabled={!url}
       class:active={mode === 'actual'}
+      aria-pressed={mode === 'actual'}
       onclick={() => {
         mode = 'actual';
         zoom = 1;
@@ -166,120 +182,135 @@
       aria-label="Zoom in">+</button
     >
     <button disabled={!url} onclick={fullscreen}>Fullscreen</button>
-    <button disabled={!artifact} class:active={metadata} onclick={() => (metadata = !metadata)}
-      >Details</button
+    <button
+      disabled={!artifact}
+      class:active={metadata}
+      aria-expanded={metadata}
+      aria-controls="media-metadata"
+      onclick={() => (metadata = !metadata)}>Details</button
     >
     {#if url && artifact}<a class="button" href={url} download={artifact.filename ?? artifact.id}
         >Download</a
       >{/if}
   </div>
-  <!-- svelte-ignore a11y_no_noninteractive_tabindex (the scrollable viewport supports keyboard panning) -->
-  <div
-    class="viewport"
-    bind:this={viewport}
-    class:empty={!artifact}
-    class:actual={mode === 'actual'}
-    role="region"
-    aria-label="Output image or video"
-    tabindex="0"
-    onpointerdown={(e) => {
-      if (mode !== 'actual' || (e.target as HTMLElement).tagName === 'VIDEO') return;
-      pan = {
-        x: e.clientX,
-        y: e.clientY,
-        left: viewport.scrollLeft,
-        top: viewport.scrollTop,
-        active: true,
-      };
-      viewport.setPointerCapture(e.pointerId);
-    }}
-    onpointermove={(e) => {
-      if (pan.active) {
-        viewport.scrollLeft = pan.left - (e.clientX - pan.x);
-        viewport.scrollTop = pan.top - (e.clientY - pan.y);
-      }
-    }}
-    onpointerup={() => (pan.active = false)}
-    onpointercancel={() => (pan.active = false)}
-  >
-    {#if !artifact}
-      <div class="empty-art">
-        <svg viewBox="0 0 120 100" aria-hidden="true"
-          ><path
-            d="M60 53C27 8 4 14 18 51c7 18 27 18 42 7C26 78 36 99 58 66M60 53c33-45 56-39 42-2-7 18-27 18-42 7 34 20 24 41 2 8"
-          /><path d="M60 46v29m0-28-6-9m6 9 6-9" /></svg
+  <div class="viewer-frame" class:working={activeCount > 0}>
+    <!-- svelte-ignore a11y_no_noninteractive_tabindex (the scrollable viewport supports keyboard panning) -->
+    <div
+      class="viewport"
+      bind:this={viewport}
+      class:empty={!artifact}
+      class:actual={mode === 'actual'}
+      role="region"
+      aria-label="Output image or video"
+      tabindex="0"
+      onpointerdown={(e) => {
+        if (mode !== 'actual' || (e.target as HTMLElement).tagName === 'VIDEO') return;
+        pan = {
+          x: e.clientX,
+          y: e.clientY,
+          left: viewport.scrollLeft,
+          top: viewport.scrollTop,
+          active: true,
+        };
+        viewport.setPointerCapture(e.pointerId);
+      }}
+      onpointermove={(e) => {
+        if (pan.active) {
+          viewport.scrollLeft = pan.left - (e.clientX - pan.x);
+          viewport.scrollTop = pan.top - (e.clientY - pan.y);
+        }
+      }}
+      onpointerup={() => (pan.active = false)}
+      onpointercancel={() => (pan.active = false)}
+    >
+      {#if !artifact}
+        <div class="empty-art">
+          <svg viewBox="0 0 120 100" aria-hidden="true"
+            ><path
+              d="M60 53C27 8 4 14 18 51c7 18 27 18 42 7C26 78 36 99 58 66M60 53c33-45 56-39 42-2-7 18-27 18-42 7 34 20 24 41 2 8"
+            /><path d="M60 46v29m0-28-6-9m6 9 6-9" /></svg
+          >
+          <h3>Make something remarkable.</h3>
+          <p>Choose a workflow, shape your inputs,<br />then review a submission to begin.</p>
+        </div>
+      {:else if loading}<p role="status" class="muted">Loading selected media…</p>
+      {:else if error}<p role="alert" class="error">{error}</p>
+      {:else if url}
+        <div
+          class="media-stage"
+          class:side={!!compareUrl && comparison === 'side'}
+          class:wipe={!!compareUrl && comparison === 'wipe'}
+          style:--zoom={zoom}
         >
-        <h3>Make something remarkable.</h3>
-        <p>Choose a workflow, shape your inputs,<br />then review a submission to begin.</p>
-      </div>
-    {:else if loading}<p role="status" class="muted">Loading selected media…</p>
-    {:else if error}<p role="alert" class="error">{error}</p>
-    {:else if url}
-      <div
-        class="media-stage"
-        class:side={!!compareUrl && comparison === 'side'}
-        class:wipe={!!compareUrl && comparison === 'wipe'}
-        style:--zoom={zoom}
-      >
-        {#if artifact.kind === 'video'}<video
-            bind:this={video}
-            src={url}
-            controls
-            {muted}
-            {loop}
-            onplay={syncPlayback}
-            onpause={syncPlayback}
-            onseeked={syncPlayback}
-            ontimeupdate={syncPlayback}
-            onratechange={syncPlayback}><track kind="captions" /></video
-          >
-        {:else}<img
-            src={url}
-            alt={artifact.filename ?? 'Selected generated output'}
-            draggable="false"
-          />{/if}
-        {#if compareUrl && compare}
-          <div
-            class="comparison-media"
-            style:clip-path={comparison === 'wipe' ? `inset(0 0 0 ${wipe}%)` : undefined}
-          >
-            {#if compare.kind === 'video'}<video
-                bind:this={secondVideo}
-                src={compareUrl}
-                controls
-                {muted}
-                {loop}><track kind="captions" /></video
-              >
-            {:else}<img
-                src={compareUrl}
-                alt={compare.filename ?? 'Comparison output'}
-                draggable="false"
-              />{/if}
-          </div>
-        {/if}
-      </div>
-    {/if}
+          {#if artifact.kind === 'video'}<video
+              bind:this={video}
+              src={url}
+              controls
+              {muted}
+              {loop}
+              onloadedmetadata={() => (mediaDuration = video?.duration ?? NaN)}
+              ondurationchange={() => (mediaDuration = video?.duration ?? NaN)}
+              onerror={() => decodeError()}
+              onplay={syncPlayback}
+              onpause={syncPlayback}
+              onseeked={syncPlayback}
+              ontimeupdate={syncPlayback}
+              onratechange={syncPlayback}><track kind="captions" /></video
+            >
+          {:else}<img
+              src={url}
+              alt={artifact.filename ?? 'Selected generated output'}
+              draggable="false"
+              onerror={() => decodeError()}
+            />{/if}
+          {#if compareUrl && compare}
+            <div
+              class="comparison-media"
+              style:clip-path={comparison === 'wipe' ? `inset(0 0 0 ${wipe}%)` : undefined}
+            >
+              {#if compare.kind === 'video'}<video
+                  bind:this={secondVideo}
+                  src={compareUrl}
+                  controls
+                  {muted}
+                  {loop}
+                  onerror={() => decodeError(true)}><track kind="captions" /></video
+                >
+              {:else}<img
+                  src={compareUrl}
+                  alt={compare.filename ?? 'Comparison output'}
+                  draggable="false"
+                  onerror={() => decodeError(true)}
+                />{/if}
+            </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
   </div>
   {#if compare}<div class="viewer-toolbar">
-      <button class:active={comparison === 'side'} onclick={() => (comparison = 'side')}
-        >Side by side</button
+      <button
+        class:active={comparison === 'side'}
+        aria-pressed={comparison === 'side'}
+        onclick={() => (comparison = 'side')}>Side by side</button
       ><button
         disabled={artifact?.kind === 'video' || compare?.kind === 'video'}
         class:active={comparison === 'wipe'}
+        aria-pressed={comparison === 'wipe'}
         onclick={() => (comparison = 'wipe')}>Image wipe</button
       >{#if comparison === 'wipe'}<label
           >Wipe <input type="range" min="0" max="100" bind:value={wipe} /></label
         >{/if}<button onclick={() => onselect(null)}>Exit comparison</button>
     </div>{/if}
   {#if artifact?.kind === 'video'}<div class="viewer-toolbar">
-      <button disabled={!frameRate} onclick={() => stepFrame(-1)}>Previous frame</button><button
-        disabled={!frameRate}
+      <button disabled={!canStep} onclick={() => stepFrame(-1)}>Previous frame</button><button
+        disabled={!canStep}
         onclick={() => stepFrame(1)}>Next frame</button
       >
       <small
-        >{frameRate
+        >{canStep
           ? `${frameRate} fps step`
-          : 'Frame rate unknown; use native seek controls'}</small
+          : 'Frame stepping needs valid duration and frame rate; use native seek controls'}</small
       >
       <label><input type="checkbox" bind:checked={muted} /> Mute</label><label
         ><input type="checkbox" bind:checked={loop} /> Loop</label
@@ -302,7 +333,7 @@
       </div>
     </div>{/if}
   {#if artifact && compare}<ComparisonDetails left={artifact} right={compare} {client} />{/if}
-  {#if metadata && artifact}<div class="metadata-panel">
+  {#if metadata && artifact}<div class="metadata-panel" id="media-metadata">
       <dl>
         <dt>Job</dt>
         <dd>{displayUnknown(artifact.job_id)}</dd>

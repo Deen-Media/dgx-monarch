@@ -126,7 +126,12 @@ export class Submission {
   }
 
   clearUnreadableRequest() {
-    sessionStorage.removeItem(PENDING_KEY);
-    this.recoveryError = '';
+    try {
+      sessionStorage.removeItem(PENDING_KEY);
+      this.recoveryError = '';
+    } catch {
+      this.recoveryError =
+        'The unreadable request could not be cleared from browser storage. New submissions remain blocked.';
+    }
   }
 }
