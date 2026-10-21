@@ -59,7 +59,8 @@ def test_declarations_match_the_spec():
     reason = adapter.sp_quant_refusal_reason
     for phrase in ("divisibility pad rows", "NVFP4", "adapters/mage_nvfp4_scale.py",
                    "fp8 weight_dtype cast", "unrecognized quantization format as fp8",
-                   "INT8 ConvRot, which quantizes each row on its own"):
+                   "INT8 ConvRot, which takes no statistic across rows",
+                   "every INT8 linear reaches that GEMM", "adapters/int8_linear_layout.py"):
         assert phrase in reason, phrase
     assert adapter.usp_pad_exclusion_probe is None
     assert adapter.cfg_pad_restores_stock_call is False

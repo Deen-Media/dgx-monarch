@@ -221,6 +221,9 @@ matrix reads the widgets of each Skip Layer Guidance (DGX Monarch) node on a
 sampler's or guider's model chain with the runtime's own test, so every cfg
 cell of a graph whose skip on that chain names a layer is predicted
 `refuse:P`. A node no sampler or guider reads its model from claims nothing.
+A cell that puts a LoRA on a MOSS-Image INT8 file is predicted `refuse:P` on
+every topology and in both sessions, as the driver refuses it
+([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
 
 ## 3. Adding a template
 

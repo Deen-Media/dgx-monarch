@@ -97,7 +97,7 @@ that match the tested configurations in its model details. See
 | Flux2 | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | FP8-mixed Ulysses and BF16 `uly2+fsdp` were compared with references. LoRA/FSDP rendered, but its reference ran out of memory. [Details](#model-flux2) · [Workflow](../example_workflows/dgx-monarch-flux2-t2i.json) |
 | FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. Before the fused-norm parity change, uly2 edits and uly2 text to image at 704 square or below differed from one GPU, up to one-step NRMS 0.117 for the NVFP4 edit; after it they are bit-identical in BF16 and NVFP4, confirmed on hardware on 2026-10-16. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
 | FLUX.3 Klein Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3.5, 25 steps, euler. cfg2 is measured, not the same math: bit-identical when the prompt encodes past one 80-row block; on a shorter prompt it stays within the one-step floor but full renders diverge, and auto never picks it. ring2 is measured, one-step NRMS 0.011 to 0.057, and padded ring needs a waiver. Edits use uly2 or single in BF16 and NVFP4: the NVFP4 edit read one-step NRMS 0.019 on uly2 before the fused-norm parity change, and uly2 edits are bit-identical to one GPU after it, confirmed on hardware on 2026-10-16. Same uly2, INT8, FSDP and LoRA notes as FLUX.3 Klein. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
-| MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | CFG 3, 50 steps, euler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 with stock's math by construction, and an equal-length pair is unmeasured. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin and matches only a pin-stripped one-GPU render. NVFP4 and an fp8 `weight_dtype` cast refuse on uly2, ring and cfg2. Padded ring needs a waiver. LoRA untested, on the BF16 and the INT8 files alike. The driver preflight does not price the 19.31 GB BF16 encoder. No hardware test has run yet. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
+| MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | CFG 3, 50 steps, euler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 with stock's math by construction, and an equal-length pair is unmeasured. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin and matches only a pin-stripped one-GPU render. NVFP4 and an fp8 `weight_dtype` cast refuse on uly2, ring and cfg2. Padded ring needs a waiver. A LoRA on the INT8 files refuses class P on every topology ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)); LoRA on the BF16 files is untested. The driver preflight does not price the 19.31 GB BF16 encoder. No hardware test has run yet. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
 | MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | CFG 3, 50 steps, euler, with the same layer-22 skip. Same cfg2, INT8, quantization, ring, LoRA and driver notes as MOSS-Image SFT. No hardware test has run yet. [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
 | Kromoss | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler, with the layer-22 skip, or 8 Euler steps at CFG 1 with a DMD LoRA, where cfg2 has nothing to split. Same cfg2, INT8, quantization, ring, LoRA and driver notes as MOSS-Image SFT. No hardware test has run yet. [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
@@ -649,8 +649,11 @@ skip off, MOSS-Image publishes its text as a regular condition, so ComfyUI
 runs a prompt and a negative of different lengths as two calls and cfg2
 gives each rank one, stock's math by construction; a pair of equal length
 batches into one call on one GPU and is unmeasured on cfg2. No hardware test
-covers a LoRA, on the BF16 or the INT8 files, and an INT8 file with a LoRA
-refuses FSDP. On 2026-10-20 ComfyUI's RoPE scaling options for MOSS-Image
+covers a LoRA on the BF16 files. An INT8 file with a LoRA refuses class P on
+every topology, before any weight moves: a cluster render of that pair read
+far from stock, and its cause is not yet known
+([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
+On 2026-10-20 ComfyUI's RoPE scaling options for MOSS-Image
 (commit b9b290e43) and its color and depth control (commit e3bee7ffc, the
 `MOSSImageControl` node) were on ComfyUI master only, in no release, and no
 shipped graph uses either. The control LoRA widens the model's input, so
@@ -763,9 +766,11 @@ vendor's diffusers recipe applies a LoRA unmerged and warns that merging it
 into BF16 weights loses part of the delta to rounding. ComfyUI merges it into
 the weights, and dgx-monarch bakes it with ComfyUI's own math, so a render on
 the pair is compared with stock ComfyUI, not with the unmerged pipeline. No
-hardware test covers either LoRA, on the BF16 or the INT8 file, although the
-vendor's card says the INT8 file works with them. LoRA on FSDP keeps the
-[shared FSDP rules](#fsdp-precision-and-residency).
+hardware test covers either LoRA on the BF16 file. The vendor's card says the
+INT8 file works with them, and stock ComfyUI on one GPU runs that pair, but
+dgx-monarch refuses a LoRA on the INT8 file on every topology
+([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
+LoRA on FSDP keeps the [shared FSDP rules](#fsdp-precision-and-residency).
 
 **Tested configurations.** No hardware test has run; the CPU and kernel tests
 listed for [MOSS-Image SFT](#model-moss-image-sft) cover the architecture

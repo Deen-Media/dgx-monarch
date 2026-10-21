@@ -431,7 +431,10 @@ read one-step NRMS 0.01 to 0.055 against one GPU for that reason alone. The
 parity rule: where a sharded forward runs a row-count-sensitive stock op on a
 rank's piece, it launches the op at stock's call size for those rows, filling
 the call with zero rows and keeping the piece's rows, rather than copying a
-kernel threshold that a later comfy-kitchen may move. FLUX.3 applies it to
+kernel threshold that a later comfy-kitchen may move. The kept rows go on
+with a fresh tensor's strides, as stock's output does, because outside
+inference mode ComfyUI picks a quantized linear's route by its input's
+strides (`adapters/int8_linear_layout.py`). FLUX.3 applies it to
 every fused-norm call of its 33 sharded blocks
 (`adapters/flux3_adaln_parity.py`), at the cost of each rank doing stock's
 full normalization work. MOSS-Image applies it, through the same

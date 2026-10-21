@@ -1013,7 +1013,7 @@ copied from historical evidence.
   integration, ownership, refusal, status, platform binding, and release are
   [`comfy_bridge.py:161-267`](../src/dgx_monarch/actor/comfy_bridge.py#L161-L267 "anchor:slab_load"),
   [`comfy_bridge.py:270-329`](../src/dgx_monarch/actor/comfy_bridge.py#L270-L329 "anchor:load_diffusion_model_slab"),
-  [`model_store.py:237-337`](../src/dgx_monarch/actor/model_store.py#L237-L337 "anchor:ensure"),
+  [`model_store.py:238-340`](../src/dgx_monarch/actor/model_store.py#L238-L340 "anchor:ensure"),
   [`slab_lifetime.py:22-22`](../src/dgx_monarch/actor/slab_lifetime.py#L22-L22 "anchor:_RETAINED_FAILED_LOAD_SLABS"),
   [`slab_lifetime.py:28-28`](../src/dgx_monarch/actor/slab_lifetime.py#L28-L28 "anchor:_RETAINED_FAILED_LOAD_RESOURCES"),
   [`slab_lifetime.py:32-32`](../src/dgx_monarch/actor/slab_lifetime.py#L32-L32 "anchor:_FAILED_LOAD_CLEANUP_POISONED"),
@@ -1037,10 +1037,10 @@ copied from historical evidence.
   [`slab.py:436-480`](../src/dgx_monarch/actor/slab.py#L436-L480 "anchor:close"),
   [`slab_lifetime.py:203-252`](../src/dgx_monarch/actor/slab_lifetime.py#L203-L252 "anchor:release_after_explicit_unload"),
   [`slab_lifetime.py:255-378`](../src/dgx_monarch/actor/slab_lifetime.py#L255-L378 "anchor:cleanup_failed_load"),
-  [`model_store.py:404-447`](../src/dgx_monarch/actor/model_store.py#L404-L447 "anchor:_drop"),
-  [`model_store.py:461-461`](../src/dgx_monarch/actor/model_store.py#L461-L461 "anchor:unload_all"),
-  [`model_store.py:469-472`](../src/dgx_monarch/actor/model_store.py#L469-L472 "anchor:release_retained_cleanup"), and
-  [`model_store.py:480-494`](../src/dgx_monarch/actor/model_store.py#L480-L494 "anchor:snapshot").
+  [`model_store.py:407-450`](../src/dgx_monarch/actor/model_store.py#L407-L450 "anchor:_drop"),
+  [`model_store.py:464-464`](../src/dgx_monarch/actor/model_store.py#L464-L464 "anchor:unload_all"),
+  [`model_store.py:472-475`](../src/dgx_monarch/actor/model_store.py#L472-L475 "anchor:release_retained_cleanup"), and
+  [`model_store.py:483-497`](../src/dgx_monarch/actor/model_store.py#L483-L497 "anchor:snapshot").
   Retention, refusal, and recovery are covered by
   [`test_slab.py:256-279`](../tests/test_slab.py#L256-L279 "anchor:test_close_attempts_annex_after_primary_arena_failure"),
   [`test_slab.py:670-681`](../tests/test_slab.py#L670-L681 "anchor:test_close_retains_live_export_until_retry"),

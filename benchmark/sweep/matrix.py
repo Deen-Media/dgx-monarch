@@ -62,6 +62,7 @@ from dgx_monarch.adapters.fsdp import validate_fsdp_launch_loras, validate_fsdp_
 from dgx_monarch.adapters.fsdp_lora_admission import refuse_fsdp_lora_checkpoint_property  # noqa: E402
 from dgx_monarch.capacity_lora_bake import patched_base_keys  # noqa: E402
 from dgx_monarch.latent_scale import spatial_megapixels  # noqa: E402
+from dgx_monarch.lora_quant_guard import lora_refused  # noqa: E402
 from dgx_monarch.mesh_runtime import ATTACH_INIT_WAIT_S  # noqa: E402
 from dgx_monarch.mesh_safety import REF_POSE_TOKEN_FAMILIES  # noqa: E402
 from dgx_monarch.nodes.common import resolve_sample_attention  # noqa: E402
@@ -975,6 +976,13 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
             cfg=topo.cfg, sp=topo.ulysses * topo.ring, family=family,
             family_honours=bool(getattr(adapter, "sp_honours_block_replace", False)),
             dual_model=bool(facts["dual_model"])) is not None:
+        return "refuse:P", "guard", False, guards
+    # The same preflight then refuses a LoRA on a quantized file whose cluster
+    # bake renders wrong, on every topology and session, with the runtime's own
+    # predicate (lora_quant_guard.py, TROUBLESHOOTING #129). It reads the
+    # header's quantization kind, which equals the topology kind here for every
+    # kind it refuses.
+    if lora_refused(family, quant, cell["loras"]):
         return "refuse:P", "guard", False, guards
     if facts["packed"] and (topo.cfg > 1 or topo.dp > 1):
         return "refuse:P", "guard", False, guards

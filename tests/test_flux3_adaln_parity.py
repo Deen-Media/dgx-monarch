@@ -118,6 +118,99 @@ def test_a_piece_of_stocks_size_is_handed_to_the_op_as_it_is():
     assert seen[0] is x and out is x
 
 
+@pytest.mark.parametrize("batch", [1, 2])
+def test_the_kept_rows_have_a_fresh_tensors_strides_at_every_batch(batch):
+    """At batch 1 the kept rows are a prefix of the call. Torch counts that
+    prefix as contiguous, so ``.contiguous()`` can keep the call's leading
+    stride, and a linear after it may not fold the rows into one matrix. The
+    result carries a fresh ``[B, n, D]`` tensor's strides instead: a view of
+    the op's output at batch 1, one copy at batch 2. What ``.contiguous()``
+    does to the prefix is the torch build's, so the test only reports it."""
+    outputs: list[torch.Tensor] = []
+
+    def op(call):
+        outputs.append(call * 2)
+        return outputs[-1]
+
+    piece = torch.randn(batch, 3, D)
+    out = at_stock_rows(op, piece, 7)
+    assert out.shape == (batch, 3, D) and out.stride() == (3 * D, D, 1)
+    assert torch.equal(out, piece * 2)
+    shared = out.untyped_storage().data_ptr() == outputs[0].untyped_storage().data_ptr()
+    assert shared is (batch == 1)
+    stale = outputs[0][:, :3].contiguous()
+    if batch == 1 and stale.stride(0) != 7 * D:
+        print(f"this torch gives a batch-1 prefix slice strides {stale.stride()} on "
+              ".contiguous(); the layout the reshape avoids does not arise here")
+
+
+def _dispatch_spy(monkeypatch, quantized_tensor) -> list[str]:
+    """The aten ops ``quantized_tensor`` dispatches, recorded as it runs them."""
+    seen: list[str] = []
+    stock = quantized_tensor.__torch_dispatch__.__func__
+
+    def spy(cls, func, types, args=(), kwargs=None):
+        seen.append(func.overloadpacket.__name__)
+        return stock(cls, func, types, args, kwargs)
+
+    monkeypatch.setattr(quantized_tensor, "__torch_dispatch__", classmethod(spy))
+    return seen
+
+
+@pytest.mark.parametrize("batch", [1, 2])
+def test_an_int8_convrot_linear_after_the_kept_rows_runs_its_int8_gemm(monkeypatch, batch):
+    """Outside inference mode, as on a Worker's sampling thread, F.linear on an
+    INT8 ConvRot weight reaches comfy-kitchen's INT8 GEMM through ``mm`` when the
+    activation's leading strides chain, and dequantizes the weight through
+    ``expand`` when they do not. The kept rows take ``mm``, never ``expand``,
+    and match the inference-mode result, which is stock's route, bit for bit.
+    The old ``.contiguous()`` form at batch 1 is the control: behind the
+    weight-only wrapper it takes ``mm`` too. Whether it takes ``expand``
+    unwrapped depends on the torch build, so the test only reports it."""
+    _comfy_kitchen()
+    from comfy_kitchen.tensor import QuantizedTensor
+
+    from dgx_monarch.adapters import int8_linear_layout
+
+    class _Linear(torch.nn.Module):
+        quant_format, layout_type = "int8_tensorwise", "TensorWiseINT8Layout"
+
+        def _forward(self, input, weight, bias):
+            return torch.nn.functional.linear(input, weight, bias)
+
+    torch.manual_seed(3)
+    width, rows, stock_rows = 256, 5, 9
+    weight = QuantizedTensor.from_float(
+        (torch.randn(64, width) * 0.02).to(torch.bfloat16), "TensorWiseINT8Layout",
+        is_weight=True, per_channel=True, convrot=True, convrot_groupsize=256)
+    seen = _dispatch_spy(monkeypatch, QuantizedTensor)
+    piece = torch.randn(batch, rows, width).to(torch.bfloat16)
+    with torch.inference_mode():
+        stock = torch.nn.functional.linear(piece.clone(), weight)
+    with torch.no_grad():
+        kept = at_stock_rows(lambda call: call * 1, piece, stock_rows)
+        seen.clear()
+        out = torch.nn.functional.linear(kept, weight)
+        assert "mm" in seen and "expand" not in seen, seen
+        assert torch.equal(out, stock)
+        if batch == 1:
+            call = torch.zeros(batch, stock_rows, width, dtype=torch.bfloat16)
+            call[:, :rows] = piece
+            stale = call[:, :rows].contiguous()
+            seen.clear()
+            torch.nn.functional.linear(stale, weight)
+            unwrapped = list(seen)
+            linear = _Linear()
+            assert int8_linear_layout.install(linear) == 1
+            seen.clear()
+            wrapped = linear._forward(stale, weight, None)
+            assert "mm" in seen and "expand" not in seen, seen
+            assert torch.equal(wrapped, stock)
+            if "expand" not in unwrapped:
+                print(f"this torch already folds the stale batch-1 layout ({unwrapped}); "
+                      "the wrapper has no expand route to close here")
+
+
 def test_stock_norm_rows_names_stocks_call_for_each_span_of_the_uly2_edit():
     """1024 square, one 1 MP reference, 80 text rows: the stream holds 8272."""
     spans = [(0, 4096, "img"), (4096, 8192, "ref"), (8192, 8272, "txt")]

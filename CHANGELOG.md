@@ -69,6 +69,37 @@
   only to Wan and Kandinsky 5, whose configs sample at multiplier 1000, and a
   checkpoint whose config the driver cannot read is let through
   ([TROUBLESHOOTING #128](docs/TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)). Fleet KSampler runs the same check.
+- Run every INT8 linear of the sequence-parallel MOSS-Image and FLUX.3 Klein
+  forwards through comfy-kitchen's INT8 GEMM, as stock does. Since the
+  fused-norm parity change, the rows `at_stock_rows` keeps carried the filled
+  call's leading stride at batch 1. Outside inference mode, where a Worker
+  samples, ComfyUI then sent the next linear on an INT8 weight down a route
+  that dequantizes the weight and skips activation quantization: MOSS-Image's
+  `qkv` and `ffn_up_gate`, and FLUX.3 Klein's `qkv` (or `q`, `k` and `v`) and
+  `mlp_in`. On 2026-10-21 MOSS-Image INT8 ConvRot on uly2 read one-step NRMS
+  0.027 to 0.036 against the pin-stripped one-GPU render for that reason.
+  FLUX.3 Klein's INT8 uly2 row was measured before that change. The kept rows
+  now carry a fresh tensor's strides, and the weight-only layouts (INT8 with
+  or without ConvRot, ConvRot W4A4, W4A8 and W6A8) always get a 3-D
+  activation as 2-D rows. A BF16 linear after the norm now takes stock's
+  matrix product too, where it ran as a batched product of batch 1; NVFP4
+  already got 2-D rows from ComfyUI. No hardware run has measured the change
+  yet.
+- Copy each component when the un-bake restore rebuilds a quantized weight.
+  On a module that lives on the CPU, the rebuilt weight and scale shared the
+  pooled read buffer that the reader refills for a later key, so an un-bake
+  to an empty LoRA stack could leave one key holding another key's bytes. A
+  module on the GPU already got a copy.
+- Refuse a LoRA on a MOSS-Image INT8 file (SFT, Base or Kromoss) on every
+  topology, class P, before any weight moves. On 2026-10-21 the Kromoss INT8
+  ConvRot file with its DMD2 LoRA on uly2 read one-step NRMS 0.985 against
+  stock ComfyUI, and the cause is under investigation. The driver checks
+  before dispatch and Fleet KSampler before its first one, every Worker's
+  model store before any LoRA build or bake, and the sweep matrix predicts
+  those cells `refuse:P`. Stock ComfyUI on one GPU runs the pair
+  ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
+  The MOSS-Image quantization refusal now says why INT8 ConvRot is admitted
+  under sequence parallelism.
 
 ## [1.2.0] - 2026-10-16
 

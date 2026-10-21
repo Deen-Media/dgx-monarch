@@ -1,17 +1,18 @@
-"""Driver preflights for the per-render model patches: Skip Layer Guidance and the SD3 shift.
+"""Driver preflights for the per-render model patches: Skip Layer Guidance, the SD3 shift, LoRA.
 
-Both run once per render in nodes/render_submit.py, after the topology resolves
-and before any Worker call, so a refusal costs no dispatch. Each fails open where
-it cannot read its facts: the Worker belt (actor/guidance_render.py) still
-guards Skip Layer Guidance, and the shift guard refuses only a config that says
-multiplier 1.0 outright.
+All three run once per render in nodes/render_submit.py, after the topology
+resolves and before any Worker call, so a refusal costs no dispatch. Each fails
+open where it cannot read its facts: the Worker belt (actor/guidance_render.py)
+still guards Skip Layer Guidance, the shift guard refuses only a config that
+says multiplier 1.0 outright, and the model store refuses a LoRA on a refused
+quantized file on every Worker (lora_quant_guard.py).
 """
 from __future__ import annotations
 
 from collections.abc import Mapping
 from typing import Any
 
-from .. import family_select
+from .. import family_select, lora_quant_guard
 from ..refusal import RefusalClass, refusal
 from ..skip_layer_guidance import (
     normalize_skip_layer_guidance,
@@ -21,12 +22,13 @@ from ..skip_layer_guidance import (
 
 
 def preflight_model_patches(model: Any, topo: Any, request: Mapping[str, Any]) -> None:
-    """The one driver entry: the skip check, then the shift check on every model."""
+    """The one driver entry: the skip check, then the shift and LoRA checks on every model."""
     preflight_skip_layer_guidance(model, topo, request)
     preflight_shift_node(model)
     uncond = request.get("uncond_model")
     if uncond is not None:
         preflight_shift_node(uncond)
+    preflight_lora_quant(model, uncond)
 
 
 def honouring_families() -> frozenset[str]:
@@ -36,20 +38,49 @@ def honouring_families() -> frozenset[str]:
     return frozenset(a.family for a in ADAPTERS if getattr(a, "sp_honours_block_replace", False))
 
 
-def _sniffed_family(model: Any) -> str | None:
-    """The checkpoint family from its header, or None when it cannot be read."""
+def _sniffed_checkpoint(unet_name: Any, override: str | None) -> tuple[str, str] | None:
+    """(family, quant kind) from a checkpoint's header, or None when it cannot be read."""
     try:
         import folder_paths
 
         from ..adapters.detect import sniff_checkpoint
 
-        path = folder_paths.get_full_path("diffusion_models", model.unet_name)
+        path = folder_paths.get_full_path("diffusion_models", unet_name)
         if path is None:
             return None
-        return family_select.effective_family(
-            sniff_checkpoint(path)[0], family_select.override_for_model(model))
+        family, quant_kind = sniff_checkpoint(path)
+        return family_select.effective_family(family, override), quant_kind
     except Exception:
         return None
+
+
+def _sniffed_family(model: Any) -> str | None:
+    """The checkpoint family from its header, or None when it cannot be read."""
+    try:
+        sniffed = _sniffed_checkpoint(model.unet_name, family_select.override_for_model(model))
+    except Exception:
+        return None
+    return None if sniffed is None else sniffed[0]
+
+
+def preflight_lora_quant(model: Any, uncond: Any = None) -> None:
+    """Refuse a LoRA on a quantized file whose cluster bake renders wrong (#129).
+
+    Checks the model and the unconditional model of a two-checkpoint guider,
+    a ModelSpec or a model request dict alike. A header is read only for a
+    model that carries a LoRA, and an unreadable one passes: every Worker's
+    model store refuses the same pair before any LoRA build or bake.
+    """
+    for target in (model, uncond):
+        if isinstance(target, Mapping):
+            unet_name, loras = target.get("unet_name"), target.get("loras")
+        else:
+            unet_name, loras = getattr(target, "unet_name", None), getattr(target, "loras", None)
+        if not loras or not unet_name:
+            continue
+        sniffed = _sniffed_checkpoint(unet_name, family_select.override_for_model(model))
+        if sniffed is not None:
+            lora_quant_guard.assert_lora_quant_supported(*sniffed, list(loras))
 
 
 def preflight_skip_layer_guidance(model: Any, topo: Any, request: Mapping[str, Any]) -> None:

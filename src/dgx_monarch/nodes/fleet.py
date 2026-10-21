@@ -253,6 +253,7 @@ class DGXMonarchFleetKSampler:
         # INPUT_IS_LIST: every arg arrives as a list; widgets are 1-element.
         spec: ModelSpec = model[0]
         model_patch_preflight.preflight_shift_node(spec)  # before any dispatch (#128)
+        model_patch_preflight.preflight_lora_quant(spec)  # and a refused LoRA pair (#129)
         clip0 = clip[0]
         # Private topology hints are input-only. Fleet bypasses common's
         # normal request/output path, so scrub once here and use this clean

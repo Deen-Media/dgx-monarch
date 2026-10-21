@@ -479,11 +479,11 @@ def _pread_into_at(fd: int, offset: int, nbytes: int, scratch: torch.Tensor,
 
 
 def _restore_quant(model: Any, key: str, spec: QuantSpec, comps: dict) -> None:
-    """Rebuild a quantized weight's wrapper from pristine checkpoint bytes.
+    """Rebuild a quantized weight's wrapper from copies of pristine checkpoint bytes.
 
-    ``comps`` contains CPU tensors in checkpoint dtype and shape; resident
-    snapshots fill gaps. Layout constructors define each format's scale views
-    and parameter fields.
+    ``comps`` holds CPU views of a pooled buffer the reader refills, and resident
+    snapshots fill gaps, so each is copied even onto a CPU module, where ``.to``
+    alone would alias it. Layout constructors define scale views and fields.
     """
     import comfy.quant_ops as quant_ops
 
@@ -509,9 +509,9 @@ def _restore_quant(model: Any, key: str, spec: QuantSpec, comps: dict) -> None:
 
     def comp(name: str) -> torch.Tensor:
         if name in comps:
-            return comps[name].to(device)
+            return comps[name].to(device, copy=True)
         if name in spec.resident:
-            return spec.resident[name].to(device)
+            return spec.resident[name].to(device, copy=True)
         raise UnbakeError(f"quantized layer {spec.module_key}: missing component {name}")
 
     weight = comp("weight").view(qconfig["storage_t"])
