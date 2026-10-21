@@ -1059,6 +1059,12 @@
       "waivable": false
     },
     {
+      "site": "lora_quant_guard.py::assert_lora_quant_supported::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "mesh_residency.py::assert_normal_render_residency_mode::ComfyManagedResidencyError#0",
       "class": "P",
       "guard": null,

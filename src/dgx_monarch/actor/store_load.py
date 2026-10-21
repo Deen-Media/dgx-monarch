@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .. import attention_pins, residency_mode
+from .. import attention_pins, lora_quant_guard, residency_mode
 from ..compile_policy import compile_dit_blocks_slab, compile_dit_is_known_noop
 from ..constants import TRANSITION_LOAD
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error
@@ -234,6 +234,7 @@ def fresh_load(
             from . import fsdp_streaming
 
             fsdp_streaming.release_materialize_window(base, load_path)
+        lora_quant_guard.assert_lora_quant_supported(family, detected_quant, lora_stack)  # #129
         active = store._build_active(base, lora_stack)
         unbake_record = None
         base_baked = bool(store.lora_low_rss and lora_stack)

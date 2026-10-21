@@ -4,9 +4,10 @@ A refusal ends "See docs/TROUBLESHOOTING.md #N." from ``refusal(...,
 troubleshooting=N)``, and some texts name the entry inline. Entries are
 numbered in order, so a merge that renumbers them leaves a pointer on a
 neighboring entry with the suite green unless something reads the headings.
-The first test reads every pointer in src. The second raises the MOSS-Image and
-Skip Layer Guidance refusals and checks that each lands on its own entry, and
-the third checks the documentation links to those entries.
+The first test reads every pointer in src. The second raises the MOSS-Image,
+Skip Layer Guidance and LoRA quantization refusals and checks that each lands
+on its own entry, and the third checks the documentation links to those
+entries.
 """
 from __future__ import annotations
 
@@ -19,6 +20,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from dgx_monarch import lora_quant_guard
 from dgx_monarch.actor import guidance_render
 from dgx_monarch.adapters.base import UnsupportedModelError
 from dgx_monarch.adapters.moss_image_seams import refuse_control_channels
@@ -35,6 +37,7 @@ SKIP = "Skip Layer Guidance (DGX Monarch) refuses on cfg2"
 SHAPE = "A LoRA that changes a weight's shape refuses before any bake"
 SHIFT = "Model Sampling SD3 (DGX Monarch) refuses on a family whose ComfyUI sampling multiplier is 1.0"
 FLOOR = "A MOSS-Image checkpoint fails to load on ComfyUI older than 0.42.0"
+LORA_QUANT = "A MOSS-Image INT8 render with a LoRA refuses on every topology"
 
 
 def _headings() -> dict[int, str]:
@@ -101,6 +104,10 @@ def _control_channels() -> None:
     refuse_control_channels(384, 128)
 
 
+def _lora_quant() -> None:
+    lora_quant_guard.assert_lora_quant_supported("moss_image", "int8", [{"name": "a.safetensors"}])
+
+
 def _multiplier_one(monkeypatch) -> None:
     stub = types.ModuleType("folder_paths")
     stub.get_full_path = lambda _kind, _name: "/home/user/models/diffusion_models/m.safetensors"
@@ -116,7 +123,9 @@ def _multiplier_one(monkeypatch) -> None:
     (_shift_after_skip, SKIP),
     (_control_channels, SHAPE),
     (_multiplier_one, SHIFT),
-], ids=["driver-skip", "worker-skip", "shift-after-skip", "control-channels", "multiplier-one"])
+    (_lora_quant, LORA_QUANT),
+], ids=["driver-skip", "worker-skip", "shift-after-skip", "control-channels", "multiplier-one",
+        "lora-quant"])
 def test_the_moss_and_carrier_refusals_land_on_their_own_entries(monkeypatch, raise_it, title):
     with pytest.raises(UnsupportedModelError) as caught:
         if raise_it is _multiplier_one:
@@ -138,7 +147,7 @@ def test_the_lora_shape_guard_points_at_its_entry():
 
 def test_the_documentation_links_to_the_moss_entries_name_their_headings():
     headings = _headings()
-    titles = (FLOOR, SKIP, SHAPE, SHIFT)
+    titles = (FLOOR, SKIP, SHAPE, SHIFT, LORA_QUANT)
     entries = {number: title for number, title in headings.items() if title.startswith(titles)}
     assert sorted(title[:24] for title in entries.values()) == sorted(title[:24] for title in titles)
     anchor = re.compile(r"(?:TROUBLESHOOTING\.md)?#(\d+)-([\w\-]+)\)")

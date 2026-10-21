@@ -6421,3 +6421,46 @@ its first dispatch.
 vendor's shift of 5, and the other families render with their own sampling.
 dgx-monarch carries no other shift node, so a different shift on those
 families needs stock ComfyUI on one GPU.
+
+## 129. A MOSS-Image INT8 render with a LoRA refuses on every topology
+
+**Symptom:** a render of a `moss_image` INT8 file (MOSS-Image SFT, Base or
+Kromoss) with a LoRA in its stack refuses class P before dispatch, or on
+every Worker while the model loads, with a message that opens "moss_image:
+an INT8 file with a LoRA", names the LoRA, and goes on "rendered far from
+stock ComfyUI on the cluster on 2026-10-21, and the cause is under
+investigation, so this release refuses the pair on every topology before any
+weight moves: each one bakes the LoRA the same way, mode=local on one GPU
+included. Render this graph in stock ComfyUI on one GPU instead, or remove
+the LoRA; a BF16 file with a LoRA is not refused. See
+docs/TROUBLESHOOTING.md #129."
+
+**Cause:** on 2026-10-21 the Kromoss INT8 ConvRot file with the DMD2 LoRA at
+strength 1.0, rendered on uly2 at 1024 square, read one-step NRMS 0.985
+against stock ComfyUI's render of the same file and LoRA on one GPU, far past
+the 0.10 floor. The result was a wrong prediction, not noise, and two runs,
+one through ComfyUI's classic bake and one through a cold load and a lazy
+swap, were bit-identical, so it does not depend on swap history. A CPU
+reproduction of the store's bake on the real file and LoRA finds every step
+correct: the capture, the restore, the FP16 dequantize, the LoRA math on the
+q, k and v slices of the fused `qkv` weight, and the requantize. The fault
+therefore sits below dgx-monarch's Python code, on the GPU, and its cause is
+under investigation. Only uly2 was measured. The Workers bake a LoRA into an
+INT8 weight the same way on single, dp2 and mode=local, so the refusal
+covers every topology, while stock ComfyUI's dynamic VRAM path applies the
+LoRA another way, in BF16 on each weight cast. The driver reads each
+checkpoint header before dispatch, for the model and for the unconditional
+model of a two-checkpoint guider, and Fleet KSampler runs the same check
+before its first dispatch. The model store refuses the same pair on every
+Worker before any LoRA build or bake, which covers a header the driver
+cannot read. The same release routes the sharded forward's INT8 linears back
+through comfy-kitchen's INT8 GEMM; no hardware run has shown whether that
+alone repairs this render, so the refusal stays until one does. Other
+families' INT8 ConvRot files share the bake. On 2026-10-21, with
+comfy-kitchen 0.2.39, none of them had a measured INT8 render with a LoRA,
+and they are not refused.
+
+**Fix:** render the graph in stock ComfyUI on one GPU, or remove the LoRA
+from the DGX Monarch LoRA loader, or use the BF16 file with the LoRA. Every
+rank refuses alike before any bake, so the next render runs on the same
+fleet, by design; no hardware test has observed it yet.

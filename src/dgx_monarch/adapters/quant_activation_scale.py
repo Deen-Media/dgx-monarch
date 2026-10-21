@@ -405,8 +405,8 @@ def install(
         log.info("shared activation scale: %d/%d nvfp4 linears wrapped, %d declined, "
                  "reducers=%s", wrapped, shard_dependent, declined,
                  ",".join(plan.names) or "none")
-    # The TensorWise INT8 layout repair does not depend on topology; it runs
-    # here because this is the post-load hook for quantized Linears.
+    # The weight-only layout repair does not depend on topology; it runs here
+    # because this is the post-load hook for quantized Linears.
     from . import int8_linear_layout
     int8_linear_layout.install(diffusion_model)
     return coverage

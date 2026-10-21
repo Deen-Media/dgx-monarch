@@ -118,6 +118,80 @@ def test_a_piece_of_stocks_size_is_handed_to_the_op_as_it_is():
     assert seen[0] is x and out is x
 
 
+@pytest.mark.parametrize("batch", [1, 2])
+def test_the_kept_rows_have_a_fresh_tensors_strides_at_every_batch(batch):
+    """At batch 1 the kept rows are a prefix of the call. Torch counts that
+    prefix as contiguous, so ``.contiguous()`` keeps the call's leading stride,
+    and a linear after it cannot fold the rows into one matrix. The result
+    carries a fresh ``[B, n, D]`` tensor's strides instead: a view of the op's
+    output at batch 1, one copy at batch 2."""
+    outputs: list[torch.Tensor] = []
+
+    def op(call):
+        outputs.append(call * 2)
+        return outputs[-1]
+
+    piece = torch.randn(batch, 3, D)
+    out = at_stock_rows(op, piece, 7)
+    assert out.shape == (batch, 3, D) and out.stride() == (3 * D, D, 1)
+    assert torch.equal(out, piece * 2)
+    shared = out.untyped_storage().data_ptr() == outputs[0].untyped_storage().data_ptr()
+    assert shared is (batch == 1)
+    stale = outputs[0][:, :3].contiguous()
+    assert stale.stride(0) == (7 * D if batch == 1 else 3 * D), (
+        "torch now gives a batch-1 prefix slice fresh strides on .contiguous(); "
+        "this test no longer shows the layout the reshape avoids")
+
+
+def _dispatch_spy(monkeypatch, quantized_tensor) -> list[str]:
+    """The aten ops ``quantized_tensor`` dispatches, recorded as it runs them."""
+    seen: list[str] = []
+    stock = quantized_tensor.__torch_dispatch__.__func__
+
+    def spy(cls, func, types, args=(), kwargs=None):
+        seen.append(func.overloadpacket.__name__)
+        return stock(cls, func, types, args, kwargs)
+
+    monkeypatch.setattr(quantized_tensor, "__torch_dispatch__", classmethod(spy))
+    return seen
+
+
+@pytest.mark.parametrize("batch", [1, 2])
+def test_an_int8_convrot_linear_after_the_kept_rows_runs_its_int8_gemm(monkeypatch, batch):
+    """Outside inference mode, as on a Worker's sampling thread, F.linear on an
+    INT8 ConvRot weight reaches comfy-kitchen's INT8 GEMM through ``mm`` when the
+    activation's leading strides chain, and dequantizes the weight through
+    ``expand`` when they do not. The kept rows take ``mm`` and match the
+    inference-mode result, which is stock's route, bit for bit. The old
+    ``.contiguous()`` form at batch 1 is the control: it takes ``expand``."""
+    _comfy_kitchen()
+    from comfy_kitchen.tensor import QuantizedTensor
+
+    torch.manual_seed(3)
+    width, rows, stock_rows = 256, 5, 9
+    weight = QuantizedTensor.from_float(
+        (torch.randn(64, width) * 0.02).to(torch.bfloat16), "TensorWiseINT8Layout",
+        is_weight=True, per_channel=True, convrot=True, convrot_groupsize=256)
+    seen = _dispatch_spy(monkeypatch, QuantizedTensor)
+    piece = torch.randn(batch, rows, width).to(torch.bfloat16)
+    with torch.inference_mode():
+        stock = torch.nn.functional.linear(piece.clone(), weight)
+    with torch.no_grad():
+        kept = at_stock_rows(lambda call: call * 1, piece, stock_rows)
+        seen.clear()
+        out = torch.nn.functional.linear(kept, weight)
+        assert seen == ["t", "mm"], seen
+        assert torch.equal(out, stock)
+        if batch == 1:
+            call = torch.zeros(batch, stock_rows, width, dtype=torch.bfloat16)
+            call[:, :rows] = piece
+            seen.clear()
+            torch.nn.functional.linear(call[:, :rows].contiguous(), weight)
+            assert seen == ["t", "expand"], (
+                f"the stale batch-1 layout now dispatches {seen}; the control no longer "
+                "shows the route the reshape avoids")
+
+
 def test_stock_norm_rows_names_stocks_call_for_each_span_of_the_uly2_edit():
     """1024 square, one 1 MP reference, 80 text rows: the stream holds 8272."""
     spans = [(0, 4096, "img"), (4096, 8192, "ref"), (8192, 8272, "txt")]

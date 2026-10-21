@@ -2774,6 +2774,34 @@ def test_a_loose_skip_leaves_every_cell_the_label_of_the_graph_without_it(tmp_pa
     assert _pick(cells, "krea2loose", "cfg2", artifact_quant="bf16")["label"] == "render"
 
 
+def test_moss_image_int8_with_a_lora_refuses_class_p_on_every_topology(tmp_path):
+    # The driver preflight refuses a LoRA on a MOSS-Image INT8 file before
+    # dispatch on every topology and in both sessions (lora_quant_guard.py,
+    # TROUBLESHOOTING #129). Wherever the same stack renders on the BF16 file,
+    # the INT8 cell refuses class P and the INT8 file without a LoRA renders;
+    # elsewhere an earlier rule answers first for every arm alike.
+    config = _moss_rig(tmp_path, {
+        "mosslora": _MOSS_TESTING / "dgx-monarch-test-moss-image-lora.json"})
+    config["loras"] = {"mosslora": ["one.safetensors"]}
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    arms: dict[tuple, dict] = {}
+    for cell in cells:
+        if cell["template"] == "mosslora":
+            where = (cell["session"], cell["preset"], cell["attention"])
+            arms.setdefault(where, {})[(bool(cell["loras"]), cell["artifact_quant"])] = cell
+    rendering = [where for where, arm in arms.items() if arm[(True, "bf16")]["label"] == "render"]
+    assert {where[0] for where in rendering} == {"local", "cluster"}
+    assert {where[1] for where in rendering} >= {"single", "auto", "uly2", "ring2"}
+    for where in rendering:
+        refused = arms[where][(True, "int8_convrot")]
+        assert (refused["label"], refused["basis"], refused["waiver"]) == (
+            "refuse:P", "guard", False), where
+        assert arms[where][(False, "int8_convrot")]["label"] == "render", where
+    for where, arm in arms.items():
+        if where not in rendering:
+            assert arm[(True, "int8_convrot")]["label"] == arm[(True, "bf16")]["label"], where
+
+
 def test_moss_image_int8_with_a_lora_under_fsdp_refuses_class_p(tmp_path):
     # The LoRA loader's FSDP preflight refuses a stack on a comfy-kitchen
     # quantized checkpoint, MOSS-Image's INT8 ConvRot files among them, before

@@ -1248,6 +1248,19 @@
       "test_the_whole_one_click_arc_on_the_default_residency": "7112144dadb8756e",
       "test_worker_args_the_ledger_cannot_canonicalize_keep_the_blind_read": "044f3245126758ef"
     },
+    "tests/test_lora_quant_guard.py": {
+      "test_a_fresh_load_refuses_before_the_lora_build_and_leaves_the_slot_empty": "9b8857d765a73145",
+      "test_a_fresh_load_stays_open_without_the_refused_pair": "e30addb54751a7c5",
+      "test_a_resident_base_refuses_a_lora_before_either_swap": "b2d3bc761b6880d2",
+      "test_a_resident_bf16_base_still_swaps_a_lora": "6cb7c841bfb39cc8",
+      "test_fleet_ksampler_refuses_before_its_first_dispatch": "07cbaeb4f36b5cb9",
+      "test_only_a_moss_image_int8_file_with_a_lora_refuses": "ca10be1ebfd45dab",
+      "test_the_driver_checks_a_two_checkpoint_guiders_unconditional_model": "cff6a63e692a3095",
+      "test_the_driver_lets_a_bf16_file_another_family_and_an_unreadable_header_through": "6d64cc749fa05184",
+      "test_the_driver_reads_no_header_without_a_lora": "dc69f4a29cd45f9b",
+      "test_the_driver_refuses_before_dispatch_on_every_topology": "51d70a0322ad777f",
+      "test_the_refusal_names_the_lora_the_measurement_date_and_the_remedy": "78de42c39a8a6335"
+    },
     "tests/test_lora_shape_guard.py": {
       "test_a_padded_diff_that_grows_a_weight_refuses_too": "dd5ecc2b53b94cbf",
       "test_a_widening_set_patch_refuses_with_the_key_and_both_shapes": "8bf7fe067a2ba0ff",
@@ -1360,7 +1373,7 @@
       "test_a_vetted_patch_receives_rank_rows_and_a_parity_bound_original_block": "1fcb83434079f89f",
       "test_an_even_ring_render_and_a_waived_padded_ring_proceed": "fa422213b007170d",
       "test_an_unrouted_attention_refuses_class_p_after_the_loop": "ceb53a44b6796d82",
-      "test_declarations_match_the_spec": "da56c6f61705c7d7",
+      "test_declarations_match_the_spec": "6cbcaf8a556f6786",
       "test_drop_rows_follow_the_parity_of_n": "0f3e3dc5305ddc72",
       "test_every_norm_call_holds_stocks_rows": "79154b5542a02dc7",
       "test_inject_checks_then_binds_every_block_and_the_forward": "5d5e7b0094906b14",
@@ -1972,6 +1985,7 @@
       "test_journal_lines_preserve_attention_and_unavailable_evidence": "37a899170773187f",
       "test_kernels_that_resolve_to_one_collapse_to_one_cell": "f19bbd3ff31414db",
       "test_labels_follow_the_runtime_guards": "701f6741ff7e3a5b",
+      "test_moss_image_int8_with_a_lora_refuses_class_p_on_every_topology": "ad059300355977f8",
       "test_moss_image_int8_with_a_lora_under_fsdp_refuses_class_p": "7c0c4c3b1a3dcf10",
       "test_only_a_dirty_mesh_crash_earns_the_one_retry": "9eda9e99c85be373",
       "test_outcome_classifier_reads_the_message_not_the_type": "afbf64a366d1b9fd",

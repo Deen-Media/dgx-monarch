@@ -513,6 +513,60 @@ def test_quant_capture_and_rebuild(quant_rig):
     assert recorded["params"].orig_shape == (8, 8)
 
 
+def test_a_cpu_restore_to_an_empty_stack_keeps_each_keys_own_bytes(quant_rig, tmp_path):
+    """Un-bake to no LoRA on modules that live on the CPU.
+
+    The reader fills three pooled buffers and refills each one once the
+    consumer has restored its key, so the fourth key lands in the first key's
+    buffer. ``.to(device)`` returns the same storage on the CPU, so a rebuilt
+    weight or scale that kept that view would read the fourth key's bytes
+    after the restore. Every key's weight and scale equal the file's. Each
+    weight spans two 4 KiB blocks: an O_DIRECT read fills whole aligned
+    blocks, so tensors that share one block would reread their own bytes.
+    """
+    model, _module, _path, _qdata, _scale, recorded = quant_rig
+    conf = {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256}
+    generator = torch.Generator().manual_seed(7)
+    tensors, modules, pristine, built = {}, {}, {}, []
+    for index in range(5):
+        qdata = torch.randint(-127, 128, (64, 128), dtype=torch.int8, generator=generator)
+        scale = torch.rand(64, 1, generator=generator) + index
+        tensors |= {f"blk{index}.weight": qdata.clone(), f"blk{index}.weight_scale": scale.clone(),
+                    f"blk{index}.comfy_quant": _quant_marker(conf)}
+        module = _FakeQuantLinear(qdata.clone(), scale.clone())
+        module.quant_format = "int8_tensorwise"
+        module.state_dict = (lambda owner: lambda *args, **kwargs: {
+            "weight": owner.qdata, "weight_scale": owner.scale,
+            "comfy_quant": _quant_marker(conf)})(module)
+        modules[f"blk{index}"] = module
+        pristine[f"blk{index}"] = (qdata, scale)
+    path = str(tmp_path / "pooled-int8.safetensors")
+    write_safetensors(path, tensors)
+    model.diffusion_model = SimpleNamespace(**modules)
+    keys = [f"diffusion_model.{name}.weight" for name in modules]
+    record = capture_unbake_record(model, keys, path)
+    assert set(record.quant) == set(keys) and record.resident_count == 0
+
+    for module in modules.values():  # the bake replaced every weight and scale
+        assert module.weight.device == torch.device("cpu")
+        module.qdata = torch.zeros_like(module.qdata)
+        module.scale = torch.full_like(module.scale, 0.5)
+    quant_ops = sys.modules["comfy.quant_ops"]
+    rebuild = quant_ops.QuantizedTensor
+    quant_ops.QuantizedTensor = lambda qdata, layout_type, params: (
+        built.append(params) or rebuild(qdata, layout_type, params))
+    restore_pristine(model, record)
+
+    # The consumer restores the quantized keys in the record's order.
+    assert len(built) == 5 and recorded["layout_type"] == "TensorWiseINT8Layout"
+    for key, params in zip(record.quant, built, strict=True):
+        name = key.split(".")[1]
+        qdata, scale = pristine[name]
+        assert torch.equal(modules[name].rebuilt.data, qdata), name
+        assert params.convrot is True and params.convrot_groupsize == 256
+        assert torch.equal(params.scale, scale), name
+
+
 def test_per_layer_quant_marker_capture_and_rebuild(quant_rig, tmp_path):
     model, module, _path, qdata, scale, recorded = quant_rig
     conf = {"format": "float8_e4m3fn"}

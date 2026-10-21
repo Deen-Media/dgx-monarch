@@ -142,6 +142,13 @@ The seams, in run order:
  46. dynamic prompt asymmetry  CLIP Text Encode's text declares dynamicPrompts and
                               Text (Multiline)'s value does not, which the
                               MOSS-Image layout graph's JSON prompt relies on
+ 47. weight-only linear dispatch  the formats that quantize no activation and
+                              the layouts they load as, the 2-D reshape the
+                              quantized Linear skips for them, and outside
+                              inference mode the INT8 GEMM through mm for a
+                              3-D activation whose strides chain, the
+                              dequantizing expand for one whose strides do
+                              not, and mm for both behind the pack's wrapper
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -5243,6 +5250,113 @@ def _assert_dynamic_prompt_asymmetry_seam() -> None:
         "browser would rewrite the MOSS-Image layout graph's JSON braces on Queue")
 
 
+def _assert_weight_only_linear_dispatch_seam() -> None:
+    """The route ComfyUI's weight-only quantized Linear takes into its kernel.
+
+    ComfyUI quantizes no activation for a format whose ``quantize_input`` is
+    False, and its mixed-precision Linear then hands ``F.linear`` the
+    activation as it arrives. Outside inference mode, as on a Worker's
+    sampling thread, ``aten.linear`` decomposes: a 3-D activation whose
+    leading strides chain folds into ``mm``, which reaches comfy-kitchen's
+    INT8 GEMM, and any other one expands the weight, which no layout handles,
+    so the weight is dequantized and the linear runs unquantized. The pack
+    guards both ends (adapters/int8_linear_layout.py hands these layouts 2-D
+    rows, and adapters/flux3_adaln_parity.py ``at_stock_rows`` returns fresh
+    strides). Pinned on a real INT8 ConvRot Linear: the format table the
+    wrapper copies, the reshape the Linear skips, ``mm`` for the rows
+    ``at_stock_rows`` keeps, ``expand`` for the prefix slice the old batch-1
+    layout handed over, ``mm`` for that slice behind the wrapper, and each
+    GEMM route equal to the inference-mode result, stock's own, bit for bit.
+    """
+    import json
+
+    import comfy.ops
+    import torch
+    from comfy.quant_ops import QUANT_ALGOS, QuantizedTensor
+
+    from dgx_monarch.adapters import int8_linear_layout
+    from dgx_monarch.adapters.flux3_adaln_parity import at_stock_rows
+
+    weight_only = {name: config["comfy_tensor_layout"] for name, config in QUANT_ALGOS.items()
+                   if config.get("quantize_input", True) is False}
+    assert weight_only == dict(int8_linear_layout.WEIGHT_ONLY_FORMATS), (
+        "weight-only linear dispatch seam: ComfyUI's formats that quantize no activation are "
+        f"now {weight_only}, and adapters/int8_linear_layout.py copies "
+        f"{dict(int8_linear_layout.WEIGHT_ONLY_FORMATS)}")
+    source = inspect.getsource(comfy.ops.mixed_precision_ops)
+    for phrase in ('.get("quantize_input", True)', "if _use_quantized and quantize_input:",
+                   "input.reshape(-1, input_shape[-1])",
+                   "weight_only_quant = _use_quantized and not quantize_input"):
+        assert phrase in source, (
+            "weight-only linear dispatch seam: the quantized Linear no longer reads "
+            f"{phrase!r}, so its 2-D reshape may now cover the weight-only formats")
+
+    generator = torch.Generator().manual_seed(47)
+    width, out_features, rows, stock_rows = 256, 64, 5, 9
+    packed = QuantizedTensor.from_float(
+        (torch.randn(out_features, width, generator=generator) * 0.02).to(torch.bfloat16),
+        "TensorWiseINT8Layout", is_weight=True, per_channel=True, convrot=True,
+        convrot_groupsize=256)
+    conf = torch.tensor(list(json.dumps(
+        {"format": "int8_tensorwise", "convrot": True, "convrot_groupsize": 256}).encode()),
+        dtype=torch.uint8)
+
+    def build():
+        linear = comfy.ops.mixed_precision_ops({}, compute_dtype=torch.bfloat16).Linear(
+            width, out_features, bias=False)
+        linear.load_state_dict({"weight": packed._qdata.clone(),
+                                "weight_scale": packed._params.scale.clone(),
+                                "comfy_quant": conf.clone()}, strict=False)
+        assert linear.quant_format == "int8_tensorwise" and linear.weight._params.convrot, (
+            "weight-only linear dispatch seam: an INT8 ConvRot state dict no longer loads "
+            "as a ConvRot QuantizedTensor")
+        return linear
+
+    seen: list[str] = []
+    own = "__torch_dispatch__" in QuantizedTensor.__dict__
+    stock_dispatch = inspect.getattr_static(QuantizedTensor, "__torch_dispatch__")
+
+    def spy(cls, func, types, args=(), kwargs=None):
+        seen.append(func.overloadpacket.__name__)
+        return stock_dispatch.__func__(cls, func, types, args, kwargs)
+
+    def route(linear, x):
+        seen.clear()
+        return linear(x), list(seen)
+
+    QuantizedTensor.__torch_dispatch__ = classmethod(spy)
+    try:
+        plain, wrapped = build(), build()
+        assert int8_linear_layout.install(wrapped) == 1, (
+            "weight-only linear dispatch seam: the pack's wrapper no longer takes a loaded "
+            "INT8 ConvRot Linear")
+        piece = torch.randn(1, rows, width, generator=generator).to(torch.bfloat16)
+        with torch.inference_mode():
+            stock, path = route(plain, piece.clone())
+        assert "linear" in path and "expand" not in path, (
+            f"weight-only linear dispatch seam: under inference mode the Linear now dispatches {path}")
+        with torch.no_grad():
+            kept = at_stock_rows(lambda call: call * 1, piece, stock_rows)
+            out, path = route(plain, kept)
+            assert "mm" in path and "expand" not in path and torch.equal(out, stock), (
+                f"weight-only linear dispatch seam: the rows at_stock_rows keeps now dispatch {path}")
+            call = torch.zeros(1, stock_rows, width, dtype=torch.bfloat16)
+            call[:, :rows] = piece
+            stale = call[:, :rows].contiguous()
+            out, path = route(plain, stale)
+            assert "expand" in path and "mm" not in path, (
+                "weight-only linear dispatch seam: a prefix slice with the call's leading stride "
+                f"now dispatches {path}; the expand route the wrapper closes may be gone")
+            out, path = route(wrapped, stale)
+            assert "mm" in path and "expand" not in path and torch.equal(out, stock), (
+                f"weight-only linear dispatch seam: behind the wrapper the slice dispatches {path}")
+    finally:
+        if own:
+            QuantizedTensor.__torch_dispatch__ = stock_dispatch
+        else:
+            del QuantizedTensor.__torch_dispatch__
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -5290,6 +5404,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("skip layer guidance simple", _assert_skip_layer_guidance_simple_seam),
     ("lora shape-changing set", _assert_lora_shape_changing_set_seam),
     ("dynamic prompt asymmetry", _assert_dynamic_prompt_asymmetry_seam),
+    ("weight-only linear dispatch", _assert_weight_only_linear_dispatch_seam),
 )
 
 

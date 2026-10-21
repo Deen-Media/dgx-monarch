@@ -85,7 +85,10 @@ class MOSSImageAdapter(Adapter):
         "MOSS-Image file and no sharded measurement, an fp8 weight_dtype cast on a BF16 file "
         "carries the same unmeasured kind, and this release reads an unrecognized "
         "quantization format as fp8, so only the two shipped kinds are admitted: BF16, and "
-        "INT8 ConvRot, which quantizes each row on its own."
+        "INT8 ConvRot, which takes no statistic across rows: comfy-kitchen's INT8 GEMM scales "
+        "each activation row on its own, and every INT8 linear reaches that GEMM on a rank as "
+        "on one GPU, ffn_down through its fused call and the others with their activation "
+        "handed over as 2-D rows (adapters/int8_linear_layout.py)."
     )
     # The sharded forward applies patches_replace["dit"] as stock does, for
     # every patch the vetting admits; the Skip Layer Guidance carrier reads it.

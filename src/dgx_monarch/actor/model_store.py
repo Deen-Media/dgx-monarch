@@ -10,6 +10,7 @@ import threading
 from contextlib import suppress
 from typing import Any
 
+from .. import lora_quant_guard
 from ..adapters import fsdp_shard_build
 from ..capacity_fit import SLAB_VOUCHED_FAMILIES as SLAB_VOUCHED_FAMILIES
 from ..constants import TRANSITION_REUSE
@@ -305,6 +306,8 @@ class ModelStore:
             log.info("model store [%s]: %s%s -- %s", slot, TRANSITION_REUSE, reload_note, unet_name)
             return stored.active_patcher, TRANSITION_REUSE
 
+        if stored is not None and stored.base_key == base_key:  # before either swap (#129)
+            lora_quant_guard.assert_lora_quant_supported(stored.family, stored.quant_kind, lora_stack)
         if stored is not None and stored.base_key == base_key and self.lora_low_rss \
                 and (stored.unbake is not None or not stored.lora_sig):
             # Low-RSS hot-swap restores verified bytes and re-bakes in place. An
