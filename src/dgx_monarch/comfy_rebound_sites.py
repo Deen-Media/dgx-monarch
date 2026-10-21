@@ -72,6 +72,11 @@ ADAPTER_BIND_SITES: tuple[AdapterBindSite, ...] = (
     # and runs on every topology, not only under sequence parallelism.
     _site("flux3.py", "Flux3Adapter.prepare_base_model", "base_model", "extra_conds",
           "extra_conds", ("flux3",), "conds", ("comfy.model_base.Flux3.extra_conds",)),
+    # The per-block parity forwards are instance attributes the binder sets
+    # (adapters/moss_image_seams.py), not Adapter.bind sites, as for FLUX.3.
+    _site("moss_image.py", "MOSSImageAdapter.inject_usp", "diffusion_model", "_forward",
+          "usp_forward", ("moss_image",), "usp",
+          ("comfy.ldm.moss_image.model.MOSSImage._forward",)),
     _site("flux_family.py", "ChromaAdapter.inject_usp", "diffusion_model", "forward_orig",
           "usp_forward_orig", ("chroma",), "usp",
           ("comfy.ldm.chroma.model.Chroma.forward_orig",

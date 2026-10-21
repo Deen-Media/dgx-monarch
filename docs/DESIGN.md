@@ -434,8 +434,14 @@ the call with zero rows and keeping the piece's rows, rather than copying a
 kernel threshold that a later comfy-kitchen may move. FLUX.3 applies it to
 every fused-norm call of its 33 sharded blocks
 (`adapters/flux3_adaln_parity.py`), at the cost of each rank doing stock's
-full normalization work. The other families that call comfy-kitchen's
-`adaln` or `rms_adaln` on sharded rows are unchecked
+full normalization work. MOSS-Image applies it, through the same
+`at_stock_rows`, to both `rms_adaln` calls of each of its 42 sharded blocks
+(`adapters/moss_image_seams.py`), with the rank's window at the front of the
+filled call; its head norm runs after the gather, on stock's rows. Its fused
+q and k norm and RoPE runs unfilled, because on 2026-10-20 comfy-kitchen
+0.2.39 returned stock's bits for that op on every rank's window. The other
+families that call comfy-kitchen's `adaln` or `rms_adaln` on sharded rows
+are unchecked
 ([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
 
 Adapter acceptance requires identical cross-rank latent statistics and
@@ -455,7 +461,7 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   Anima, and from 1.2 MP up to 1.64 MP for Chroma, 1.77 MP for Qwen-Image and
   2.36 MP for Krea 2. Per-model thresholds are stored as data; other
   families have explicit full-range ring or Ulysses rows. Mage Flow, Qwen
-  Image 2.1 and FLUX.3 Klein have no row, and Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image
+  Image 2.1, FLUX.3 Klein and MOSS-Image have no row, and Flux, Flux 2, Krea 2, Lens, Qwen-Image and Z-Image
   have no row below 1.2 MP; those cases take the generic uly2 fallback
   (row 99). Data parallelism is never a table row: `with_derived_dp` derives it
   from the ranks a row leaves spare, and a batch that cannot split across them
@@ -931,6 +937,21 @@ Category **"DGX Monarch"**. The node surface is small by design:
   SD3 shift, applied to a clone on the worker and kept outside model residency
   identity (§5.5). ComfyUI's own default for the Kandinsky5 video checkpoints
   is shift 10; docs/MODELS.md gives the shift each Kandinsky5 model needs.
+  The driver refuses it, class P, on a checkpoint whose ComfyUI configuration
+  samples at multiplier 1.0, where the node's multiplier 1000 renders noise
+  ([TROUBLESHOOTING #128](TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)).
+- `DGXMonarchSkipLayerGuidance`: stock `SkipLayerGuidanceDiTSimple`'s four
+  widgets in stock's order with stock's defaults, kept on the model spec and,
+  like the shift, outside model residency identity and outside the Gate
+  combination, so a PASS covers a combination with and without the skip. Each
+  Worker applies
+  ComfyUI's own node to its render clone after the shift; empty layer lists
+  change nothing. The driver refuses an active skip, class P, before dispatch
+  on a cfg topology, with a two-checkpoint guider, and under sequence
+  parallelism on a family whose adapter does not declare
+  `sp_honours_block_replace` (MOSS-Image alone so far), and each Worker
+  repeats the check from facts every rank holds
+  ([TROUBLESHOOTING #126](TROUBLESHOOTING.md#126-skip-layer-guidance-dgx-monarch-refuses-on-cfg2-on-a-sequence-parallel-family-that-does-not-apply-block-replacement-or-with-a-two-checkpoint-guider)).
 - `DGXMonarchQwenImage21Cache`: sets Qwen Image 2.1's replicated prefix KV
   cache on every worker, off by default. `default` storage is lossless; `int8`
   and `int4` use ComfyUI's compressed K/V cache and are approximate. The policy
@@ -998,7 +1019,7 @@ Node contract stability is workflow stability: **NODE_CLASS_MAPPINGS keys,
 input names, and defaults are semver-governed API.** New inputs are optional or
 hidden and go at the end, because ComfyUI stores widget values by position.
 `tests/test_node_contract.py` snapshots the keys, ordered input names, types
-and defaults (`tests/node_input_contract.json`). Ten of the 18 nodes declare a
+and defaults (`tests/node_input_contract.json`). Ten of the 19 nodes declare a
 hidden `UNIQUE_ID`; no node reads its value, but it is part of that contract.
 
 ### 5.8 Progress, logging, observability
@@ -1698,6 +1719,8 @@ dgx-monarch/
 │   │   ├── gate_provenance.py # mandatory all-rank Gate source bracket
 │   │   ├── gate_verdict.py    # verdict derivation, lever quarantine, publication
 │   │   ├── metrics_route.py   # bounded finite Prometheus projection
+│   │   ├── model_patch_preflight.py # driver refusals for the per-render skip
+│   │   │                      #   and shift patches
 │   │   ├── pending.py         # terminal sample-result ownership and cleanup
 │   │   ├── pipeline.py        # bounded FIFO submission/abort orchestration
 │   │   ├── recycle_guard.py   # reset single-flight/rate ownership past HTTP timeout
@@ -1729,6 +1752,10 @@ dgx-monarch/
 │   │   ├── worker_capacity.py # the capacity_quote endpoint body: this rank's
 │   │   │                      #   slots, one snapshot, one running budget
 │   │   ├── worker_compile.py  # opt-in DiT block compilation boundary
+│   │   ├── guidance_render.py # Skip Layer Guidance on the render clone, and
+│   │   │                      #   its Worker refusal
+│   │   ├── lora_shape_guard.py # the refusal of a LoRA patch that changes a
+│   │   │                      #   weight's shape, before any bake
 │   │   └── rdma_handoff.py    # durable worker descriptor ownership + ACK
 │   ├── adapters/              # §5.3 registry (one file per family)
 │   │   ├── flux_shared.py     # control-span/shard helpers the flux forwards
@@ -1742,6 +1769,8 @@ dgx-monarch/
 │   │   │                      #   path's index tensors
 │   │   ├── flux3_packing.py   # FLUX.3 Klein span clipping, stream shards, and
 │   │   │                      #   pad rows
+│   │   ├── moss_image_seams.py # MOSS-Image window cut, block-patch vetting,
+│   │   │                      #   fused-norm route and attention ledger
 │   │   └── minimax_h3_packing.py # MiniMax H3 per-token packing and checkpoint
 │   │                          #   timestep embeddings
 │   ├── comfy_surface.py       # runtime Comfy touchpoint/signature assertion
@@ -1752,6 +1781,8 @@ dgx-monarch/
 │   ├── topology.py            # dataclasses + auto-mode resolution
 │   ├── topology_table.py      # the auto-mode table rows (data)
 │   ├── topology_cfg_evidence.py # dated evidence each cfg row needs
+│   ├── skip_layer_guidance.py # Skip Layer Guidance wire, activity test and
+│   │                          #   refusal reasons (stdlib leaf)
 │   ├── error_utils.py         # total diagnostics + cancellation-first composition
 │   ├── retry_policy.py        # bounded retry outcomes without stale diagnostics
 │   ├── actor_lifetime.py      # actor-side reaper (stdlib leaf; watcher installed

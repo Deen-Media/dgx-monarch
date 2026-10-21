@@ -88,10 +88,10 @@ Spark may not make those images faster. Fleet does nothing useful on one GPU.
 **Do I have to rebuild my workflows?**
 No. Drop in **DGX Monarch Init**. Only a few nodes have a cluster version: the
 diffusion-model loader, the LoRA loader, the samplers and guiders, Model
-Sampling SD3, and Basic Scheduler. CLIP, text encode, empty latent, VAE
-decode, and save stay in normal ComfyUI ([QUICKSTART.md](QUICKSTART.md)). When
-you hit Queue it tells you which stock nodes to swap. It does not edit the
-graph for you. The list is [TROUBLESHOOTING.md #63](TROUBLESHOOTING.md#63-a-toast-at-queue-time-says-the-workflow-is-missing-dgx-monarch-nodes).
+Sampling SD3, Skip Layer Guidance, and Basic Scheduler. CLIP, text encode,
+empty latent, VAE decode, and save stay in normal ComfyUI
+([QUICKSTART.md](QUICKSTART.md)). When you hit Queue it tells you which stock
+nodes to swap. It does not edit the graph for you. The list is [TROUBLESHOOTING.md #63](TROUBLESHOOTING.md#63-a-toast-at-queue-time-says-the-workflow-is-missing-dgx-monarch-nodes).
 
 **Can I keep my other custom node packs?** Yes, as long as they are not also
 wrapping the DiT forward. If two packs patch the same attention, they can

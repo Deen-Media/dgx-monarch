@@ -24,9 +24,13 @@ for graphs whose UI-only transformations are not implemented by Studio.
 ## Recorded driver schema
 
 `object_info_bundled.json` is not synthetic. It is trimmed from a real
-`/object_info` response that a driver returned on 2026-10-16, running ComfyUI
-commit 29e28e2b4 (v0.39.0-67), ComfyUI frontend package 1.55.17 and
-dgx-monarch commit dab81e3bb02c. `tests/test_studio_bundled_workflows.py`
+`/object_info` response that a driver returned on 2026-10-20, running ComfyUI
+commit d52a7a5ef (v0.42.0-14), ComfyUI frontend package 1.55.18 and the
+dgx-monarch tree that adds MOSS-Image on dev 61f446f, with the rig's other node
+packs loaded. It replaces a 2026-10-16 recording (ComfyUI 29e28e2b4, frontend
+1.55.17, dgx-monarch dab81e3bb02c) that lacked the MOSS-Image nodes, files and
+CLIP type; rebuilt, the two differ only in those additions.
+`tests/test_studio_bundled_workflows.py`
 inspects and compiles every bundled workflow against it, so it covers the
 frontend's upload helper slots, V3 dynamic combos, union widgets and Autogrow
 sockets as a real driver declares them.

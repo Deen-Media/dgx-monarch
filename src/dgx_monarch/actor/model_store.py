@@ -17,6 +17,7 @@ from ..log import get_logger
 from ..mesh_safety import stock_load_preflight  # noqa: F401 - read by store_load
 from ..transfer_utils import failure_summary
 from . import (
+    lora_shape_guard,
     resident_ledger,
     slab_lifetime,
     store_bake,
@@ -392,6 +393,7 @@ class ModelStore:
                 lora_sd = {k: v.to(dev) if hasattr(v, "to") and not k.endswith(".config") else v
                            for k, v in lora_sd.items()}
             active, _ = comfy_sd.load_lora_for_models(active, None, lora_sd, float(entry["strength"]), 0)
+        lora_shape_guard.assert_patch_shapes_fit(active)
         return active
 
     _invalidate_gpu_weights = staticmethod(store_bake.invalidate_gpu_weights)

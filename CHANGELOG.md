@@ -16,6 +16,59 @@
   lists it with the other driver routes.
 - Verified update, release staging and setup refuse a target whose packaged
   Studio files are missing, extra or differ from their recorded SHA-256 table.
+- Support MOSS-Image, the OpenMOSS team's 5B single-stream text-to-image
+  model, with its SFT and Base checkpoints and lodestones' Kromoss fine-tune,
+  at status `impl` with no hardware test yet
+  ([MODELS](docs/MODELS.md#model-moss-image-sft)). It needs ComfyUI 0.42.0 or
+  newer, the first release to carry ComfyUI's support commit e087d8f6c of
+  2026-10-16 ([TROUBLESHOOTING #125](docs/TROUBLESHOOTING.md#125-a-moss-image-checkpoint-fails-to-load-on-comfyui-older-than-0420)). The `moss_image` adapter
+  shards the joint `[image, text]` stream in one contiguous window per rank,
+  keeps the prelude and the two text-embedder blocks whole on every rank,
+  launches both fused-norm calls of each block at stock's row count, names
+  pad rows on every topology and refuses a padded ring class K. Under
+  sequence parallelism it honors a block replacement only when it is an
+  identity or marked `sequence_shard_local`, which admits ComfyUI's own Skip
+  Layer Guidance skip, and refuses any other class P, as it does a marked
+  replacement that hands the block other rows than the rank's window. Five BF16 templates
+  ship at the vendor's settings: 50 Euler steps at CFG 3 with the layer-22
+  skip for SFT, Base and Kromoss, a JSON layout graph on SFT, and 8 steps at
+  CFG 1 for Kromoss with its DMD2 LoRA. Nine testing graphs cover the INT8
+  ConvRot files, an odd grid, a 1536 square canvas, the skip turned off, the
+  second DMD LoRA, the DMD2 LoRA on Base and a LoRA slot. The artifact
+  manifest pins the six DiT files, the BF16 and INT8 ConvRot encoders and the
+  FLUX.2 small decoder at Comfy-Org's and lodestones' commits, and the two
+  Kromoss LoRAs.
+- The MOSS-Image INT8 ConvRot files pin comfy-kitchen's INT8 attention on all
+  42 blocks, so single, cfg2 and dp2 ask for the Sol-Attn waiver and uly2
+  drops the pins ([TROUBLESHOOTING #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). On uly2, ring and cfg2 the
+  family admits only BF16 and INT8 ConvRot. RoPE scaling and the color and
+  depth control, on ComfyUI master only on 2026-10-20, ship no template.
+- Add Skip Layer Guidance (DGX Monarch), which carries stock
+  SkipLayerGuidanceDiTSimple's widgets to every Worker, where ComfyUI's own
+  node applies them to the render. The graph advisor suggests it in place of
+  the stock node. It refuses on a cfg topology, with a two-checkpoint guider,
+  and under sequence parallelism on any family but MOSS-Image, and Model
+  Sampling SD3 (DGX Monarch) refuses when it follows the node with a step
+  window other than 0 to 1
+  ([TROUBLESHOOTING #126](docs/TROUBLESHOOTING.md#126-skip-layer-guidance-dgx-monarch-refuses-on-cfg2-on-a-sequence-parallel-family-that-does-not-apply-block-replacement-or-with-a-two-checkpoint-guider)). `benchmark/run_matrix.py` takes the same
+  widgets as the optional `slg_double_layers`, `slg_single_layers`,
+  `slg_start_percent` and `slg_end_percent` keys.
+- Refuse a LoRA whose patch changes a weight's shape, on every family and
+  topology, before any bake. ComfyUI master since e3bee7ffc can apply such a
+  patch, for example the
+  MOSS-Image color and depth control LoRA, which widens `video_embedder` from
+  128 to 384 input channels; the bake used to fail on it with an untyped
+  error. The refusal names the key and both shapes
+  ([TROUBLESHOOTING #127](docs/TROUBLESHOOTING.md#127-a-lora-that-changes-a-weights-shape-refuses-before-any-bake)).
+- Refuse Model Sampling SD3 (DGX Monarch) on a checkpoint whose ComfyUI
+  config samples at multiplier 1.0, where the node's multiplier-1000 sampling
+  renders noise: FLUX.1 Schnell, Chroma and Radiance, Z-Image and Lumina 2,
+  OmniGen2, Boogu, Mage Flow, Qwen-Image, Qwen Image 2.1, Ideogram 4, Krea 2
+  and Kroma, MOSS-Image and Kromoss, and Anima. Such graphs rendered noise
+  before and now refuse before dispatch. The shipped graphs wire the node
+  only to Wan and Kandinsky 5, whose configs sample at multiplier 1000, and a
+  checkpoint whose config the driver cannot read is let through
+  ([TROUBLESHOOTING #128](docs/TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)). Fleet KSampler runs the same check.
 
 ## [1.2.0] - 2026-10-16
 

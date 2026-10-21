@@ -41,6 +41,12 @@ on:
       - "tests/test_ernie_stock_equivalence.py"
       - "tests/test_flux3_comfy_exactness.py"
       - "tests/test_flux3_cond_branch.py"
+      - "tests/test_moss_image_comfy_exactness.py"
+      - "tests/test_moss_image_parity.py"
+      - "tests/test_moss_image_support.py"
+      - "tests/test_moss_image_skip_end_to_end.py"
+      - "tests/test_skip_layer_guidance_comfy.py"
+      - "tests/test_lora_shape_guard.py"
       - "tests/test_mage_flow_comfy_differential.py"
       - "tests/test_qwen_image21_adapter.py"
       - "tests/test_qwen_text_projections.py"
@@ -48,15 +54,17 @@ on:
       - "tests/test_wan_variants.py"
       - "tests/test_worker_latent_size_tags.py"
       # No step runs these files, but the files the steps run import them. The
-      # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4 and Lens
-      # two-rank harness. tests/test_canary_path_filter.py checks that every
-      # repo file the steps import by name is listed here.
+      # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4, Lens and
+      # MOSS-Image two-rank harness. tests/test_canary_path_filter.py checks
+      # that every repo file the steps import by name is listed here.
+      - "tests/attention_pin_helpers.py"
       - "tests/comfy_managed_helpers.py"
       - "tests/fake_model_base_helpers.py"
       - "tests/module_location_helpers.py"
       - "tests/test_fsdp_lora.py"
       - "tests/test_flux_pad_exclusion.py"
       - "tests/test_lens_order.py"
+      - "tests/test_detect.py"
       - "tests/test_qwen_image_order.py"
       - "tests/test_sweep_matrix.py"
       # The entrypoint canary checks the web/js assets. The template and video
@@ -65,6 +73,8 @@ on:
       - "web/**"
       - "example_workflows/**"
       - "tools/gen_templates.py"
+      # Seam 39 loads this file by path.
+      - "tools/make_pin_probe_lora.py"
       # The cfg combine seam loads this file with benchmark/ on sys.path.
       - "benchmark/gates.py"
       # The auto-topology step imports test_sweep_matrix.py, which loads these.
@@ -255,6 +265,25 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_lens_comfy_exactness.py tests/test_lens_text_projections.py
+      # MOSS-Image's sharded forward against stock operand by operand, padded
+      # and unpadded, the LoRA key map and bakes, and ComfyUI's own Skip Layer
+      # Guidance on a tiny real model. The parity file's GPU half skips here.
+      - name: MOSS-Image sharded forward vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_moss_image_comfy_exactness.py tests/test_moss_image_parity.py
+      # The Skip Layer Guidance carrier installs ComfyUI's node on the render
+      # clone and reaches MOSS-Image's sharded forward end to end; the LoRA
+      # shape guard reads ComfyUI's own shape predicate.
+      - name: Skip Layer Guidance carrier and LoRA shape guard vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+          COMFYUI_DIR: ../ComfyUI
+        run: >-
+          pytest -q
+          tests/test_skip_layer_guidance_comfy.py
+          tests/test_lora_shape_guard.py
+          tests/test_moss_image_skip_end_to_end.py
       # Keep the formula check last so its failure cannot prevent earlier
       # canaries from running; no step uses continue-on-error.
       - name: Render-memory formula vs comfy master (CPU)
@@ -300,3 +329,9 @@ jobs:
           tests/test_wan_variants.py
           tests/test_int8_linear_layout.py
           tests/test_render_memory_price.py
+          tests/test_moss_image_support.py
+          tests/test_moss_image_comfy_exactness.py
+          tests/test_moss_image_parity.py
+          tests/test_skip_layer_guidance_comfy.py
+          tests/test_lora_shape_guard.py
+          tests/test_moss_image_skip_end_to_end.py

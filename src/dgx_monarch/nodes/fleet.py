@@ -22,7 +22,7 @@ from ..transfer_utils import (
     reconcile_error,
     safe_note,
 )
-from . import consent_waiver
+from . import consent_waiver, model_patch_preflight
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .common import ModelSpec, conditioning_for_wire
 from .fleet_cleanup import (
@@ -252,6 +252,7 @@ class DGXMonarchFleetKSampler:
               steps, cfg, sampler_name, scheduler, positive=None, unique_id=None):
         # INPUT_IS_LIST: every arg arrives as a list; widgets are 1-element.
         spec: ModelSpec = model[0]
+        model_patch_preflight.preflight_shift_node(spec)  # before any dispatch (#128)
         clip0 = clip[0]
         # Private topology hints are input-only. Fleet bypasses common's
         # normal request/output path, so scrub once here and use this clean

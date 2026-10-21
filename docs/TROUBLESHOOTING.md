@@ -618,8 +618,8 @@ compile flag is cleared on the next setup).
 
 **Which models it compiles:** only a diffusion model with a `blocks` list.
 krea2 is the one measured; other `blocks` families (wan, minimax) compile
-without a fidelity record. Flux, Flux2, Chroma, and LongCat name their lists
-otherwise, so they compile nothing and the worker logs
+without a fidelity record. Flux, Flux2, FLUX.3, Chroma, LongCat and MOSS-Image
+name their lists otherwise, so they compile nothing and the worker logs
 `compile_dit: ... has no blocks list, so nothing was compiled; running eager`.
 For a checkpoint whose live-model family has already been detected, those
 known no-op families leave requested slab residency available. Other families
@@ -2842,6 +2842,11 @@ against the resident model, and `auto` picks the topology at the first render,
 after the sigmas are already needed, so the node refuses with a RuntimeError
 instead. Every toast that names that node says so; set the topology while you
 make the swap and the first Queue works.
+
+**Skip Layer Guidance.** A stock `SkipLayerGuidanceDiTSimple` swaps for Skip
+Layer Guidance (DGX Monarch), which takes the same four widgets in the same
+order, so the swap keeps every value, and carries them to every Worker. The
+topologies and guiders it refuses are in [#126](#126-skip-layer-guidance-dgx-monarch-refuses-on-cfg2-on-a-sequence-parallel-family-that-does-not-apply-block-replacement-or-with-a-two-checkpoint-guider).
 
 **One toast per graph.** Each advisory appears once per driver process.
 Changing the relevant nodes produces new advice; requeueing unchanged nodes
@@ -5640,6 +5645,13 @@ pins and runs exact attention, so a uly2 render differs from stock INT8 on one
 GPU by construction. The BF16 and NVFP4 files pin nothing, and the shipped
 FLUX.3 templates use BF16.
 
+The MOSS-Image INT8 ConvRot files, the SFT, Base and Kromoss checkpoints, pin
+comfy-kitchen's INT8 attention on all 42 blocks and on neither text-embedder
+block. Their testing graphs ask for the waiver on single, cfg2 and dp2 and
+render without it on uly2, which drops the pins and runs exact attention, so
+a uly2 render differs from stock INT8 on one GPU by construction. The BF16
+files pin nothing, and the shipped MOSS-Image templates use BF16.
+
 **What to do:** either accept the card and queue the render again, or pick a
 sequence-parallel topology such as uly2, where dgx-monarch drops every pin and
 the Init widget's kernel runs (exact under TORCH_FLASH; the Sol card appears
@@ -5714,10 +5726,13 @@ python tools/make_pin_probe_lora.py \
   --family wan21 --kernel comfy_kitchen_sol --tau 0.7
 ```
 
-It knows krea2, anima, kandinsky5, wan21, qwen_image21, flux3 and
-flux3_early, and its docstring lists the key pattern for each. `flux3` pins
-every FLUX.3 block; `flux3_early` pins only the five text and five reference
-blocks, which every rank runs whole before the sharded blocks. It pins
+It knows krea2, anima, kandinsky5, wan21, qwen_image21, flux3, flux3_early,
+moss_image and moss_image_text, and its docstring lists the key pattern for
+each. `flux3` pins every FLUX.3 block; `flux3_early` pins only the five text
+and five reference blocks, which every rank runs whole before the sharded
+blocks. `moss_image` pins every MOSS-Image block and both text-embedder
+blocks; `moss_image_text` pins only the two text-embedder blocks, which every
+rank runs whole on ComfyUI's default attention. It pins
 self-attention by default. `--cross`
 adds cross-attention, for int8 only: Sol needs q, k and v of one shape with a
 head dimension of 128, and cross-attention gives its keys and values the
@@ -6234,3 +6249,173 @@ refuses Workers that run from release slots. A driver service must serve the
 - For a driver code, read the companion log. The observer and the event
   watcher retry on their own with a pause of up to 30 seconds; free disk space
   for `studio_storage`.
+
+## 125. A MOSS-Image checkpoint fails to load on ComfyUI older than 0.42.0
+
+**Symptom:** a MOSS-Image or Kromoss template is refused before it runs:
+ComfyUI's prompt check reports `Value not in list` for the CLIPLoader type
+`moss_image`. A graph that loads a `moss_image_*` or `kromoss_*` file another
+way stops at the model load, where ComfyUI's loader raises
+`Could not detect model type`, while dgx-monarch's own header read still names
+the family `moss_image`. A ComfyUI that loads the file as some other model
+class leaves the render refused with `has no dgx-monarch adapter`.
+
+**Cause:** ComfyUI added the MOSS-Image model, its detection, the
+`moss_image` text encoder type and the LoRA key map in one change, commit
+e087d8f6c, first released in ComfyUI 0.42.0. ComfyUI 0.41.3 does not carry
+it, although on 2026-10-20 ComfyUI's own MOSS-Image tutorial still named that
+release. dgx-monarch reads the family from the checkpoint header without asking
+ComfyUI, so it names `moss_image` on any ComfyUI, but only a ComfyUI that
+defines `comfy.model_base.MOSSImage` can build the model, and the adapter
+binds that exact class. The driver needs it for the `moss_image` CLIPLoader
+type too.
+
+**Fix:** update ComfyUI to 0.42.0 or newer on the driver and on every Worker,
+through the procedure you use for ComfyUI, then restart the driver and the
+Workers. That ComfyUI also needs the comfy-kitchen version its requirements
+name, which the INT8 ConvRot files need as well. `dgxm update` moves
+dgx-monarch and torchmonarch only, never ComfyUI. Every other family keeps
+working on the older ComfyUI meanwhile. Every Gate PASS goes stale with the
+ComfyUI change, so each combination runs its first-use Gate again
+([#114](#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
+
+## 126. Skip Layer Guidance (DGX Monarch) refuses on cfg2, on a sequence-parallel family that does not apply block replacement, or with a two-checkpoint guider
+
+**Symptom:** a graph whose Skip Layer Guidance (DGX Monarch) node names a
+layer in `double_layers` or `single_layers` stops with a class P refusal
+before dispatch. The message ends "To keep this topology and guider instead,
+clear both layer lists on the node; the render then runs without the skip.
+See docs/TROUBLESHOOTING.md #126." and opens with one of three reasons:
+
+* "Skip Layer Guidance (DGX Monarch) runs the conditional and unconditional
+  passes as two separate model calls on every step in its window, and
+  cfg-parallel can split only a call that carries both; set the Init topology
+  to auto, uly2, ring2, dp2 or single to keep the skip." On a family other
+  than MOSS-Image the last clause reads "set the Init topology to dp2 or
+  single to keep the skip." When the driver cannot read the checkpoint's
+  header it gives the first form, and a Worker on another family then refuses
+  with the second reason below.
+* "Skip Layer Guidance (DGX Monarch) reaches a sequence-parallel render only
+  through the family's sharded forward, and dgx-monarch has shown that only
+  for moss_image; `<family>`'s sharded forward could render without the skip
+  and report nothing; set the Init topology to single or dp2, where ComfyUI's
+  own forward runs, to keep the skip." Here `<family>` is the checkpoint's
+  family.
+* "Skip Layer Guidance (DGX Monarch) with a two-checkpoint guider is not
+  carried to the Workers; use a single-model guider to keep the skip."
+
+Each Worker raises the same refusal, with the same text, when a render
+reaches it without the driver's check.
+
+A graph that wires Model Sampling SD3 (DGX Monarch) after the skip node, with
+a step window other than 0 to 1, stops at the shift node instead: "Model
+Sampling SD3 (DGX Monarch) follows Skip Layer Guidance (DGX Monarch) in this
+graph, and the skip's step window runs from `<start>` to `<end>`. Stock
+ComfyUI turns that window into sigmas when the skip node runs, from the
+sampling the model has at that point, while every Worker applies the shift
+before the skip, so the skip would fall on other steps than stock's. Put the
+shift node before the skip node instead; a window of 0 to 1 is not affected."
+
+**Cause:** stock `SkipLayerGuidanceDiTSimple` cannot connect to a DGX Monarch
+model, so the DGX Monarch node carries its four widgets on the model and each
+Worker applies ComfyUI's own node to its render. Inside the node's step
+window ComfyUI replaces the batched model call with two calls: the
+conditional pass alone, then the unconditional pass alone with each listed
+layer replaced by an identity. cfg-parallel splits a call that carries both
+passes, one per rank. A call that carries one pass would be sliced instead,
+which at latent batch 1 refuses with a reason that blames the prompt lengths
+and at batch 2 or more computes what one GPU never does, so every cfg
+topology, `+fsdp` included, refuses an active skip. Under sequence
+parallelism each rank runs the family's sharded forward, which must apply
+ComfyUI's block replacement as stock does. dgx-monarch shows that only for
+MOSS-Image, with CPU tests that run ComfyUI's own node through the sharded
+forward; the other families' sharded forwards never read the replacement and
+would render without the skip and say nothing. A two-checkpoint guider sends
+a second model that this release does not carry the skip on. dp2 and single
+run ComfyUI's own forward and honor the skip on every family.
+
+**Fix:** keep the skip on a topology the refusal names. On MOSS-Image auto
+picks uly2. To keep cfg2, a sequence-parallel topology on another family, or a
+two-checkpoint guider, clear both layer lists; the node then changes nothing
+and the render runs without the skip. For the shift refusal, wire Model
+Sampling SD3 (DGX Monarch) before the skip node, the order every Worker
+applies them in. The refusal needs no Recycle: the driver raises it before
+dispatch, and a Worker raises it on every rank alike before the first step, so
+the next render runs on the same fleet, by design; no hardware test has
+observed it yet. Fleet KSampler does not run the driver check; there the
+Workers refuse instead.
+
+## 127. A LoRA that changes a weight's shape refuses before any bake
+
+**Symptom:** a render with a LoRA refuses class P while the model loads,
+before any weight moves, with a message that opens "a LoRA patch replaces",
+names the weight and its two shapes, and goes on "as a control adapter that
+widens the model's input does (the MOSS-Image color and depth control LoRA
+widens video_embedder from 128 to 384 input channels). dgx-monarch's bake,
+un-bake, slab and FSDP paths keep the checkpoint's shapes, so this release
+refuses it before any weight moves. Remove that LoRA from the DGX Monarch
+LoRA loader, or run it in plain ComfyUI on one GPU instead. See
+docs/TROUBLESHOOTING.md #127." On a sequence-parallel MOSS-Image render that
+reaches the model with a wider latent by another path, the refusal instead
+opens "moss_image: this render feeds the model", gives both channel counts,
+and says "A color or depth control adapter concatenates them, and this
+release has not validated control under sequence parallelism. Run this
+workflow in plain ComfyUI on one GPU instead."
+
+**Cause:** on ComfyUI master since e3bee7ffc, ComfyUI's model patcher can
+replace a weight with a tensor of another shape, through a "set" patch or a
+padded diff. ComfyUI 0.42.x counts no set patch in its shape rule, so there
+the guard finds nothing to refuse and ComfyUI's own merge fails on such a
+patch instead. The MOSS-Image color
+and depth control (ComfyUI commit e3bee7ffc, the `MOSSImageControl` node, on
+ComfyUI master only on 2026-10-20) loads a LoRA whose `video_embedder.weight`
+takes 384 input channels where the checkpoint's takes 128, and feeds the
+model the latent with the color and depth maps joined to it. dgx-monarch's
+bake writes each patched weight into the checkpoint's own tensor, and its
+un-bake, slab and FSDP paths keep the file's shapes, so before this check the
+bake failed on such a key with an untyped error from
+`comfy.utils.copy_to_param`. The check runs on every family and topology
+right after the LoRA stack builds, with ComfyUI's own shape rule. Under
+sequence parallelism the MOSS-Image forward also refuses a latent wider than
+the checkpoint's, because the control channels would shard with the image
+rows and no test has shown that exact.
+
+**Fix:** remove the shape-changing LoRA from Load LoRA (DGX Monarch), or run
+the control graph in plain ComfyUI on one GPU. An ordinary LoRA keeps every
+shape and is not affected. Every rank refuses alike before any bake, so the
+next render runs on the same fleet, by design; no hardware test has observed
+it yet.
+
+## 128. Model Sampling SD3 (DGX Monarch) refuses on a family whose ComfyUI sampling multiplier is 1.0
+
+**Symptom:** a graph with Model Sampling SD3 (DGX Monarch) stops before
+dispatch with a class P refusal: "Model Sampling SD3 (DGX Monarch) applies
+ComfyUI's ModelSamplingSD3 at multiplier 1000, and ComfyUI's `<config>`
+config for `<checkpoint>` samples at multiplier 1.0, so this render would be
+noise (ComfyUI issue 17119 reports it for MOSS-Image). Remove the node and
+render with the checkpoint's own sampling instead; for MOSS-Image that
+already applies the vendor's shift of 5. See docs/TROUBLESHOOTING.md #128."
+Here `<config>` is ComfyUI's configuration class and `<checkpoint>` the file.
+
+**Cause:** ComfyUI's ModelSamplingSD3 builds a flow sampling object at
+multiplier 1000, the timestep scale that Wan and Kandinsky 5 use. A
+checkpoint whose ComfyUI configuration samples at multiplier 1.0 then gets
+timesteps a thousand times too large, and every step renders noise; stock
+ComfyUI does the same with its own node. The driver reads the checkpoint's
+ComfyUI configuration from its header, for the model and for the
+unconditional model of a two-checkpoint guider, and refuses the node only
+when that configuration says multiplier 1.0. Among dgx-monarch's families
+that covers FLUX.1 Schnell checkpoints, Chroma and Radiance, Z-Image (latent
+and DCT) and Lumina 2, OmniGen2, Boogu, Mage Flow, Qwen-Image, Qwen Image
+2.1, Ideogram 4, Krea 2 and Kroma, MOSS-Image and Kromoss, and Anima. Such
+graphs rendered noise before this check and now refuse before dispatch. The
+shipped graphs wire the node only to Wan and Kandinsky 5, whose
+configurations sample at multiplier 1000, so no shipped graph or sweep cell
+changes outcome. A configuration with no multiplier, or a header the driver
+cannot read, passes unchecked. Fleet KSampler runs the same check before
+its first dispatch.
+
+**Fix:** remove the node. MOSS-Image's own configuration already applies the
+vendor's shift of 5, and the other families render with their own sampling.
+dgx-monarch carries no other shift node, so a different shift on those
+families needs stock ComfyUI on one GPU.

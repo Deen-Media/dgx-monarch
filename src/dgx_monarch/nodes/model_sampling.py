@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from ..constants import MODEL_TYPE, NODE_CATEGORY
 from .common import ModelSpec
+from .model_patch_preflight import refuse_shift_after_skip
 
 
 class DGXMonarchModelSamplingSD3:
@@ -24,4 +25,5 @@ class DGXMonarchModelSamplingSD3:
     CATEGORY = NODE_CATEGORY
 
     def patch(self, model: ModelSpec, shift: float):
+        refuse_shift_after_skip(model)
         return (model.with_model_sampling({"kind": "sd3", "shift": shift}),)

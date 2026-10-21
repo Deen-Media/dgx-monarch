@@ -35,6 +35,17 @@ negative = ""
 # shift 5 for Video Lite/Pro. Omit the field to preserve checkpoint defaults.
 # model_sampling_sd3_shift = 3.0
 
+# Optional render-time Skip Layer Guidance can live here or on an individual
+# case. This mirrors DGXMonarchSkipLayerGuidance (stock SkipLayerGuidanceDiTSimple
+# applied on every Worker) and is bound before topology resolution. A missing
+# layer list means no layers; missing percents default to 0.0 and 1.0; omit all
+# four keys for no skip. The MOSS-Image CFG 3 recipe skips single layer 22 on
+# the negative pass at every step. cfg topologies refuse an active skip.
+# slg_double_layers = ""
+# slg_single_layers = "22"
+# slg_start_percent = 0.0
+# slg_end_percent = 1.0
+
 # Optional empty-latent shape settings may live here or on an individual case.
 # Defaults are 4 channels at 1/8 spatial scale; omit latent_t (or set it to 0)
 # for an image [B,C,H/D,W/D], or set it positive for video [B,C,T,H/D,W/D].

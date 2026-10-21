@@ -35,6 +35,7 @@ from ..mesh import MeshHandle, ensure_live
 from ..model_sampling import ModelSamplingSpec, freeze_model_sampling, normalize_model_sampling
 from ..qwen_image21_cache import normalize_qwen_image21_cache
 from ..sampling_contract import latent_size_tags
+from ..skip_layer_guidance import SkipLayerGuidanceSpec, normalize_skip_layer_guidance
 from ..topology import Topology, choose_auto_topology, topology_from_preset
 from ..topology_cfg_evidence import sniffed_checkpoint_variant
 from ..transfer import pack_conditioning
@@ -92,6 +93,7 @@ class ModelSpec:
     loras: tuple = ()
     slot: str = "cond"
     model_sampling: ModelSamplingSpec | None = None
+    skip_layer_guidance: SkipLayerGuidanceSpec | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model_sampling", freeze_model_sampling(self.model_sampling))
@@ -126,6 +128,7 @@ class ModelSpec:
             "options": options,
             "loras": [dict(entry) for entry in self.loras],
             "model_sampling": normalize_model_sampling(self.model_sampling),
+            "skip_layer_guidance": normalize_skip_layer_guidance(self.skip_layer_guidance),
         }
 
 

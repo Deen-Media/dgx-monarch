@@ -249,6 +249,54 @@ def _apply_model_sampling_sd3(model, settings: dict, *, patch=None):
     return patch(model, shift)[0]
 
 
+# DGXMonarchSkipLayerGuidance's widgets as matrix keys, in the node's order.
+_SLG_LAYER_KEYS = ("slg_double_layers", "slg_single_layers")
+_SLG_PERCENT_KEYS = (("slg_start_percent", 0.0), ("slg_end_percent", 1.0))
+
+
+def _skip_layer_guidance_settings(settings: dict) -> tuple[str, str, float, float] | None:
+    """Validate the optional matrix-facing Skip Layer Guidance widgets.
+
+    All four keys absent means no node. A missing layer list means no layers,
+    not the node's "7, 8, 9" default, so a cell that sets only
+    slg_single_layers skips only those; missing percents take the node's 0.0
+    and 1.0.
+    """
+    names = (*_SLG_LAYER_KEYS, *(name for name, _default in _SLG_PERCENT_KEYS))
+    if not any(name in settings for name in names):
+        return None
+    layers = []
+    for name in _SLG_LAYER_KEYS:
+        value = settings.get(name, "")
+        if not isinstance(value, str) or len(value) > 256:
+            raise ValueError(f"{name} must be a string of at most 256 characters")
+        layers.append(value)
+    percents = []
+    for name, default in _SLG_PERCENT_KEYS:
+        value = settings.get(name, default)
+        if (
+            isinstance(value, bool)
+            or not isinstance(value, int | float)
+            or not math.isfinite(float(value))
+            or not 0.0 <= float(value) <= 1.0
+        ):
+            raise ValueError(f"{name} must be a finite number from 0 through 1")
+        percents.append(float(value))
+    return layers[0], layers[1], percents[0], percents[1]
+
+
+def _apply_skip_layer_guidance(model, settings: dict, *, patch=None):
+    """Apply the optional node-equivalent Skip Layer Guidance before topology binding."""
+    values = _skip_layer_guidance_settings(settings)
+    if values is None:
+        return model
+    if patch is None:
+        from dgx_monarch.nodes.skip_layer_guidance import DGXMonarchSkipLayerGuidance
+
+        patch = DGXMonarchSkipLayerGuidance().patch
+    return patch(model, *values)[0]
+
+
 def _integer_setting(
     settings: dict, name: str, default: int, *, minimum: int
 ) -> int:
@@ -755,6 +803,7 @@ def run_case(
     mesh = _init_tracked_mesh(merged, mesh_handles)
     (model,) = DGXMonarchUNETLoader().load(mesh, merged["unet"], merged.get("weight_dtype", "default"))
     model = _apply_model_sampling_sd3(model, merged)
+    model = _apply_skip_layer_guidance(model, merged)
 
     positive, negative = encode_prompts(
         merged["te"], merged["prompt"], merged["negative"],

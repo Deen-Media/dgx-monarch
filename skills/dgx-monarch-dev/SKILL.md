@@ -51,8 +51,11 @@ Read `docs/ADAPTERS.md` first. Summary:
    Route clipped span calls through the parity helper `at_stock_rows` in
    `adapters/flux3_adaln_parity.py` (FLUX.3 wires it in with
    `bind_adaln_parity`), which fills the call with zero rows to stock's row
-   count and keeps the piece's rows. The proof is the GPU seam test
-   (`tests/test_flux3_adaln_parity.py`) plus a one-step hardware comparison
+   count and keeps the piece's rows. MOSS-Image reuses `at_stock_rows`,
+   `loads_global` and `route_global` through `adapters/moss_image_seams.py`
+   (`bind_norm_parity`). The proof is the GPU seam test
+   (`tests/test_flux3_adaln_parity.py`, and `tests/test_moss_image_parity.py`
+   for MOSS-Image) plus a one-step hardware comparison
    at a small size (704 square or below) and a one-reference edit, both
    expected bit-identical to one GPU.
 6. Register in `ADAPTERS` (most specific first); a subclass whose forward

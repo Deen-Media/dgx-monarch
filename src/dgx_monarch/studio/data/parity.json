@@ -1,18 +1,18 @@
 {
   "baseline_counts": {
-    "nodes": 18,
-    "workflows": 66
+    "nodes": 19,
+    "workflows": 71
   },
   "counts": {
     "cli_command": 18,
     "cli_option": 83,
     "configuration": 47,
-    "node": 18,
-    "node_input": 124,
+    "node": 19,
+    "node_input": 129,
     "panel_action": 7,
     "telemetry": 17,
     "tui_action": 9,
-    "workflow": 66
+    "workflow": 71
   },
   "coverage_meaning": "Discovered surfaces with a reviewed Studio view: an operation, a route, an equivalent, a waiver with its reason, or source coverage only. Not a claim of accepted parity.",
   "limitations": [
@@ -8047,6 +8047,44 @@
       "datatype": "node_schema",
       "default": null,
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.DGXMonarchSkipLayerGuidance",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSkipLayerGuidance",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node schemas from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node",
+      "name": "DGXMonarchSkipLayerGuidance",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/nodes/skip_layer_guidance.py:DGXMonarchSkipLayerGuidance.INPUT_TYPES",
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "node_schema",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "node.DGXMonarchStatus",
       "interfaces": {
         "cli": {
@@ -10436,6 +10474,7 @@
         "ltx",
         "mage_flow",
         "minimax_h3",
+        "moss_image",
         "omnigen2",
         "pixeldit_comfy",
         "qwen_image",
@@ -13516,6 +13555,239 @@
       "validation": {}
     },
     {
+      "applicability": "required input of DGXMonarchSkipLayerGuidance; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "STRING",
+      "default": "7, 8, 9",
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchSkipLayerGuidance.double_layers",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSkipLayerGuidance",
+          "input": "double_layers",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "double_layers",
+      "node": "DGXMonarchSkipLayerGuidance",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/skip_layer_guidance.py:DGXMonarchSkipLayerGuidance.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchSkipLayerGuidance; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "FLOAT",
+      "default": 1.0,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchSkipLayerGuidance.end_percent",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSkipLayerGuidance",
+          "input": "end_percent",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "end_percent",
+      "node": "DGXMonarchSkipLayerGuidance",
+      "order": 4,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/skip_layer_guidance.py:DGXMonarchSkipLayerGuidance.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "max": 1.0,
+        "min": 0.0,
+        "step": 0.001
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchSkipLayerGuidance; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "DGXM_MODEL",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchSkipLayerGuidance.model",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSkipLayerGuidance",
+          "input": "model",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "model",
+      "node": "DGXMonarchSkipLayerGuidance",
+      "order": 0,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/skip_layer_guidance.py:DGXMonarchSkipLayerGuidance.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchSkipLayerGuidance; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "STRING",
+      "default": "7, 8, 9",
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchSkipLayerGuidance.single_layers",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSkipLayerGuidance",
+          "input": "single_layers",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "single_layers",
+      "node": "DGXMonarchSkipLayerGuidance",
+      "order": 2,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/skip_layer_guidance.py:DGXMonarchSkipLayerGuidance.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchSkipLayerGuidance; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "FLOAT",
+      "default": 0.0,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchSkipLayerGuidance.start_percent",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSkipLayerGuidance",
+          "input": "start_percent",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "start_percent",
+      "node": "DGXMonarchSkipLayerGuidance",
+      "order": 3,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/skip_layer_guidance.py:DGXMonarchSkipLayerGuidance.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "max": 1.0,
+        "min": 0.0,
+        "step": 0.001
+      }
+    },
+    {
       "applicability": "required input of DGXMonarchStatus; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -16546,6 +16818,88 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
+      "digest": "72bf5f7ca011d8d3a8812a1e98533dbf7ffa87b0a9dc469bcd73e5c5c7a2911f",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-kromoss-t2i",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-kromoss-t2i",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-kromoss-t2i.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "30df75eee6080e16b5a268542fa4e473a9803e54b802cf8050019b9a75b0618c",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-kromoss-t2i-turbo",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-kromoss-t2i-turbo",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-kromoss-t2i-turbo.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
       "digest": "dc8c0f8202a450518eed7e4a53508b62d900ad4f4ed4855ab36b16c1c1b6a083",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-lens-t2i",
@@ -17193,6 +17547,129 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "example_workflows/dgx-monarch-minimax-h3-t2va.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "262a8b6be13554ddc53cf961358fddce4984a43d31f133edb9469d714af29641",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-moss-image-base-t2i",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-moss-image-base-t2i",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-moss-image-base-t2i.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "96bfb7015fae4867bb155c43502012a92d70582b9ada46dee482ece880b446e9",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-moss-image-layout-t2i",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-moss-image-layout-t2i",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-moss-image-layout-t2i.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "027cc17671d85b61aebc1773df2737d711c37b9d6a795ee60c307a7df6330739",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-moss-image-t2i",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-moss-image-t2i",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-moss-image-t2i.json",
       "units": null,
       "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
     },

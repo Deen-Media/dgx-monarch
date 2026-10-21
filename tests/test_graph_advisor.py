@@ -203,6 +203,22 @@ def test_leftover_stock_warns_with_the_exact_node_ids():
     assert "CLIPTextEncode" not in advisory.message
 
 
+def test_stock_skip_layer_guidance_is_advised_as_the_monarch_carrier():
+    """The carrier node keeps stock's widget names and order, so the swap keeps every value."""
+    assert graph_advisor.SWAPS["SkipLayerGuidanceDiTSimple"] == "DGXMonarchSkipLayerGuidance"
+    assert graph_advisor.DISPLAY_NAMES["DGXMonarchSkipLayerGuidance"] == (
+        "Skip Layer Guidance (DGX Monarch)")
+    advisories = graph_advisor.analyze(graph(
+        ("1", "DGXMonarchInit"),
+        ("2", "DGXMonarchUNETLoader"),
+        ("3", "SkipLayerGuidanceDiTSimple"),
+        ("4", "DGXMonarchKSampler"),
+    ))
+    assert kinds(advisories) == ["leftover_stock"]
+    assert ("#3 SkipLayerGuidanceDiTSimple -> Skip Layer Guidance (DGX Monarch)"
+            in advisories[0].message)
+
+
 def test_a_complete_monarch_graph_says_nothing():
     assert graph_advisor.analyze(graph(
         ("1", "DGXMonarchInit"),

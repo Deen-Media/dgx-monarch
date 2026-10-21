@@ -2570,3 +2570,108 @@ def test_a_pinned_nvfp4_cell_on_cfg2_carries_no_shard_quant_waiver(tmp_path):
     assert (plain["label"], plain["basis"], plain["waiver"], plain["waiver_guards"]) == (
         "refuse:K", "guard", True, [shard])
     assert _pick(cells, "chromapin", "cfg2", artifact_quant="bf16")["label"] == "render"
+
+
+# MOSS-Image: ComfyUI's own needle pair, without the shared FAMILY_KEYS table,
+# so no existing test's checkpoints move.
+_MOSS_KEYS = ("shared_block_modulation.weight", "layers.0.proj.ffn_up_gate.weight")
+_SKIP_WIDGETS = {"double_layers": "", "single_layers": "22", "start_percent": 0.0,
+                 "end_percent": 1.0}
+
+
+def _moss_rig(tmp_path: Path, graphs: dict[str, Path]) -> dict:
+    """The rig plus MOSS-Image SFT in BF16 and INT8 and the given committed graphs.
+
+    Each graph goes through the converter the sweep itself uses, so the cells
+    read the committed widgets of the Skip Layer Guidance (DGX Monarch) node.
+    """
+    config = _rig(tmp_path)
+    for name, dtype in (("moss_image_sft_bf16.safetensors", torch.bfloat16),
+                        ("moss_image_sft_int8_convrot.safetensors", torch.int8)):
+        save_file({key: torch.zeros(2, 2, dtype=dtype) for key in _MOSS_KEYS},
+                  str(config["model_dir"] / name))
+    names = convert.repo_widget_names(REPO)
+    for stem, path in graphs.items():
+        api = convert.convert(json.loads(path.read_text()), names)
+        (config["out_dir"] / "graphs" / f"{stem}.json").write_text(json.dumps(api))
+    return config
+
+
+_MOSS_SHIPPED = REPO / "example_workflows" / "dgx-monarch-moss-image-t2i.json"
+_MOSS_TESTING = REPO / "tests" / "fixtures" / "workflows" / "generated"
+
+
+def test_the_moss_image_files_split_into_one_stem_per_checkpoint():
+    # SFT, Base and Kromoss share one key set, so only the stems keep each CFG 3
+    # graph with its own INT8 sibling; no [artifact_groups] entry is needed.
+    for model, stem in (("moss_image_sft", "mossimagesft"), ("moss_image_base", "mossimagebase"),
+                        ("kromoss", "kromoss")):
+        assert matrix.split_quant(f"{model}_bf16") == (stem, "bf16")
+        assert matrix.split_quant(f"{model}_int8_convrot") == (stem, "int8_convrot")
+    assert matrix.split_quant("qwen3.5_9b_int8_convrot") == ("qwen359b", "int8_convrot")
+
+
+def test_an_active_skip_refuses_class_p_on_every_cfg_cell(tmp_path):
+    """The driver preflight refuses an active skip on any cfg topology before
+    dispatch (nodes/model_patch_preflight.py), so the matrix labels those cells
+    class P from the runtime's own reason function. MOSS-Image honors block
+    replacement under sequence parallelism, so its sharded cells render; the
+    same graph with the skip cleared renders on cfg2 too."""
+    config = _moss_rig(tmp_path, {
+        "moss": _MOSS_SHIPPED,
+        "mossoff": _MOSS_TESTING / "dgx-monarch-test-moss-image-slg-off.json"})
+    skip = _graph("krea2_raw_bf16.safetensors")
+    skip["6"] = {"class_type": "DGXMonarchSkipLayerGuidance",
+                 "inputs": {"model": ["2", 0], **_SKIP_WIDGETS}}
+    skip["4"]["inputs"]["model"] = ["6", 0]
+    (config["out_dir"] / "graphs" / "krea2skip.json").write_text(json.dumps(skip))
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    for quant in ("bf16", "int8"):
+        for preset in ("cfg2", "cfg2+fsdp"):
+            cell = _pick(cells, "moss", preset, artifact_quant=quant)
+            assert (cell["label"], cell["basis"], cell["waiver"]) == (
+                "refuse:P", "guard", False), (quant, preset)
+            assert _pick(cells, "mossoff", preset, artifact_quant=quant)["label"] == "render"
+        for preset in ("auto", "uly2", "ring2", "uly2+fsdp"):
+            assert _pick(cells, "moss", preset, artifact_quant=quant)["label"] == "render", preset
+    # A family whose sharded forward is not shown to honor the skip refuses it
+    # under sequence parallelism too, while the same graph without the node renders.
+    for preset in ("uly2", "cfg2", "ring2"):
+        assert _pick(cells, "krea2skip", preset, artifact_quant="bf16")["label"] == "refuse:P"
+    assert _pick(cells, "krea2", "uly2", artifact_quant="bf16")["label"] == "render"
+    # One GPU runs ComfyUI's own forward on one rank, so the skip refuses nothing
+    # there: each local cell keeps the label of the same cell without the node.
+    def local(template: str) -> dict:
+        return {(cell["artifact_quant"], cell["attention"]): cell["label"] for cell in cells
+                if cell["template"] == template and cell["session"] == "local"}
+
+    assert local("krea2skip") == local("krea2") and local("krea2")
+    assert set(local("moss").values()) == {"render"}
+
+
+def test_a_skip_off_or_unreadable_node_makes_no_claim():
+    node = {"class_type": "DGXMonarchSkipLayerGuidance", "inputs": dict(_SKIP_WIDGETS)}
+    assert matrix.skip_layer_guidance_on({"1": node})
+    for change in ({"single_layers": ""}, {"single_layers": "none"},
+                   {"single_layers": ["7", 0]}, {"start_percent": 2.0}):
+        graph = {"1": {**node, "inputs": {**_SKIP_WIDGETS, **change}}}
+        assert not matrix.skip_layer_guidance_on(graph), change
+    assert matrix.graph_facts({"1": node})["skip_layer_guidance"] is True
+
+
+def test_moss_image_int8_with_a_lora_under_fsdp_refuses_class_p(tmp_path):
+    # The LoRA loader's FSDP preflight refuses a stack on a comfy-kitchen
+    # quantized checkpoint, MOSS-Image's INT8 ConvRot files among them, before
+    # dispatch; BF16 with the same stack, and INT8 without one, render.
+    config = _moss_rig(tmp_path, {
+        "mosslora": _MOSS_TESTING / "dgx-monarch-test-moss-image-lora.json"})
+    config["loras"] = {"mosslora": ["one.safetensors"]}
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    at_preset = [cell for cell in cells if cell["template"] == "mosslora"
+                 and cell["preset"] == "uly2+fsdp" and cell["session"] == "cluster"]
+    by_arm = {(bool(cell["loras"]), cell["artifact_quant"]): cell for cell in at_preset}
+    int8_with_lora = by_arm[(True, "int8_convrot")]
+    assert int8_with_lora["fsdp_lora_admission"] == "quantized_shards"
+    assert (int8_with_lora["label"], int8_with_lora["basis"]) == ("refuse:P", "guard")
+    assert by_arm[(False, "int8_convrot")]["label"] == "render"
+    assert by_arm[(True, "bf16")]["label"] == "render"

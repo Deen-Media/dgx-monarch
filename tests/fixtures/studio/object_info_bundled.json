@@ -135,6 +135,7 @@
       "mage_qwen3vl_4b_bf16.safetensors",
       "ministral-3-3b.safetensors",
       "mistral_3_small_flux2_bf16.safetensors",
+      "qwen3.5_9b_bf16.safetensors",
       "qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors",
       "qwen3vl_4b_bf16.safetensors",
       "qwen3vl_8b_bf16.safetensors",
@@ -179,7 +180,8 @@
       "mage",
       "minimax",
       "yue2",
-      "flux3"
+      "flux3",
+      "moss_image"
      ]
     ]
    },
@@ -1183,6 +1185,7 @@
       "ltx",
       "mage_flow",
       "minimax_h3",
+      "moss_image",
       "omnigen2",
       "pixeldit_comfy",
       "qwen_image",
@@ -1612,6 +1615,7 @@
     ],
     "lora_name": [
      [
+      "kromoss_8-steps-dmd2-lora.safetensors",
       "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors",
       "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors",
       "your_first_lora.safetensors",
@@ -1742,6 +1746,66 @@
   "name": "DGXMonarchSamplerCustom",
   "python_module": "custom_nodes.dgx-monarch"
  },
+ "DGXMonarchSkipLayerGuidance": {
+  "input": {
+   "required": {
+    "model": [
+     "DGXM_MODEL"
+    ],
+    "double_layers": [
+     "STRING",
+     {
+      "default": "7, 8, 9"
+     }
+    ],
+    "single_layers": [
+     "STRING",
+     {
+      "default": "7, 8, 9"
+     }
+    ],
+    "start_percent": [
+     "FLOAT",
+     {
+      "default": 0.0,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.001
+     }
+    ],
+    "end_percent": [
+     "FLOAT",
+     {
+      "default": 1.0,
+      "min": 0.0,
+      "max": 1.0,
+      "step": 0.001
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "model",
+    "double_layers",
+    "single_layers",
+    "start_percent",
+    "end_percent"
+   ]
+  },
+  "output": [
+   "DGXM_MODEL"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "model"
+  ],
+  "output_node": false,
+  "name": "DGXMonarchSkipLayerGuidance",
+  "python_module": "custom_nodes.dgx-monarch"
+ },
  "DGXMonarchUNETLoader": {
   "input": {
    "required": {
@@ -1771,6 +1835,7 @@
       "krea2_turbo_fp8_scaled.safetensors",
       "kroma-v0.3.1-turbo-opd.safetensors",
       "kromaKrea2_opd.safetensors",
+      "kromoss_bf16.safetensors",
       "lens_bf16.safetensors",
       "longcat_image_bf16.safetensors",
       "ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors",
@@ -1780,6 +1845,8 @@
       "mage_flow_edit_turbo_int8_convrot.safetensors",
       "mage_flow_turbo_int8_convrot.safetensors",
       "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+      "moss_image_base_bf16.safetensors",
+      "moss_image_sft_bf16.safetensors",
       "omnigen2_fp16.safetensors",
       "pid_flux1_1024_to_4096_4step_bf16.safetensors",
       "pixeldit_1300m_1024px_bf16.safetensors",
@@ -4022,6 +4089,35 @@
   "name": "PiDConditioning",
   "python_module": "comfy_extras.nodes_pid"
  },
+ "PrimitiveStringMultiline": {
+  "input": {
+   "required": {
+    "value": [
+     "STRING",
+     {
+      "multiline": true
+     }
+    ]
+   }
+  },
+  "input_order": {
+   "required": [
+    "value"
+   ]
+  },
+  "output": [
+   "STRING"
+  ],
+  "output_is_list": [
+   false
+  ],
+  "output_name": [
+   "STRING"
+  ],
+  "output_node": false,
+  "name": "PrimitiveStringMultiline",
+  "python_module": "comfy_extras.nodes_primitive"
+ },
  "RandomNoise": {
   "input": {
    "required": {
@@ -5170,6 +5266,7 @@
       "ae.safetensors",
       "cogvideox_vae_bf16.safetensors",
       "flux2-vae.safetensors",
+      "flux2-vae_small.safetensors",
       "hunyuan_image_2.1_vae_fp16.safetensors",
       "hunyuan_video_vae_bf16.safetensors",
       "hunyuanvideo15_vae_fp16.safetensors",

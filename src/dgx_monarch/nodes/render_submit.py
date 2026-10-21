@@ -46,7 +46,7 @@ from ..log import get_logger
 from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
-from . import consent_waiver, render_preflight
+from . import consent_waiver, model_patch_preflight, render_preflight
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_identity import (
     authorize_normal_render,
@@ -313,6 +313,7 @@ def _submit_render_guarded(
         topo, sage, reason = resolved
         render_preflight.preflight_krea2_reference_latents(model, ref_summary, topo)
         render_preflight.preflight_minimax_h3_topology(model, topo)
+        model_patch_preflight.preflight_model_patches(model, topo, request)
         sample_attention = resolve_sample_attention(spec.attention, sage)
         render_preflight.preflight_sol_attention(
             model, topo, sample_attention, handle)

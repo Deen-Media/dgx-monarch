@@ -15447,6 +15447,1226 @@
       }
     },
     {
+      "digest": "30df75eee6080e16b5a268542fa4e473a9803e54b802cf8050019b9a75b0618c",
+      "id": "workflow.dgx-monarch-kromoss-t2i-turbo",
+      "name": "dgx-monarch-kromoss-t2i-turbo",
+      "source": "example_workflows/dgx-monarch-kromoss-t2i-turbo.json",
+      "workflow": {
+        "config": {},
+        "extra": {},
+        "groups": [],
+        "id": "kromoss-turbo-text-to-image",
+        "last_link_id": 11,
+        "last_node_id": 12,
+        "links": [
+          [
+            1,
+            1,
+            0,
+            3,
+            0,
+            "DGXM_MESH"
+          ],
+          [
+            2,
+            4,
+            0,
+            6,
+            0,
+            "CLIP"
+          ],
+          [
+            3,
+            6,
+            0,
+            7,
+            0,
+            "CONDITIONING"
+          ],
+          [
+            4,
+            3,
+            0,
+            8,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            5,
+            8,
+            0,
+            10,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            6,
+            6,
+            0,
+            10,
+            1,
+            "CONDITIONING"
+          ],
+          [
+            7,
+            7,
+            0,
+            10,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            8,
+            9,
+            0,
+            10,
+            3,
+            "LATENT"
+          ],
+          [
+            9,
+            10,
+            0,
+            11,
+            0,
+            "LATENT"
+          ],
+          [
+            10,
+            5,
+            0,
+            11,
+            1,
+            "VAE"
+          ],
+          [
+            11,
+            11,
+            0,
+            12,
+            0,
+            "IMAGE"
+          ]
+        ],
+        "nodes": [
+          {
+            "dgxm_widgets": {
+              "attention": "TORCH_FLASH",
+              "auto_gate": "first_use",
+              "comfy_managed": "off",
+              "compile_dit": false,
+              "config_path": "",
+              "family_adapter": "auto",
+              "gpus_per_host": 0,
+              "load_profile": false,
+              "lora_low_rss": "auto",
+              "mmap_fallback": false,
+              "mode": "auto",
+              "pipeline_depth": 1,
+              "reserve_vram_gb": 0.0,
+              "slab_weights": "auto",
+              "swap_verify": 2,
+              "sync_ulysses": true,
+              "topology": "auto",
+              "uma_reserve_gb": 0.0
+            },
+            "flags": {},
+            "id": 1,
+            "inputs": [],
+            "mode": 0,
+            "order": 0,
+            "outputs": [
+              {
+                "links": [
+                  1
+                ],
+                "name": "mesh",
+                "slot_index": 0,
+                "type": "DGXM_MESH"
+              }
+            ],
+            "pos": [
+              80,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchInit"
+            },
+            "size": [
+              315,
+              448
+            ],
+            "type": "DGXMonarchInit",
+            "widgets_values": [
+              "auto",
+              "auto",
+              "TORCH_FLASH",
+              "",
+              0,
+              0.0,
+              true,
+              false,
+              1,
+              false,
+              "auto",
+              "auto",
+              "first_use",
+              false,
+              2,
+              0.0,
+              "off",
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 2,
+            "inputs": [],
+            "mode": 0,
+            "order": 1,
+            "outputs": [],
+            "pos": [
+              80,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "Note"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "title": "DGX Monarch | Kromoss Turbo text to image",
+            "type": "Note",
+            "widgets_values": [
+              "Kromoss Turbo text to image: 1024x1024, 8 steps, CFG 1, Euler and the simple scheduler with kromoss_8-steps-dmd2-lora.safetensors at strength 1.0, the Kromoss card's ComfyUI recipe; 4 steps also works. The card ships the file as 8-steps-dmd2-lora.safetensors; save it under the name above. kromoss_8-steps-dmd-lora.safetensors, the plain DMD LoRA, is the other choice; use one LoRA at a time. Both were distilled from MOSS-Image Base and also run on it. CFG 1 never evaluates the negative, so Conditioning Zero Out stands in for it and the graph carries no skip layer node. The card warns against merging the LoRA into BF16 weights, because its delta sits close to the BF16 rounding step; Load LoRA (DGX Monarch) bakes it into the weights with ComfyUI's own math, so a render can differ from the card's unmerged diffusers run. ComfyUI's native shift of 5 is the vendor's; add no shift node. Model Sampling SD3 (DGX Monarch) samples at multiplier 1000, which would render noise on this model, so it refuses here. The vendor recommends 1, 1.5 or 2 MP and reports 0.25 to 4 MP working, with sides in multiples of 16; the model trained at up to about 1 MP. English works best and Chinese is supported. The vendor's pipeline reads up to 4096 tokens after its chat template; ComfyUI sets no such cap. Describe the finished image, put any text to render in double quotes, and use real line breaks where its lines should break. For tag prompts the guide's order is quality, score, meta, year, character, series, artist, then general tags, with @ before an artist name. Kromoss is the lodestones' full fine-tune of MOSS-Image Base at 1024 px. It shares the file layout, encoder and decoder of the Comfy-Org MOSS-Image files, so it drops in wherever they run. Its weights have changed under the same file names; example_workflows/artifacts.toml pins the sha256 this graph names, and the pinned model card is https://huggingface.co/lodestones/Kromoss/blob/7f9bb7b06d7b6c27d294b0bab5a2b3056c379279/README.md . Comfy-Org's own MOSS-Image graphs can rewrite a short request into a full caption with Text Generate on this same encoder; that step runs on the driver, and its memory is outside dgx-monarch's driver estimate. The INT8 ConvRot DiT files pin an approximate attention kernel on all 42 blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. They also need comfy-kitchen 0.2.39 or newer. This graph uses the BF16 file, which asks nothing. Auto picks Ulysses on a configured pair. No hardware comparison has run for MOSS-Image yet; see docs/MODELS.md. Expects kromoss_bf16.safetensors in models/diffusion_models, kromoss_8-steps-dmd2-lora.safetensors in models/loras, qwen3.5_9b_bf16.safetensors in models/text_encoders (CLIP type moss_image) and flux2-vae_small.safetensors in models/vae, the FLUX.2 small decoder; the larger flux2-vae.safetensors other FLUX graphs use is a different decoder, and the file of that name in Comfy-Org's MOSS-Image repository holds other bytes again, so never copy it over yours. qwen3.5_9b_int8_convrot.safetensors is a smaller drop-in encoder. Needs ComfyUI 0.42.0 or newer on the driver and every Worker. MOSS-Image Base and SFT, Kromoss and its two LoRAs, the Qwen3.5-9B text encoder and the FLUX.2 small decoder are all released under Apache-2.0. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "unet_name": "kromoss_bf16.safetensors",
+              "weight_dtype": "default"
+            },
+            "flags": {},
+            "id": 3,
+            "inputs": [
+              {
+                "link": 1,
+                "name": "mesh",
+                "type": "DGXM_MESH"
+              }
+            ],
+            "mode": 0,
+            "order": 2,
+            "outputs": [
+              {
+                "links": [
+                  4
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              420,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchUNETLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "DGXMonarchUNETLoader",
+            "widgets_values": [
+              "kromoss_bf16.safetensors",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 4,
+            "inputs": [],
+            "mode": 0,
+            "order": 3,
+            "outputs": [
+              {
+                "links": [
+                  2
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3.5_9b_bf16.safetensors",
+              "moss_image",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 5,
+            "inputs": [],
+            "mode": 0,
+            "order": 4,
+            "outputs": [
+              {
+                "links": [
+                  10
+                ],
+                "name": "VAE",
+                "slot_index": 0,
+                "type": "VAE"
+              }
+            ],
+            "pos": [
+              80,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "VAELoader"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "VAELoader",
+            "widgets_values": [
+              "flux2-vae_small.safetensors"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 6,
+            "inputs": [
+              {
+                "link": 2,
+                "name": "clip",
+                "type": "CLIP"
+              }
+            ],
+            "mode": 0,
+            "order": 5,
+            "outputs": [
+              {
+                "links": [
+                  3,
+                  6
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              "a tabby cat holding a sign that says KROMOSS"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 7,
+            "inputs": [
+              {
+                "link": 3,
+                "name": "conditioning",
+                "type": "CONDITIONING"
+              }
+            ],
+            "mode": 0,
+            "order": 6,
+            "outputs": [
+              {
+                "links": [
+                  7
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "ConditioningZeroOut"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "ConditioningZeroOut",
+            "widgets_values": []
+          },
+          {
+            "dgxm_widgets": {
+              "lora_name": "kromoss_8-steps-dmd2-lora.safetensors",
+              "strength_model": 1.0
+            },
+            "flags": {},
+            "id": 8,
+            "inputs": [
+              {
+                "link": 4,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "mode": 0,
+            "order": 7,
+            "outputs": [
+              {
+                "links": [
+                  5
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              760,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchLoraLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "DGXMonarchLoraLoader",
+            "widgets_values": [
+              "kromoss_8-steps-dmd2-lora.safetensors",
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 9,
+            "inputs": [],
+            "mode": 0,
+            "order": 8,
+            "outputs": [
+              {
+                "links": [
+                  8
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              760,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "EmptyFlux2LatentImage"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "EmptyFlux2LatentImage",
+            "widgets_values": [
+              1024,
+              1024,
+              1
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "cfg": 1.0,
+              "control_after_generate": "randomize",
+              "denoise": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "seed": 42,
+              "steps": 8
+            },
+            "flags": {},
+            "id": 10,
+            "inputs": [
+              {
+                "link": 5,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              },
+              {
+                "link": 6,
+                "name": "positive",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 7,
+                "name": "negative",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 8,
+                "name": "latent_image",
+                "type": "LATENT"
+              }
+            ],
+            "mode": 0,
+            "order": 9,
+            "outputs": [
+              {
+                "links": [
+                  9
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1100,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchKSampler"
+            },
+            "size": [
+              315,
+              294
+            ],
+            "type": "DGXMonarchKSampler",
+            "widgets_values": [
+              42,
+              "randomize",
+              8,
+              1.0,
+              "euler",
+              "simple",
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 11,
+            "inputs": [
+              {
+                "link": 9,
+                "name": "samples",
+                "type": "LATENT"
+              },
+              {
+                "link": 10,
+                "name": "vae",
+                "type": "VAE"
+              }
+            ],
+            "mode": 0,
+            "order": 10,
+            "outputs": [
+              {
+                "links": [
+                  11
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1440,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "VAEDecode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "VAEDecode",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 12,
+            "inputs": [
+              {
+                "link": 11,
+                "name": "images",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 11,
+            "outputs": [
+              {
+                "links": [],
+                "name": "images",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1780,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "SaveImage"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "SaveImage",
+            "widgets_values": [
+              "dgx_monarch_kromoss_turbo"
+            ]
+          }
+        ],
+        "revision": 0,
+        "version": 0.4
+      }
+    },
+    {
+      "digest": "72bf5f7ca011d8d3a8812a1e98533dbf7ffa87b0a9dc469bcd73e5c5c7a2911f",
+      "id": "workflow.dgx-monarch-kromoss-t2i",
+      "name": "dgx-monarch-kromoss-t2i",
+      "source": "example_workflows/dgx-monarch-kromoss-t2i.json",
+      "workflow": {
+        "config": {},
+        "extra": {},
+        "groups": [],
+        "id": "kromoss-text-to-image",
+        "last_link_id": 11,
+        "last_node_id": 12,
+        "links": [
+          [
+            1,
+            1,
+            0,
+            3,
+            0,
+            "DGXM_MESH"
+          ],
+          [
+            2,
+            4,
+            0,
+            6,
+            0,
+            "CLIP"
+          ],
+          [
+            3,
+            4,
+            0,
+            7,
+            0,
+            "CLIP"
+          ],
+          [
+            4,
+            3,
+            0,
+            8,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            5,
+            8,
+            0,
+            10,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            6,
+            6,
+            0,
+            10,
+            1,
+            "CONDITIONING"
+          ],
+          [
+            7,
+            7,
+            0,
+            10,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            8,
+            9,
+            0,
+            10,
+            3,
+            "LATENT"
+          ],
+          [
+            9,
+            10,
+            0,
+            11,
+            0,
+            "LATENT"
+          ],
+          [
+            10,
+            5,
+            0,
+            11,
+            1,
+            "VAE"
+          ],
+          [
+            11,
+            11,
+            0,
+            12,
+            0,
+            "IMAGE"
+          ]
+        ],
+        "nodes": [
+          {
+            "dgxm_widgets": {
+              "attention": "TORCH_FLASH",
+              "auto_gate": "first_use",
+              "comfy_managed": "off",
+              "compile_dit": false,
+              "config_path": "",
+              "family_adapter": "auto",
+              "gpus_per_host": 0,
+              "load_profile": false,
+              "lora_low_rss": "auto",
+              "mmap_fallback": false,
+              "mode": "auto",
+              "pipeline_depth": 1,
+              "reserve_vram_gb": 0.0,
+              "slab_weights": "auto",
+              "swap_verify": 2,
+              "sync_ulysses": true,
+              "topology": "auto",
+              "uma_reserve_gb": 0.0
+            },
+            "flags": {},
+            "id": 1,
+            "inputs": [],
+            "mode": 0,
+            "order": 0,
+            "outputs": [
+              {
+                "links": [
+                  1
+                ],
+                "name": "mesh",
+                "slot_index": 0,
+                "type": "DGXM_MESH"
+              }
+            ],
+            "pos": [
+              80,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchInit"
+            },
+            "size": [
+              315,
+              448
+            ],
+            "type": "DGXMonarchInit",
+            "widgets_values": [
+              "auto",
+              "auto",
+              "TORCH_FLASH",
+              "",
+              0,
+              0.0,
+              true,
+              false,
+              1,
+              false,
+              "auto",
+              "auto",
+              "first_use",
+              false,
+              2,
+              0.0,
+              "off",
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 2,
+            "inputs": [],
+            "mode": 0,
+            "order": 1,
+            "outputs": [],
+            "pos": [
+              80,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "Note"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "title": "DGX Monarch | Kromoss text to image",
+            "type": "Note",
+            "widgets_values": [
+              "Kromoss text to image: 1024x1024, Euler and ComfyUI's simple scheduler at the vendor's 50 steps, CFG 3 and shift 5. Use at least 50 steps, and raise CFG toward 6 for a short prompt. A render here does not reproduce the vendor's own pipeline at the same seed: that pipeline builds its own schedule and its own noise. ComfyUI's native shift of 5 is the vendor's; add no shift node. Model Sampling SD3 (DGX Monarch) samples at multiplier 1000, which would render noise on this model, so it refuses here. Skip Layer Guidance (DGX Monarch) drops block 22 (zero-based) from the negative pass on every step, the vendor's default; blocks 24 and 26 also help. Clear single_layers to turn it off: the image looks more realistic, but some details can collapse. cfg2 refuses while Skip Layer Guidance is on; clear single_layers to use it. The vendor recommends 1, 1.5 or 2 MP and reports 0.25 to 4 MP working, with sides in multiples of 16; the model trained at up to about 1 MP. The negative is the tag list the vendor's guide recommends; the model card's default is an empty negative. English works best and Chinese is supported. The vendor's pipeline reads up to 4096 tokens after its chat template; ComfyUI sets no such cap. Describe the finished image, put any text to render in double quotes, and use real line breaks where its lines should break. For tag prompts the guide's order is quality, score, meta, year, character, series, artist, then general tags, with @ before an artist name. Kromoss is the lodestones' full fine-tune of MOSS-Image Base at 1024 px. It shares the file layout, encoder and decoder of the Comfy-Org MOSS-Image files, so it drops in wherever they run. Its weights have changed under the same file names; example_workflows/artifacts.toml pins the sha256 this graph names, and the pinned model card is https://huggingface.co/lodestones/Kromoss/blob/7f9bb7b06d7b6c27d294b0bab5a2b3056c379279/README.md . Comfy-Org's own MOSS-Image graphs can rewrite a short request into a full caption with Text Generate on this same encoder; that step runs on the driver, and its memory is outside dgx-monarch's driver estimate. The INT8 ConvRot DiT files pin an approximate attention kernel on all 42 blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. They also need comfy-kitchen 0.2.39 or newer. This graph uses the BF16 file, which asks nothing. Auto picks Ulysses on a configured pair. No hardware comparison has run for MOSS-Image yet; see docs/MODELS.md. Expects kromoss_bf16.safetensors in models/diffusion_models, qwen3.5_9b_bf16.safetensors in models/text_encoders (CLIP type moss_image) and flux2-vae_small.safetensors in models/vae, the FLUX.2 small decoder; the larger flux2-vae.safetensors other FLUX graphs use is a different decoder, and the file of that name in Comfy-Org's MOSS-Image repository holds other bytes again, so never copy it over yours. qwen3.5_9b_int8_convrot.safetensors is a smaller drop-in encoder. Needs ComfyUI 0.42.0 or newer on the driver and every Worker. MOSS-Image Base and SFT, Kromoss and its two LoRAs, the Qwen3.5-9B text encoder and the FLUX.2 small decoder are all released under Apache-2.0. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "unet_name": "kromoss_bf16.safetensors",
+              "weight_dtype": "default"
+            },
+            "flags": {},
+            "id": 3,
+            "inputs": [
+              {
+                "link": 1,
+                "name": "mesh",
+                "type": "DGXM_MESH"
+              }
+            ],
+            "mode": 0,
+            "order": 2,
+            "outputs": [
+              {
+                "links": [
+                  4
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              420,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchUNETLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "DGXMonarchUNETLoader",
+            "widgets_values": [
+              "kromoss_bf16.safetensors",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 4,
+            "inputs": [],
+            "mode": 0,
+            "order": 3,
+            "outputs": [
+              {
+                "links": [
+                  2,
+                  3
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3.5_9b_bf16.safetensors",
+              "moss_image",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 5,
+            "inputs": [],
+            "mode": 0,
+            "order": 4,
+            "outputs": [
+              {
+                "links": [
+                  10
+                ],
+                "name": "VAE",
+                "slot_index": 0,
+                "type": "VAE"
+              }
+            ],
+            "pos": [
+              80,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "VAELoader"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "VAELoader",
+            "widgets_values": [
+              "flux2-vae_small.safetensors"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 6,
+            "inputs": [
+              {
+                "link": 2,
+                "name": "clip",
+                "type": "CLIP"
+              }
+            ],
+            "mode": 0,
+            "order": 5,
+            "outputs": [
+              {
+                "links": [
+                  6
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              "a tabby cat holding a sign that says KROMOSS"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 7,
+            "inputs": [
+              {
+                "link": 3,
+                "name": "clip",
+                "type": "CLIP"
+              }
+            ],
+            "mode": 0,
+            "order": 6,
+            "outputs": [
+              {
+                "links": [
+                  7
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "double_layers": "",
+              "end_percent": 1.0,
+              "single_layers": "22",
+              "start_percent": 0.0
+            },
+            "flags": {},
+            "id": 8,
+            "inputs": [
+              {
+                "link": 4,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "mode": 0,
+            "order": 7,
+            "outputs": [
+              {
+                "links": [
+                  5
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              760,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchSkipLayerGuidance"
+            },
+            "size": [
+              315,
+              162
+            ],
+            "type": "DGXMonarchSkipLayerGuidance",
+            "widgets_values": [
+              "",
+              "22",
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 9,
+            "inputs": [],
+            "mode": 0,
+            "order": 8,
+            "outputs": [
+              {
+                "links": [
+                  8
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              760,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "EmptyFlux2LatentImage"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "EmptyFlux2LatentImage",
+            "widgets_values": [
+              1024,
+              1024,
+              1
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "cfg": 3.0,
+              "control_after_generate": "randomize",
+              "denoise": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "seed": 42,
+              "steps": 50
+            },
+            "flags": {},
+            "id": 10,
+            "inputs": [
+              {
+                "link": 5,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              },
+              {
+                "link": 6,
+                "name": "positive",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 7,
+                "name": "negative",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 8,
+                "name": "latent_image",
+                "type": "LATENT"
+              }
+            ],
+            "mode": 0,
+            "order": 9,
+            "outputs": [
+              {
+                "links": [
+                  9
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1100,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchKSampler"
+            },
+            "size": [
+              315,
+              294
+            ],
+            "type": "DGXMonarchKSampler",
+            "widgets_values": [
+              42,
+              "randomize",
+              50,
+              3.0,
+              "euler",
+              "simple",
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 11,
+            "inputs": [
+              {
+                "link": 9,
+                "name": "samples",
+                "type": "LATENT"
+              },
+              {
+                "link": 10,
+                "name": "vae",
+                "type": "VAE"
+              }
+            ],
+            "mode": 0,
+            "order": 10,
+            "outputs": [
+              {
+                "links": [
+                  11
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1440,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "VAEDecode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "VAEDecode",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 12,
+            "inputs": [
+              {
+                "link": 11,
+                "name": "images",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 11,
+            "outputs": [
+              {
+                "links": [],
+                "name": "images",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1780,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "SaveImage"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "SaveImage",
+            "widgets_values": [
+              "dgx_monarch_kromoss"
+            ]
+          }
+        ],
+        "revision": 0,
+        "version": 0.4
+      }
+    },
+    {
       "digest": "dc8c0f8202a450518eed7e4a53508b62d900ad4f4ed4855ab36b16c1c1b6a083",
       "id": "workflow.dgx-monarch-lens-t2i",
       "name": "dgx-monarch-lens-t2i",
@@ -28793,6 +30013,1893 @@
             "widgets_values": [
               "audio/dgx_monarch_minimax_h3",
               "flac"
+            ]
+          }
+        ],
+        "revision": 0,
+        "version": 0.4
+      }
+    },
+    {
+      "digest": "262a8b6be13554ddc53cf961358fddce4984a43d31f133edb9469d714af29641",
+      "id": "workflow.dgx-monarch-moss-image-base-t2i",
+      "name": "dgx-monarch-moss-image-base-t2i",
+      "source": "example_workflows/dgx-monarch-moss-image-base-t2i.json",
+      "workflow": {
+        "config": {},
+        "extra": {},
+        "groups": [],
+        "id": "moss-image-base-text-to-image",
+        "last_link_id": 11,
+        "last_node_id": 12,
+        "links": [
+          [
+            1,
+            1,
+            0,
+            3,
+            0,
+            "DGXM_MESH"
+          ],
+          [
+            2,
+            4,
+            0,
+            6,
+            0,
+            "CLIP"
+          ],
+          [
+            3,
+            4,
+            0,
+            7,
+            0,
+            "CLIP"
+          ],
+          [
+            4,
+            3,
+            0,
+            8,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            5,
+            8,
+            0,
+            10,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            6,
+            6,
+            0,
+            10,
+            1,
+            "CONDITIONING"
+          ],
+          [
+            7,
+            7,
+            0,
+            10,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            8,
+            9,
+            0,
+            10,
+            3,
+            "LATENT"
+          ],
+          [
+            9,
+            10,
+            0,
+            11,
+            0,
+            "LATENT"
+          ],
+          [
+            10,
+            5,
+            0,
+            11,
+            1,
+            "VAE"
+          ],
+          [
+            11,
+            11,
+            0,
+            12,
+            0,
+            "IMAGE"
+          ]
+        ],
+        "nodes": [
+          {
+            "dgxm_widgets": {
+              "attention": "TORCH_FLASH",
+              "auto_gate": "first_use",
+              "comfy_managed": "off",
+              "compile_dit": false,
+              "config_path": "",
+              "family_adapter": "auto",
+              "gpus_per_host": 0,
+              "load_profile": false,
+              "lora_low_rss": "auto",
+              "mmap_fallback": false,
+              "mode": "auto",
+              "pipeline_depth": 1,
+              "reserve_vram_gb": 0.0,
+              "slab_weights": "auto",
+              "swap_verify": 2,
+              "sync_ulysses": true,
+              "topology": "auto",
+              "uma_reserve_gb": 0.0
+            },
+            "flags": {},
+            "id": 1,
+            "inputs": [],
+            "mode": 0,
+            "order": 0,
+            "outputs": [
+              {
+                "links": [
+                  1
+                ],
+                "name": "mesh",
+                "slot_index": 0,
+                "type": "DGXM_MESH"
+              }
+            ],
+            "pos": [
+              80,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchInit"
+            },
+            "size": [
+              315,
+              448
+            ],
+            "type": "DGXMonarchInit",
+            "widgets_values": [
+              "auto",
+              "auto",
+              "TORCH_FLASH",
+              "",
+              0,
+              0.0,
+              true,
+              false,
+              1,
+              false,
+              "auto",
+              "auto",
+              "first_use",
+              false,
+              2,
+              0.0,
+              "off",
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 2,
+            "inputs": [],
+            "mode": 0,
+            "order": 1,
+            "outputs": [],
+            "pos": [
+              80,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "Note"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "title": "DGX Monarch | MOSS-Image Base text to image",
+            "type": "Note",
+            "widgets_values": [
+              "MOSS-Image Base text to image: 1024x1024, Euler and ComfyUI's simple scheduler at the vendor's 50 steps, CFG 3 and shift 5. Use at least 50 steps, and raise CFG toward 6 for a short prompt. A render here does not reproduce the vendor's own pipeline at the same seed: that pipeline builds its own schedule and its own noise. ComfyUI's native shift of 5 is the vendor's; add no shift node. Model Sampling SD3 (DGX Monarch) samples at multiplier 1000, which would render noise on this model, so it refuses here. Skip Layer Guidance (DGX Monarch) drops block 22 (zero-based) from the negative pass on every step, the vendor's default; blocks 24 and 26 also help. Clear single_layers to turn it off: the image looks more realistic, but some details can collapse. cfg2 refuses while Skip Layer Guidance is on; clear single_layers to use it. The vendor recommends 1, 1.5 or 2 MP and reports 0.25 to 4 MP working, with sides in multiples of 16; the model trained at up to about 1 MP. The negative is the tag list the vendor's guide recommends; the model card's default is an empty negative. English works best and Chinese is supported. The vendor's pipeline reads up to 4096 tokens after its chat template; ComfyUI sets no such cap. Describe the finished image, put any text to render in double quotes, and use real line breaks where its lines should break. For tag prompts the guide's order is quality, score, meta, year, character, series, artist, then general tags, with @ before an artist name. Base has no post-training or CFG distillation, which makes it the usual target for LoRA training. Comfy-Org's own MOSS-Image graphs can rewrite a short request into a full caption with Text Generate on this same encoder; that step runs on the driver, and its memory is outside dgx-monarch's driver estimate. The INT8 ConvRot DiT files pin an approximate attention kernel on all 42 blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. They also need comfy-kitchen 0.2.39 or newer. This graph uses the BF16 file, which asks nothing. Auto picks Ulysses on a configured pair. No hardware comparison has run for MOSS-Image yet; see docs/MODELS.md. Expects moss_image_base_bf16.safetensors in models/diffusion_models, qwen3.5_9b_bf16.safetensors in models/text_encoders (CLIP type moss_image) and flux2-vae_small.safetensors in models/vae, the FLUX.2 small decoder; the larger flux2-vae.safetensors other FLUX graphs use is a different decoder, and the file of that name in Comfy-Org's MOSS-Image repository holds other bytes again, so never copy it over yours. qwen3.5_9b_int8_convrot.safetensors is a smaller drop-in encoder. Needs ComfyUI 0.42.0 or newer on the driver and every Worker. MOSS-Image Base and SFT, Kromoss and its two LoRAs, the Qwen3.5-9B text encoder and the FLUX.2 small decoder are all released under Apache-2.0. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "unet_name": "moss_image_base_bf16.safetensors",
+              "weight_dtype": "default"
+            },
+            "flags": {},
+            "id": 3,
+            "inputs": [
+              {
+                "link": 1,
+                "name": "mesh",
+                "type": "DGXM_MESH"
+              }
+            ],
+            "mode": 0,
+            "order": 2,
+            "outputs": [
+              {
+                "links": [
+                  4
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              420,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchUNETLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "DGXMonarchUNETLoader",
+            "widgets_values": [
+              "moss_image_base_bf16.safetensors",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 4,
+            "inputs": [],
+            "mode": 0,
+            "order": 3,
+            "outputs": [
+              {
+                "links": [
+                  2,
+                  3
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3.5_9b_bf16.safetensors",
+              "moss_image",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 5,
+            "inputs": [],
+            "mode": 0,
+            "order": 4,
+            "outputs": [
+              {
+                "links": [
+                  10
+                ],
+                "name": "VAE",
+                "slot_index": 0,
+                "type": "VAE"
+              }
+            ],
+            "pos": [
+              80,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "VAELoader"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "VAELoader",
+            "widgets_values": [
+              "flux2-vae_small.safetensors"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 6,
+            "inputs": [
+              {
+                "link": 2,
+                "name": "clip",
+                "type": "CLIP"
+              }
+            ],
+            "mode": 0,
+            "order": 5,
+            "outputs": [
+              {
+                "links": [
+                  6
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              "An editorial studio portrait of an elderly fisherman in a heavy navy wool sweater, seated on a wooden crate against a seamless warm grey backdrop. A single large softbox from the left carves deep shadows across his weathered face and white beard; his hands rest on a coil of rope in his lap. 85mm lens, shallow depth of field, muted cream and charcoal palette, subtle film grain."
+            ]
+          },
+          {
+            "flags": {},
+            "id": 7,
+            "inputs": [
+              {
+                "link": 3,
+                "name": "clip",
+                "type": "CLIP"
+              }
+            ],
+            "mode": 0,
+            "order": 6,
+            "outputs": [
+              {
+                "links": [
+                  7
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "double_layers": "",
+              "end_percent": 1.0,
+              "single_layers": "22",
+              "start_percent": 0.0
+            },
+            "flags": {},
+            "id": 8,
+            "inputs": [
+              {
+                "link": 4,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "mode": 0,
+            "order": 7,
+            "outputs": [
+              {
+                "links": [
+                  5
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              760,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchSkipLayerGuidance"
+            },
+            "size": [
+              315,
+              162
+            ],
+            "type": "DGXMonarchSkipLayerGuidance",
+            "widgets_values": [
+              "",
+              "22",
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 9,
+            "inputs": [],
+            "mode": 0,
+            "order": 8,
+            "outputs": [
+              {
+                "links": [
+                  8
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              760,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "EmptyFlux2LatentImage"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "EmptyFlux2LatentImage",
+            "widgets_values": [
+              1024,
+              1024,
+              1
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "cfg": 3.0,
+              "control_after_generate": "randomize",
+              "denoise": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "seed": 42,
+              "steps": 50
+            },
+            "flags": {},
+            "id": 10,
+            "inputs": [
+              {
+                "link": 5,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              },
+              {
+                "link": 6,
+                "name": "positive",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 7,
+                "name": "negative",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 8,
+                "name": "latent_image",
+                "type": "LATENT"
+              }
+            ],
+            "mode": 0,
+            "order": 9,
+            "outputs": [
+              {
+                "links": [
+                  9
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1100,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchKSampler"
+            },
+            "size": [
+              315,
+              294
+            ],
+            "type": "DGXMonarchKSampler",
+            "widgets_values": [
+              42,
+              "randomize",
+              50,
+              3.0,
+              "euler",
+              "simple",
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 11,
+            "inputs": [
+              {
+                "link": 9,
+                "name": "samples",
+                "type": "LATENT"
+              },
+              {
+                "link": 10,
+                "name": "vae",
+                "type": "VAE"
+              }
+            ],
+            "mode": 0,
+            "order": 10,
+            "outputs": [
+              {
+                "links": [
+                  11
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1440,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "VAEDecode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "VAEDecode",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 12,
+            "inputs": [
+              {
+                "link": 11,
+                "name": "images",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 11,
+            "outputs": [
+              {
+                "links": [],
+                "name": "images",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1780,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "SaveImage"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "SaveImage",
+            "widgets_values": [
+              "dgx_monarch_moss_image_base"
+            ]
+          }
+        ],
+        "revision": 0,
+        "version": 0.4
+      }
+    },
+    {
+      "digest": "96bfb7015fae4867bb155c43502012a92d70582b9ada46dee482ece880b446e9",
+      "id": "workflow.dgx-monarch-moss-image-layout-t2i",
+      "name": "dgx-monarch-moss-image-layout-t2i",
+      "source": "example_workflows/dgx-monarch-moss-image-layout-t2i.json",
+      "workflow": {
+        "config": {},
+        "extra": {},
+        "groups": [],
+        "id": "moss-image-layout-text-to-image",
+        "last_link_id": 12,
+        "last_node_id": 13,
+        "links": [
+          [
+            1,
+            1,
+            0,
+            3,
+            0,
+            "DGXM_MESH"
+          ],
+          [
+            2,
+            4,
+            0,
+            7,
+            0,
+            "CLIP"
+          ],
+          [
+            3,
+            6,
+            0,
+            7,
+            1,
+            "STRING"
+          ],
+          [
+            4,
+            4,
+            0,
+            8,
+            0,
+            "CLIP"
+          ],
+          [
+            5,
+            3,
+            0,
+            9,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            6,
+            9,
+            0,
+            11,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            7,
+            7,
+            0,
+            11,
+            1,
+            "CONDITIONING"
+          ],
+          [
+            8,
+            8,
+            0,
+            11,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            9,
+            10,
+            0,
+            11,
+            3,
+            "LATENT"
+          ],
+          [
+            10,
+            11,
+            0,
+            12,
+            0,
+            "LATENT"
+          ],
+          [
+            11,
+            5,
+            0,
+            12,
+            1,
+            "VAE"
+          ],
+          [
+            12,
+            12,
+            0,
+            13,
+            0,
+            "IMAGE"
+          ]
+        ],
+        "nodes": [
+          {
+            "dgxm_widgets": {
+              "attention": "TORCH_FLASH",
+              "auto_gate": "first_use",
+              "comfy_managed": "off",
+              "compile_dit": false,
+              "config_path": "",
+              "family_adapter": "auto",
+              "gpus_per_host": 0,
+              "load_profile": false,
+              "lora_low_rss": "auto",
+              "mmap_fallback": false,
+              "mode": "auto",
+              "pipeline_depth": 1,
+              "reserve_vram_gb": 0.0,
+              "slab_weights": "auto",
+              "swap_verify": 2,
+              "sync_ulysses": true,
+              "topology": "auto",
+              "uma_reserve_gb": 0.0
+            },
+            "flags": {},
+            "id": 1,
+            "inputs": [],
+            "mode": 0,
+            "order": 0,
+            "outputs": [
+              {
+                "links": [
+                  1
+                ],
+                "name": "mesh",
+                "slot_index": 0,
+                "type": "DGXM_MESH"
+              }
+            ],
+            "pos": [
+              80,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchInit"
+            },
+            "size": [
+              315,
+              448
+            ],
+            "type": "DGXMonarchInit",
+            "widgets_values": [
+              "auto",
+              "auto",
+              "TORCH_FLASH",
+              "",
+              0,
+              0.0,
+              true,
+              false,
+              1,
+              false,
+              "auto",
+              "auto",
+              "first_use",
+              false,
+              2,
+              0.0,
+              "off",
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 2,
+            "inputs": [],
+            "mode": 0,
+            "order": 1,
+            "outputs": [],
+            "pos": [
+              80,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "Note"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "title": "DGX Monarch | MOSS-Image layout text to image",
+            "type": "Note",
+            "widgets_values": [
+              "MOSS-Image layout text to image: 1024x1024, Euler and ComfyUI's simple scheduler at the vendor's 50 steps, CFG 3 and shift 5. Use at least 50 steps, and raise CFG toward 6 for a short prompt. A render here does not reproduce the vendor's own pipeline at the same seed: that pipeline builds its own schedule and its own noise. ComfyUI's native shift of 5 is the vendor's; add no shift node. Model Sampling SD3 (DGX Monarch) samples at multiplier 1000, which would render noise on this model, so it refuses here. Skip Layer Guidance (DGX Monarch) drops block 22 (zero-based) from the negative pass on every step, the vendor's default; blocks 24 and 26 also help. Clear single_layers to turn it off: the image looks more realistic, but some details can collapse. cfg2 refuses while Skip Layer Guidance is on; clear single_layers to use it. The vendor recommends 1, 1.5 or 2 MP and reports 0.25 to 4 MP working, with sides in multiples of 16; the model trained at up to about 1 MP. The negative is the tag list the vendor's guide recommends; the model card's default is an empty negative. The prompt is a JSON layout, the vendor guide's own example for a 1024x1024 canvas. summary.caption describes the whole image. Each item gives a label (text, object or character), a caption, the text to render for a text item, and a bbox as [y_min, x_min, y_max, x_max] in pixels with the origin at the canvas center (bbox_coord_space abs_centralized, bbox_format yxyx), so a 1024 canvas runs from -512 to 512 on each axis. Rescale the boxes when you change the canvas. The JSON sits in Text (Multiline) and reaches CLIP Text Encode through a link: typed into CLIP Text Encode's own box, the browser's dynamic prompt pass would strip its braces. The vendor marks layout prompts experimental. ComfyUI's Create Bounding Boxes and MOSS-Image Layout Prompt nodes build the same JSON from boxes drawn on a canvas and can feed the same link. Comfy-Org's own MOSS-Image graphs can rewrite a short request into a full caption with Text Generate on this same encoder; that step runs on the driver, and its memory is outside dgx-monarch's driver estimate. The INT8 ConvRot DiT files pin an approximate attention kernel on all 42 blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. They also need comfy-kitchen 0.2.39 or newer. This graph uses the BF16 file, which asks nothing. Auto picks Ulysses on a configured pair. No hardware comparison has run for MOSS-Image yet; see docs/MODELS.md. Expects moss_image_sft_bf16.safetensors in models/diffusion_models, qwen3.5_9b_bf16.safetensors in models/text_encoders (CLIP type moss_image) and flux2-vae_small.safetensors in models/vae, the FLUX.2 small decoder; the larger flux2-vae.safetensors other FLUX graphs use is a different decoder, and the file of that name in Comfy-Org's MOSS-Image repository holds other bytes again, so never copy it over yours. qwen3.5_9b_int8_convrot.safetensors is a smaller drop-in encoder. Needs ComfyUI 0.42.0 or newer on the driver and every Worker. MOSS-Image Base and SFT, Kromoss and its two LoRAs, the Qwen3.5-9B text encoder and the FLUX.2 small decoder are all released under Apache-2.0. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "unet_name": "moss_image_sft_bf16.safetensors",
+              "weight_dtype": "default"
+            },
+            "flags": {},
+            "id": 3,
+            "inputs": [
+              {
+                "link": 1,
+                "name": "mesh",
+                "type": "DGXM_MESH"
+              }
+            ],
+            "mode": 0,
+            "order": 2,
+            "outputs": [
+              {
+                "links": [
+                  5
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              420,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchUNETLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "DGXMonarchUNETLoader",
+            "widgets_values": [
+              "moss_image_sft_bf16.safetensors",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 4,
+            "inputs": [],
+            "mode": 0,
+            "order": 3,
+            "outputs": [
+              {
+                "links": [
+                  2,
+                  4
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3.5_9b_bf16.safetensors",
+              "moss_image",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 5,
+            "inputs": [],
+            "mode": 0,
+            "order": 4,
+            "outputs": [
+              {
+                "links": [
+                  11
+                ],
+                "name": "VAE",
+                "slot_index": 0,
+                "type": "VAE"
+              }
+            ],
+            "pos": [
+              80,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "VAELoader"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "VAELoader",
+            "widgets_values": [
+              "flux2-vae_small.safetensors"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 6,
+            "inputs": [],
+            "mode": 0,
+            "order": 5,
+            "outputs": [
+              {
+                "links": [
+                  3
+                ],
+                "name": "STRING",
+                "slot_index": 0,
+                "type": "STRING"
+              }
+            ],
+            "pos": [
+              80,
+              840
+            ],
+            "properties": {
+              "Node name for S&R": "PrimitiveStringMultiline"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "PrimitiveStringMultiline",
+            "widgets_values": [
+              "{\"summary\":{\"meta\":[\"poster\"],\"canvas\":\"single\",\"caption\":\"A minimalist travel poster with a cream background, a blue mountain illustration, and the title EXPLORE at the top.\"},\"items\":[{\"label\":\"text\",\"caption\":\"Large dark-blue uppercase title centered at the top.\",\"text\":\"EXPLORE\",\"bbox\":[-416,-384,-288,384]},{\"label\":\"object\",\"caption\":\"A flat blue mountain illustration in the lower center.\",\"bbox\":[-192,-288,384,288]}],\"bbox_coord_space\":\"abs_centralized\",\"bbox_format\":\"yxyx\"}"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 7,
+            "inputs": [
+              {
+                "link": 2,
+                "name": "clip",
+                "type": "CLIP"
+              },
+              {
+                "link": 3,
+                "name": "text",
+                "type": "STRING",
+                "widget": {
+                  "name": "text"
+                }
+              }
+            ],
+            "mode": 0,
+            "order": 6,
+            "outputs": [
+              {
+                "links": [
+                  7
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              ""
+            ]
+          },
+          {
+            "flags": {},
+            "id": 8,
+            "inputs": [
+              {
+                "link": 4,
+                "name": "clip",
+                "type": "CLIP"
+              }
+            ],
+            "mode": 0,
+            "order": 7,
+            "outputs": [
+              {
+                "links": [
+                  8
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "double_layers": "",
+              "end_percent": 1.0,
+              "single_layers": "22",
+              "start_percent": 0.0
+            },
+            "flags": {},
+            "id": 9,
+            "inputs": [
+              {
+                "link": 5,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "mode": 0,
+            "order": 8,
+            "outputs": [
+              {
+                "links": [
+                  6
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              760,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchSkipLayerGuidance"
+            },
+            "size": [
+              315,
+              162
+            ],
+            "type": "DGXMonarchSkipLayerGuidance",
+            "widgets_values": [
+              "",
+              "22",
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 10,
+            "inputs": [],
+            "mode": 0,
+            "order": 9,
+            "outputs": [
+              {
+                "links": [
+                  9
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              760,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "EmptyFlux2LatentImage"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "EmptyFlux2LatentImage",
+            "widgets_values": [
+              1024,
+              1024,
+              1
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "cfg": 3.0,
+              "control_after_generate": "randomize",
+              "denoise": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "seed": 42,
+              "steps": 50
+            },
+            "flags": {},
+            "id": 11,
+            "inputs": [
+              {
+                "link": 6,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              },
+              {
+                "link": 7,
+                "name": "positive",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 8,
+                "name": "negative",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 9,
+                "name": "latent_image",
+                "type": "LATENT"
+              }
+            ],
+            "mode": 0,
+            "order": 10,
+            "outputs": [
+              {
+                "links": [
+                  10
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1100,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchKSampler"
+            },
+            "size": [
+              315,
+              294
+            ],
+            "type": "DGXMonarchKSampler",
+            "widgets_values": [
+              42,
+              "randomize",
+              50,
+              3.0,
+              "euler",
+              "simple",
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 12,
+            "inputs": [
+              {
+                "link": 10,
+                "name": "samples",
+                "type": "LATENT"
+              },
+              {
+                "link": 11,
+                "name": "vae",
+                "type": "VAE"
+              }
+            ],
+            "mode": 0,
+            "order": 11,
+            "outputs": [
+              {
+                "links": [
+                  12
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1440,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "VAEDecode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "VAEDecode",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 13,
+            "inputs": [
+              {
+                "link": 12,
+                "name": "images",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 12,
+            "outputs": [
+              {
+                "links": [],
+                "name": "images",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1780,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "SaveImage"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "SaveImage",
+            "widgets_values": [
+              "dgx_monarch_moss_image_layout"
+            ]
+          }
+        ],
+        "revision": 0,
+        "version": 0.4
+      }
+    },
+    {
+      "digest": "027cc17671d85b61aebc1773df2737d711c37b9d6a795ee60c307a7df6330739",
+      "id": "workflow.dgx-monarch-moss-image-t2i",
+      "name": "dgx-monarch-moss-image-t2i",
+      "source": "example_workflows/dgx-monarch-moss-image-t2i.json",
+      "workflow": {
+        "config": {},
+        "extra": {},
+        "groups": [],
+        "id": "moss-image-text-to-image",
+        "last_link_id": 11,
+        "last_node_id": 12,
+        "links": [
+          [
+            1,
+            1,
+            0,
+            3,
+            0,
+            "DGXM_MESH"
+          ],
+          [
+            2,
+            4,
+            0,
+            6,
+            0,
+            "CLIP"
+          ],
+          [
+            3,
+            4,
+            0,
+            7,
+            0,
+            "CLIP"
+          ],
+          [
+            4,
+            3,
+            0,
+            8,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            5,
+            8,
+            0,
+            10,
+            0,
+            "DGXM_MODEL"
+          ],
+          [
+            6,
+            6,
+            0,
+            10,
+            1,
+            "CONDITIONING"
+          ],
+          [
+            7,
+            7,
+            0,
+            10,
+            2,
+            "CONDITIONING"
+          ],
+          [
+            8,
+            9,
+            0,
+            10,
+            3,
+            "LATENT"
+          ],
+          [
+            9,
+            10,
+            0,
+            11,
+            0,
+            "LATENT"
+          ],
+          [
+            10,
+            5,
+            0,
+            11,
+            1,
+            "VAE"
+          ],
+          [
+            11,
+            11,
+            0,
+            12,
+            0,
+            "IMAGE"
+          ]
+        ],
+        "nodes": [
+          {
+            "dgxm_widgets": {
+              "attention": "TORCH_FLASH",
+              "auto_gate": "first_use",
+              "comfy_managed": "off",
+              "compile_dit": false,
+              "config_path": "",
+              "family_adapter": "auto",
+              "gpus_per_host": 0,
+              "load_profile": false,
+              "lora_low_rss": "auto",
+              "mmap_fallback": false,
+              "mode": "auto",
+              "pipeline_depth": 1,
+              "reserve_vram_gb": 0.0,
+              "slab_weights": "auto",
+              "swap_verify": 2,
+              "sync_ulysses": true,
+              "topology": "auto",
+              "uma_reserve_gb": 0.0
+            },
+            "flags": {},
+            "id": 1,
+            "inputs": [],
+            "mode": 0,
+            "order": 0,
+            "outputs": [
+              {
+                "links": [
+                  1
+                ],
+                "name": "mesh",
+                "slot_index": 0,
+                "type": "DGXM_MESH"
+              }
+            ],
+            "pos": [
+              80,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchInit"
+            },
+            "size": [
+              315,
+              448
+            ],
+            "type": "DGXMonarchInit",
+            "widgets_values": [
+              "auto",
+              "auto",
+              "TORCH_FLASH",
+              "",
+              0,
+              0.0,
+              true,
+              false,
+              1,
+              false,
+              "auto",
+              "auto",
+              "first_use",
+              false,
+              2,
+              0.0,
+              "off",
+              "auto"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 2,
+            "inputs": [],
+            "mode": 0,
+            "order": 1,
+            "outputs": [],
+            "pos": [
+              80,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "Note"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "title": "DGX Monarch | MOSS-Image text to image",
+            "type": "Note",
+            "widgets_values": [
+              "MOSS-Image text to image: 1024x1024, Euler and ComfyUI's simple scheduler at the vendor's 50 steps, CFG 3 and shift 5. Use at least 50 steps, and raise CFG toward 6 for a short prompt. A render here does not reproduce the vendor's own pipeline at the same seed: that pipeline builds its own schedule and its own noise. ComfyUI's native shift of 5 is the vendor's; add no shift node. Model Sampling SD3 (DGX Monarch) samples at multiplier 1000, which would render noise on this model, so it refuses here. Skip Layer Guidance (DGX Monarch) drops block 22 (zero-based) from the negative pass on every step, the vendor's default; blocks 24 and 26 also help. Clear single_layers to turn it off: the image looks more realistic, but some details can collapse. cfg2 refuses while Skip Layer Guidance is on; clear single_layers to use it. The vendor recommends 1, 1.5 or 2 MP and reports 0.25 to 4 MP working, with sides in multiples of 16; the model trained at up to about 1 MP. The negative is the tag list the vendor's guide recommends; the model card's default is an empty negative. English works best and Chinese is supported. The vendor's pipeline reads up to 4096 tokens after its chat template; ComfyUI sets no such cap. Describe the finished image, put any text to render in double quotes, and use real line breaks where its lines should break. For tag prompts the guide's order is quality, score, meta, year, character, series, artist, then general tags, with @ before an artist name. MOSS-Image also reads a JSON layout prompt; the layout graph shows how, and the JSON must reach CLIP Text Encode through a link. Comfy-Org's own MOSS-Image graphs can rewrite a short request into a full caption with Text Generate on this same encoder; that step runs on the driver, and its memory is outside dgx-monarch's driver estimate. The INT8 ConvRot DiT files pin an approximate attention kernel on all 42 blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. They also need comfy-kitchen 0.2.39 or newer. This graph uses the BF16 file, which asks nothing. Auto picks Ulysses on a configured pair. No hardware comparison has run for MOSS-Image yet; see docs/MODELS.md. Expects moss_image_sft_bf16.safetensors in models/diffusion_models, qwen3.5_9b_bf16.safetensors in models/text_encoders (CLIP type moss_image) and flux2-vae_small.safetensors in models/vae, the FLUX.2 small decoder; the larger flux2-vae.safetensors other FLUX graphs use is a different decoder, and the file of that name in Comfy-Org's MOSS-Image repository holds other bytes again, so never copy it over yours. qwen3.5_9b_int8_convrot.safetensors is a smaller drop-in encoder. Needs ComfyUI 0.42.0 or newer on the driver and every Worker. MOSS-Image Base and SFT, Kromoss and its two LoRAs, the Qwen3.5-9B text encoder and the FLUX.2 small decoder are all released under Apache-2.0. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "unet_name": "moss_image_sft_bf16.safetensors",
+              "weight_dtype": "default"
+            },
+            "flags": {},
+            "id": 3,
+            "inputs": [
+              {
+                "link": 1,
+                "name": "mesh",
+                "type": "DGXM_MESH"
+              }
+            ],
+            "mode": 0,
+            "order": 2,
+            "outputs": [
+              {
+                "links": [
+                  4
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              420,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchUNETLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "DGXMonarchUNETLoader",
+            "widgets_values": [
+              "moss_image_sft_bf16.safetensors",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 4,
+            "inputs": [],
+            "mode": 0,
+            "order": 3,
+            "outputs": [
+              {
+                "links": [
+                  2,
+                  3
+                ],
+                "name": "CLIP",
+                "slot_index": 0,
+                "type": "CLIP"
+              }
+            ],
+            "pos": [
+              80,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPLoader"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "CLIPLoader",
+            "widgets_values": [
+              "qwen3.5_9b_bf16.safetensors",
+              "moss_image",
+              "default"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 5,
+            "inputs": [],
+            "mode": 0,
+            "order": 4,
+            "outputs": [
+              {
+                "links": [
+                  10
+                ],
+                "name": "VAE",
+                "slot_index": 0,
+                "type": "VAE"
+              }
+            ],
+            "pos": [
+              80,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "VAELoader"
+            },
+            "size": [
+              315,
+              80
+            ],
+            "type": "VAELoader",
+            "widgets_values": [
+              "flux2-vae_small.safetensors"
+            ]
+          },
+          {
+            "flags": {},
+            "id": 6,
+            "inputs": [
+              {
+                "link": 2,
+                "name": "clip",
+                "type": "CLIP"
+              }
+            ],
+            "mode": 0,
+            "order": 5,
+            "outputs": [
+              {
+                "links": [
+                  6
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              460
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              "A photograph of a small corner bakery at dawn, seen from across a quiet cobbled street. A green wooden shopfront with a large window full of round loaves and braided bread, warm light glowing inside. Above the door a hand-painted sign reads \"MORNING LOAF\" in cream serif capitals, and a chalkboard on the pavement says \"FRESH BREAD\nOPEN 6 AM\" in white chalk on two lines. Soft blue morning light, wet stones reflecting the window, a bicycle leaning against the wall, 35mm lens, natural colors, fine detail."
+            ]
+          },
+          {
+            "flags": {},
+            "id": 7,
+            "inputs": [
+              {
+                "link": 3,
+                "name": "clip",
+                "type": "CLIP"
+              }
+            ],
+            "mode": 0,
+            "order": 6,
+            "outputs": [
+              {
+                "links": [
+                  7
+                ],
+                "name": "CONDITIONING",
+                "slot_index": 0,
+                "type": "CONDITIONING"
+              }
+            ],
+            "pos": [
+              420,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "CLIPTextEncode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "CLIPTextEncode",
+            "widgets_values": [
+              "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "double_layers": "",
+              "end_percent": 1.0,
+              "single_layers": "22",
+              "start_percent": 0.0
+            },
+            "flags": {},
+            "id": 8,
+            "inputs": [
+              {
+                "link": 4,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "mode": 0,
+            "order": 7,
+            "outputs": [
+              {
+                "links": [
+                  5
+                ],
+                "name": "model",
+                "slot_index": 0,
+                "type": "DGXM_MODEL"
+              }
+            ],
+            "pos": [
+              760,
+              80
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchSkipLayerGuidance"
+            },
+            "size": [
+              315,
+              162
+            ],
+            "type": "DGXMonarchSkipLayerGuidance",
+            "widgets_values": [
+              "",
+              "22",
+              0.0,
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 9,
+            "inputs": [],
+            "mode": 0,
+            "order": 8,
+            "outputs": [
+              {
+                "links": [
+                  8
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              760,
+              650
+            ],
+            "properties": {
+              "Node name for S&R": "EmptyFlux2LatentImage"
+            },
+            "size": [
+              315,
+              118
+            ],
+            "type": "EmptyFlux2LatentImage",
+            "widgets_values": [
+              1024,
+              1024,
+              1
+            ]
+          },
+          {
+            "dgxm_widgets": {
+              "cfg": 3.0,
+              "control_after_generate": "randomize",
+              "denoise": 1.0,
+              "sampler_name": "euler",
+              "scheduler": "simple",
+              "seed": 42,
+              "steps": 50
+            },
+            "flags": {},
+            "id": 10,
+            "inputs": [
+              {
+                "link": 5,
+                "name": "model",
+                "type": "DGXM_MODEL"
+              },
+              {
+                "link": 6,
+                "name": "positive",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 7,
+                "name": "negative",
+                "type": "CONDITIONING"
+              },
+              {
+                "link": 8,
+                "name": "latent_image",
+                "type": "LATENT"
+              }
+            ],
+            "mode": 0,
+            "order": 9,
+            "outputs": [
+              {
+                "links": [
+                  9
+                ],
+                "name": "LATENT",
+                "slot_index": 0,
+                "type": "LATENT"
+              }
+            ],
+            "pos": [
+              1100,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "DGXMonarchKSampler"
+            },
+            "size": [
+              315,
+              294
+            ],
+            "type": "DGXMonarchKSampler",
+            "widgets_values": [
+              42,
+              "randomize",
+              50,
+              3.0,
+              "euler",
+              "simple",
+              1.0
+            ]
+          },
+          {
+            "flags": {},
+            "id": 11,
+            "inputs": [
+              {
+                "link": 9,
+                "name": "samples",
+                "type": "LATENT"
+              },
+              {
+                "link": 10,
+                "name": "vae",
+                "type": "VAE"
+              }
+            ],
+            "mode": 0,
+            "order": 10,
+            "outputs": [
+              {
+                "links": [
+                  11
+                ],
+                "name": "IMAGE",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1440,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "VAEDecode"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "VAEDecode",
+            "widgets_values": []
+          },
+          {
+            "flags": {},
+            "id": 12,
+            "inputs": [
+              {
+                "link": 11,
+                "name": "images",
+                "type": "IMAGE"
+              }
+            ],
+            "mode": 0,
+            "order": 11,
+            "outputs": [
+              {
+                "links": [],
+                "name": "images",
+                "slot_index": 0,
+                "type": "IMAGE"
+              }
+            ],
+            "pos": [
+              1780,
+              270
+            ],
+            "properties": {
+              "Node name for S&R": "SaveImage"
+            },
+            "size": [
+              315,
+              96
+            ],
+            "type": "SaveImage",
+            "widgets_values": [
+              "dgx_monarch_moss_image"
             ]
           }
         ],

@@ -112,6 +112,16 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     # FLUX.3's sharded blocks read this global from Block.forward's own module
     # and launch each call at stock's row count (adapters/flux3_adaln_parity.py).
     _call("comfy.ldm.flux3.model", "modulated_norm", positional=("x", "norm", "scale", "shift")),
+    # MOSS-Image's sharded blocks read both globals from Block.forward's own
+    # module: the fused norm launches at stock's rows (adapters/moss_image_seams.py),
+    # and the head calls the norm itself on the gathered rows. The class sits
+    # here, ahead of its rebound _forward, so a missing class is named first.
+    _attr("comfy.ldm.moss_image.model", "MOSSImage"),
+    _call("comfy.ldm.moss_image.model", "modulated_rms_norm",
+          positional=("x", "norm", "scale", "shift")),
+    _call("comfy.ldm.moss_image.model", "attention",
+          positional=("q", "k", "v", "q_norm", "k_norm", "pe", "heads", "comfy_attention",
+                      "transformer_options")),
 )
 
 REBOUND_FORWARD_TOUCHPOINTS: tuple[Touchpoint, ...] = tuple(
@@ -194,6 +204,30 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ldm.flux3.model", "Flux3.rope", positional=("self", "ids")),
     _call("comfy.ldm.flux3.model", "Block.forward",
           positional=("self", "x", "spans", "pe", "transformer_options")),
+    # MOSS-Image's sharded forward checks the stock tree at inject, calls
+    # stock's rope in either form (five names admit v0.42.0 and master), and
+    # runs stock's Block and TextEmbedder code on stock's call shapes.
+    _attr("comfy.ldm.moss_image.model", "Block"),
+    _attr("comfy.ldm.moss_image.model", "TextEmbedder"),
+    _call("comfy.ldm.moss_image.model", "MOSSImage.rope",
+          positional=("self", "h", "w", "text_len", "device")),
+    _call("comfy.ldm.moss_image.model", "MOSSImage.forward", "transformer_options",
+          positional=("self", "x", "timestep", "context")),
+    _call("comfy.ldm.moss_image.model", "Block.forward",
+          positional=("self", "x", "mod", "pe", "transformer_options")),
+    _call("comfy.ldm.moss_image.model", "TextEmbedder.forward",
+          positional=("self", "x", "pe", "transformer_options")),
+)
+
+
+# Model patches the Skip Layer Guidance carrier and the LoRA shape guard call
+# (actor/guidance_render.py, actor/lora_shape_guard.py); comfy_surface.py sits
+# at its line ceiling, so they join the family manifest here.
+MODEL_PATCH_TOUCHPOINTS: tuple[Touchpoint, ...] = (
+    _call("comfy_extras.nodes_slg", "SkipLayerGuidanceDiTSimple.execute",
+          "double_layers", "single_layers", positional=("model", "start_percent", "end_percent")),
+    _call("comfy.lora", "calculate_shape", positional=("patches", "weight", "key")),
+    _call("comfy.utils", "get_attr", positional=("obj", "attr")),
 )
 
 
@@ -202,4 +236,5 @@ FAMILY_FORWARD_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     + REBOUND_FORWARD_TOUCHPOINTS
     + REBOUND_CALLER_TOUCHPOINTS
     + REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS
+    + MODEL_PATCH_TOUCHPOINTS
 )

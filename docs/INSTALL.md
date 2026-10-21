@@ -18,7 +18,8 @@ described below. Use the current requirements in
 Each Worker host also needs `/usr/bin/python3` at Python 3.9 or newer, because
 the Worker lifecycle helpers run on it rather than on the configured `python`;
 `dgxm doctor` checks it on every host ([CLUSTER.md](CLUSTER.md#hosts)).
-FLUX.3 Klein needs ComfyUI 0.41.0 or newer
+FLUX.3 Klein needs ComfyUI 0.41.0 or newer, and MOSS-Image and Kromoss need
+ComfyUI 0.42.0 or newer
 ([model files](#model-files-required-by-each-template)).
 
 First discover the ComfyUI checkout and the interpreter that actually starts
@@ -380,6 +381,25 @@ tensors as the pinned file with different header metadata, and the VAE holds
 the same weights in another key layout. Their bytes differ from the pinned
 files, so `check_artifacts.py --models-dir` reports a vendor copy staged under
 either name as a mismatch. Stage the files the manifest pins.
+
+MOSS-Image and Kromoss need ComfyUI 0.42.0 or newer on the driver and on
+every Worker, with the comfy-kitchen version that ComfyUI's requirements name.
+An older ComfyUI cannot build a MOSS-Image checkpoint: dgx-monarch names the
+family, and the load fails in ComfyUI's own loader
+([TROUBLESHOOTING #125](TROUBLESHOOTING.md#125-a-moss-image-checkpoint-fails-to-load-on-comfyui-older-than-0420)).
+The MOSS-Image and Kromoss templates name `flux2-vae_small.safetensors`, the
+FLUX.2 small decoder, a row of its own, not the Flux 2 VAE row the Flux 2 and
+FLUX.3 templates name. Comfy-Org's MOSS-Image repository also ships a
+`vae/flux2-vae.safetensors` whose bytes differ from the pinned Flux 2 VAE, so
+copying that repository's `vae` folder over `models/vae` replaces the pinned
+file, and `check_artifacts.py --models-dir` reports it as a mismatch. Stage
+the files the manifest pins. The lodestones/Kromoss repository ships its two
+LoRAs as `8-steps-dmd2-lora.safetensors` and `8-steps-dmd-lora.safetensors`
+at its root; save them in `models/loras` under the manifest's names,
+`kromoss_8-steps-dmd2-lora.safetensors` and
+`kromoss_8-steps-dmd-lora.safetensors`. The Kromoss files change under the
+same names as training continues; the manifest pins one revision, and
+`--hash` reports a file from another.
 
 A row with a blank `url` or `sha256`, or a `size` of 0, is pending. The check
 reports pending rows and passes; `--pending` names them, and `--strict` fails

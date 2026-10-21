@@ -509,6 +509,9 @@ _ORACLE_REFUSE = (
     "flux3_image_klein_sd_fp8r_modelopt.safetensors",
     "krea2_raw_convrot_int8.safetensors",
     "krea2_raw_fp8_scaled.safetensors",
+    "moss_image_sft_int8_convrot.safetensors",
+    "moss_image_base_int8_convrot.safetensors",
+    "kromoss_int8_convrot.safetensors",
 )
 _ORACLE_ADMIT = (
     "Chroma1-HD.safetensors",
@@ -518,6 +521,11 @@ _ORACLE_ADMIT = (
     "kandinsky5lite_t2i.safetensors",
     "qwen_image_2512_fp8_e4m3fn.safetensors",
     "z_image_turbo_bf16.safetensors",
+    # MOSS-Image's one F32 tensor, rope.bands, is popped before load, so the
+    # three BF16 files carry no fp32 island live.
+    "moss_image_sft_bf16.safetensors",
+    "moss_image_base_bf16.safetensors",
+    "kromoss_bf16.safetensors",
     # fp32-island files (the comment above).
     "krea2_raw_bf16.safetensors",
     "chroma-radiance-x0.safetensors",
@@ -1240,6 +1248,13 @@ _SNIFF_ORACLE = (
     ("flux3_image_klein_nvfp4.safetensors", ("flux3", "fp8")),
     ("flux3_image_klein_sd_nvfp4.safetensors", ("flux3", "fp8")),
     ("flux3_image_klein_sd_fp8r_modelopt.safetensors", ("flux3", "fp8")),
+    # MOSS-Image: SFT, Base and Kromoss in both shipped quants, one key set.
+    ("moss_image_sft_bf16.safetensors", ("moss_image", "bf16")),
+    ("moss_image_sft_int8_convrot.safetensors", ("moss_image", "int8")),
+    ("moss_image_base_bf16.safetensors", ("moss_image", "bf16")),
+    ("moss_image_base_int8_convrot.safetensors", ("moss_image", "int8")),
+    ("kromoss_bf16.safetensors", ("moss_image", "bf16")),
+    ("kromoss_int8_convrot.safetensors", ("moss_image", "int8")),
 )
 
 
@@ -1337,3 +1352,97 @@ def test_flux3_names_no_neighbour_and_misses_without_either_needle():
     for needle in ("content_mode_blocks.", "single_stream_modulations."):
         assert detect_family_from_keys([k for k in keys if not k.startswith(needle)]) == "unknown"
     assert detect_family_from_keys(["model.diffusion_model." + k for k in keys]) == "flux3"
+
+
+# MOSS-Image vendor layouts at their real shapes. SFT, Base and Kromoss share
+# one key set, so a kind is one header: BF16 is 379 keys, the one F32 tensor
+# being `rope.bands`, which ComfyUI pops before load; INT8 ConvRot is 757, the
+# four block linears stored I8 beside a per-row F32 scale and a U8 comfy_quant
+# descriptor, and an int8 attention pin on every block. Neither file carries
+# header metadata. The row is ComfyUI's own needle pair (comfy/model_detection.py).
+_MOSS_DIM, _MOSS_FFN, _MOSS_LAYERS, _MOSS_TEXT_BLOCKS = 3072, 8192, 42, 2
+_MOSS_ROWS_ON_DISK = 16
+
+
+def _moss_header(kind: str) -> dict[str, dict]:
+    """``{key: {"dtype", "shape"}}`` of one MOSS-Image vendor file."""
+    d, f = _MOSS_DIM, _MOSS_FFN
+    shapes: dict[str, list[int]] = {
+        "video_embedder.weight": [d, 128], "video_embedder.bias": [d],
+        "text_embedder.proj.weight": [d, 4096], "text_embedder.proj.bias": [d],
+        "time_embedding.0.weight": [d, 256], "time_embedding.0.bias": [d],
+        "time_embedding.2.weight": [d, d], "time_embedding.2.bias": [d],
+        "shared_block_modulation.weight": [6 * d, d], "shared_block_modulation.bias": [6 * d],
+        "video_head_modulation.weight": [2 * d, d], "video_head_modulation.bias": [2 * d],
+        "final_norm_video.weight": [d], "final_linear_video.weight": [128, d],
+    }
+    norms = (("norm1", d), ("norm2", d), ("q_norm", 128), ("k_norm", 128))
+    for n in range(_MOSS_TEXT_BLOCKS):
+        block = f"text_embedder.blocks.{n}"
+        for name, shape in (("qkv", [3 * d, d]), ("proj", [d, d]), ("ffn_gate", [f, d]),
+                            ("ffn_up", [f, d]), ("ffn_down", [d, f])):
+            shapes[f"{block}.{name}.weight"], shapes[f"{block}.{name}.bias"] = shape, shape[:1]
+        shapes.update({f"{block}.{norm}.weight": [width] for norm, width in norms})
+    tensors = {key: {"dtype": "BF16", "shape": shape} for key, shape in shapes.items()}
+    tensors["rope.bands"] = {"dtype": "F32", "shape": [16]}
+    for n in range(_MOSS_LAYERS):
+        block = f"layers.{n}"
+        tensors.update({f"{block}.{norm}.weight": {"dtype": "BF16", "shape": [width]}
+                        for norm, width in norms})
+        for linear, shape in (("proj.qkv", [3 * d, d]), ("proj.o", [d, d]),
+                              ("proj.ffn_up_gate", [2 * f, d]), ("proj.ffn_down", [d, f])):
+            name = f"{block}.{linear}"
+            tensors[f"{name}.weight"] = {"dtype": "I8" if kind == "int8" else "BF16",
+                                         "shape": shape}
+            if kind == "int8":
+                tensors[f"{name}.weight_scale"] = {"dtype": "F32", "shape": [shape[0], 1]}
+                tensors[f"{name}.comfy_quant"] = {"dtype": "U8", "shape": [72]}
+        if kind == "int8":
+            tensors[f"{block}.comfy_attention.config"] = {"dtype": "U8", "shape": [35]}
+    return tensors
+
+
+def _write_moss(path: Path, kind: str) -> Path:
+    """On disk a first dimension stops at 16 rows and every trailing one is 1.
+
+    `rope.bands` keeps its 16 fp32 values (64 bytes) beside a BF16 core big
+    enough to hold them inside the fp32-islands ceiling, as the real files do;
+    the family and quant sniffs read key names and dtypes, never a shape.
+    """
+    header: dict = {}
+    offset = 0
+    for key, info in _moss_header(kind).items():
+        rows, *rest = info["shape"]
+        shape = [min(rows, _MOSS_ROWS_ON_DISK), *([1] * len(rest))]
+        size = math.prod(shape) * _FLUX3_WIDTHS[info["dtype"]]
+        header[key] = {"dtype": info["dtype"], "shape": shape,
+                       "data_offsets": [offset, offset + size]}
+        offset += size
+    _write_safetensors_header(path, header)
+    return path
+
+
+@pytest.mark.parametrize(("kind", "count"), [("bf16", 379), ("int8", 757)])
+def test_every_moss_image_vendor_layout_sniffs_moss_image_with_its_kind(tmp_path: Path, kind,
+                                                                        count):
+    assert len(_moss_header(kind)) == count
+    path = _write_moss(tmp_path / f"moss_image_{kind}.safetensors", kind)
+    assert sniff_checkpoint(path) == ("moss_image", kind)
+    assert sniff_checkpoint_for_topology(path) == ("moss_image", kind)
+    assert sniff_metadata_keys(path) == ()
+
+
+def test_moss_image_names_no_neighbour_and_misses_without_either_needle():
+    """Neither needle alone names the family, and a header missing one names
+    moss_image as its closest row with that needle missing. The row reads
+    through ComfyUI's wrapper prefix."""
+    keys = list(_moss_header("bf16"))
+    assert detect_family_from_keys(keys) == "moss_image"
+    for needle in ("shared_block_modulation.", "proj.ffn_up_gate."):
+        damaged = [k for k in keys if f".{needle}" not in f".{k}"]
+        assert len(damaged) < len(keys)
+        assert detect_family_from_keys(damaged) == "unknown"
+        best = nearest_signatures(damaged)[0]
+        assert (best.family, best.present, best.total, best.missing) == (
+            "moss_image", 1, 2, (needle,))
+    assert detect_family_from_keys(["model.diffusion_model." + k for k in keys]) == "moss_image"

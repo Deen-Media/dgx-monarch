@@ -71,6 +71,10 @@ from dgx_monarch.nodes.render_validation import (  # noqa: E402
 )
 from dgx_monarch.refusal import parse_refusal_tag  # noqa: E402
 from dgx_monarch.safetensors_header import read_safetensors_header  # noqa: E402
+from dgx_monarch.skip_layer_guidance import (  # noqa: E402
+    skip_layer_guidance_active,
+    skip_layer_guidance_refusal_reason,
+)
 from dgx_monarch.topology import (  # noqa: E402
     Topology,
     choose_auto_topology,
@@ -82,6 +86,11 @@ from dgx_monarch.topology_cfg_evidence import sniffed_checkpoint_variant  # noqa
 from .convert import probe_support  # noqa: E402
 
 UNET_CLASSES = ("DGXMonarchUNETLoader", "DGXMonarchUncondUNETLoader")
+# The driver node that carries ComfyUI's Skip Layer Guidance to the Workers,
+# and its four widgets in the order the wire carries them.
+SKIP_LAYER_GUIDANCE_CLASS = "DGXMonarchSkipLayerGuidance"
+SKIP_LAYER_GUIDANCE_WIDGETS = ("double_layers", "single_layers", "start_percent",
+                               "end_percent")
 LORA_CLASS, INIT_CLASS = "DGXMonarchLoraLoader", "DGXMonarchInit"
 PACKED_CLASSES = frozenset({"LTXVConcatAVLatent", "EmptyMiniMaxH3LatentAV",
                             "MiniMaxH3ImageToVideo", "MiniMaxH3AddGuide"})
@@ -457,6 +466,25 @@ def missing_media(graph: dict, input_dir: Path) -> list[str]:
     return sorted(set(missing))
 
 
+def skip_layer_guidance_on(graph: dict) -> bool:
+    """Whether a Skip Layer Guidance (DGX Monarch) node in the graph skips a layer.
+
+    The runtime's own predicate decides, so layer lists that hold no digit
+    read off, as the node freezes them to no skip at all. A node whose widgets
+    the graph wires instead of writing makes no claim here.
+    """
+    for node in graph.values():
+        if node["class_type"] != SKIP_LAYER_GUIDANCE_CLASS:
+            continue
+        try:
+            if skip_layer_guidance_active(
+                    {name: node["inputs"].get(name) for name in SKIP_LAYER_GUIDANCE_WIDGETS}):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
 def graph_facts(graph: dict) -> dict:
     """What the matrix needs to know about one API graph."""
     unets = {nid: node["inputs"]["unet_name"] for nid, node in graph.items()
@@ -489,6 +517,7 @@ def graph_facts(graph: dict) -> dict:
         "unets": unets, "cond_node": min(unets, key=int) if unets else "",
         "loras": sorted(loras, key=int), "megapixels": spatial_megapixels(height, width),
         "dual_model": any(graph[nid]["class_type"] == UNET_CLASSES[1] for nid in unets),
+        "skip_layer_guidance": skip_layer_guidance_on(graph),
         "packed": bool(classes & PACKED_CLASSES), "audio": "SaveAudioAdvanced" in classes,
         "cfg": cfg, "batch": batch, "probe": probe, "probe_reason": probe_reason,
         "sampler": sampler, "sampler_keeps_uncond": sampler_keeps_uncond(sampler),
@@ -893,6 +922,17 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     if family == "minimax_h3" and minimax_h3.minimax_h3_topology_would_reject(topo.cfg, topo.dp):
         return _label_from(RuntimeError(minimax_h3.MINIMAX_H3_BATCH_CAPPED_MESSAGE)), \
             "guard", False, guards
+    # The driver's Skip Layer Guidance preflight runs at the render submit right
+    # after the MiniMax one, once the topology resolves and before any Worker
+    # call (nodes/model_patch_preflight.py), so it answers ahead of every rule
+    # below. The reason is the runtime's own function. Its two-checkpoint arm
+    # reads the graph's second loader, the guider request the driver reads; the
+    # local `dual` above is the dm-cfg2 grant, a different question.
+    if facts.get("skip_layer_guidance") and skip_layer_guidance_refusal_reason(
+            cfg=topo.cfg, sp=topo.ulysses * topo.ring, family=family,
+            family_honours=bool(getattr(adapter, "sp_honours_block_replace", False)),
+            dual_model=bool(facts["dual_model"])) is not None:
+        return "refuse:P", "guard", False, guards
     if facts["packed"] and (topo.cfg > 1 or topo.dp > 1):
         return "refuse:P", "guard", False, guards
     if topo.dp > 1 and cell["batch"] % topo.dp:

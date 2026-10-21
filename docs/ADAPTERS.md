@@ -174,8 +174,8 @@ stacks on a repeat call.
 
    * every topology, so a padded sequence on ring or hybrid raises a typed
      refusal instead of rendering known-wrong math: Krea2, Lens, MiniMax H3,
-     LTX, Mage Flow, FLUX.3 and the flux family (Chroma, Flux, Flux2,
-     LongCat);
+     LTX, Mage Flow, FLUX.3, MOSS-Image and the flux family (Chroma, Flux,
+     Flux2, LongCat);
    * pure Ulysses only, so ring and hybrid attend the pad and never refuse:
      Qwen-Image, Hunyuan, Boogu, Ernie-Image and Ideogram4 (each in its own
      paragraph below).
@@ -199,9 +199,10 @@ stacks on a repeat call.
    measured contracts. Wiring another family onto the exclusion requires its
    own probe, which may be a named acceptance test while the family still
    has status `impl`: MiniMax H3's probe was included in its acceptance checks
-   ([VALIDATION.md](VALIDATION.md)), and FLUX.3's is the odd-grid case of
-   `tests/test_flux3_comfy_exactness.py`. An adapter with a stronger fail-closed
-   invariant may opt into `shard_seq(..., allow_padding=False)`. Omnigen2 does
+   ([VALIDATION.md](VALIDATION.md)), FLUX.3's is the odd-grid case of
+   `tests/test_flux3_comfy_exactness.py`, and MOSS-Image's is the odd-stream
+   case of `tests/test_moss_image_comfy_exactness.py`. An adapter with a
+   stronger fail-closed invariant may opt into `shard_seq(..., allow_padding=False)`. Omnigen2 does
    so for its joined ring stream. It has no exact pad-row exclusion evidence,
    so a non-divisible stream typed-refuses instead of attending a synthetic
    key. This is a capability reduction, not hardware evidence; see [TROUBLESHOOTING #77](TROUBLESHOOTING.md#77-a-chroma-omnigen2-or-z-image-usp-render-refuses-a-mask-or-sequence-length).
@@ -346,7 +347,8 @@ stacks on a repeat call.
    adapter against ComfyUI e8665ca8 on 2026-10-14 found these sites; on
    2026-10-15 the inventory was checked again against 29e28e2b4, whose
    commits since e8665ca8 change none of the modules below except to add
-   FLUX.3:
+   FLUX.3. On 2026-10-20 the MOSS-Image sites were added from d52a7a5ef; the
+   other sites were not read again against that tree:
 
    * cross-attention: every block's `cross_attn` in Wan 2.1 and 2.2, Wan
      SCAIL, WanDancer and Wan-Animate 2; `attn2` in LTX, and `audio_attn2`
@@ -359,7 +361,8 @@ stacks on a repeat call.
      token refiner (`txt_in`) in HunyuanImage 2.1 and HunyuanVideo 1.5;
      Kandinsky 5's text transformer blocks; the text fusion blocks in Krea2
      and Kroma (all of them under pure Ulysses, the layerwise blocks under
-     ring or hybrid); and WanDancer's music encoder;
+     ring or hybrid); WanDancer's music encoder; and MOSS-Image's two
+     text-embedder blocks;
    * text refiners that comfy runs from `extra_conds` on every rank, before
      the forward: MiniMax H3's token refiner, which also runs inside the
      forward when the text arrives unrefined, and the video and audio text
@@ -522,17 +525,20 @@ stacks on a repeat call.
    attention against the real ComfyUI tree, and with tiny real models the
    stock sites in the Wan 2.1, LTX, Kandinsky 5, Anima (on its cosmos DiT),
    Z-Image and Krea2 forwards, WanDancer's music encoder, MiniMax H3's token
-   refiner, the LTX audio-video text connectors and FLUX.3's text and
+   refiner, the LTX audio-video text connectors, FLUX.3's text and
    reference blocks, where a tiny real FLUX.3 model carries real config
-   tensors on two early and two sharded blocks. The other sites (SCAIL,
+   tensors on two early and two sharded blocks, and MOSS-Image's text-embedder
+   and sharded blocks, where a tiny real MOSS-Image model carries a real pin
+   on every block. The other sites (SCAIL,
    WanDancer cross-attention, LTX audio-video `attn2` and `audio_attn2`,
    OmniGen2, Boogu and the Hunyuan token refiner) have CPU tests with
    stand-in models (`tests/test_stock_attention_pins.py`). The same seam
    loads a tiny real Wan 2.1 model with two real config tensors and applies a
    real LoRA pin through ComfyUI's own patcher, and the detector must report
    both; it also checks the probe tool's key patterns against tiny real
-   Krea2, Anima, Kandinsky 5, Wan 2.1, Qwen Image 2.1 and FLUX.3 models, the
-   last for both the `flux3` and the `flux3_early` pattern. The
+   Krea2, Anima, Kandinsky 5, Wan 2.1, Qwen Image 2.1, FLUX.3 and MOSS-Image
+   models, FLUX.3 for both the `flux3` and the `flux3_early` pattern and
+   MOSS-Image for both `moss_image` and `moss_image_text`. The
    detection, record and waiver have CPU tests with stand-in modules
    (`tests/test_attention_pins.py`, `tests/test_attention_pins_wiring.py`).
 
@@ -1113,6 +1119,105 @@ stacks on a repeat call.
    1.33x to 1.57x faster than one GPU on the base model, 1.41x to 1.55x on the
    step-distilled model and 1.50x on the step-distilled edit
    ([BENCHMARKS](BENCHMARKS.md#flux3-klein-one-gpu-uly2-and-cfg2-2026-10-15-to-2026-10-16-head-capped)).
+
+   **MOSS-Image single stream, shared modulation and text embedder.**
+   MOSS-Image runs 42 identical blocks over one joint `[image, text]` stream,
+   the image rows first. One modulation per model call comes from the
+   timestep: `shared_block_modulation` gives six chunks that every block reads
+   for every row, and `video_head_modulation` gives the head's pair. The final
+   RMSNorm, modulation and linear run on the image rows only. There are no
+   spans, so FLUX.3's span clipping does not apply: every rank's block call
+   reads the same `(B, 1, dim)` vectors. The sharded forward replaces
+   `MOSSImage._forward` and calls stock's methods for the whole prelude, on
+   stock's rows on every rank: the rotary table for all N rows, the time
+   embedding, both modulations, the image embedding and the text embedder,
+   whose two blocks run whole on the last T rows of the table, as stock runs
+   them. The text stream is short, and sharding it would add all-to-alls.
+   Under sequence parallelism those two blocks are a stock attention site
+   (above), and the INT8 files pin neither of them.
+
+   The joint stream and its rotary table then shard together, one contiguous
+   window per rank (`adapters/moss_image_seams.py`), so Ulysses' head
+   all-to-all hands the kernel stock's key order with the pads at the tail and
+   no order descriptor is needed. Each block runs stock's own `Block.forward`
+   code on its window, and the head runs after the gather, stock's call on
+   stock's rows. MOSS-Image calls comfy-kitchen's fused `rms_adaln` twice per
+   block and its fused q and k norm and RoPE, `rms_rope_split_half`, once in
+   every block. Each block gets a per-instance `forward` that runs stock's code
+   with its `modulated_rms_norm` global sent through FLUX.3's `at_stock_rows`
+   (`adapters/flux3_adaln_parity.py`): both calls are filled with zero rows to
+   the stream's N rows, the rank's window at the front, run once, and keep the
+   rank's rows, so each launch is stock's launch whatever row count
+   comfy-kitchen branches on. The q and k call is not routed: on 2026-10-20,
+   with comfy-kitchen 0.2.39, it returned stock's bits on every window with no
+   fill ([VALIDATION](VALIDATION.md#evidence-moss-image-sft)). A fused-norm
+   call stock's block does not make, another call count or a missing norm
+   global refuses class P, and canary seam 43 names the change.
+
+   An odd joint total pads at world 2, from an odd image grid or from a
+   prompt length that makes N = HW + T odd. A pad row takes the shared shift,
+   so it is a nonzero key after the first norm; pad rows are named as
+   `drop_rows` on every topology, and a padded ring or hybrid render refuses
+   class K once, before the first block, through FLUX.3's
+   `refuse_padded_ring`. Under sequence parallelism the loop sets
+   `block_index`, `total_blocks` and `block_type="single"` as stock does and
+   honors a `patches_replace["dit"][("single_block", i)]` replacement only
+   when it is exact on a window: an identity function, read from its
+   bytecode, which is what ComfyUI's Skip Layer Guidance installs, or a
+   callable marked `sequence_shard_local`. Any other replacement refuses
+   class P before any compute, and so does a marked one that hands the block
+   other rows than the rank's window or its rotary rows. The adapter declares
+   `sp_honours_block_replace = True`, the attribute the Skip Layer Guidance
+   carrier reads before it admits a skip under sequence parallelism
+   ([TROUBLESHOOTING #126](TROUBLESHOOTING.md#126-skip-layer-guidance-dgx-monarch-refuses-on-cfg2-on-a-sequence-parallel-family-that-does-not-apply-block-replacement-or-with-a-two-checkpoint-guider)).
+   The prefetch queue mirrors stock's, with its block-scope pops, and the
+   malloc graph stock opens around its block loop is not opened, as in
+   FLUX.3's sharded forward.
+
+   Injection checks the live tree against stock's MOSS-Image on every path,
+   the forced `family_adapter` path included, and refuses class P where it
+   differs, as `matches()` refuses a `MOSSImage` subclass. It chooses the
+   `rope` call once, from the loaded class's signature:
+   `(h, w, text_len, device)` in the 0.42 releases, and the form that adds
+   `transformer_options` on ComfyUI master since b9b290e43 (2026-10-19), which
+   reads `rope_options`; any other form refuses class P. A Ulysses degree that
+   does not divide the 24 heads refuses class P at injection. Under sequence
+   parallelism a latent wider than the checkpoint's, which only a color or
+   depth control adapter feeds, refuses class P
+   ([TROUBLESHOOTING #127](TROUBLESHOOTING.md#127-a-lora-that-changes-a-weights-shape-refuses-before-any-bake)),
+   and so does a forward in which a block attended outside the sharded
+   override. The sharded forward keeps FLUX.3's attention-hook and keyword
+   guards. single, cfg2 and dp2 bind nothing and run stock's forward. The
+   adapter declares `cfg_cond_padding = "none"`: every image row's rotary
+   position depends on the prompt length and the joint attention has no mask,
+   so no driver pad is exact, and a prompt pair of different lengths
+   dispatches one condition per rank.
+   On uly2, ring and cfg2 only BF16 and INT8 ConvRot run
+   (`sp_validated_quants`); NVFP4 would reduce its shared activation scale
+   over a rank's pad rows. FSDP needs no table row: `layers` is a standard
+   block list, so the 42 blocks wrap one by one and the text embedder and
+   every other module fall in the root group, and `extra_conds` runs no
+   diffusion-model module, so the family needs no row in either
+   outside-forward table and no `prepare_base_model` hook. The block list is
+   not named `blocks`, so `compile_dit` compiles nothing for this family and
+   keeps requested slab residency.
+
+   Hardware results: none yet. On the CPU,
+   `tests/test_moss_image_comfy_exactness.py` builds ComfyUI's own
+   `MOSSImage` at toy size in float32 and shows every kernel call of the
+   two-rank forward receiving stock's q, k and v for its heads in stock order
+   with no pad row, and the output equal to stock's: an even stream, odd
+   streams cut inside the image rows and inside the text rows, four ranks
+   with a rank of pads only, batch 2, fused and separate q, k and v, both
+   `rope` forms, ComfyUI's own Skip Layer Guidance skip and a marked
+   row-local patch. That proves operands and order, not a GPU kernel; the
+   kernel facts the route relies on are in the VALIDATION record.
+
+   Performance cost, not timed. Per model call: 42 times four joint
+   all-to-alls and one final all-gather, the replicated prelude and text
+   embedder on every rank, and the fused-norm route, which runs each block's
+   two `rms_adaln` calls over all N rows on every rank. By block rows uly2
+   leaves each rank about half of one GPU's Linear and attention work.
 
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,

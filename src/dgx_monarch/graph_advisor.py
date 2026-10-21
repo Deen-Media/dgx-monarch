@@ -54,6 +54,7 @@ SWAPS: dict[str, str] = {
     "BasicGuider": "DGXMonarchBasicGuider",
     "CFGGuider": "DGXMonarchCFGGuider",
     "ModelSamplingSD3": "DGXMonarchModelSamplingSD3",
+    "SkipLayerGuidanceDiTSimple": "DGXMonarchSkipLayerGuidance",
 }
 
 DISPLAY_NAMES: dict[str, str] = {
@@ -61,6 +62,7 @@ DISPLAY_NAMES: dict[str, str] = {
     "DGXMonarchUNETLoader": "Load Diffusion Model (DGX Monarch)",
     "DGXMonarchLoraLoader": "Load LoRA (DGX Monarch)",
     "DGXMonarchModelSamplingSD3": "Model Sampling SD3 (DGX Monarch)",
+    "DGXMonarchSkipLayerGuidance": "Skip Layer Guidance (DGX Monarch)",
     "DGXMonarchKSampler": "KSampler (DGX Monarch)",
     "DGXMonarchKSamplerAdvanced": "KSampler Advanced (DGX Monarch)",
     "DGXMonarchSamplerCustom": "Sampler Custom (DGX Monarch)",

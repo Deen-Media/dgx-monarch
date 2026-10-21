@@ -29,7 +29,7 @@ FILE_SUFFIX = re.compile(r"\.(safetensors|gguf|sft|ckpt|pt|pth|bin|onnx|png|jpe?
                          r"|wav|flac|mp3|ogg|opus|json|yaml|txt|glb)$", re.IGNORECASE)
 KEEP = ("input", "input_order", "output", "output_is_list", "output_name", "output_node", "name", "python_module")
 VIRTUAL = {"Note", "MarkdownNote", "PrimitiveNode", "Reroute"}
-# Example names that public bundled workflows ship and the 2026-10-16 recording rig lacked.
+# Example names that public bundled workflows ship and the recording rig lacked.
 NOT_IN_RECORDING = {
     "DGXMonarchLoraLoader": {"your_first_lora.safetensors", "your_second_lora.safetensors"},
     "LoadImage": {"blue_dancer.png", "qwen21_canvas_rgba.png", "qwen21_mask_rgba.png", "qwen21_source.png",
