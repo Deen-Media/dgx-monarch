@@ -125,6 +125,11 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "comfy.model_base", "Flux3.extra_conds", ("flux3",), ("conds",),
         "self", 1, variadic_keyword="kwargs",
     ),
+    # Identical on v0.42.0 and master; only rope's signature moved between them.
+    _rebound(
+        "comfy.ldm.moss_image.model", "MOSSImage._forward", ("moss_image",), ("usp",),
+        "self x timestep context transformer_options", 4, variadic_keyword="kwargs",
+    ),
     _rebound(
         "comfy.ldm.chroma.model", "Chroma.forward_orig", ("chroma",), ("usp",),
         "self img img_ids txt txt_ids timesteps guidance control transformer_options attn_mask",

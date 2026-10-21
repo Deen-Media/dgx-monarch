@@ -48,7 +48,7 @@ OTHER_CONFIG_RATIO = {
     "Ideogram4": 16, "ErnieImage": 16, "MageFlow": 16, "QwenImage21": 16,
     "HunyuanImage21": 32, "HunyuanVideo15": 16, "LTXV": 32, "LTXAV": 32,
     "MiniMaxH3": 16, "WAN22_T2V": 16, "WAN21_T2V": 8, "PixelDiTT2I": 1,
-    "Flux3": 16,
+    "Flux3": 16, "MOSSImage": 16,
 }
 # Every shipped template whose family has a finite megapixel row, with the
 # auto family and the comfy config its checkpoint detects as (read from the

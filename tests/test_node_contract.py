@@ -21,6 +21,7 @@ EXPECTED_NODE_KEYS = {
     "DGXMonarchLoraLoader",
     "DGXMonarchModelSamplingSD3",
     "DGXMonarchQwenImage21Cache",
+    "DGXMonarchSkipLayerGuidance",
     "DGXMonarchKSampler",
     "DGXMonarchKSamplerAdvanced",
     "DGXMonarchKSamplerPipeline",

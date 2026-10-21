@@ -2570,3 +2570,223 @@ def test_a_pinned_nvfp4_cell_on_cfg2_carries_no_shard_quant_waiver(tmp_path):
     assert (plain["label"], plain["basis"], plain["waiver"], plain["waiver_guards"]) == (
         "refuse:K", "guard", True, [shard])
     assert _pick(cells, "chromapin", "cfg2", artifact_quant="bf16")["label"] == "render"
+
+
+# MOSS-Image: ComfyUI's own needle pair, without the shared FAMILY_KEYS table,
+# so no existing test's checkpoints move.
+_MOSS_KEYS = ("shared_block_modulation.weight", "layers.0.proj.ffn_up_gate.weight")
+_SKIP_WIDGETS = {"double_layers": "", "single_layers": "22", "start_percent": 0.0,
+                 "end_percent": 1.0}
+
+
+def _moss_rig(tmp_path: Path, graphs: dict[str, Path]) -> dict:
+    """The rig plus MOSS-Image SFT in BF16 and INT8 and the given committed graphs.
+
+    Each graph goes through the converter the sweep itself uses, so the cells
+    read the committed widgets of the Skip Layer Guidance (DGX Monarch) node.
+    """
+    config = _rig(tmp_path)
+    for name, dtype in (("moss_image_sft_bf16.safetensors", torch.bfloat16),
+                        ("moss_image_sft_int8_convrot.safetensors", torch.int8)):
+        save_file({key: torch.zeros(2, 2, dtype=dtype) for key in _MOSS_KEYS},
+                  str(config["model_dir"] / name))
+    names = convert.repo_widget_names(REPO)
+    for stem, path in graphs.items():
+        api = convert.convert(json.loads(path.read_text()), names)
+        (config["out_dir"] / "graphs" / f"{stem}.json").write_text(json.dumps(api))
+    return config
+
+
+_MOSS_SHIPPED = REPO / "example_workflows" / "dgx-monarch-moss-image-t2i.json"
+_MOSS_TESTING = REPO / "tests" / "fixtures" / "workflows" / "generated"
+
+
+def test_the_moss_image_files_split_into_one_stem_per_checkpoint():
+    # SFT, Base and Kromoss share one key set, so only the stems keep each CFG 3
+    # graph with its own INT8 sibling; no [artifact_groups] entry is needed.
+    for model, stem in (("moss_image_sft", "mossimagesft"), ("moss_image_base", "mossimagebase"),
+                        ("kromoss", "kromoss")):
+        assert matrix.split_quant(f"{model}_bf16") == (stem, "bf16")
+        assert matrix.split_quant(f"{model}_int8_convrot") == (stem, "int8_convrot")
+    assert matrix.split_quant("qwen3.5_9b_int8_convrot") == ("qwen359b", "int8_convrot")
+
+
+def test_an_active_skip_refuses_class_p_on_every_cfg_cell(tmp_path):
+    """The driver preflight refuses an active skip on any cfg topology before
+    dispatch (nodes/model_patch_preflight.py), so the matrix labels those cells
+    class P from the runtime's own reason function. MOSS-Image honors block
+    replacement under sequence parallelism, so its sharded cells render; the
+    same graph with the skip cleared renders on cfg2 too."""
+    config = _moss_rig(tmp_path, {
+        "moss": _MOSS_SHIPPED,
+        "mossoff": _MOSS_TESTING / "dgx-monarch-test-moss-image-slg-off.json"})
+    skip = _graph("krea2_raw_bf16.safetensors")
+    skip["6"] = {"class_type": "DGXMonarchSkipLayerGuidance",
+                 "inputs": {"model": ["2", 0], **_SKIP_WIDGETS}}
+    skip["4"]["inputs"]["model"] = ["6", 0]
+    (config["out_dir"] / "graphs" / "krea2skip.json").write_text(json.dumps(skip))
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    for quant in ("bf16", "int8"):
+        for preset in ("cfg2", "cfg2+fsdp"):
+            cell = _pick(cells, "moss", preset, artifact_quant=quant)
+            assert (cell["label"], cell["basis"], cell["waiver"]) == (
+                "refuse:P", "guard", False), (quant, preset)
+            assert _pick(cells, "mossoff", preset, artifact_quant=quant)["label"] == "render"
+        for preset in ("auto", "uly2", "ring2", "uly2+fsdp"):
+            assert _pick(cells, "moss", preset, artifact_quant=quant)["label"] == "render", preset
+    # A family whose sharded forward is not shown to honor the skip refuses it
+    # under sequence parallelism too, while the same graph without the node renders.
+    for preset in ("uly2", "cfg2", "ring2"):
+        assert _pick(cells, "krea2skip", preset, artifact_quant="bf16")["label"] == "refuse:P"
+    assert _pick(cells, "krea2", "uly2", artifact_quant="bf16")["label"] == "render"
+    # One GPU runs ComfyUI's own forward on one rank, so the skip refuses nothing
+    # there: each local cell keeps the label of the same cell without the node.
+    def local(template: str) -> dict:
+        return {(cell["artifact_quant"], cell["attention"]): cell["label"] for cell in cells
+                if cell["template"] == template and cell["session"] == "local"}
+
+    assert local("krea2skip") == local("krea2") and local("krea2")
+    assert set(local("moss").values()) == {"render"}
+
+
+def _carrier(model: list, **widgets) -> dict:
+    """A Skip Layer Guidance (DGX Monarch) node on the given model link."""
+    return {"class_type": "DGXMonarchSkipLayerGuidance",
+            "inputs": {"model": model, **_SKIP_WIDGETS, **widgets}}
+
+
+def _skip_graph(**widgets) -> dict:
+    """The krea2 rig graph with the skip node between the loader and the sampler."""
+    graph = _graph("krea2_raw_bf16.safetensors")
+    graph["6"] = _carrier(["2", 0], **widgets)
+    graph["4"]["inputs"]["model"] = ["6", 0]
+    return graph
+
+
+def test_a_skip_off_or_unreadable_node_makes_no_claim():
+    assert matrix.skip_layer_guidance_on(_skip_graph())
+    for change in ({"single_layers": ""}, {"single_layers": "none"},
+                   {"single_layers": ["7", 0]}, {"start_percent": 2.0}):
+        assert not matrix.skip_layer_guidance_on(_skip_graph(**change)), change
+    assert matrix.graph_facts(_skip_graph())["skip_layer_guidance"] is True
+
+
+def test_an_active_skip_off_every_render_model_chain_makes_no_claim():
+    # The runtime reads the skip off the model the sampler holds
+    # (nodes/model_patch_preflight.py), so a node the sampler never reads
+    # changes no render: one wired nowhere, or only into the scheduler.
+    loose = _graph("krea2_raw_bf16.safetensors")
+    loose["6"] = _carrier(["2", 0])
+    assert not matrix.skip_layer_guidance_on(loose)
+    assert matrix.graph_facts(loose)["skip_layer_guidance"] is False
+    scheduled = {**loose, "7": {"class_type": "DGXMonarchBasicScheduler",
+                                "inputs": {"model": ["6", 0], "scheduler": "simple",
+                                           "steps": 20, "denoise": 1.0}}}
+    assert not matrix.skip_layer_guidance_on(scheduled)
+    # An empty node on the chain borrows nothing from the loose active one.
+    loose["7"] = _carrier(["2", 0], single_layers="")
+    loose["4"]["inputs"]["model"] = ["7", 0]
+    assert not matrix.skip_layer_guidance_on(loose)
+
+
+def test_an_active_skip_on_the_samplers_model_chain_claims_through_other_nodes():
+    def lora(model: list) -> dict:
+        return {"class_type": "DGXMonarchLoraLoader",
+                "inputs": {"model": model, "lora_name": "style.safetensors",
+                           "strength_model": 1.0}}
+
+    lora_after = _skip_graph()
+    lora_after["7"] = lora(["6", 0])
+    lora_after["4"]["inputs"]["model"] = ["7", 0]
+    lora_before = _graph("krea2_raw_bf16.safetensors")
+    lora_before["7"] = lora(["2", 0])
+    lora_before["6"] = _carrier([7, 0])
+    lora_before["4"]["inputs"]["model"] = ["6", 0]
+    # An empty node after an active one keeps its skip, as stock's does.
+    emptied = _skip_graph()
+    emptied["7"] = _carrier(["6", 0], single_layers="")
+    emptied["4"]["inputs"]["model"] = ["7", 0]
+    for graph in (lora_after, lora_before, emptied):
+        assert matrix.skip_layer_guidance_on(graph)
+        assert matrix.graph_facts(graph)["skip_layer_guidance"] is True
+
+
+def test_a_skip_on_either_model_a_guider_takes_claims():
+    graph = {
+        "2": {"class_type": "DGXMonarchUNETLoader", "inputs": {"unet_name": "c.safetensors"}},
+        "3": {"class_type": "DGXMonarchUncondUNETLoader",
+              "inputs": {"unet_name": "u.safetensors"}},
+        "6": _carrier(["3", 0]),
+        "8": {"class_type": "DGXMonarchDualModelGuider",
+              "inputs": {"model": ["2", 0], "model_negative": ["6", 0], "cfg": 4.0}},
+        "9": {"class_type": "DGXMonarchSamplerCustom", "inputs": {"guider": ["8", 0]}},
+    }
+    assert matrix.skip_layer_guidance_on(graph)
+    graph["8"]["inputs"]["model_negative"] = ["3", 0]
+    assert not matrix.skip_layer_guidance_on(graph)
+    graph["6"] = _carrier(["2", 0])
+    graph["8"] = {"class_type": "DGXMonarchCFGGuider",
+                  "inputs": {"model": ["6", 0], "cfg": 4.0}}
+    assert matrix.skip_layer_guidance_on(graph)
+
+
+def test_the_render_model_inputs_name_every_node_that_takes_the_model():
+    # The walk follows the table's inputs, then the input named model on every
+    # node that passes the model on, so a new node that takes the model must
+    # pass it on through that name, render with it, or be listed as reading it.
+    # tests/node_input_contract.json holds every node's ordered inputs and their
+    # types without ComfyUI, and tests/test_node_contract.py pins it to INPUT_TYPES.
+    from dgx_monarch.constants import MODEL_TYPE
+    from dgx_monarch.nodes import NODE_CLASS_MAPPINGS
+
+    contract = json.loads((REPO / "tests" / "node_input_contract.json").read_text())
+    assert set(contract) == set(NODE_CLASS_MAPPINGS)
+    renders, passes = {}, set()
+    for name, sections in contract.items():
+        taken = tuple(field for section in ("required", "optional")
+                      for field, kind, _default in sections.get(section, [])
+                      if kind == MODEL_TYPE)
+        if not taken:
+            continue
+        if MODEL_TYPE in NODE_CLASS_MAPPINGS[name].RETURN_TYPES:
+            assert taken == ("model",), name
+            passes.add(name)
+        elif name not in matrix.MODEL_READ_ONLY_CLASSES:
+            renders[name] = taken
+    assert renders == matrix.RENDER_MODEL_INPUTS
+    assert matrix.MODEL_READ_ONLY_CLASSES <= set(NODE_CLASS_MAPPINGS) - passes
+    assert {matrix.SKIP_LAYER_GUIDANCE_CLASS, matrix.LORA_CLASS} <= passes
+
+
+def test_a_loose_skip_leaves_every_cell_the_label_of_the_graph_without_it(tmp_path):
+    config = _rig(tmp_path)
+    loose = _graph("krea2_raw_bf16.safetensors")
+    loose["6"] = _carrier(["2", 0])
+    (config["out_dir"] / "graphs" / "krea2loose.json").write_text(json.dumps(loose))
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+
+    def labels(template: str) -> dict:
+        return {(cell["preset"], cell["session"], cell["artifact_quant"], cell["attention"],
+                 json.dumps(cell["levers"], sort_keys=True)): cell["label"]
+                for cell in cells if cell["template"] == template}
+
+    assert labels("krea2loose") == labels("krea2") and labels("krea2")
+    assert _pick(cells, "krea2loose", "cfg2", artifact_quant="bf16")["label"] == "render"
+
+
+def test_moss_image_int8_with_a_lora_under_fsdp_refuses_class_p(tmp_path):
+    # The LoRA loader's FSDP preflight refuses a stack on a comfy-kitchen
+    # quantized checkpoint, MOSS-Image's INT8 ConvRot files among them, before
+    # dispatch; BF16 with the same stack, and INT8 without one, render.
+    config = _moss_rig(tmp_path, {
+        "mosslora": _MOSS_TESTING / "dgx-monarch-test-moss-image-lora.json"})
+    config["loras"] = {"mosslora": ["one.safetensors"]}
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    at_preset = [cell for cell in cells if cell["template"] == "mosslora"
+                 and cell["preset"] == "uly2+fsdp" and cell["session"] == "cluster"]
+    by_arm = {(bool(cell["loras"]), cell["artifact_quant"]): cell for cell in at_preset}
+    int8_with_lora = by_arm[(True, "int8_convrot")]
+    assert int8_with_lora["fsdp_lora_admission"] == "quantized_shards"
+    assert (int8_with_lora["label"], int8_with_lora["basis"]) == ("refuse:P", "guard")
+    assert by_arm[(False, "int8_convrot")]["label"] == "render"
+    assert by_arm[(True, "bf16")]["label"] == "render"

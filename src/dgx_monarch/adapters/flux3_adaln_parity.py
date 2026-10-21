@@ -18,8 +18,10 @@ passes ``stock_norm_rows`` runs stock's own ``Block.forward`` code with its one
 global ``modulated_norm`` resolved to a wrapper that sends each span's call
 through ``at_stock_rows``. Stock's class, its module and every block the
 sharded forward does not call stay as they are, and topologies without
-sequence parallelism never bind. This module imports no ComfyUI module, so the
-CPU suite reaches it without one.
+sequence parallelism never bind. MOSS-Image's binder
+(adapters/moss_image_seams.py) reuses ``at_stock_rows``, ``loads_global`` and
+``route_global``. This module imports no ComfyUI module, so the CPU suite
+reaches it without one.
 """
 from __future__ import annotations
 
@@ -41,7 +43,7 @@ def pad_rows(piece_rows: int, stock_rows: int) -> int:
     """
     if not 0 < piece_rows <= stock_rows:
         raise ValueError(
-            f"flux3 norm parity: a {piece_rows}-row piece cannot sit in a "
+            f"fused-norm parity: a {piece_rows}-row piece cannot sit in a "
             f"{stock_rows}-row stock call")
     return stock_rows - piece_rows
 
@@ -65,13 +67,18 @@ def at_stock_rows(op: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor,
     return op(call)[:, :rows].contiguous()
 
 
-def loads_norm_global(forward: Callable[..., Any]) -> bool:
-    """Whether ``forward``'s own code reads ``modulated_norm`` as a global."""
+def loads_global(forward: Callable[..., Any], name: str) -> bool:
+    """Whether ``forward``'s own code reads ``name`` as a module global."""
     function = getattr(forward, "__func__", forward)
     if not isinstance(function, types.FunctionType):
         return False
-    return any(ins.opname == "LOAD_GLOBAL" and ins.argval == NORM_GLOBAL
+    return any(ins.opname == "LOAD_GLOBAL" and ins.argval == name
                for ins in dis.get_instructions(function))
+
+
+def loads_norm_global(forward: Callable[..., Any]) -> bool:
+    """Whether ``forward``'s own code reads ``modulated_norm`` as a global."""
+    return loads_global(forward, NORM_GLOBAL)
 
 
 def _plan(spans: Sequence, stock_norm_rows: Sequence[int]) -> list[tuple[Any, int]]:
@@ -108,24 +115,31 @@ def _parity_norm(stock_norm: Callable[..., torch.Tensor],
     return modulated_norm
 
 
-def _routed(stock_forward: types.FunctionType, plan: list[tuple[Any, int]]) -> types.FunctionType:
-    """Stock's forward code, reading the live module globals with one name replaced.
+def route_global(stock_forward: types.FunctionType, name: str,
+                 wrap: Callable[[Callable[..., Any]], Callable[..., Any]]) -> types.FunctionType:
+    """Stock's forward code, reading the live module globals with ``name`` wrapped.
 
     The namespace is copied per call, so a module global ComfyUI or a test
     rebinds later still reaches the code, and the module itself never changes.
+    ``wrap`` receives stock's global and returns what the code reads instead.
     """
     namespace = dict(stock_forward.__globals__)
-    stock_norm = namespace.get(NORM_GLOBAL)
-    if not callable(stock_norm):
+    stock_global = namespace.get(name)
+    if not callable(stock_global):
         raise TypeError(
-            f"flux3 norm parity: {stock_forward.__module__}.{NORM_GLOBAL} is "
-            f"{type(stock_norm).__name__}, not stock's fused norm")
-    namespace[NORM_GLOBAL] = _parity_norm(stock_norm, plan)
+            f"fused-norm parity: {stock_forward.__module__}.{name} is "
+            f"{type(stock_global).__name__}, not a callable stock global")
+    namespace[name] = wrap(stock_global)
     routed = types.FunctionType(stock_forward.__code__, namespace, stock_forward.__name__,
                                 stock_forward.__defaults__, stock_forward.__closure__)
     routed.__kwdefaults__ = stock_forward.__kwdefaults__
     routed.__qualname__ = stock_forward.__qualname__
     return routed
+
+
+def _routed(stock_forward: types.FunctionType, plan: list[tuple[Any, int]]) -> types.FunctionType:
+    """Stock's forward code with its ``modulated_norm`` global launched at stock's rows."""
+    return route_global(stock_forward, NORM_GLOBAL, lambda stock_norm: _parity_norm(stock_norm, plan))
 
 
 def bind_adaln_parity(block: Any) -> bool:

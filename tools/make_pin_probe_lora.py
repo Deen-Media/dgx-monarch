@@ -26,6 +26,10 @@ parent of the query projection is the attention module):
   flux3_early   the same for the ten early blocks only (txt_mode_blocks and
                 content_mode_blocks.image_cond), the stock sites comfy runs from
                 preprocess_conds
+  moss_image    {layers,text_embedder.blocks}.N.{proj.qkv,proj.q,qkv}.weight (each block owns
+                its attention; fused blocks carry proj.qkv, split ones proj.q, text blocks qkv)
+  moss_image_text  text_embedder.blocks.N.qkv.weight only, the two text blocks the
+                sharded forward leaves replicated, so their pins run at stock sites
 
 Only torch and safetensors are needed.
 """
@@ -55,6 +59,9 @@ FAMILY_PATTERNS: dict[str, re.Pattern[str]] = {
     "flux3_early": re.compile(
         r"^(?P<path>(?:txt_mode_blocks|content_mode_blocks\.image_cond)\.\d+)"
         r"\.(?:qkv|q_proj)\.weight$"),
+    "moss_image": re.compile(
+        r"^(?P<path>(?:layers|text_embedder\.blocks)\.\d+)\.(?:proj\.qkv|proj\.q|qkv)\.weight$"),
+    "moss_image_text": re.compile(r"^(?P<path>text_embedder\.blocks\.\d+)\.qkv\.weight$"),
 }
 # ComfyUI's checkpoint prefixes (comfy/model_detection.py unet_prefix_from_state_dict).
 PREFIXES = ("model.diffusion_model.", "model.model.", "net.")

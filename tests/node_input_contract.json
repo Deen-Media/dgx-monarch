@@ -39,6 +39,12 @@
   "DGXMonarchQwenImage21Cache": {
     "required": [["model", "DGXM_MODEL", null], ["device", "COMBO", "off"], ["dtype", "COMBO", "default"]]
   },
+  "DGXMonarchSkipLayerGuidance": {
+    "required": [
+      ["model", "DGXM_MODEL", null], ["double_layers", "STRING", "7, 8, 9"],
+      ["single_layers", "STRING", "7, 8, 9"], ["start_percent", "FLOAT", 0.0], ["end_percent", "FLOAT", 1.0]
+    ]
+  },
   "DGXMonarchKSampler": {
     "required": [
       ["model", "DGXM_MODEL", null], ["seed", "INT", 0], ["steps", "INT", 20], ["cfg", "FLOAT", 8.0],

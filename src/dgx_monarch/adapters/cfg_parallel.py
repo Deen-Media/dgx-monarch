@@ -233,7 +233,8 @@ def assert_sp_quant_supported(adapter: Adapter, sp: int, quant_kind: str, *,
         f"validated: {sorted(validated)}.")
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
-        f"{reason} Use mode=local with gpus_per_host=1 for a stock one-GPU path.",
+        f"{reason} Use dp2 with an even batch, or mode=local with gpus_per_host=1, where "
+        "ComfyUI's own forward runs.",
     ))
 
 

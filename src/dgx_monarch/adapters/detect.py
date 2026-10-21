@@ -36,6 +36,7 @@ _SIGNATURES: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("flux2", ("double_stream_modulation_img.",)),
     # FLUX.3 Klein: ComfyUI's own needle pair, which no other row carries.
     ("flux3", ("content_mode_blocks.", "single_stream_modulations.")),
+    ("moss_image", ("shared_block_modulation.", "proj.ffn_up_gate.")),  # ComfyUI's own needle pair; no other row carries either
     ("flux", ("double_blocks.", "single_blocks.", "img_attn.qkv.", "vector_in.")),
     ("longcat", ("double_blocks.", "single_blocks.", "img_attn.qkv.")),
     # Lens precedes Qwen because they share common transformer/text/image paths.

@@ -19,6 +19,7 @@ from .samplers import (
     DGXMonarchKSamplerPipeline,
     DGXMonarchSamplerCustom,
 )
+from .skip_layer_guidance import DGXMonarchSkipLayerGuidance
 
 # Comfy's node registry contract: built at import and read-only after import.
 NODE_CLASS_MAPPINGS = {
@@ -28,6 +29,7 @@ NODE_CLASS_MAPPINGS = {
     "DGXMonarchLoraLoader": DGXMonarchLoraLoader,
     "DGXMonarchModelSamplingSD3": DGXMonarchModelSamplingSD3,
     "DGXMonarchQwenImage21Cache": DGXMonarchQwenImage21Cache,
+    "DGXMonarchSkipLayerGuidance": DGXMonarchSkipLayerGuidance,
     "DGXMonarchKSampler": DGXMonarchKSampler,
     "DGXMonarchKSamplerAdvanced": DGXMonarchKSamplerAdvanced,
     "DGXMonarchKSamplerPipeline": DGXMonarchKSamplerPipeline,
@@ -50,6 +52,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DGXMonarchLoraLoader": "Load LoRA (DGX Monarch)",
     "DGXMonarchModelSamplingSD3": "Model Sampling SD3 (DGX Monarch)",
     "DGXMonarchQwenImage21Cache": "Qwen Image 2.1 Cache (DGX Monarch)",
+    "DGXMonarchSkipLayerGuidance": "Skip Layer Guidance (DGX Monarch)",
     "DGXMonarchKSampler": "KSampler (DGX Monarch)",
     "DGXMonarchKSamplerAdvanced": "KSampler Advanced (DGX Monarch)",
     "DGXMonarchKSamplerPipeline": "KSampler Pipeline (DGX Monarch)",

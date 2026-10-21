@@ -64,6 +64,7 @@ _KNOWN_NODE_TYPES = frozenset({
     "DGXMonarchUncondUNETLoader",
     "DGXMonarchLoraLoader",
     "DGXMonarchModelSamplingSD3",
+    "DGXMonarchSkipLayerGuidance",
     "DGXMonarchKSampler",
     "DGXMonarchKSamplerAdvanced",
     "DGXMonarchFleetKSampler",
@@ -76,6 +77,7 @@ _KNOWN_NODE_TYPES = frozenset({
     "CLIPLoader",
     "DualCLIPLoader",
     "CLIPTextEncode",
+    "PrimitiveStringMultiline",
     "TextEncodeMageFlowEdit",
     "TextEncodeQwenImage21",
     "QwenImage21Cache",
@@ -407,6 +409,11 @@ TEMPLATE_FOR_ROW: dict[str, str | None] = {
     # beside them unmapped, as the extra LTX 2.5 templates do.
     "FLUX.3 Klein": "dgx-monarch-flux3-klein-t2i.json",
     "FLUX.3 Klein Base": "dgx-monarch-flux3-klein-base-t2i.json",
+    # Each row maps to its CFG 3 text-to-image graph; the layout graph and
+    # the Kromoss Turbo graph ship beside them unmapped.
+    "MOSS-Image SFT": "dgx-monarch-moss-image-t2i.json",
+    "MOSS-Image Base": "dgx-monarch-moss-image-base-t2i.json",
+    "Kromoss": "dgx-monarch-kromoss-t2i.json",
     "LongCat-Image": "dgx-monarch-longcat-t2i.json",
     "HunyuanImage 2.1 (+refiner)": "dgx-monarch-hunyuan-image.json",
     "Qwen-Image": "dgx-monarch-qwen-image-t2i.json",
@@ -697,7 +704,8 @@ _MODEL_SINKS = frozenset({
     "DGXMonarchKSampler", "DGXMonarchKSamplerAdvanced", "DGXMonarchFleetKSampler",
     "DGXMonarchIdentityGate", "DGXMonarchCFGGuider", "DGXMonarchDualModelGuider",
 })
-_MODEL_PASSTHROUGH = frozenset({"DGXMonarchLoraLoader", "DGXMonarchModelSamplingSD3"})
+_MODEL_PASSTHROUGH = frozenset({"DGXMonarchLoraLoader", "DGXMonarchModelSamplingSD3",
+                                "DGXMonarchSkipLayerGuidance"})
 
 _LORA_VARIANTS = [path for path in TESTING_TEMPLATES
                   if path.name.endswith(_LORA_VARIANT_SUFFIX)]

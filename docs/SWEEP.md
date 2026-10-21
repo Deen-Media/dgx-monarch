@@ -215,6 +215,13 @@ read one-step NRMS 0.117 against one GPU, and text to image on ring2 read
 0.183 ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)). The edit reading
 predates the fused-norm parity change, which VALIDATION describes.
 
+MOSS-Image joins at `impl` before any of its sweep cells has run. Its scoped
+sweep runs after the family merges, and a later change records it here. The
+matrix reads the widgets of each Skip Layer Guidance (DGX Monarch) node on a
+sampler's or guider's model chain with the runtime's own test, so every cfg
+cell of a graph whose skip on that chain names a layer is predicted
+`refuse:P`. A node no sampler or guider reads its model from claims nothing.
+
 ## 3. Adding a template
 
 1. Add the spec to `tools/gen_templates.py` and regenerate. A shipped template

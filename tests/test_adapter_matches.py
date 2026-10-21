@@ -63,6 +63,7 @@ from dgx_monarch.adapters.lens import LensAdapter
 from dgx_monarch.adapters.ltx import LTXAdapter
 from dgx_monarch.adapters.mage_flow import MageFlowAdapter
 from dgx_monarch.adapters.minimax_h3 import MiniMaxH3Adapter
+from dgx_monarch.adapters.moss_image import MOSSImageAdapter
 from dgx_monarch.adapters.omnigen2 import Omnigen2Adapter
 from dgx_monarch.adapters.pixeldit import Ideogram4Adapter
 from dgx_monarch.adapters.pixeldit_comfy import PixelDiTAdapter
@@ -197,6 +198,7 @@ _ROWS = (
         reject_fragment="wan-animate2 variant",
     ),
     _Row(Flux3Adapter(), {"Flux3": None}, ("Flux3",), reject_fragment="flux3 variant"),
+    _Row(MOSSImageAdapter(), {"MOSSImage": None}, ("MOSSImage",), reject_fragment="moss_image variant"),
     # Krea2Adapter, Ideogram4Adapter and ChromaAdapter do not override
     # matches(): the inherited isinstance check admits any subclass of their
     # one model_base_classes entry (flux_family.py: ChromaAdapter admits the

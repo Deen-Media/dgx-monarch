@@ -161,7 +161,7 @@ their own status option, and uploads have their own media kinds.
 
 ## Working with workflows
 
-Choose one of the 66 packaged workflows or import a ComfyUI UI workflow/API
+Choose one of the 71 packaged workflows or import a ComfyUI UI workflow/API
 prompt. Supported inputs appear as typed controls; connected inputs remain
 graph connections. The advanced view exposes all supported primitive fields.
 App Mode labels and layout can change without changing binding identity.

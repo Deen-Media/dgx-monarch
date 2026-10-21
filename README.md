@@ -11,7 +11,7 @@
 
 Generate images and video across two DGX Sparks from one ComfyUI window. Split a render between the GPUs, run separate prompts at once, or shard supported model weights to fit larger checkpoints.
 
-DGX Monarch provides model loaders, samplers, memory controls, and 66 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI.
+DGX Monarch provides model loaders, samplers, memory controls, and 71 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI.
 
 [Get started](docs/QUICKSTART.md) · [Installation](docs/INSTALL.md) · [Model support](docs/MODELS.md) · [Benchmarks](docs/BENCHMARKS.md)
 
@@ -56,7 +56,7 @@ Image generation and editing with up to ten references, including alpha-masked i
 </table>
 
 The pack also includes [Kroma BF16, INT8 and 2x upscale workflows](docs/MODELS.md#model-kroma),
-Flux, FLUX.3 Klein, Chroma, LTX, Hunyuan, Wan, and other families. Kroma uses the Krea2 runtime;
+Flux, FLUX.3 Klein, MOSS-Image and its Kromoss fine-tune, Chroma, LTX, Hunyuan, Wan, and other families. Kroma uses the Krea2 runtime;
 its resident BF16, local INT8 and BF16 2x refinement graphs matched their
 [listed stock references](docs/VALIDATION.md#evidence-kroma). Manual
 `uly2+fsdp` also matched these three workflows at batch 1; batch-2 `dp2+fsdp`

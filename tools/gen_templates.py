@@ -109,6 +109,10 @@ STOCK = {
     "DualCLIPLoader": ["clip_name1", "clip_name2", "type", "device"],
     "CLIPLoader": ["clip_name", "type", "device"],
     "CLIPTextEncode": ["text"],
+    # A multiline string source with no dynamicPrompts flag: the MOSS-Image
+    # layout graph keeps its JSON here and wires it to CLIP Text Encode, whose
+    # own text box the browser would rewrite on Queue (_moss_template says why).
+    "PrimitiveStringMultiline": ["value"],
     "TextEncodeMageFlowEdit": ["prompt", "negative_prompt", "width", "height", "batch_size"],
     # The native Qwen Image 2.1 node has two text widgets followed by the
     # reference-image target resolution. `vae` and its autogrowing images are
@@ -221,6 +225,7 @@ STOCK_OUTPUTS = {
     "DualCLIPLoader": [("CLIP", "CLIP")],
     "CLIPLoader": [("CLIP", "CLIP")],
     "CLIPTextEncode": [("CONDITIONING", "CONDITIONING")],
+    "PrimitiveStringMultiline": [("STRING", "STRING")],
     "TextEncodeMageFlowEdit": [("positive", "CONDITIONING"),
                                ("negative", "CONDITIONING"), ("latent", "LATENT")],
     "TextEncodeQwenImage21": [("positive", "CONDITIONING"),
@@ -535,6 +540,28 @@ def _outputs(node_type: str) -> list[tuple[str, str]]:
     return list(zip(names, cls.RETURN_TYPES, strict=False))
 
 
+def _sockets(node: dict, types: dict[str, str]) -> list[tuple[str, str, bool]]:
+    """Every input socket of one spec node: (name, type, is a wired widget).
+
+    The node's connection inputs come first, in slot order. A ``wire`` entry
+    that names one of the node's widgets instead becomes a widget socket after
+    them, in wire order, typed by the output that feeds it; the frontend
+    serializes such an input with a ``widget`` key and keeps the widget's slot
+    in ``widgets_values``. A node that wires no widget keeps exactly its
+    connection inputs, so every graph without one is unchanged.
+    """
+    ntype = node["type"]
+    sockets = [(name, kind, False) for name, kind in _connection_inputs(ntype)]
+    declared = {name for name, _kind, _widget in sockets}
+    for inp, (src_key, out_idx) in (node.get("wire") or {}).items():
+        if inp in declared:
+            continue
+        if inp not in _widget_names(ntype):
+            raise KeyError(f"{ntype} has no input or widget named {inp!r}")
+        sockets.append((inp, _outputs(types[src_key])[out_idx][1], True))
+    return sockets
+
+
 def _workflow_id(title: str) -> str:
     """Return the legacy 0.4 graph ID without WidgetId's reserved delimiter."""
     # ComfyUI Nodes 2 keys every widget as ``graphId:nodeId:name`` and inserts
@@ -550,6 +577,8 @@ def build(spec: dict) -> dict:
     pos:(col,row), note?}]} -> UI-format workflow dict."""
     nodes_out, links = [], []
     key_to_id = {n["key"]: i + 1 for i, n in enumerate(spec["nodes"])}
+    key_to_type = {n["key"]: n["type"] for n in spec["nodes"]}
+    sockets = {n["key"]: _sockets(n, key_to_type) for n in spec["nodes"]}
     link_id = 0
     node_links: dict = {}
 
@@ -557,10 +586,9 @@ def build(spec: dict) -> dict:
         nid = key_to_id[n["key"]]
         for inp, (src_key, out_idx) in (n.get("wire") or {}).items():
             link_id += 1
-            slot = next(i for i, (name, _) in enumerate(_connection_inputs(n["type"]))
-                        if name == inp)
-            links.append([link_id, key_to_id[src_key], out_idx, nid, slot,
-                          dict(_connection_inputs(n["type"]))[inp]])
+            slot, kind = next((i, kind) for i, (name, kind, _widget)
+                              in enumerate(sockets[n["key"]]) if name == inp)
+            links.append([link_id, key_to_id[src_key], out_idx, nid, slot, kind])
             node_links.setdefault((key_to_id[src_key], out_idx), []).append(link_id)
             node_links[("in", nid, inp)] = link_id
 
@@ -583,9 +611,11 @@ def build(spec: dict) -> dict:
                     wv.append(widgets[wname])
                 else:
                     wv.append(_default_for(ntype, wname))
-        inputs = [{"name": name, "type": kind,
+        inputs = [{"name": name, "type": kind, "widget": {"name": name},
+                   "link": node_links.get(("in", nid, name))} if widget else
+                  {"name": name, "type": kind,
                    "link": node_links.get(("in", nid, name))}
-                  for name, kind in _connection_inputs(ntype)]
+                  for name, kind, widget in sockets[n["key"]]]
         outputs = [{"name": name, "type": kind, "slot_index": i,
                     "links": node_links.get((nid, i), [])}
                    for i, (name, kind) in enumerate(_outputs(ntype))]
@@ -5187,6 +5217,250 @@ for _flux3_base in (False, True):
         TEMPLATES[_flux3_name] = _flux3_template(base=_flux3_base, edit=_flux3_edit)
 
 
+# MOSS-Image: the vendor's SFT and Base checkpoints and the Kromoss full
+# fine-tune, all on one ComfyUI class. Stock ComfyUI conditioning and decode, the
+# DGX Monarch DiT, and the vendor's layer-22 skip through Skip Layer Guidance
+# (DGX Monarch), which applies ComfyUI's own node on every Worker. ComfyUI's
+# config already carries the vendor's shift of 5, so no graph places a shift
+# node. The prompts avoid `{`, `|` and `//`: CLIP Text Encode marks its text for
+# the browser's dynamic prompt pass, which rewrites those on Queue. The layout
+# graph therefore keeps its JSON in Text (Multiline), which carries no such flag,
+# and wires it to CLIP Text Encode's text socket.
+MOSS_PROMPT = (
+    "A photograph of a small corner bakery at dawn, seen from across a quiet "
+    "cobbled street. A green wooden shopfront with a large window full of "
+    "round loaves and braided bread, warm light glowing inside. Above the "
+    "door a hand-painted sign reads \"MORNING LOAF\" in cream serif capitals, "
+    "and a chalkboard on the pavement says \"FRESH BREAD\nOPEN 6 AM\" in white "
+    "chalk on two lines. Soft blue morning light, wet stones reflecting the "
+    "window, a bicycle leaning against the wall, 35mm lens, natural colors, "
+    "fine detail.")  # the line break is deliberate: real breaks place rendered text
+MOSS_BASE_PROMPT = (
+    "An editorial studio portrait of an elderly fisherman in a heavy navy wool "
+    "sweater, seated on a wooden crate against a seamless warm grey backdrop. "
+    "A single large softbox from the left carves deep shadows across his "
+    "weathered face and white beard; his hands rest on a coil of rope in his "
+    "lap. 85mm lens, shallow depth of field, muted cream and charcoal palette, "
+    "subtle film grain.")
+KROMOSS_PROMPT = "a tabby cat holding a sign that says KROMOSS"  # the Kromoss card's sample
+MOSS_NEGATIVE = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"
+# The vendor guide's layout example for a 1024x1024 canvas, compact, as
+# ComfyUI's MOSS-Image Layout Prompt node writes its JSON.
+MOSS_LAYOUT = json.dumps({
+    "summary": {"meta": ["poster"], "canvas": "single",
+                "caption": "A minimalist travel poster with a cream background, "
+                           "a blue mountain illustration, and the title EXPLORE at the top."},
+    "items": [{"label": "text", "caption": "Large dark-blue uppercase title centered at the top.",
+               "text": "EXPLORE", "bbox": [-416, -384, -288, 384]},
+              {"label": "object", "caption": "A flat blue mountain illustration in the lower center.",
+               "bbox": [-192, -288, 384, 288]}],
+    "bbox_coord_space": "abs_centralized", "bbox_format": "yxyx"},
+    ensure_ascii=False, separators=(",", ":"))
+MOSS_ARTIFACT = {"sft": "moss_image_sft_bf16.safetensors",
+                 "base": "moss_image_base_bf16.safetensors",
+                 "kromoss": "kromoss_bf16.safetensors"}
+MOSS_TITLE = {"sft": "MOSS-Image", "base": "MOSS-Image Base", "kromoss": "Kromoss"}
+MOSS_ENCODER = "qwen3.5_9b_bf16.safetensors"
+MOSS_ENCODER_INT8 = "qwen3.5_9b_int8_convrot.safetensors"
+MOSS_VAE = "flux2-vae_small.safetensors"
+KROMOSS_TURBO_LORA = "kromoss_8-steps-dmd2-lora.safetensors"
+KROMOSS_DMD_LORA = "kromoss_8-steps-dmd-lora.safetensors"
+MOSS_LICENSE = (
+    "MOSS-Image Base and SFT, Kromoss and its two LoRAs, the Qwen3.5-9B text "
+    "encoder and the FLUX.2 small decoder are all released under Apache-2.0.")
+# Replaced at promotion with what the hardware tests showed, as FLUX3_HW_TESTS was.
+MOSS_HW_TESTS = ("No hardware comparison has run for MOSS-Image yet; see "
+                 "docs/MODELS.md. ")
+
+
+def _moss_note(*, checkpoint: str, turbo: bool, layout: bool) -> str:
+    """The Note of one public MOSS-Image graph."""
+    artifact, title = MOSS_ARTIFACT[checkpoint], MOSS_TITLE[checkpoint]
+    if turbo:
+        note = (
+            f"{title} Turbo text to image: 1024x1024, 8 steps, CFG 1, Euler and "
+            f"the simple scheduler with {KROMOSS_TURBO_LORA} at strength 1.0, the "
+            "Kromoss card's ComfyUI recipe; 4 steps also works. The card ships "
+            "the file as 8-steps-dmd2-lora.safetensors; save it under the name "
+            f"above. {KROMOSS_DMD_LORA}, the plain DMD LoRA, is the other "
+            "choice; use one LoRA at a time. Both were distilled from MOSS-Image "
+            "Base and also run on it. CFG 1 never evaluates the negative, so "
+            "Conditioning Zero Out stands in for it and the graph carries no "
+            "skip layer node. The card warns against merging the LoRA into BF16 "
+            "weights, because its delta sits close to the BF16 rounding step; "
+            "Load LoRA (DGX Monarch) bakes it into the weights with ComfyUI's own "
+            "math, so a render can differ from the card's unmerged diffusers run. ")
+    else:
+        note = (
+            f"{title}{' layout' if layout else ''} text to image: 1024x1024, Euler "
+            "and ComfyUI's simple scheduler at the vendor's 50 steps, CFG 3 and "
+            "shift 5. Use at least 50 steps, and raise CFG toward 6 for a short "
+            "prompt. A render here does not reproduce the vendor's own pipeline "
+            "at the same seed: that pipeline builds its own schedule and its own "
+            "noise. ")
+    note += (
+        "ComfyUI's native shift of 5 is the vendor's; add no shift node. Model "
+        "Sampling SD3 (DGX Monarch) samples at multiplier 1000, which would "
+        "render noise on this model, so it refuses here. ")
+    if not turbo:
+        note += (
+            "Skip Layer Guidance (DGX Monarch) drops block 22 (zero-based) from "
+            "the negative pass on every step, the vendor's default; blocks 24 and "
+            "26 also help. Clear single_layers to turn it off: the image looks "
+            "more realistic, but some details can collapse. cfg2 refuses while "
+            "Skip Layer Guidance is on; clear single_layers to use it. ")
+    note += (
+        "The vendor recommends 1, 1.5 or 2 MP and reports 0.25 to 4 MP working, "
+        "with sides in multiples of 16; the model trained at up to about 1 MP. ")
+    if not turbo:
+        note += ("The negative is the tag list the vendor's guide recommends; the "
+                 "model card's default is an empty negative. ")
+    if layout:
+        note += (
+            "The prompt is a JSON layout, the vendor guide's own example for a "
+            "1024x1024 canvas. summary.caption describes the whole image. Each "
+            "item gives a label (text, object or character), a caption, the text "
+            "to render for a text item, and a bbox as [y_min, x_min, y_max, "
+            "x_max] in pixels with the origin at the canvas center "
+            "(bbox_coord_space abs_centralized, bbox_format yxyx), so a 1024 "
+            "canvas runs from -512 to 512 on each axis. Rescale the boxes when "
+            "you change the canvas. The JSON sits in Text (Multiline) and "
+            "reaches CLIP Text Encode through a link: typed into CLIP Text "
+            "Encode's own box, the browser's dynamic prompt pass would strip its "
+            "braces. The vendor marks layout prompts experimental. ComfyUI's "
+            "Create Bounding Boxes and MOSS-Image Layout Prompt nodes build the "
+            "same JSON from boxes drawn on a canvas and can feed the same link. ")
+    else:
+        note += (
+            "English works best and Chinese is supported. The vendor's pipeline "
+            "reads up to 4096 tokens after its chat template; ComfyUI sets no such "
+            "cap. Describe the finished image, put any text to "
+            "render in double quotes, and use real line breaks where its lines "
+            "should break. For tag prompts the guide's order is quality, score, "
+            "meta, year, character, series, artist, then general tags, with @ "
+            "before an artist name. ")
+        note += {
+            "sft": ("MOSS-Image also reads a JSON layout prompt; the layout graph "
+                    "shows how, and the JSON must reach CLIP Text Encode through a "
+                    "link. "),
+            "base": ("Base has no post-training or CFG distillation, which makes it "
+                     "the usual target for LoRA training. "),
+            "kromoss": (
+                "Kromoss is the lodestones' full fine-tune of MOSS-Image Base at "
+                "1024 px. It shares the file layout, encoder and decoder of the "
+                "Comfy-Org MOSS-Image files, so it drops in wherever they run. Its "
+                "weights have changed under the same "
+                "file names; example_workflows/artifacts.toml pins the sha256 this "
+                "graph names, and the pinned model card is "
+                "https://huggingface.co/lodestones/Kromoss/blob/"
+                "7f9bb7b06d7b6c27d294b0bab5a2b3056c379279/README.md . "),
+        }[checkpoint]
+    note += (
+        "Comfy-Org's own MOSS-Image graphs can rewrite a short request into a full "
+        "caption with Text Generate on this same encoder; that step runs on the "
+        "driver, and its memory is outside dgx-monarch's driver estimate. "
+        "The INT8 ConvRot DiT files pin an approximate attention kernel on all 42 "
+        "blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops "
+        "the pin. They also need comfy-kitchen 0.2.39 or newer. This graph uses "
+        "the BF16 file, which asks nothing. Auto picks Ulysses on a configured "
+        "pair. " + MOSS_HW_TESTS
+        + f"Expects {artifact} in models/diffusion_models, ")
+    if turbo:
+        note += f"{KROMOSS_TURBO_LORA} in models/loras, "
+    note += (
+        f"{MOSS_ENCODER} in models/text_encoders (CLIP type moss_image) and "
+        f"{MOSS_VAE} in models/vae, the FLUX.2 small decoder; the larger "
+        "flux2-vae.safetensors other FLUX graphs use is a different decoder, and "
+        "the file of that name in Comfy-Org's MOSS-Image repository holds other "
+        f"bytes again, so never copy it over yours. {MOSS_ENCODER_INT8} is a "
+        "smaller drop-in encoder. Needs ComfyUI 0.42.0 or newer on the driver and "
+        "every Worker. " + MOSS_LICENSE + " " + GATE + " " + DERIVED)
+    return note
+
+
+def _moss_template(*, checkpoint: str, turbo: bool = False, layout: bool = False) -> dict:
+    """A MOSS-Image graph: stock conditioning and decode, DGX Monarch DiT only."""
+    artifact = MOSS_ARTIFACT[checkpoint]
+    title = MOSS_TITLE[checkpoint] + (" Turbo" if turbo else "")
+    title += " layout text to image" if layout else " text to image"
+    steps, cfg = (8, 1.0) if turbo else (50, 3.0)
+    nodes = [
+        {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
+         "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
+        {"key": "note", "type": "Note", "pos": (0, 1),
+         "note": _moss_note(checkpoint=checkpoint, turbo=turbo, layout=layout)},
+        {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
+         "widgets": {"unet_name": artifact, "weight_dtype": "default"},
+         "wire": {"mesh": ("init", 0)}},
+        {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
+         "widgets": {"clip_name": MOSS_ENCODER, "type": "moss_image",
+                     "device": "default"}},
+        {"key": "vae", "type": "VAELoader", "pos": (0, 3),
+         "widgets": {"vae_name": MOSS_VAE}},
+    ]
+    if layout:
+        nodes += [
+            {"key": "layout", "type": "PrimitiveStringMultiline", "pos": (0, 4),
+             "widgets": {"value": MOSS_LAYOUT}},
+            # `text` is a wired widget: build() gives it a socket after `clip`,
+            # and its widgets_values slot stays empty.
+            {"key": "pos", "type": "CLIPTextEncode", "pos": (1, 2),
+             "widgets": {"text": ""},
+             "wire": {"clip": ("clip", 0), "text": ("layout", 0)}},
+        ]
+    else:
+        text = {"sft": MOSS_PROMPT, "base": MOSS_BASE_PROMPT,
+                "kromoss": KROMOSS_PROMPT}[checkpoint]
+        nodes.append({"key": "pos", "type": "CLIPTextEncode", "pos": (1, 2),
+                      "widgets": {"text": text}, "wire": {"clip": ("clip", 0)}})
+    if turbo:
+        nodes += [
+            # CFG 1 never evaluates the negative, as in the Kroma graphs, and
+            # the stock skip node touches only the negative pass, so none here.
+            {"key": "neg", "type": "ConditioningZeroOut", "pos": (1, 3),
+             "wire": {"conditioning": ("pos", 0)}},
+            {"key": "lora", "type": "DGXMonarchLoraLoader", "pos": (2, 0),
+             "widgets": {"lora_name": KROMOSS_TURBO_LORA, "strength_model": 1.0},
+             "wire": {"model": ("unet", 0)}},
+        ]
+        model = ("lora", 0)
+    else:
+        nodes += [
+            {"key": "neg", "type": "CLIPTextEncode", "pos": (1, 3),
+             "widgets": {"text": MOSS_NEGATIVE}, "wire": {"clip": ("clip", 0)}},
+            # The vendor's uncond skip: block 22 on every step.
+            {"key": "slg", "type": "DGXMonarchSkipLayerGuidance", "pos": (2, 0),
+             "widgets": {"double_layers": "", "single_layers": "22",
+                         "start_percent": 0.0, "end_percent": 1.0},
+             "wire": {"model": ("unet", 0)}},
+        ]
+        model = ("slg", 0)
+    prefix = "dgx_monarch_" + {"sft": "moss_image", "base": "moss_image_base",
+                               "kromoss": "kromoss"}[checkpoint]
+    prefix += "_turbo" if turbo else "_layout" if layout else ""
+    nodes += [
+        {"key": "latent", "type": "EmptyFlux2LatentImage", "pos": (2, 3),
+         "widgets": {"width": 1024, "height": 1024, "batch_size": 1}},
+        {"key": "ks", "type": "DGXMonarchKSampler", "pos": (3, 1),
+         "widgets": {"seed": 42, "steps": steps, "cfg": cfg, "sampler_name": "euler",
+                     "scheduler": "simple", "denoise": 1.0},
+         "wire": {"model": model, "positive": ("pos", 0), "negative": ("neg", 0),
+                  "latent_image": ("latent", 0)}},
+        {"key": "dec", "type": "VAEDecode", "pos": (4, 1),
+         "wire": {"samples": ("ks", 0), "vae": ("vae", 0)}},
+        {"key": "save", "type": "SaveImage", "pos": (5, 1),
+         "widgets": {"filename_prefix": prefix}, "wire": {"images": ("dec", 0)}},
+    ]
+    return {"title": title, "nodes": nodes}
+
+
+TEMPLATES["dgx-monarch-moss-image-t2i"] = _moss_template(checkpoint="sft")
+TEMPLATES["dgx-monarch-moss-image-base-t2i"] = _moss_template(checkpoint="base")
+TEMPLATES["dgx-monarch-moss-image-layout-t2i"] = _moss_template(checkpoint="sft", layout=True)
+TEMPLATES["dgx-monarch-kromoss-t2i"] = _moss_template(checkpoint="kromoss")
+TEMPLATES["dgx-monarch-kromoss-t2i-turbo"] = _moss_template(checkpoint="kromoss", turbo=True)
+
+
 # dual-spark-split shares FLUX_STACK, whose latent is 1024. Override it here to
 # 1536 so the split has enough tokens to be worth splitting.
 TEMPLATES["dgx-monarch-dual-spark-split"]["nodes"] = [
@@ -5837,6 +6111,69 @@ TESTING_TEMPLATES = {
             {"key": "refneg2", "type": "ReferenceLatent", "pos": (3, 3),
              "wire": {"conditioning": ("refneg", 0), "latent": ("enc2", 0)}},
         )),
+    # MOSS-Image: the quantized files on each checkpoint, an odd grid, the skip
+    # off, a large canvas, the second turbo LoRA, the turbo LoRA on Base, and
+    # the family's LoRA slot.
+    "dgx-monarch-test-moss-image-int8": _testing_spec(
+        "dgx-monarch-moss-image-t2i", "MOSS-Image INT8 ConvRot",
+        "The vendor's INT8 ConvRot DiT and INT8 ConvRot text encoder. The DiT "
+        "pins comfy-kitchen's INT8 attention on all 42 blocks, so single and dp2 "
+        "ask for the Sol-Attn waiver, cfg2 refuses first because the skip is on, "
+        "and uly2 drops the pins. ComfyUI runs these files through "
+        "comfy-kitchen's fused SiTU input activation, which needs comfy-kitchen "
+        "0.2.39 or newer.",
+        widgets={"unet": {"unet_name": "moss_image_sft_int8_convrot.safetensors"},
+                 "clip": {"clip_name": MOSS_ENCODER_INT8}}),
+    "dgx-monarch-test-moss-image-base-int8": _testing_spec(
+        "dgx-monarch-moss-image-base-t2i", "MOSS-Image Base INT8 ConvRot",
+        "The vendor's Base INT8 ConvRot DiT with the BF16 text encoder, at the "
+        "shipped Base recipe.",
+        widgets={"unet": {"unet_name": "moss_image_base_int8_convrot.safetensors"}}),
+    "dgx-monarch-test-kromoss-int8": _testing_spec(
+        "dgx-monarch-kromoss-t2i", "Kromoss INT8 ConvRot",
+        "Kromoss's own INT8 ConvRot DiT, made with the recipe of the vendor's "
+        "INT8 files, with the BF16 text encoder at the shipped Kromoss recipe.",
+        widgets={"unet": {"unet_name": "kromoss_int8_convrot.safetensors"}}),
+    "dgx-monarch-test-moss-image-odd": _testing_spec(
+        "dgx-monarch-moss-image-t2i", "MOSS-Image on an odd grid",
+        "1040x1040 is a 65 by 65 grid, 4225 image rows, an odd image block. The "
+        "stream is the image rows followed by the prompt's rows, so whether uly2 "
+        "pads depends on the total: an even prompt length makes it odd and pads "
+        "one row at the tail, an odd one does not.",
+        widgets={"latent": {"width": 1040, "height": 1040},
+                 "save": {"filename_prefix": "dgx_monarch_moss_image_odd"}}),
+    "dgx-monarch-test-moss-image-slg-off": _testing_spec(
+        "dgx-monarch-moss-image-t2i", "MOSS-Image without skip layer guidance",
+        "An empty single_layers turns Skip Layer Guidance off, as the stock node "
+        "does, so the negative pass runs every block. The vendor says this looks "
+        "more realistic and can collapse some details. With the skip off, cfg2 "
+        "can split the two conditionings.",
+        widgets={"slg": {"single_layers": ""},
+                 "save": {"filename_prefix": "dgx_monarch_moss_image_slg_off"}}),
+    "dgx-monarch-test-moss-image-1536px": _testing_spec(
+        "dgx-monarch-moss-image-t2i", "MOSS-Image at 1536 square",
+        "1536x1536 is a 96 by 96 grid, 9216 image rows: a 2.4 MP canvas, past "
+        "the vendor's 2 MP recommendation and inside the 4 MP it reports "
+        "working.",
+        widgets={"latent": {"width": 1536, "height": 1536},
+                 "save": {"filename_prefix": "dgx_monarch_moss_image_1536"}}),
+    "dgx-monarch-test-kromoss-turbo-dmd": _testing_spec(
+        "dgx-monarch-kromoss-t2i-turbo", "Kromoss Turbo with the DMD LoRA",
+        f"The Kromoss card's other LoRA, {KROMOSS_DMD_LORA} "
+        "(8-steps-dmd-lora.safetensors upstream), at the same 8 steps, CFG 1 and "
+        "strength 1.0.",
+        widgets={"lora": {"lora_name": KROMOSS_DMD_LORA},
+                 "save": {"filename_prefix": "dgx_monarch_kromoss_turbo_dmd"}}),
+    "dgx-monarch-test-moss-image-base-turbo": _testing_spec(
+        "dgx-monarch-kromoss-t2i-turbo", "MOSS-Image Base with the DMD2 LoRA",
+        f"{KROMOSS_TURBO_LORA} on MOSS-Image Base, the model it was distilled "
+        "from; the Kromoss card scores this pair on PartiPrompts.",
+        widgets={"unet": {"unet_name": MOSS_ARTIFACT["base"]},
+                 "save": {"filename_prefix": "dgx_monarch_moss_image_base_turbo"}}),
+    "dgx-monarch-test-moss-image-lora": _testing_spec(
+        "dgx-monarch-moss-image-t2i", "MOSS-Image with a LoRA slot",
+        _LORA_PURPOSE + " The loader sits between the model loader and Skip Layer "
+        "Guidance (DGX Monarch).", lora_after=("unet",)),
     "dgx-monarch-test-hunyuan-image-refiner": _testing_spec(
         "dgx-monarch-hunyuan-image",
         "HunyuanImage 2.1 text to image with the refiner",

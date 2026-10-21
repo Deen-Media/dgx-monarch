@@ -151,19 +151,21 @@ def ulysses_degree() -> int:
         return 1
 
 
-def refuse_indivisible_heads(heads: int, degree: int) -> None:
+def refuse_indivisible_heads(heads: int, degree: int, *, family: str = "flux3",
+                             divisors: str = "2, 4 or 8 for the 24-head FLUX.3 Klein files") -> None:
     """Refuse a Ulysses degree that does not divide the attention heads.
 
     Ulysses hands each rank whole heads. Every shipped FLUX.3 Klein file has
     24, which degrees 2, 4 and 8 divide; ring has no head constraint.
+    MOSS-Image passes its own ``family`` and ``divisors`` (adapters/moss_image.py).
     """
     if degree > 1 and heads % degree:
         raise UnsupportedModelError(refusal(
             RefusalClass.PHYSICS,
-            f"flux3: this checkpoint has {heads} attention heads, which the Ulysses "
+            f"{family}: this checkpoint has {heads} attention heads, which the Ulysses "
             f"degree {degree} does not divide, and Ulysses hands each rank whole heads. "
-            "Use a Ulysses degree that divides the head count (2, 4 or 8 for the "
-            "24-head FLUX.3 Klein files), a ring topology, or topology 'single' "
-            "(mode=local with gpus_per_host=1) (docs/MODELS.md).",
+            f"Use a Ulysses degree that divides the head count ({divisors}), a ring "
+            "topology, or topology 'single' (mode=local with gpus_per_host=1) "
+            "(docs/MODELS.md).",
         ))
 

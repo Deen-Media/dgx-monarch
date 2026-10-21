@@ -19,6 +19,8 @@ comparison fields. Times below are seconds unless marked otherwise.
 | Qwen Image 2.1 | Not timed | Not timed | Matching native output recorded for 25-step T2I and editing; no comparable timing published here |
 | FLUX.3 Klein | 10.2 s | 6.7 s | Step-distilled BF16, 1024x1024, 16 steps, CFG 1, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
 | FLUX.3 Klein Base | 29.8 s | 20.0 s | BF16, 1024x1024, 25 steps, CFG 3.5, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
+| MOSS-Image | Not timed | Not timed | SFT and Base, BF16, 1024x1024, 50 steps, CFG 3, Euler, layer-22 skip; no dgx-monarch render has been timed, and no comparable timing is published here |
+| Kromoss | Not timed | Not timed | BF16, 50 steps at CFG 3, and 8 steps at CFG 1 with a DMD LoRA; no dgx-monarch render has been timed, and no comparable timing is published here |
 
 Krea2 and Ideogram4 use the [Ulysses comparison tests](VALIDATION.md#ulysses-comparisons).
 Their times are warm full renders of the same graph on one GPU and two GPUs. The first Spark had a 2100 MHz GPU clock cap; the second was uncapped. Separate one-step probes produced identical decoded pixels;

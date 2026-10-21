@@ -12,7 +12,7 @@ from types import ModuleType
 from typing import Any
 
 from ..model_sampling import normalize_model_sampling
-from . import dm_cfg2_residency, latent_outputs, rank_readiness, store_fsdp, worker_env
+from . import dm_cfg2_residency, guidance_render, latent_outputs, rank_readiness, store_fsdp, worker_env
 from .cancellation import raise_if_sample_cancelled
 
 
@@ -354,6 +354,7 @@ def run_sample(
     from .comfy_bridge import gpu_load_seconds_reset
 
     render_patcher = model_sampling_render_clone(patcher, primary_sampling)
+    render_patcher = guidance_render.apply_skip_layer_guidance(render_patcher, request, worker)
     render_uncond_patcher = (
         model_sampling_render_clone(uncond_patcher, uncond_sampling)
         if uncond_patcher is not None else None

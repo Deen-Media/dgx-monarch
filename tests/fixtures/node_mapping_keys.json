@@ -14,7 +14,9 @@
     "DGXMonarchKSamplerPipeline",
     "DGXMonarchLoraLoader",
     "DGXMonarchModelSamplingSD3",
+    "DGXMonarchQwenImage21Cache",
     "DGXMonarchSamplerCustom",
+    "DGXMonarchSkipLayerGuidance",
     "DGXMonarchStatus",
     "DGXMonarchUNETLoader",
     "DGXMonarchUncondUNETLoader"

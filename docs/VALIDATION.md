@@ -987,6 +987,121 @@ lists every cell's walls.
 At CFG 1 the step-distilled model gives cfg2 nothing to split, and an explicit
 cfg2 refused class P.
 
+<a id="evidence-moss-image-sft"></a>
+
+### MOSS-Image SFT
+
+Status impl: no hardware leg has run on the SFT checkpoint. Support follows
+ComfyUI e087d8f6c ("feat: Add MOSS-image support", 2026-10-16), first released
+in ComfyUI 0.42.0 together with the fused feed-forward activation of
+a639f187a. On 2026-10-20 the RoPE scaling options (b9b290e43, 2026-10-19) and
+the color and depth control (e3bee7ffc, 2026-10-20) were on ComfyUI master
+only, in no release. ComfyUI 0.42.0 requires comfy-kitchen 0.2.39. On
+2026-10-20 the forward, LoRA and guidance tests of
+`tests/test_moss_image_comfy_exactness.py`, the tests in
+`tests/test_skip_layer_guidance_comfy.py`, `tests/test_lora_shape_guard.py`
+and `tests/test_moss_image_skip_end_to_end.py`, and the custom-node
+entrypoint canary passed on a `git archive` export of ComfyUI v0.42.0
+(355cd6b14) with comfy-kitchen 0.2.39. Four cases skip there: the
+`rope_options` case, because that release's `rope` reads no options; the two
+widening "set" patch cases of the shape guard, because that release's
+`calculate_shape` counts no set patch, so that release's own merge fails on
+such a patch instead; and the on-disk
+SD3 graph case, because the export holds no model files.
+
+The CPU evidence, `tests/test_moss_image_comfy_exactness.py`, builds
+ComfyUI's own MOSS-Image model at toy size in float32 and runs the two-rank
+sharded forward against stock's. Only the all-to-all, the gather and the
+attention kernel are stubbed, and the stub kernel runs ComfyUI's own
+attention on the full gathered rows. Every kernel call gets stock's q, k and
+v for its heads in stock order with no pad row, and the output equals
+stock's. The cases cover an even stream; odd streams whose rank boundary
+falls inside the image rows or inside the text rows; an odd stream whose pad
+row, if kept, moves the output; four ranks with one rank of pads only;
+batch 2; the fused and the separate q, k and v layouts; `rope_options`
+reaching stock's table, and the four-argument `rope` of the 0.42 releases
+called without them; ComfyUI's own Skip Layer Guidance skip; a marked
+row-local block patch, honored, and the same patch unmarked, refused class
+P; every fused-norm launch on every rank against stock's launch; one sharded
+attention per block, with the text embedder on ComfyUI's default backend;
+stock's prefetch order with no malloc graph; a padded ring, refused class K,
+and a waived ring, which attends the pad; and each guard refusing class P
+before the first exchange. The file's LoRA half shows ComfyUI's key map
+putting separate q, k and v keys on slices of the fused `qkv` weight, and the
+store's bake, un-bake and FSDP bake equal to ComfyUI's merge on every patched
+key. Its guidance half shows the prompt and the negative published as
+`CONDRegular`, which folds only at equal length, and ComfyUI's own
+`SkipLayerGuidanceDiTSimple` making two calls inside its window, the second
+with the layer-22 identity, which the sharded forward admits and honors with
+stock's bits. `tests/test_moss_image_skip_end_to_end.py` carries the skip
+from the Skip Layer Guidance (DGX Monarch) node through the request to a
+two-rank sharded skip on a tiny real model and matches stock; the same
+request on cfg2 refuses class P before any model call.
+
+On 2026-10-20, with comfy-kitchen 0.2.39 and torch 2.12.0 on one GB10 (the
+first Spark, under its 2100 MHz cap), kernel probes and
+`tests/test_moss_image_parity.py` read every rank's window at 1047, 1031,
+4119 and 16420 joint rows, batch 1 and 2, two and four ranks. The fused
+`rms_adaln` norm filled to stock's rows, with the window at the front,
+returned stock's bits in every window. Called unfilled, it differed in 15 to
+27 elements, only where a piece fell below 1024 kernel rows at batch 1, so
+the adapter fills both of a block's calls. The fused q and k norm and RoPE
+and the BF16 GEMMs of the four block shapes (q, k and v 3072 to 9216, the
+output 3072 to 3072, the gated feed-forward input 3072 to 16384 and its
+output 8192 to 3072) returned stock's bits on every window with no fill, and
+so did the INT8 ConvRot linears, the SiTU activation of the feed-forward
+output included. These are kernel results, not a render: uly2 is exact by
+construction on these facts, pending the hardware legs.
+
+Canary seams 42 to 46 (`moss_image conds`, `moss_image block surface`,
+`skip layer guidance simple`, `lora shape-changing set` and `dynamic prompt
+asymmetry`) hold, against the installed ComfyUI, the conditioning (the empty
+negative encodes to 10 tokens and the vendor tags to 23), the block and
+forward surface the sharded forward reruns, the Skip Layer Guidance call
+pattern, the LoRA shape predicate, and the schema fact the layout graph's
+JSON prompt rests on: CLIP Text Encode's `text` declares dynamic prompts and
+Text (Multiline)'s `value` does not.
+Seam 26 (`nvfp4 activation scale`) also pins that an INT8 ConvRot weight
+takes comfy-kitchen's fused path, which never calls the module, while an
+NVFP4 weight calls it once, and seam 39 (`attention keyword handoff`) that a
+tiny real MOSS-Image's attention pins drop under sequence parallelism.
+
+On 2026-10-20 the pinned files were read from their headers. The three BF16
+DiT files hold the same 379 tensors, 378 BF16 and the F32 `rope.bands` that
+ComfyUI drops at load, with no header metadata; the three INT8 ConvRot files
+hold the same 757, with 168 INT8 Linears and an attention config tensor on
+each of the 42 blocks. ComfyUI's own detection named all six `MOSSImage` with
+ratio 16. Kromoss's `qwen3.5_9b_bf16.safetensors` (SHA-256 `7e6e9f08`) and
+`flux2-vae_small.safetensors` (`d8d52ba0`) are the same files as Comfy-Org's,
+and the VAE is the same file as `diffusion_pytorch_model.safetensors` in
+`black-forest-labs/FLUX.2-small-decoder` at `a3efc24f`, by size and SHA-256.
+No decode has compared the VAE files.
+
+<a id="evidence-moss-image-base"></a>
+
+### MOSS-Image Base
+
+Status impl: no hardware leg has run on the base checkpoint. The CPU, kernel
+and canary evidence and the file readings under
+[MOSS-Image SFT](#evidence-moss-image-sft) cover it as well. Support follows
+ComfyUI e087d8f6c, first released in ComfyUI 0.42.0.
+
+<a id="evidence-kromoss"></a>
+
+### Kromoss
+
+Status impl: no hardware leg has run on Kromoss or its LoRAs. The record pins
+`lodestones/Kromoss` at revision `7f9bb7b06d7b` (update 11000, 2026-10-20);
+the vendor publishes new weights under the same file names. The CPU, kernel
+and canary evidence under [MOSS-Image SFT](#evidence-moss-image-sft) covers
+the architecture. On 2026-10-20 both LoRAs read as 756 FP32 tensors in
+`lora_down`, `lora_up` and `alpha` keys on every block's q, k, v, o and
+feed-forward projections, rank 128 and alpha 128, and hold the same bytes as `lora.safetensors` and
+`lora_dmd2.safetensors` in `lodestones/MOSS-Image-Base-8-steps-dmd`. The LoRA
+half of the CPU evidence uses a rank-4 LoRA in the same key layout on a tiny
+real model; no test has loaded either Kromoss LoRA, on the BF16 or the INT8
+file.
+
 <a id="evidence-longcat-image"></a>
 
 ### LongCat-Image
@@ -1675,12 +1790,13 @@ sampled spatial grid, not the compressed latent area.
 |---:|---|
 | 1 | Radiance, Z-Image DCT, PixelDiT |
 | 8 | Chroma, Flux 1, LongCat, Qwen-Image, Krea2, Z-Image latent, Kandinsky5 Image, Wan 2.2 14B |
-| 16 | Flux2, Lens, Ideogram4, Ernie, Mage Flow, Qwen Image 2.1, HunyuanVideo 1.5, H3, FLUX.3 Klein |
+| 16 | Flux2, Lens, Ideogram4, Ernie, Mage Flow, Qwen Image 2.1, HunyuanVideo 1.5, H3, FLUX.3 Klein, MOSS-Image |
 | 32 | HunyuanImage 2.1, LTX 2.3 |
 
 Lens 1344 square is 1.81 MP; Flux2 1024 square is 1.05 MP. On 2026-10-15
 ComfyUI's own detection named all six FLUX.3 Klein vendor files `Flux3` with
-ratio 16 from their headers.
+ratio 16 from their headers, and on 2026-10-20 all six MOSS-Image and Kromoss
+DiT files `MOSSImage` with ratio 16.
 These dimensions use the detected ratios; they do not imply new hardware tests.
 Lens FP8 auto keeps SAGE off: at the tested size SAGE/Flash/cuDNN all passed
 (NRMS 0.036869/0.026198/0.032733), with 20.3/20.0/20.1-second warm times,

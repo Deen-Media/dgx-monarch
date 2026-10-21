@@ -25,6 +25,8 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | [Krea2 RAW and Turbo](#model-krea2-raw-turbo) | Text-to-image | Auto picks cfg2 for FP8 and BF16 from 1.2 to 2.36 MP, including the template's CFG++ sampler at CFG 1, and Ulysses elsewhere. Reference images require `single`. |
 | [Kroma](#model-kroma) | BF16, INT8 and two-pass 2x upscale | Uses the Krea2 loader and native shift. Start with 8 steps, CFG 1, Euler/simple. BF16, local INT8 and BF16 refinement matched their own stock references. See the [tested configurations](VALIDATION.md#evidence-kroma). |
 | [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly. Since the fused-norm parity change, edits and text to image at 704 square or below on uly2 are bit-identical to one GPU too, confirmed on hardware on 2026-10-16. See the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
+| [MOSS-Image SFT and Base](#model-moss-image-sft) | Text-to-image, and a JSON layout prompt on SFT | Needs ComfyUI 0.42.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Keep the template's 50 Euler steps at CFG 3 and its Skip Layer Guidance (DGX Monarch) node, which skips layer 22 on the negative pass; cfg2 refuses while that skip is on. No hardware test has run yet. |
+| [Kromoss](#model-kromoss) | Text-to-image at 50 steps, and at 8 steps with a DMD LoRA | A MOSS-Image Base fine-tune on the same files and adapter. Pin the manifest's revision: the vendor replaces the files under the same names. No hardware test has run yet. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -64,7 +66,7 @@ cfg2 row at any CFG other than 1, and at CFG 1 under a CFG++ sampler chosen
 on a DGX Monarch KSampler, KSampler Advanced or KSampler Pipeline node, when
 its evidence covers the checkpoint's precision; otherwise the Ulysses row
 applies. A Sampler Custom graph hands over a SAMPLER object with no name, so
-at CFG 1 auto keeps Ulysses there. Mage Flow, Qwen Image 2.1 and FLUX.3 Klein have no row, and Flux, Flux 2, Krea 2,
+at CFG 1 auto keeps Ulysses there. Mage Flow, Qwen Image 2.1, FLUX.3 Klein and MOSS-Image have no row, and Flux, Flux 2, Krea 2,
 Lens, Qwen-Image and Z-Image have no row below 1.2 MP; those cases take the
 generic uly2 fallback (row 99). Every other family has one full-range Ulysses
 or ring row.
@@ -95,6 +97,9 @@ that match the tested configurations in its model details. See
 | Flux2 | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | FP8-mixed Ulysses and BF16 `uly2+fsdp` were compared with references. LoRA/FSDP rendered, but its reference ran out of memory. [Details](#model-flux2) · [Workflow](../example_workflows/dgx-monarch-flux2-t2i.json) |
 | FLUX.3 Klein | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | Step-distilled; CFG 1, euler, 16 steps or fewer. BF16 and NVFP4 uly2 text to image up to 1536 square is bit-identical to one GPU, and at one step to stock. ring2 is measured, one-step NRMS 0.026 to 0.183 against one GPU, so use uly2; padded ring needs a waiver. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin. Plain Euler at CFG 1 leaves cfg2 nothing to split. NVFP4 refuses FSDP. Before the fused-norm parity change, uly2 edits and uly2 text to image at 704 square or below differed from one GPU, up to one-step NRMS 0.117 for the NVFP4 edit; after it they are bit-identical in BF16 and NVFP4, confirmed on hardware on 2026-10-16. Edits scale each reference to 1 MP. Public LoRA: none; mechanism tested with a synthetic LoRA. [Details](#model-flux-3-klein) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-t2i.json) |
 | FLUX.3 Klein Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3.5, 25 steps, euler. cfg2 is measured, not the same math: bit-identical when the prompt encodes past one 80-row block; on a shorter prompt it stays within the one-step floor but full renders diverge, and auto never picks it. ring2 is measured, one-step NRMS 0.011 to 0.057, and padded ring needs a waiver. Edits use uly2 or single in BF16 and NVFP4: the NVFP4 edit read one-step NRMS 0.019 on uly2 before the fused-norm parity change, and uly2 edits are bit-identical to one GPU after it, confirmed on hardware on 2026-10-16. Same uly2, INT8, FSDP and LoRA notes as FLUX.3 Klein. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
+| MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | CFG 3, 50 steps, euler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 with stock's math by construction, and an equal-length pair is unmeasured. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin and matches only a pin-stripped one-GPU render. NVFP4 and an fp8 `weight_dtype` cast refuse on uly2, ring and cfg2. Padded ring needs a waiver. LoRA untested, on the BF16 and the INT8 files alike. The driver preflight does not price the 19.31 GB BF16 encoder. No hardware test has run yet. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
+| MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | CFG 3, 50 steps, euler, with the same layer-22 skip. Same cfg2, INT8, quantization, ring, LoRA and driver notes as MOSS-Image SFT. No hardware test has run yet. [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
+| Kromoss | ✓ | 🔒 | ★ | 🔒 | ⚪ | impl | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler, with the layer-22 skip, or 8 Euler steps at CFG 1 with a DMD LoRA, where cfg2 has nothing to split. Same cfg2, INT8, quantization, ring, LoRA and driver notes as MOSS-Image SFT. No hardware test has run yet. [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
 | Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
@@ -552,6 +557,230 @@ has no cfg2 row for FLUX.3; cfg2 is an explicit, measured choice.
 
 **Upstream and license.** [Model card](https://huggingface.co/black-forest-labs/flux-3-image-klein-base),
 gated, under the FLUX Kommunity License v1.0.
+
+<a id="model-moss-image-sft"></a>
+
+### MOSS-Image SFT
+
+Detail status (`MOSS-Image SFT`): impl.
+
+MOSS-Image is the OpenMOSS team's 5B-parameter single-stream text-to-image
+model, with the Qwen3.5-9B text encoder and the FLUX.2 small decoder as its
+VAE. Three checkpoints share the `moss_image` adapter: this supervised
+fine-tune, [MOSS-Image Base](#model-moss-image-base) and lodestones'
+[Kromoss](#model-kromoss). dgx-monarch needs ComfyUI 0.42.0 or newer on the
+driver and on every Worker
+([INSTALL](INSTALL.md#model-files-required-by-each-template)).
+
+**Recommended workflow.** [Text to image](../example_workflows/dgx-monarch-moss-image-t2i.json)
+and [layout text to image](../example_workflows/dgx-monarch-moss-image-layout-t2i.json):
+`euler` and ComfyUI's `simple` scheduler at the vendor's 50 steps, CFG 3 and
+shift 5, at 1024×1024. The negative is the tag list the vendor's guide recommends; the model
+card's default is an empty negative. A Skip Layer Guidance (DGX Monarch) node
+skips layer 22 (zero-based) on the negative pass at every step, as the
+vendor's pipeline does. The vendor reports that layers 24 and 26 can also
+help, and that without the skip an image looks more realistic but can lose
+fine detail; clear the node's `single_layers` to turn it off. ComfyUI's
+MOSS-Image configuration sets the sampling shift to 5, the vendor's value, so
+the graph has no shift node. Keep that native shift: Model Sampling SD3
+(DGX Monarch) applies multiplier 1000, which renders noise on this model's
+multiplier-1.0 configuration, so dgx-monarch refuses it
+([TROUBLESHOOTING #128](TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)). The vendor recommends 1 to 2 MP with sides
+that are multiples of 16, and reports that 0.25 to 4 MP works. English
+prompts work best and Chinese is supported. Put text to render in double
+quotes; a line break in the prompt sets a line break in the rendered text.
+The layout graph's prompt is a JSON layout that reaches CLIP Text Encode
+through a link from Primitive String Multiline: typed into CLIP Text Encode's
+own box, the browser's dynamic prompt pass would strip its braces. The vendor
+marks layout prompts experimental.
+
+**Required files.** Install the same files under each Worker's ComfyUI model
+directories and on the driver. The driver reads the diffusion checkpoint's
+header and artifact identity even when its weights load on Workers.
+
+| File | ComfyUI directory | Purpose |
+|---|---|---|
+| `moss_image_sft_bf16.safetensors` | `models/diffusion_models` | SFT BF16 DiT, 10.16 GB |
+| `qwen3.5_9b_bf16.safetensors` | `models/text_encoders` | Qwen3.5-9B encoder, 19.31 GB; set CLIPLoader type to `moss_image` |
+| `flux2-vae_small.safetensors` | `models/vae` | FLUX.2 small decoder; not the `flux2-vae.safetensors` the Flux 2 and FLUX.3 templates name |
+
+The [artifact manifest](../example_workflows/artifacts.toml) lists the
+download links, byte sizes and SHA-256 hashes, including the INT8 ConvRot DiT
+files and the INT8 ConvRot encoder `qwen3.5_9b_int8_convrot.safetensors` that
+the testing graphs name. The files come from the ungated `Comfy-Org/MOSS-Image`
+repository. The encoder runs on the driver and is the largest file the graph
+loads. The driver footprint preflight has no row for this family, so it does
+not price that encoder. Comfy-Org also publishes the encoder as INT8 ConvRot
+(9.75 GB) and W4A8 GPTQ (7.34 GB); Comfy-Org's own ComfyUI templates use the
+W4A8 file, which no graph here names and no test here has loaded.
+
+**Tested configurations.** No hardware test has run. CPU tests build
+ComfyUI's own MOSS-Image model at toy size in float32 and compare the
+two-rank sharded forward with stock's: every kernel call gets stock's q, k
+and v for its heads in stock order with no pad row, and the output equals
+stock's. The cases cover an even stream, odd streams whose rank boundary
+falls inside the image rows or inside the text rows, four ranks with one rank
+of pads only, batch 2, the fused and the separate q, k and v layouts, both forms of
+ComfyUI's `rope`, ComfyUI's own Skip Layer Guidance skip and a row-local
+block patch. They also check every fused-norm launch against stock's, the
+LoRA key map, which puts separate q, k and v LoRA keys on slices of the fused
+`qkv` weight, and the store's bake, un-bake and FSDP bake against ComfyUI's
+merge. Kernel tests on one GB10 GPU show comfy-kitchen's fused norm, filled
+to stock's rows, its fused q and k norm and RoPE, and the INT8 ConvRot
+linears returning stock's bits on every rank's window; they test kernels,
+not a render. The pinned encoder and VAE files were checked against the
+vendor's copies ([VALIDATION](VALIDATION.md#evidence-moss-image-sft)).
+
+**Known limitations.** The INT8 ConvRot files pin comfy-kitchen's INT8
+attention, an approximate kernel, on all 42 blocks: single, cfg2 and dp2 ask
+for the Sol-Attn waiver ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)), and uly2 drops the
+pins and runs exact attention, so a uly2 INT8 render differs from stock INT8
+on one GPU by construction and can match only a one-GPU render of a copy
+with the pins removed. On uly2, ring and cfg2 only BF16 and INT8 ConvRot
+run: an NVFP4 file, and an fp8 `weight_dtype` cast on a BF16 file, refuse
+class P there and run on single and dp2. The joint stream holds every image
+row and every text row, so an odd total pads at world 2: uly2 and single
+render it, and padded ring or hybrid refuses unless waived. Auto has no cfg2
+row for MOSS-Image. The shipped graphs carry the layer-22 skip, and cfg2
+refuses while it is on ([TROUBLESHOOTING #126](TROUBLESHOOTING.md#126-skip-layer-guidance-dgx-monarch-refuses-on-cfg2-on-a-sequence-parallel-family-that-does-not-apply-block-replacement-or-with-a-two-checkpoint-guider)): inside its window
+ComfyUI runs the conditional and unconditional passes as two separate
+calls, and cfg-parallel can split only a call that carries both. With the
+skip off, MOSS-Image publishes its text as a regular condition, so ComfyUI
+runs a prompt and a negative of different lengths as two calls and cfg2
+gives each rank one, stock's math by construction; a pair of equal length
+batches into one call on one GPU and is unmeasured on cfg2. No hardware test
+covers a LoRA, on the BF16 or the INT8 files, and an INT8 file with a LoRA
+refuses FSDP. On 2026-10-20 ComfyUI's RoPE scaling options for MOSS-Image
+(commit b9b290e43) and its color and depth control (commit e3bee7ffc, the
+`MOSSImageControl` node) were on ComfyUI master only, in no release, and no
+shipped graph uses either. The control LoRA widens the model's input, so
+dgx-monarch refuses it before any bake ([TROUBLESHOOTING #127](TROUBLESHOOTING.md#127-a-lora-that-changes-a-weights-shape-refuses-before-any-bake)).
+The same seed does not reproduce the vendor's diffusers pipeline image,
+because that pipeline builds its own schedule and draws its own noise. Comfy-Org's
+ComfyUI templates can rewrite the prompt with the encoder model itself; no
+shipped graph does, and that generation's driver memory is outside the
+driver estimate. Community reports describe faint vertical color stripes
+across smooth areas in SFT output that Base does not show; ComfyUI has no
+fix for them, and no test here has measured them.
+
+**Test results.** [Comparisons and limits](VALIDATION.md#evidence-moss-image-sft).
+
+**Upstream and license.** [Model card](https://huggingface.co/OpenMOSS-Team/MOSS-Image-SFT),
+[ComfyUI files](https://huggingface.co/Comfy-Org/MOSS-Image) and
+[source](https://github.com/OpenMOSS/MOSS-Image). The weights and the vendor's
+code are under the Apache License 2.0, as the repositories' metadata and model
+cards state. The Qwen3.5-9B encoder is Apache-2.0. The VAE file holds the same
+bytes as Black Forest Labs' [FLUX.2 Small Decoder](https://huggingface.co/black-forest-labs/FLUX.2-small-decoder),
+which is Apache-2.0.
+
+<a id="model-moss-image-base"></a>
+
+### MOSS-Image Base
+
+Detail status (`MOSS-Image Base`): impl.
+
+The base checkpoint of [MOSS-Image SFT](#model-moss-image-sft), on the same
+adapter, encoder and VAE. The vendor says it had no post-training or
+distillation of inference settings such as CFG.
+
+**Recommended workflow.** [Text to image](../example_workflows/dgx-monarch-moss-image-base-t2i.json):
+`euler` and ComfyUI's `simple` scheduler at the vendor's 50 steps and CFG 3,
+at 1024×1024, with the vendor's tag negative and the same layer-22 skip. The vendor finds
+CFG 3 enough for long prompts and suggests raising it, up to 6, for short
+ones.
+
+| File | ComfyUI directory | Purpose |
+|---|---|---|
+| `moss_image_base_bf16.safetensors` | `models/diffusion_models` | Base BF16 DiT, 10.16 GB |
+| `qwen3.5_9b_bf16.safetensors` | `models/text_encoders` | Qwen3.5-9B encoder; set CLIPLoader type to `moss_image` |
+| `flux2-vae_small.safetensors` | `models/vae` | FLUX.2 small decoder |
+
+**Tested configurations.** No hardware test has run; the CPU and kernel tests
+listed for [MOSS-Image SFT](#model-moss-image-sft) cover this checkpoint too.
+
+**Known limitations.** As [MOSS-Image SFT](#model-moss-image-sft), apart from
+the color stripes, which the reports do not find in Base.
+
+**Test results.** [Comparisons and limits](VALIDATION.md#evidence-moss-image-base).
+
+**Upstream and license.** [Model card](https://huggingface.co/OpenMOSS-Team/MOSS-Image-Base),
+under the Apache License 2.0.
+
+<a id="model-kromoss"></a>
+
+### Kromoss
+
+Detail status (`Kromoss`): impl.
+
+Kromoss is lodestones' full fine-tune of
+[MOSS-Image Base](#model-moss-image-base) at 1024 px. It keeps the
+architecture, encoder and VAE, so it runs on the `moss_image` adapter and the
+same files. The similarly named Kroma is a Krea2 fine-tune on a different
+architecture ([Kroma](#model-kroma)).
+
+**Workflows.** [Text to image at 50 steps](../example_workflows/dgx-monarch-kromoss-t2i.json)
+and [8 steps with the DMD2 LoRA](../example_workflows/dgx-monarch-kromoss-t2i-turbo.json).
+The full model takes the MOSS-Image settings: 50 steps, CFG 3, `euler`,
+`simple`, the vendor's tag negative and the layer-22 skip. With either of the
+repository's LoRAs, `kromoss_8-steps-dmd2-lora.safetensors` (the vendor's
+recommendation) or `kromoss_8-steps-dmd-lora.safetensors`, use 8 steps,
+CFG 1, `euler`, `simple`, strength 1 and one LoRA at a time; the vendor
+reports that 4 steps also works. The repository names the two files
+`8-steps-dmd2-lora.safetensors` and `8-steps-dmd-lora.safetensors`; save them
+under the manifest's names. Plain Euler at CFG 1 never evaluates the
+negative, so the 8-step graph zeroes it, carries no skip node, and leaves
+cfg2 nothing to split.
+
+| File | ComfyUI directory | Purpose |
+|---|---|---|
+| `kromoss_bf16.safetensors` | `models/diffusion_models` | Kromoss BF16 DiT, update 11000, 10.16 GB |
+| `kromoss_8-steps-dmd2-lora.safetensors` | `models/loras` | 8-step DMD2 LoRA, 1.19 GB, for the 8-step workflow |
+| `qwen3.5_9b_bf16.safetensors` | `models/text_encoders` | Qwen3.5-9B encoder; set CLIPLoader type to `moss_image` |
+| `flux2-vae_small.safetensors` | `models/vae` | FLUX.2 small decoder |
+
+The manifest pins `lodestones/Kromoss` at revision `7f9bb7b06d7b`, update
+11000 of the fine-tune, published on 2026-10-20. The vendor has published new
+weights under the same file names several times since 2026-10-18, so a file
+from another revision has a different SHA-256, `check_artifacts.py --hash`
+reports it, and no test record covers it. The repository's encoder and VAE
+hold the same bytes as Comfy-Org's.
+
+**Identity.** dgx-monarch reads Kromoss, MOSS-Image Base and MOSS-Image SFT as
+one family, `moss_image`: their BF16 headers hold the same tensor names,
+dtypes and shapes and no metadata, and their INT8 headers likewise, so no
+header field tells them apart. The manifest and each test record name a file
+by its SHA-256, and the first-use Gate binds a PASS to the file's name and a
+sampled fingerprint of its bytes ([TRUST](TRUST.md)), so each checkpoint earns
+its own PASS. A dated result for one checkpoint does not
+cover another. Unlike Kroma, which auto recognizes by the merge record in its
+header, Kromoss can take no checkpoint-specific auto rule.
+
+**LoRA.** Both LoRAs were distilled from MOSS-Image Base and hold the same
+bytes as lodestones' `MOSS-Image-Base-8-steps-dmd` release. Each is rank 128
+in FP32 on every block's q, k, v, o and feed-forward projections, with
+separate q, k and v keys that ComfyUI maps onto the fused `qkv` weight. The
+vendor's diffusers recipe applies a LoRA unmerged and warns that merging it
+into BF16 weights loses part of the delta to rounding. ComfyUI merges it into
+the weights, and dgx-monarch bakes it with ComfyUI's own math, so a render on
+the pair is compared with stock ComfyUI, not with the unmerged pipeline. No
+hardware test covers either LoRA, on the BF16 or the INT8 file, although the
+vendor's card says the INT8 file works with them. LoRA on FSDP keeps the
+[shared FSDP rules](#fsdp-precision-and-residency).
+
+**Tested configurations.** No hardware test has run; the CPU and kernel tests
+listed for [MOSS-Image SFT](#model-moss-image-sft) cover the architecture
+([VALIDATION](VALIDATION.md#evidence-kromoss)).
+
+**Known limitations.** As [MOSS-Image Base](#model-moss-image-base). The INT8
+ConvRot file `kromoss_int8_convrot.safetensors` pins comfy-kitchen's INT8
+attention on all 42 blocks, as the Comfy-Org INT8 files do.
+
+**Test results.** [Comparisons and limits](VALIDATION.md#evidence-kromoss).
+
+**Upstream and license.** [Kromoss repository](https://huggingface.co/lodestones/Kromoss).
+The weights, both LoRAs and the bundled pipeline code are under the Apache
+License 2.0, which the repository's metadata, model card and LICENSE file
+carry.
 
 <a id="model-longcat-image"></a>
 
@@ -1320,6 +1549,40 @@ ComfyUI-layout NVFP4 files above and carry no ComfyUI quantization record.
 In the 2026-10-15 test stock ComfyUI dropped their scales and failed at the
 first step. dgx-monarch's header gate refuses them by the same rule, so no
 template or manifest row names them.
+
+### MOSS-Image vendor files
+
+Comfy-Org publishes MOSS-Image in ComfyUI layout at
+`Comfy-Org/MOSS-Image@3284a1dbb351e3396d70f39f2a71cbf6ed2ef1bb`, and lodestones
+publishes Kromoss at `lodestones/Kromoss@7f9bb7b06d7b6c27d294b0bab5a2b3056c379279`.
+Neither repository is gated. These are vendor files, not local conversions,
+and no hardware comparison covers any of them yet; the support matrix states
+what each topology asks of each kind.
+
+<details>
+<summary>MOSS-Image files, layouts and checksums</summary>
+
+
+| File | Bytes | SHA-256 (first 12) | Header kind | Layout | Pinned attention |
+|---|--:|---|---|---|---|
+| `moss_image_sft_bf16.safetensors` | 10,164,655,808 | `f96738d8116d` | bf16 | fused `qkv`; 378 BF16 tensors and one F32 `rope.bands` that ComfyUI drops at load; no header metadata | none |
+| `moss_image_base_bf16.safetensors` | 10,164,655,808 | `cacd158728a1` | bf16 | as above | none |
+| `kromoss_bf16.safetensors` | 10,164,655,808 | `54c863b9392f` | bf16 | as above | none |
+| `moss_image_sft_int8_convrot.safetensors` | 5,413,698,958 | `b4d1475bc7ee` | int8 | fused `qkv`; 168 INT8 ConvRot Linears, the q, k, v, o and feed-forward projections of 42 blocks | comfy-kitchen INT8 on 42 blocks |
+| `moss_image_base_int8_convrot.safetensors` | 5,413,698,958 | `f601c1e11619` | int8 | as above | as above |
+| `kromoss_int8_convrot.safetensors` | 5,413,698,958 | `cacff0dd25cd` | int8 | as above | as above |
+
+</details>
+
+The three BF16 files share one header layout, and so do the three INT8 files,
+so nothing in a header tells the checkpoints apart. The encoder
+`qwen3.5_9b_bf16.safetensors` (`7e6e9f08d598`) and the VAE
+`flux2-vae_small.safetensors` (`d8d52ba03647`) are the same bytes in both
+repositories, and the VAE is the same bytes as
+`diffusion_pytorch_model.safetensors` in `black-forest-labs/FLUX.2-small-decoder`
+at `a3efc24f613e`. Comfy-Org's `vae/flux2-vae.safetensors` (`868fe7b343cc`) is
+the full Flux 2 VAE in Black Forest Labs' layout, not the file the manifest
+pins for the Flux 2 and FLUX.3 templates, and no MOSS-Image graph names it.
 
 ## Shared topology and memory guidance
 

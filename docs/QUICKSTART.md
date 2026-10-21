@@ -39,11 +39,11 @@ selects a topology for the requested resolution and logs its choice. Without
 ## 2. Only some nodes move to the cluster
 
 DGX Monarch versions of model operations run on the mesh: the diffusion-model
-loader, LoRA loader, samplers, guiders, Model Sampling SD3, and Basic
-Scheduler. Templates include the DGX Monarch shift node where needed; the
-stock node cannot accept a mesh model. The CLIP loader, text encodes, empty
-latent, VAE decode, and save nodes remain in the ComfyUI process on both paths
-and have no cluster variant.
+loader, LoRA loader, samplers, guiders, Model Sampling SD3, Skip Layer
+Guidance, and Basic Scheduler. Templates include the DGX Monarch shift and
+skip nodes where needed; the stock nodes cannot accept a mesh model. The CLIP
+loader, text encodes, empty latent, VAE decode, and save nodes remain in the
+ComfyUI process on both paths and have no cluster variant.
 
 On Queue, the driver reports each stock-node replacement by node id and whether
 Init is missing. The advice neither blocks the queue nor edits the graph.

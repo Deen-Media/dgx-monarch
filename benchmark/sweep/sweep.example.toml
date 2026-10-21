@@ -107,6 +107,10 @@ auto_gate = ["uly2+fsdp"]
 # also changes its prompts, so its dropped arm is not a repeat). Set a template
 # true to keep that arm, or false to drop the lora-off arm of any other template.
 [lora_off]
+# MOSS-Image turbo graphs: the lora-off arm (8 steps, CFG 1, no LoRA) is a junk render, not a base row.
+"dgx-monarch-kromoss-t2i-turbo" = false
+"dgx-monarch-test-kromoss-turbo-dmd" = false
+"dgx-monarch-test-moss-image-base-turbo" = false
 
 # Template to the real LoRA files on this rig, one per loader in node-id order.
 # The templates carry placeholder names; put yours here, not in a graph. A
@@ -130,6 +134,12 @@ auto_gate = ["uly2+fsdp"]
 "dgx-monarch-test-minimax-h3-lora" = ["your_first_lora.safetensors"]
 "dgx-monarch-test-qwen-image-lora" = ["your_first_lora.safetensors"]
 "dgx-monarch-test-zimage-lora" = ["your_first_lora.safetensors"]
+# The Kromoss turbo recipe and its two testing legs ship a real LoRA in the
+# graph; map it to the file staged on your rig.
+"dgx-monarch-kromoss-t2i-turbo" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-kromoss-turbo-dmd" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-moss-image-base-turbo" = ["your_first_lora.safetensors"]
+"dgx-monarch-test-moss-image-lora" = ["your_first_lora.safetensors"]
 # Two loaders: the high-noise model first, then the low-noise one.
 "dgx-monarch-test-wan22-i2v-lora" = ["your_first_lora.safetensors",
                                      "your_second_lora.safetensors"]
@@ -150,6 +160,10 @@ auto_gate = ["uly2+fsdp"]
 # the step-distilled ones. Name a local conversion with a quant token the
 # matrix knows (int8_convrot, nvfp4 and the like), or list it here under its
 # template; any other spelling lands in a pool of its own.
+#
+# MOSS-Image needs none either: moss_image_sft_*, moss_image_base_* and
+# kromoss_* split into the stems mossimagesft, mossimagebase and kromoss,
+# so each CFG 3 graph meets its own INT8 ConvRot sibling and no other.
 [artifact_groups."dgx-monarch-ideogram4-t2i"]
 "ideogram4_fp8_scaled.safetensors" = []
 "ideogram4_unconditional_fp8_scaled.safetensors" = []

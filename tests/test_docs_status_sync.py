@@ -65,6 +65,9 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "Flux2"): ("flux2", "HW"),
     ("image", "FLUX.3 Klein"): ("flux3", "HW"),
     ("image", "FLUX.3 Klein Base"): ("flux3", "HW"),
+    ("image", "MOSS-Image SFT"): ("moss_image", "impl"),
+    ("image", "MOSS-Image Base"): ("moss_image", "impl"),
+    ("image", "Kromoss"): ("moss_image", "impl"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),
@@ -713,6 +716,8 @@ _MP_PROBES = (0.26, 0.79, 1.05, 1.19, 1.5, 2.36, 8.0)
 # below derive from it. Kroma is not one: its shipped graphs run Euler at CFG 1,
 # but its model card allows CFG up to 1.5. Krea2's cfg2 row would take a BF16
 # file there, and that row's record excludes the Kroma checkpoint variant.
+# Kromoss is not one: its 8-step graph is distilled by a LoRA, not the
+# checkpoint, and its row maps to the 50-step CFG 3 graph.
 _DISTILLED_CFG1_ROWS = frozenset({"Flux 1 Dev", "Flux 1 Schnell", "Flux2", "FLUX.3 Klein"})
 _REAL_CFG = 3.5
 

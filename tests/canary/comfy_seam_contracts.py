@@ -56,8 +56,10 @@ The seams, in run order:
                               and the places the rebound forward reads them from
  26. nvfp4 activation scale   every quantization format classified in the pack's
                               activation-scale table, the whole-tensor fallback
-                              nvfp4 alone takes, and the per-module scales the
-                              quantized Linear reads
+                              nvfp4 alone takes, the per-module scales the
+                              quantized Linear reads, and the fused INT8 SiTU
+                              input that never calls the module while nvfp4
+                              falls back to it
  27. chroma text stream      the row count chroma's text encoder hands the
                               model, the floor it pads to, and the one route
                               an attention mask can reach its forward by
@@ -112,7 +114,8 @@ The seams, in run order:
                               forwards leave in place; the pin detector reads
                               a real checkpoint's and a real LoRA's pins, and
                               the probe tool's key patterns find each
-                              family's pinnable attention
+                              family's pinnable attention, MOSS-Image's
+                              block and text pins included
  40. cfg++ uncond pass        every sampler the auto table's cfg++ rule names
                               sets disable_cfg1_optimization before its first
                               model call, the CFG 1.0 shortcut still reads
@@ -123,6 +126,22 @@ The seams, in run order:
                               forward takes both input sets alike, and the bound
                               extra_conds takes the cache off inference mode and
                               leaves no inference tensor in its output
+ 42. moss_image conds         CONDRegular text that folds only at equal length,
+                              no constant, no mask, no cond branch, rope.bands
+                              popped, flow at multiplier 1.0 and shift 5.0, the
+                              Flux2 latent, and the tokenizer's 10 and 23 rows
+ 43. moss_image block surface  the two fused-norm calls a block makes, the
+                              rotary table, the [image, text] join, the block
+                              keys, the replace call, the malloc graph and the
+                              attention call shape the sharded forward re-runs
+ 44. skip layer guidance simple  the stock node's widgets, and the two
+                              single-cond calls with an identity skip it makes
+                              inside its window, one call outside or at CFG 1
+ 45. lora shape-changing set  the shape test the LoRA shape guard runs, and the
+                              control LoRA that widens video_embedder
+ 46. dynamic prompt asymmetry  CLIP Text Encode's text declares dynamicPrompts and
+                              Text (Multiline)'s value does not, which the
+                              MOSS-Image layout graph's JSON prompt relies on
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -2551,7 +2570,11 @@ def _assert_nvfp4_activation_scale_seam() -> None:
     Linear reads the per-module `input_scale` the hook writes and the
     `pre_quant_scale` the installer declines on. A silent change to any one of
     them turns a sharded render's numbers wrong while every pixel still
-    arrives, which no identity gate can see.
+    arrives, which no identity gate can see. The last check pins the route
+    MOSS-Image's ffn_down takes through ``comfy.ops.linear_input_act``: an
+    INT8 ConvRot weight takes comfy-kitchen's fused path and never calls the
+    module, and an nvfp4 weight falls back to the module, where the shared
+    scale is applied (adapters/moss_image.py ``sp_quant_refusal_reason``).
     """
     import inspect
 
@@ -2625,6 +2648,29 @@ def _assert_nvfp4_activation_scale_seam() -> None:
     assert call in experts and f"{call[:-1]}, scale=" not in experts, (
         "nvfp4 activation scale seam: MoEExperts now passes a scale to "
         "from_float, so the installer could cover it instead of declining it")
+
+    def routed(layout_name):
+        module = comfy.ops.disable_weight_init.Linear(256, 64, bias=False, dtype=torch.bfloat16)
+        module.weight = torch.nn.Parameter(QuantizedTensor.from_float(
+            torch.randn(64, 256, dtype=torch.bfloat16), layout_name), requires_grad=False)
+        calls: list = []
+
+        def forward(rows, *args, **kwargs):
+            calls.append(tuple(rows.shape))
+            return torch.zeros(*rows.shape[:-1], 64, dtype=torch.bfloat16)
+
+        module.forward = forward
+        out = comfy.ops.linear_input_act(module, torch.randn(3, 512, dtype=torch.bfloat16), "situ")
+        return calls, out
+
+    calls, out = routed("TensorWiseINT8Layout")
+    assert not calls and tuple(out.shape) == (3, 64), (
+        "nvfp4 activation scale seam: an INT8 ConvRot linear_input_act now calls the module "
+        f"({calls}), so MOSS-Image's ffn_down no longer takes the fused path")
+    calls, _out = routed("TensorCoreNVFP4Layout")
+    assert calls == [(3, 256)], (
+        "nvfp4 activation scale seam: an nvfp4 linear_input_act no longer falls back to the "
+        f"module ({calls}), so the shared-scale wrapper would be bypassed")
 
 
 def _assert_chroma_text_stream_seam() -> None:
@@ -3692,7 +3738,8 @@ def _assert_attention_keyword_handoff_seam() -> None:
     holds the same contract for the stock attention the other forwards leave
     in place. Half five (``_assert_attention_pins_detected``) holds the
     detector the render record and the waiver read where no sequence
-    parallelism drops a pin.
+    parallelism drops a pin. Half six (``_assert_moss_image_pins_dropped``)
+    holds MOSS-Image's block and text-block pins and its probe patterns.
     """
     import comfy.ldm.modules.attention as attention_module
     import comfy.ops
@@ -3993,6 +4040,7 @@ def _assert_attention_keyword_handoff_seam() -> None:
 
     _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations)
     _assert_attention_pins_detected(operations)
+    _assert_moss_image_pins_dropped(pin, pinned_runs)
 
 
 class _OneSpRank:
@@ -4433,6 +4481,65 @@ def _assert_attention_pins_detected(operations) -> None:
     }, f"attention keyword handoff: the detector read {found} from a pinned FLUX.3 checkpoint"
 
 
+def _assert_moss_image_pins_dropped(pin, pinned_runs) -> None:
+    """Half six of the attention keyword handoff seam: MOSS-Image's per-block pins.
+
+    The INT8 files pin every block's attention through a real ComfyAttention.
+    Stock runs each pin, block and text block alike; the sharded forward runs
+    none: the blocks attend through its override and the two text blocks, run
+    whole on every rank, get ComfyUI's default backend, and the output equals
+    the unpinned stock forward bit for bit. The probe tool's ``moss_image``
+    pattern must find exactly the pinnable attention of a tiny real model,
+    fused and split, and ``moss_image_text`` only its two text blocks.
+    """
+    import comfy.ldm.modules.attention as attention_module
+    import torch
+
+    from dgx_monarch.adapters.base import InjectionContext
+    from dgx_monarch.adapters.moss_image import MOSSImageAdapter
+
+    def one_rank_attention(q, k, v, heads, *args, drop_rows=None, **kwargs):
+        # The sharded dispatcher's place on one rank: no pad rows.
+        assert not drop_rows, "attention keyword handoff: a one-rank MOSS-Image call named pad rows"
+        return attention_module.optimized_attention(q, k, v, heads, *args, **kwargs)
+
+    model = _tiny_moss(seed=39)
+    x, timestep, context = _moss_inputs(seed=39)
+    with torch.no_grad():
+        unpinned = model._forward(x, timestep, context)
+        for module in (model.layers[0], model.layers[2], model.text_embedder.blocks[1]):
+            pin(module.comfy_attention)
+        pinned_runs.clear()
+        pinned = model._forward(x, timestep, context)
+        assert len(pinned_runs) >= 3 and not torch.equal(pinned, unpinned), (
+            "attention keyword handoff: stock MOSS-Image no longer runs a block's pinned kernel")
+        with _OneSpRank():
+            MOSSImageAdapter().inject_usp(model, InjectionContext(
+                topology_sp=1, usp_attention=one_rank_attention, pure_ulysses=True))
+            pinned_runs.clear()
+            injected = model._forward(x, timestep, context)
+    assert not pinned_runs, (
+        "attention keyword handoff: the MOSS-Image sequence-parallel forward ran a pinned kernel")
+    assert torch.equal(injected, unpinned), (
+        "attention keyword handoff: the MOSS-Image sequence-parallel forward with pinned blocks no "
+        "longer matches the unpinned stock forward")
+
+    tool = _probe_tool()
+    for fused in (True, False):
+        tiny = _tiny_moss(fused=fused)
+        keys = list(tiny.state_dict())
+        owners = sorted(name.rpartition(".")[0] for name, module in tiny.named_modules()
+                        if isinstance(module, attention_module.ComfyAttention))
+        matched = tool.attention_paths("moss_image", keys, cross=True)
+        assert sorted(matched) == owners, (
+            f"attention keyword handoff: the probe tool's moss_image pattern finds {matched}, and "
+            f"the {'fused' if fused else 'split'} model's pinnable attention is {owners}")
+        text = [owner for owner in owners if owner.startswith("text_embedder.")]
+        assert tool.attention_paths("moss_image_text", keys) == text and len(text) == 2, (
+            "attention keyword handoff: the probe tool's moss_image_text pattern no longer finds "
+            "exactly the two text blocks")
+
+
 def _assert_cfg_pp_uncond_pass_seam() -> None:
     """Which samplers keep the uncond pass at CFG 1.0, and the flag that says so.
 
@@ -4626,6 +4733,516 @@ def _assert_flux3_conds_branch_seam() -> None:
             f"flux3 conds branch: the bound output still holds inference tensors in {leaked}")
 
 
+# MOSS-Image's vendor negative tags (the USERGUIDE's recommended list), which
+# the shipped CFG 3 templates encode.
+_MOSS_NEGATIVE = "nsfw, worst quality, bad anatomy, watermark, jpeg artifact"
+
+
+def _tiny_moss(*, fused: bool = True, heads: int = 2, text_dim: int = 64, seed: int = 0):
+    """A real comfy.ldm.moss_image.model.MOSSImage at toy width, CPU float32, seeded.
+
+    128 a head keeps the four 32-wide rotary axes; three blocks put a skipped
+    block in the middle.
+    """
+    import comfy.ldm.moss_image.model as moss
+    import comfy.ops
+    import torch
+
+    generator = torch.Generator().manual_seed(seed)
+    model = moss.MOSSImage(dim=128 * heads, ffn_dim=512, num_heads=heads, num_layers=3,
+                           text_dim=text_dim, latent_channels=128, fused_qkv=fused,
+                           operations=comfy.ops.disable_weight_init, dtype=torch.float32,
+                           device="cpu")
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn(parameter.shape, generator=generator) * 0.05)
+    return model
+
+
+def _tiny_moss_patcher():
+    """A real model_base.MOSSImage in its ModelPatcher, by ComfyUI's own load.
+
+    Detection keeps the default 4096-wide text input, so the state dict carries
+    it, and the vendor files' ``rope.bands``, which the load pops.
+    """
+    import comfy.sd
+    import torch
+
+    state = dict(_tiny_moss(text_dim=4096).state_dict())
+    state["rope.bands"] = torch.arange(16, dtype=torch.float32)
+    return comfy.sd.load_diffusion_model_state_dict(state)
+
+
+def _moss_inputs(grid=(3, 3), text=6, seed=0):
+    import torch
+
+    generator = torch.Generator().manual_seed(seed)
+    return (torch.randn(1, 128, *grid, generator=generator), torch.tensor([0.6]),
+            torch.randn(1, text, 64, generator=generator))
+
+
+def _moss_slg_step(patcher, sigma: float, *, start: float = 0.0, end: float = 1.0,
+                   uncond: bool = True):
+    """One step of ComfyUI's own SkipLayerGuidanceDiTSimple function, its calls captured.
+
+    Returns the patched patcher, the conds it was handed, each
+    ``calc_cond_batch`` call as ``(conds, model_options, outputs)`` and what the
+    function returned. The stand-in ``calc_cond_batch`` gives every output its
+    own value, so a returned output can be told apart.
+    """
+    import comfy.samplers
+    import torch
+    from comfy_extras.nodes_slg import SkipLayerGuidanceDiTSimple
+
+    patched = SkipLayerGuidanceDiTSimple.execute(
+        patcher, start, end, double_layers="", single_layers="1")[0]
+    function = patched.model_options["sampler_calc_cond_batch_function"]
+    calls: list = []
+    real = comfy.samplers.calc_cond_batch
+
+    def capture(model, conds, x_in, timestep, model_options):
+        outputs = [torch.full_like(x_in, float(10 * len(calls) + index)) for index in range(len(conds))]
+        calls.append((conds, model_options, outputs))
+        return outputs
+
+    conds = [[{"cond": "positive"}], [{"cond": "negative"}] if uncond else None]
+    comfy.samplers.calc_cond_batch = capture
+    try:
+        result = function({"conds": conds, "input": torch.zeros(1, 128, 2, 2),
+                           "sigma": torch.tensor([sigma]), "model": patcher.model,
+                           "model_options": patched.model_options})
+    finally:
+        comfy.samplers.calc_cond_batch = real
+    return patched, conds, calls, result
+
+
+def _assert_moss_image_conds_seam() -> None:
+    """What MOSS-Image's conditioning publishes, which decides its cfg2 path.
+
+    ``model_base.MOSSImage.extra_conds`` publishes ``c_crossattn`` as
+    CONDRegular, which concatenates only at equal shapes, and no CONDConstant,
+    so a prompt pair of different lengths runs as two calls that cfg-parallel
+    dispatches one per rank, and an equal pair folds into one call. Every image
+    row's RoPE position depends on the prompt length, so no driver pad is exact
+    (``cfg_cond_padding = "none"``). ``extra_conds`` runs nothing of the
+    diffusion model, so the adapter binds no cond branch; a plain model's
+    ``concat_cond`` gives no control input; the load pops ``rope.bands``; the
+    sampling is flow at multiplier 1.0 and shift 5.0 (so the SD3 shift node,
+    multiplier 1000, would be noise); the latent is Flux2 at 128 channels and
+    ratio 16; no attention mask reaches the model; and ComfyUI's MOSS tokenizer
+    gives an empty negative 10 tokens and the vendor tags 23, the two parities
+    the hardware legs pick prompts by.
+    """
+    import comfy.conds
+    import comfy.latent_formats
+    import comfy.model_base
+    import comfy.text_encoders.moss_image
+    import torch
+
+    patcher = _tiny_moss_patcher()
+    base = patcher.model
+    assert type(base) is comfy.model_base.MOSSImage, (
+        f"moss_image conds seam: the vendor layout now loads as {type(base).__name__}")
+    assert not any("rope.bands" in key for key in base.state_dict()), (
+        "moss_image conds seam: the load keeps rope.bands, an fp32 tensor the live model never held")
+    kept = base.model_config.process_unet_state_dict(
+        {"rope.bands": torch.zeros(16), "layers.0.norm1.weight": torch.zeros(4)})
+    assert set(kept) == {"layers.0.norm1.weight"}, (
+        f"moss_image conds seam: process_unet_state_dict now keeps {sorted(kept)}")
+
+    cpu = torch.device("cpu")
+    noise = torch.zeros(1, 128, 4, 4)
+    generator = torch.Generator().manual_seed(42)
+    touched: list[str] = []
+    dm = base.diffusion_model
+    def touch(module, args):
+        touched.append(type(module).__name__)
+
+    hooks = [module.register_forward_pre_hook(touch) for module in dm.modules()]
+
+    def refuse_rope(*_args, **_kwargs):
+        touched.append("rope")
+        raise AssertionError("extra_conds built a rotary table")
+
+    dm.rope = refuse_rope
+    try:
+        def conds(length, **extra):
+            context = torch.randn(1, length, 4096, generator=generator)
+            return base.extra_conds(cross_attn=context, noise=noise, device=cpu, **extra)
+
+        short = conds(10, attention_mask=torch.ones(1, 10))
+        long, twin = conds(23), conds(10)
+        concat = base.concat_cond(noise=noise, device=cpu)
+    finally:
+        for hook in hooks:
+            hook.remove()
+        del dm.rope
+    assert not touched, f"moss_image conds seam: extra_conds now runs {sorted(set(touched))}"
+    assert set(short) == {"c_crossattn"}, (
+        f"moss_image conds seam: extra_conds now publishes {sorted(short)}, so a mask or a "
+        "constant may reach the model")
+    assert type(short["c_crossattn"]) is comfy.conds.CONDRegular, (
+        f"moss_image conds seam: c_crossattn is {type(short['c_crossattn']).__name__}, not CONDRegular")
+    assert not short["c_crossattn"].can_concat(long["c_crossattn"]), (
+        "moss_image conds seam: two prompts of different lengths now concatenate into one call")
+    assert short["c_crossattn"].can_concat(twin["c_crossattn"]), (
+        "moss_image conds seam: two prompts of equal length no longer concatenate")
+    assert concat is None, "moss_image conds seam: a plain model's concat_cond now returns an input"
+
+    assert base.model_type == comfy.model_base.ModelType.FLOW, (
+        f"moss_image conds seam: the model type is {base.model_type}, not flow")
+    sampling = base.model_sampling
+    assert (float(sampling.multiplier), float(sampling.shift)) == (1.0, 5.0), (
+        f"moss_image conds seam: sampling is multiplier {sampling.multiplier}, shift {sampling.shift}")
+    latent = base.latent_format
+    assert type(latent) is comfy.latent_formats.Flux2 and latent.latent_channels == 128 and (
+        latent.spacial_downscale_ratio == 16), (
+        f"moss_image conds seam: the latent format is {type(latent).__name__}, "
+        f"{latent.latent_channels} channels, ratio {latent.spacial_downscale_ratio}")
+
+    tokenizer = comfy.text_encoders.moss_image.MOSSImageTokenizer()
+    lengths = {text: [len(section) for sections in tokenizer.tokenize_with_weights(text).values()
+                      for section in sections]
+               for text in ("", _MOSS_NEGATIVE)}
+    assert lengths == {"": [10], _MOSS_NEGATIVE: [23]}, (
+        f"moss_image conds seam: the MOSS tokenizer now gives {lengths} tokens for the empty "
+        "negative and the vendor tags; the hardware legs pick N's parity by these counts")
+
+
+def _assert_moss_image_block_surface_seam() -> None:
+    """What the MOSS-Image sharded forward re-runs of stock's block and forward.
+
+    adapters/moss_image.py keeps stock's prelude, cuts the joint stream into
+    one window per rank and runs stock's own ``Block.forward`` there, with the
+    block's two fused-norm calls launched at stock's row count through its
+    ``modulated_rms_norm`` global (adapters/moss_image_seams.py). Pinned on a
+    tiny real MOSSImage: ``Block.forward`` reads both globals and makes exactly
+    two norm calls over its whole stream with ``[B, 1, D]`` modulation; the
+    text embedder calls its blocks positionally; ``_forward`` builds one table
+    for all N rows with a known ``rope`` form, hands the text embedder its last
+    T rows, joins ``[image, text]``, sets ``total_blocks`` and ``block_type``
+    before the prefetch queue and ``block_index`` before the replace lookup,
+    calls a ``("single_block", i)`` patch with five keys and
+    ``original_block``, opens and closes the malloc graph around the loop, and
+    runs the head norm on the image rows; the table is ``[1, N, 1, 64, 2, 2]``,
+    contiguous, image rows first; master's ``rope`` reads ``rope_options``; an
+    identity skip equals dropping the block; ``attention()`` hands
+    ``optimized_attention`` (q, k, v, heads) plus ``transformer_options`` and
+    ``preferred_attention``; no ``patches`` hook is read; ComfyUI's own skip
+    passes the identity test the vetting runs on this interpreter.
+    """
+    import copy
+
+    import comfy.ldm.moss_image.model as moss
+    import comfy.model_prefetch as prefetch
+    import torch
+
+    from dgx_monarch.adapters.flux3_adaln_parity import loads_global
+    from dgx_monarch.adapters.moss_image_seams import (
+        is_identity_block_patch,
+        rope_call,
+        vet_block_replacements,
+    )
+
+    for name in ("modulated_rms_norm", "attention"):
+        assert loads_global(moss.Block.forward, name), (
+            f"moss_image block surface: Block.forward no longer reads the module global {name}")
+    model = _tiny_moss(seed=43)
+    rope_call(model)    # refuses class P on a third rope form
+    x, timestep, context = _moss_inputs()
+    hw, text = x.shape[2] * x.shape[3], context.shape[1]
+    rows = hw + text
+    events: list = []
+    seen: dict = {"norms": [], "attention": [], "text_blocks": [], "ropes": [], "replace": []}
+    saved = {name: getattr(moss, name) for name in ("modulated_rms_norm", "optimized_attention")}
+    saved_prefetch = {name: getattr(prefetch, name) for name in (
+        "make_prefetch_queue", "prefetch_queue_pop", "malloc_graph_begin", "malloc_graph_end")}
+
+    def norm(x, norm_module, scale, shift):
+        seen["norms"].append((tuple(x.shape), tuple(scale.shape), tuple(shift.shape)))
+        return saved["modulated_rms_norm"](x, norm_module, scale, shift)
+
+    def attention(*args, **kwargs):
+        seen["attention"].append((len(args), sorted(kwargs)))
+        return saved["optimized_attention"](*args, **kwargs)
+
+    def make_prefetch_queue(queue, device, options):
+        events.append(("queue", len(queue), options.get("total_blocks"), options.get("block_type")))
+        return saved_prefetch["make_prefetch_queue"](queue, device, options)
+
+    def prefetch_queue_pop(queue, device, module, *args, **kwargs):
+        events.append(("pop", kwargs.get("malloc_scope")))
+        return saved_prefetch["prefetch_queue_pop"](queue, device, module, *args, **kwargs)
+
+    def graph(label, function):
+        def record(*args, **kwargs):
+            events.append((label,))
+            return function(*args, **kwargs)
+        return record
+
+    stock_rope = type(model).rope
+
+    def rope(*args):
+        table = stock_rope(model, *args)
+        seen["ropes"].append((len(args), table))
+        return table
+
+    def replace(args, extra):
+        seen["replace"].append((sorted(args), sorted(extra), args["transformer_options"]["block_index"]))
+        return extra["original_block"](args)
+
+    captured: dict = {}
+
+    def keep(name, value):
+        # A hook that returns a value replaces the call's input or output, so this returns None.
+        captured.setdefault(name, value.detach().clone())
+
+    def text_block(module, args, kwargs):
+        seen["text_blocks"].append((len(args), sorted(kwargs)))
+
+    hooks = [
+        model.video_embedder.register_forward_hook(lambda module, args, out: keep("image", out)),
+        model.text_embedder.register_forward_pre_hook(lambda module, args: keep("text_pe", args[1])),
+        model.text_embedder.register_forward_hook(lambda module, args, out: keep("text", out)),
+        model.layers[0].register_forward_pre_hook(lambda module, args: keep("joint", args[0])),
+    ] + [block.register_forward_pre_hook(text_block, with_kwargs=True)
+         for block in model.text_embedder.blocks]
+    moss.modulated_rms_norm, moss.optimized_attention = norm, attention
+    prefetch.make_prefetch_queue, prefetch.prefetch_queue_pop = make_prefetch_queue, prefetch_queue_pop
+    prefetch.malloc_graph_begin = graph("graph begin", saved_prefetch["malloc_graph_begin"])
+    prefetch.malloc_graph_end = graph("graph end", saved_prefetch["malloc_graph_end"])
+    model.rope = rope
+
+    def raising_hook(*_args, **_kwargs):
+        raise AssertionError("a patches hook ran")
+
+    options = {"patches_replace": {"dit": {("single_block", 1): replace}},
+               "patches": {hook: [raising_hook] for hook in
+                           ("attn1_patch", "attn1_output_patch", "attn2_patch", "middle_patch")}}
+    try:
+        with torch.no_grad():
+            out = model(x, timestep, context, transformer_options=options)
+    finally:
+        for hook in hooks:
+            hook.remove()
+        moss.modulated_rms_norm, moss.optimized_attention = saved["modulated_rms_norm"], saved[
+            "optimized_attention"]
+        for name, function in saved_prefetch.items():
+            setattr(prefetch, name, function)
+        del model.rope
+
+    blocks = len(model.layers)
+    width = model.video_embedder.out_features
+    assert seen["norms"] == [((1, rows, width), (1, 1, width), (1, 1, width))] * (2 * blocks) + [
+        ((1, hw, width), (1, 1, width), (1, 1, width))], (
+        f"moss_image block surface: the fused-norm calls are now {seen['norms']}")
+    assert seen["text_blocks"] == [(3, [])] * len(model.text_embedder.blocks), (
+        "moss_image block surface: TextEmbedder no longer calls its blocks positionally with "
+        f"(x, pe, transformer_options): {seen['text_blocks']}")
+    assert len(seen["ropes"]) == 1 and seen["ropes"][0][0] in (4, 5), (
+        f"moss_image block surface: _forward built {len(seen['ropes'])} rotary tables")
+    table = seen["ropes"][0][1]
+    assert tuple(table.shape) == (1, rows, 1, 64, 2, 2) and table.is_contiguous() and (
+        table.dtype == torch.float32), (
+        f"moss_image block surface: the table is {tuple(table.shape)} {table.dtype}")
+    assert torch.equal(captured["text_pe"], table[:, hw:]), (
+        "moss_image block surface: the text embedder no longer gets the table's last T rows")
+    joint = captured["joint"]
+    assert torch.equal(joint[:, :hw], captured["image"]) and torch.equal(joint[:, hw:], captured["text"]), (
+        "moss_image block surface: the joint stream is no longer [image, text]")
+    identity = torch.eye(2).expand(64, 2, 2)
+    assert torch.equal(table[0, :, 0, :16], identity[:16].expand(rows, 16, 2, 2)), (
+        "moss_image block surface: rotary pairs 0 to 15 are no longer the identity axis")
+    assert torch.equal(table[0, hw:, 0, 32:], identity[32:].expand(text, 32, 2, 2)), (
+        "moss_image block surface: text rows no longer sit at h = w = 0, so the image rows may not come first")
+    assert torch.equal(table[0, hw, 0, 16:32], identity[16:32]), (
+        "moss_image block surface: the first text row is no longer at f = 0")
+    assert all(torch.equal(table[0, row, 0, 16:32], table[0, 0, 0, 16:32]) for row in range(hw)) and (
+        not torch.equal(table[0, 0, 0, 16:32], identity[16:32])), (
+        "moss_image block surface: image rows no longer share one f position past the text")
+    queue = [event for event in events if event[0] == "queue" and event[1] == blocks]
+    assert queue == [("queue", blocks, blocks, "single")], (
+        f"moss_image block surface: total_blocks and block_type are not set before the queue: {events}")
+    begin, end = events.index(("graph begin",)), events.index(("graph end",))
+    assert events.index(queue[0]) < begin < end and events[begin + 1:end] == [("pop", "block")] * (
+        blocks + 1), f"moss_image block surface: the malloc graph no longer wraps the block loop: {events}"
+    assert seen["replace"] == [(["img", "mod", "pe", "transformer_options", "vec"],
+                                ["original_block"], 1)], (
+        f"moss_image block surface: a single_block patch now gets {seen['replace']}")
+    assert seen["attention"] == [(4, ["preferred_attention", "transformer_options"])] * (
+        blocks + len(model.text_embedder.blocks)), (
+        f"moss_image block surface: attention() now hands optimized_attention {seen['attention']}")
+    assert out.shape == x.shape, f"moss_image block surface: the output is {tuple(out.shape)}"
+
+    if seen["ropes"][0][0] == 5:
+        moved = stock_rope(model, 3, 3, text, torch.device("cpu"), {"rope_options": {"shift_t": 1.0}})
+        assert not torch.equal(moved, table), (
+            "moss_image block surface: master's rope no longer reads rope_options")
+
+    _patched, _conds, calls, _result = _moss_slg_step(_tiny_moss_patcher(), 0.5)
+    skip = calls[1][1]["transformer_options"]["patches_replace"]["dit"][("single_block", 1)]
+    assert is_identity_block_patch(skip), (
+        "moss_image block surface: ComfyUI's Skip Layer Guidance skip no longer passes the identity "
+        "test on this interpreter, so every sharded skip render would refuse")
+    skipped = {"patches_replace": {"dit": {("single_block", 1): skip}}}
+    assert vet_block_replacements(skipped, blocks) == {1: skip}, (
+        "moss_image block surface: the vetting no longer admits ComfyUI's skip")
+    dropped = copy.deepcopy(model)
+    del dropped.layers[1]
+    with torch.no_grad():
+        with_skip = model(x, timestep, context, transformer_options=skipped)
+        without = dropped(x, timestep, context, transformer_options={})
+    assert torch.equal(with_skip, without), (
+        "moss_image block surface: an identity skip on block 1 no longer equals dropping block 1")
+
+
+def _assert_skip_layer_guidance_simple_seam() -> None:
+    """ComfyUI's SkipLayerGuidanceDiTSimple, which the DGX Monarch carrier applies as is.
+
+    The Worker runs the node's own ``execute`` on the render clone
+    (actor/guidance_render.py), and the carrier node copies its widgets, so the
+    widget names, order, defaults and ranges are a contract. Digit-free layer
+    strings leave the model untouched; inside the window the installed
+    function makes exactly two ``calc_cond_batch`` calls, ``[cond, None]`` with
+    the caller's options and ``[None, uncond]`` with an identity
+    ``("single_block", k)`` replacement in a copied options dict, and returns
+    their outputs unchanged; outside the window and with no uncond (CFG 1) it
+    makes one ordinary call. Two single-cond calls are why cfg2 refuses an
+    active skip, and the copied dict is what every sequence-parallel rank skips
+    alike.
+    """
+    from comfy_extras.nodes_slg import SkipLayerGuidanceDiTSimple
+
+    from dgx_monarch.adapters.moss_image_seams import is_identity_block_patch
+
+    inputs = {item.id: item for item in SkipLayerGuidanceDiTSimple.define_schema().inputs}
+    assert list(inputs) == ["model", "double_layers", "single_layers", "start_percent", "end_percent"], (
+        f"skip layer guidance seam: the node's inputs are now {list(inputs)}")
+    assert (inputs["double_layers"].default, inputs["single_layers"].default) == ("7, 8, 9", "7, 8, 9"), (
+        "skip layer guidance seam: the layer defaults moved")
+    for name, default in (("start_percent", 0.0), ("end_percent", 1.0)):
+        item = inputs[name]
+        assert (item.default, item.min, item.max, item.step) == (default, 0.0, 1.0, 0.001), (
+            f"skip layer guidance seam: {name} is now {item.default} in [{item.min}, {item.max}] "
+            f"by {item.step}")
+
+    patcher = _tiny_moss_patcher()
+    for layers in ("", ", ;"):
+        same = SkipLayerGuidanceDiTSimple.execute(patcher, 0.0, 1.0, double_layers=layers,
+                                                  single_layers=layers)[0]
+        assert same is patcher, f"skip layer guidance seam: layers {layers!r} no longer leave the model as is"
+    patched, conds, calls, result = _moss_slg_step(patcher, 0.5)
+    assert patched is not patcher and "sampler_calc_cond_batch_function" not in patcher.model_options, (
+        "skip layer guidance seam: execute no longer patches a clone")
+    assert [call[0] for call in calls] == [[conds[0], None], [None, conds[1]]], (
+        f"skip layer guidance seam: inside the window the calls are {[call[0] for call in calls]}")
+    assert calls[0][1] is patched.model_options, (
+        "skip layer guidance seam: the cond call no longer gets the caller's options")
+    skip_options = calls[1][1]
+    dit = skip_options["transformer_options"]["patches_replace"]["dit"]
+    assert skip_options is not patched.model_options and set(dit) == {("single_block", 1)} and (
+        is_identity_block_patch(dit[("single_block", 1)])), (
+        "skip layer guidance seam: the uncond call no longer carries one identity skip in a copied dict")
+    assert "patches_replace" not in patched.model_options.get("transformer_options", {}), (
+        "skip layer guidance seam: the skip leaked into the caller's options")
+    assert result[0] is calls[0][2][0] and result[1] is calls[1][2][1], (
+        "skip layer guidance seam: the function no longer returns the two outputs unchanged")
+    # end 0.5 maps through shift 5 to sigma 0.8333, so sigma 0.5 sits outside.
+    patched, conds, calls, result = _moss_slg_step(patcher, 0.5, end=0.5)
+    assert [call[0] for call in calls] == [conds] and calls[0][1] is patched.model_options, (
+        "skip layer guidance seam: outside the window the step is no longer one ordinary call")
+    _patched, conds, calls, _result = _moss_slg_step(patcher, 0.5, uncond=False)
+    assert [call[0] for call in calls] == [conds], (
+        "skip layer guidance seam: with no uncond (CFG 1) the step is no longer one ordinary call")
+
+
+def _assert_lora_shape_changing_set_seam() -> None:
+    """The shape test the LoRA shape guard runs, on ComfyUI's own patch list.
+
+    actor/lora_shape_guard.py refuses class P, before any bake, a patch whose
+    result has another shape than the live weight, with ComfyUI's own
+    predicate ``comfy.lora.calculate_shape(patches, weight, key)``, the one the
+    model patcher uses. Pinned here: a "set" patch of another shape reports the
+    new shape, while diff, LoRA and offset patches keep the weight's; and on
+    master ``convert_lora`` routes a MOSS-Image color and depth control state
+    dict (``video_embedder.weight`` beside ``layers.0.proj.q.lora_A.weight``)
+    to "set" patches that widen ``video_embedder`` from 128 to 384 inputs.
+    """
+    import comfy.lora
+    import comfy.lora_convert
+    import comfy.utils
+    import torch
+
+    patcher = _tiny_moss_patcher()
+    key = "diffusion_model.video_embedder.weight"
+    weight = comfy.utils.get_attr(patcher.model, key)
+    width = weight.shape[0]
+    assert tuple(weight.shape) == (width, 128), f"lora shape-changing set seam: video_embedder is {weight.shape}"
+    generator = torch.Generator().manual_seed(45)
+    control = {"video_embedder.weight": torch.randn(width, 384, generator=generator),
+               "video_embedder.bias": torch.randn(width, generator=generator),
+               "layers.0.proj.q.lora_A.weight": torch.randn(4, width, generator=generator),
+               "layers.0.proj.q.lora_B.weight": torch.randn(width, 4, generator=generator)}
+    converted = comfy.lora_convert.convert_lora(dict(control))
+    assert {"diffusion_model.video_embedder.set_weight",
+            "diffusion_model.video_embedder.bias.set_weight"} <= set(converted), (
+        f"lora shape-changing set seam: convert_lora no longer routes the control LoRA: {sorted(converted)}")
+    key_map = comfy.lora.model_lora_keys_unet(patcher.model, {})
+    patches = comfy.lora.load_lora(converted, key_map)
+    assert patches[key][0] == "set", f"lora shape-changing set seam: the control weight loads as {patches[key][0]!r}"
+    active = patcher.clone()
+    active.add_patches(patches, 1.0)
+    assert tuple(comfy.lora.calculate_shape(active.patches[key], weight, key)) == (width, 384), (
+        "lora shape-changing set seam: calculate_shape no longer reports a set patch's new shape")
+    qkv = "diffusion_model.layers.0.proj.qkv.weight"
+    qkv_weight = comfy.utils.get_attr(patcher.model, qkv)
+    assert comfy.lora.calculate_shape(active.patches[qkv], qkv_weight, qkv) == qkv_weight.shape, (
+        "lora shape-changing set seam: an offset LoRA patch onto proj.qkv now changes its shape")
+    rank4 = {"diffusion_model.layers.0.proj.o.lora_up.weight": torch.randn(width, 4, generator=generator),
+             "diffusion_model.layers.0.proj.o.lora_down.weight": torch.randn(4, width, generator=generator),
+             "diffusion_model.layers.0.proj.o.alpha": torch.tensor(4.0)}
+    plain = patcher.clone()
+    plain.add_patches(comfy.lora.load_lora(rank4, key_map), 1.0)
+    plain.add_patches({key: ("diff", (torch.zeros_like(weight),))}, 1.0)
+    o_key = "diffusion_model.layers.0.proj.o.weight"
+    o_weight = comfy.utils.get_attr(patcher.model, o_key)
+    assert comfy.lora.calculate_shape(plain.patches[o_key], o_weight, o_key) == o_weight.shape, (
+        "lora shape-changing set seam: a plain LoRA patch now changes the weight's shape")
+    assert comfy.lora.calculate_shape(plain.patches[key], weight, key) == weight.shape, (
+        "lora shape-changing set seam: a same-shape diff patch now changes the weight's shape")
+
+
+def _assert_dynamic_prompt_asymmetry_seam() -> None:
+    """CLIP Text Encode's text runs the browser's dynamic prompt pass; Text (Multiline)'s value does not.
+
+    The MOSS-Image layout template (tools/gen_templates.py) types its JSON layout
+    into a Text (Multiline) node and wires it to CLIP Text Encode's ``text``,
+    because the frontend rewrites ``{a|b}`` braces on Queue in a widget that
+    declares ``dynamicPrompts``. A connected input runs no such pass, so the JSON
+    reaches the encoder byte for byte only while the primitive's widget declares
+    none. Pinned here from both schemas as the running ComfyUI publishes them.
+    """
+    import comfy_extras.nodes_primitive as primitives
+    import nodes
+    from comfy_api.internal import _ComfyNodeInternal
+
+    text = nodes.CLIPTextEncode.INPUT_TYPES()["required"]["text"]
+    assert text[0] == "STRING" and text[1].get("dynamicPrompts") is True, (
+        f"dynamic prompt asymmetry seam: CLIPTextEncode.text is now {text!r}")
+    infos = [cls.GET_NODE_INFO_V1() for cls in vars(primitives).values()
+             if isinstance(cls, type) and issubclass(cls, _ComfyNodeInternal)
+             and cls.__module__ == primitives.__name__]
+    info = next((row for row in infos if row.get("name") == "PrimitiveStringMultiline"), None)
+    assert info is not None, (
+        "dynamic prompt asymmetry seam: comfy_extras/nodes_primitive.py no longer defines PrimitiveStringMultiline")
+    value = info["input"]["required"]["value"]
+    assert value[0] == "STRING" and value[1].get("multiline") is True, (
+        f"dynamic prompt asymmetry seam: PrimitiveStringMultiline.value is now {value!r}")
+    assert not value[1].get("dynamicPrompts"), (
+        "dynamic prompt asymmetry seam: PrimitiveStringMultiline.value now declares dynamicPrompts, so the "
+        "browser would rewrite the MOSS-Image layout graph's JSON braces on Queue")
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -4668,6 +5285,11 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("attention keyword handoff", _assert_attention_keyword_handoff_seam),
     ("cfg++ uncond pass", _assert_cfg_pp_uncond_pass_seam),
     ("flux3 conds branch", _assert_flux3_conds_branch_seam),
+    ("moss_image conds", _assert_moss_image_conds_seam),
+    ("moss_image block surface", _assert_moss_image_block_surface_seam),
+    ("skip layer guidance simple", _assert_skip_layer_guidance_simple_seam),
+    ("lora shape-changing set", _assert_lora_shape_changing_set_seam),
+    ("dynamic prompt asymmetry", _assert_dynamic_prompt_asymmetry_seam),
 )
 
 

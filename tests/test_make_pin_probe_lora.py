@@ -45,8 +45,16 @@ HEADERS = {
               "txt_mode_blocks.{n}.k_proj.weight", "content_mode_blocks.image.{n}.qkv.weight",
               "content_mode_blocks.image.{n}.comfy_attention.config",
               "content_mode_blocks.image_cond.{n}.q_proj.weight"],
+    # MOSS-Image: the int8 layout, the fused block qkv beside its scale and pin,
+    # and the text blocks' own fused qkv with its bias.
+    "moss_image": ["layers.{n}.proj.qkv.weight", "layers.{n}.proj.qkv.weight_scale",
+                   "layers.{n}.comfy_attention.config", "layers.{n}.q_norm.weight",
+                   "layers.{n}.proj.o.weight", "layers.{n}.proj.ffn_up_gate.weight",
+                   "text_embedder.blocks.{n}.qkv.weight", "text_embedder.blocks.{n}.qkv.bias",
+                   "text_embedder.blocks.{n}.proj.weight", "text_embedder.proj.weight"],
 }
 HEADERS["flux3_early"] = HEADERS["flux3"]
+HEADERS["moss_image_text"] = HEADERS["moss_image"]
 
 EXPECTED_SELF = {
     "krea2": ["blocks.{n}.attn", "txtfusion.layerwise_blocks.{n}.attn",
@@ -59,6 +67,8 @@ EXPECTED_SELF = {
     "flux3": ["single_blocks.{n}", "txt_mode_blocks.{n}", "content_mode_blocks.image.{n}",
               "content_mode_blocks.image_cond.{n}"],
     "flux3_early": ["txt_mode_blocks.{n}", "content_mode_blocks.image_cond.{n}"],
+    "moss_image": ["layers.{n}", "text_embedder.blocks.{n}"],
+    "moss_image_text": ["text_embedder.blocks.{n}"],
 }
 
 
@@ -172,3 +182,27 @@ def test_flux3_early_is_the_early_subset_and_a_fused_or_split_file_reads_alike(t
     filler = [f"model.diffusion_model.single_blocks.0.x{i}" for i in range(6)]
     assert probe.attention_paths("flux3", fused + filler) == probe.attention_paths(
         "flux3", split + filler) == ["single_blocks.0", "txt_mode_blocks.0"]
+
+
+def test_moss_image_text_is_the_text_subset_and_a_fused_or_split_file_reads_alike(tmp_path):
+    """Each MOSS-Image block owns its attention, so the pin path is the block's.
+    The text pattern is the two text blocks, which the sharded forward leaves
+    replicated, a subset of the family pattern. A fused block (`proj.qkv`, every
+    shipped file) and a split one (`proj.q`) name the same block, and no other
+    projection or the text embedder's own input projection matches."""
+    keys = probe.read_header_keys(_checkpoint(tmp_path, "moss_image", blocks=2))
+    every = probe.attention_paths("moss_image", keys)
+    text = probe.attention_paths("moss_image_text", keys)
+    assert every == ["layers.0", "layers.1", "text_embedder.blocks.0", "text_embedder.blocks.1"]
+    assert text == ["text_embedder.blocks.0", "text_embedder.blocks.1"]
+    assert set(text) < set(every)
+    fused = ["layers.0.proj.qkv.weight", "text_embedder.blocks.0.qkv.weight"]
+    split = ["layers.0.proj.q.weight", "layers.0.proj.k.weight", "layers.0.proj.v.weight",
+             "text_embedder.blocks.0.qkv.weight"]
+    filler = ["layers.0.proj.o.weight", "layers.0.proj.ffn_down.weight", "text_embedder.proj.weight",
+              "text_embedder.blocks.0.proj.weight", "video_embedder.weight",
+              "shared_block_modulation.weight"]
+    prefixed = ["model.diffusion_model." + key for key in fused + filler]
+    assert probe.attention_paths("moss_image", fused + filler) == probe.attention_paths(
+        "moss_image", split + filler) == probe.attention_paths("moss_image", prefixed) == [
+        "layers.0", "text_embedder.blocks.0"]

@@ -1,10 +1,10 @@
 """Pure compile/residency compatibility shared by driver and workers."""
 from __future__ import annotations
 
-# The block compiler (actor/worker_compile.py) compiles only a `blocks` list,
-# and the Flux-family and FLUX.3 models name theirs differently, so compile does
-# nothing for them. Any other family, an unknown one included, is compiled.
-KNOWN_COMPILE_NOOP_FAMILIES = frozenset({"chroma", "flux", "flux2", "flux3", "longcat"})
+# The block compiler (actor/worker_compile.py) compiles only a `blocks` list, and the
+# Flux-family, FLUX.3 and MOSS-Image (`layers`) models name theirs differently, so
+# compile does nothing for them. Any other family, an unknown one included, is compiled.
+KNOWN_COMPILE_NOOP_FAMILIES = frozenset({"chroma", "flux", "flux2", "flux3", "longcat", "moss_image"})
 
 
 def compile_dit_is_known_noop(family: str | None) -> bool:
