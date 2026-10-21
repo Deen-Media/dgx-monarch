@@ -368,8 +368,11 @@ def test_forward_a_marked_patch_that_changes_the_window_rows_refuses_class_p(mon
         _sharded(monkeypatch, model, inputs, options, harness.kernel, harness=harness)
     assert _tag(caught.value).refusal_class is RefusalClass.PHYSICS
     assert "[1, 11, D] window with 11 rotary rows" in str(caught.value)
-    # Block 0 attended on every rank; block 1 never reached the kernel.
-    assert {rank: len(seen) for rank, seen in harness.seen.items()} == dict.fromkeys(range(WORLD), 1)
+    # Block 1 never reached the kernel on any rank, and the refusing rank attended
+    # block 0 first. The other rank may still be waiting in block 0's all-to-all
+    # when the refusal aborts the fabric barrier, so its count is 0 or 1.
+    counts = {rank: len(seen) for rank, seen in harness.seen.items()}
+    assert max(counts.values()) == 1 and set(counts.values()) <= {0, 1}
 
 
 @pytest.mark.parametrize("grid,text,batch", [((3, 3), 6, 1), ((4, 4), 3, 2)], ids=["odd-N", "batch-2"])

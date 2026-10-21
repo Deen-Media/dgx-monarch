@@ -1371,7 +1371,7 @@
     },
     "tests/test_moss_image_comfy_exactness.py": {
       "test_forward_a_marked_patch_is_honoured_and_the_same_patch_unmarked_refuses": "1036cb30f980b7e1",
-      "test_forward_a_marked_patch_that_changes_the_window_rows_refuses_class_p": "b4fa17c90cc4ccda",
+      "test_forward_a_marked_patch_that_changes_the_window_rows_refuses_class_p": "8cde2cecd3daff43",
       "test_forward_a_padded_ring_refuses_class_k_and_a_waived_ring_attends_the_pad": "0e5ebf633ae1eaf4",
       "test_forward_a_subclass_tree_refuses_at_inject_on_the_forced_path": "28fbddd7f7b47874",
       "test_forward_an_attention_keyword_the_dispatcher_drops_refuses_class_p": "a43a3390551bc7b4",
