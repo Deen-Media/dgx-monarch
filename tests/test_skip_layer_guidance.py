@@ -168,6 +168,34 @@ def test_a_node_with_no_digit_in_either_list_is_byte_for_byte_the_no_node_reques
         assert json.dumps(patched.request_dict(), sort_keys=True) == json.dumps(plain, sort_keys=True)
 
 
+def test_a_lone_empty_node_returns_its_input_model_as_stock_does():
+    # comfy_extras/nodes_slg.py SkipLayerGuidanceDiTSimple returns its input
+    # model unchanged when both lists hold no digit.
+    model = _model()
+    patched, = DGXMonarchSkipLayerGuidance().patch(model, **OFF)
+    assert patched is model
+    assert patched.skip_layer_guidance is None
+
+
+def test_an_empty_node_chained_after_an_active_one_keeps_the_earlier_skip():
+    active = _skipping()
+    for value in (OFF, {**OFF, "double_layers": " , "}, {**OFF, "start_percent": 0.5}):
+        chained, = DGXMonarchSkipLayerGuidance().patch(active, **value)
+        assert chained is active
+        assert chained.skip_layer_guidance == SkipLayerGuidanceSpec(**TEMPLATE)
+        assert chained.request_dict()["skip_layer_guidance"] == TEMPLATE
+
+
+def test_an_active_node_chained_after_an_active_one_replaces_it():
+    # Stock's second node sets the one calc_cond_batch function a model holds
+    # (ModelPatcher.set_model_sampler_calc_cond_batch_function), so the later
+    # skip is the only one that runs.
+    later = {"double_layers": "7", "single_layers": "", "start_percent": 0.01, "end_percent": 0.15}
+    chained, = DGXMonarchSkipLayerGuidance().patch(_skipping(), **later)
+    assert chained.skip_layer_guidance == SkipLayerGuidanceSpec(**later)
+    assert chained.request_dict()["skip_layer_guidance"] == later
+
+
 def test_the_skip_survives_every_driver_model_transform_before_the_wire():
     """Each driver step rebuilds the ModelSpec with dataclasses.replace, never field by field."""
     from dgx_monarch.nodes.gate_identity import model_for_request, model_with_worker_overrides

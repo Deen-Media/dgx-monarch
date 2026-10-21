@@ -6337,7 +6337,9 @@ run ComfyUI's own forward and honor the skip on every family.
 **Fix:** keep the skip on a topology the refusal names. On MOSS-Image auto
 picks uly2. To keep cfg2, a sequence-parallel topology on another family, or a
 two-checkpoint guider, clear both layer lists; the node then changes nothing
-and the render runs without the skip. For the shift refusal, wire Model
+and the render runs without the skip. As in stock ComfyUI, a node with empty
+lists keeps a skip an earlier node in the chain set, so clear or remove every
+skip node on the chain. For the shift refusal, wire Model
 Sampling SD3 (DGX Monarch) before the skip node, the order every Worker
 applies them in. The refusal needs no Recycle: the driver raises it before
 dispatch, and a Worker raises it on every rank alike before the first step, so

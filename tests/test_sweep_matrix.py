@@ -2649,14 +2649,129 @@ def test_an_active_skip_refuses_class_p_on_every_cfg_cell(tmp_path):
     assert set(local("moss").values()) == {"render"}
 
 
+def _carrier(model: list, **widgets) -> dict:
+    """A Skip Layer Guidance (DGX Monarch) node on the given model link."""
+    return {"class_type": "DGXMonarchSkipLayerGuidance",
+            "inputs": {"model": model, **_SKIP_WIDGETS, **widgets}}
+
+
+def _skip_graph(**widgets) -> dict:
+    """The krea2 rig graph with the skip node between the loader and the sampler."""
+    graph = _graph("krea2_raw_bf16.safetensors")
+    graph["6"] = _carrier(["2", 0], **widgets)
+    graph["4"]["inputs"]["model"] = ["6", 0]
+    return graph
+
+
 def test_a_skip_off_or_unreadable_node_makes_no_claim():
-    node = {"class_type": "DGXMonarchSkipLayerGuidance", "inputs": dict(_SKIP_WIDGETS)}
-    assert matrix.skip_layer_guidance_on({"1": node})
+    assert matrix.skip_layer_guidance_on(_skip_graph())
     for change in ({"single_layers": ""}, {"single_layers": "none"},
                    {"single_layers": ["7", 0]}, {"start_percent": 2.0}):
-        graph = {"1": {**node, "inputs": {**_SKIP_WIDGETS, **change}}}
-        assert not matrix.skip_layer_guidance_on(graph), change
-    assert matrix.graph_facts({"1": node})["skip_layer_guidance"] is True
+        assert not matrix.skip_layer_guidance_on(_skip_graph(**change)), change
+    assert matrix.graph_facts(_skip_graph())["skip_layer_guidance"] is True
+
+
+def test_an_active_skip_off_every_render_model_chain_makes_no_claim():
+    # The runtime reads the skip off the model the sampler holds
+    # (nodes/model_patch_preflight.py), so a node the sampler never reads
+    # changes no render: one wired nowhere, or only into the scheduler.
+    loose = _graph("krea2_raw_bf16.safetensors")
+    loose["6"] = _carrier(["2", 0])
+    assert not matrix.skip_layer_guidance_on(loose)
+    assert matrix.graph_facts(loose)["skip_layer_guidance"] is False
+    scheduled = {**loose, "7": {"class_type": "DGXMonarchBasicScheduler",
+                                "inputs": {"model": ["6", 0], "scheduler": "simple",
+                                           "steps": 20, "denoise": 1.0}}}
+    assert not matrix.skip_layer_guidance_on(scheduled)
+    # An empty node on the chain borrows nothing from the loose active one.
+    loose["7"] = _carrier(["2", 0], single_layers="")
+    loose["4"]["inputs"]["model"] = ["7", 0]
+    assert not matrix.skip_layer_guidance_on(loose)
+
+
+def test_an_active_skip_on_the_samplers_model_chain_claims_through_other_nodes():
+    def lora(model: list) -> dict:
+        return {"class_type": "DGXMonarchLoraLoader",
+                "inputs": {"model": model, "lora_name": "style.safetensors",
+                           "strength_model": 1.0}}
+
+    lora_after = _skip_graph()
+    lora_after["7"] = lora(["6", 0])
+    lora_after["4"]["inputs"]["model"] = ["7", 0]
+    lora_before = _graph("krea2_raw_bf16.safetensors")
+    lora_before["7"] = lora(["2", 0])
+    lora_before["6"] = _carrier([7, 0])
+    lora_before["4"]["inputs"]["model"] = ["6", 0]
+    # An empty node after an active one keeps its skip, as stock's does.
+    emptied = _skip_graph()
+    emptied["7"] = _carrier(["6", 0], single_layers="")
+    emptied["4"]["inputs"]["model"] = ["7", 0]
+    for graph in (lora_after, lora_before, emptied):
+        assert matrix.skip_layer_guidance_on(graph)
+        assert matrix.graph_facts(graph)["skip_layer_guidance"] is True
+
+
+def test_a_skip_on_either_model_a_guider_takes_claims():
+    graph = {
+        "2": {"class_type": "DGXMonarchUNETLoader", "inputs": {"unet_name": "c.safetensors"}},
+        "3": {"class_type": "DGXMonarchUncondUNETLoader",
+              "inputs": {"unet_name": "u.safetensors"}},
+        "6": _carrier(["3", 0]),
+        "8": {"class_type": "DGXMonarchDualModelGuider",
+              "inputs": {"model": ["2", 0], "model_negative": ["6", 0], "cfg": 4.0}},
+        "9": {"class_type": "DGXMonarchSamplerCustom", "inputs": {"guider": ["8", 0]}},
+    }
+    assert matrix.skip_layer_guidance_on(graph)
+    graph["8"]["inputs"]["model_negative"] = ["3", 0]
+    assert not matrix.skip_layer_guidance_on(graph)
+    graph["6"] = _carrier(["2", 0])
+    graph["8"] = {"class_type": "DGXMonarchCFGGuider",
+                  "inputs": {"model": ["6", 0], "cfg": 4.0}}
+    assert matrix.skip_layer_guidance_on(graph)
+
+
+def test_the_render_model_inputs_name_every_node_that_takes_the_model():
+    # The walk follows the table's inputs, then the input named model on every
+    # node that passes the model on, so a new node that takes the model must
+    # pass it on through that name, render with it, or be listed as reading it.
+    # tests/node_input_contract.json holds every node's ordered inputs and their
+    # types without ComfyUI, and tests/test_node_contract.py pins it to INPUT_TYPES.
+    from dgx_monarch.constants import MODEL_TYPE
+    from dgx_monarch.nodes import NODE_CLASS_MAPPINGS
+
+    contract = json.loads((REPO / "tests" / "node_input_contract.json").read_text())
+    assert set(contract) == set(NODE_CLASS_MAPPINGS)
+    renders, passes = {}, set()
+    for name, sections in contract.items():
+        taken = tuple(field for section in ("required", "optional")
+                      for field, kind, _default in sections.get(section, [])
+                      if kind == MODEL_TYPE)
+        if not taken:
+            continue
+        if MODEL_TYPE in NODE_CLASS_MAPPINGS[name].RETURN_TYPES:
+            assert taken == ("model",), name
+            passes.add(name)
+        elif name not in matrix.MODEL_READ_ONLY_CLASSES:
+            renders[name] = taken
+    assert renders == matrix.RENDER_MODEL_INPUTS
+    assert matrix.MODEL_READ_ONLY_CLASSES <= set(NODE_CLASS_MAPPINGS) - passes
+    assert {matrix.SKIP_LAYER_GUIDANCE_CLASS, matrix.LORA_CLASS} <= passes
+
+
+def test_a_loose_skip_leaves_every_cell_the_label_of_the_graph_without_it(tmp_path):
+    config = _rig(tmp_path)
+    loose = _graph("krea2_raw_bf16.safetensors")
+    loose["6"] = _carrier(["2", 0])
+    (config["out_dir"] / "graphs" / "krea2loose.json").write_text(json.dumps(loose))
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+
+    def labels(template: str) -> dict:
+        return {(cell["preset"], cell["session"], cell["artifact_quant"], cell["attention"],
+                 json.dumps(cell["levers"], sort_keys=True)): cell["label"]
+                for cell in cells if cell["template"] == template}
+
+    assert labels("krea2loose") == labels("krea2") and labels("krea2")
+    assert _pick(cells, "krea2loose", "cfg2", artifact_quant="bf16")["label"] == "render"
 
 
 def test_moss_image_int8_with_a_lora_under_fsdp_refuses_class_p(tmp_path):

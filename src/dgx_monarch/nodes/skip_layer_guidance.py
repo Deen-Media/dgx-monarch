@@ -14,6 +14,13 @@ class DGXMonarchSkipLayerGuidance:
     The names, order, defaults and ranges are stock's, so a graph advisor swap
     keeps every value. Each Worker applies ComfyUI's own node to its render
     clone (actor/guidance_render.py).
+
+    Chained nodes behave as stock's do. Stock returns its input model when both
+    lists hold no digit (comfy_extras/nodes_slg.py SkipLayerGuidanceDiTSimple),
+    so an empty node keeps a skip an earlier node set. An active node installs
+    the one calc_cond_batch function a model holds
+    (ModelPatcher.set_model_sampler_calc_cond_batch_function), so a later
+    active node replaces an earlier one.
     """
 
     @classmethod
@@ -34,9 +41,11 @@ class DGXMonarchSkipLayerGuidance:
     CATEGORY = NODE_CATEGORY
     DESCRIPTION = (
         "Skips the listed layers on the unconditional pass inside the step window on every "
-        "Worker, as ComfyUI's SkipLayerGuidanceDiTSimple does; empty lists change nothing. "
-        "It refuses on a cfg topology, with a two-checkpoint guider, and under sequence "
-        "parallelism on any family but MOSS-Image (docs/TROUBLESHOOTING.md #126)."
+        "Worker, as ComfyUI's SkipLayerGuidanceDiTSimple does. Empty lists change nothing, "
+        "so they do not remove a skip an earlier node in the chain set: clear or remove that "
+        "node instead. A later node with layers replaces an earlier one. It refuses on a cfg "
+        "topology, with a two-checkpoint guider, and under sequence parallelism on any "
+        "family but MOSS-Image (docs/TROUBLESHOOTING.md #126)."
     )
 
     def patch(self, model: ModelSpec, double_layers: str, single_layers: str,
@@ -47,4 +56,7 @@ class DGXMonarchSkipLayerGuidance:
             "start_percent": start_percent,
             "end_percent": end_percent,
         })
+        if spec is None:
+            # Stock returns its input unchanged here, so an earlier skip stands.
+            return (model,)
         return (replace(model, skip_layer_guidance=spec),)

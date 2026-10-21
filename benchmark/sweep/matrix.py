@@ -91,6 +91,23 @@ UNET_CLASSES = ("DGXMonarchUNETLoader", "DGXMonarchUncondUNETLoader")
 SKIP_LAYER_GUIDANCE_CLASS = "DGXMonarchSkipLayerGuidance"
 SKIP_LAYER_GUIDANCE_WIDGETS = ("double_layers", "single_layers", "start_percent",
                                "end_percent")
+# The nodes that render with the mesh model, by the inputs they take it on. The
+# driver preflight reads the skip off the model the render holds and off a
+# two-checkpoint guider's second model (nodes/model_patch_preflight.py), and the
+# Worker belt reads the same request (actor/guidance_render.py), so only a
+# carrier on a chain into one of these inputs changes a render. Every node that
+# passes the model on takes it on an input named model.
+# test_the_render_model_inputs_name_every_node_that_takes_the_model pins both.
+RENDER_MODEL_INPUTS: dict[str, tuple[str, ...]] = {
+    "DGXMonarchKSampler": ("model",), "DGXMonarchKSamplerAdvanced": ("model",),
+    "DGXMonarchKSamplerPipeline": ("model",), "DGXMonarchIdentityGate": ("model",),
+    "DGXMonarchFleetKSampler": ("model",), "DGXMonarchBasicGuider": ("model",),
+    "DGXMonarchCFGGuider": ("model",),
+    "DGXMonarchDualModelGuider": ("model", "model_negative"),
+}
+# The nodes that take the mesh model and never render with it: the scheduler
+# reads only the model's sampling for its sigmas.
+MODEL_READ_ONLY_CLASSES = frozenset({"DGXMonarchBasicScheduler"})
 LORA_CLASS, INIT_CLASS = "DGXMonarchLoraLoader", "DGXMonarchInit"
 PACKED_CLASSES = frozenset({"LTXVConcatAVLatent", "EmptyMiniMaxH3LatentAV",
                             "MiniMaxH3ImageToVideo", "MiniMaxH3AddGuide"})
@@ -466,14 +483,40 @@ def missing_media(graph: dict, input_dir: Path) -> list[str]:
     return sorted(set(missing))
 
 
-def skip_layer_guidance_on(graph: dict) -> bool:
-    """Whether a Skip Layer Guidance (DGX Monarch) node in the graph skips a layer.
+def render_model_chain(graph: dict) -> set[str]:
+    """Every node on a model chain a render reads, from each render node up to its loader.
 
-    The runtime's own predicate decides, so layer lists that hold no digit
-    read off, as the node freezes them to no skip at all. A node whose widgets
-    the graph wires instead of writing makes no claim here.
+    The walk follows each input RENDER_MODEL_INPUTS names, then the input
+    named model on every node above it, so a node wired nowhere, or only into
+    the scheduler, is on no chain.
     """
-    for node in graph.values():
+    links = [node["inputs"].get(name) for node in graph.values()
+             for name in RENDER_MODEL_INPUTS.get(node["class_type"], ())]
+    chain: set[str] = set()
+    while links:
+        link = links.pop()
+        if not (isinstance(link, list) and len(link) == 2 and str(link[0]) in graph):
+            continue
+        node_id = str(link[0])
+        if node_id not in chain:
+            chain.add(node_id)
+            links.append(graph[node_id]["inputs"].get("model"))
+    return chain
+
+
+def skip_layer_guidance_on(graph: dict) -> bool:
+    """Whether a Skip Layer Guidance (DGX Monarch) node on a render's model chain skips a layer.
+
+    The runtime reads the skip off the model a render holds, so a node off
+    every render_model_chain claims nothing. One active node on a chain makes
+    the render's skip active: a later node with empty lists keeps it and a
+    later active one replaces it, as stock's chained nodes do. The runtime's
+    own predicate decides, so layer lists that hold no digit read off, as the
+    node freezes them to no skip at all. A node whose widgets the graph wires
+    instead of writing makes no claim here.
+    """
+    for node_id in render_model_chain(graph):
+        node = graph[node_id]
         if node["class_type"] != SKIP_LAYER_GUIDANCE_CLASS:
             continue
         try:
