@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { frameTarget } from './mediaPlayback.ts';
 import { renderComponent, visibleText } from './renderHarness.js';
 
@@ -30,4 +31,16 @@ test('the viewer footer formats the recorded time like every other view', async 
   );
   assert.ok(footer.includes(`· a · ${new Date(created * 1000).toLocaleString()}`), footer);
   assert.doesNotMatch(footer, /1792522149/);
+});
+
+test('a short window scrolls the viewer instead of collapsing the metadata panel', () => {
+  // At 1024x600 a video's Details panel once shrank to zero height in the viewer's flex column.
+  const css = readFileSync(new URL('./styles/viewer.css', import.meta.url), 'utf8');
+  const rule = (selector: string) => {
+    const match = css.match(new RegExp(`^${selector.replace('.', '\\.')} \\{([^}]*)\\}`, 'm'));
+    assert.ok(match, selector);
+    return match[1];
+  };
+  assert.match(rule('.metadata-panel'), /flex-shrink: 0;/);
+  assert.match(rule('.viewer'), /overflow-y: auto;/);
 });

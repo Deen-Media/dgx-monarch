@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20. Status: **scoped local validation on earlier bundle builds; draft acceptance remains incomplete**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21. Status: **scoped local validation; the browser rows ran headless on the shipped bundle; draft acceptance remains incomplete**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -40,29 +40,49 @@ and revision rather than fetched on every snapshot poll.
 
 ## Browser evidence
 
-These checks ran on earlier builds of the bundle than the one this branch
-ships, and their records name no browser, browser version or bundle hash. File
-times place the phone, upload, mask and generation-activity checks before the
-last source change of that round. A raw record survives for two rows only,
-responsive routes and image previews. Read each row as evidence about an
-earlier build until the
-[browser procedure](../studio/tests/README.md#browser-checks) repeats it on the
-shipped bundle. The video row's frame stepping relied on a fixture record that
-carried a frame rate; ComfyUI reports no frame rate for the videos it saves, so
-Studio does not offer frame stepping for generated videos.
+On 2026-10-21 the ten rows below were repeated on the shipped bundle, following
+the [browser procedure](../studio/tests/README.md#browser-checks). A first run on
+the previous bundle found the video metadata panel at zero height at 1024×600.
+The viewer fix that the video row describes was made, the bundle was rebuilt, and
+all ten rows ran again on the rebuilt bundle; the results below come from that
+second run. The bundle was the set that `RESOURCE_SHA256` names:
+`index-DPkdXJyt.js`
+(`15b3abf8f7656f30c14a5fe77eff749abd022907f8d736962eb7913557930566`),
+`index-Daeeztpe.css`
+(`8d9d95443d0baecd7bc1b2391fff05559bc6e8fc81daf4ba2e40ed0df51e2a82`) and
+`index.html` (`f202c2777cc63909e74bbb18ac5ebc8b1b961a30102325dcef64a70f62db2152`).
+The companion served those bytes unchanged. The browser was Mozilla Firefox
+158.0, build 20261007201254, headless on Ubuntu 24.04.5 LTS for arm64, driven
+through WebDriver BiDi with real pointer and key input. Every row ran at
+360×800, 390×844, 768×1024 and 1024×600 viewports, and the motion rows ran again
+in a profile that reports reduced motion. No run logged a console message. The
+results file holds every measurement and names a screenshot for each row and
+viewport. It is kept in the maintainer's private evidence store, outside the
+repository and the packages, and its SHA-256 is
+`4298bdb94bda062ccd2652648c9b1403e2df6379e4abbe943ac85ba25764797e`. Every row
+passed at each viewport where its check applies. The earlier runs
+that these rows replace used earlier builds of the bundle and recorded no
+browser, browser version or bundle hash.
 
 | Check | Observed result and scope |
 |---|---|
-| Responsive routes | All eight routes were opened at 360×800, 390×844, 768×1024 and 1024×600 browser viewport sizes. Page and main-content horizontal overflow measured zero in those fixture states. Expanded controls and arbitrary user content remain additional state combinations. |
-| Phone controls | Inspected phone inputs and selects used 16px text and 44px height. Native phone operating-system behavior was not tested. |
-| Palette and motion | Palette search received focus immediately; its reveal was 200ms. With reduced motion enabled, dialog, backdrop and disclosure animations were absent. A short disclosure-closing sample captured 23 frames with a maximum interval of 16.7ms; this is local interaction evidence, not a general frame-rate guarantee. |
-| Image previews | Portrait 120×480, landscape 480×120, square 256×256, wide 1024×64 and tall 64×1024 previews had zero measured aspect-ratio and centering error in the tested layout. |
-| Image upload | The uploaded portrait decoded to the exact expected 230,400 RGBA bytes at 120×480. |
-| Mask alignment | Canvas bounds matched the source preview. A centered click produced an uploaded mask bounding box of `(43, 224, 76, 257)`, with center alpha 0 and corner alpha 255, matching the inverse-alpha mask convention. |
-| Video controls | A 24fps fixture advanced to approximately 0.041666 seconds with Next frame and returned to zero with Previous frame. Mute and loop toggles worked; video metadata expanded on the phone layout. This does not establish synchronization across every codec or real device. |
-| Generation activity | The whole viewer border used a 2.4-second opacity animation while generation was active and did not intercept pointer events. Reduced motion disabled both the activity frame and logo animation. |
-| Editing and saved state | Editing a reviewed grid invalidated its confirmed submit state. Renaming a preset while a different draft was active retained the preset's original values. Enter preserved two lines in the multiline field. |
-| Operation review | A review and durable receipt were inspected. No host operation was applied. |
+| Responsive routes | All eight routes were opened at all four viewports after jobs, uploads, grids, presets and operation reviews existed. Page and main-content horizontal overflow measured zero for every route. Arbitrary user content and other expanded states remain additional combinations. |
+| Phone controls | At 360 and 390 pixels wide, all 32 visible inputs, selects and textareas across the eight routes used 16px text and at least 44px height. The rule applies up to 760 pixels wide, so the 768×1024 and 1024×600 viewports keep desktop sizing. Native phone operating-system behavior was not tested. |
+| Palette and motion | Palette search held focus two frames after a pointer click or Ctrl+K opened the palette, and took focus 3ms to 12ms after a scripted open. Escape closed the palette and returned focus to its button. The dialog and backdrop reveals were declared at 200ms, and the dialog's finished 201ms to 218ms after opening. With reduced motion enabled, neither animated. A disclosure-closing sample captured 35 or 36 frames with a longest interval of 17.2ms to 17.5ms in headless Firefox's software compositor; this is local interaction evidence, not a frame-rate guarantee. |
+| Image previews | Portrait 120×480, landscape 480×120, square 256×256, wide 1024×64 and tall 64×1024 previews filled their frames at every viewport, with at most 0.053 percent aspect-ratio error and 0.017px centering error. |
+| Image upload | At every viewport the uploaded portrait came back from the fixture as 120×480 RGBA, 230,400 decoded bytes, with pixels and file bytes identical to the source. |
+| Mask alignment | Canvas bounds matched the source preview at every viewport. A pointer press at the canvas center gave a transparent box 32 to 33 pixels a side, such as `(44, 224, 76, 256)`, centered within 0.24 pixels of the press. Center alpha was 0 and corner alpha 255, matching the inverse-alpha mask convention. |
+| Video controls | A 2-second 24fps H.264 clip decoded, played, paused, muted and looped in the viewer. Frame stepping stayed disabled, because ComfyUI reports no frame rate for the videos it saves. Details opened the metadata panel at its full 260px at every viewport. The panel no longer shrinks, and in a short window the viewer column scrolls to it; before that fix the panel collapsed to zero height at 1024×600. This does not establish synchronization across codecs or real devices. |
+| Generation activity | While a 30-second fixture job ran, the viewer border ran a 2.4-second opacity animation and passed clicks through to the viewer at every viewport. The logo animated at 768 and 1024 pixels wide; the phone layout hides it. Reduced motion stopped both. |
+| Editing and saved state | Editing a reviewed two-cell grid removed its confirmation and submit control. Renaming a preset while a different draft was active kept the preset's original values. Enter kept two lines in the prompt field, also after a tab switch. |
+| Operation review | The read-only version review and its durable record were opened at every viewport. No host operation was applied. The receipt list shows the oldest receipt first. |
+
+Headless Firefox could not show Chromium or Safari behavior, native phone
+operating-system behavior, native select pop-ups or video control internals, or
+frame timing under hardware composition. The run set select values and fired
+`change` instead of using the pop-up. Firefox 158 lacks `interpolate-size`, so
+it never applies the disclosure transition, and the run could not show that
+transition's reduced-motion change.
 
 The earlier [acceptance record](STUDIO_ACCEPTANCE.md) separately records corrupt
 request quarantine, invalid draft refusal, corrupt image/video errors, frame
@@ -71,10 +91,11 @@ Those observations are not expanded into untested claims here.
 
 ## Remaining acceptance
 
-Physical iOS and Android devices, Safari, assistive technology, comprehensive
-keyboard and contrast coverage, every control/state combination, full long-session
-performance and real hardware/service workflows remain **NOT RUN**. Browser
-viewport sizing is not physical-device qualification. Representative inference,
-Worker acknowledgements, native return and fidelity acceptance retain their
-separate gates in [Studio acceptance](STUDIO_ACCEPTANCE.md) and the
+Physical iOS and Android devices, Safari, Chromium, assistive technology,
+comprehensive keyboard and contrast coverage, every control/state combination,
+full long-session performance and real hardware/service workflows remain
+**NOT RUN**. Browser viewport sizing is not physical-device qualification.
+Representative inference, Worker acknowledgements, native return and fidelity
+acceptance retain their separate gates in
+[Studio acceptance](STUDIO_ACCEPTANCE.md) and the
 [performance record](STUDIO_PERFORMANCE.md).

@@ -227,9 +227,6 @@
     height: min(65vh, 480px);
     min-height: 240px;
   }
-  .metadata-panel {
-    flex-shrink: 0;
-  }
   .metadata-panel dl {
     grid-template-columns: minmax(80px, 0.8fr) minmax(0, 1.2fr);
   }

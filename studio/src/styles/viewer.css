@@ -5,6 +5,9 @@
   min-height: 0;
   flex: 1;
   padding: 27px 27px 0;
+  /* A short window scrolls the column instead of squeezing the metadata panel. */
+  overflow-y: auto;
+  scrollbar-width: thin;
 }
 .section-heading {
   display: flex;
@@ -199,6 +202,7 @@
   padding: 6px 9px;
 }
 .metadata-panel {
+  flex-shrink: 0;
   max-height: 260px;
   overflow: auto;
 }
