@@ -351,3 +351,36 @@ def test_experiment_record_freezes_grid_definition_and_live_outcome_without_disp
         assert restored["grid_source"]["state"] == "unavailable"
         assert len(jobs.client.calls) == calls and len(store.all("jobs")) == 4
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("data", [{"timestamp": 10**400}, {"timestamp": float("nan")},
+                                  {"nodes": "deep"}, {"value": float("inf"), "max": 10}])
+def test_unboundable_driver_events_are_ignored_without_raising(store, data):
+    from dgx_monarch.studio.job_observations import observation
+
+    if data.get("nodes") == "deep":
+        nested: dict = {}
+        for _ in range(5000):
+            nested = {"n": nested}
+        data = {"nodes": nested}
+    message = {"type": "progress_state" if "nodes" in data else "progress", "data": {"prompt_id": "prompt", **data}}
+    assert observation(message) is None
+    saved_job(store)
+    Jobs(store, Driver()).consume_event(message)
+    assert store.get("jobs", "job")["state"] == "queued"
+
+
+def test_telemetry_freshness_survives_a_backward_wall_clock_step(store):
+    import time
+
+    async def scenario():
+        jobs = Jobs(store, Driver())
+        # The wall clock stepped back an hour after this sample was observed long ago.
+        jobs.telemetry = {"state": "connected", "observed_at": time.time() + 3600,
+                          "sample": {"diagnostic_identity": {"stale": True}, "comfy": {}}}
+        jobs.telemetry_clock = time.monotonic() - 120
+        assert "monarch_diagnostic_identity" not in await jobs.capture_runtime()
+        jobs.telemetry_clock = time.monotonic()
+        runtime = await jobs.capture_runtime()
+        assert runtime["monarch_diagnostic_identity"] == {"stale": True}
+    asyncio.run(scenario())

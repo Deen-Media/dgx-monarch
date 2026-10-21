@@ -1,7 +1,9 @@
 <script lang="ts">
   import type { StudioClient } from '../api';
   import type { Job } from '../contracts';
+  import { untrack } from 'svelte';
   import { formatTime } from '../model';
+  import { emptyQueueText, isActive, keptPage, settledJobs, type SnapshotIds } from '../queueRows';
   import JobProvenance from '../components/JobProvenance.svelte';
   let {
     client,
@@ -23,25 +25,19 @@
   let selectedJob = $state<Job | null>(null);
   let history = $state<Job[]>([]),
     cursor = $state<string | null>(null),
-    loading = $state(false),
+    loading = $state(true),
     query = $state(''),
     status = $state(''),
     page = $state(0);
   let revision = 0;
-  const active = $derived(
-    jobs.filter((job) =>
-      ['submitting', 'accepted', 'queued', 'running', 'cancel_requested', 'unknown'].includes(
-        job.state,
-      ),
-    ),
-  );
+  const active = $derived(jobs.filter(isActive));
   const terminal = $derived(
     history
       .map((job) => jobs.find((current) => current.id === job.id) ?? job)
       .filter((job) => !active.some((current) => current.id === job.id)),
   );
   const shown = $derived([...active, ...terminal.slice(page * 40, (page + 1) * 40)]);
-  async function load(reset = false) {
+  async function load(reset = false, keepPosition = false) {
     const ticket = reset ? ++revision : revision;
     loading = true;
     const params = new URLSearchParams({ limit: '100', q: query, status });
@@ -54,13 +50,21 @@
       const replace = reset || history.length >= 2000;
       history = replace ? result.items : [...history, ...result.items];
       cursor = result.next_cursor;
-      if (replace) page = 0;
+      if (replace) page = keepPosition ? keptPage(page, history.length) : 0;
     } catch (cause) {
       fail(cause);
     } finally {
       if (ticket === revision) loading = false;
     }
   }
+  let observed: SnapshotIds | null = null;
+  $effect(() => {
+    // A job that settles after the history load must come back through history.
+    const { next, settled } = settledJobs(observed, jobs);
+    observed = next;
+    if (settled.length) untrack(() => void load(true, true));
+  });
+  const empty = $derived(emptyQueueText(query, status, loading));
   $effect(() => {
     const search = query + status;
     const timer = setTimeout(() => {
@@ -135,8 +139,8 @@
         {#if selectedJob?.id === job.id}<JobProvenance {client} summary={job} />{/if}
       </div>
     </details>{/each}{#if !shown.length}<div class="empty-state">
-      <h2>No recorded jobs yet.</h2>
-      <p>Review and submit a workflow to create the first immutable job record.</p>
+      <h2>{empty.title}</h2>
+      <p>{empty.detail}</p>
     </div>{/if}
   <div class="pagination">
     <button disabled={page === 0} onclick={() => page--}>Previous history page</button><span

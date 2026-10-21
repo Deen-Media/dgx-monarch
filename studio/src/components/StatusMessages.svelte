@@ -1,26 +1,28 @@
 <script lang="ts">
   import type { Connection } from '../connection.svelte';
   import type { Submission } from '../submission.svelte';
+  import type { DraftAutosave } from '../draftAutosave.svelte';
+  import type { Draft } from '../model';
   let {
     messages,
     connection,
     submission,
+    autosave,
+    draft,
     busy,
     ondismiss,
-    onexport,
-    onkeep,
     onload,
     connect,
     reconcilePending,
     retryPending,
   }: {
-    messages: { notice: string; error: string; localError: string; draftConflict: boolean };
+    messages: { notice: string; error: string; localError: string };
     connection: Connection;
     submission: Submission;
+    autosave: DraftAutosave;
+    draft: Draft;
     busy: boolean;
     ondismiss: (kind: 'notice' | 'error') => void;
-    onexport: () => void;
-    onkeep: () => void;
     onload: () => void;
     connect: () => Promise<void>;
     reconcilePending: () => Promise<void>;
@@ -41,11 +43,24 @@
     >
   </div>{/if}
 {#if messages.localError}<div class="notice warning" role="alert">
-    {messages.localError}<button onclick={() => onexport()}>Export draft</button>
+    <span>{messages.localError}</span>
   </div>{/if}
-{#if messages.draftConflict}<div class="notice warning" role="alert">
+{#if autosave.retained}<div class="notice warning" role="alert">
+    <span
+      >The saved draft in this browser could not be restored. Automatic saves are paused so it is
+      not overwritten.</span
+    ><button onclick={() => autosave.exportSaved()}>Export saved record</button><button
+      onclick={() => autosave.resume()}>Allow saving over it</button
+    >
+  </div>{/if}
+{#if autosave.storageError}<div class="notice warning" role="alert">
+    <span>{autosave.storageError}</span><button onclick={() => autosave.exportDraft(draft)}
+      >Export this draft</button
+    >
+  </div>{/if}
+{#if autosave.conflict}<div class="notice warning" role="alert">
     <span>Another tab saved a newer draft. Automatic saves are paused.</span><button
-      onclick={onkeep}>Export this tab, then keep it</button
+      onclick={() => autosave.keep(draft)}>Export this tab, then keep it</button
     ><button onclick={onload}>Load newer draft</button>
   </div>{/if}
 {#if connection.connected && connection.state !== 'connected'}<div class="notice warning">
@@ -60,9 +75,9 @@
     completion and new output discovery may be delayed.
   </div>{/if}
 {#if submission.pending}<div class="notice warning" role="alert">
-    <span>A submission has an unresolved outcome. Its request identity is retained.</span><button
-      disabled={busy}
-      onclick={reconcilePending}>Reconcile request</button
+    <span
+      >{submission.outcome || 'A submission has an unresolved outcome.'} Its request identity is retained.</span
+    ><button disabled={busy} onclick={reconcilePending}>Reconcile request</button
     >{#if submission.confirmedMissing}<button disabled={busy} onclick={retryPending}
         >Retry retained request</button
       >{/if}

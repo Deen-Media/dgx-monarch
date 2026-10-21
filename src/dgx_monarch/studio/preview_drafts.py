@@ -50,7 +50,14 @@ def _styles(request: dict[str, Any], bindings: dict[str, Any], values: dict[str,
     return {"styles": expanded, "style_bindings": canonical_mapping}
 
 
-def prepare_preview(request: dict[str, Any], schema: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+def prepare_preview(request: dict[str, Any], schema: dict[str, Any], *,
+                    view: dict[str, Any] | None = None) -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    """Compile a draft against `view`, a per-request schema view (by default the driver schema).
+
+    The view only widens image upload choices with stored uploads the draft
+    names; values are still checked strictly against it.
+    """
+    schema = schema if view is None else view
     workflow = object_value(request.get("workflow"), "workflow")
     values = deepcopy(object_value(request.get("values", {}), "values"))
     inspection = inspect_workflow(workflow, schema)

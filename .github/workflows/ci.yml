@@ -56,7 +56,7 @@ jobs:
           python tools/check_dependencies.py
           python -c 'import torch; actual = (torch.__version__, torch.version.cuda, torch.cuda.is_available()); assert actual == ("2.12.0+cu132", "13.2", False), actual'
       - name: ruff
-        run: ruff check __init__.py src tests benchmark tools
+        run: ruff check __init__.py src tests benchmark tools studio/tests
       - name: Trust citations
         run: python tools/repin_trust_citations.py --check
       - name: Protected test inventory
@@ -81,7 +81,7 @@ jobs:
         run: bash scripts/test_cpu.sh
       - name: Surface artifact checks
         run: |
-          python -m compileall -q __init__.py src benchmark tests tools
+          python -m compileall -q __init__.py src benchmark tests tools studio/tests
           python tools/gen_templates.py --check
           python tools/gen_brand_assets.py --check
           python tools/gen_template_cards.py --check
@@ -289,6 +289,40 @@ jobs:
           sdist-smoke/bin/python -m pip install --no-deps dist/*.tar.gz
           sdist-smoke/bin/dgxm version
           sdist-smoke/bin/dgxm-studio --check
+      - name: Wheel ships exactly the hashed Studio resources
+        if: matrix.python == '3.12'
+        run: |
+          python - dist/*.whl <<'PY'
+          # The served Studio files in the wheel must be exactly the keys of the
+          # wheel's own RESOURCE_SHA256 table, with the same bytes, so a
+          # packaging change cannot drop, add or alter a file the companion serves.
+          import ast, hashlib, json, sys, zipfile
+
+          if len(sys.argv) != 2:
+              raise SystemExit(f"expected one wheel, got {sys.argv[1:]}")
+          with zipfile.ZipFile(sys.argv[1]) as archive:
+              table = ast.parse(archive.read("dgx_monarch/studio/resource_hashes.py"))
+              expected = next(
+                  ast.literal_eval(node.value)
+                  for node in table.body
+                  if isinstance(node, ast.Assign)
+                  and [getattr(target, "id", None) for target in node.targets] == ["RESOURCE_SHA256"]
+              )
+              shipped = {
+                  name.removeprefix("dgx_monarch/"): hashlib.sha256(archive.read(name)).hexdigest()
+                  for name in archive.namelist()
+                  if name.startswith(("dgx_monarch/studio/data/", "dgx_monarch/studio/static/"))
+                  and not name.endswith("/")
+              }
+          if shipped != expected:
+              raise SystemExit(json.dumps({
+                  "wheel_missing": sorted(set(expected) - set(shipped)),
+                  "wheel_extra": sorted(set(shipped) - set(expected)),
+                  "changed": sorted(name for name in set(expected) & set(shipped)
+                                    if expected[name] != shipped[name]),
+              }, indent=2))
+          print(f"The wheel ships all {len(shipped)} hashed Studio resources.")
+          PY
       - name: dgxm smoke
         run: |
           dgxm version

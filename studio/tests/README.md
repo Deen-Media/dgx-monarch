@@ -5,41 +5,119 @@ HTTP fixture. It has one named `StudioCPUFixture` node, performs no inference,
 and returns a small deterministic RGB PNG. It cannot contact hardware or execute
 management operations. Its telemetry explicitly identifies the CPU fixture.
 
+The fixture answers in the shapes ComfyUI uses. POST `/prompt` keeps a
+client-supplied prompt id and refuses one that is not a canonical UUID,
+`/history/{prompt_id}` stays empty until the prompt finishes, and uploads stay
+in memory and can be read back through `/view`. Output descriptors carry only a
+file name, subfolder and type, because ComfyUI reports no width, height, frame
+rate or duration for the files it saves.
+
+Keep fixture files and evidence in a directory that only you can read, outside
+the repository. Do not use a temporary directory that the host clears:
+
+```sh
+SCRATCH="$HOME/.local/state/dgxm-studio-fixture"
+mkdir -p "$SCRATCH" && chmod 700 "$SCRATCH"
+```
+
 Start the fixture and export a workflow:
 
 ```sh
-python3 studio/tests/mock_driver.py --port 18189 --export-workflow /tmp/studio-cpu-workflow.json
+python3 studio/tests/mock_driver.py --port 18189 --export-workflow "$SCRATCH/studio-cpu-workflow.json"
 ```
 
 In a Python environment with the optional Studio dependency installed, start a
-separate companion with a new temporary state directory:
+separate companion in a terminal, with its own state directory:
 
 ```sh
-python -m dgx_monarch.studio --port 18221 --driver http://127.0.0.1:18189 --state-dir /tmp/studio-cpu-smoke
+python -m dgx_monarch.studio --port 18221 --driver http://127.0.0.1:18189 --state-dir "$SCRATCH/companion"
 ```
 
 Do not pass a cluster configuration, a driver service, or `--allow-management`.
-Copy the ephemeral owner token into a mode-0600 temporary file, then run:
+Put the companion's owner token in a mode-0600 file, then run:
 
 ```sh
-python3 studio/tests/http_smoke.py --companion http://127.0.0.1:18221 --token-file /tmp/studio-token
+python3 studio/tests/http_smoke.py --companion http://127.0.0.1:18221 --token-file "$SCRATCH/token"
 ```
 
 The smoke verifies workflow inspection, submission preview, idempotent duplicate
 submission, request reconciliation, terminal job state, immutable workflow/seed,
 and authenticated artifact retrieval through the real companion HTTP routes.
 It refuses drivers without the explicit fixture node and refuses enabled
-mutation controls. It does not invoke the available read-only diagnostics.
+mutation controls. It does not invoke the available read-only diagnostics. It
+prints a JSON report whose check flags come from the companion's responses, and
+exits 1 when any check fails. `tests/test_studio_tooling.py` runs the same smoke
+against an in-process companion on every CPU test run.
 
-For manual browser verification, open that separate companion, enter its token,
-and import `/tmp/studio-cpu-workflow.json`. Edit the visible prompt/seed controls,
-review and submit, then select the resulting PNG from recent outputs. This is
-synthetic integration evidence only; it is not GPU generation or fidelity proof.
-Terminate both fixture processes and delete the temporary token when finished.
+## Browser checks
 
-The HTTP smoke passed during development. Browser verification against this
-fixture subsequently covered workflow import, typed controls, immutable review,
-a completed synthetic job, a two-cell grid and durable thumbnail gallery.
-Offline-driver operation, durable records, navigation and presentation mode had
-earlier browser coverage. Complete keyboard, screen-reader, video and performance
-acceptance remains required; see `docs/STUDIO_ACCEPTANCE.md`.
+The [interface QA record](../../docs/STUDIO_INTERFACE_QA.md#browser-evidence)
+lists checks that a person runs in a browser against this fixture. Run them on
+the bundle you intend to ship, not an earlier build, and repeat them after any
+change to `studio/src`.
+
+1. Build the bundle and regenerate the inventory as `studio/README.md`
+   describes. The `studio/static/assets/` entries of `RESOURCE_SHA256` in
+   `src/dgx_monarch/studio/resource_hashes.py` name the bundle under test and
+   give its SHA-256 hashes.
+2. Start the fixture with a 30-second job, so that generation stays visible,
+   and a short MP4 of your own for the video row:
+
+   ```sh
+   python3 studio/tests/mock_driver.py --port 18189 --job-seconds 30 \
+     --video "$SCRATCH/clip.mp4" --export-workflow "$SCRATCH/studio-cpu-workflow.json"
+   ```
+
+3. Start the companion as above, open `http://127.0.0.1:18221`, enter the token
+   and import the exported workflow.
+4. Write down the date, the browser name and version, the operating system, the
+   viewport or device, and the bundle hashes from step 1.
+5. Work through each check below. Keep screenshots, fetched files and
+   measurements in a new mode-0700 evidence directory outside the repository,
+   called `$EVIDENCE` below.
+6. List each check's outcome in one results file in that directory. Cite the
+   file in the QA record by its SHA-256 (`sha256sum results.json`) and by a
+   description of where it is kept, never by a temporary path.
+
+The checks:
+
+- **Responsive routes.** Open all eight routes at 360x800, 390x844, 768x1024
+  and 1024x600 viewports. For the page and for `main`, compare `scrollWidth`
+  with `clientWidth` in the developer console and record any overflow.
+- **Phone controls.** At 390x844, read the computed font size and height of
+  the inputs and selects.
+- **Palette and motion.** Open the command palette, confirm that the search
+  field takes focus, and time the reveal. Turn on reduced motion in the
+  browser's rendering settings and confirm that dialogs, backdrops and
+  disclosures no longer animate. Record a performance trace while a disclosure
+  closes and note the longest frame interval.
+- **Image previews.** On the Assets tab, select PNGs of 120x480, 480x120,
+  256x256, 1024x64 and 64x1024 pixels, and measure each preview's aspect ratio
+  and centering in its frame.
+- **Image upload.** Upload the 120x480 portrait. Fetch the stored copy with
+  `curl -o "$EVIDENCE/upload.png" "http://127.0.0.1:18189/view?type=input&subfolder=studio&filename=NAME"`,
+  where `NAME` is the file name Studio shows, and confirm that it decodes to
+  120x480 RGBA, which is 230,400 bytes.
+- **Mask alignment.** Paint a mask at the center of the portrait, upload it,
+  fetch it the same way, and record its bounding box and the alpha at the
+  center and at a corner. ComfyUI's LoadImage reads transparent pixels as the
+  masked area.
+- **Video controls.** Select the video output. Check play, pause, mute, loop
+  and the metadata panel on the phone layout. Studio offers frame stepping only
+  when a record carries a frame rate, and ComfyUI reports none for the videos it
+  saves, so record whether stepping is disabled. Do not add a frame rate to the
+  fixture to test stepping.
+- **Generation activity.** Submit the workflow and, while the 30-second job
+  runs, confirm that the viewer border animates without blocking clicks. With
+  reduced motion on, confirm that the border and the logo stop animating.
+- **Editing and saved state.** Review a two-cell grid, edit it, and confirm that
+  the confirmed submit state clears. Rename a saved preset while another draft
+  is active and confirm that the preset keeps its own values. Enter two lines in
+  a multiline field and confirm that both remain.
+- **Operation review.** Review the read-only version operation and open its
+  durable receipt. Do not apply any host operation.
+
+Stop both fixture processes and delete the token file when you finish. These
+checks are synthetic integration evidence only; they are not GPU generation,
+accessibility, fidelity or performance proof. See `docs/STUDIO_ACCEPTANCE.md`
+for the acceptance that remains.

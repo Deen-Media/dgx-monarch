@@ -29,9 +29,14 @@ export function initialWorkspace() {
   let layout: { width: number; showTelemetry: boolean; showConsole: boolean } | null = null;
   try {
     saved = localStorage.getItem('dgxm.studio.draft.v1') ?? '';
+  } catch {
+    errors.push('Browser storage is unavailable, so no saved draft was read.');
+  }
+  try {
     draft = saved ? restoreDraft(JSON.parse(saved).draft) : null;
   } catch {
-    errors.push('Local draft could not be restored; the stored record is retained.');
+    // The caller retains `saved` and pauses autosave until the user exports or replaces it.
+    draft = null;
   }
   try {
     const value = JSON.parse(localStorage.getItem('dgxm.studio.layout.v1') ?? 'null');

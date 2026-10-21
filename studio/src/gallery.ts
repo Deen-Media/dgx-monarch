@@ -59,29 +59,61 @@ export function galleryEntries(artifacts: Artifact[], jobs: Job[]): GalleryEntry
     };
   });
 }
-export function filterGallery(entries: GalleryEntry[], filter: GalleryFilter): GalleryEntry[] {
-  const from = filter.from ? new Date(`${filter.from}T00:00:00`).getTime() / 1000 : -Infinity;
-  const until = filter.until ? new Date(`${filter.until}T23:59:59.999`).getTime() / 1000 : Infinity;
-  return entries
-    .filter(
-      (entry) =>
-        (!filter.project || entry.project === filter.project) &&
-        (!filter.query || entry.searchable.includes(filter.query.toLowerCase())) &&
-        (!filter.kind || entry.artifact.kind === filter.kind) &&
-        (!filter.operation || entry.operation === filter.operation) &&
-        (!filter.status || entry.status === filter.status) &&
-        (!filter.model ||
-          entry.models.some((model) => model.toLowerCase().includes(filter.model.toLowerCase()))) &&
-        entry.artifact.created_at >= from &&
-        entry.artifact.created_at <= until,
-    )
-    .sort((a, b) =>
-      filter.sort === 'name'
-        ? a.artifact.filename.localeCompare(b.artifact.filename)
-        : filter.sort === 'oldest'
-          ? a.artifact.created_at - b.artifact.created_at
-          : b.artifact.created_at - a.artifact.created_at,
-    );
+/** Media kinds the companion records; uploads carry their own kinds. */
+export const GALLERY_KINDS = [
+  { value: '', label: 'All media' },
+  { value: 'image', label: 'Images' },
+  { value: 'video', label: 'Video' },
+  { value: 'input', label: 'Uploaded inputs' },
+  { value: 'mask', label: 'Uploaded masks' },
+];
+/** Output states. Intermediate previews are a flag on the artifact, not a state. */
+export const GALLERY_STATES = [
+  { value: '', label: 'All states' },
+  { value: 'succeeded', label: 'succeeded' },
+  { value: 'failed', label: 'failed' },
+  { value: 'cancelled', label: 'cancelled' },
+  { value: 'intermediate', label: 'Intermediate previews' },
+];
+
+/** Build the companion query for the gallery filters; every filter maps to a stored field. */
+export function galleryQuery(
+  filter: GalleryFilter,
+  scope: { projectId: string; width?: string | number | null; height?: string | number | null },
+): string {
+  const params = new URLSearchParams({
+    limit: '100',
+    sort: filter.sort === 'oldest' ? 'oldest' : 'newest',
+  });
+  const day = (value: string, time: string) =>
+    value ? String(new Date(`${value}T${time}`).getTime() / 1000) : '';
+  const options: Record<string, string> = {
+    q: filter.query,
+    kind: filter.kind,
+    operation: filter.operation,
+    model: filter.model,
+    status: filter.status === 'intermediate' ? '' : filter.status,
+    intermediate: filter.status === 'intermediate' ? 'true' : '',
+    project_id: scope.projectId,
+    width: scope.width ? String(scope.width) : '',
+    height: scope.height ? String(scope.height) : '',
+    after: day(filter.from, '00:00:00'),
+    before: day(filter.until, '23:59:59.999'),
+  };
+  for (const [key, value] of Object.entries(options)) if (value) params.set(key, value);
+  return params.toString();
+}
+
+/**
+ * ComfyUI does not report the size of generated outputs, so only uploads carry dimensions.
+ * The size filters are useful only when a loaded row has them.
+ */
+export function hasDimensions(artifacts: Artifact[]): boolean {
+  return artifacts.some((artifact) =>
+    [artifact.metadata?.width, artifact.metadata?.height].some(
+      (value) => typeof value === 'number' && Number.isFinite(value),
+    ),
+  );
 }
 export function virtualRows(
   count: number,

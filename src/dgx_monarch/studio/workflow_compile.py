@@ -7,16 +7,18 @@ from collections.abc import Mapping
 from typing import Any
 
 from .drafts import DraftError, validate_value
-from .workflows import (
-    SCALAR_TYPES,
-    WorkflowError,
-    api_prompt_nodes,
-    binding_id,
-    graph_index,
-    is_api_prompt,
-    node_inputs,
-    widget_values,
+from .widget_values import (
+    DYNAMIC_COMBO,
+    LINKED,
+    MISSING,
+    field_schema,
+    finalize_inputs,
+    is_link,
+    layout_values,
+    link_accepts,
+    resolve_inputs,
 )
+from .workflows import SCALAR_TYPES, WorkflowError, api_prompt_nodes, binding_id, graph_index, is_api_prompt
 
 _DECORATIVE = {"Note", "MarkdownNote"}
 _VIRTUAL = {"PrimitiveNode", "Reroute"}
@@ -53,8 +55,8 @@ def _cycle_check(prompt: Mapping[str, Any]) -> None:
             return
         active.add(identity)
         for value in prompt[identity]["inputs"].values():
-            if isinstance(value, list):
-                visit(str(value[0]))
+            if is_link(value) and value[0] in prompt:
+                visit(value[0])
         active.remove(identity)
         done.add(identity)
 
@@ -66,15 +68,22 @@ def _cycle_check(prompt: Mapping[str, Any]) -> None:
 
 
 def _validate_prompt(prompt: dict[str, Any], info: Mapping[str, Any]) -> dict[str, Any]:
+    """Validate as ComfyUI's validate_inputs does, on its finalized declared inputs.
+
+    ComfyUI skips inputs a node does not declare and still passes them to the
+    node, as rgthree's Power Lora Loader relies on for ``lora_1..N``. Studio
+    keeps them in the prompt and checks only that a link among them names a node.
+    """
     for nid, node in prompt.items():
         definition = info.get(node["class_type"])
         if definition is None:
             raise WorkflowError(f"Node type unavailable: {node['class_type']}")
-        fields = node_inputs(definition)
+        fields = finalize_inputs(definition, node["inputs"])
         declared = {name for name, _, _ in fields}
-        if set(node["inputs"]) - declared:
-            raise WorkflowError(f"Unknown inputs for node {nid}")
-        for name, schema, required in fields:
+        for name, value in node["inputs"].items():
+            if name not in declared and is_link(value) and value[0] not in prompt:
+                raise WorkflowError(f"Link references missing node: {nid}.{name}")
+        for name, spec, required in fields:
             if name not in node["inputs"]:
                 if required:
                     raise WorkflowError(f"Required input is missing: {nid}.{name}")
@@ -90,16 +99,13 @@ def _validate_prompt(prompt: dict[str, Any], info: Mapping[str, Any]) -> dict[st
                 output_types = source_info.get("output", [])
                 if not 0 <= value[1] < len(output_types):
                     raise WorkflowError(f"Link references invalid output slot: {nid}.{name}")
-                source_type = output_types[value[1]]
-                if schema["type"] == "COMBO":
-                    compatible = source_type in {"STRING", "COMBO"}
-                else:
-                    compatible = source_type == schema["type"] or source_type == "*" or schema["type"] == "*"
-                if not compatible:
+                # ComfyUI never type-checks a linked DynamicCombo: the link
+                # selects no option, so the input is not declared there.
+                if spec[0] != DYNAMIC_COMBO and not link_accepts(output_types[value[1]], spec[0]):
                     raise WorkflowError(f"Incompatible input link: {nid}.{name}")
             else:
                 try:
-                    validate_value(value, schema)
+                    validate_value(value, field_schema(name, spec))
                 except DraftError as exc:
                     raise WorkflowError(f"{nid}.{name}: {exc}") from exc
     _cycle_check(prompt)
@@ -122,10 +128,15 @@ def compile_graph(workflow: Mapping[str, Any], info: Mapping[str, Any],
         for nid, node in prompt.items():
             if not isinstance(node.get("inputs"), dict):
                 raise WorkflowError(f"Node {nid} inputs must be an object")
-            for name, _, _ in node_inputs(info.get(node["class_type"], {})):
-                identity = binding_id("root", str(nid), name)
-                if identity in values:
-                    node["inputs"][name] = copy.deepcopy(values[identity])
+
+            def edit(name: str, nid: str = str(nid)) -> Any:
+                identity = binding_id("root", nid, name)
+                return copy.deepcopy(values[identity]) if identity in values else MISSING
+
+            for name, _, _ in resolve_inputs(info.get(node["class_type"], {}), node["inputs"], edit,
+                                             fill_defaults=False):
+                if (value := edit(name)) is not MISSING:
+                    node["inputs"][name] = value
         return _validate_prompt(prompt, info)
     if len(graphs) > 1 or any(node.get("mode", 0) in {2, 4} for node in nodes.values()):
         from .subgraph_compile import compile_subgraphs
@@ -174,8 +185,7 @@ def compile_graph(workflow: Mapping[str, Any], info: Mapping[str, Any],
         definition = info.get(kind)
         if definition is None:
             raise WorkflowError(f"Node type unavailable: {kind}")
-        fields = node_inputs(definition)
-        serialized = widget_values(node, definition)
+        serialized = layout_values(node, definition)
         inputs = {}
         sockets = node.get("inputs", [])
         if not isinstance(sockets, list):
@@ -183,11 +193,20 @@ def compile_graph(workflow: Mapping[str, Any], info: Mapping[str, Any],
         names = [socket.get("name") for socket in sockets if isinstance(socket, dict)]
         if len(set(names)) != len(sockets):
             raise WorkflowError("Duplicate or malformed input sockets")
-        declared = {name for name, _, _ in fields}
-        if set(names) - declared:
-            raise WorkflowError("Custom input sockets require an explicit typed adapter")
         by_name = {socket["name"]: (index, socket) for index, socket in enumerate(sockets)}
-        for name, schema, _ in fields:
+        linked = {name for name, (_, socket) in by_name.items() if socket.get("link") is not None}
+
+        def edit(name: str, nid: str = nid) -> Any:
+            return values.get(binding_id(gid, nid, name), MISSING)
+
+        fields = resolve_inputs(definition, {**serialized, **dict.fromkeys(linked, LINKED)}, edit,
+                                fill_defaults=True)
+        # Unlinked helper sockets (upload buttons, media players) carry nothing;
+        # a link into an input the schema does not declare cannot be typed.
+        if linked - {name for name, _, _ in fields}:
+            raise WorkflowError("Custom input sockets require an explicit typed adapter")
+        for name, spec, _ in fields:
+            schema = field_schema(name, spec)
             identity = binding_id(gid, nid, name)
             socket_index, socket = by_name.get(name, (-1, {}))
             if socket.get("link") is not None:

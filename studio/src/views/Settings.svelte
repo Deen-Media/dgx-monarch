@@ -2,6 +2,7 @@
   import type { Draft } from '../model';
   import { restoreDraft } from '../model';
   import { exportJSON } from '../files';
+  import { checkImportFile, checkRequestBody, requestLimit } from '../api';
   import type { Capabilities, ReportError } from '../contracts';
   let {
     draft,
@@ -58,8 +59,11 @@
             try {
               const file = input.files?.[0];
               if (!file) return;
-              if (file.size > 8 * 1024 * 1024) throw new Error('Draft exceeds 8 MiB.');
-              await onimport(restoreDraft(JSON.parse(await file.text())));
+              const limit = requestLimit(capabilities);
+              checkImportFile(file.size, limit, 'Draft file');
+              const imported = restoreDraft(JSON.parse(await file.text()));
+              checkRequestBody({ workflow: imported.workflow }, limit, 'The draft workflow');
+              await onimport(imported);
             } catch (error) {
               fail(error);
             } finally {

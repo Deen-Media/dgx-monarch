@@ -2,27 +2,21 @@
   import type { Artifact, Job } from '../contracts';
   import type { StudioClient } from '../api';
   import { parameterDifferences } from '../gallery';
+  import { comparableSubmission, fullJob } from '../jobProvenance';
+  import { keyedRecord } from '../keyedRecord.svelte';
   let { left, right, client }: { left: Artifact; right: Artifact; client: StudioClient } = $props();
-  let pair = $state<Job[]>([]),
-    error = $state('');
-  $effect(() => {
-    const ids = [left.job_id, right.job_id];
-    let current = true;
-    pair = [];
-    error = '';
-    Promise.all(ids.map((id) => client.request<Job>(`/jobs/${encodeURIComponent(id)}`)))
-      .then((result) => {
-        if (current) pair = result;
-      })
-      .catch((cause) => {
-        if (current) error = String(cause);
-      });
-    return () => {
-      current = false;
-    };
-  });
+  // Submissions are immutable, so the pair loads once per pair of job ids, not once per poll.
+  const pair = keyedRecord<Job[]>(
+    (key) => Promise.all(key.split('\n').map((id) => fullJob(client, id))),
+    () => ({ id: `${left.job_id}\n${right.job_id}` }),
+  );
   const differences = $derived(
-    pair.length === 2 ? parameterDifferences(pair[0].submission, pair[1].submission) : [],
+    pair.value?.length === 2
+      ? parameterDifferences(
+          comparableSubmission(pair.value[0]),
+          comparableSubmission(pair.value[1]),
+        )
+      : [],
   );
   const text = (value: unknown) => (value === undefined ? 'Not recorded' : JSON.stringify(value));
 </script>
@@ -31,9 +25,10 @@
   <summary>Parameter differences ({differences.length})</summary>
   <p>
     Recorded submission fields include prompts, seeds, model names, LoRA stacks, workflow and
-    topology. Paths are preserved so similarly named inputs remain distinct.
+    topology. Paths are preserved so similarly named inputs remain distinct. A retry shows the
+    runtime and versions it recorded itself.
   </p>
-  {#if error}<p class="error">{error}</p>{:else if pair.length < 2}<p>
+  {#if pair.error}<p class="error">{pair.error}</p>{:else if pair.value?.length !== 2}<p>
       Loading immutable submissions…
     </p>{:else}
     <div class="comparison-table">

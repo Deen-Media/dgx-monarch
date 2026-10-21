@@ -1,4 +1,6 @@
 export const API_VERSION = '1';
+/** The companion's request ceiling when its capabilities do not publish one. */
+export const DEFAULT_REQUEST_BYTES = 4 * 1024 * 1024;
 export class ApiError extends Error {
   status: number;
   code?: string;
@@ -43,15 +45,8 @@ export class StudioClient {
         credentials: 'same-origin',
         cache: 'no-store',
       });
-      const data = response.ok ? await response.json() : await response.json().catch(() => ({}));
-      if (!response.ok)
-        throw new ApiError(
-          response.status,
-          typeof data.error === 'string'
-            ? data.error
-            : (data.error?.message ?? data.message ?? JSON.stringify(data.error ?? data)),
-          typeof data.error?.code === 'string' ? data.error.code : undefined,
-        );
+      const data = response.ok ? await response.json() : await response.json().catch(() => null);
+      if (!response.ok) throw refusal(response.status, data);
       return data as T;
     } finally {
       clearTimeout(timeout);
@@ -102,4 +97,57 @@ export class StudioClient {
       type: response.headers.get('Content-Type') ?? 'application/octet-stream',
     });
   }
+}
+
+/** Say what an HTTP status means when the refusal carries no readable message. */
+export function statusMessage(status: number): string {
+  if (status === 401) return 'The companion refused the owner token (HTTP 401).';
+  if (status === 403) return 'The companion refused this request (HTTP 403).';
+  if (status === 404) return 'The companion has no such record or route (HTTP 404).';
+  if (status === 413) return 'The request is larger than the companion accepts (HTTP 413).';
+  if (status === 502 || status === 503 || status === 504)
+    return `The companion or a proxy in front of it did not answer (HTTP ${status}).`;
+  if (status >= 500) return `The companion failed while handling the request (HTTP ${status}).`;
+  return `The companion refused the request (HTTP ${status}).`;
+}
+
+/** Build the error for a refused request, from the JSON envelope when one is readable. */
+export function refusal(status: number, data: unknown): ApiError {
+  const body = data && typeof data === 'object' ? (data as Record<string, any>) : {};
+  const error = body.error;
+  const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value : undefined);
+  const message =
+    text(error) ?? text(error?.message) ?? text(body.message) ?? statusMessage(status);
+  return new ApiError(status, message, typeof error?.code === 'string' ? error.code : undefined);
+}
+
+/** The request ceiling the companion publishes in `capabilities.limits.request_bytes`. */
+export function requestLimit(capabilities: { limits?: { request_bytes?: unknown } }): number {
+  const value = capabilities.limits?.request_bytes;
+  return typeof value === 'number' && Number.isSafeInteger(value) && value > 0
+    ? value
+    : DEFAULT_REQUEST_BYTES;
+}
+
+const mib = (bytes: number) => `${Number((bytes / 1048576).toFixed(1))} MiB`;
+
+/**
+ * Refuse a file before reading it. Indentation is dropped when a workflow is
+ * sent, so a file may be up to twice the request limit; the encoded request is
+ * then checked against the exact limit.
+ */
+export function checkImportFile(size: number, limit: number, label: string) {
+  if (size > 2 * limit)
+    throw new Error(
+      `${label} is ${mib(size)}; files above ${mib(2 * limit)} are not read, because the companion accepts requests up to ${mib(limit)}.`,
+    );
+}
+
+/** Refuse a request body the companion would refuse with HTTP 413. */
+export function checkRequestBody(body: unknown, limit: number, label: string) {
+  const size = new TextEncoder().encode(JSON.stringify(body)).length;
+  if (size > limit)
+    throw new Error(
+      `${label} needs a ${mib(size)} request; the companion accepts requests up to ${mib(limit)}.`,
+    );
 }

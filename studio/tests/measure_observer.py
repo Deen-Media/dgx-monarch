@@ -1,8 +1,10 @@
 """CPU-only observer microbenchmark; no ComfyUI, Torch, driver or Worker required.
 
-Write results only to a new JSON file under /tmp. The context fixture below is
-stdlib-only and explicitly synthetic. Timings are not generation overhead or
-hardware acceptance; tracemalloc measures retained Python allocations, not RSS.
+Write results to a new JSON file in an owner-private directory outside this
+repository, then cite the file by the path and SHA-256 the harness prints. The
+context fixture below is stdlib-only and explicitly synthetic. Timings are not
+generation overhead or hardware acceptance; tracemalloc measures retained Python
+allocations, not RSS.
 """
 from __future__ import annotations
 
@@ -13,6 +15,7 @@ import importlib.abc
 import json
 import os
 import platform
+import stat
 import statistics
 import subprocess
 import sys
@@ -34,6 +37,36 @@ from dgx_monarch.runtime_provenance import dgx_source_manifest_sha256  # noqa: E
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise RuntimeError(message)
+
+
+def private_output(requested: Path) -> Path:
+    """A new .json path whose directory only this user can read, outside the repo.
+
+    Evidence under the repository would be swept into commits and archives, and
+    evidence in a shared or world-writable directory can be read, replaced or
+    removed by other accounts, so both are refused before any measurement.
+    """
+    output = requested.absolute()
+    require(output.suffix == ".json", "Output must be a .json file")
+    parent = output.parent.resolve()
+    require(not parent.is_relative_to(ROOT.resolve()), "Output must be outside the repository")
+    require(parent.is_dir(), f"Output directory does not exist: {parent}")
+    info = parent.stat()
+    require(info.st_uid == os.geteuid() and stat.S_IMODE(info.st_mode) & 0o077 == 0,
+            f"Output directory must belong to this user with no group or other access (mode 0700): {parent}")
+    require(not output.exists() and not output.is_symlink(), f"Output already exists: {output}")
+    return parent / output.name
+
+
+def write_record(output: Path, result: dict[str, Any]) -> str:
+    """Write the record once, flush it to disk and return its SHA-256."""
+    data = (json.dumps(result, indent=2, sort_keys=True) + "\n").encode()
+    fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "wb") as stream:
+        stream.write(data)
+        stream.flush()
+        os.fsync(stream.fileno())
+    return hashlib.sha256(data).hexdigest()
 
 
 def worktree_identity() -> dict[str, Any]:
@@ -196,14 +229,16 @@ def retained(case: str, payload_size: int, wave: int) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--output", type=Path, required=True, help="New JSON file under /tmp")
+    parser.add_argument("--output", type=Path, required=True,
+                        help="new .json file in an owner-private (0700) directory outside the repository")
     parser.add_argument("--iterations", type=int, default=10000)
     parser.add_argument("--repeats", type=int, default=7)
     args = parser.parse_args()
     require(100 <= args.iterations <= 100000 and 3 <= args.repeats <= 15, "Use 100..100000 iterations and 3..15 repeats")
-    output = args.output.absolute()
-    require(output.parent.resolve().is_relative_to(Path("/tmp")) and output.suffix == ".json",  # noqa: S108
-            "Output must be a new JSON file under /tmp")
+    try:
+        output = private_output(args.output)
+    except RuntimeError as exc:
+        parser.error(str(exc))
     tree_start = worktree_identity()
     package_start = dgx_source_manifest_sha256()
     result = {"schema_version": 1, "scope": "CPU-only synthetic observer microbenchmark, not Spark/native/generation acceptance",
@@ -220,11 +255,8 @@ def main() -> None:
     result["source_tree_changed_during_run"] = tree_start != result["source_tree_after"]
     require(package_start == result["package_source_manifest_after"], "Runtime package changed during benchmark")
     result["assertions"] = "passed"
-    fd = os.open(output, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w") as stream:
-        json.dump(result, stream, indent=2, sort_keys=True)
-        stream.write("\n")
-    print(output)
+    digest = write_record(output, result)
+    print(json.dumps({"output": str(output), "sha256": digest}))
 
 
 if __name__ == "__main__":

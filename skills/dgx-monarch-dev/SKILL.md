@@ -118,7 +118,7 @@ order").
 ## Test / validation ladder
 
 ```bash
-ruff check __init__.py src tests benchmark tools
+ruff check __init__.py src tests benchmark tools studio/tests
 mypy -p dgx_monarch
 bash scripts/test_cpu.sh                           # CPU, timing + slow-test report
 python tools/gen_templates.py --check

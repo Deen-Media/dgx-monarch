@@ -4,25 +4,95 @@ Autouse fixtures isolate placeholder DNS, source-only imports, gate state,
 and family memo files, and reject unexpected SSH calls. Plugins detect and
 restore leaked ComfyUI modules, sys.path entries, and environment variables.
 The sp and isolated_environ fixtures are opt-in. Collection excludes canary
-scripts and freezes imported objects; settings also configure Hypothesis
-and filter SWIG warnings.
+scripts and the modules whose optional test dependencies are missing, and
+freezes imported objects; settings also configure Hypothesis and filter SWIG
+warnings.
 """
 
 from __future__ import annotations
 
+import fnmatch
 import gc
+import importlib.util
 import os
 import socket
 import subprocess
 import sys
 import time
 import warnings
+from pathlib import Path
 
 import pytest
 from hypothesis import settings
 
+_TESTS = Path(__file__).resolve().parent
+
+
+def _importable(name: str) -> bool:
+    """Whether a top-level module can be imported, without importing it."""
+    try:
+        return importlib.util.find_spec(name) is not None
+    except (ImportError, ValueError):
+        return False
+
+
+# Test modules that import an optional dependency at module scope, with no
+# importorskip guard of their own. When the dependency is missing, collection
+# leaves the modules out instead of stopping the whole run with import errors,
+# and the terminal summary names what it left out.
+_OPTIONAL_IMPORTS = (
+    # The Studio companion imports aiohttp and Pillow at module scope. The glob
+    # also covers the Studio tooling tests, which need neither package.
+    (("aiohttp", "PIL"), "test_studio_*.py"),
+    # The TUI record helpers import rich at module scope.
+    (("rich",), "test_tui_record_security.py"),
+    # The presentation parity test imports dgx_monarch.tui.app, which imports rich.
+    (("rich",), "test_studio_presentation_parity.py"),
+    # The memory breakdown test drives dgx_monarch.tui.app and its data poller.
+    (("rich",), "test_tui_memory_breakdown.py"),
+)
+_LEFT_OUT = tuple(
+    (pattern, missing)
+    for names, pattern in _OPTIONAL_IMPORTS
+    if (missing := tuple(name for name in names if not _importable(name)))
+)
 # Canaries are CI scripts the workflows run directly, not unit tests.
-collect_ignore_glob = ["canary/*"]
+collect_ignore_glob = ["canary/*", *(pattern for pattern, _missing in _LEFT_OUT)]
+_LEFT_OUT_COUNTS = dict.fromkeys((pattern for pattern, _missing in _LEFT_OUT), 0)
+
+
+def _requested_directory(config, directory: Path) -> bool:
+    """Whether a directory argument (or testpaths) asks pytest to collect this directory."""
+    for argument in config.args:
+        target = (config.invocation_params.dir / argument.split("::", 1)[0]).resolve()
+        if target.is_dir() and (target == directory or target in directory.parents):
+            return True
+    return False
+
+
+@pytest.hookimpl(tryfirst=True)
+def pytest_ignore_collect(collection_path, config):
+    """Count the modules the glob above leaves out; pytest's own hook ignores them.
+
+    pytest also asks about the siblings of an explicitly named file, so only
+    modules in a requested directory count.
+    """
+    for pattern in _LEFT_OUT_COUNTS:
+        if fnmatch.fnmatch(collection_path.name, pattern):
+            directory = collection_path.parent.resolve()
+            if directory == _TESTS and _requested_directory(config, directory):
+                _LEFT_OUT_COUNTS[pattern] += 1
+    return None
+
+
+def pytest_terminal_summary(terminalreporter):
+    """Say which modules a missing optional dependency kept out of the run."""
+    for pattern, missing in _LEFT_OUT:
+        if _LEFT_OUT_COUNTS[pattern]:
+            terminalreporter.write_line(
+                f"Left out {_LEFT_OUT_COUNTS[pattern]} module(s) matching tests/{pattern}: "
+                f"{' and '.join(missing)} not installed; install the dev extra to run them."
+            )
 
 
 def pytest_collection_finish(session):

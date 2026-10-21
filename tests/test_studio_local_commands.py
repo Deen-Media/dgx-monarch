@@ -59,11 +59,11 @@ def test_dispatch_uses_local_adapter_only_without_explicit_config(tmp_path, monk
         monkeypatch.setattr(asyncio, "create_subprocess_exec", spawn)
         await operations.execute_owned({"id": "operation", "action": action, "parameters": {"grace_s": 2.5}})
         module = "dgx_monarch" if selected_config else "dgx_monarch.studio.local_commands"
-        assert calls[0][:2] == ["-m", module]
+        assert calls[0][:5] == ["-P", "-s", "-B", "-m", module]
         if selected_config:
-            assert calls[0][2:4] == ["--config", str(config_path)]
+            assert calls[0][5:7] == ["--config", str(config_path)]
         else:
-            assert calls[0][2] == action and "--config" not in calls[0]
+            assert calls[0][5] == action and "--config" not in calls[0]
         store.close()
 
     asyncio.run(scenario())

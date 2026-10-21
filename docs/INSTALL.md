@@ -872,6 +872,19 @@ than creating or overwriting another one.
 
 `dgxm update` installs with `--no-deps`, so it never adds the extra.
 
+### Optional Studio companion
+
+The optional Studio companion (`dgxm-studio`) needs the `studio` extra, which
+adds aiohttp and Pillow. Install it with the same dry-run and constrained
+installation procedure, using the verified xFuser wheel and preserved Torch
+constraint, and change `-e "$REPO_DIR"` to `-e "$REPO_DIR[studio]"` in both
+commands, or to `-e "$REPO_DIR[tui,studio]"` to add both extras at once.
+Review the dependency plan and verify torch afterward; do not run an
+unconstrained extras install. Node is needed only to rebuild the frontend,
+never to install or run the companion. `dgxm update` installs with
+`--no-deps`, so it never adds this extra either.
+[STUDIO.md](STUDIO.md#install-and-start) covers starting the companion.
+
 ### Optional Sol-Attention
 
 Sol is approximate and requires the explicit accuracy waiver before a workflow

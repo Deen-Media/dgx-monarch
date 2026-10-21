@@ -21,6 +21,7 @@ from . import (
     arguments,
     comfy_ports,
     doctor_repair,
+    gate_last,
     legacy_init,
     legacy_update,
     lifecycle,
@@ -193,30 +194,17 @@ def _cmd_gate_impl(args) -> int:
 
     args.host = _resolve_driver_host(args.host)
     base = f"http://{args.host}"
-    hist = json.load(urllib.request.urlopen(f"{base}/history?max_items=1", timeout=15))
-    if not hist:
+    newest = gate_last.latest_entry(
+        json.load(urllib.request.urlopen(f"{base}/history?max_items=1", timeout=15)))
+    if newest is None:
         print("nothing in ComfyUI history; render your workflow once, then re-run")
         return 2
-    _, entry = next(iter(hist.items()))
-    prompt = entry["prompt"][2]
-    samplers = {"DGXMonarchKSampler", "DGXMonarchKSamplerAdvanced", "DGXMonarchKSamplerPipeline"}
-    target = next((nid for nid, n in prompt.items()
-                   if isinstance(n, dict) and n.get("class_type") in samplers), None)
-    if target is None:
+    run_id = uuid.uuid4().hex
+    built = gate_last.identity_gate(gate_last.source_graph(newest[1]), run_id)
+    if built is None:
         print("the last prompt has no DGX Monarch sampler node to gate")
         return 2
-    i = prompt[target]["inputs"]
-    seed_input = i.get("noise_seed", i.get("seed", 42))
-    run_id = uuid.uuid4().hex
-    prompt[target] = {"class_type": "DGXMonarchIdentityGate", "inputs": {
-        "model": i["model"], "positive": i["positive"], "negative": i["negative"],
-        "latent_image": i["latent_image"],
-        "noise_seed": _prompt_input(seed_input, 42, int),
-        "steps": 2, "cfg": _prompt_input(i.get("cfg", 1.0), 1.0, float),
-        "sampler_name": i.get("sampler_name", "euler"),
-        "scheduler": i.get("scheduler", "simple"),
-        "run_id": run_id,
-    }}
+    _, prompt = built
     req = urllib.request.Request(f"{base}/prompt", data=json.dumps({"prompt": prompt}).encode(),
                                  headers={"Content-Type": "application/json"})
     pid = json.load(urllib.request.urlopen(req, timeout=60))["prompt_id"]
@@ -258,33 +246,9 @@ def cmd_gate(args) -> int:
         return 2
 
 
-def _find_gate_report(report_dir: str, run_id: str) -> dict | None:
-    """Find only the report produced by this CLI invocation.
-
-    A shared JSONL file can contain concurrent node runs and old verdicts, so
-    accepting its last row can report success for the wrong prompt.
-    """
-    import json
-
-    try:
-        lines = (Path(report_dir) / "dgxm_gate_reports.jsonl").read_text().splitlines()
-    except OSError:
-        return None
-    for line in reversed(lines):
-        try:
-            report = json.loads(line)
-        except (TypeError, ValueError):
-            continue
-        if isinstance(report, dict) and report.get("run_id") == run_id:
-            return report
-    return None
-
-
-def _prompt_input(value, default, cast):
-    """Preserve a Comfy API link; coerce only literal widget values."""
-    if isinstance(value, list) and len(value) == 2:
-        return value
-    return cast(default if value is None else value)
+# The entry choice and graph rewrite live in gate_last, which Studio shares.
+_find_gate_report = gate_last.find_gate_report
+_prompt_input = gate_last.prompt_input
 
 
 def _resolve_driver_host(host: str | None) -> str:

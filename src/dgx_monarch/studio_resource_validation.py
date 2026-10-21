@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+from typing import Any
 
 
 def validate_studio_resources(root: str, require_all: bool = True) -> dict[str, str]:
@@ -105,3 +106,78 @@ def validate_studio_resources(root: str, require_all: bool = True) -> dict[str, 
 def studio_resource_validation_source() -> str:
     """Embed this fixed validator in isolated scripts, never candidate imports."""
     return inspect.getsource(validate_studio_resources)
+
+
+# The manifest rules validate_studio_resources applies, repeated here because that
+# function must stay self-contained: isolated scripts embed its source text.
+_REQUIRED_RESOURCES = frozenset({"studio/data/parity.json", "studio/data/presentation.json",
+                                 "studio/data/workflows.json", "studio/static/index.html"})
+_ASSET_PATH = r"studio/static/assets/[A-Za-z0-9_.-]+-[A-Za-z0-9_-]{8,}\.(?:js|css)"
+_RESOURCE_LIMIT = 2048
+
+
+def check_packaged_studio_resources(root: Any = None) -> dict[str, str]:
+    """Hash every manifest entry through importlib.resources for ``dgxm-studio --check``.
+
+    This check-only reader applies no ownership policy, so a correct install that
+    root or another account owns passes. Reviewed update and setup paths keep
+    validate_studio_resources, which also refuses files the caller does not own.
+    ``root`` is the installed ``dgx_monarch`` package unless a test supplies a
+    directory with the same layout.
+    """
+    import ast
+    import hashlib
+    import re
+    from importlib.resources import files
+
+    package = files("dgx_monarch") if root is None else root
+    manifest = package.joinpath("studio", "resource_hashes.py")
+    if not manifest.is_file():
+        raise RuntimeError("the manifest studio/resource_hashes.py is missing")
+    try:
+        tree = ast.parse(manifest.read_text(encoding="utf-8"), filename="resource_hashes.py")
+    except (SyntaxError, UnicodeError) as exc:
+        raise RuntimeError("the manifest is not valid literal Python") from exc
+    statements = [node for node in tree.body if not (isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant)
+                                                    and isinstance(node.value.value, str))]
+    if (len(statements) != 1 or not isinstance(statements[0], ast.Assign) or len(statements[0].targets) != 1
+            or not isinstance(statements[0].targets[0], ast.Name) or statements[0].targets[0].id != "RESOURCE_SHA256"):
+        raise RuntimeError("the manifest must contain only the RESOURCE_SHA256 literal")
+    try:
+        table = ast.literal_eval(statements[0].value)
+    except (ValueError, TypeError, RecursionError) as exc:
+        raise RuntimeError("the manifest contains nonliteral data") from exc
+    if not isinstance(table, dict) or len(table) > _RESOURCE_LIMIT or not _REQUIRED_RESOURCES <= set(table):
+        raise RuntimeError("the manifest has an incomplete inventory")
+    for relative, expected in table.items():
+        if (not isinstance(relative, str) or not isinstance(expected, str)
+                or re.fullmatch(r"[a-f0-9]{64}", expected) is None
+                or (relative not in _REQUIRED_RESOURCES and re.fullmatch(_ASSET_PATH, relative) is None)):
+            raise RuntimeError("the manifest contains an unsupported path or hash")
+    found: set[str] = set()
+
+    def walk(directory: Any, prefix: str, depth: int) -> None:
+        for entry in directory.iterdir():
+            name = f"{prefix}/{entry.name}"
+            if entry.is_dir():
+                if depth >= 8:
+                    raise RuntimeError(f"{name} is nested too deeply")
+                walk(entry, name, depth + 1)
+            else:
+                found.add(name)
+                if len(found) > _RESOURCE_LIMIT:
+                    raise RuntimeError("the packaged resource directories hold too many files")
+
+    for relative in ("studio/data", "studio/static"):
+        directory = package.joinpath(*relative.split("/"))
+        if directory.is_dir():
+            walk(directory, relative, 0)
+    missing, extra = sorted(set(table) - found), sorted(found - set(table))
+    if missing or extra:
+        problems = [f"missing {name}" for name in missing[:5]] + [f"unexpected {name}" for name in extra[:5]]
+        raise RuntimeError("the packaged files differ from the manifest: " + ", ".join(problems))
+    changed = sorted(relative for relative in table
+                     if hashlib.sha256(package.joinpath(*relative.split("/")).read_bytes()).hexdigest() != table[relative])
+    if changed:
+        raise RuntimeError("these files differ from their manifest hash: " + ", ".join(changed[:5]))
+    return table

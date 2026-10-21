@@ -10,7 +10,7 @@
     GraphConnection,
   } from '../contracts';
   import { exportJSON } from '../files';
-  import type { StudioClient } from '../api';
+  import { checkImportFile, checkRequestBody, type StudioClient } from '../api';
   import AssetEditor from '../components/AssetEditor.svelte';
   import Field from '../components/Field.svelte';
   import LoraStack from '../components/LoraStack.svelte';
@@ -25,6 +25,8 @@
     catalog,
     connections,
     workflows,
+    workflowId,
+    requestLimit,
     dirty,
     busy,
     pending,
@@ -44,6 +46,9 @@
     catalog: Catalog;
     connections: GraphConnection[];
     workflows: WorkflowEntry[];
+    /** The bundled workflow the draft came from, or '' for any other workflow. */
+    workflowId: string;
+    requestLimit: number;
     dirty: boolean;
     busy: boolean;
     pending: boolean;
@@ -66,17 +71,21 @@
       : bindings.filter((b) => b.prominent || b.display?.prominent)
     ).sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
   );
+  // The template being inspected shows until the inspection ends; then the draft's own.
+  let choosing = $state('');
+  $effect(() => {
+    if (!busy) choosing = '';
+  });
   function fieldChange(id: string, value: unknown) {
     changeDraft({ values: { ...draft.values, [id]: value } });
   }
   async function importWorkflow(file: File | undefined) {
     if (!file) return;
-    if (file.size > 8 * 1024 * 1024) {
-      fail('Workflow exceeds 8 MiB import limit.');
-      return;
-    }
     try {
-      await inspect(JSON.parse(await file.text()), file.name);
+      checkImportFile(file.size, requestLimit, 'Workflow file');
+      const workflow = JSON.parse(await file.text());
+      checkRequestBody({ workflow }, requestLimit, 'This workflow');
+      await inspect(workflow, file.name);
     } catch (e) {
       fail(e);
     }
@@ -93,10 +102,12 @@
   </div>
   <label for="workflow">Workflow</label><select
     id="workflow"
-    value=""
+    value={choosing || workflowId}
     onchange={(e) => {
       const w = workflows.find((w) => w.id === e.currentTarget.value);
-      if (w) void inspect(w.workflow, w.name);
+      if (!w) return;
+      choosing = w.id;
+      void inspect(w.workflow, w.name, false, w.id);
     }}
     ><option value="">{draft.workflowName || 'Choose a workflow'}</option
     >{#each workflows as w}<option value={w.id}>{w.name}</option>{/each}</select

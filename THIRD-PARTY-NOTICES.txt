@@ -107,7 +107,8 @@ Bundled Studio browser runtime notices
 ======================================
 
 The optional Studio application includes the following MIT-licensed runtime
-components. Development tools remain build dependencies.
+components. Development tools remain build dependencies. Each version below
+matches studio/package-lock.json.
 
 Svelte 5.57.2 runtime
 ---------------------

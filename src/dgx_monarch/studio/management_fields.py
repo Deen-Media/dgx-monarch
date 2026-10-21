@@ -36,7 +36,7 @@ FIELDS = {
                     field("plan"), field("plan_digest")],
     "sol-smoke": [field("idle_maintenance", "BOOLEAN", default=False), field("timeout_s", "INT", default=300, min=30, max=1800)],
     "uninstall": [field("remove_config", "BOOLEAN", default=False)],
-    "update": [field("repo", required=True), field("mode", "CHOICE", choices=["legacy", "verified"], default="legacy"),
+    "update": [field("repo", required=True), field("mode", "CHOICE", choices=["verified", "legacy"], default="verified"),
                field("target_ref", default="origin/HEAD"), field("receipt"),
                field("stop_driver", "BOOLEAN", default=False), field("restore_driver", "BOOLEAN", default=False),
                field("privileged_process_inspection", "BOOLEAN", default=False)],
@@ -59,7 +59,10 @@ COMMAND_FIELDS = {
        for action in ("gate.inspect", "gate.repair.preview", "gate.repair.apply")},
 }
 FIELDS.update({action: COMMAND_FIELDS[action] for action in ("gate.inspect", "gate.repair.preview", "gate.repair.apply")})
-NO_CONFIG = frozenset({"update", "top.record", "top.replay", "diagnostics", "diagnostics.capabilities", "gate.last",
+# Update is absent on purpose: both modes need the selected cluster configuration
+# (the legacy release-slot check and Worker restart read it), so availability
+# names the missing --config instead of offering a config-free update.
+NO_CONFIG = frozenset({"top.record", "top.replay", "diagnostics", "diagnostics.capabilities", "gate.last",
                        "gate.inspect", "gate.repair.preview", "gate.repair.apply", "doctor", "reap.preview", "reap.apply"})
 
 

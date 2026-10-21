@@ -20,15 +20,31 @@ for (const damaged of ['draft', 'layout', 'both']) {
     const restored = initialWorkspace();
     assert.deepEqual(restored.pending, identity);
     assert.equal(restored.pendingError, '');
-    assert.match(restored.error, /could not be restored/);
+    if (damaged !== 'layout') {
+      // The unreadable draft text comes back for retention and export.
+      assert.equal(restored.draft, null);
+      assert.equal(restored.saved, '{');
+    }
+    if (damaged !== 'draft') assert.match(restored.error, /layout could not be restored/);
+    else assert.equal(restored.error, '');
   });
 }
+test('a draft that fails restore returns its exact stored text', () => {
+  const stored = JSON.stringify({ draft: { lora_insertion: { loader: 5 } } });
+  setup(stored, null, null);
+  const restored = initialWorkspace();
+  assert.equal(restored.draft, null);
+  assert.equal(restored.saved, stored);
+});
 test('optional storage denial does not lose the pending request', () => {
   setup(null, null, JSON.stringify(identity));
   localStorage.getItem = () => {
     throw new Error('denied');
   };
-  assert.deepEqual(initialWorkspace().pending, identity);
+  const restored = initialWorkspace();
+  assert.deepEqual(restored.pending, identity);
+  assert.equal(restored.saved, '');
+  assert.match(restored.error, /storage is unavailable/);
 });
 for (const pending of ['{', '{}', 'false', '{"key":"","preview_id":"preview"}']) {
   test(`unreadable pending state is quarantined: ${pending}`, () => {

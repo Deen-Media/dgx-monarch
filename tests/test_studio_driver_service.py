@@ -237,3 +237,95 @@ def test_unconfigured_driver_unavailable(tmp_path):
     operations = Operations(store, object(), allow_management=True)
     assert all(not row["available"] for row in operations.capabilities() if row["id"].startswith("driver.") and row["id"] != "driver.free")
     store.close()
+
+
+def exec_start(fields, executable, arguments):
+    argv = [str(executable), *arguments]
+    fields["ExecStart"] = f"{{ path={executable} ; argv[]={' '.join(argv)} ; ignore_errors=no ; pid=0 ; }}"
+
+
+def bound(driver, origin, arguments=None):
+    """The fixture's recorded unit, read again for a companion that tracks this origin."""
+    service, fields, _, source_root = driver
+    if arguments is not None:
+        exec_start(fields, fields["ExecStart"].split("path=", 1)[1].split(" ;", 1)[0],
+                   [str(source_root / "main.py"), *arguments])
+    service.origin = origin
+    return service
+
+
+@pytest.mark.parametrize(("arguments", "origin"), [
+    (["--listen", "127.0.0.1"], "http://127.0.0.1:8188"),
+    ([], "http://127.0.0.1:8188"),
+    ([], "http://localhost:8188"),
+    (["--listen"], "http://127.0.0.1:8188"),
+    (["--listen"], "http://[::1]:8188"),
+    (["--listen=0.0.0.0", "--port=8190"], "http://127.0.0.1:8190"),
+    (["--listen=127.0.0.1,::1", "--port", "8191"], "http://[::1]:8191"),
+    (["--tls-keyfile", "/k.pem", "--tls-certfile", "/c.pem"], "https://127.0.0.1:8188"),
+])
+def test_driver_unit_serving_the_driver_origin_is_accepted(driver, arguments, origin):
+    identity = bound(driver, origin, arguments).inspect()
+    assert identity["config"]["listen"]["port"] == int(origin.rsplit(":", 1)[1])
+
+
+@pytest.mark.parametrize(("arguments", "origin"), [
+    (["--listen", "127.0.0.1"], "http://127.0.0.1:8189"),
+    (["--listen", "127.0.0.1"], "http://192.0.2.10:8188"),
+    (["--listen", "127.0.0.1"], "http://comfy.example:8188"),
+    (["--listen"], "http://192.0.2.10:8188"),
+    (["--listen=0.0.0.0"], "http://[::1]:8188"),
+    ([], "https://127.0.0.1:8188"),
+    (["--tls-keyfile", "/k.pem", "--tls-certfile", "/c.pem"], "http://127.0.0.1:8188"),
+])
+def test_driver_unit_that_serves_another_origin_is_refused(driver, arguments, origin):
+    with pytest.raises(StudioError) as caught:
+        bound(driver, origin, arguments).inspect()
+    assert caught.value.code == "driver_service_identity" and "not the --driver origin" in str(caught.value)
+
+
+@pytest.mark.parametrize("arguments", [["--lis=0.0.0.0"], ["--po", "8188"], ["--port"], ["--port", "--listen"],
+                                       ["--port", "http"], ["--port=0"], ["--listen="]])
+def test_ambiguous_or_malformed_listen_options_are_refused(driver, arguments):
+    with pytest.raises(StudioError) as caught:
+        bound(driver, "http://127.0.0.1:8188", arguments).inspect()
+    assert caught.value.code == "driver_service_identity"
+
+
+def test_operations_tie_the_driver_service_to_the_companion_origin(tmp_path):
+    store = Store(tmp_path / "state")
+    operations = Operations(store, SimpleNamespace(origin="http://127.0.0.1:8190"), allow_management=True,
+                            driver_service="comfyui.service")
+    assert operations.driver_binding.origin == "http://127.0.0.1:8190"
+    store.close()
+
+
+def test_listen_change_after_review_invalidates_the_driver_review(driver, monkeypatch):
+    service = bound(driver, "http://127.0.0.1:8188", ["--listen", "127.0.0.1"])
+    before = service.inspect()
+    _, fields, _, source_root = driver
+    exec_start(fields, before["config"]["executable"], [str(source_root / "main.py"), "--listen", "127.0.0.1", "--port", "8188"])
+    with pytest.raises(StudioError, match="changed after review"):
+        asyncio.run(service.perform("start", before))
+
+
+def test_group_write_counts_only_when_the_group_holds_another_user(driver, monkeypatch):
+    import pwd
+
+    from dgx_monarch.studio import driver_service
+
+    service, _, unit, source_root = driver
+    service.origin = "http://127.0.0.1:8188"
+    for path in (unit, *(source_root / name for name in _MARKERS)):
+        path.chmod(0o664)  # A umask 002 install with a group of just the owner.
+    owner = pwd.getpwuid(os.getuid()).pw_name
+    group_id = unit.stat().st_gid
+    monkeypatch.setattr(driver_service.pwd, "getpwall", lambda: [SimpleNamespace(pw_name=owner, pw_gid=group_id)])
+    monkeypatch.setattr(driver_service.grp, "getgrgid", lambda gid: SimpleNamespace(gr_mem=[]))
+    assert service.inspect()["config"]["unit_files"][0]["mode"] & 0o020
+    monkeypatch.setattr(driver_service.grp, "getgrgid", lambda gid: SimpleNamespace(gr_mem=[owner, "another-user"]))
+    with pytest.raises(StudioError, match="owner-controlled"):
+        service.inspect()
+    monkeypatch.setattr(driver_service.grp, "getgrgid", lambda gid: (_ for _ in ()).throw(KeyError(gid)))
+    with pytest.raises(StudioError, match="owner-controlled"):
+        service.inspect()

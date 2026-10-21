@@ -10,7 +10,10 @@ MEMORY_COLORS = {
     "anonymous": "#c084fc", "other": "#64748b", "cache": "#facc15",
 }
 MEMORY_ANSI256 = dict(zip(MEMORY_COLORS, (45, 79, 208, 141, 244, 220), strict=True))
-MEMORY_ANSI = dict(zip(MEMORY_COLORS, ("cyan", "green", "yellow", "magenta", "white", "yellow"), strict=True))
+# Six different standard slots, so a 16-color terminal keeps every segment
+# apart unless its own palette paints two slots alike. Pool takes the slot Rich
+# picks for its orange; cache keeps yellow.
+MEMORY_ANSI = dict(zip(MEMORY_COLORS, ("cyan", "green", "bright_red", "magenta", "white", "yellow"), strict=True))
 STATUS_COLORS = {
     **dict.fromkeys(("ready", "idle", "rendering", "busy"), "#4ade80"),
     **dict.fromkeys(("degraded", "legacy-active"), "#facc15"),
@@ -28,6 +31,15 @@ UNITS: dict[str, dict[str, Any]] = {
     "count": {"precision": 0, "divisor": 1, "source_unit": "count"},
 }
 AVAILABLE_MEMORY_THRESHOLD_GIB = 20.0
+# A Worker reports slab_gib only while a slab holds its model, so a missing
+# value is a known zero unless the report could be hiding one.
+SLAB_RULE = {
+    "zero": ["no Worker reports the host (a driver-only box, or dgxm top reading local stats while the driver is down)",
+             "the Worker reports weight_residency other than slab", "the Worker reports no resident model"],
+    "unknown": ["the Worker sent memory_error", "the Worker sent no memory report",
+                "the Worker sent a slab_gib that is not a finite number",
+                "the Worker reports slab residency, or a resident model with no weight_residency, and no slab_gib"],
+}
 
 
 def _finite(value: object) -> TypeGuard[int | float]:
@@ -54,6 +66,28 @@ def available_memory_status(value_gib: object) -> str:
     if not _finite(value_gib):
         return "unknown"
     return "ready" if float(value_gib) > AVAILABLE_MEMORY_THRESHOLD_GIB else "degraded"
+
+
+def slab_reading(meta: object) -> float | None:
+    """Slab GiB a host's memory bar may draw under SLAB_RULE, or None when unknown.
+
+    ``meta`` is the Worker report for the host, or None when no Worker reports it.
+    """
+    if meta is None:
+        return 0.0
+    if not isinstance(meta, dict) or meta.get("memory_error") is not None:
+        return None
+    memory = meta.get("memory")
+    if not isinstance(memory, dict):
+        return None
+    if "slab_gib" in memory:
+        value = memory["slab_gib"]
+        return max(0.0, float(value)) if _finite(value) else None
+    residency = memory.get("weight_residency")
+    if residency is None:
+        # Every Worker that holds a model also reports its weight_residency.
+        return None if "patcher_class" in memory or "model" in memory else 0.0
+    return 0.0 if isinstance(residency, str) and residency != "slab" else None
 
 
 def freshness(sample_time: object, now: float, *, interval_s: float = 1.0) -> str:
@@ -119,7 +153,9 @@ def presentation_contract() -> dict[str, Any]:
         "metrics": [{"id": identity, "name": name, "source": source, "unit": unit,
                      "aggregation": "per_host_per_rail_rate" if ".rail." in identity else "none",
                      "missing": "unknown", "threshold": "available_memory_gib" if identity == "host.memory.available" else None,
-                     "safety_authority": "backend_policy"} for identity, name, source, unit in metric_fields],
+                     "safety_authority": "backend_policy",
+                     **({"missing": "slab_rule", "missing_rule": SLAB_RULE} if identity == "host.memory.slab" else {})}
+                    for identity, name, source, unit in metric_fields],
         "render_fields": ["topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step", "last_step_t"],
         "rail_rate": {"directions": ["rx", "tx"], "identity": ["host", "rail"],
                       "counter_reset": "unknown", "nonpositive_interval": "unknown", "divisor": 1000000000},

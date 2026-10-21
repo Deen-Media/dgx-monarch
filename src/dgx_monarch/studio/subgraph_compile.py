@@ -11,9 +11,10 @@ from dataclasses import dataclass, field
 from typing import Any
 from urllib.parse import quote
 
-from .workflows import SCALAR_TYPES, WorkflowError, binding_id, graph_index, node_inputs, widget_values
+from .widget_values import LINKED, MISSING, field_schema, layout_values, resolve_inputs
+from .workflows import SCALAR_TYPES, WorkflowError, binding_id, graph_index, node_inputs
 
-_MISSING = object()
+_MISSING = MISSING
 
 
 @dataclass
@@ -225,16 +226,26 @@ class Compiler:
                 definition = self.info.get(node["type"])
                 if definition is None:
                     raise WorkflowError(f"Node type unavailable: {node['type']}")
-                fields = node_inputs(definition)
-                serialized = widget_values(node, definition)
+                serialized = layout_values(node, definition)
                 sockets = node.get("inputs", [])
                 if not isinstance(sockets, list) or any(not isinstance(item, dict) for item in sockets):
                     raise WorkflowError("Malformed subgraph input sockets")
                 by_name = {item.get("name"): (index, item) for index, item in enumerate(sockets)}
-                if len(by_name) != len(sockets) or set(by_name) - {name for name, _, _ in fields}:
+                linked = {name for name, (_, item) in by_name.items() if item.get("link") is not None}
+                if len(by_name) != len(sockets):
+                    raise WorkflowError("Duplicate or unsupported subgraph input sockets")
+
+                def edit(name: str, context: Context = context, nid: str = nid) -> Any:
+                    return self.value(context, nid, name, context.overrides.get((nid, name), MISSING))
+
+                fields = resolve_inputs(definition, {**serialized, **dict.fromkeys(linked, LINKED)}, edit,
+                                        fill_defaults=True)
+                # Unlinked helper sockets carry nothing; an undeclared link cannot be typed.
+                if linked - {name for name, _, _ in fields}:
                     raise WorkflowError("Duplicate or unsupported subgraph input sockets")
                 inputs: dict[str, Any] = {}
-                for name, schema, _ in fields:
+                for name, spec, _ in fields:
+                    schema = field_schema(name, spec)
                     key = context.binding(nid, name)
                     index, socket = by_name.get(name, (-1, {}))
                     value = self.linked(context, nid, index, socket, frozenset())

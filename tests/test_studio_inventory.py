@@ -5,7 +5,11 @@ import argparse
 import ast
 import json
 import math
+import os
+import pwd
 import re
+import subprocess
+import sys
 from collections import defaultdict
 from pathlib import Path
 
@@ -13,6 +17,7 @@ import pytest
 
 from dgx_monarch.cli.arguments import build_parser
 from dgx_monarch.studio.inventory import (
+    DISCOVERY_HOME,
     INTERFACES,
     REQUIRED_FIELDS,
     build_inventory,
@@ -21,6 +26,7 @@ from dgx_monarch.studio.inventory import (
     load_inventory,
     validate_inventory,
 )
+from dgx_monarch.studio.inventory_registry import STATUSES
 from dgx_monarch.studio.presentation import (
     MEMORY_ANSI256,
     MEMORY_COLORS,
@@ -34,6 +40,16 @@ ROOT = Path(__file__).resolve().parents[1]
 INVENTORY = load_inventory()
 
 
+def _private_home_prefixes() -> list[str]:
+    """The build account's home directories, as path prefixes a manifest must not carry.
+
+    HOME=/ gives no prefix: every absolute path starts with "/", and the
+    account's password-database home still guards the real directory.
+    """
+    homes = {str(Path.home()), pwd.getpwuid(os.getuid()).pw_dir}
+    return sorted(home.rstrip("/") + "/" for home in homes if home.rstrip("/"))
+
+
 @pytest.mark.parametrize("row", INVENTORY["rows"], ids=lambda row: row["id"])
 def test_every_row_has_source_and_explicit_interface_contract(row):
     assert REQUIRED_FIELDS <= row.keys()
@@ -42,16 +58,77 @@ def test_every_row_has_source_and_explicit_interface_contract(row):
     assert set(row["interfaces"]) == set(INTERFACES)
     assert all(view.get("status") for view in row["interfaces"].values())
     assert row["guard"] and row["recovery"] and row["preview"] and row["apply"]
-    assert row["interfaces"]["studio"]["status"] == "inventory"
-    assert str(Path.home()) not in json.dumps(row)
+    assert row["interfaces"]["studio"]["status"] in STATUSES
+    text = json.dumps(row)
+    assert "typed advanced inventory" not in text
+    assert DISCOVERY_HOME not in text
+    assert not any(prefix in text for prefix in _private_home_prefixes())
 
 
 def test_checked_in_inventory_matches_live_checkout():
     actual = build_inventory(ROOT)
     assert INVENTORY == actual
-    assert actual["counts"]["node"] == 18
-    assert actual["counts"]["workflow"] == 66
+    # Counted from the checkout, so regenerating or adding a template changes
+    # only the generated data, never this test.
+    nodes = len(json.loads((ROOT / "tests/node_input_contract.json").read_text()))
+    workflows = len(list((ROOT / "example_workflows").glob("*.json")))
+    assert actual["counts"]["node"] == actual["baseline_counts"]["nodes"] == nodes
+    assert actual["counts"]["workflow"] == actual["baseline_counts"]["workflows"] == workflows
     validate_inventory(actual)
+
+
+def test_home_relative_defaults_normalize_the_same_under_any_home(tmp_path):
+    """HOME=/ used to leave /ComfyUI/output unrewritten and abort collection."""
+    program = (
+        "import json, sys\n"
+        "from pathlib import Path\n"
+        "from dgx_monarch.studio.inventory import build_inventory, discover_cli\n"
+        "rows = {row['id']: row['default'] for row in discover_cli()}\n"
+        "print(json.dumps({'cli': [rows['cli.option.gate.report_dir'], rows['cli.option.launcher.destination']],\n"
+        "                  'inventory': build_inventory(Path(sys.argv[1]))}))\n"
+    )
+    results = []
+    for home in ("/", str(tmp_path)):
+        env = {**os.environ, "HOME": home, "PYTHONPATH": str(ROOT / "src")}
+        result = subprocess.run([sys.executable, "-c", program, str(ROOT)], env=env, capture_output=True,
+                                text=True, timeout=120, check=False)
+        assert result.returncode == 0, result.stderr[-2000:]
+        results.append(json.loads(result.stdout))
+    for value in results:
+        assert value["cli"] == ["~/ComfyUI/output", "~/.local/bin/dgxm"]
+        assert value["inventory"] == INVENTORY
+    check = subprocess.run([sys.executable, str(ROOT / "tools/gen_studio_inventory.py"), "--check"],
+                           env={**os.environ, "HOME": "/", "PYTHONPATH": str(ROOT / "src")},
+                           capture_output=True, text=True, timeout=120, check=False)
+    assert check.returncode == 0, check.stderr[-2000:]
+
+
+def test_no_module_keeps_the_discovery_home_after_a_fresh_build():
+    """Discovery imports its modules before HOME changes, so no import-time path holds the sentinel."""
+    program = (
+        "import sys\n"
+        "from pathlib import Path\n"
+        "from dgx_monarch.studio import inventory\n"
+        "inventory.build_inventory(Path(sys.argv[1]))\n"
+        "hits = [f'{name}.{attr}' for name, module in list(sys.modules.items()) if name.startswith('dgx_monarch')\n"
+        "        for attr, value in vars(module).items() if attr != 'DISCOVERY_HOME'\n"
+        "        and isinstance(value, (str, Path)) and inventory.DISCOVERY_HOME in str(value)]\n"
+        "print(hits)\n"
+    )
+    result = subprocess.run([sys.executable, "-c", program, str(ROOT)], capture_output=True, text=True, timeout=120,
+                            env={**os.environ, "PYTHONPATH": str(ROOT / "src")}, check=True)
+    assert result.stdout.strip() == "[]"
+
+
+def test_discovery_restores_the_callers_home(monkeypatch):
+    monkeypatch.setenv("HOME", "/somewhere/else")
+    build_inventory(ROOT)
+    assert os.environ["HOME"] == "/somewhere/else"
+    monkeypatch.delenv("HOME")
+    from dgx_monarch.studio.inventory import discover_cli
+
+    discover_cli()
+    assert "HOME" not in os.environ
 
 
 def test_all_cli_options_and_commands_are_independently_enumerated():

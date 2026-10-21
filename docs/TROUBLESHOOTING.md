@@ -6067,3 +6067,170 @@ explicit clear action; removing an uncertain identity can otherwise permit a
 duplicate request. A recent-history warning does not mean the driver queue is
 offline: Studio continues displaying observed queue state and resolving known
 prompt identities while reducing oversized history windows.
+
+## 123. Studio refuses to start, or refuses the browser's host, origin or token
+
+**Symptom:** `dgxm-studio` exits at startup, or the page or an API call
+returns one of these refusals:
+
+- `Unrecognized companion host.` (HTTP 403, code `host`). Opening
+  `http://localhost:8220` shows only this JSON error.
+- `Cross-origin access is forbidden.` (HTTP 403, code `origin`)
+- `Enter this companion's owner token.` (HTTP 401, code `authentication`)
+- `A companion already owns this state directory.`
+- `State directories cannot be symlinks.`
+- `State directory must belong to this user with mode 0700.`
+- `State database must be an owner-private regular file.`
+- `Unsupported storage schema; export with the matching companion.`
+- `XDG_STATE_HOME must be an absolute path; unset it or pass an absolute --state-dir.`
+- `The owner token file must be in an existing directory.`
+- `The owner token file directory must belong to this user with mode 0700 and must not be a symlink.`
+- `The owner token file cannot replace a companion state file.`
+- `The owner token file path holds another file; choose a new path.`
+- `Cursor must be below 2^63.` (HTTP 400, code `cursor`)
+- `The companion could not complete this request; its log records the cause.`
+  (HTTP 500, code `internal`)
+
+**Cause:** the companion checks every request, and its state directory at
+startup, before it does anything else
+([STUDIO.md](STUDIO.md#install-and-start),
+[threat model](THREAT_MODEL.md#browser-to-studio-companion)).
+
+- Host: the request's `Host` header must be exactly the address and port the
+  companion bound and printed: `127.0.0.1:8220` by default, or `[::1]:8220`
+  for an IPv6 bind. `localhost:8220` reaches the same socket but is refused,
+  and so is a tunnel or proxy that rewrites `Host` or listens on a different
+  port. `--host` itself takes only a loopback IP literal, never a name.
+- Origin: a request that carries an `Origin` header must name the same
+  scheme, host and port as the request itself. A page from any other origin,
+  the ComfyUI driver's page included, is refused.
+- Token: every `/api/` request needs `Authorization: Bearer <owner token>`.
+  The companion makes a new token at every launch, so a token from an earlier
+  launch, or from another companion, no longer works.
+- Lock: one companion holds an exclusive lock on `companion.lock` in its
+  state directory for as long as it runs. A second companion on the same
+  directory exits.
+- Directory: no part of the state directory path may be a symbolic link, and
+  the directory must belong to the user running the companion and grant no
+  group or other access (mode `0700`). Its database, `studio.sqlite3`, must be
+  a regular file with the same owner and no group or other access.
+- Schema: the database records its storage schema. A companion that reads a
+  schema other than its own refuses to start rather than change the records.
+- State root: an empty `XDG_STATE_HOME` counts as unset. A relative
+  `XDG_STATE_HOME` is refused, and so is a relative `--state-dir` or
+  `--token-file` (`--state-dir must be an absolute path`), because a relative
+  root would open a second database from another launch directory.
+- Token file: when standard output is not a terminal, the companion writes
+  the token to `owner-token` in its state directory. `--token-file` names
+  another file. Its directory must exist, belong to the user and grant no
+  group or other access, and the companion replaces only a file that holds an
+  earlier token.
+- Cursor and errors: an event cursor must be below 2^63, and every other
+  failure returns the JSON error envelope with code `internal`; the companion
+  log records its cause.
+
+**Fix:**
+
+- Open the exact URL the companion printed, and do not swap `127.0.0.1` for
+  `localhost`. Through an SSH tunnel, forward the same port on both ends
+  (`ssh -L <port>:127.0.0.1:<port>`) and browse `http://127.0.0.1:<port>`.
+- After a token refusal, enter the token this launch made: the one it printed,
+  or the contents of the token file it named.
+  A restart makes a new token, so reconnect every open tab after one.
+- For the lock refusal, stop the other companion, or give this one its own
+  `--state-dir`. Do not delete `companion.lock`; the running companion still
+  owns the directory, and a second one would share its records.
+- For a symlink refusal, pass the real directory path with `--state-dir`. For
+  a mode refusal, check the owner and run `chmod 700` on the directory, or
+  `chmod 600` on its database; never loosen either.
+- For a schema refusal, start the companion that wrote the directory, export
+  the library, then import the export with the new companion into a fresh
+  `--state-dir`.
+- For a state root refusal, unset `XDG_STATE_HOME` or give it an absolute
+  path, and pass absolute `--state-dir` and `--token-file` paths.
+- For a token file refusal, choose a new path in a directory you own with
+  `chmod 700`; never point `--token-file` at another file you keep.
+- For an `internal` refusal, read the companion's log; the response holds no
+  exception text.
+
+## 124. Studio refuses a submission, retry, upload, cancellation, operation or update
+
+**Symptom:** a Studio review, submission, retry, upload, cancellation,
+management review or update returns one of these codes, or a job settles with
+one of these reasons:
+
+- Submission and retry: `choice_unavailable` (HTTP 409, "<node>.<input>: the
+  driver no longer offers the selected option; review a fresh preview."),
+  `schema_changed` (409), `preview_expired` (409, "Preview expired; review a
+  fresh submission."), `grid_preview` (409), `lora_binding` (400, "LoRA slot
+  <n> (<node>.<input>): <reason>") and `workflow` (400, for example "<input>
+  uses COMFY_DYNAMICGROUP_V3, which needs an explicit adapter").
+- Job outcomes: an error `prompt_rejected` ("Driver refused the prompt before
+  queueing it (HTTP <status>)."), with the failing nodes; a settlement reason
+  `absent_from_driver` ("The driver no longer holds this prompt in its queue or
+  history."); or a `node_errors` warning on a job that stays queued.
+- Uploads and media: `image_limit` (413, "Use a PNG, JPEG or WebP image." or
+  "Downscale the image to at most 16 megapixels (4096 x 4096 pixels) and try
+  again."), `asset_limit` (413, "The normalized image exceeds the 65 MiB
+  backstop. ...") and `thumbnail_limit` (413, "Source exceeds the 65 MiB
+  thumbnail backstop.").
+- Limits: `request_limit` (413, "Request body exceeds the 4 MiB companion
+  limit."), `driver_response_limit` (502, "Driver response from <endpoint>
+  exceeds its 4 MiB budget.", or 16 MiB for `/object_info`),
+  `record_window_limit` (413, "Saving this record would take the <kind> catalog
+  past the 8 MiB browser window. ...") and `library_limit` (413, for an export
+  past 4 MiB or 2,000 rows of one collection).
+- Cancellation: `cancellation_scope` (409, "This driver has no
+  prompt-specific cancellation route; only queued graph tasks can be
+  cancelled.").
+- Operations: `operation_unavailable` (409, "Restart the companion with
+  --allow-management to write a diagnostics file."), `operation_fields` (400,
+  "Enter both the pending consent key and id, or leave both empty to list
+  pending requests."), `operation_path` (400, "Management paths must be
+  absolute."), `consent_state` (502), `gate_sampler` and `gate_history` (409),
+  and `driver_service_identity` (409, "The selected driver service serves
+  <scheme> on <addresses> port <port>, not the --driver origin; select the unit
+  that runs that driver.").
+- Update: `update_config`, `update_driver_service`, `update_repository`,
+  `update_controller_source`, `update_release_slot`,
+  `update_release_slot_unknown` and `update_changed` (all 409).
+- Driver state: `driver.code` reads `studio_storage`, `driver_data`,
+  `studio_internal` or `observer_failed`, or the queue reads `over_budget`.
+
+**Cause:** a review binds to the node definitions its prompt uses, and
+submission and retry check each selected file or option against the live
+driver again. A 4xx from POST `/prompt` is a definite refusal, so the job fails
+with the driver's node, class, input and type for each error. A job is absent
+when a successful queue snapshot lacks it and its own history lookup returns no
+entry, which follows a driver restart or a history clear. The upload rule
+bounds decoded pixels, not the encoded size. Studio update binds the driver's
+interpreter and checkout through its systemd user unit, and legacy update
+refuses Workers that run from release slots. A driver service must serve the
+`--driver` origin ([STUDIO.md](STUDIO.md#install-and-start)).
+
+**Fix:**
+
+- After `choice_unavailable` or `schema_changed`, inspect and review the draft
+  again; adding a model, LoRA or input file alone never voids a review. After
+  `preview_expired` or `grid_preview`, review again; expired previews are
+  deleted, and a submit of one is refused rather than left uncertain.
+- For `prompt_rejected`, fix the inputs the job lists, then retry or review
+  again. An `absent_from_driver` job may or may not have run; check the
+  driver's output folder before you resubmit.
+- For upload refusals, downscale the image to 16 megapixels or less, or save it
+  as PNG, JPEG or WebP.
+- For `record_window_limit`, shorten the record or another record of that kind.
+  For `library_limit`, export one project at a time, or move records into
+  another project.
+- For `cancellation_scope`, wait for the running job to finish, or interrupt it
+  from ComfyUI; Studio kept the cancellation intent and its key unspent.
+- For `driver_service_identity`, pass the `--driver` origin the unit serves,
+  or select the unit that runs that driver.
+- For update refusals, start the companion with `--config` and
+  `--driver-service`, select the checkout the driver's
+  `custom_nodes/dgx-monarch` links to, and start Studio from that checkout.
+  After `update_release_slot`, select verified mode. `dgxm update` on the
+  command line has none of these Studio requirements.
+- For a driver code, read the companion log. The observer and the event
+  watcher retry on their own with a pause of up to 30 seconds; free disk space
+  for `studio_storage`.

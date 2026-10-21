@@ -4,8 +4,8 @@ from __future__ import annotations
 import asyncio
 import hmac
 import json
+import logging
 import mimetypes
-from contextlib import suppress
 from importlib.resources import files
 from typing import Any
 
@@ -33,14 +33,66 @@ from .media_assets import MediaAssets
 from .operations import Operations
 from .runtime_history import page_runtime
 from .store import Store
-from .wire_records import snapshot_rows, telemetry_summary
+from .wire_records import snapshot_window, telemetry_summary
 from .workflows import WorkflowError, inspect_workflow
 
+LOG = logging.getLogger(__name__)
 MEDIA_LIMIT = 64 * 1024 * 1024
+CURSOR_LIMIT = 2**63 - 1  # SQLite's largest integer; a larger cursor would overflow the query.
+OBSERVE_SECONDS = 2.0
+BACKOFF_SECONDS = 30.0
+HTTP_CODES = {400: "bad_request", 404: "not_found", 405: "method_not_allowed", 413: "request_limit"}
 
 
 def json_response(value: Any, *, status: int = 200) -> web.Response:
     return web.json_response(value, status=status, dumps=canonical)
+
+
+def error_response(code: str, message: str, status: int) -> web.Response:
+    return json_response({"error": {"code": code, "message": message}}, status=status)
+
+
+def http_error(exc: web.HTTPException) -> web.Response:
+    """Give aiohttp's own refusals, such as the request size limit, the JSON error envelope."""
+    if exc.status == 413:
+        message = f"Request body exceeds the {MAX_BODY_BYTES // (1024 * 1024)} MiB companion limit."
+    else:
+        message = f"{exc.reason}."
+    response = error_response(HTTP_CODES.get(exc.status, "http_error"), message, exc.status)
+    if "Allow" in exc.headers:
+        response.headers["Allow"] = exc.headers["Allow"]
+    return response
+
+
+def degrade(jobs: Jobs, code: str) -> None:
+    """Show an unexpected background failure as an unavailable driver, keeping when it began."""
+    current = jobs.driver
+    since = current.get("since") if current.get("state") == "unavailable" and current.get("code") == code else None
+    jobs.driver = {**current, "state": "unavailable", "code": code, "since": since or timestamp()}
+
+
+async def supervise(name: str, step: Any, *, repeat: bool, degrades: Jobs | None = None) -> None:
+    """Run ``step`` until cancelled; an unexpected error is logged and retried after a growing pause.
+
+    asyncio.CancelledError is not an Exception, so shutdown still ends the loop.
+    Only the observer marks the driver unavailable: reconciliation, not the event
+    feed, is what keeps the snapshot's driver state current.
+    """
+    delay = OBSERVE_SECONDS
+    while True:
+        try:
+            await step()
+        except Exception:
+            LOG.exception("Studio %s failed; retrying in %.0f s", name, delay)
+            if degrades is not None:
+                degrade(degrades, f"{name}_failed")
+            await asyncio.sleep(delay)
+            delay = min(delay * 2, BACKOFF_SECONDS)
+            continue
+        if not repeat:
+            return
+        delay = OBSERVE_SECONDS
+        await asyncio.sleep(OBSERVE_SECONDS)
 
 
 def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: set[str],
@@ -77,8 +129,9 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
             if origin is not None and origin != f"{request.scheme}://{request.host}":
                 raise StudioError("origin", "Cross-origin access is forbidden.", 403)
             if request.path.startswith("/api/"):
-                authorization = request.headers.get("Authorization", "")
-                if not hmac.compare_digest(authorization.encode(), f"Bearer {token}".encode()):
+                # aiohttp decodes header bytes with surrogateescape; encode them back the same way.
+                authorization = request.headers.get("Authorization", "").encode("utf-8", "surrogateescape")
+                if not hmac.compare_digest(authorization, f"Bearer {token}".encode()):
                     raise StudioError("authentication", "Enter this companion's owner token.", 401)
                 version = request.headers.get("X-DGXM-Schema", SCHEMA_VERSION)
                 if version.split(".")[0] != SCHEMA_VERSION.split(".")[0]:
@@ -87,11 +140,19 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
                     raise StudioError("content_type", "Mutations require application/json.", 415)
             response = await handler(request)
         except StudioError as exc:
-            response = json_response({"error": {"code": exc.code, "message": str(exc)}}, status=exc.status)
+            response = error_response(exc.code, str(exc), exc.status)
         except WorkflowError as exc:
-            response = json_response({"error": {"code": "workflow", "message": str(exc)}}, status=400)
+            response = error_response("workflow", str(exc), 400)
         except (json.JSONDecodeError, UnicodeDecodeError):
-            response = json_response({"error": {"code": "invalid_json", "message": "Invalid JSON request."}}, status=400)
+            response = error_response("invalid_json", "Invalid JSON request.", 400)
+        except web.HTTPException as exc:
+            if exc.status < 400:
+                raise
+            response = http_error(exc)
+        except Exception:
+            LOG.exception("Studio request %s %s failed", request.method, request.path)
+            response = error_response("internal", "The companion could not complete this request; "
+                                                  "its log records the cause.", 500)
         return response
 
     async def response_headers(request: web.Request, response: web.StreamResponse) -> None:
@@ -113,9 +174,9 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
                                   "support_status": "draft; see docs/STUDIO_ACCEPTANCE.md for unimplemented acceptance criteria"})
 
     async def snapshot(request: web.Request) -> web.Response:
-        rows, omitted = snapshot_rows(store)
+        rows, omitted, cursor = snapshot_window(store)
         return json_response({"schema_version": SCHEMA_VERSION, "instance_id": instance,
-                                  "server_time": timestamp(), "cursor": store.events(0)["latest_cursor"],
+                                  "server_time": timestamp(), "cursor": cursor,
                                   "jobs": rows["jobs"], "artifacts": rows["artifacts"], "operations": rows["operations"],
                                   "records": {kind: rows[kind] for kind in RECORD_KINDS}, "omitted": omitted,
                                   "jobs_truncated": bool(omitted.get("jobs")),
@@ -128,6 +189,8 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
             raise StudioError("cursor", "Cursor must be an integer.") from exc
         if cursor < 0:
             raise StudioError("cursor", "Cursor must be nonnegative.")
+        if cursor > CURSOR_LIMIT:
+            raise StudioError("cursor", "Cursor must be below 2^63.")
         return json_response(store.events(cursor))
 
     async def catalog(request: web.Request) -> web.Response:
@@ -139,7 +202,9 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
     async def inspect(request: web.Request) -> web.Response:
         body = await payload(request)
         catalog_value = await jobs.catalog()
-        return json_response(inspect_workflow(object_value(body.get("workflow")), catalog_value["object_info"]))
+        workflow = object_value(body.get("workflow"))
+        # Stored uploads the workflow names join image upload choices, as at preview.
+        return json_response(inspect_workflow(workflow, jobs.upload_view({"workflow": workflow}, catalog_value["object_info"])))
 
     async def preview(request: web.Request) -> web.Response:
         return json_response(await jobs.preview(await payload(request)))
@@ -151,6 +216,21 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
             await jobs.catalog()
         return json_response(existing if existing is not None else jobs.submit(body), status=202)
 
+    async def refresh_before_retry(kind: str, body: dict[str, Any], bound: dict[str, Any]) -> None:
+        """Refresh the driver schema before a new confirmed retry, as submit does.
+
+        An accepted retry replays offline. An unconfirmed retry never reaches the
+        driver. A key conflict is left to the retry itself, which owns that rule.
+        """
+        try:
+            if store.request(kind, body.get("idempotency_key"), bound) is not None:
+                return
+        except StudioError as exc:
+            if exc.code != "idempotency_conflict":
+                raise
+        if body.get("confirmed") is True:
+            await jobs.catalog()
+
     async def job_action(request: web.Request) -> web.Response:
         body = await payload(request)
         if request.match_info["action"] == "cancel":
@@ -158,6 +238,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
             bounded_key(body.get("idempotency_key"))
             value = await jobs.cancel(request.match_info["id"], body)
         elif request.match_info["action"] == "retry":
+            await refresh_before_retry("jobs", body, {**body, "retry_of": request.match_info["id"]})
             value = jobs.retry(request.match_info["id"], body)
         else:
             raise StudioError("job_action", "Unknown job action.", 404)
@@ -206,7 +287,9 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
 
     async def grid_retry(request: web.Request) -> web.Response:
         compact = compact_grid(request)
-        value = grids.retry(request.match_info["id"], await payload(request))
+        body = await payload(request)
+        await refresh_before_retry("grid_retries", body, {**body, "grid_id": request.match_info["id"]})
+        value = grids.retry(request.match_info["id"], body)
         return json_response(grid_summary(value) if compact else value, status=202)
 
     async def request_status(request: web.Request) -> web.Response:
@@ -277,6 +360,13 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
                     return response
                 await response.write(chunk)
             await response.write_eof()
+        except Exception as exc:
+            if not response.prepared:
+                raise
+            # Headers are out, so a JSON error cannot follow; end the stream the same way.
+            LOG.warning("Studio media stream for %s ended early: %s", artifact["id"], type(exc).__name__)
+            if request.transport:
+                request.transport.close()
         finally:
             upstream.release()
         return response
@@ -331,24 +421,22 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
     async def lifecycle(application: web.Application) -> Any:
         store.recover()
         await client.start()
-        async def observe() -> None:
-            while True:
-                await jobs.reconcile()
-                await asyncio.sleep(2)
-        task = asyncio.create_task(observe()) if poll else None
-        stream = asyncio.create_task(jobs.watch_events()) if poll else None
+        listeners = [asyncio.create_task(supervise("observer", jobs.reconcile, repeat=True, degrades=jobs)),
+                     asyncio.create_task(supervise("event_watch", jobs.watch_events, repeat=False))] if poll else []
         yield
-        for listener in (task, stream):
-            if not listener:
-                continue
-            listener.cancel()
-            with suppress(asyncio.CancelledError):
-                await listener
-        # Do not kill an in-flight management subprocess on companion shutdown.
-        for pending in [*jobs.tasks, *ops.tasks]:
-            pending.cancel()
-        await asyncio.gather(*jobs.tasks, *ops.tasks, return_exceptions=True)
-        await client.close()
+        try:
+            for listener in listeners:
+                listener.cancel()
+            # A listener that already failed must not stop the rest of shutdown.
+            for outcome in await asyncio.gather(*listeners, return_exceptions=True):
+                if isinstance(outcome, Exception):
+                    LOG.error("Studio background listener ended with an error", exc_info=outcome)
+            # Do not kill an in-flight management subprocess on companion shutdown.
+            for pending in [*jobs.tasks, *ops.tasks]:
+                pending.cancel()
+            await asyncio.gather(*jobs.tasks, *ops.tasks, return_exceptions=True)
+        finally:
+            await client.close()
 
     app.cleanup_ctx.append(lifecycle)
     return app

@@ -4,7 +4,10 @@
   import { initialWorkspace } from './initialWorkspace';
   import { Submission } from './submission.svelte';
   import { Connection } from './connection.svelte';
-  import { emptyDraft, restoreDraft } from './model';
+  import { emptyDraft, restoreDraft, driverStatus } from './model';
+  import { DraftAutosave } from './draftAutosave.svelte';
+  import { InspectionGuard, droppedInspection, DROPPED_REVIEW } from './inspectionGuard';
+  import { requestLimit } from './api';
   import type { Binding, Draft } from './model';
   import type {
     Artifact,
@@ -15,7 +18,6 @@
     RecordData,
     GraphConnection,
   } from './contracts';
-  import { exportJSON } from './files';
   import { isActiveJob, requestJobAction } from './jobActions';
   import { persistRecord } from './recordPersistence';
   import { artifactDraft } from './artifactDraft';
@@ -37,10 +39,10 @@
   import Connect from './views/Connect.svelte';
   const connection = new Connection();
   const submission = new Submission(connection);
-  const DRAFT_KEY = 'dgxm.studio.draft.v1',
-    LAYOUT_KEY = 'dgxm.studio.layout.v1';
+  const autosave = new DraftAutosave(),
+    guard = new InspectionGuard();
+  const LAYOUT_KEY = 'dgxm.studio.layout.v1';
   let draft = $state<Draft>(emptyDraft()),
-    savedDraft = '',
     undoDraft: Draft | null = null;
   let bindings = $state<Binding[]>([]),
     bindingErrors = $state<string[]>([]),
@@ -55,14 +57,13 @@
     notice = $state(''),
     error = $state(''),
     dirty = $state(false),
-    draftConflict = $state(false),
     localError = $state('');
   let showTelemetry = $state(true),
     showConsole = $state(false),
     presentation = $state(false),
     width = $state(340);
-  let inspectionSequence = 0,
-    pendingActions = 0;
+  let pendingActions = 0,
+    workflowId = $state('');
   let palettePanel: CommandPalette, previewPanel: SubmissionReview;
   let jobs = $derived(connection.snapshot.jobs),
     activeJobs = $derived(jobs.filter(isActiveJob));
@@ -97,10 +98,8 @@
     error = '';
     try {
       await connection.connect();
-      if (connection.snapshot.driver.state !== 'connected')
-        setNotice(
-          'Companion connected. Driver catalog unavailable; management controls remain accessible.',
-        );
+      const degraded = connection.degradedNotice();
+      if (degraded) setNotice(degraded);
       if (draft.workflow) await inspect(draft.workflow, draft.workflowName, true);
     } catch (e) {
       fail(e);
@@ -130,7 +129,8 @@
   }
 
   function changeDraft(change: Partial<Draft>) {
-    inspectionSequence++;
+    guard.edit(change);
+    if (change.workflow !== undefined) workflowId = '';
     undoDraft = structuredClone($state.snapshot(draft));
     draft = { ...draft, ...change };
     dirty = true;
@@ -144,17 +144,24 @@
     }
   }
 
-  async function inspect(workflow: Workflow, name: string, preserveValues = false) {
-    const ticket = ++inspectionSequence,
-      api = connection.client;
+  async function inspect(
+    workflow: Workflow,
+    name: string,
+    preserveValues = false,
+    templateId = '',
+  ) {
+    const ticket = guard.begin(connection.client);
     const values = preserveValues ? structuredClone($state.snapshot(draft.values)) : undefined;
     await withBusy(async () => {
       const result = await inspectDraft(connection.client, workflow, name, values);
-      if (ticket !== inspectionSequence || api !== connection.client) return;
+      const state = guard.inspected(ticket, connection.client);
+      if (state !== 'current')
+        return void (state !== 'newer' && fail(droppedInspection(name, state)));
       bindings = result.bindings;
       connections = result.connections;
       bindingErrors = result.errors;
       changeDraft(result.patch);
+      workflowId = templateId;
       rawWorkflow = result.rawWorkflow;
       controlTab = result.controlTab;
     });
@@ -162,7 +169,7 @@
 
   async function jobAction(job: Job, action: 'cancel' | 'retry') {
     await withBusy(async () => {
-      await requestJobAction(connection.client, job, action);
+      await requestJobAction(connection.client, job, action, setNotice);
       await refresh();
     });
   }
@@ -170,14 +177,14 @@
     await withBusy(() => loadArtifact(artifact, operation));
   }
   async function loadArtifact(artifact: Artifact, operation?: string) {
-    const ticket = ++inspectionSequence,
-      api = connection.client;
+    const api = connection.client,
+      ticket = guard.begin(api);
     const job = await fullJob(
       api,
       artifact.job_id,
       jobs.find((j) => j.id === artifact.job_id),
     );
-    if (ticket !== inspectionSequence || api !== connection.client) return;
+    if (guard.inspected(ticket, connection.client) !== 'current') return;
     if (!job?.submission?.workflow && !job?.submission?.prompt) {
       error = 'Source workflow is unavailable. Restore the job provenance before reuse.';
       return;
@@ -239,12 +246,10 @@
     localError = restored.error;
     submission.recoveryError = restored.pendingError;
     if (restored.draft) draft = restored.draft;
-    savedDraft = restored.saved;
+    autosave.restore(restored.saved, restored.draft);
     if (restored.layout) ({ width, showTelemetry, showConsole } = restored.layout);
     submission.pending = restored.pending;
-    const storage = (e: StorageEvent) => {
-      if (e.key === DRAFT_KEY && e.newValue !== savedDraft) draftConflict = true;
-    };
+    const storage = (e: StorageEvent) => autosave.observe(e.key, e.newValue);
     window.addEventListener('storage', storage);
     const stopConnection = connection.observeVisibility();
     if (connection.token) void connect();
@@ -253,21 +258,7 @@
       window.removeEventListener('storage', storage);
     };
   });
-  $effect(() => {
-    const value = JSON.stringify({
-      schema_version: '1.0',
-      draft: $state.snapshot(draft),
-      updated_at: new Date().toISOString(),
-    });
-    if (dirty && !draftConflict) {
-      try {
-        localStorage.setItem(DRAFT_KEY, value);
-        savedDraft = value;
-      } catch {
-        localError = 'Local storage is full or unavailable. Export your draft to preserve changes.';
-      }
-    }
-  });
+  $effect(() => autosave.save($state.snapshot(draft), dirty));
   $effect(() => {
     try {
       localStorage.setItem(LAYOUT_KEY, JSON.stringify({ width, showTelemetry, showConsole }));
@@ -292,9 +283,11 @@
     }
   }
   async function prepareJob() {
+    const ticket = guard.snapshot(connection.client);
     await withBusy(async () => {
-      await submission.prepare($state.snapshot(draft));
-      previewPanel.open();
+      const current = () => guard.previewed(ticket, connection.client);
+      if (await submission.prepare($state.snapshot(draft), current)) previewPanel.open();
+      else fail(DROPPED_REVIEW);
     });
   }
   async function submitPreview() {
@@ -335,9 +328,11 @@
   {openPalette}
 >
   <StatusMessages
-    messages={{ notice, error, localError, draftConflict }}
+    messages={{ notice, error, localError }}
     {connection}
     {submission}
+    {autosave}
+    {draft}
     {busy}
     {connect}
     {reconcilePending}
@@ -346,23 +341,21 @@
       if (kind === 'notice') notice = '';
       else error = '';
     }}
-    onexport={() => exportJSON(draft, 'monarch-draft.json')}
-    onkeep={() => {
-      exportJSON(draft, 'monarch-this-tab.json');
-      draftConflict = false;
-      dirty = true;
-    }}
     onload={() => {
       try {
-        void importDraft(restoreDraft(JSON.parse(localStorage.getItem(DRAFT_KEY) ?? '{}').draft));
-        draftConflict = false;
+        void importDraft(autosave.loadNewer());
       } catch (e) {
         fail(e);
       }
     }}
   />
   <main id="main-heading" tabindex="-1">
-    {#if !connection.connected}<Connect bind:token={connection.token} {busy} {connect} />
+    {#if !connection.connected}<Connect
+        bind:token={connection.token}
+        {busy}
+        error={connection.error}
+        {connect}
+      />
     {:else if presentation}<Viewer
         activeCount={activeJobs.length}
         artifact={displayedArtifact}
@@ -382,10 +375,12 @@
           catalog={connection.catalog}
           {connections}
           workflows={connection.workflows}
+          {workflowId}
+          requestLimit={requestLimit(connection.capabilities)}
           {dirty}
           {busy}
           pending={!!submission.pending || !!submission.recoveryError}
-          driverState={connection.snapshot.driver.state}
+          driverState={driverStatus(connection.snapshot.driver)}
           {changeDraft}
           {inspect}
           {fail}
@@ -472,7 +467,7 @@
         bind:showTelemetry
         bind:showConsole
         capabilities={connection.capabilities}
-        driverState={connection.snapshot.driver.state}
+        driverState={driverStatus(connection.snapshot.driver)}
         onimport={importDraft}
         disconnect={() => connection.disconnect()}
         {fail}

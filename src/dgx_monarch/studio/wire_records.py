@@ -47,10 +47,21 @@ def projection(kind: str) -> str:
 
 def snapshot_rows(store: Store) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
     """Share a byte budget across compact windows, prioritizing unresolved jobs."""
+    rows, omitted, _ = snapshot_window(store)
+    return rows, omitted
+
+
+def snapshot_window(store: Store) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int], int]:
+    """Return the compact rows, the omitted counts and the event cursor they reflect.
+
+    The cursor is read under the same lock as the rows, so a client that resumes
+    from it neither skips an event the rows lack nor decodes any event payload.
+    """
     result: dict[str, list[dict[str, Any]]] = {}
     omitted: dict[str, int] = {}
     remaining = PAGE_BYTES // 2  # Leave half for driver/telemetry and the response envelope.
     with store.lock:
+        cursor = store.db.execute("SELECT COALESCE(MAX(cursor),0) FROM events").fetchone()[0]
         for kind in ("jobs", "operations", *RECORD_KINDS, "artifacts"):
             count = store.db.execute("SELECT count(*) FROM objects WHERE kind=?", (kind,)).fetchone()[0]
             priority = ("CASE WHEN json_extract(document,'$.state') IN "
@@ -68,7 +79,7 @@ def snapshot_rows(store: Store) -> tuple[dict[str, list[dict[str, Any]]], dict[s
                 remaining -= size
             if count > len(result[kind]):
                 omitted[kind] = count - len(result[kind])
-    return result, omitted
+    return result, omitted, int(cursor)
 
 
 def telemetry_summary(value: dict[str, Any]) -> dict[str, Any]:

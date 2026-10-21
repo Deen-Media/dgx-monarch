@@ -2,6 +2,7 @@
   import type { Binding, Draft } from '../model';
   import { fieldLabel } from '../model';
   import { layoutWorkflow, unchangedWorkflow } from '../workflowLayout';
+  import { numberField } from '../numberField';
   import type { ChangeDraft, InspectWorkflow, ReportError } from '../contracts';
   let {
     draft,
@@ -65,8 +66,12 @@
       ><label
         >Order<input
           type="number"
-          value={Number(binding.order ?? 0)}
-          onchange={(e) => configureBinding(binding.id, { order: Number(e.currentTarget.value) })}
+          placeholder="0"
+          use:numberField={{
+            value: binding.order,
+            commit: (order) => order !== null && configureBinding(binding.id, { order }),
+            event: 'change',
+          }}
         /></label
       >
     </div>

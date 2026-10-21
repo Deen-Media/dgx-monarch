@@ -6,6 +6,8 @@ export interface MetricDefinition {
   unit: string;
   aggregation: string;
   threshold?: string | null;
+  /** `slab_rule` names the contract's rule for a missing value; anything else means unknown. */
+  missing?: string;
 }
 export interface Presentation {
   metrics: MetricDefinition[];
@@ -32,6 +34,31 @@ function read(value: unknown, path: string): number | null {
   for (const key of path.split('.')) node = record(node)[key];
   return number(node);
 }
+/**
+ * Slab GiB a host's chart records under the presentation contract's slab rule, the rule
+ * `slab_reading` in studio/presentation.py applies for `dgxm top` and the sidebar. A Worker
+ * reports `slab_gib` only while a slab holds its model, so a missing value is a known zero
+ * unless the report could hide one. `undefined` means no Worker reports the host.
+ */
+export function slabReading(worker: unknown): number | null {
+  if (worker === undefined) return 0;
+  if (!worker || typeof worker !== 'object' || Array.isArray(worker)) return null;
+  const report = worker as Record<string, unknown>;
+  if (report.memory_error != null) return null;
+  const memory = report.memory;
+  if (!memory || typeof memory !== 'object' || Array.isArray(memory)) return null;
+  const fields = memory as Record<string, unknown>;
+  if ('slab_gib' in fields) {
+    const value = number(fields.slab_gib);
+    return value === null ? null : Math.max(0, value);
+  }
+  const residency = fields.weight_residency;
+  // Every Worker that holds a model also reports its weight_residency.
+  if (residency == null) return 'patcher_class' in fields || 'model' in fields ? null : 0;
+  return typeof residency === 'string' && residency !== 'slab' ? 0 : null;
+}
+/** Host clocks may run slightly ahead of the companion that fetched their sample. */
+export const SAMPLE_CLOCK_MARGIN_S = 5;
 export function appendTelemetry(
   history: MetricSeries[],
   telemetry: Telemetry,
@@ -41,7 +68,11 @@ export function appendTelemetry(
   if (telemetry.state !== 'connected') return history;
   const sample = record(telemetry.sample),
     sourceTime = number(sample.t);
-  if (sourceTime === null || sourceTime > Date.now() / 1000) return history;
+  // Bound sample times by the companion's clock at fetch, not the browser's: a remote browser
+  // behind the host would drop every sample. The bound keeps one far-future time from blocking
+  // every later point at the order check below.
+  const latest = (number(telemetry.observed_at) ?? Date.now() / 1000) + SAMPLE_CLOCK_MARGIN_S;
+  if (sourceTime === null || sourceTime > latest) return history;
   const hosts: Record<string, unknown>[] = [
     record(sample.driver_host),
     ...(Array.isArray(sample.workers)
@@ -50,6 +81,9 @@ export function appendTelemetry(
   ];
   const updates: { host: string; metric: MetricDefinition; time: number; value: number | null }[] =
     [];
+  const workerHosts = new Set(
+    hosts.filter((scope) => 'worker' in scope).map((scope) => String(scope.host ?? 'unknown')),
+  );
   for (const metric of definitions) {
     const scopes: Record<string, unknown>[] = metric.id.startsWith('render.')
       ? [{ host: 'driver', t: sourceTime, ...sample }]
@@ -69,6 +103,11 @@ export function appendTelemetry(
           });
       } else {
         let value = read(scope, metric.source);
+        if (metric.missing === 'slab_rule') {
+          // The driver's own box takes its Worker's report when a Worker runs there.
+          if (!('worker' in scope) && workerHosts.has(host)) continue;
+          value = slabReading('worker' in scope ? scope.worker : undefined);
+        }
         if (metric.id === 'host.memory.cache') {
           const available = read(scope, 'mem_gib.MemAvailable'),
             free = read(scope, 'mem_gib.MemFree');

@@ -148,6 +148,7 @@ export interface Capabilities {
   host?: string;
   instance_id?: string;
   operations?: OperationCapability[];
+  limits?: { request_bytes?: number; [key: string]: unknown };
   [key: string]: unknown;
 }
 export interface Telemetry {
@@ -169,6 +170,8 @@ export interface Snapshot {
   telemetry: Telemetry;
   driver: {
     state?: string;
+    code?: string;
+    since?: number;
     timestamp?: number;
     history?: { state: string; code?: string };
   };
@@ -193,6 +196,8 @@ export type InspectWorkflow = (
   workflow: Workflow,
   name: string,
   preserveValues?: boolean,
+  /** The bundled workflow id the select shows once this inspection applies. */
+  templateId?: string,
 ) => Promise<void>;
 export type ChangeDraft = (changes: Partial<Draft>) => void;
 export type ReuseArtifact = (artifact: Artifact, operation?: string) => Promise<void>;

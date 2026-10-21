@@ -7,14 +7,18 @@ Monarch Workers. Unsupported unit layouts require an explicit adapter.
 from __future__ import annotations
 
 import asyncio
+import grp
+import ipaddress
 import os
 import pwd
 import re
 import shlex
+import socket
 import stat
 import subprocess
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from .contracts import StudioError, digest
 
@@ -43,11 +47,31 @@ def validate_unit_name(unit: str) -> None:
         raise _refuse("Persistent Monarch Worker services cannot be selected as the ComfyUI driver.")
 
 
+def _others_can_write(info: os.stat_result) -> bool:
+    """Write access for anyone but the owner.
+
+    Group write counts only when the group holds another user. A group of
+    just the owner (the usual umask 002 setup) grants nothing more. Update's
+    checkout_identity applies the same rule to the checkout.
+    """
+    if info.st_mode & 0o002:
+        return True
+    if not info.st_mode & 0o020:
+        return False
+    try:
+        owner = pwd.getpwuid(info.st_uid).pw_name
+        group = grp.getgrgid(info.st_gid)
+        members = {entry.pw_name for entry in pwd.getpwall() if entry.pw_gid == info.st_gid} | set(group.gr_mem)
+    except KeyError:
+        return True
+    return bool(members - {owner})
+
+
 def _record(path: Path, uid: int, *, limit: int = 4 * 1024 * 1024) -> dict[str, Any]:
     try:
         metadata = path.lstat()
-        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != uid or metadata.st_mode & 0o022:
-            raise _refuse("Driver unit and source files must be regular, owner-controlled, and not group/world writable.")
+        if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != uid or _others_can_write(metadata):
+            raise _refuse("Driver unit and source files must be regular, owner-controlled files no other user can write.")
         if metadata.st_size > limit:
             raise _refuse("Driver identity file exceeds the supported size limit.")
         content = path.read_bytes()
@@ -87,10 +111,91 @@ def _direct_command(serialized: str) -> tuple[Path, Path, list[str]]:
     return executable, main, argv
 
 
+_LISTEN_OPTIONS = ("--listen", "--port", "--tls-keyfile", "--tls-certfile")
+
+
+def listen_endpoint(argv: list[str]) -> dict[str, Any]:
+    """The scheme, addresses and port ComfyUI serves, read from its own argv.
+
+    ComfyUI's defaults apply when an option is absent: 127.0.0.1 and port 8188,
+    and a bare --listen means 0.0.0.0 and ::. argparse would also accept an
+    abbreviated option, so an abbreviation is refused rather than guessed.
+    """
+    arguments = argv[1:]
+    while arguments and arguments[0] in {"-u", "-B"}:
+        arguments = arguments[1:]
+    arguments = arguments[1:]  # the verified main.py
+    values: dict[str, str] = {}
+    index = 0
+    while index < len(arguments):
+        name, has_value, value = arguments[index].partition("=")
+        if name.startswith("--") and name not in _LISTEN_OPTIONS and any(option.startswith(name) for option in _LISTEN_OPTIONS):
+            raise _refuse("Driver command abbreviates a listen option; spell --listen, --port and the TLS options in full.")
+        if name in _LISTEN_OPTIONS:
+            following = arguments[index + 1] if index + 1 < len(arguments) else None
+            if not has_value and following is not None and not following.startswith("-"):
+                value, index = following, index + 1
+            elif not has_value and name != "--listen":
+                raise _refuse("Driver command gives a listen option without its value.")
+            values[name] = value if has_value or value else "0.0.0.0,::"
+        index += 1
+    addresses = values.get("--listen", "127.0.0.1").split(",")
+    try:
+        port = int(values.get("--port", "8188"))
+    except ValueError as exc:
+        raise _refuse("Driver command gives a port that is not a number.") from exc
+    if not 1 <= port <= 65535 or any(not address for address in addresses):
+        raise _refuse("Driver command gives an unusable listen address or port.")
+    scheme = "https" if values.get("--tls-keyfile") and values.get("--tls-certfile") else "http"
+    return {"scheme": scheme, "addresses": addresses, "port": port}
+
+
+def _bindable(address: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    """Whether this host owns the address; binding port 0 sends nothing."""
+    family = socket.AF_INET6 if address.version == 6 else socket.AF_INET
+    try:
+        with socket.socket(family, socket.SOCK_DGRAM) as probe:
+            probe.bind((str(address), 0))
+    except OSError:
+        return False
+    return True
+
+
+def _serves(address: str, host: str) -> bool:
+    if address.lower() == host:
+        return True
+    try:
+        bound = ipaddress.ip_address(address)
+        wanted = ([ipaddress.ip_address("127.0.0.1"), ipaddress.ip_address("::1")] if host == "localhost"
+                  else [ipaddress.ip_address(host)])
+    except ValueError:
+        return False  # A host name other than localhost cannot be proven to reach this unit.
+    return any(bound == target or (bound.is_unspecified and bound.version == target.version
+                                   and (target.is_loopback or _bindable(target)))
+               for target in wanted)
+
+
+def origin_mismatch(endpoint: dict[str, Any], origin: str) -> str | None:
+    """Why this unit does not serve the --driver origin, or None when it does."""
+    parts = urlsplit(origin)
+    try:
+        port = parts.port or (443 if parts.scheme == "https" else 80)
+    except ValueError:
+        return "The --driver origin has an invalid port."
+    host = (parts.hostname or "").lower()
+    if (parts.scheme == endpoint["scheme"] and port == endpoint["port"]
+            and any(_serves(address, host) for address in endpoint["addresses"])):
+        return None
+    return (f"The selected driver service serves {endpoint['scheme']} on {', '.join(endpoint['addresses'])} "
+            f"port {endpoint['port']}, not the --driver origin; select the unit that runs that driver.")
+
+
 class DriverService:
-    def __init__(self, unit: str):
+    def __init__(self, unit: str, *, origin: str | None = None):
         validate_unit_name(unit)
         self.unit = unit
+        # The --driver origin this unit must serve; jobs and reviews track that origin.
+        self.origin = origin
         self.uid = os.getuid()
         self.owner_root = Path(pwd.getpwuid(self.uid).pw_dir) / ".config/systemd/user"
 
@@ -160,10 +265,14 @@ class DriverService:
             raise _refuse("Driver drop-in paths cannot be inspected.") from exc
         unit_files.extend(self._unit_file(path) for path in drop_ins)
         executable, main, argv = _direct_command(fields["ExecStart"])
+        endpoint = listen_endpoint(argv)
+        mismatch = origin_mismatch(endpoint, self.origin) if self.origin is not None else None
+        if mismatch:
+            raise _refuse(mismatch)
         try:
             interpreter = executable.resolve(strict=True)
             interpreter_stat = interpreter.stat()
-            if interpreter_stat.st_uid not in {0, self.uid} or interpreter_stat.st_mode & 0o022:
+            if interpreter_stat.st_uid not in {0, self.uid} or _others_can_write(interpreter_stat):
                 raise _refuse("Driver Python interpreter is not owner-controlled.")
         except OSError as exc:
             raise _refuse("Driver Python interpreter is unavailable.") from exc
@@ -187,7 +296,8 @@ class DriverService:
         else:
             raise _refuse("Driver is not in a known stable running or stopped state.")
         config = {"unit": self.unit, "owner_uid": self.uid, "unit_files": unit_files,
-                  "source_files": source, "exec_digest": digest(argv), "executable": str(executable), "interpreter": str(interpreter),
+                  "source_files": source, "exec_digest": digest(argv), "listen": endpoint,
+                  "executable": str(executable), "interpreter": str(interpreter),
                   "interpreter_identity": [interpreter_stat.st_dev, interpreter_stat.st_ino, interpreter_stat.st_mtime_ns],
                   "service_policy": {name: fields[name] for name in ("UnitFileState", "Restart", "KillMode")}}
         return {"schema_version": 1, "role": "comfyui_driver", "config": config,

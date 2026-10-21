@@ -34,7 +34,7 @@
       "label": "Other"
     },
     "pool": {
-      "ansi": "yellow",
+      "ansi": "bright_red",
       "ansi256": 208,
       "hex": "#fb923c",
       "label": "Retained pool"
@@ -93,7 +93,20 @@
     {
       "aggregation": "none",
       "id": "host.memory.slab",
-      "missing": "unknown",
+      "missing": "slab_rule",
+      "missing_rule": {
+        "unknown": [
+          "the Worker sent memory_error",
+          "the Worker sent no memory report",
+          "the Worker sent a slab_gib that is not a finite number",
+          "the Worker reports slab residency, or a resident model with no weight_residency, and no slab_gib"
+        ],
+        "zero": [
+          "no Worker reports the host (a driver-only box, or dgxm top reading local stats while the driver is down)",
+          "the Worker reports weight_residency other than slab",
+          "the Worker reports no resident model"
+        ]
+      },
       "name": "Slab",
       "safety_authority": "backend_policy",
       "source": "worker.memory.slab_gib",

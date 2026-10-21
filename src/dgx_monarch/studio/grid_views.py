@@ -50,17 +50,23 @@ def live_view(store: Store, value: dict[str, Any]) -> dict[str, Any]:
         for start in range(0, len(identities), 256):
             batch = identities[start:start + 256]
             placeholders = ",".join("?" for _ in batch)
-            for row in store.db.execute("SELECT id,json_extract(document,'$.state'),json_extract(document,'$.prompt_id') "  # noqa: S608
+            for row in store.db.execute("SELECT id,json_extract(document,'$.state'),json_extract(document,'$.prompt_id'),"  # noqa: S608
+                                        "json_extract(document,'$.retry_runtime') "
                                         f"FROM objects WHERE kind='jobs' AND id IN ({placeholders})", batch):
-                jobs[row[0]] = {"state": row[1], "prompt_id": row[2]}
+                jobs[row[0]] = {"state": row[1], "prompt_id": row[2], "retry_runtime": row[3]}
             for row in store.db.execute("SELECT id,json_extract(document,'$.job_id') FROM objects "  # noqa: S608
                                         f"WHERE kind='artifacts' AND json_extract(document,'$.job_id') IN ({placeholders})", batch):
                 artifacts.setdefault(row[1], []).append(row[0])
+    full = not value.get("summary")
     for cell in cells:
         if cell.get("excluded"):
             continue
-        state = jobs.get(cell.get("job_id"), {"state": "unknown", "prompt_id": None})
-        cell.update(**state, artifact_ids=[identity for attempt in cell.get("attempts") or [] for identity in artifacts.get(attempt, [])])
+        outcome = dict(jobs.get(cell.get("job_id"), {"state": "unknown", "prompt_id": None}))
+        retried = outcome.pop("retry_runtime", None)
+        if full and isinstance(retried, str):
+            # A retried cell's manifest names the runtime that attempt ran against.
+            cell["retry_runtime"] = json.loads(retried)
+        cell.update(**outcome, artifact_ids=[identity for attempt in cell.get("attempts") or [] for identity in artifacts.get(attempt, [])])
     states = {cell["state"] for cell in cells if not cell.get("excluded")}
     state = ("unknown" if "unknown" in states else "running" if states & {"running", "cancel_requested"} else
              "submitting" if states & {"submitting", "accepted"} else "queued" if "queued" in states else

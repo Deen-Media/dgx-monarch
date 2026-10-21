@@ -65,7 +65,7 @@ test('clearing unreadable request remains visibly blocked when storage removal f
   assert.equal(submission.recoveryError, '');
   assert.equal(store.has('dgxm.studio.pending'), false);
 });
-for (const code of ['preview_expired', 'schema_changed']) {
+for (const code of ['preview_expired', 'schema_changed', 'choice_unavailable']) {
   test(`a definitive ${code} refusal allows a fresh reviewed submission`, async () => {
     const { submission, connection, store } = setup();
     connection.client.request = async () => {
@@ -157,6 +157,32 @@ test('grid refusal classification preserves uncertainty and separates submit fro
   assert.equal(submissionRefused(new Error('timeout'), 'grid'), false);
   assert.equal(submissionRefused(new ApiError(409, 'retry', 'grid_retry'), 'grid'), false);
 });
+// Each code the companion raises after its key lookup, so nothing was accepted under the key.
+const definite: Record<string, string[]> = {
+  job: ['preview_expired', 'schema_changed', 'choice_unavailable'],
+  grid: ['grid_preview', 'preview_expired', 'schema_changed', 'choice_unavailable'],
+  'grid-retry': ['grid_retry', 'schema_changed', 'choice_unavailable', 'preview_expired'],
+  cancel: ['confirmation', 'cancellation_scope'],
+  retry: ['retry_scope', 'retry_provenance', 'schema_changed', 'choice_unavailable'],
+};
+for (const [kind, codes] of Object.entries(definite)) {
+  for (const code of codes) {
+    test(`a ${kind} request refused with ${code} is definite, but not as a server fault`, () => {
+      const refusal = kind as Parameters<typeof submissionRefused>[1];
+      assert.equal(submissionRefused(new ApiError(409, code, code), refusal), true);
+      assert.equal(submissionRefused(new ApiError(500, code, code), refusal), false);
+    });
+  }
+  test(`a ${kind} key conflict, transport failure or uncoded refusal stays unknown`, () => {
+    const refusal = kind as Parameters<typeof submissionRefused>[1];
+    assert.equal(
+      submissionRefused(new ApiError(409, 'conflict', 'idempotency_conflict'), refusal),
+      false,
+    );
+    assert.equal(submissionRefused(new ApiError(409, 'refused'), refusal), false);
+    assert.equal(submissionRefused(new Error('timeout'), refusal), false);
+  });
+}
 test('unreadable pending identity blocks fresh work until explicitly cleared', async () => {
   const { submission, connection, store } = setup();
   store.set('dgxm.studio.pending', '{');
@@ -187,3 +213,63 @@ for (const response of [{}, null, { id: '' }]) {
     assert.deepEqual(submission.pending, retained);
   });
 }
+function held<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+test('a draft edit during preview preparation drops the older review', async () => {
+  const { submission, connection } = setup();
+  submission.preview = null;
+  const response = held<unknown>();
+  connection.client.request = () => response.promise;
+  let edited = false;
+  const preparing = submission.prepare({ values: { seed: 1 } }, () => !edited);
+  edited = true;
+  response.resolve({ id: 'older-preview' });
+  assert.equal(await preparing, false);
+  assert.equal(submission.preview, null);
+  connection.client.request = async () => ({ id: 'current-preview' });
+  assert.equal(await submission.prepare({ values: { seed: 2 } }, () => true), true);
+  assert.equal(submission.preview.id, 'current-preview');
+});
+test('a reconnect during preview preparation drops the old companion review', async () => {
+  const { submission, connection } = setup();
+  submission.preview = null;
+  const response = held<unknown>();
+  connection.client.request = () => response.promise;
+  const preparing = submission.prepare({ values: {} });
+  connection.client = { request: async () => ({ id: 'new-companion' }) };
+  response.resolve({ id: 'old-companion-preview' });
+  assert.equal(await preparing, false);
+  assert.equal(submission.preview, null);
+});
+test('the unknown-outcome message stays in submission state after a refresh', async () => {
+  const { submission, connection } = setup();
+  let refreshed = 0;
+  connection.refresh = async () => {
+    refreshed++;
+    connection.error = '';
+  };
+  connection.client.request = async () => {
+    throw new Error('timeout');
+  };
+  await assert.rejects(submission.submit(), /timeout/);
+  assert.ok(refreshed > 0);
+  assert.match(submission.outcome, /outcome unknown until reconciled/);
+  assert.equal(connection.error, '');
+  connection.client.request = async () => ({ id: 'job' });
+  assert.equal(await submission.reconcile(), true);
+  assert.equal(submission.outcome, '');
+  assert.equal(submission.pending, null);
+});
+test('a definitive refusal leaves no unknown-outcome message', async () => {
+  const { submission, connection } = setup();
+  connection.client.request = async () => {
+    throw new ApiError(409, 'Expired', 'preview_expired');
+  };
+  await assert.rejects(submission.submit());
+  assert.equal(submission.outcome, '');
+});

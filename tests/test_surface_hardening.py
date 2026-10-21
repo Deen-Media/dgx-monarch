@@ -394,6 +394,10 @@ def test_browser_panel_avoids_html_interpolation_and_accounts_slab():
     assert 'legendItem(legend, MEMORY.slab, `slab ${slab.toFixed(1)} GiB`)' in panel
     assert "if (breakdownKnown) card.appendChild(legend)" in panel
     assert '"memory breakdown unknown"' in panel
+    # The shared slab rule gates the bar; a raw finite-slab_gib check hid it on
+    # every host without a slab (tests/test_tui_memory_breakdown.py runs it).
+    assert "slabReading(meta) !== null" in panel
+    assert "mm?.slab_gib].every" not in panel
 
 
 def test_setup_script_is_fail_fast_and_python_version_independent():

@@ -44,3 +44,31 @@ export async function loadRecordCatalog(
     );
   return [...records.values()];
 }
+
+/**
+ * Read one record back by identity. The companion has no single-record route, so page through
+ * the kind, newest first, and keep only the match; no catalog is held in memory.
+ */
+export async function findRecord(
+  client: StudioClient,
+  kind: RecordKind,
+  id: string,
+): Promise<StoredRecord | null> {
+  let offset: number | null = 0;
+  for (let pages = 0; offset !== null && pages <= RECORD_ROW_LIMIT; pages++) {
+    const result: { records: StoredRecord[]; next_offset: number | null } = await client.request(
+      `/records/${kind}?limit=200&offset=${offset}`,
+    );
+    const match = result.records.find((record) => record.id === id);
+    if (match) return match;
+    if (
+      result.next_offset !== null &&
+      (!Number.isInteger(result.next_offset) ||
+        result.next_offset <= offset ||
+        !result.records.length)
+    )
+      throw new Error('The companion returned a non-advancing library page.');
+    offset = result.next_offset;
+  }
+  return null;
+}

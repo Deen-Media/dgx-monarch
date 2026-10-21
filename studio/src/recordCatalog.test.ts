@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { StudioClient } from './api.ts';
-import { loadRecordCatalog } from './recordCatalog.ts';
+import { findRecord, loadRecordCatalog } from './recordCatalog.ts';
 import { recordProjects, persistRecord } from './recordPersistence.ts';
 
 test('catalog loads beyond the snapshot page and deduplicates moving records', async () => {
@@ -98,4 +98,26 @@ test('catalog refuses an oversized aggregate rather than return a partial select
   } as unknown as StudioClient;
   await assert.rejects(loadRecordCatalog(client, 'styles'), /8 MiB.*No partial catalog/);
   assert.equal(calls, 2);
+});
+
+test('read-back pages by identity, stops at the match and refuses a stalled cursor', async () => {
+  const paths: string[] = [];
+  const client = {
+    request: async (path: string) => {
+      paths.push(path);
+      return paths.length === 1
+        ? { records: [{ id: 'other', revision: 1, data: {} }], next_offset: 1 }
+        : { records: [{ id: 'kept', revision: 1, data: { name: 'x' } }], next_offset: 2 };
+    },
+  } as unknown as StudioClient;
+  assert.equal((await findRecord(client, 'styles', 'kept'))?.data.name, 'x');
+  assert.equal(paths.length, 2);
+  const empty = {
+    request: async () => ({ records: [], next_offset: null }),
+  } as unknown as StudioClient;
+  assert.equal(await findRecord(empty, 'styles', 'kept'), null);
+  const stalled = {
+    request: async () => ({ records: [{ id: 'a', revision: 1, data: {} }], next_offset: 0 }),
+  } as unknown as StudioClient;
+  await assert.rejects(findRecord(stalled, 'styles', 'kept'), /non-advancing library page/);
 });

@@ -2,31 +2,20 @@
 
 ## [Unreleased]
 
-- Add an optional Studio companion with bundled workflow controls, durable
-  job records, project libraries, reviewed imports, reusable grid experiments
-  and job-bound runtime evidence. CLI parity mappings and typed LoRA/subgraph
-  editing have CPU coverage. Release acceptance remains incomplete; see the
-  [acceptance record](docs/STUDIO_ACCEPTANCE.md) before enabling it.
-- Harden Studio review/cancellation replay, concurrent preview isolation and
-  reconnect handling. Bound list responses and record windows while retaining
-  full provenance on demand; preserve preview membership and copied experiment
-  references.
-- Preserve pending requests through malformed acknowledgements and local draft
-  recovery, replay effective seeds without reapplying styles, bind saved state
-  to its driver, and bound template/grid expansion before allocation.
-- Keep queue tracking available when driver history exceeds its byte budget;
-  retain every unread event page and quarantine unreadable operation, grid and
-  import requests. Reject malformed draft controls and unresolved App Mode
-  selections even when hidden. Preserve valid telemetry append files and show
-  media decoding failures with guarded frame controls.
-- Refine Studio phone and tablet layouts, touch controls, dialog/disclosure
-  motion and generation activity feedback, with reduced-motion support. Keep
-  image previews proportional and mask painting aligned with the source image.
-- Preserve saved content when renaming records, invalidate grid reviews after
-  definition edits, keep workflow layout and repair text synchronized, and show
-  complete project choices. Fix multiline editing and repeated file selection.
-  Scoped browser evidence and remaining device checks are recorded in
-  [interface QA](docs/STUDIO_INTERFACE_QA.md).
+- Add an optional Studio companion with bundled workflow controls, durable job
+  records, project libraries, reviewed imports, grid experiments and job-bound
+  evidence; read the [acceptance record](docs/STUDIO_ACCEPTANCE.md) first.
+- Studio update needs `--config` and `--driver-service` and defaults to verified
+  mode. The owner token prints only to a terminal, otherwise to a 0600 file
+  ([Studio](docs/STUDIO.md#install-and-start), [#123](docs/TROUBLESHOOTING.md#123-studio-refuses-to-start-or-refuses-the-browsers-host-origin-or-token)).
+- `dgxm top` and the ComfyUI sidebar show memory in GiB, draw the memory bar on
+  hosts with no slab-resident model, give the six 16-color segments six colors
+  and show RX and TX rails for every box ([TUI](docs/TUI.md#what-it-shows)).
+- Drivers register GET `/dgxm/execution-events`, which grants the Studio
+  companion a 30 s observer lease; the [threat model](docs/THREAT_MODEL.md#browser-to-comfyui-driver)
+  lists it with the other driver routes.
+- Verified update, release staging and setup refuse a target whose packaged
+  Studio files are missing, extra or differ from their recorded SHA-256 table.
 
 ## [1.2.0] - 2026-10-16
 

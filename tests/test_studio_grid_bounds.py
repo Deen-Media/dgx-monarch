@@ -143,3 +143,99 @@ def test_http_compact_grid_roundtrip_retains_full_export(tmp_path, monkeypatch):
             listing = await system.request("GET", "/grids")
             assert listing["items"][0]["id"] == accepted["id"] and "cells" not in listing["items"][0]
     asyncio.run(scenario())
+
+
+def large_workflow_grid(excluded=()):
+    request = grid_request()
+    # About 24 KB of graph metadata that the compiled prompt does not carry, as in a UI workflow.
+    request["draft"]["workflow"]["extra"] = {"layout": "x" * 24 * 1024}
+    request.update(seed_policy="fixed", seed_binding=None, excluded=list(excluded),
+                   axes=[{"name": "root:1:steps", "values": list(range(1, 17))},
+                         {"name": "root:1:text", "values": [f"subject {index}" for index in range(64)]}])
+    return request
+
+
+def test_full_grid_fits_when_each_distinct_workflow_is_charged_once(store):
+    preview = asyncio.run(GridExperiments(Jobs(store, Driver())).preview(large_workflow_grid()))
+    assert preview["ready"] and preview["total"] == preview["job_count"] == 1024
+    assert len(store.list("previews", limit=200)) == 200
+
+
+def test_excluded_cells_are_neither_built_nor_charged(store, monkeypatch):
+    jobs = Jobs(store, Driver())
+    built = []
+    original = jobs.build_preview
+
+    def counted(request, **kwargs):
+        built.append(request["values"])
+        return original(request, **kwargs)
+    monkeypatch.setattr(jobs, "build_preview", counted)
+    preview = asyncio.run(GridExperiments(jobs).preview(large_workflow_grid(excluded=range(0, 1024, 2))))
+    assert preview["job_count"] == 512 and len(built) == 512
+    assert all("preview_id" not in cell for cell in preview["cells"] if cell["excluded"])
+    assert all("preview_id" in cell for cell in preview["cells"] if not cell["excluded"])
+
+
+def written_bytes(store, *kinds):
+    """Bytes of the stored rows of these kinds plus the shared workflow copies."""
+    with store.lock:
+        rows = store.db.execute(f"SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) FROM objects "  # noqa: S608
+                                f"WHERE kind IN ({','.join('?' for _ in kinds)})", kinds).fetchone()[0]
+        shared = store.db.execute("SELECT COALESCE(SUM(length(CAST(document AS BLOB))),0) FROM preview_workflows").fetchone()[0]
+    return rows, shared
+
+
+def preview_and_submit(store, request, monkeypatch):
+    """Preview a grid, then submit it without dispatching; return the bytes each step wrote."""
+    jobs = Jobs(store, Driver())
+    monkeypatch.setattr(jobs, "launch", lambda coroutine: coroutine.close())
+    grids = GridExperiments(jobs)
+    preview = asyncio.run(grids.preview(request))
+    rows, shared = written_bytes(store, "previews", "grid_previews")
+    reviewed = rows + shared
+    run = grids.submit({"preview_id": preview["id"], "idempotency_key": "grid-bytes"})
+    rows, after = written_bytes(store, "jobs", "grid_runs")
+    return preview, run, reviewed, rows + after - shared
+
+
+def test_a_full_grid_of_a_large_workflow_submits_within_the_grid_budget(store, monkeypatch):
+    # Each child job keeps the workflow under workflow, requested and effective;
+    # stored three times per cell, 1,024 cells of this graph would write about 75 MB.
+    preview, run, reviewed, submitted = preview_and_submit(store, large_workflow_grid(), monkeypatch)
+    assert preview["job_count"] == 1024 and len(run["cells"]) == 1024
+    assert reviewed <= experiments.GRID_BYTES and submitted <= experiments.GRID_BYTES
+    job = store.get("jobs", run["cells"][0]["job_id"])
+    layout = preview["request"]["draft"]["workflow"]["extra"]["layout"]
+    assert job["submission"]["workflow"]["extra"]["layout"] == layout
+    assert job["submission"]["requested"]["workflow"] == job["submission"]["effective"]["workflow"] == job["submission"]["workflow"]
+    with store.lock:
+        stored = "".join(row[0] for row in store.db.execute("SELECT document FROM objects WHERE kind='jobs'"))
+    assert layout not in stored
+
+
+def test_the_grid_budget_bounds_what_preview_and_submit_write_at_its_edge(tmp_path, monkeypatch):
+    request = large_workflow_grid()
+    request["axes"][1]["values"] = request["axes"][1]["values"][:4]
+
+    admitted = {}
+
+    def attempt(limit):
+        monkeypatch.setattr(experiments, "GRID_BYTES", limit)
+        store = Store(tmp_path / f"budget-{len(admitted)}-{limit}")
+        try:
+            admitted[limit] = preview_and_submit(store, request, monkeypatch)[2:]
+            return True
+        except StudioError as exc:
+            assert exc.code == "grid_size"
+            return False
+        finally:
+            store.close()
+
+    low, high = 1, 64 * 1024 * 1024
+    assert attempt(high)
+    while low < high:
+        middle = (low + high) // 2
+        low, high = (low, middle) if attempt(middle) else (middle + 1, high)
+    # The smallest budget that admitted the grid still bounds both writes.
+    reviewed, submitted = admitted[high]
+    assert reviewed <= high and submitted <= high

@@ -389,6 +389,8 @@ class Poller:
                     hosts[hstats["host"]] = {"stats": hstats, "source": "worker"}
                     workers_meta[hstats["host"]] = {
                         "vram": w.get("vram"), "memory": w.get("memory"),
+                        # A failed memory report keeps the bar unknown.
+                        "memory_error": w.get("memory_error"),
                         "nccl": w.get("nccl"), "models": w.get("models"),
                     }
                 w_events = w.get("events")

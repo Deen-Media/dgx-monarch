@@ -8,16 +8,16 @@ Unimplemented work below is not a proposed reduction of that scope.
 
 | Required acceptance | Draft evidence and remaining work |
 |---|---|
-| Complete interface parity | Generated source inventory covers 18 node schemas, 124 ordered inputs, 66 workflows, config, panel and TUI actions. All 101 CLI command/option rows have explicit action, parameter, selector, context or presentation mappings; checks reject missing mappings and mismatched defaults/choices. Typed workflow controls work for supported graphs. Source coverage and CPU tests do **not** establish live cross-interface acceptance. |
-| Bundled optional companion | Python entry point, authenticated loopback host, compiled Svelte assets and explicit package data implemented. Exact reviewed update uses a frozen controller, retained transaction lock, selected driver interpreter and durable receipts. Real shutdown/update/restart transaction acceptance is **NOT RUN**. |
-| Image/video/edit/upscale/Fleet outputs | Existing-node graph compilation and queue adapters implemented and mocked. Job-bound runtime fingerprint capture is implemented. Representative hardware outputs, runtime identity verification against a live Worker cohort and fidelity acceptance are **NOT RUN**. |
-| Cross-interface semantic identity | Shared presentation schema and regression fixtures implemented. Complete names/defaults/formatting/topology parity needs cross-interface acceptance. |
-| Race and recovery correctness | Durable idempotency, immutable submissions, optimistic revisions, replay gaps, restart unknown states, atomic prompt-specific cancellation, prompt-bound events, bounded preview frames, and per-prompt history reconciliation have CPU regressions. Older drivers without atomic cancellation refuse that operation. Monarch dispatch, validated Worker result, native owner ACK and individual Fleet outcome hooks have CPU regressions. Real Worker/ACK/Fleet coverage remains **NOT RUN**. |
-| Workspace features | Mask/input uploads, bounded thumbnails, virtualized gallery, paginated queue, synchronized comparisons and telemetry charts are implemented. Durable grids include frozen named-style axes, per-cell inspection and selective retry. LoRA chains support typed insertion and extension. Saved records and artifacts have project membership; reviewed library import/export preserves definitions and source references. Complete end-to-end acceptance remains **NOT RUN**. |
+| Complete interface parity | Generated source inventory covers 18 node schemas, 124 ordered inputs, 66 workflows, config, panel and TUI actions. All 101 CLI command/option rows have explicit action, parameter, selector, context or presentation mappings; checks reject missing mappings and mismatched defaults/choices. Closed registries map all 7 panel handlers and 9 TUI bindings to a Studio operation, route or equivalent, or waive them with a reason (consent dismiss and revoke, the automatic rescue setting, and the terminal quit, pause, animation and theme keys); a new handler or binding fails generation. Node schema and node input rows record source coverage only, because Studio reads them from the live object_info, so no closed check yet fails when such a backend feature lacks a Studio representation. Typed workflow controls work for supported graphs. Source coverage and CPU tests do **not** establish live cross-interface acceptance. |
+| Bundled optional companion | Python entry point, authenticated loopback host, compiled Svelte assets and explicit package data implemented. `dgxm-studio --check` hashes every packaged Studio file against the manifest. Update requires `--config` and `--driver-service` in both modes; without either, Studio lists update as unavailable and names the missing setting, so it is unavailable when ComfyUI runs from the documented foreground launcher rather than a systemd user unit. The CLI update is unaffected. It binds the selected checkout to the driver's `custom_nodes/dgx-monarch` target, defaults to the verified transaction, and runs in a frozen controller with the driver unit's interpreter, a retained transaction lock and durable receipts. A CPU test runs Studio's review and execution through the real verified transaction against a scratch checkout and a local bare origin, with scripted Worker steps. Real shutdown/update/restart transaction acceptance against a live driver unit and Workers is **NOT RUN**. |
+| Image/video/edit/upscale/Fleet outputs | Existing-node graph compilation and queue adapters implemented and mocked. All 66 bundled workflows inspect and compile in CPU tests against a recorded driver schema, including upload loaders, V3 dynamic combos and Autogrow inputs. An uploaded input or mask binds to image upload widgets through inspection, preview and submission (CPU end-to-end test); a live driver run with bundled image workflows is **NOT RUN**. Job-bound runtime fingerprint capture is implemented. Representative hardware outputs, runtime identity verification against a live Worker cohort and fidelity acceptance are **NOT RUN**. |
+| Cross-interface semantic identity | Shared presentation schema and regression fixtures implemented. The memory bar's slab rule is shared by `dgxm top`, the sidebar and Studio's charts and is pinned by Python, browser panel and Studio parity tests. Complete names/defaults/formatting/topology parity needs cross-interface acceptance. |
+| Race and recovery correctness | Durable idempotency, immutable submissions, optimistic revisions, replay gaps, restart unknown states, atomic prompt-specific cancellation, prompt-bound events, bounded preview frames, and per-prompt history reconciliation have CPU regressions. Dequeued cancellations, driver restarts and history clears settle from exact per-prompt evidence, a lost acknowledgement reconciles through the companion-issued identity, and the polling observer and event watcher survive storage faults; all have CPU regressions, including a polling lifecycle test against an in-process driver. On a driver without atomic cancellation, a queued job falls back to queue deletion and a running job is refused with its intent unspent. Monarch dispatch, validated Worker result, native owner ACK and individual Fleet outcome hooks have CPU regressions. Real Worker/ACK/Fleet coverage and the lifecycle hardware pass at this head (render, recycle, respawn, a Fleet wave, `dgxm restart` and `dgxm doctor` with Worker activation) remain **NOT RUN**. |
+| Workspace features | Mask/input uploads, bounded thumbnails, virtualized gallery, paginated queue, synchronized comparisons and telemetry charts are implemented. Durable grids include frozen named-style axes, per-cell inspection and selective retry. LoRA chains support typed insertion and extension; LoRA model compatibility has no data source and stays pending backend validation. Saved records and artifacts have project membership; reviewed library import/export preserves definitions and source references. Complete end-to-end acceptance remains **NOT RUN**. |
 | App Mode | Canonical/legacy identities, metadata preservation, primitive/reroute conversion, nested virtual interfaces and separate repeated-instance bindings have fixtures. Nested promoted scalar widgets resolve through explicit serialized mappings. Ambiguous legacy references, duplicate mappings and unsupported custom serialization refuse with a repair reason. Broader source-version fixtures remain an acceptance requirement; arbitrary widget JavaScript is outside the agreed scope. |
-| Security | Token/Host/Origin/content-type checks, body limits, fixed driver routes, safe artifact descriptors, typed confirmed actions and stale-plan rejection have CPU tests. Full abuse testing and deployment review remain required. |
+| Security | Token/Host/Origin/content-type checks, body limits, fixed driver routes, safe artifact descriptors, typed confirmed actions (every mutating action, both retries and one HTTP case refuse an unconfirmed apply with no reservation) and stale-plan rejection have CPU tests. [THREAT_MODEL.md](THREAT_MODEL.md#browser-to-studio-companion) records the companion's two boundaries and the owner token's scope. Full abuse testing and deployment review remain required. |
 | Accessibility | Typed labels, focus styling, responsive layouts, reduced motion and keyboard actions implemented. The [interface QA record](STUDIO_INTERFACE_QA.md) separates authored-control inspection from scoped browser checks. Comprehensive keyboard/screen-reader/contrast/hidden-tab acceptance is **NOT RUN**. |
-| Performance and retention | Explicit event, console and media limits implemented. Spark/browser overhead, long-session growth and variance-based regression budgets are **NOT RUN**. No zero-overhead or fastest-performance claim is made. |
+| Performance and retention | Explicit event, console and media limits implemented. Expired job and grid previews are swept at startup and on later preview writes. Spark/browser overhead, long-session growth and variance-based regression budgets are **NOT RUN**. No zero-overhead or fastest-performance claim is made. |
 
 Completed local feature work includes:
 
@@ -37,15 +37,16 @@ Completed local feature work includes:
 
 Typed reviewed launcher, setup/init, Sol installation/smoke, update, uninstall,
 and telemetry recording/replay adapters have CPU or mocked transaction tests.
-Real service acceptance is still **NOT RUN**. An update targets the selected
-runtime checkout and Worker cohort; it does not replace a separately installed,
-currently running companion wheel.
+Real service acceptance is still **NOT RUN**. An update targets the checkout the
+driver imports and the Worker cohort. Studio refuses it when the companion's own
+dgx_monarch source differs from that checkout, so a separately installed
+companion wheel must be reinstalled after an update.
 
 The remaining release gates include the hardware and real-service cases below,
 full browser/accessibility workflows, broader supported workflow-version
 fixtures, cross-interface semantic checks, deployment/abuse review and measured
-performance/retention budgets. A local implementation or source mapping does
-not close those gates.
+performance/retention budgets. A local implementation or source mapping does not
+close those gates.
 
 Job-bound Monarch evidence now uses explicit Comfy execution context and a
 leased in-memory driver journal, with durable companion event/per-render
@@ -75,135 +76,41 @@ lease expiry during an in-flight request, bounded driver replay and companion
 database growth. Encoded payload limits and CPU tests do not establish host
 RSS, generation overhead or a long-session disk budget.
 
-The browser was checked against the explicitly synthetic CPU HTTP fixture:
-workflow import, editable controls, immutable submission review, completed job,
-two-cell named-style grid, durable outcomes and thumbnail gallery. Follow-up
-checks covered project creation, negative-prompt/style-mode preservation,
-revision-bound import conflicts, missing negative-input refusal, saving a grid
-as an experiment and restoring its definition without dispatching more jobs.
-The final installed wheel also served those saved project/experiment records
-with its driver offline and Node absent from PATH. These checks do not establish
-real video synchronization, screen-reader behavior, complete keyboard coverage
-or the performance rows above.
+Browser checks against the synthetic CPU HTTP fixture (workflow import, editable
+controls, submission review, a two-cell named-style grid, durable outcomes, the
+thumbnail gallery, project and experiment records, and the request quarantine
+screens) ran on earlier bundle builds and recorded no browser name, browser
+version or bundle hash. Repeating them on the shipped bundle with the [browser
+procedure](../studio/tests/README.md#browser-checks) is a follow-up. The
+synthetic HTTP smoke itself now runs in every CPU test run against an in-process
+companion (`tests/test_studio_tooling.py`). These checks do not establish real
+video synchronization, screen-reader behavior, complete keyboard coverage or the
+performance rows above.
 
 All tests in this draft are CPU or mocked service tests unless explicitly
 identified otherwise. They do not authorize live maintenance, grant capacity,
 waive class P/K guards or establish native RDMA, ACK or model fidelity.
 
-Local verification on 2026-10-19: the final complete CPU harness passed
-13,588 tests with 39 skipped. Frontend tests passed all 22 cases with zero
-Svelte/TypeScript errors or warnings. Ruff, whole-package mypy (475 source
-files), generated inventory, trust citations, protected-test inventory and leak
-checks passed. Wheel and source archive matched 478 runtime/package resource
-files byte for byte. The isolated wheel served the final assets and its
-authenticated API with Node absent from PATH.
+## Current result
 
-The full CPU harness took 317 seconds on this local ARM64 host and emitted its
-warning for exceeding the 120-second test-battery target. This is a test-runtime
-warning, not a measurement of generation overhead. The observer microbenchmark
-and its retained-allocation limits are recorded separately in the performance
-record. No real hardware or production service acceptance was run.
-
-The brand follow-up imports the canonical repository small dark SVG. The
-welcome screen retains its headline without the unrelated orbit illustration. It
-passed 22 frontend tests, zero Svelte/TypeScript diagnostics, all 418 Studio
-packaging/resource/inventory cases and the brand-generation check. Browser
-inspection confirmed the rendered SVG matches the source geometry and colors.
-The full CPU result above belongs to implementation commit `ba31a02`.
-
-The subsequent PR-wide quality pass added regressions for single-use operation
-reviews, cancellation replay and interrupted local mutators, explicit local-only
-diagnostics, immutable prompt identities, concurrent schema/runtime capture,
-schema-bounded random seeds, reconnect races, and exact library references.
-Live preview updates preserve memberships and extensions. Snapshot/history
-summaries and byte-bounded library windows retain full provenance through
-explicit detail reads. Streamed media carries the same security headers as
-ordinary responses.
-
-Compiled-browser checks against the synthetic CPU fixture verified queue detail
-loading, restored prompt/seed through Gallery reuse, and a full read-only version
-receipt. The browser reported no console errors. These do not close the
-hardware, real-service, accessibility or long-session acceptance gates above.
-
-Quality-pass validation on 2026-10-19: the complete CPU harness passed
-13,652 tests with 39 skipped in 315.11 seconds (317 seconds for the wrapper;
-its 120-second target warning remains advisory). The final Studio-only suite,
-including the pagination regression added after full-suite collection, passed
-all 851 cases. All 35 frontend tests passed, with zero Svelte/TypeScript
-diagnostics. Ruff, mypy (479 source files), inventory, protected-test, trust,
-artifact, brand/template and leak checks passed. Both installed package formats
-passed `dgxm-studio --check`; wheel and source archive matched 482 runtime and
-resource files. The installed wheel passed the actual synthetic HTTP generation
-and idempotency smoke with Node absent from PATH.
-
-The additional triple review used three independent passes over authored PR
-changes: correctness/recovery; trust boundaries/data integrity; and product,
-transport, persistence and package integration. Each pass traced call sites and
-failure sequences; reported defects were reproduced and cross-checked. Generated
-inventories and bundles were checked against their producers and consumers.
-
-This pass fixed pending-request loss after malformed acknowledgements or local
-storage corruption, recovery after definitive pre-acceptance refusals, effective
-seed/style/LoRA reuse, API-workflow layout metadata, retry endpoint identity,
-driver-origin binding, pre-allocation template/grid limits and atomic grid
-preview persistence. Grid histories now use read-only live summaries; full
-exports and saved experiment output references remain available.
-
-Compiled-browser checks exercised expired-review recovery and a two-cell grid
-through submission, reload and saving its observed outcomes. Backend regressions
-also cover current and previous-attempt artifacts in saved experiments. These
-remain synthetic CPU checks, not inference or real-service acceptance.
-
-Triple-review validation on 2026-10-19: the full CPU harness passed 13,673
-tests with 39 skipped in 319.45 seconds (322 seconds including the wrapper;
-the 120-second advisory warning remains). All 871 Studio tests and 86 frontend
-tests passed. Svelte/TypeScript reported zero errors or warnings; Ruff, mypy
-(480 source files), inventory, protected tests, trust citations and leak checks
-passed. Wheel and source archive matched 483 runtime/resource files byte for
-byte; both installed formats passed their startup check. The installed wheel
-passed the synthetic HTTP smoke without Node on PATH, and 20 focused tests
-passed from the extracted source archive. No protected tests changed in this
-follow-up. Hosted checks and the unrun acceptance gates remain separate.
-
-The additional independent review on 2026-10-20 fixed oversized driver-history
-recovery, invalid acceptance identities, skipped event replay pages, unreadable
-operation/grid/import state, malformed draft controls, telemetry append files
-without a final newline and hidden unresolved App Mode selections. Browser
-media decoding errors are explicit; frame stepping requires valid metadata.
-
-Compiled-browser checks against a disposable CPU fixture verified the three
-request quarantine screens, explicit clearing, invalid draft refusal, corrupt
-image/video errors, disabled frame controls for undecodable video, successful
-image selection after an error, and palette keyboard entry/Escape focus
-restoration. The inspected freshness label improved from 3.90:1 to 6.23:1
-contrast. No browser console errors were observed. These are scoped checks,
-not comprehensive accessibility, video playback or responsive-layout acceptance.
-
-The complete CPU harness passed 13,692 tests with 39 skipped in 317.05 seconds
-(319 seconds including the wrapper; the 120-second warning remains advisory).
-All 129 frontend tests passed with zero Svelte/TypeScript diagnostics. Ruff and
-whole-package mypy passed for 480 source files. The final Studio suite passed
-all 890 tests. A final cross-check also fixed loss of import uncertainty when
-saving the retained retry identity fails; the actual apply handler has a
-storage-denial regression. The previously reviewed head
-`78450a7899bdaf79872801f992a809b4ed8b7b96` passed every hosted check, including
-Python 3.11/3.12, ARM64, frontend builds and the ComfyUI canary. Hosted results
-for subsequent commits must be checked separately.
-
-The interface follow-up fixed saved-record content replacement, stale grid and
-library reviews, incomplete project selectors, multiline editing, workflow
-layout repair and repeated file selection. It added full-frame generation
-activity, reduced-motion support, responsive control sizing and aspect-correct
-input/mask previews. The [interface QA record](STUDIO_INTERFACE_QA.md) records
-the complete authored-control inspection and scoped browser execution, including
-all eight routes at four phone/tablet viewport sizes, five source-image shapes,
-exact uploaded pixels and mask alignment. Physical mobile devices and Safari
-remain untested.
-
-The final wheel and source archive matched all 483 runtime/resource files.
-Both fresh installations passed startup checks; 56 focused tests passed from
-the extracted source archive. The installed wheel passed synthetic HTTP
-generation, request reconciliation, idempotency, immutable workflow and image
-transport checks with Node absent from PATH. Generated inventory, protected-test
-inventory, trust citations and the leak check passed. No protected tests changed
-in this follow-up, and no live hardware or production service was exercised.
+Measured on 2026-10-21 (UTC) on the tree that the first set of PR 63 review-fix
+commits records on top of `a0afbb0aa4fb3d7bb1522bfe49353438d097ee00`, before
+those commits were made. This result covers that tree only; any later commit
+must be measured again before this section applies to it. The full CPU suite
+passed 14,374 tests with 27 skipped; `tests/test_brand_assets.py` and
+`tests/test_template_cards.py` were left out because the measuring host lacks
+CairoSVG and defusedxml, and the suite took 366 seconds against its advisory
+120-second target. All 258 frontend tests passed with zero Svelte/TypeScript
+errors or warnings. They server-render Generation, the asset editor, the field,
+the status banners, the token form, Queue, JobProvenance, Gallery and the
+viewer, and run the shipped grid dispatch, grid retry and Operations apply
+handlers, but no test types into, clicks or paints a mounted DOM, so typing,
+focus and canvas paint are covered only by helper and action tests. Ruff,
+whole-package mypy (491 source files), the generated inventory, trust citations,
+the protected-test inventory, the refusal ledger, templates, the artifact
+manifest, the dependency check and the leak check passed. The wheel and the
+source archive, each installed without dependencies, passed
+`dgxm-studio --check`, which hashed every packaged Studio file against the
+manifest, and their 494 installed package files matched byte for byte. Hosted CI
+results for the pushed head must be checked separately. No hardware, live driver
+or production service was exercised.

@@ -21,6 +21,15 @@ class DraftError(ValueError):
 def validate_value(value: Any, schema: Mapping[str, Any]) -> Any:
     """Validate without coercion, clipping, or substituting missing values."""
     kind = schema.get("type")
+    if isinstance(kind, str) and "," in kind:
+        # A union input such as "INT,FLOAT" takes a value of any listed scalar type.
+        for member in (part.strip() for part in kind.split(",")):
+            if member in {"INT", "FLOAT", "BOOLEAN", "STRING"}:
+                try:
+                    return validate_value(value, {**schema, "type": member})
+                except DraftError:
+                    continue
+        raise DraftError(f"Value matches none of the types {kind}")
     if kind == "INT" and (not isinstance(value, int) or isinstance(value, bool)):
         raise DraftError("Expected an integer")
     if kind == "FLOAT" and (not isinstance(value, (int, float)) or isinstance(value, bool)):
@@ -87,31 +96,6 @@ def apply_styles(prompt: str, negative_prompt: str, styles: Sequence[Mapping[str
                 negative = expanded
     return {"prompt": positive, "negative_prompt": negative, "style_order": order,
             "unexpanded": {"prompt": prompt, "negative_prompt": negative_prompt}}
-
-
-def resolve_loras(stack: Sequence[Mapping[str, Any]], catalog: Mapping[str, Mapping[str, Any]],
-                  model_id: str) -> list[dict[str, Any]]:
-    """Resolve ordered active entries; compatibility must be supplied by catalog."""
-    resolved = []
-    for entry in stack:
-        if not entry.get("enabled", True):
-            continue
-        identity = entry.get("id")
-        asset = catalog.get(str(identity))
-        if asset is None or not asset.get("available", False):
-            raise DraftError(f"LoRA unavailable: {identity}")
-        if model_id not in asset.get("compatible_models", []):
-            raise DraftError(f"LoRA compatibility unverified: {identity} with {model_id}")
-        strengths = {}
-        for name, schema in asset.get("strengths", {}).items():
-            strengths[name] = validate_value(entry.get(name, schema.get("default")), schema)
-        if not strengths:
-            raise DraftError(f"LoRA strength schema unavailable: {identity}")
-        unknown = set(entry) - {"id", "enabled"} - set(strengths)
-        if unknown:
-            raise DraftError(f"Unsupported LoRA controls: {sorted(unknown)}")
-        resolved.append({"id": identity, "asset": copy.deepcopy(asset), "strengths": strengths})
-    return resolved
 
 
 def expand_grid(base: Mapping[str, Any], axes: Sequence[Mapping[str, Any]],

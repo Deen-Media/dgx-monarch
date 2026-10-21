@@ -30,6 +30,12 @@ status colors remain separate from the logo. The terminal mark has Unicode
 and ASCII forms, a monochrome option, and an animation toggle. It stays still
 in idle, paused, and replay views.
 
-The TUI images in `docs/media/dgxm-top.svg` and `dgxm-top.png` show the
-actual dashboard replaying sample data. The PNG keeps the same terminal-cell
-proportions for the README. Its example readings are not benchmark results.
+`docs/media/dgxm-top.svg` shows the actual dashboard replaying a synthetic
+sample in a 120 by 46 terminal. Install the `[tui]` extra and run
+`python tools/gen_dgxm_top_image.py` to regenerate it after a dashboard change.
+The README shows `dgxm-top.png`. Whenever the SVG changes, render the PNG
+again from it at the same size (1482 by 1172) in a browser, for example
+`firefox --headless --screenshot dgxm-top.png --window-size=1482,1172` on the
+SVG's file URL. A browser loads the SVG's Fira Code font and draws the rail
+graphs from a fallback font; CairoSVG has no fallback, so it draws those
+graphs as empty boxes. The example readings are not benchmark results.

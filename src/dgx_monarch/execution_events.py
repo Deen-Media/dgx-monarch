@@ -100,12 +100,16 @@ class Journal:
                 rows.append(event)
                 total += size
             next_sequence = rows[-1]["sequence"] if rows else self._sequence
-            return {"schema_version": 1, "producer_id": self.producer_id, "producer_changed": changed,
+            page: dict[str, Any] = {"schema_version": 1, "producer_id": self.producer_id, "producer_changed": changed,
                     "oldest_sequence": oldest, "next_sequence": next_sequence, "latest_sequence": self._sequence,
                     "more": next_sequence < self._sequence,
                     "gap": changed or (after < oldest - 1), "lease_seconds": LEASE_SECONDS,
                     "coverage_epoch": self._coverage_epoch, "coverage_started_at": self._coverage_started,
-                    "events": deepcopy(rows), "omitted_events": self._omitted, "capture": "explicit_comfy_execution_context_only"}
+                    "omitted_events": self._omitted, "capture": "explicit_comfy_execution_context_only"}
+        # Copy outside the lock so a 2 MiB page never stalls a render's publish.
+        # Retained events are never mutated after publish, so the references stay valid.
+        page["events"] = deepcopy(rows)
+        return page
 
 
 journal = Journal()

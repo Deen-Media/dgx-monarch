@@ -305,8 +305,12 @@ it through port forwarding without those protections.
 
 **License?**
 Apache-2.0 for this repo. ComfyUI is the GPL-3.0 host, xDiT and xfuser are Apache-2.0,
-Monarch is BSD-3-Clause, each installed separately. This tree vendors no
-third-party code. [LICENSE-NOTES.md](../LICENSE-NOTES.md).
+Monarch is BSD-3-Clause, each installed separately. The tree vendors no
+third-party source. Two kinds of shipped file do carry third-party material:
+the wordmarks hold DejaVu glyph outlines, and the compiled Studio bundle holds
+the MIT-licensed Svelte runtime with small Vite, clsx and esm-env helpers.
+Their notices are in [THIRD-PARTY-NOTICES.txt](../THIRD-PARTY-NOTICES.txt), and
+[LICENSE-NOTES.md](../LICENSE-NOTES.md) lists every dependency.
 
 ## When it breaks
 

@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import subprocess
 from pathlib import Path
 
 import pytest
 
+from dgx_monarch.studio import server as server_module
+from dgx_monarch.studio.contracts import MAX_BODY_BYTES
 from test_studio_integration import PNG, companion
 
 
@@ -112,3 +115,42 @@ def test_snapshot_is_summary_while_operation_endpoint_retains_receipt(tmp_path, 
             full_job = await system.request("GET", "/jobs/job")
             assert full_job["submission"]["prompt"] == {"large": "full prompt"}
     asyncio.run(scenario())
+
+
+def test_oversize_request_gets_the_json_error_envelope(tmp_path, monkeypatch):
+    async def scenario():
+        async with companion(tmp_path, monkeypatch) as system:
+            response = await system.browser.post("/api/v1/workflows/inspect", headers=system.headers,
+                                                 json={"workflow": {"padding": "x" * MAX_BODY_BYTES}})
+            assert response.status == 413
+            assert response.content_type == "application/json"
+            assert await response.json() == {"error": {"code": "request_limit",
+                                                       "message": "Request body exceeds the 4 MiB companion limit."}}
+            assert response.headers["Cache-Control"] == "no-store"
+    asyncio.run(scenario())
+
+
+def test_router_refusals_get_the_json_error_envelope(tmp_path, monkeypatch):
+    async def scenario():
+        async with companion(tmp_path, monkeypatch) as system:
+            response = await system.browser.put("/api/v1/capabilities", headers=system.headers, json={})
+            assert response.status == 405
+            assert (await response.json())["error"] == {"code": "method_not_allowed", "message": "Method Not Allowed."}
+            assert "GET" in response.headers["Allow"]
+    asyncio.run(scenario())
+
+
+def test_unexpected_handler_error_is_a_logged_json_500_without_detail(tmp_path, monkeypatch, caplog):
+    def broken(*args, **kwargs):
+        raise RuntimeError("private detail that must stay in the log")
+
+    async def scenario():
+        async with companion(tmp_path, monkeypatch) as system:
+            monkeypatch.setattr(server_module, "page_jobs", broken)
+            with caplog.at_level(logging.ERROR, logger=server_module.__name__):
+                body = await system.request("GET", "/jobs", expected=500)
+            assert body["error"]["code"] == "internal"
+            assert "private detail" not in body["error"]["message"]
+    asyncio.run(scenario())
+    failures = [record for record in caplog.records if "Studio request GET /api/v1/jobs failed" in record.getMessage()]
+    assert failures and failures[0].exc_info[0] is RuntimeError

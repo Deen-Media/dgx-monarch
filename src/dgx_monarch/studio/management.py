@@ -20,6 +20,7 @@ from .driver_service import DriverService
 from .management_fields import parse
 from .management_update import Updates, blocking
 from .store import Store, private_directory
+from .submission_guard import stored_upload_names
 
 RECORD_BYTES = 4 * 1024 * 1024
 
@@ -71,7 +72,9 @@ class Management:
             path = self.selected_path(action, parameters)
             if path is None:
                 raise StudioError("operation_config", "Select a configuration path before this operation.")
-            if action in {"sol-install", "sol-smoke"}:
+            if action == "sol-install":
+                plan = management_sol.review_install(self.store, load_cluster_config(path), parameters)
+            elif action == "sol-smoke":
                 plan = management_sol.preview(action, load_cluster_config(path), parameters)
             else:
                 plan = management_config.preview(action, path, parameters)
@@ -86,7 +89,7 @@ class Management:
         return self.config
 
     async def gate_preview(self, parameters: dict[str, Any]) -> dict[str, Any]:
-        return await management_observe.gate_plan(self.client, parameters)
+        return await management_observe.gate_plan(self.client, parameters, stored_upload_names(self.store))
 
     async def execute(self, operation: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         action, parameters, plan = operation["action"], operation["parameters"], operation["adapter_plan"]

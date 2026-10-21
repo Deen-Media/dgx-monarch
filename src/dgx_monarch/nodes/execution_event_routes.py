@@ -1,4 +1,19 @@
-"""Read-only opt-in replay of explicitly prompt-bound runtime observations."""
+"""GET /dgxm/execution-events: replay of prompt-bound runtime observations.
+
+This route is not read-only. Every GET or HEAD renews the 30 s observer lease
+in `execution_events.LEASE_SECONDS`. While the lease holds, each render
+captures its ComfyUI execution context, carries the `_dgxm_observe_runtime`
+request key and asks its Workers for `runtime_identity`; once the lease lapses
+those hooks stop. The lease grants no authority over sampling, teardown, ACK
+or retry, and the journal it fills keeps at most `MAX_EVENTS` events and
+`MAX_BYTES` bytes.
+
+Every driver registers the route, whether or not Studio is installed. It has
+no action-header check: ComfyUI's own middleware refuses cross-site browser
+requests here as on every route, and `--enable-cors-header` opens it as it
+opens POST /prompt. docs/THREAT_MODEL.md lists it under "Browser to ComfyUI
+driver".
+"""
 from __future__ import annotations
 
 from ..execution_events import context_available, journal

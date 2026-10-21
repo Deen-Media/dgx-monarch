@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import inspect
+import re
 import sys
 import types
 from pathlib import Path
@@ -828,14 +829,25 @@ def test_surface_uses_existing_prompt_server_instance_without_constructing_it(mo
 
     from dgx_monarch.nodes import routes
 
+    logged: list[str] = []
+    monkeypatch.setattr(routes.log, "info", lambda message, *args: logged.append(message % args))
     routes.register()
 
     assert _assert_fake_surface(modules, patcher, detection, quantized) > 0
     assert getattr(prompt_server, "_dgxm_routes", False) is True
     assert len(prompt_server.on_prompt_handlers) == 1
-    assert {route.path for route in prompt_server.routes} >= {
-        "/dgxm/telemetry", "/dgxm/metrics", "/dgxm/recycle", "/dgxm/consents", "/dgxm/consent",
+    # Exact, so a new driver route cannot land without this list, the module
+    # docstring, the registration log line and docs/THREAT_MODEL.md naming it.
+    registered = {(route.method, route.path) for route in prompt_server.routes}
+    assert registered == {
+        ("GET", "/dgxm/telemetry"), ("GET", "/dgxm/metrics"), ("POST", "/dgxm/recycle"),
+        ("GET", "/dgxm/consents"), ("POST", "/dgxm/consent"), ("GET", "/dgxm/execution-events"),
     }
+    summary = [line for line in logged if line.startswith("dgxm routes registered:")]
+    assert len(summary) == 1
+    assert set(summary[0].split(":", 1)[1].split()) == {path for _method, path in registered}
+    for method, path in registered:
+        assert re.search(rf"^  {method} +{re.escape(path)} ", routes.__doc__, re.M), (method, path)
 
 
 def test_module_import_failure_names_the_first_touchpoint():

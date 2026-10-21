@@ -5,7 +5,16 @@
   import { recordedSettings } from '../recordedSettings';
   import { formatTime } from '../model';
   import { exportJSON } from '../files';
-  import { galleryEntries, virtualRows, type GalleryFilter, type GalleryEntry } from '../gallery';
+  import {
+    GALLERY_KINDS,
+    GALLERY_STATES,
+    galleryEntries,
+    galleryQuery,
+    hasDimensions,
+    virtualRows,
+    type GalleryFilter,
+    type GalleryEntry,
+  } from '../gallery';
   import Thumbnail from '../components/Thumbnail.svelte';
   import ArtifactProjects from '../components/ArtifactProjects.svelte';
   import ProjectSelect from '../components/ProjectSelect.svelte';
@@ -50,7 +59,7 @@
     currentProject = $state(true);
   let loaded = $state<Artifact[]>([]),
     nextCursor = $state<string | null>(null),
-    loading = $state(false),
+    loading = $state(true),
     loadError = $state('');
   let widthFilter = $state(''),
     heightFilter = $state(''),
@@ -60,34 +69,20 @@
   const entries = $derived(galleryEntries(loaded, jobs));
   const artifacts = $derived(entries);
   const window = $derived(virtualRows(artifacts.length, width, height, top));
-  const query = $derived.by(() => {
-    const params = new URLSearchParams({
-      limit: '100',
-      sort: filter.sort === 'oldest' ? 'oldest' : 'newest',
-    });
-    const options = {
-      q: filter.query,
-      kind: filter.kind,
-      operation: filter.operation,
-      model: filter.model,
-      status: filter.status,
-      project_id: currentProject ? projectId : filter.project,
+  const query = $derived(
+    galleryQuery(filter, {
+      projectId: currentProject ? projectId : filter.project,
       width: widthFilter,
       height: heightFilter,
-      after: filter.from ? String(new Date(`${filter.from}T00:00:00`).getTime() / 1000) : '',
-      before: filter.until ? String(new Date(`${filter.until}T23:59:59.999`).getTime() / 1000) : '',
-    };
-    for (const [key, value] of Object.entries(options)) if (value) params.set(key, value);
-    return params.toString();
-  });
+    }),
+  );
+  // Only uploads carry dimensions; keep the controls while a size filter is set so it can be cleared.
+  const sizeFilters = $derived(!!widthFilter || !!heightFilter || hasDimensions(loaded));
   async function loadPage(parameters = query, reset = false) {
     const ticket = reset ? ++generation : generation;
     loading = true;
     loadError = '';
-    if (reset) {
-      loaded = [];
-      nextCursor = null;
-    }
+    // Keep the current page on screen until the new one arrives, as Queue does.
     const cursor = reset ? null : nextCursor;
     try {
       const page = await client.request<{ items: Artifact[]; next_cursor: string | null }>(
@@ -169,9 +164,8 @@
       aria-label="Search gallery"
     />
     <select bind:value={filter.kind} aria-label="Media kind"
-      ><option value="">All media</option><option value="image">Images</option><option value="video"
-        >Video</option
-      ></select
+      >{#each GALLERY_KINDS as option}<option value={option.value}>{option.label}</option
+        >{/each}</select
     >
     <select bind:value={filter.sort} aria-label="Sort gallery"
       ><option value="newest">Newest first</option><option value="oldest">Oldest first</option
@@ -192,15 +186,17 @@
       <label>Model<input bind:value={filter.model} placeholder="Model filename" /></label>
       <label
         >Status<select bind:value={filter.status}
-          ><option value="">All states</option
-          >{#each ['succeeded', 'failed', 'cancelled', 'input', 'intermediate'] as value}<option
-              >{value}</option
+          >{#each GALLERY_STATES as option}<option value={option.value}>{option.label}</option
             >{/each}</select
         ></label
       >
-      <label>Width<input type="number" min="1" bind:value={widthFilter} /></label><label
-        >Height<input type="number" min="1" bind:value={heightFilter} /></label
-      >
+      {#if sizeFilters}<label>Width<input type="number" min="1" bind:value={widthFilter} /></label
+        ><label>Height<input type="number" min="1" bind:value={heightFilter} /></label>{:else}<p
+          class="muted"
+        >
+          Width and height filters apply to uploaded inputs and masks. ComfyUI does not report the
+          size of generated outputs.
+        </p>{/if}
       <label>From<input type="date" bind:value={filter.from} /></label><label
         >Through<input type="date" bind:value={filter.until} /></label
       >
@@ -291,7 +287,9 @@
         </article>{/each}
     </div>
     <div style:height={`${window.after}px`}></div>
-    {#if !artifacts.length}<div class="empty-state">
+    {#if !artifacts.length && loading}<p class="muted" role="status">
+        Loading outputs…
+      </p>{:else if !artifacts.length && !loadError}<div class="empty-state">
         <h2>No matching outputs.</h2>
         <p>Change filters or complete a generation.</p>
       </div>{/if}

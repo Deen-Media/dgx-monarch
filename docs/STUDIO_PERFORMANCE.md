@@ -1,7 +1,7 @@
 # Studio measurement record
 
-Asset sizes updated: 2026-10-20. Status: partial engineering measurements; performance
-acceptance remains **NOT RUN**.
+Asset sizes and observer timings updated: 2026-10-21 (UTC). Status: partial
+engineering measurements; performance acceptance remains **NOT RUN**.
 
 ## Packaged asset sizes
 
@@ -12,7 +12,7 @@ not JavaScript execution, browser responsiveness or Spark overhead.
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
 | `index-DSKZGroL.css` | 30,825 | 7,621 |
-| `index-Di414Qjj.js` | 209,224 | 72,504 |
+| `index-DU611Avd.js` | 229,120 | 79,304 |
 
 ## CPU observer microbenchmark
 
@@ -26,27 +26,32 @@ allocations are measured separately with `tracemalloc`.
 
 ```sh
 python studio/tests/measure_observer.py \
-  --output /tmp/dgxm-observer-cpu.json --iterations 10000 --repeats 7
+  --output "$EVIDENCE/dgxm-observer-cpu.json" --iterations 10000 --repeats 7
 ```
 
-The output must be a new JSON file under `/tmp`; the harness refuses to replace
-an existing file. It records raw repeat samples, Python/platform/CPU affinity,
-load averages, the harness hash, the uncached package source manifest, and hashes
-of current tracked and nonignored untracked file bytes. Git HEAD is not used as
+`$EVIDENCE` is a durable directory outside the repository that only you can
+read (mode 0700). Do not use a temporary directory that the host clears. The
+harness refuses a path inside the repository, a directory that other accounts
+can read or write, and an existing file, before it measures anything. It
+prints the record's path and SHA-256. Cite the record by that SHA-256 and by
+where it is kept; a public page names the store, not a private path. The record
+holds raw repeat samples, Python/platform/CPU affinity, load averages, the
+harness hash, the uncached package source manifest, and hashes of current
+tracked and nonignored untracked file bytes. Git HEAD is not used as
 the source identity. A runtime package change during measurement fails the run;
 other concurrent workspace changes are recorded with both tree hashes.
 
-Local CPU measurement at `2026-10-19T14:22:57Z`, Python 3.12.3, Linux aarch64,
+Local CPU measurement at `2026-10-21T02:28:19Z`, Python 3.12.3, Linux aarch64,
 20 CPUs in the process affinity set, seven repeats:
 
 | Operation | Median wall time/call | Repeat minimum to maximum |
 |---|---:|---:|
-| Capture, observer disabled | 107.6 ns | 107.5 to 108.3 ns |
-| Publish, observer disabled | 106.1 ns | 105.8 to 107.0 ns |
-| Capture, enabled with synthetic context | 764.9 ns | 761.7 to 767.5 ns |
-| Capture, enabled with ComfyUI unavailable | 6.306 us | 6.289 to 6.331 us |
-| Publish enabled, small synthetic event | 4.379 us | 4.374 to 4.515 us |
-| Replay first 128 retained events | 450.7 us | 450.3 to 451.2 us |
+| Capture, observer disabled | 107.0 ns | 106.7 to 107.3 ns |
+| Publish, observer disabled | 105.3 ns | 105.1 to 105.5 ns |
+| Capture, enabled with synthetic context | 749.6 ns | 749.0 to 752.3 ns |
+| Capture, enabled with ComfyUI unavailable | 6.389 us | 6.359 to 6.418 us |
+| Publish enabled, small synthetic event | 4.408 us | 4.402 to 4.592 us |
+| Replay first 128 retained events | 449.4 us | 449.3 to 449.7 us |
 
 Each repeat used 10,000 calls, except replay which used 1,000. These include
 Python call/loop overhead. The CPU governor and concurrent host work were not
@@ -64,15 +69,17 @@ oversized-event omission. The second wave added only 372 traced bytes in each
 case. Python object overhead exceeds encoded payload size; these are not RSS
 measurements or a long-session database-growth test.
 
-The local raw result is `/tmp/dgxm-observer-delivery-measurement.json` (ephemeral, not a
-packaged artifact). Its runtime package manifest was unchanged throughout:
-`d4df964b3450467791e1120ffb886f30ceecf9858fd734fa3722fe2c3c1e7ba0`.
+The raw record of this run is kept in the maintainer's private evidence store,
+outside the repository and the packages. Its SHA-256 is
+`41960ecff8e8a7793befa6a8cadafe00d17d08bb951d6cb9526a652438397102`.
 The harness SHA-256 was
-`461d5215dcedaa28ca3d34f5ad7d1159998fec457114b52f2e288ae357e6e250`.
-Both the runtime package manifest and whole-tree hash remained unchanged
-during this run; the JSON records both snapshots. These measurements supplement correctness tests and do
-not establish Spark generation overhead, native return performance, browser
-responsiveness or release regression budgets.
+`8f0ae41d337a838d3af92f5b83c409e0ddd634921e4bd737c9a1ebd05df5cd99`.
+The runtime package manifest was
+`307615b607e6ae7e14ebfb34463c5a4cb84e3cd8ef1bc9d5562615bb3c414874`.
+Both the runtime package manifest and the whole-tree hash stayed the same
+during the run; the record holds both snapshots. These measurements supplement
+correctness tests and do not establish Spark generation overhead, native return
+performance, browser responsiveness or release regression budgets.
 
 ## Runtime acceptance
 
@@ -89,8 +96,11 @@ The CPU-only HTTP fixture verifies contract behavior and artifact transport;
 it is not a substitute for these measurements. The interface passed browser
 checks against the synthetic fixture for workflow import, generation
 review/submission, a two-cell grid, durable results, thumbnail gallery and image
-viewer. These checks do not establish video, accessibility or long-session
-performance acceptance.
+viewer. Those checks ran on an earlier build of the bundle and recorded no
+browser name, browser version or bundle hash. The
+[browser procedure](../studio/tests/README.md#browser-checks) repeats them on
+the shipped bundle. These checks do not establish video, accessibility or
+long-session performance acceptance.
 
 The [interface QA record](STUDIO_INTERFACE_QA.md) adds scoped responsive,
 image geometry, video controls and reduced-motion checks. Its short disclosure

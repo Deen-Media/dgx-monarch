@@ -2,46 +2,27 @@
   import type { StudioClient } from '../api';
   import type { OperationRecord } from '../contracts';
   import { exportJSON } from '../files';
+  import { keyedRecord } from '../keyedRecord.svelte';
   let { client, operation }: { client: StudioClient; operation: OperationRecord } = $props();
-  let receipt = $state<OperationRecord | null>(null),
-    error = $state(''),
-    loading = $state(false);
-  let sequence = 0;
-  async function load() {
-    const ticket = ++sequence,
-      id = operation.id;
-    loading = true;
-    error = '';
-    try {
-      const result = await client.request<OperationRecord>(`/operations/${encodeURIComponent(id)}`);
-      if (result.id !== id || result.summary)
-        throw new Error('The full operation receipt was not returned.');
-      if (ticket === sequence && operation.id === id) receipt = result;
-    } catch (cause) {
-      if (ticket === sequence) error = String(cause);
-    } finally {
-      if (ticket === sequence) loading = false;
-    }
+  async function read(id: string) {
+    const result = await client.request<OperationRecord>(`/operations/${encodeURIComponent(id)}`);
+    if (result.id !== id || result.summary)
+      throw new Error('The full operation receipt was not returned.');
+    return result;
   }
-  $effect(() => {
-    const identity = `${operation.id}:${operation.state}:${operation.updated_at ?? ''}`;
-    void identity;
-    receipt = null;
-    void load();
-    return () => {
-      sequence++;
-    };
-  });
+  // Polls replace the summary row every tick; only a new operation id clears the receipt.
+  const receipt = keyedRecord<OperationRecord>(read, () => ({
+    id: operation.id,
+    revision: `${operation.state ?? ''}:${operation.updated_at ?? ''}`,
+    live: operation.state === 'applying',
+  }));
 </script>
 
-<button disabled={loading} onclick={() => void load()}>Refresh full receipt</button>
-{#if error}<p role="alert">{error}</p>{/if}
-{#if loading}<p role="status">Loading operation receipt…</p>{/if}
-{#if receipt}
-  <button
-    onclick={() => {
-      if (receipt) exportJSON(receipt, `operation-${receipt.id}.json`);
-    }}>Export receipt</button
-  >
-  <pre>{JSON.stringify(receipt, null, 2)}</pre>
+<button disabled={receipt.loading} onclick={() => receipt.refresh()}>Refresh full receipt</button>
+{#if receipt.error}<p role="alert">{receipt.error}</p>{/if}
+{#if receipt.loading && !receipt.value}<p role="status">Loading operation receipt…</p>{/if}
+{#if receipt.value}
+  {@const value = receipt.value}
+  <button onclick={() => exportJSON(value, `operation-${value.id}.json`)}>Export receipt</button>
+  <pre>{JSON.stringify(value, null, 2)}</pre>
 {/if}

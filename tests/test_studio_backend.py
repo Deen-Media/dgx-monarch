@@ -365,12 +365,22 @@ def test_authority_is_rechecked_after_waiting_for_operation_lock(store):
 
 
 def test_consent_adapter_sends_fixed_accept_action_and_exact_pending_identity(store):
-    driver = FakeDriver()
+    # The review reads the driver's pending requests first, so the fake
+    # driver answers GET /dgxm/consents with the one request it accepts.
+    class PendingDriver(FakeDriver):
+        async def request(self, method, path, data=None):
+            if (method, path) == ("GET", "/dgxm/consents"):
+                self.calls.append((method, path, None))
+                return {"pending": [{"key": "exact-key", "id": "pending-id"}], "active": []}
+            return await super().request(method, path, data)
+
+    driver = PendingDriver()
     ops = Operations(store, driver, allow_management=True)
-    plan = ops.preview({"action": "consent.apply", "parameters": {"key": "exact-key", "id": "pending-id"}})
 
     async def scenario():
+        plan = await ops.prepare({"action": "consent.apply", "parameters": {"key": "exact-key", "id": "pending-id"}})
         ops.apply(plan["id"], {"digest": plan["digest"], "confirmed": True, "idempotency_key": "consent-once"})
         await asyncio.gather(*ops.tasks)
-        assert driver.calls == [("POST", "/dgxm/consent", {"action": "accept", "key": "exact-key", "id": "pending-id"})]
+        assert driver.calls == [("GET", "/dgxm/consents", None),
+                                ("POST", "/dgxm/consent", {"action": "accept", "key": "exact-key", "id": "pending-id"})]
     asyncio.run(scenario())

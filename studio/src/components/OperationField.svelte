@@ -1,6 +1,7 @@
 <script lang="ts">
   import Field from './Field.svelte';
   import type { OperationParameter } from '../contracts';
+  import { numberField } from '../numberField';
   interface Host {
     name: string;
     fabric_ip: string;
@@ -51,8 +52,12 @@
             type="number"
             min="1"
             step="1"
-            value={host.gpus}
-            oninput={(event) => updateHost(i, 'gpus', Number(event.currentTarget.value))}
+            use:numberField={{
+              value: host.gpus,
+              commit: (gpus) => gpus !== null && updateHost(i, 'gpus', gpus),
+              integer: true,
+              min: 1,
+            }}
           /></label
         >
         <label

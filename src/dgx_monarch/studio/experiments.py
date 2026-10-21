@@ -7,8 +7,42 @@ from typing import Any
 from .contracts import StudioError, canonical, digest, identifier, object_value, timestamp
 from .drafts import DraftError, expand_grid
 from .grid_views import GRID_BYTES, VIEW_BYTES, live_view, read, summary
-from .jobs import Jobs
+from .jobs import SNAPSHOT_OMITTED, Jobs
+from .preview_storage import stored_bytes
+from .submission_guard import stored_upload_names
 from .workflows import inspect_workflow
+
+# A grid run's cell adds a job identity, its attempts and a state to the
+# preview's cell; a job row's two times vary in decimal length by a few bytes.
+_RUN_CELL_BYTES = len(canonical({"job_id": "0" * 36, "attempts": ["0" * 36], "state": "submitting"}))
+_TIME_SLACK = 16
+_RUN_BYTES = 256
+
+
+class _Budget:
+    """The bytes a grid writes when it is previewed and again when it is submitted.
+
+    The store keeps one copy of a workflow for every preview and job that
+    shares it, so a cell costs its preview row or its job row without the
+    workflow, and each distinct workflow is counted once. Submission writes
+    every cell's job row and a grid run that copies the grid preview, so both
+    totals must fit the grid budget.
+    """
+
+    def __init__(self) -> None:
+        self.preview, self.submit, self.workflows = 0, _RUN_BYTES, set[str]()
+
+    def cell(self, row: dict[str, Any], preview: dict[str, Any] | None, child: dict[str, Any] | None) -> None:
+        self.submit += len(canonical(row).encode()) + _RUN_CELL_BYTES
+        if preview is not None and child is not None:
+            self.preview += stored_bytes("previews", preview)
+            self.submit += stored_bytes("jobs", child) + _TIME_SLACK
+            if preview["workflow_digest"] not in self.workflows:
+                self.workflows.add(preview["workflow_digest"])
+                self.preview += len(canonical(preview["workflow"]).encode())
+
+    def exceeds(self, grid_bytes: int = 0) -> bool:
+        return max(self.preview, self.submit) + grid_bytes > GRID_BYTES
 
 
 class GridExperiments:
@@ -21,7 +55,11 @@ class GridExperiments:
             raise StudioError("grid_seed", "Grid previews require resolved fixed or incrementing seeds.")
         schema = (await self.jobs.catalog())["object_info"]
         runtime = await self.jobs.capture_runtime()
-        inspection = inspect_workflow(object_value(draft.get("workflow")), schema)
+        # One schema view serves the inspection, the axes and every cell: it adds
+        # the stored uploads the draft or an axis names to the upload choices.
+        # Digests and identities keep the driver's own schema.
+        view = self.jobs.upload_view({"draft": draft, "axes": request.get("axes", [])}, schema)
+        inspection = inspect_workflow(object_value(draft.get("workflow")), view)
         bindings = {row["id"]: row for row in inspection["bindings"] if row["resolved"]}
         schemas = {key: row["schema"] for key, row in bindings.items()}
         policy = request.get("seed_policy", "fixed")
@@ -44,15 +82,19 @@ class GridExperiments:
                                    base_seed=request.get("base_seed", 0) if policy != "fixed" else 0, excluded=excluded)
         except DraftError as exc:
             raise StudioError("grid_axes", str(exc)) from exc
-        cells, previews, byte_count = [], [], 0
+        cells, previews, budget = [], [], _Budget()
         style_cache: dict[str, dict[str, Any]] = {}
         axis_names = {axis["name"] for axis in axes}
+        parent = identifier()
         for cell in expanded["cells"]:
             row = {key: deepcopy(cell[key]) for key in ("index", "coordinates", "excluded", "errors")}
             values = {key: val for key, val in cell["parameters"].items() if key not in {"seed", "styles"}}
             if policy == "increment" and seed_binding and seed_binding not in axis_names:
                 values[seed_binding] = cell["parameters"]["seed"]
-            if not row["errors"]:
+            # An excluded cell never dispatches, so it is neither built nor charged for a preview or job.
+            preview: dict[str, Any] | None = None
+            child: dict[str, Any] | None = None
+            if not row["errors"] and not row["excluded"]:
                 try:
                     cell_draft = {**deepcopy(draft), "values": values}
                     if "styles" in axis_names:
@@ -69,23 +111,24 @@ class GridExperiments:
                             records.append(deepcopy(style_cache[identity]))
                         cell_draft.update(style_records=records, styles=[{**row["data"], "id": row["id"]} for row in records])
                         row["style_records"] = records
-                    preview = self.jobs.build_preview(cell_draft, schema=schema, runtime=runtime, persist=False)
-                    byte_count += len(canonical(preview).encode())
-                    if byte_count > GRID_BYTES:
-                        raise StudioError("grid_size", "Expanded submissions exceed the 32 MiB grid budget.")
-                    previews.append(preview)
+                    preview = self.jobs.build_preview(cell_draft, schema=schema, runtime=runtime, persist=False, view=view)
                     row.update(preview_id=preview["id"], submission_digest=preview["digest"])
+                    child = {**self._fields(parent, row["index"]),
+                             "submission": {key: value for key, value in preview.items() if key not in SNAPSHOT_OMITTED}}
+                    previews.append(preview)
                 except ValueError as exc:
-                    if isinstance(exc, StudioError) and exc.code == "grid_size":
-                        raise
+                    preview = child = None
                     row["errors"].append(str(exc))
+            budget.cell(row, preview, child)
+            if budget.exceeds():
+                raise StudioError("grid_size", "Expanded submissions exceed the 32 MiB grid budget.")
             cells.append(row)
         value = {"id": identifier(), "request": deepcopy(request), "cells": cells, "total": expanded["total"],
                  "job_count": expanded["job_count"], "created_at": timestamp(), "expires_at": timestamp() + 600,
                  "schema_digest": digest(schema), "ready": bool(expanded["job_count"]) and all(
                      row["excluded"] or not row["errors"] for row in cells)}
         value["digest"] = digest(value)
-        if byte_count + len(canonical(value).encode()) > GRID_BYTES or len(canonical(summary(value)).encode()) > VIEW_BYTES:
+        if budget.exceeds(len(canonical(value).encode())) or len(canonical(summary(value)).encode()) > VIEW_BYTES:
             raise StudioError("grid_size", "Expanded grid exceeds its 32 MiB storage or 8 MiB display budget.")
         with self.store.lock, self.store.transaction():
             for preview in previews:
@@ -97,17 +140,29 @@ class GridExperiments:
         existing = self.store.request("grid_runs", request.get("idempotency_key"), request)
         if existing is not None:
             return self.get(existing["id"])
-        preview = self.store.get("grid_previews", request.get("preview_id", ""))
+        try:
+            preview = self.store.get("grid_previews", request.get("preview_id", ""))
+        except StudioError as exc:
+            # The expiry sweep deletes expired grid previews; refuse as for any stale preview.
+            if exc.code != "not_found":
+                raise
+            raise StudioError("grid_preview", "A current fully validated grid preview is required.", 409) from exc
         if not preview["ready"] or preview["expires_at"] < timestamp():
             raise StudioError("grid_preview", "A current fully validated grid preview is required.", 409)
-        if preview["schema_digest"] != digest(self.jobs.schema):
-            raise StudioError("schema_changed", "Driver capabilities changed; preview the grid again.", 409)
+        # Each cell checks the classes its prompt uses and its selected choices;
+        # the grid's whole-schema digest stays as provenance only.
+        uploads = stored_upload_names(self.store)
         identity = identifier()
         cells, children = [], []
         for cell in preview["cells"]:
             row = deepcopy(cell)
             if not cell["excluded"]:
-                submission = self.jobs.reviewed_snapshot(cell["preview_id"])
+                try:
+                    submission = self.jobs.reviewed_snapshot(cell["preview_id"], uploads=uploads)
+                except StudioError as exc:
+                    if exc.code == "schema_changed":
+                        raise StudioError("schema_changed", "Driver capabilities changed; preview the grid again.", 409) from exc
+                    raise
                 child = self._child(identity, cell["index"], submission)
                 children.append(child)
                 row.update(job_id=child["id"], attempts=[child["id"]], state="submitting")
@@ -121,16 +176,22 @@ class GridExperiments:
             self.jobs.launch(self._dispatch(children))
         return value
 
-    async def _dispatch(self, children: list[dict[str, Any]]) -> None:
+    async def _dispatch(self, children: list[dict[str, Any]], *, retry: bool = False) -> None:
         # This is bounded transport, not a scheduler: the driver owns admission and execution order.
+        # Retried cells record the runtime they run against, observed once per retry.
+        runtime = await self.jobs.capture_runtime() if retry else None
         for child in children:
-            await self.jobs.dispatch(child)
+            await self.jobs.dispatch(child, runtime=runtime)
 
     @staticmethod
-    def _child(parent: str, index: int, submission: dict[str, Any], retry_of: str | None = None) -> dict[str, Any]:
-        return {"id": identifier(), "state": "submitting", "prompt_id": None, "submission": deepcopy(submission),
+    def _fields(parent: str, index: int, retry_of: str | None = None) -> dict[str, Any]:
+        return {"id": identifier(), "state": "submitting", "prompt_id": None, "client_prompt_id": identifier(),
                 "experiment_id": parent, "cell_index": index, "retry_of": retry_of,
                 "created_at": timestamp(), "updated_at": timestamp()}
+
+    @classmethod
+    def _child(cls, parent: str, index: int, submission: dict[str, Any], retry_of: str | None = None) -> dict[str, Any]:
+        return {**cls._fields(parent, index, retry_of), "submission": deepcopy(submission)}
 
     def get(self, identity: str, *, compact: bool = False) -> dict[str, Any]:
         return live_view(self.store, read(self.store, "grid_runs", identity, compact=compact))
@@ -149,11 +210,13 @@ class GridExperiments:
         if any(index < 0 or index >= len(cells) for index in indices):
             raise StudioError("grid_retry", "Cell index is out of range.")
         children = []
+        uploads = stored_upload_names(self.store)
         for index in indices:
             cell = cells[index]
             if cell["state"] not in {"failed", "cancelled"}:
                 raise StudioError("grid_retry", "Only explicitly failed or cancelled cells can be retried.", 409)
             old = self.store.get("jobs", cell["job_id"])
+            self.jobs.revalidate(old["submission"], uploads=uploads)
             child = self._child(identity, index, old["submission"], old["id"])
             children.append(child)
             cell.update(job_id=child["id"], attempts=[*cell["attempts"], child["id"]], state="submitting")
@@ -161,5 +224,5 @@ class GridExperiments:
         _, created = self.store.reserve_group("grid_retries", request.get("idempotency_key"), bound_request, retry, children,
                                               replace={**value, "cells": cells, "state": "submitting", "updated_at": timestamp()})
         if created:
-            self.jobs.launch(self._dispatch(children))
+            self.jobs.launch(self._dispatch(children, retry=True))
         return self.get(identity)

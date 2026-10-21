@@ -1,6 +1,6 @@
-import { StudioClient } from './api';
+import { ApiError, StudioClient } from './api';
 import { savedToken } from './sessionRecovery';
-import { consumeEvents, boundedLog, formatTime } from './model';
+import { consumeEvents, boundedLog, formatTime, driverStatus } from './model';
 import type { Capabilities, Catalog, Snapshot, WorkflowEntry } from './contracts';
 
 import { appendTelemetry, type MetricSeries } from './telemetryHistory';
@@ -18,6 +18,8 @@ export class Connection {
   capabilities = $state<Capabilities>({});
   workflows = $state<WorkflowEntry[]>([]);
   catalog = $state<Catalog>({});
+  /** Why the driver catalog could not be read at connect, or '' when it was read. */
+  catalogError = $state('');
   snapshot = $state<Snapshot>({
     jobs: [],
     artifacts: [],
@@ -44,12 +46,8 @@ export class Connection {
       generation = this.generation,
       sequence = ++this.snapshotSequence;
     const result = await client.request<Snapshot>('/snapshot');
+    // The request sequence orders responses; the host clock may step backward.
     if (generation !== this.generation || sequence !== this.snapshotSequence) return;
-    if (
-      result.instance_id === this.instance &&
-      Number(result.server_time) < Number(this.snapshot.server_time)
-    )
-      return;
     const newInstance = result.instance_id !== this.instance;
     if (this.instance && result.instance_id !== this.instance) {
       this.cursor = 0;
@@ -79,6 +77,7 @@ export class Connection {
     this.stop();
     const generation = this.generation;
     this.state = 'reconnecting';
+    this.error = '';
     const client = new StudioClient(this.token.trim());
     this.client = client;
     try {
@@ -96,9 +95,11 @@ export class Connection {
         const catalog = await client.request<Catalog>('/catalog');
         if (generation !== this.generation) return;
         this.catalog = catalog;
-      } catch {
+        this.catalogError = '';
+      } catch (error) {
         if (generation !== this.generation) return;
         this.catalog = {};
+        this.catalogError = error instanceof Error ? error.message : String(error);
       }
       try {
         sessionStorage.setItem(TOKEN_KEY, this.client.token);
@@ -145,6 +146,14 @@ export class Connection {
         this.backoff = 1500;
       } catch (error) {
         if (generation !== this.generation) return;
+        if (error instanceof ApiError && error.status === 401) {
+          // A restarted companion issues a new token; show the token form again.
+          this.stop();
+          this.connected = false;
+          this.state = 'unavailable';
+          this.error = `${error.message} The companion may have restarted with a new owner token. Enter the current token to reconnect.`;
+          return;
+        }
         this.state = 'stale';
         this.error = error instanceof Error ? error.message : String(error);
         this.backoff = Math.min(30000, this.backoff * 2);
@@ -152,6 +161,17 @@ export class Connection {
     }
     this.polling = false;
     if (!this.stopped) this.timer = setTimeout(() => void this.poll(), this.backoff);
+  }
+
+  /** Explain a connection that works but cannot drive generation yet, or ''. */
+  degradedNotice(): string {
+    const driver = this.snapshot.driver;
+    const reason = /[.!?]$/.test(this.catalogError) ? this.catalogError : `${this.catalogError}.`;
+    if (this.catalogError)
+      return `Companion connected. The driver catalog could not be read: ${reason} Management controls remain available.`;
+    return driver.state === 'connected'
+      ? ''
+      : `Companion connected. The driver is ${driverStatus(driver)}. Management controls remain available.`;
   }
 
   observeVisibility() {
@@ -192,6 +212,8 @@ export class Connection {
     this.metricHistory = [];
     this.capabilities = {};
     this.catalog = {};
+    this.catalogError = '';
+    this.error = '';
     this.workflows = [];
     this.snapshot = {
       jobs: [],

@@ -12,6 +12,9 @@ from typing import Any
 from . import SCHEMA_VERSION
 
 MAX_BODY_BYTES = 4 * 1024 * 1024
+# /object_info carries every installed node schema and grows with each
+# ComfyUI release, so it has its own budget instead of the 4 MiB body cap.
+OBJECT_INFO_BYTES = 16 * 1024 * 1024
 MAX_EVENT_BYTES = 65536
 EVENT_LIMIT = 4096
 EVENT_BYTE_LIMIT = 8 * 1024 * 1024
@@ -21,7 +24,14 @@ RECORD_KINDS = frozenset({"projects", "presets", "styles", "sessions", "workflow
 
 
 class StudioError(ValueError):
-    """A bounded, client-readable refusal with an HTTP status."""
+    """A bounded, client-readable refusal with an HTTP status.
+
+    A driver refusal also carries the driver's own HTTP status and a bounded,
+    cleaned detail; every other refusal leaves both as None.
+    """
+
+    upstream_status: int | None = None
+    upstream_detail: Any = None
 
     def __init__(self, code: str, message: str, status: int = 400):
         super().__init__(message)
@@ -87,11 +97,13 @@ def schema_document() -> dict[str, Any]:
             "event": ["cursor", "kind", "entity_id", "worker_id", "server_time", "data"],
         },
         "limits": {"request_bytes": MAX_BODY_BYTES, "event_count": EVENT_LIMIT,
-                   "event_bytes": EVENT_BYTE_LIMIT, "list_page": 200, "grid_cells": 1024,
+                   "event_bytes": EVENT_BYTE_LIMIT, "event_max_bytes": MAX_EVENT_BYTES,
+                   "list_page": 200, "grid_cells": 1024,
                    "console_lines": 400, "console_bytes": 131072,
                    "chart_samples": 240, "chart_seconds": 3600, "thumbnail_bytes": 33554432,
                    "history_page_bytes": 8388608, "record_window_bytes": 8388608,
-                   "preview_bytes": MAX_BODY_BYTES, "grid_preview_bytes": 33554432},
+                   "preview_bytes": MAX_BODY_BYTES, "grid_preview_bytes": 33554432,
+                   "object_info_bytes": OBJECT_INFO_BYTES},
         "replay": "Cursors are durable. A reset response requires a fresh snapshot before applying later events.",
         "reproduction": "Reconstructs configuration; hardware and kernel determinism are not guaranteed.",
     }

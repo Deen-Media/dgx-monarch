@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20. Status: **scoped local validation; draft acceptance remains incomplete**.
+Date: 2026-10-20. Status: **scoped local validation on earlier bundle builds; draft acceptance remains incomplete**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -39,6 +39,17 @@ the confirmed preview. Full project catalogs are bounded and shared by client
 and revision rather than fetched on every snapshot poll.
 
 ## Browser evidence
+
+These checks ran on earlier builds of the bundle than the one this branch
+ships, and their records name no browser, browser version or bundle hash. File
+times place the phone, upload, mask and generation-activity checks before the
+last source change of that round. A raw record survives for two rows only,
+responsive routes and image previews. Read each row as evidence about an
+earlier build until the
+[browser procedure](../studio/tests/README.md#browser-checks) repeats it on the
+shipped bundle. The video row's frame stepping relied on a fixture record that
+carried a frame rate; ComfyUI reports no frame rate for the videos it saves, so
+Studio does not offer frame stepping for generated videos.
 
 | Check | Observed result and scope |
 |---|---|

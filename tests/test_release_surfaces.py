@@ -315,9 +315,9 @@ def test_ci_runs_the_committed_worktree_leak_check():
 
 def test_ci_lints_and_compiles_the_root_custom_node_entrypoint():
     workflow = (REPO / ".github" / "workflows" / "ci.yml").read_text()
-    assert "ruff check __init__.py src tests benchmark tools" in workflow
+    assert "ruff check __init__.py src tests benchmark tools studio/tests" in workflow
     assert (
-        "python -m compileall -q __init__.py src benchmark tests tools" in workflow
+        "python -m compileall -q __init__.py src benchmark tests tools studio/tests" in workflow
     )
 
 

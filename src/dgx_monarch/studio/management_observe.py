@@ -5,13 +5,14 @@ import asyncio
 import time
 import uuid
 from collections.abc import Callable
-from copy import deepcopy
 from typing import Any
 
 from .. import diagnostic_session
-from ..cli.main import _find_gate_report, _prompt_input
+from ..cli.gate_last import find_gate_report as _find_gate_report
+from ..cli.gate_last import identity_gate, latest_entry, source_graph
 from .contracts import StudioError, digest
 from .management_config import absolute
+from .submission_guard import referenced_uploads, upload_view
 from .workflows import compile_workflow
 
 
@@ -45,36 +46,31 @@ async def diagnostics(client: Any, parameters: dict[str, Any], checkpoint: Calla
             {"source": "diagnostic_session", "report": report, "output": str(output) if output else None})
 
 
-async def gate_plan(client: Any, parameters: dict[str, Any]) -> dict[str, Any]:
+async def gate_plan(client: Any, parameters: dict[str, Any], uploads: frozenset[str] = frozenset()) -> dict[str, Any]:
+    """Gate the prompt `dgxm gate --last` would gate: the last /history entry.
+
+    ``uploads`` are the input files this companion stored; a last prompt that
+    loaded one validates against them, as the job that rendered it did.
+    """
     absolute(parameters["report_dir"])
-    history = await client.request("GET", "/history")
-    if not isinstance(history, dict) or not history:
+    latest = latest_entry(await client.request("GET", "/history"))
+    if latest is None:
         raise StudioError("gate_history", "Render a supported Monarch workflow before gating it.", 409)
-    rows = []
-    for identity, entry in history.items():
-        serialized = entry.get("prompt") if isinstance(entry, dict) else None
-        if isinstance(serialized, list) and len(serialized) >= 3 and isinstance(serialized[2], dict) and type(serialized[0]) is int:
-            rows.append((serialized[0], identity, serialized[2]))
-    if not rows:
-        raise StudioError("gate_history", "History has no usable prompt identity.", 409)
-    _, identity, original = max(rows, key=lambda row: row[0])
-    prompt = deepcopy(original)
-    candidates = [nid for nid, node in prompt.items() if isinstance(node, dict) and node.get("class_type") in
-                  {"DGXMonarchKSampler", "DGXMonarchKSamplerAdvanced", "DGXMonarchKSamplerPipeline"}]
-    if not candidates:
+    identity, entry = latest
+    run_id = uuid.uuid4().hex
+    try:
+        original = source_graph(entry)
+    except ValueError as exc:
+        raise StudioError("gate_history", "The last prompt in history has no usable API graph.", 409) from exc
+    try:
+        built = identity_gate(original, run_id)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise StudioError("gate_sampler", "The latest sampler lacks gate inputs or has a seed or cfg the gate cannot use.", 409) from exc
+    if built is None:
         raise StudioError("gate_sampler", "The last prompt has no supported Monarch sampler.", 409)
-    target, run_id = candidates[0], uuid.uuid4().hex
-    inputs = prompt[target].get("inputs")
-    if not isinstance(inputs, dict) or not {"model", "positive", "negative", "latent_image"} <= inputs.keys():
-        raise StudioError("gate_sampler", "The latest sampler lacks required gate inputs.", 409)
-    prompt[target] = {"class_type": "DGXMonarchIdentityGate", "inputs": {
-        **{key: deepcopy(inputs[key]) for key in ("model", "positive", "negative", "latent_image")},
-        "noise_seed": _prompt_input(inputs.get("noise_seed", inputs.get("seed", 42)), 42, int),
-        "steps": 2, "cfg": _prompt_input(inputs.get("cfg", 1.0), 1.0, float),
-        "sampler_name": inputs.get("sampler_name", "euler"), "scheduler": inputs.get("scheduler", "simple"),
-        "run_id": run_id}}
+    target, prompt = built
     schema = await client.request("GET", "/object_info")
-    prompt = compile_workflow(prompt, schema, {})
+    prompt = compile_workflow(prompt, upload_view(schema, referenced_uploads(prompt, uploads)), {})
     return {"source_prompt_id": identity, "source_digest": digest(original), "prompt": prompt,
             "run_id": run_id, "schema_digest": digest(schema), "sampler_node": target,
             "scope": "Run the reviewed Identity Gate graph; retain its own prompt and report identities."}

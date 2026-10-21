@@ -20,3 +20,17 @@ export class GridReviewGuard {
     return true;
   }
 }
+
+export const STALE_REVIEW = 'Grid definition changed. Validate every cell again before submission.';
+/**
+ * The Grids edit effect: when an edit invalidates a frozen review that is on screen, return the
+ * message to show; the view then drops the preview, its confirmation and its request key.
+ */
+export function staleReview(
+  guard: GridReviewGuard,
+  definition: string,
+  dispatchPending: boolean,
+  hasPreview: boolean,
+): string | null {
+  return guard.invalidate(definition, dispatchPending) && hasPreview ? STALE_REVIEW : null;
+}

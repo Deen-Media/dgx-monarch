@@ -16,10 +16,12 @@ python3 tools/gen_studio_inventory.py --check
 ```
 
 The lockfile pins the build dependencies. Rebuild and commit `static/` after every
-source change, together with the regenerated `resource_hashes.py`. The Python
-source manifest binds this table to exact resource bytes for installation and
-cleanup verification. Asset filenames are content hashed; the bundle has no external
-fonts, scripts, CDN URLs or runtime dependencies. Vite's development server is
+source change, together with the files the inventory tool regenerates:
+`src/dgx_monarch/studio/resource_hashes.py`, `src/dgx_monarch/studio/data/*.json`
+and `web/js/dgx_monarch_presentation.js`. The Python source manifest binds the
+hash table to exact resource bytes for installation and cleanup verification.
+Asset filenames are content hashed; the bundle has no external fonts, scripts,
+CDN URLs or runtime dependencies. Vite's development server is
 optional and is not part of production startup. Serve the production bundle from
 the Python companion to use its same-origin authenticated API.
 
@@ -57,7 +59,9 @@ transparent alpha, matching Comfy LoadImage's inverse-alpha mask output. Clear
 editor, replace source, clear mask, and clear bound input are separate actions.
 
 Gallery filters cover provenance, operation, model, date, status, project,
-media kind and dimensions. Images support shared zoom and wipe comparison;
+media kind and dimensions. Dimension filters match only records that carry a
+size, such as uploads: ComfyUI does not report the width or height of the
+outputs it saves. Images support shared zoom and wipe comparison;
 videos support leader/follower time and playback-rate synchronization, duration
 clamping, and frame stepping when frame rate is recorded. This does not promise
 frame alignment between different encodings or durations. Unsupported thumbnails
@@ -79,8 +83,11 @@ The presentation layer is divided into `views/` for view-owned state,
 `components/` for reusable controls and shell regions, and typed records in
 `contracts.ts`. `connection.svelte.ts` owns polling and reconciled snapshots;
 `submission.svelte.ts` owns reviewed submission identities and uncertain outcomes.
-`App.svelte` coordinates unsent drafts and navigation. All TypeScript/Svelte source
-modules are below 500 lines. CSS is split by surface under `styles/`.
+`App.svelte` coordinates navigation and these modules: `draftAutosave.svelte.ts`
+owns draft autosave and tab conflicts, `inspectionGuard.ts` orders workflow
+inspections and job reviews, and `assetEditorState.svelte.ts` keeps the asset
+editor across tab and view switches. All TypeScript/Svelte source modules are
+below 500 lines. CSS is split by surface under `styles/`.
 
 The [CPU HTTP fixture](tests/README.md) exercises the companion's actual HTTP
 contract without a ComfyUI installation, GPU, or management permissions.

@@ -19,9 +19,16 @@ from .contracts import StudioError, identifier, timestamp
 from .store import Store
 
 UPLOAD_BYTES = 2 * 1024 * 1024
-SOURCE_BYTES = 8 * 1024 * 1024
+# The one decoded-size rule for uploads and thumbnails: Studio decodes at most
+# IMAGE_PIXELS (16 megapixels, 4096 x 4096) per image, checked from the header
+# before any pixel is decoded.
 IMAGE_PIXELS = 16 * 1024 * 1024
+# A backstop only: four bytes per RGBA pixel at the pixel limit, plus 1 MiB for
+# PNG filter bytes, compression framing and embedded metadata. No 8-bit image
+# within the pixel rule reaches it, so the pixel rule is what binds.
+SOURCE_BYTES = IMAGE_PIXELS * 4 + 1024 * 1024
 CACHE_BYTES = 32 * 1024 * 1024
+_DOWNSCALE = "Downscale the image to at most 16 megapixels (4096 x 4096 pixels) and try again."
 
 
 def _image(data: bytes) -> Image.Image:
@@ -29,8 +36,10 @@ def _image(data: bytes) -> Image.Image:
         with warnings.catch_warnings():
             warnings.simplefilter("error", Image.DecompressionBombWarning)
             source = Image.open(io.BytesIO(data))
-            if source.format not in {"PNG", "JPEG", "WEBP"} or source.width * source.height > IMAGE_PIXELS:
-                raise StudioError("image_limit", "Use PNG, JPEG or WebP with at most 16 megapixels.", 413)
+            if source.format not in {"PNG", "JPEG", "WEBP"}:
+                raise StudioError("image_limit", "Use a PNG, JPEG or WebP image.", 413)
+            if source.width * source.height > IMAGE_PIXELS:
+                raise StudioError("image_limit", _DOWNSCALE, 413)
             source.load()
             return ImageOps.exif_transpose(source).convert("RGBA")
     except StudioError:
@@ -56,10 +65,11 @@ def prepare_upload(body: dict[str, Any]) -> tuple[bytes, dict[str, Any]]:
         raise StudioError("asset_limit", "Input images must be at most 2 MiB.", 413)
     image = _image(raw)
     output = io.BytesIO()
+    # RGBA keeps mask alpha; the pixel rule, not the encoded size, bounds the result.
     image.save(output, format="PNG")
     payload = output.getvalue()
     if len(payload) > SOURCE_BYTES:
-        raise StudioError("asset_limit", "Decoded input exceeds the 8 MiB normalized image budget.", 413)
+        raise StudioError("asset_limit", "The normalized image exceeds the 65 MiB backstop. " + _DOWNSCALE, 413)
     return payload, {"width": image.width, "height": image.height, "media_type": "image/png",
                      "orientation": "normalized", "sha256": hashlib.sha256(payload).hexdigest()}
 
@@ -129,12 +139,12 @@ class MediaAssets:
             response = await self.client.media(descriptor)
             try:
                 if response.content_length and response.content_length > SOURCE_BYTES:
-                    raise StudioError("thumbnail_limit", "Source exceeds the 8 MiB thumbnail budget.", 413)
+                    raise StudioError("thumbnail_limit", "Source exceeds the 65 MiB thumbnail backstop.", 413)
                 raw = bytearray()
                 async for chunk in response.content.iter_chunked(65536):
                     raw.extend(chunk)
                     if len(raw) > SOURCE_BYTES:
-                        raise StudioError("thumbnail_limit", "Source exceeds the 8 MiB thumbnail budget.", 413)
+                        raise StudioError("thumbnail_limit", "Source exceeds the 65 MiB thumbnail backstop.", 413)
             finally:
                 response.release()
             result = await asyncio.to_thread(thumbnail, bytes(raw))

@@ -1,4 +1,8 @@
-"""Repository-only source review for the existing config-free legacy update."""
+"""Repository-only source review for the legacy update.
+
+The legacy backend runs its own admission, release-slot and lifecycle guards,
+so its review needs only the clean and fast-forward observations.
+"""
 from __future__ import annotations
 
 import subprocess

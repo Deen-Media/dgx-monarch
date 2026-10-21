@@ -44,3 +44,10 @@ export function maskPoint(
     y: Math.max(0, Math.min(height, ((clientY - rect.top) * height) / rect.height)),
   };
 }
+
+/** A mask with no painted pixel masks nothing, so uploading it would bind an empty mask. */
+export function maskIsEmpty(pixels: Uint8ClampedArray): boolean {
+  if (pixels.length % 4) throw new Error('Mask pixels must be RGBA.');
+  for (let i = 3; i < pixels.length; i += 4) if (pixels[i] !== 0) return false;
+  return true;
+}

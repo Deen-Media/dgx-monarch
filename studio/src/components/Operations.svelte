@@ -107,7 +107,8 @@
       requireRecordIdentity(
         await client.request(`/operations/${encodeURIComponent(preview.id)}/apply`, {
           digest: preview.digest,
-          confirmed: true,
+          // The checkbox state, so the companion's own confirmation gate decides.
+          confirmed,
           idempotency_key: requestKey,
         }),
       );

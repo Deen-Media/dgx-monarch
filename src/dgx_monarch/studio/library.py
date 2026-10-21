@@ -7,7 +7,6 @@ from contextlib import closing
 from copy import deepcopy
 from typing import Any
 
-from . import SCHEMA_VERSION
 from .contracts import (
     RECORD_KINDS,
     RECORD_LIMIT,
@@ -19,11 +18,15 @@ from .contracts import (
     object_value,
     timestamp,
 )
+from .library_export import export_library, portable_reference
 from .store import Store
 
 FORMAT = "dgxm.studio.library"
 MAX_LIBRARY_BYTES = 4 * 1024 * 1024
 PAGE_BYTES = 8 * 1024 * 1024
+# The browser loads a whole kind as one catalog of at most 8 MiB
+# (record_window_bytes in the published limits); Library.save keeps it there.
+RECORD_WINDOW_BYTES = 8 * 1024 * 1024
 AUXILIARY_LIMIT = RECORD_LIMIT
 AUXILIARY_BYTES = 16 * 1024 * 1024
 PREVIEW_LIMIT = 256
@@ -36,14 +39,23 @@ def _auxiliary_rows(plan: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
     metadata = list(plan["metadata_rows"])
     if plan["metadata"]:
         metadata.append({"data": plan["metadata"], "project_ids": plan["project_ids"]})
-    references = []
-    for reference in plan["references"] + plan["repair_list"]:
+    # A reference under review appears bare in references and again with its
+    # reason in the repair list. Keep one row per reference, with the reason.
+    references: dict[str, dict[str, Any]] = {}
+    for reference in plan["repair_list"] + plan["references"]:
         value = {key: value for key, value in reference.items() if key != "id"}
         if "id" in reference:
             value["source_id"] = reference["id"]
-        references.append(value)
+        identity = digest({key: item for key, item in value.items() if key != "reason"})
+        if identity not in references or ("reason" in value and "reason" not in references[identity]):
+            references[identity] = value
     return {kind: list({digest(row): {**row, "id": digest(row)} for row in rows}.values())
-            for kind, rows in (("library_metadata", metadata), ("library_references", references))}
+            for kind, rows in (("library_metadata", metadata), ("library_references", list(references.values())))}
+
+
+def _browser_bytes(record: dict[str, Any]) -> int:
+    """What the browser catalog counts for one record: its compact UTF-8 JSON plus one."""
+    return len(json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8", "surrogatepass")) + 1
 
 
 def project_ids(data: dict[str, Any]) -> list[str]:
@@ -120,7 +132,33 @@ class Library:
         for project in members:
             self.store.get("projects", project)
         value = {**data, "project_ids": members} if members or "project_ids" in data else data
-        return self.store.save_record(kind, identity, value, revision)
+        # The reentrant store lock keeps the window check and the save atomic.
+        with self.store.lock:
+            self._check_window(kind, identity, value, revision)
+            return self.store.save_record(kind, identity, value, revision)
+
+    def _check_window(self, kind: str, identity: str, data: dict[str, Any], revision: Any) -> None:
+        """Refuse a save that would take a kind's catalog past the browser window."""
+        row = self.store.db.execute("SELECT revision,length(CAST(document AS BLOB)) FROM objects WHERE kind=? AND id=?",
+                                    (kind, identity)).fetchone()
+        if type(revision) is not int or (row[0] if row else 0) != revision:
+            return  # save_record refuses a stale or malformed revision in its own words.
+        old = self.store.get(kind, identity) if row else {}
+        value = {**old, "id": identity, "revision": revision + 1, "data": data}
+        # The browser counts each record as compact UTF-8 JSON plus one byte,
+        # and two for the array. Stored JSON escapes non-ASCII text, so its
+        # size is an upper bound; count exactly only when that bound is past.
+        before = 2 + self.store.db.execute("SELECT COALESCE(SUM(length(CAST(document AS BLOB))+1),0) FROM objects "
+                                           "WHERE kind=?", (kind,)).fetchone()[0]
+        after = before - (row[1] + 1 if row else 0) + len(canonical(value).encode()) + 1
+        if after <= RECORD_WINDOW_BYTES:
+            return
+        before = 2 + sum(_browser_bytes(json.loads(document)) for (document,) in self.store.db.execute(
+            "SELECT document FROM objects WHERE kind=?", (kind,)))
+        after = before - (_browser_bytes(old) if row else 0) + _browser_bytes(value)
+        if after > RECORD_WINDOW_BYTES and after > before:
+            raise StudioError("record_window_limit", f"Saving this record would take the {kind} catalog past the "
+                              f"8 MiB browser window. Shorten this record or another {kind} record first.", 413)
 
     def page(self, kind: str, query: dict[str, str]) -> dict[str, Any]:
         if kind not in RECORD_KINDS or set(query) - {"project_id", "offset", "limit"}:
@@ -164,37 +202,7 @@ class Library:
         return {"records": records, "next_offset": offset + len(records) if more else None}
 
     def export(self, project: str | None = None) -> dict[str, Any]:
-        if project:
-            self.store.get("projects", project)
-        records: dict[str, list[dict[str, Any]]] = {kind: [] for kind in sorted(RECORD_KINDS)}
-        result: dict[str, Any] = {"format": FORMAT, "schema_version": SCHEMA_VERSION, "records": records,
-                                  "artifact_references": [], "unresolved_references": [], "import_metadata": []}
-        size = len(json.dumps(result).encode())
-        collections = [(kind, records[kind]) for kind in records] + [
-            ("artifacts", result["artifact_references"]), ("library_references", result["unresolved_references"]),
-            ("library_metadata", result["import_metadata"])]
-        with self.store.lock:
-            for kind, target in collections:
-                cursor = self.store.db.execute("SELECT document FROM objects WHERE kind=? ORDER BY id", (kind,))
-                try:
-                    for raw in cursor:
-                        row = json.loads(raw[0])
-                        if project:
-                            if kind == "projects":
-                                selected = row["id"] == project
-                            elif kind == "library_metadata":
-                                selected = project_ids(row) == [project]
-                            else:
-                                selected = project in project_ids(row["data"] if kind in RECORD_KINDS else row)
-                            if not selected:
-                                continue
-                        size += len(json.dumps(row).encode()) + 2
-                        if size > MAX_LIBRARY_BYTES:
-                            raise StudioError("library_limit", "Export exceeds 4 MiB; export a single project.", 413)
-                        target.append(row)
-                finally:
-                    cursor.close()
-        return result
+        return export_library(self.store, project, byte_limit=MAX_LIBRARY_BYTES)
 
     def preview(self, request: dict[str, Any]) -> dict[str, Any]:
         document = object_value(request.get("library"), "library")
@@ -284,9 +292,10 @@ class Library:
             for raw in references:
                 reference = _remap(object_value(raw, "artifact reference"), mappings["projects"])
                 identity = bounded_key(reference.get("id"), "artifact id")
-                retained = {"artifact_id": identity, "reference": deepcopy(reference),
+                # Only a reference that needs repair is retained, once, in the
+                # repair list. One that resolves is the local artifact itself.
+                retained = {"artifact_id": identity, "reference": portable_reference(reference),
                             "project_ids": project_ids(reference)}
-                retained_references.append(retained)
                 try:
                     artifact = self.store.get("artifacts", identity)
                 except StudioError as exc:
@@ -330,7 +339,7 @@ class Library:
         for raw in preserved_references:
             row = _remap(object_value(raw, "preserved reference"), mappings["projects"])
             if isinstance(row.get("reference"), dict):
-                row["reference"] = _remap(row["reference"], mappings["projects"])
+                row["reference"] = portable_reference(_remap(row["reference"], mappings["projects"]))
             retained_references.append({key: value for key, value in row.items() if key != "id"})
         metadata = {key: deepcopy(value) for key, value in document.items()
                     if key not in {"format", "schema_version", "records", "artifact_references",

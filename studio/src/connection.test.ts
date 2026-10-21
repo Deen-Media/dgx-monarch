@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
 import { compileModule } from 'svelte/compiler';
+import { ApiError } from './api.ts';
 
 // Compile the actual rune module to exercise lifecycle behavior with delayed responses.
 async function connectionClass() {
@@ -191,6 +192,125 @@ test('storage denial still permits manual authentication and disconnect', async 
     connection.disconnect();
     assert.equal(connection.connected, false);
     assert.equal(connection.client.token, '');
+  } finally {
+    connection.stop();
+    globalThis.fetch = originalFetch;
+  }
+});
+test('a backward host clock step does not freeze snapshot updates', async () => {
+  const connection = setup();
+  connection.client.token = 'token';
+  const times = [1_800_000_100, 1_800_000_040, 1_800_000_041];
+  let call = 0;
+  connection.client.request = async () => {
+    const index = call++;
+    return {
+      instance_id: 'same',
+      server_time: times[index],
+      jobs: [{ id: `job-${index}`, state: 'running' }],
+      telemetry: {},
+      cursor: index,
+    };
+  };
+  try {
+    await connection.refresh();
+    // The host clock stepped back 60 s; both later snapshots are newer requests.
+    await connection.refresh();
+    assert.equal(connection.snapshot.jobs[0].id, 'job-1');
+    await connection.refresh();
+    assert.equal(connection.snapshot.jobs[0].id, 'job-2');
+    assert.equal(connection.state, 'connected');
+  } finally {
+    connection.stop();
+  }
+});
+test('a 401 during polling returns to the token form and stops retrying the old token', async () => {
+  const connection = setup();
+  connection.client.token = 'old-token';
+  connection.connected = true;
+  connection.state = 'connected';
+  let calls = 0;
+  connection.client.request = async () => {
+    calls++;
+    throw new ApiError(401, 'The companion refused the owner token (HTTP 401).', 'unauthorized');
+  };
+  try {
+    connection.stopped = false;
+    await connection.poll();
+    assert.equal(connection.connected, false);
+    assert.equal(connection.state, 'unavailable');
+    assert.match(connection.error, /refused the owner token/);
+    assert.match(connection.error, /Enter the current token to reconnect/);
+    assert.equal(connection.stopped, true);
+    await connection.poll();
+    assert.equal(calls, 1);
+  } finally {
+    connection.stop();
+  }
+});
+test('other polling failures keep the tab connected and mark it stale', async () => {
+  const connection = setup();
+  connection.client.token = 'token';
+  connection.connected = true;
+  connection.client.request = async () => {
+    throw new ApiError(502, 'The companion or a proxy in front of it did not answer (HTTP 502).');
+  };
+  try {
+    connection.stopped = false;
+    await connection.poll();
+    assert.equal(connection.connected, true);
+    assert.equal(connection.state, 'stale');
+  } finally {
+    connection.stop();
+  }
+});
+test('a catalog failure keeps its own message for the connect notice', async () => {
+  const connection = setup();
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith('/catalog'))
+      return new Response(
+        JSON.stringify({
+          error: {
+            code: 'driver_response_limit',
+            message: 'Driver /object_info exceeds its budget.',
+          },
+        }),
+        { status: 502 },
+      );
+    const body = url.endsWith('/capabilities')
+      ? { schema_version: '1.0' }
+      : url.endsWith('/workflows')
+        ? { workflows: [] }
+        : {
+            instance_id: 'synthetic',
+            server_time: 10,
+            jobs: [],
+            artifacts: [],
+            operations: [],
+            records: {},
+            telemetry: {},
+            driver: { state: 'connected' },
+          };
+    return new Response(JSON.stringify(body));
+  };
+  try {
+    connection.token = 'token';
+    await connection.connect();
+    assert.equal(connection.catalogError, 'Driver /object_info exceeds its budget.');
+    assert.match(connection.degradedNotice(), /could not be read: Driver \/object_info exceeds/);
+    assert.doesNotMatch(connection.degradedNotice(), /Driver catalog unavailable/);
+    connection.catalogError = 'Driver response exceeds its bounded size';
+    assert.match(connection.degradedNotice(), /bounded size\. Management controls/);
+    connection.catalogError = '';
+    connection.snapshot = {
+      ...connection.snapshot,
+      driver: { state: 'unavailable', code: 'driver_unknown' },
+    };
+    assert.match(connection.degradedNotice(), /The driver is unavailable \(driver_unknown\)/);
+    connection.snapshot = { ...connection.snapshot, driver: { state: 'connected' } };
+    assert.equal(connection.degradedNotice(), '');
   } finally {
     connection.stop();
     globalThis.fetch = originalFetch;

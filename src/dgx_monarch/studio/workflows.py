@@ -91,57 +91,27 @@ def graph_index(workflow: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
 
 def node_inputs(info: Mapping[str, Any]) -> list[tuple[str, dict[str, Any], bool]]:
     """Return declared input order, retaining connection-only socket types."""
-    fields = []
-    for group in ("required", "optional"):
-        definitions = info.get("input", {}).get(group, {})
-        order = info.get("input_order", {}).get(group, list(definitions))
-        if set(order) != set(definitions) or len(order) != len(definitions):
-            raise WorkflowError("object_info input order does not match its input schema")
-        for name in order:
-            spec = definitions[name]
-            if not isinstance(spec, (list, tuple)) or not spec:
-                raise WorkflowError(f"Invalid input schema: {name}")
-            options = copy.deepcopy(spec[1]) if len(spec) > 1 and isinstance(spec[1], dict) else {}
-            kind = spec[0]
-            if isinstance(kind, list):
-                options.update(type="COMBO", choices=copy.deepcopy(kind))
-            elif kind == "COMBO" and isinstance(options.get("options"), list):
-                options.update(type="COMBO", choices=options["options"])
-            elif isinstance(kind, str):
-                options["type"] = kind
-            else:
-                raise WorkflowError(f"Unsupported input type schema: {name}")
-            fields.append((name, options, group == "required"))
-    return fields
+    from .widget_values import declared_inputs
+    return declared_inputs(info)
 
 
 def widget_values(node: Mapping[str, Any], info: Mapping[str, Any], *, api: bool = False) -> dict[str, Any]:
-    if api:
-        return copy.deepcopy(dict(node.get("inputs", {})))
-    serialized = node.get("widgets_values", [])
-    fields = [(name, schema) for name, schema, _ in node_inputs(info)
-              if schema["type"] in SCALAR_TYPES and not schema.get("forceInput")]
-    if isinstance(serialized, dict):
-        unknown = set(serialized) - {name for name, _ in fields}
-        if unknown:
-            raise WorkflowError(f"Unknown named widgets: {sorted(unknown)}")
-        return copy.deepcopy(serialized)
-    if not isinstance(serialized, list):
-        raise WorkflowError("Serialized widget values must be an array or object")
-    result, position = {}, 0
-    for name, schema in fields:
-        if position >= len(serialized):
-            break
-        result[name] = copy.deepcopy(serialized[position])
-        position += 1
-        # Core Comfy seed widgets add a UI-only control after their number.
-        has_control = schema.get("control_after_generate", name in {"seed", "noise_seed"})
-        if has_control and position < len(serialized) and isinstance(serialized[position], str):
-            if serialized[position] in {"fixed", "increment", "decrement", "randomize"}:
-                position += 1
-    if position != len(serialized):
-        raise WorkflowError("Widget serialization has unsupported extra values; explicit widget adapter required")
-    return result
+    """Map a node's serialized widget values to input names; see widget_values.py."""
+    from .widget_values import layout_values
+    return layout_values(node, info, api=api)
+
+
+def node_fields(node: Mapping[str, Any], info: Mapping[str, Any], values: Mapping[str, Any], *,
+                api: bool) -> list[tuple[str, dict[str, Any], bool]]:
+    """Typed inputs after ComfyUI's dynamic input expansion for these values."""
+    from .widget_values import LINKED, field_schema, finalize_inputs
+    live = dict(values)
+    if not api:
+        # A linked DynamicCombo selects no option here, as in ComfyUI.
+        live.update({str(socket.get("name")): LINKED for socket in node.get("inputs", [])
+                     if isinstance(socket, dict) and socket.get("link") is not None})
+    return [(name, field_schema(name, spec), required)
+            for name, spec, required in finalize_inputs(info, live, fill_defaults=not api)]
 
 
 def _resolve(identity: Any, name: str | None, graphs: Mapping[str, Any]) -> tuple[str, str, str | None]:
@@ -243,7 +213,7 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
                 continue
             try:
                 values = widget_values(node, definition, api=api)
-                fields = node_inputs(definition)
+                fields = node_fields(node, definition, values, api=api)
             except WorkflowError as exc:
                 errors.append(f"{gid}:{nid}: {exc}")
                 continue

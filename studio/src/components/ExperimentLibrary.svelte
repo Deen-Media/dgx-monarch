@@ -3,7 +3,7 @@
   import type { StudioClient } from '../api';
   import type { RecordData, StoredRecord } from '../contracts';
   import { loadRecordCatalog } from '../recordCatalog';
-  import { recordProjects } from '../recordPersistence';
+  import { putRecord, RecordSession, recordProjects } from '../recordPersistence';
   let {
     client,
     projectId,
@@ -30,7 +30,7 @@
   );
   const record = $derived(visible.find((row) => row.id === selected));
   async function refresh() {
-    records = [];
+    // Keep the current rows until the new catalog arrives.
     records = await loadRecordCatalog(client, 'experiments');
   }
   async function run(action: () => Promise<void>) {
@@ -44,20 +44,30 @@
       busy = false;
     }
   }
+  // One identity per grid being named, kept until a save is confirmed, so a retry after a lost
+  // reply reads the committed record back instead of writing a second record.
+  const session = new RecordSession();
   async function save() {
     if (!gridId || !name.trim()) return;
-    const value = await client.request<StoredRecord>(
-      `/records/experiments/${crypto.randomUUID()}`,
-      {
-        revision: 0,
-        data: { name: name.trim(), grid_id: gridId, project_ids: projectId ? [projectId] : [] },
-      },
-      'PUT',
-    );
-    await refresh();
-    selected = value.id;
+    const data = { name: name.trim(), grid_id: gridId, project_ids: projectId ? [projectId] : [] };
+    let saved: { record: StoredRecord; replayed: boolean };
+    try {
+      saved = await putRecord(client, 'experiments', data, session.id(gridId));
+    } catch (cause) {
+      session.failed(cause);
+      throw cause;
+    }
+    session.settle();
+    selected = saved.record.id;
     name = '';
-    notice = 'Saved the grid definition and observed outcomes in the project library.';
+    notice = saved.replayed
+      ? 'An earlier attempt had already saved this grid in the project library.'
+      : 'Saved the grid definition and observed outcomes in the project library.';
+    try {
+      await refresh();
+    } catch (cause) {
+      notice += ` The experiment list did not reload: ${cause instanceof Error ? cause.message : String(cause)}`;
+    }
   }
   onMount(() => {
     try {

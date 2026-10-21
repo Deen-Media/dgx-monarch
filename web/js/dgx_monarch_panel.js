@@ -31,7 +31,7 @@ import {
 import { button, el } from "./dgx_monarch_ui.js";
 import { brandHeader, brandMark, updateBrand } from "./dgx_monarch_brand.js";
 
-import { MEMORY, STATUS, formatMetric, availableMemoryStatus } from "./dgx_monarch_presentation.js";
+import { MEMORY, STATUS, formatMetric, availableMemoryStatus, slabReading } from "./dgx_monarch_presentation.js";
 
 const POLL_MS = 2500;
 let refreshInFlight = false;
@@ -75,8 +75,10 @@ function hostCard(name, stats, meta, rates) {
     const memoryKnown = Number.isFinite(stats.mem_gib?.MemTotal) && stats.mem_gib.MemTotal > 0
         && Number.isFinite(stats.mem_gib?.MemAvailable);
     const available = stats.mem_gib?.MemAvailable;
+    // A missing slab_gib is a known zero unless the Worker report could hide
+    // a slab (slabReading holds the shared rule); a null meta means no Worker.
     const breakdownKnown = memoryKnown && [stats.mem_gib?.AnonPages, stats.mem_gib?.Shmem,
-        stats.gpu_proc_gib, stats.pool_gib, mm?.slab_gib].every(Number.isFinite);
+        stats.gpu_proc_gib, stats.pool_gib].every(Number.isFinite) && slabReading(meta) !== null;
     const title = el("div", "font-weight:600;display:flex;justify-content:space-between;");
     title.appendChild(el("span", "", name));
     title.appendChild(el("span", `font-weight:400;color:${STATUS[availableMemoryStatus(available)]};`,
@@ -342,7 +344,10 @@ async function refreshOnce(root, zones) {
     // One rail reading per box per poll, on the monotonic clock, however many
     // ranks (and so cards) the box runs.
     const rates = hostRailRates(railRates, cards, performance.now());
-    for (const { name, stats, meta } of cards) {
+    for (const { name, stats, meta: cardMeta } of cards) {
+        // The card's meta leaves out memory_error; carry it from the same Worker.
+        const worker = cardMeta && Array.isArray(t.workers) ? t.workers.find((w) => w?.host === stats) : null;
+        const meta = worker?.memory_error != null ? { ...cardMeta, memory_error: worker.memory_error } : cardMeta;
         frag.appendChild(hostCard(name, stats, meta, rates.get(stats.host)));
     }
 

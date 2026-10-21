@@ -66,7 +66,9 @@ def config(tmp_path):
 
 def test_all_management_actions_have_typed_fields_and_permission_gate(store, config):
     disabled = {row["id"]: row for row in Operations(store, Driver(), config=config).capabilities()}
-    enabled = {row["id"]: row for row in Operations(store, Driver(), config=config, allow_management=True).capabilities()}
+    # Update also needs the driver unit, which names the interpreter and checkout it binds.
+    enabled = {row["id"]: row for row in Operations(store, Driver(), config=config, allow_management=True,
+                                                     driver_service="comfy.service").capabilities()}
     for action in FIELDS:
         assert enabled[action]["available"] and enabled[action]["implementation"] == "typed_adapter"
         assert bool(enabled[action]["parameters"]) is (action != "diagnostics.capabilities")
@@ -289,14 +291,29 @@ def test_repeated_cancellation_keeps_real_update_lock_until_thread_settles(tmp_p
     asyncio.run(scenario())
 
 
-def update_plan():
+def driver_identity(tmp_path, repo, state="active"):
+    """A reviewed driver unit whose ComfyUI imports ``repo`` through custom_nodes/dgx-monarch."""
+    comfy = tmp_path / "comfy"
+    (comfy / "custom_nodes").mkdir(parents=True, exist_ok=True)
+    link = comfy / "custom_nodes/dgx-monarch"
+    if not link.is_symlink():
+        link.symlink_to(repo)
+    identity = {"state": state, "config_digest": "driver-config",
+                "config": {"source_files": [{"path": str(comfy / "main.py")}]}}
+    return identity, {"link": str(link), "resolved": str(repo.resolve())}
+
+
+def update_plan(tmp_path=None, repo=None):
     staged = StagedRelease("b" * 40, "1.0", "0.6.0", "c" * 64, "d" * 64, True, True, True, True, 1, 1, 1)
     expected = {key: value for key, value in asdict(staged).items() if key in
                 {"target_sha", "version", "torchmonarch_pin", "source_manifest", "dependency_manifest"}}
     prior = ReleaseMetadata("a" * 40, "1.0", "0.6.0", "f" * 64, "d" * 64)
-    return staged, {"token": "test-token", "prior_commit": "a" * 40, "prior_release": asdict(prior),
-                    "checkout": {"path": "reviewed", "inode": 1}, "release": expected,
-                    "driver_identity": {"state": "active", "config_digest": "driver-config"}, "controller": {"exact": "bound"}}
+    plan = {"token": "test-token", "mode": "verified", "prior_commit": "a" * 40, "prior_release": asdict(prior),
+            "checkout": {"path": "reviewed", "inode": 1}, "release": expected,
+            "driver_identity": {"state": "active", "config_digest": "driver-config"}, "controller": {"exact": "bound"}}
+    if tmp_path is not None:
+        plan["driver_identity"], plan["driver_checkout"] = driver_identity(tmp_path, repo)
+    return staged, plan
 
 
 def test_update_confirmation_compares_all_reviewed_release_hashes():
@@ -313,16 +330,17 @@ def test_update_confirmation_compares_all_reviewed_release_hashes():
     (False, True, False, ["stop"]), (True, False, False, ["stop", "update"]),
     (True, True, False, ["stop", "update", "start"]), (True, True, True, ["stop", "update"]),
 ])
-def test_update_restores_only_after_exact_success(store, config, monkeypatch, stop_ok, update_ok, environment_drift, actions):
-    _, reviewed = update_plan()
+def test_update_restores_only_after_exact_success(store, config, tmp_path, monkeypatch, stop_ok, update_ok, environment_drift, actions):
+    _, reviewed = update_plan(tmp_path, store.directory)
     calls, checkpoints = [], []
+    identity = reviewed["driver_identity"]
     class OwnerDriver:
-        async def perform(self, action, identity):
+        async def perform(self, action, reviewed_identity):
             calls.append(action)
             state = "succeeded" if stop_ok else "unknown"
-            return state, {"observed_identity": {"state": "inactive", "config_digest": "driver-config"}}
+            return state, {"observed_identity": {**identity, "state": "inactive"}}
         def inspect(self):
-            return {"state": "inactive" if "stop" in calls else "active", "config_digest": "driver-config"}
+            return {**identity, "state": "inactive" if "stop" in calls else "active"}
     ops = SimpleNamespace(repo=store.directory, repo_snapshot=lambda target: RepoSnapshot("a" * 40, True, True))
     manager = management_update.Updates(config, OwnerDriver(), Driver.origin, store.directory)
     monkeypatch.setattr(manager, "operations", lambda parameters: ops)
@@ -335,7 +353,8 @@ def test_update_restores_only_after_exact_success(store, config, monkeypatch, st
     def execute(prepared):
         calls.append("update")
         assert prepared == {"private": "controller"}
-        return UpdateResult(0 if update_ok else 1, "updated" if update_ok else "stop_unknown", "result", {})
+        receipt = {"status": "succeeded", "steps": []} if update_ok else {}
+        return UpdateResult(0 if update_ok else 1, "updated" if update_ok else "stop_unknown", "result", receipt)
     monkeypatch.setattr(management_update.update_controller, "run", execute)
     state, _ = asyncio.run(manager.execute({"stop_driver": True, "restore_driver": True,
                                            "privileged_process_inspection": False}, reviewed, checkpoints.append))
@@ -345,51 +364,68 @@ def test_update_restores_only_after_exact_success(store, config, monkeypatch, st
 
 
 @pytest.mark.parametrize("mode", ["legacy", "verified"])
-def test_config_free_update_execution_is_limited_to_reviewed_legacy(store, monkeypatch, mode):
-    _, reviewed = update_plan()
-    reviewed.update(mode=mode, driver_identity=None, config_sha256=None)
-    manager = management_update.Updates(None, None, Driver.origin, store.directory)
-    backend = SimpleNamespace(repo=store.directory, repo_snapshot=lambda target: RepoSnapshot("a" * 40, True, True))
-    monkeypatch.setattr(manager, "operations", lambda parameters: backend)
-    monkeypatch.setattr(management_update, "checkout_identity", lambda path: reviewed["checkout"])
-    monkeypatch.setattr(management_update, "inspect_checkout", lambda *args: (ReleaseMetadata(**reviewed["prior_release"]), ()))
-    monkeypatch.setattr(management_update.update_controller, "binding", lambda driver: reviewed["controller"])
+def test_update_execution_without_config_refuses_in_every_mode(store, tmp_path, monkeypatch, mode):
+    _, reviewed = update_plan(tmp_path, store.directory)
+    reviewed.update(mode=mode, config_sha256=None)
+    identity = reviewed["driver_identity"]
     calls = []
-    def prepare(directory, config, repo, plan, host, privileged, lock_fd):
-        assert config is None and plan is reviewed and lock_fd == 123
-        calls.append("prepare")
-        return {"private": "controller"}
-    def execute(prepared):
-        calls.append("update")
-        return UpdateResult(0, "legacy_updated", "settled", {"reviewed_target": reviewed["release"]["target_sha"]})
-    monkeypatch.setattr(management_update.update_controller, "prepare", prepare)
-    monkeypatch.setattr(management_update.update_controller, "run", execute)
-    monkeypatch.setattr(management_update.update_controller, "cleanup", lambda prepared: calls.append("cleanup"))
-    parameters = {"mode": mode, "stop_driver": False, "restore_driver": False, "privileged_process_inspection": False}
-    checkpoints = []
-    if mode == "verified":
-        with pytest.raises(StudioError, match="configuration is unavailable"):
-            asyncio.run(manager.execute(parameters, reviewed, checkpoints.append))
-        assert calls == []
-    else:
-        state, receipt = asyncio.run(manager.execute(parameters, reviewed, checkpoints.append))
-        assert state == "succeeded" and calls == ["prepare", "update", "cleanup"]
-        assert receipt["update"]["reviewed_target"] == reviewed["release"]["target_sha"]
-        assert checkpoints[0]["phase"] == "controller_prepared"
+    class OwnerDriver:
+        def inspect(self):
+            return identity
+        async def perform(self, action, reviewed_identity):
+            calls.append(action)
+            return "succeeded", {}
+    manager = management_update.Updates(None, OwnerDriver(), Driver.origin, store.directory)
+    for name in ("prepare", "run", "cleanup"):
+        monkeypatch.setattr(management_update.update_controller, name, lambda *args, name=name: calls.append(name))
+    parameters = {"repo": str(store.directory), "mode": mode, "stop_driver": True, "restore_driver": True,
+                  "privileged_process_inspection": False}
+    state, receipt = asyncio.run(manager.execute(parameters, reviewed, lambda receipt: calls.append("checkpoint")))
+    # A refusal before any change is a definite failure, not an unknown outcome.
+    assert state == "failed" and receipt["refusal"]["code"] == "update_config" and calls == []
+    with pytest.raises(StudioError, match="--config") as refused:
+        manager.preview(parse("update", {"repo": str(store.directory), "mode": mode}))
+    assert refused.value.code == "update_config"
 
 
-def test_update_accepts_selected_checkout_independent_of_companion_import(config, tmp_path, monkeypatch):
-    repo = tmp_path / "separate-source-checkout"
-    (repo / "src/dgx_monarch").mkdir(parents=True)
-    repo.chmod(0o755)
-    (repo / "src/dgx_monarch/__init__.py").write_text("")
-    (repo / "pyproject.toml").write_text('[project]\nname="dgx-monarch"\n')
-    called = []
-    monkeypatch.setattr(management_update, "SystemUpdateOps", lambda *args, **kwargs: called.append((args, kwargs)) or "backend")
-    manager = management_update.Updates(config, None, Driver.origin, tmp_path)
-    assert manager.operations({"repo": str(repo), "privileged_process_inspection": False}) == "backend"
-    assert called[0][0][0] == repo
-    assert called[0][1]["driver_host"] == "127.0.0.1:8188"
+def checkout_fixture(path):
+    (path / "src/dgx_monarch").mkdir(parents=True)
+    path.chmod(0o755)
+    (path / "src/dgx_monarch/__init__.py").write_text("")
+    (path / "pyproject.toml").write_text('[project]\nname="dgx-monarch"\n')
+    return path.resolve()
+
+
+def test_update_binds_selected_checkout_to_the_driver_import_source(config, tmp_path, monkeypatch):
+    driver_checkout, separate = checkout_fixture(tmp_path / "driver-checkout"), checkout_fixture(tmp_path / "separate-clone")
+    alias = tmp_path / "alias"
+    alias.symlink_to(driver_checkout)
+    identity, bound = driver_identity(tmp_path, alias)
+    # The link resolves by realpath, through any chain of symlinks.
+    assert management_update.driver_checkout(identity, driver_checkout) == {
+        "link": str(tmp_path / "comfy/custom_nodes/dgx-monarch"), "resolved": str(driver_checkout)} == bound
+    hosts = []
+    def system_ops(repo, config, **kwargs):
+        hosts.append(kwargs["driver_host"])
+        return SimpleNamespace(repo=repo)
+    monkeypatch.setattr(management_update, "SystemUpdateOps", system_ops)
+    monkeypatch.setattr(management_update.update_controller, "binding", lambda driver: pytest.fail("bound before checkout"))
+    class OwnerDriver:
+        def inspect(self):
+            return identity
+    manager = management_update.Updates(config, OwnerDriver(), Driver.origin, tmp_path)
+    with pytest.raises(StudioError, match="checkout the bound ComfyUI driver imports") as refused:
+        manager.preview(parse("update", {"repo": str(separate)}))
+    assert refused.value.code == "update_repository" and hosts == [None]
+    # Without the unit Studio cannot know the driver's interpreter or checkout.
+    with pytest.raises(StudioError, match="--driver-service") as refused:
+        management_update.Updates(config, None, Driver.origin, tmp_path).preview(parse("update", {"repo": str(driver_checkout)}))
+    assert refused.value.code == "update_driver_service"
+    (tmp_path / "comfy/custom_nodes/dgx-monarch").unlink()
+    with pytest.raises(StudioError, match="no custom_nodes/dgx-monarch"):
+        management_update.driver_checkout(identity, driver_checkout)
+    assert isinstance(manager.operations(parse("update", {"repo": str(driver_checkout), "mode": "legacy"})),
+                      management_update.RepositoryOps)
 
 
 def test_update_rejects_unrelated_or_writable_checkout(tmp_path):

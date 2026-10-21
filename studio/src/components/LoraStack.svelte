@@ -2,6 +2,7 @@
   import type { Draft, Lora } from '../model';
   import type { Catalog, CatalogLora, ChangeDraft, GraphConnection } from '../contracts';
   import LoraInsertion from './LoraInsertion.svelte';
+  import { numberField } from '../numberField';
   let {
     draft,
     catalog,
@@ -80,8 +81,10 @@
           min={loraSchema(lora, 'strength_model').min}
           max={loraSchema(lora, 'strength_model').max}
           step={loraSchema(lora, 'strength_model').step ?? 'any'}
-          value={lora.model_strength}
-          oninput={(e) => updateLora(i, { model_strength: Number(e.currentTarget.value) })}
+          use:numberField={{
+            value: lora.model_strength,
+            commit: (value) => value !== null && updateLora(i, { model_strength: value }),
+          }}
         /></label
       >{#if lora.clip_strength !== undefined}<label
           >Text strength<input
@@ -89,8 +92,10 @@
             min={loraSchema(lora, 'strength_clip').min}
             max={loraSchema(lora, 'strength_clip').max}
             step={loraSchema(lora, 'strength_clip').step ?? 'any'}
-            value={lora.clip_strength}
-            oninput={(e) => updateLora(i, { clip_strength: Number(e.currentTarget.value) })}
+            use:numberField={{
+              value: lora.clip_strength,
+              commit: (value) => value !== null && updateLora(i, { clip_strength: value }),
+            }}
           /></label
         >{/if}
     </div>

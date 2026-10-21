@@ -35,16 +35,38 @@ Illustrative dashboard using sample data, not a benchmark result.
   retained pool, anon and other are five segments that never overlap and sum
   exactly to used memory (`MemTotal - MemAvailable`). Reclaimable cache and free
   split `MemAvailable`, so the six colored segments plus the uncolored free
-  remainder add up to `MemTotal`. GPU utilization, clock, power and temperature
-  follow. The legend under the bar names each segment; `slab` appears only when
-  a model is slab-resident. The default `spark` theme matches the ComfyUI sidebar: gpu cyan, slab green,
-  pool orange, anon purple, other grey, and cache yellow. `ember` and `mono`
-  recolor all six. No segment uses one of the sixteen standard ANSI
-  colors, so a terminal palette change cannot merge two segments. `slab` and
-  `pool` are residency terms; [CONCEPTS.md](CONCEPTS.md) defines both, and what
+  remainder add up to `MemTotal`. Used, total and available memory follow in
+  GiB, and that text turns yellow when 20 GiB or less is available. GPU
+  utilization, clock, power and temperature take the next line, and a reading
+  the box does not send shows `unknown`, never zero. The legend under the bar names each
+  segment; `slab` appears only when a model is slab-resident. `slab` and `pool`
+  are residency terms; [CONCEPTS.md](CONCEPTS.md) defines both, and what
   reclaims the pool.
-* **RDMA rails:** per-rail GB/s, with a braille history graph, for one box: the first
-  host by name (the rails are symmetric, so one host represents the pair). The
+* **When the bar is unknown:** a Worker reports a slab size only while a slab
+  holds its model, so a Worker that reports another weight residency, or no
+  resident model, draws a bar with no slab segment. The row reads
+  `memory breakdown unknown` and shows only total and available memory when the
+  box sends no host counters, when its Worker sent `memory_error` or no memory
+  report, or when the Worker reports slab residency without a size. A row
+  reads `memory unknown` when the box sends no usable total or available
+  memory. A box that no Worker reports, such as a driver-only box or this box
+  while the driver is down, also draws its bar with no slab segment, so a slab
+  that a Worker still holds there counts as other.
+* **Colors:** every theme draws the six memory segments in the ComfyUI
+  sidebar's colors: gpu cyan, slab green, pool orange, anon purple, other grey
+  and cache yellow. `ember` changes only the accent color, and `mono` draws six
+  grey levels. A truecolor terminal shows the sidebar's exact colors and a
+  256-color terminal shows fixed colors from its 256-color table. Neither uses
+  one of the sixteen standard ANSI colors, so a terminal palette change cannot
+  merge two segments there. A 16-color terminal, such as `TERM=xterm`, `screen`
+  or `linux` without `COLORTERM`, has only the standard colors, so the six
+  segments take six different ones: cyan, green, bright red, magenta, white and
+  yellow. The terminal's own palette then decides how they look. On such a
+  terminal `mono` has only three visible greys, so two of its segments can look
+  alike; choose `spark` or `ember` there. With `NO_COLOR` set the bar has no
+  color, and the legend values tell the segments apart.
+* **RDMA rails:** one row per rail on every box, with RX and TX GB/s shown
+  separately, each with its own braille history graph. The
   counters are `/sys/class/infiniband/*/ports/*/counters/port_{rcv,xmit}_data`.
   A rate is timed by the box's own stamps of when it read the counters, so a
   reading that waited in the driver's cache does not read fast or slow. A
@@ -58,8 +80,10 @@ Illustrative dashboard using sample data, not a benchmark result.
   the box's monotonic time of the reading, which readers use to time a rate; and
   `rails_t`, the wall-clock time of the same reading, for display only.
 * **Render line:** live step progress (fed by the driver's own progress
-  channel), s/it and ETA, or the last render's duration when idle, then the
-  gate ledger's count of each verdict. The label names the active stage, such as
+  channel), seconds per step and the estimated time remaining, or, when idle,
+  the last render's model, duration and steps, then the gate ledger's count of
+  each verdict. A step count the driver does not send reads `unknown`, with no
+  progress bar or estimate. The label names the active stage, such as
   `gate proof 2 of 2-4`, `cross-residency check`, or `render`.
 * **Driver phases:** under the render line, in `dgxm top` and in the sidebar,
   `Recent driver phases:` names the driver's last four completed phases, such
@@ -95,7 +119,11 @@ The ComfyUI memory sidebar draws a worker's card only after that worker's full
 host-memory report arrives, so a worker still starting up never shows a card of
 default values or hides valid driver telemetry. A driver on its own host keeps
 its card beside the workers; on a worker's host, that worker's card replaces
-the driver's.
+the driver's. Each card's title gives used, total and available memory in GiB,
+green above 20 GiB available and yellow at or below. The card's bar and legend
+follow the same rules as `dgxm top`, including when they read
+`memory breakdown unknown`. A Fleet row's wall time reads `unknown` when the
+driver recorded none; `0.00 s` is a measured zero.
 
 Above the cards, one sidebar line names the topology the workers set up, such
 as `uly2` or `uly2+fsdp`, and names each one when workers disagree. Each card
@@ -116,9 +144,9 @@ per model, such as
 `pinned: cond model: ..., ran; uncond model: ..., dropped (...)`.
 Each render times a step against its own previous step, so the
 second leader of a dp>1 render, or another render in the same Fleet wave,
-cannot shrink that number to the gap between two messages. `dgxm top` does not
-draw these facts yet; they are in the `render.last` block of
-`/dgxm/telemetry`.
+cannot shrink that number to the gap between two messages. `dgxm top` draws
+the same facts on a second line under its idle render line. Both read them from
+the `render.last` block of `/dgxm/telemetry`.
 
 That block holds `model`, `steps`, `wall_s` (the whole render, cold load and
 any gate included), `ended_at`, `ceremony` (whether the render paid a

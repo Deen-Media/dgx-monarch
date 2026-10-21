@@ -194,3 +194,88 @@ def test_crash_after_reservation_never_grants_redispatch(tmp_path):
         store.close()
 
     asyncio.run(scenario())
+
+
+def route_missing():
+    exc = StudioError("driver_rejected", "Driver returned HTTP 404; inspect its local diagnostics.", 502)
+    exc.upstream_status = 404  # Contract C1: the transport carries the upstream status.
+    return exc
+
+
+def test_missing_scoped_route_falls_back_to_queue_delete_for_a_queued_job(tmp_path):
+    async def scenario():
+        store = Store(tmp_path / "state")
+        job(store)
+        calls = []
+
+        async def scoped(prompt):
+            calls.append(("CANCEL", prompt))
+            raise route_missing()
+
+        async def request(method, path, data=None):
+            calls.append((method, path, data))
+            return {}
+        selected = owner(store, SimpleNamespace(cancel_prompt=scoped, request=request))
+        result = await cancel_job(selected, "job", {"confirmed": True, "idempotency_key": "first"})
+        assert calls == [("CANCEL", "prompt-job"), ("POST", "/queue", {"delete": ["prompt-job"]})]
+        assert result["state"] == "cancel_requested" and result["cancellation_scope"] == "queued_only"
+        assert result["cancellation"]["receipt"] == {"deletion_requested": True, "scoped_route": "unavailable"}
+        intent = store.get("job_cancellations", result["cancellation_intent_id"])
+        assert intent["state"] == "acknowledged" and intent["scope"] == "queued_only"
+        assert selected.scoped_cancel_unavailable is True
+        store.close()
+
+    asyncio.run(scenario())
+
+
+def test_missing_scoped_route_for_a_running_job_spends_neither_key_nor_intent(tmp_path):
+    async def scenario():
+        store = Store(tmp_path / "state")
+        job(store, state="running")
+        calls = []
+
+        async def scoped(prompt):
+            calls.append(("CANCEL", prompt))
+            raise route_missing()
+
+        async def request(method, path, data=None):
+            calls.append((method, path, data))
+            return {}
+        selected = owner(store, SimpleNamespace(cancel_prompt=scoped, request=request))
+        request_body = {"confirmed": True, "idempotency_key": "first"}
+        with pytest.raises(StudioError) as caught:
+            await cancel_job(selected, "job", request_body)
+        assert caught.value.code == "cancellation_scope" and caught.value.status == 409
+        assert calls == [("CANCEL", "prompt-job")]
+        value = store.get("jobs", "job")
+        assert value["state"] == "running"
+        assert not {"cancellation_intent_id", "cancellation", "cancellation_scope"} & set(value)
+        assert store.all("job_cancellations") == []
+        assert store.request("job_cancellations", "first", {**request_body, "job_id": "job", "action": "cancel"}) is None
+        # The same key is evaluated again, now against the known route set.
+        with pytest.raises(StudioError, match="atomic prompt cancellation is unavailable"):
+            await cancel_job(selected, "job", request_body)
+        assert calls == [("CANCEL", "prompt-job")]
+        store.close()
+
+    asyncio.run(scenario())
+
+
+def test_other_scoped_route_failures_keep_the_durable_unknown_intent(tmp_path):
+    async def scenario():
+        store = Store(tmp_path / "state")
+        job(store)
+
+        async def scoped(prompt):
+            exc = StudioError("driver_rejected", "Driver returned HTTP 500.", 502)
+            exc.upstream_status = 500
+            raise exc
+        selected = owner(store, SimpleNamespace(cancel_prompt=scoped))
+        with pytest.raises(StudioError):
+            await cancel_job(selected, "job", {"confirmed": True, "idempotency_key": "first"})
+        value = store.get("jobs", "job")
+        assert value["state"] == "unknown" and value["cancellation"]["code"] == "driver_rejected"
+        assert value["cancellation"]["reserved_state"] == "queued"
+        store.close()
+
+    asyncio.run(scenario())

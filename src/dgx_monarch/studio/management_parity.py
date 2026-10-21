@@ -69,7 +69,8 @@ SELECTORS = {
     "gate.list": (["gate.inspect"], "Read current trusted gate verdicts from the selected ledger."),
     "gate.repair": (["gate.repair.preview"], "Inspect orphan RETESTING contexts with no writes."),
     "gate.apply": (["gate.repair.apply"], "Apply the reviewed append-only repair with explicit confirmation."),
-    "update.verify": (["update"], "mode=verified selects the verified transaction; mode=legacy remains the CLI default."),
+    "update.verify": (["update"], "mode=verified, the Studio default, selects the verified transaction; mode=legacy selects "
+                      "the original in-place update, which the CLI runs without --verify. Both modes need --config."),
     "update.yes": (["update"], "Explicit confirmation replaces the terminal prompt after exact source review."),
 }
 PRESENTATION = {
@@ -81,7 +82,10 @@ PRESENTATION = {
 CONTEXT = {
     "global.config": "Owner selects --config at companion launch; each review binds the selected file identity. Studio does not silently discover another config.",
     **{f"{command}.host": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers."
-       for command in ("diagnostics", "top", "gate", "update")},
+       for command in ("diagnostics", "top", "gate")},
+    "update.host": "Update binds the driver through --driver-service, then stops it if it runs and checks it again. "
+                   "Verified mode passes no host, since with --verify an explicit --host always refuses; legacy mode "
+                   "checks an http --driver origin first. Both backends also probe the local ComfyUI ports.",
 }
 
 

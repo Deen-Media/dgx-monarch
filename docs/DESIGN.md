@@ -107,7 +107,13 @@ distribution-boundary inventory.
 1. Repository implementation is authored for this project from its
    specifications, current public APIs, and documented runtime behavior.
    Contributions must identify any external source that informed an
-   implementation and must not copy third-party implementation code.
+   implementation and must not copy third-party implementation code. The one
+   shipped exception is the compiled Studio bundle under
+   `src/dgx_monarch/studio/static/assets/`: `npm run build` produces it from
+   the locked frontend packages, so it carries the MIT-licensed Svelte runtime
+   and small Vite, clsx and esm-env helpers, whose notices live in
+   `THIRD-PARTY-NOTICES.txt`. A lockfile change that moves one of those
+   packages updates its notice in the same change.
 2. Measurements and architecture requirements belong in dated project records.
    Implementation should depend on the recorded contract, not an undocumented
    external implementation detail.
@@ -1682,6 +1688,8 @@ dgx-monarch/
 │   ├── nodes/                 # thin nodes + setup binding
 │   │   ├── abandoned_heal.py  # the #87 abandoned-lease reset, shared with Fleet
 │   │   ├── action_security.py # same-origin checks for browser driver actions
+│   │   ├── execution_event_routes.py # GET /dgxm/execution-events: every read
+│   │   │                      #   renews the observer lease
 │   │   ├── fleet_cleanup.py   # cancellation-safe Fleet resource retirement
 │   │   ├── fleet_jobs.py      # Fleet job-list assembly and its per-prompt limit
 │   │   ├── gate_ceremony.py   # one ceremony's render legs, frozen as evidence
@@ -1821,6 +1829,17 @@ dgx-monarch/
 │   │                          #   asyncio lock and executor behave as before
 │   ├── diagnostic_session.py  # finite sanitized dgxm diagnostics captures and
 │   │                          #   their private export
+│   ├── execution_events.py    # opt-in prompt-bound observation journal and its
+│   │                          #   observer lease; never runtime authority
+│   ├── runtime_observer.py    # render, Fleet and RDMA hooks that publish to
+│   │                          #   that journal only while a lease holds
+│   ├── finite_json.py         # dependency-free non-finite-to-null JSON
+│   │                          #   normalization for the driver and companion
+│   ├── studio_resource_validation.py # data-only check of packaged Studio files,
+│   │                          #   run by setup, update and Worker cleanup
+│   ├── studio/                # optional Studio companion and its compiled
+│   │                          #   bundle (frontend source in studio/); see
+│   │                          #   docs/STUDIO.md for its contracts
 │   ├── transfer.py            # messaging + RDMA return paths
 │   ├── transfer_utils.py      # pure tensor-tree/split/read helpers
 │   ├── rdma_poison.py         # process-lifetime poison records + one-time report
@@ -1854,6 +1873,8 @@ dgx-monarch/
 │       ├── doctor_repair.py    # exact-file chmod-only repair transaction
 │       ├── doctor_worker_context.py # the host's owned Worker release for
 │       │                       #   Doctor's environment probe
+│       ├── gate_last.py        # pure `gate --last` rewrite of one chosen
+│       │                       #   history entry, shared with Studio
 │       ├── launcher.py         # managed local command ownership and publication
 │       ├── comfy_top.py        # foreground driver and owned dashboard supervisor
 │       ├── comfy_top_process.py # bounded owned-process signal and settlement helpers
@@ -1878,6 +1899,8 @@ dgx-monarch/
 │       ├── sol_attn_prerequisites.py # passive optional dependency/header/cache evidence
 │       ├── sol_install.py      # per-host plans and reviewed fleet digest
 │       ├── sol_install_payload.py # isolated wheel staging and protected package apply
+│       ├── sol_staging.py      # removes the private Sol staging of abandoned
+│       │                       #   Studio reviews on one host, under the lifecycle lock
 │       ├── sol_install_guard.py # bounded passive maintenance idle guard
 │       ├── sol_install_inventory.py # installed metadata and proven editable companions
 │       ├── sol_install_protected_links.py # read-only protected link and target evidence
@@ -1926,6 +1949,8 @@ dgx-monarch/
 │       ├── update_lock.py      # per-checkout flock: one driver-side update at a time
 │       ├── update_pin_diagnostic.py # bounded local ownership errors, separate from receipts
 │       ├── update_receipt.py   # bounded update step-to-receipt adapter
+│       ├── update_repository.py # read-only checkout and origin observations
+│       │                       #   the update controllers share
 │       ├── update_release.py   # private remote release-slot switch/compensation
 │       ├── update_release_finalize.py # all-host verified finalization scripts
 │       ├── update_release_switch.py # journaled remote live-site switch scripts
@@ -1942,6 +1967,12 @@ dgx-monarch/
 ├── tests/canary/              # Comfy and torchmonarch surface canaries
 ├── tools/check_artifacts.py   # offline manifest check, and the only writer of
 │                              #   example_workflows/artifacts.toml
+├── tools/gen_studio_inventory.py # the only writer of
+│                              #   src/dgx_monarch/studio/resource_hashes.py,
+│                              #   the Studio data files and
+│                              #   web/js/dgx_monarch_presentation.js; --check verifies
+├── tools/gen_dgxm_top_image.py # renders docs/media/dgxm-top.svg from a
+│                              #   synthetic recording
 ├── example_workflows/artifacts.toml # the model files each template needs
 │                              #   staged: models subfolder, source, size, sha256
 ├── benchmark/                 # matrix and sweep harnesses + quality gates

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { encodeMaskAlpha, maskGeometry, maskPoint } from './mask.ts';
+import { encodeMaskAlpha, maskGeometry, maskIsEmpty, maskPoint } from './mask.ts';
 test('mask upload selects painted pixels in Comfy inverse-alpha convention', () => {
   const editor = new Uint8ClampedArray([135, 249, 0, 255, 0, 0, 0, 0, 135, 249, 0, 128]);
   assert.deepEqual(
@@ -65,4 +65,11 @@ test('captured pointer outside the image clamps to its edge and hidden stages ca
     { x: 0, y: 1024 },
   );
   assert.equal(maskPoint(10, 10, { left: 0, top: 0, width: 0, height: 0 }, 512, 512), null);
+});
+test('a canvas with no painted pixel is an empty mask', () => {
+  assert.equal(maskIsEmpty(new Uint8ClampedArray(16)), true);
+  // Erased paint keeps its colour but has zero alpha.
+  assert.equal(maskIsEmpty(new Uint8ClampedArray([135, 249, 0, 0, 0, 0, 0, 0])), true);
+  assert.equal(maskIsEmpty(new Uint8ClampedArray([0, 0, 0, 0, 135, 249, 0, 1])), false);
+  assert.throws(() => maskIsEmpty(new Uint8ClampedArray(3)), /RGBA/);
 });

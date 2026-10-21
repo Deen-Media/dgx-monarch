@@ -4,16 +4,20 @@
 state over plain HTTP instead of attaching a second Monarch client, which
 can wedge the driver.
 
-  GET /dgxm/telemetry   full JSON: worker status (cached ~1 s) + host planes
+  GET  /dgxm/telemetry  full JSON: worker status (cached ~1 s) + host planes
                         + event rings (driver + workers) + render progress
                         + gate ledger summary + ComfyUI commit + mesh health
                         + readiness
-  GET /dgxm/metrics     Prometheus text exposition of the numeric subset
+  GET  /dgxm/metrics    Prometheus text exposition of the numeric subset
   POST /dgxm/recycle    confirmed attached-mesh reset from the sidebar
   GET  /dgxm/consents   pending consent cards, active consents, the toggle
   POST /dgxm/consent    accept, dismiss, revoke, auto-rescue (consent_routes)
+  GET  /dgxm/execution-events  prompt-bound runtime observations; each read
+                        renews a 30 s observer lease (execution_event_routes)
 
-The GET routes are read-only. Worker status is served from a short cache so a
+GET /dgxm/execution-events is the one GET that changes driver state: its
+lease turns on observation hooks for every render until it lapses. The other
+GET routes are read-only. Worker status is served from a short cache so a
 dashboard polling at a few Hz costs the cluster one status call per second
 at most; when no mesh is up, the routes still answer with the driver-local
 planes (progress, events, ledger) and workers: [].
@@ -21,6 +25,7 @@ planes (progress, events, ledger) and workers: [].
 The reset POST has CSRF checks (action header, same-origin Host and Origin,
 Fetch Metadata) against drive-by browser requests, but they do not
 authenticate a user: that stays with ComfyUI's authentication middleware.
+docs/THREAT_MODEL.md lists every route above.
 """
 from __future__ import annotations
 
@@ -476,4 +481,5 @@ def register() -> None:
         log.warning("graph advisor not registered: %r", exc)
 
     app._dgxm_routes = True
-    log.info("dgxm routes registered: /dgxm/telemetry /dgxm/recycle /dgxm/metrics")
+    log.info("dgxm routes registered: /dgxm/telemetry /dgxm/metrics /dgxm/recycle "
+             "/dgxm/consents /dgxm/consent /dgxm/execution-events")

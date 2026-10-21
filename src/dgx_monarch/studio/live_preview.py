@@ -6,11 +6,13 @@ import json
 import struct
 from typing import Any
 
+from .. import finite_json
 from .contracts import StudioError, digest, timestamp
 from .store import Store
 
 FRAME_BYTES = 1024 * 1024
 FRAME_COUNT = 16
+LIVE_STATES = frozenset({"running", "queued", "cancel_requested"})
 
 
 def parse_frame(raw: bytes) -> dict[str, Any] | None:
@@ -20,8 +22,8 @@ def parse_frame(raw: bytes) -> dict[str, Any] | None:
     if event_type != 4 or not 0 < metadata_size <= 16384 or 8 + metadata_size >= len(raw):
         return None
     try:
-        metadata = json.loads(raw[8:8 + metadata_size])
-    except (ValueError, UnicodeError):
+        metadata = finite_json.loads(raw[8:8 + metadata_size])
+    except (ValueError, UnicodeError, RecursionError):
         return None
     if (not isinstance(metadata, dict) or not isinstance(metadata.get("prompt_id"), str)
             or not isinstance(metadata.get("image_type"), str) or metadata["image_type"] not in {"image/png", "image/jpeg"}):
@@ -32,40 +34,52 @@ def parse_frame(raw: bytes) -> dict[str, Any] | None:
     return {"type": "preview_frame", "data": metadata, "image": data}
 
 
+def _live_job(store: Store, prompt_id: str) -> str | None:
+    """The one live job bound to this prompt; call it under store.lock."""
+    matches = store.db.execute("SELECT id,json_extract(document,'$.state') AS state FROM objects "
+                               "WHERE kind='jobs' AND json_extract(document,'$.prompt_id')=? LIMIT 2",
+                               (prompt_id,)).fetchall()
+    if len(matches) != 1 or matches[0]["state"] not in LIVE_STATES:
+        return None
+    return str(matches[0]["id"])
+
+
 def accept_preview(store: Store, message: dict[str, Any]) -> None:
     from .media_assets import thumbnail
 
     metadata = message["data"]
     with store.lock:
-        matches = store.db.execute("SELECT id,json_extract(document,'$.state') AS state FROM objects "
-                                   "WHERE kind='jobs' AND json_extract(document,'$.prompt_id')=? LIMIT 2",
-                                   (metadata["prompt_id"],)).fetchall()
-    if len(matches) != 1 or matches[0]["state"] not in {"running", "queued", "cancel_requested"}:
+        job_id = _live_job(store, metadata["prompt_id"])
+    if job_id is None:
         return
-    job = matches[0]
     try:
         image = thumbnail(message["image"])
     except StudioError:
         return
-    identity = digest(["live_preview", job["id"]])
+    identity = digest(["live_preview", job_id])
     checksum = hashlib.sha256(image).hexdigest()
-    with store.lock, store.transaction():
-        row = store.db.execute("SELECT document FROM objects WHERE kind='artifacts' AND id=?", (identity,)).fetchone()
-        previous = json.loads(row[0]) if row else {}
-        artifact = {**previous, "id": identity, "job_id": job["id"], "node_id": metadata.get("node_id"),
-                    "source": "live_preview", "kind": "image", "intermediate": True,
-                    "filename": identity + ".jpg", "subfolder": "", "type": "temp",
-                    "created_at": previous.get("created_at", timestamp()), "updated_at": timestamp(),
-                    "metadata": {**previous.get("metadata", {}), "media_type": "image/jpeg", "sha256": checksum},
-                    "provenance": {**previous.get("provenance", {}), "prompt_id": metadata["prompt_id"],
-                                   "status": "approximate_live_preview"}}
-        store.db.execute("CREATE TABLE IF NOT EXISTS preview_frames (id TEXT PRIMARY KEY,data BLOB NOT NULL,updated REAL NOT NULL)")
-        store.db.execute("INSERT OR REPLACE INTO preview_frames VALUES (?,?,?)", (identity, image, timestamp()))
-        store.db.execute("DELETE FROM preview_frames WHERE id NOT IN (SELECT id FROM preview_frames ORDER BY updated DESC LIMIT ?)",
-                         (FRAME_COUNT,))
-        store._put("artifacts", artifact, 1)
-        store._event("artifacts.preview", identity, {"job_id": job["id"], "sha256": checksum, "intermediate": True})
-    store.update("jobs", job["id"], {"preview_artifact_id": identity})
+    # Decoding ran outside the lock, so a cancel or a settled outcome may have
+    # landed meanwhile. Check again, then write under the same hold.
+    with store.lock:
+        if _live_job(store, metadata["prompt_id"]) != job_id:
+            return
+        with store.transaction():
+            row = store.db.execute("SELECT document FROM objects WHERE kind='artifacts' AND id=?", (identity,)).fetchone()
+            previous = json.loads(row[0]) if row else {}
+            artifact = {**previous, "id": identity, "job_id": job_id, "node_id": metadata.get("node_id"),
+                        "source": "live_preview", "kind": "image", "intermediate": True,
+                        "filename": identity + ".jpg", "subfolder": "", "type": "temp",
+                        "created_at": previous.get("created_at", timestamp()), "updated_at": timestamp(),
+                        "metadata": {**previous.get("metadata", {}), "media_type": "image/jpeg", "sha256": checksum},
+                        "provenance": {**previous.get("provenance", {}), "prompt_id": metadata["prompt_id"],
+                                       "status": "approximate_live_preview"}}
+            store.db.execute("CREATE TABLE IF NOT EXISTS preview_frames (id TEXT PRIMARY KEY,data BLOB NOT NULL,updated REAL NOT NULL)")
+            store.db.execute("INSERT OR REPLACE INTO preview_frames VALUES (?,?,?)", (identity, image, timestamp()))
+            store.db.execute("DELETE FROM preview_frames WHERE id NOT IN (SELECT id FROM preview_frames ORDER BY updated DESC LIMIT ?)",
+                             (FRAME_COUNT,))
+            store._put("artifacts", artifact, 1)
+            store._event("artifacts.preview", identity, {"job_id": job_id, "sha256": checksum, "intermediate": True})
+        store.update("jobs", job_id, {"preview_artifact_id": identity})
 
 
 def preview_frame(store: Store, artifact_id: str) -> tuple[bytes, str]:

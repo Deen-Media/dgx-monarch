@@ -21,7 +21,9 @@ const applyCode = ts.transpile(applyNode.getText(ast), { target: ts.ScriptTarget
 const runApply = new Function(
   'initialUncertain',
   'storageAPI',
-  `return (async () => {
+  // Strict mode makes a handler that names a variable this harness does not declare fail loudly.
+  `'use strict';
+  return (async () => {
     let recoveryBlocked = false, plan = { id: 'plan', digest: 'digest', ready: true },
       confirmed = true, busy = false, reading = false, error = '', uncertain = initialUncertain,
       key = 'original-key', name = 'fixture', sent = 0;
@@ -44,7 +46,8 @@ const sourceHandlers = ['read', 'review']
   .join('\n');
 const sourceHarness = new Function(
   'client',
-  `let recoveryBlocked = false, uncertain = false, busy = false, reading = false,
+  `'use strict';
+  let recoveryBlocked = false, uncertain = false, busy = false, reading = false,
     sourceGeneration = 0, document = { name: 'old source' }, name = 'old.json',
     plan = { id: 'old-plan' }, choices = {}, confirmed = false, error = '',
     key = 'old-key', mode = 'copy';

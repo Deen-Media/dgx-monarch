@@ -8,15 +8,20 @@ from __future__ import annotations
 
 import argparse
 import ast
+import contextlib
 import dataclasses
 import hashlib
+import importlib
 import json
+import os
 import re
 from collections import Counter
+from collections.abc import Iterator
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from .inventory_registry import apply_studio_views
 from .presentation import presentation_contract
 
 SCHEMA_VERSION = 1
@@ -24,6 +29,28 @@ PINNED_BASELINE = "5604ac77799f1f3e1a077a2f841dfce59fbcb892"
 INTERFACES = ("studio", "cli", "tui", "panel", "nodes")
 REQUIRED_FIELDS = frozenset({"id", "kind", "name", "source", "datatype", "choices", "default", "units",
                              "applicability", "validation", "guard", "preview", "apply", "recovery", "interfaces"})
+# Discovery runs with this HOME, so a home-relative default normalizes to the
+# same "~/..." text under any build account, HOME=/ included. No real default
+# begins with it.
+DISCOVERY_HOME = "/dgxm-inventory-discovery-home"
+
+
+@contextlib.contextmanager
+def discovery_home() -> Iterator[None]:
+    # Import discovery's modules first, so a module-level home path computed
+    # at import never keeps the sentinel after discovery ends.
+    for name in ("..cli.arguments", "..config", "..config_schema", "..monarch_policy", ".management_parity",
+                 ".management_fields"):
+        importlib.import_module(name, __package__)
+    saved = os.environ.get("HOME")
+    os.environ["HOME"] = DISCOVERY_HOME
+    try:
+        yield
+    finally:
+        if saved is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = saved
 
 
 def load_inventory() -> dict[str, Any]:
@@ -43,8 +70,8 @@ def _row(identity: str, kind: str, name: str, source: str, **values: Any) -> dic
         "interfaces": {name: {"status": "unavailable", "reason": "No direct representation discovered."}
                        for name in INTERFACES},
     }
-    result["interfaces"]["studio"] = {"status": "inventory", "representation": "typed advanced inventory",
-                                        "reason": "Inventory coverage alone is not executable feature parity."}
+    # build_inventory replaces this with the reviewed view (inventory_registry).
+    result["interfaces"]["studio"] = {"status": "source_only", "reason": "No Studio view has been reviewed."}
     result.update(values)
     return result
 
@@ -67,15 +94,20 @@ def _json_value(value: Any) -> Any:
     if isinstance(value, tuple):
         return [_json_value(item) for item in value]
     if isinstance(value, str):
-        # Public manifests must not embed the build user's private home.
-        home = str(Path.home())
-        return "~" + value[len(home):] if value.startswith(home + "/") else value
+        # Public manifests must not embed the build user's private home;
+        # discovery_home() makes every home-relative default start here.
+        return "~" + value[len(DISCOVERY_HOME):] if value.startswith(DISCOVERY_HOME + "/") else value
     if value is None or isinstance(value, (str, int, float, bool, list, dict)):
         return value
     raise TypeError(f"Nonportable inventory value: {type(value).__name__}")
 
 
 def discover_cli() -> list[dict[str, Any]]:
+    with discovery_home():
+        return _discover_cli()
+
+
+def _discover_cli() -> list[dict[str, Any]]:
     from ..cli.arguments import build_parser
 
     class Commands(dict):
@@ -350,7 +382,8 @@ def discover_workflows(root: Path) -> tuple[list[dict[str, Any]], list[dict[str,
 
 def build_inventory(root: Path) -> dict[str, Any]:
     workflow_rows, _ = discover_workflows(root)
-    rows = discover_cli() + discover_nodes(root) + discover_config() + discover_tui(root) + discover_panel(root) + workflow_rows
+    with discovery_home():
+        rows = _discover_cli() + discover_nodes(root) + discover_config() + discover_tui(root) + discover_panel(root) + workflow_rows
     for metric in presentation_contract()["metrics"]:
         row = _row("telemetry." + metric["id"], "telemetry", metric["name"],
                    "src/dgx_monarch/telemetry.py:host_stats / RenderProgress.snapshot",
@@ -360,10 +393,15 @@ def build_inventory(root: Path) -> dict[str, Any]:
         row["interfaces"]["tui"] = {"status": "partial", "reason": "Layout and per-host/per-rail parity must be independently verified."}
         row["apply"] = "Read only. Never treat a presentation threshold as runtime admission."
         rows.append(row)
+    apply_studio_views(rows, root)
+    counts = Counter(row["kind"] for row in rows)
     result = {"schema_version": SCHEMA_VERSION, "pinned_baseline": PINNED_BASELINE,
-              "baseline_counts": {"nodes": 18, "workflows": 66},
-              "counts": dict(sorted(Counter(row["kind"] for row in rows).items())),
-              "coverage_meaning": "Discovered surfaces with explicit representation status; not a claim of implemented or accepted parity.",
+              # Counted from this checkout's node contract and bundled
+              # templates, so a regenerated template set needs no code change.
+              "baseline_counts": {"nodes": counts["node"], "workflows": counts["workflow"]},
+              "counts": dict(sorted(counts.items())),
+              "coverage_meaning": ("Discovered surfaces with a reviewed Studio view: an operation, a route, an equivalent, "
+                                   "a waiver with its reason, or source coverage only. Not a claim of accepted parity."),
               "limitations": ["Dynamic catalog choices require the connected ComfyUI object_info schema; no build-machine catalog is frozen.",
                               "Configuration effective defaults depend on backend policy and precedence.",
                               "Studio operation availability is negotiated separately; inventory rows do not authorize execution.",

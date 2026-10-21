@@ -7,13 +7,15 @@
   import GridCellDetails from '../components/GridCellDetails.svelte';
   import Viewer from '../components/Viewer.svelte';
   import GridDefinition from '../components/GridDefinition.svelte';
-  import { GridReviewGuard } from '../gridReview';
+  import { GridReviewGuard, staleReview } from '../gridReview';
   import ExperimentLibrary from '../components/ExperimentLibrary.svelte';
   import { experimentDefinition } from '../experimentRecords';
   import { submissionRefused } from '../submissionRefusal';
   import type { Artifact, RecordData, ReuseArtifact } from '../contracts';
   import { exportJSON } from '../files';
-  import { gridIdentity, type Grid } from '../gridState';
+  import { dispatchAbsent, GridPassivePoll } from '../gridPassivePoll';
+  import * as gridState from '../gridState';
+  import type { Grid, GridFields } from '../gridState';
   let {
     client,
     draft,
@@ -27,14 +29,9 @@
     reuse: ReuseArtifact;
     restoreDraft: (draft: Draft) => Promise<void>;
   } = $props();
-  let axisA = $state(''),
-    axisB = $state(''),
-    valuesA = $state('[1,2]'),
-    valuesB = $state('[1]');
-  let seedPolicy = $state('fixed'),
-    seedBinding = $state(''),
-    baseSeed = $state(0),
-    excluded = $state('');
+  let fields = $state<GridFields>(gridState.defaultGridFields()),
+    reviewedFields: GridFields | null = null,
+    passiveError = $state('');
   let preview = $state<Grid | null>(null),
     grid = $state<Grid | null>(null),
     error = $state(''),
@@ -58,47 +55,32 @@
   const mutationBlocked = $derived(recoveryBlocked || busy || dispatchPending || retryPending);
   const storage = 'dgxm.studio.grid.v1';
   const editable = $derived(bindings.filter((binding) => binding.resolved !== false));
-  const definition = $derived(
-    JSON.stringify({
-      draft,
-      axisA,
-      axisB,
-      valuesA,
-      valuesB,
-      seedPolicy,
-      seedBinding,
-      baseSeed,
-      excluded,
-    }),
-  );
+  const definition = $derived(gridState.gridDefinitionKey(draft, fields));
   const reviewGuard = new GridReviewGuard();
   $effect(() => {
-    if (reviewGuard.invalidate(definition, dispatchPending) && preview) {
+    const stale = staleReview(reviewGuard, definition, dispatchPending, !!preview);
+    if (stale) {
       preview = null;
       confirmed = false;
       requestKey = '';
-      error = 'Grid definition changed. Validate every cell again before submission.';
-      try {
-        remember();
-      } catch (cause) {
-        fail(cause);
-      }
+      error = stale;
+      persist();
     }
   });
   function remember() {
     if (recoveryBlocked) return;
+    const session = { preview, grid, requestKey, retryKey, retryIndices, dispatchPending };
     sessionStorage.setItem(
       storage,
-      JSON.stringify({
-        preview: gridIdentity(preview),
-        grid: gridIdentity(grid),
-        requestKey,
-        retryKey,
-        retryIndices,
-        dispatchPending,
-        retryPending,
-      }),
+      gridState.gridSessionText({ ...session, retryPending, definition: reviewedFields }),
     );
+  }
+  function persist() {
+    try {
+      remember();
+    } catch (cause) {
+      fail(cause);
+    }
   }
   function fail(cause: unknown) {
     error = cause instanceof Error ? cause.message : String(cause);
@@ -107,16 +89,9 @@
     if (recoveryBlocked || dispatchPending || retryPending)
       throw new Error('Reconcile the pending grid dispatch before replacing its definition.');
     loadGeneration++;
-    const saved = experimentDefinition(data);
-    await restoreDraft(saved.draft);
-    axisA = saved.axisA;
-    valuesA = saved.valuesA;
-    axisB = saved.axisB;
-    valuesB = saved.valuesB;
-    seedPolicy = saved.seedPolicy;
-    seedBinding = saved.seedBinding;
-    baseSeed = saved.baseSeed;
-    excluded = saved.excluded;
+    const { draft: savedDraft, ...saved } = experimentDefinition(data);
+    await restoreDraft(savedDraft);
+    fields = saved;
     preview = null;
     grid = null;
     confirmed = false;
@@ -136,12 +111,14 @@
     grid = null;
     selected = [];
     cellPage = 0;
-    const requestedDefinition = definition;
+    const requestedDefinition = definition,
+      requested = $state.snapshot(fields);
     try {
+      const { axisA, axisB, valuesA, valuesB, seedPolicy, seedBinding, baseSeed } = requested;
       const axes = [{ name: axisA, values: JSON.parse(valuesA) }];
       if (axisB) axes.push({ name: axisB, values: JSON.parse(valuesB) });
-      const exclusions = excluded.trim()
-        ? excluded.split(',').map((value) => Number(value.trim()) - 1)
+      const exclusions = requested.excluded.trim()
+        ? requested.excluded.split(',').map((value) => Number(value.trim()) - 1)
         : [];
       if (exclusions.some((value) => !Number.isInteger(value) || value < 0))
         throw new Error('Excluded cell numbers must be positive integers.');
@@ -153,6 +130,7 @@
         excluded: exclusions,
       });
       reviewGuard.accept(requestedDefinition, definition);
+      reviewedFields = requested;
       preview = reviewed;
       requestKey = crypto.randomUUID();
       remember();
@@ -185,27 +163,30 @@
       dispatchPending = false;
       remember();
     } catch (cause) {
-      if (submissionRefused(cause, 'grid')) {
+      const absent = dispatchAbsent(cause);
+      if (absent || submissionRefused(cause, 'grid')) {
         dispatchPending = false;
         preview = null;
         confirmed = false;
         remember();
       }
-      fail(cause);
+      fail(absent ?? cause);
     } finally {
       busy = false;
     }
   }
-  async function refresh(id = grid?.id, passive = false) {
+  const readGrid = (id: string) =>
+    client.request<Grid>(`/grids/${encodeURIComponent(id)}?summary=true`);
+  async function refresh(id = grid?.id) {
     if (!id) return;
-    if (!passive && (dispatchPending || retryPending)) {
+    if (dispatchPending || retryPending) {
       error = 'Reconcile the pending grid action before opening another run.';
       return;
     }
-    const ticket = passive ? loadGeneration : ++loadGeneration;
+    const ticket = ++loadGeneration;
     try {
-      const result = await client.request<Grid>(`/grids/${encodeURIComponent(id)}?summary=true`);
-      if (ticket !== loadGeneration || (passive && grid?.id !== id)) return;
+      const result = await readGrid(id);
+      if (ticket !== loadGeneration) return;
       if (grid?.id !== id) {
         selected = [];
         retryKey = '';
@@ -215,9 +196,26 @@
       grid = result;
       remember();
     } catch (cause) {
-      fail(cause);
+      if (ticket === loadGeneration) fail(cause);
     }
   }
+  const poll = new GridPassivePoll({
+    read: readGrid,
+    target: () => grid?.id,
+    ticket: () => loadGeneration,
+    paused: () => document.hidden || busy,
+    apply: (_id, value) => {
+      grid = value;
+      persist();
+    },
+    missing: (id) => {
+      grid = null;
+      [retryPending, retryKey, retryIndices, selected] = [false, '', [], []];
+      passiveError = `Grid ${id} is not in this companion's records, so no retry against it can have been accepted here. Studio cleared the saved grid identity and its retry receipt. If you used another state directory, check the grid there.`;
+      persist();
+    },
+    report: (text) => (passiveError = text),
+  });
   async function retry() {
     if (recoveryBlocked || !grid || (!retryPending && !selected.length)) return;
     loadGeneration++;
@@ -288,9 +286,12 @@
     recoveryBlocked = restored.blocked;
     if (restored.value) {
       const saved = restored.value;
-      preview = gridIdentity(saved.preview);
-      grid = gridIdentity(saved.grid);
+      preview = gridState.gridIdentity(saved.preview);
+      grid = gridState.gridIdentity(saved.grid);
       ({ requestKey, retryKey, retryIndices, dispatchPending, retryPending } = saved);
+      // Restore the reviewed fields before the guard reads the definition they produced.
+      const reviewed = gridState.restoredGridFields((saved as { definition?: unknown }).definition);
+      if (preview && reviewed) [fields, reviewedFields] = [{ ...reviewed }, reviewed];
       if (preview) reviewGuard.restore(definition);
     }
     if (preview) {
@@ -303,17 +304,8 @@
         })
         .catch(fail);
     }
-    let stopped = false,
-      timer: ReturnType<typeof setTimeout>;
-    const tick = async () => {
-      if (!document.hidden && !busy) await refresh(grid?.id, true);
-      if (!stopped) timer = setTimeout(tick, 3000);
-    };
-    void tick();
-    return () => {
-      stopped = true;
-      clearTimeout(timer);
-    };
+    poll.start();
+    return () => poll.stop();
   });
 </script>
 
@@ -348,14 +340,14 @@
   <GridDefinition
     {client}
     {editable}
-    bind:axisA
-    bind:axisB
-    bind:valuesA
-    bind:valuesB
-    bind:seedPolicy
-    bind:seedBinding
-    bind:baseSeed
-    bind:excluded
+    bind:axisA={fields.axisA}
+    bind:axisB={fields.axisB}
+    bind:valuesA={fields.valuesA}
+    bind:valuesB={fields.valuesB}
+    bind:seedPolicy={fields.seedPolicy}
+    bind:seedBinding={fields.seedBinding}
+    bind:baseSeed={fields.baseSeed}
+    bind:excluded={fields.excluded}
   />
   {#if savedCursor}<button disabled={savedLoading} onclick={loadSavedGrids}
       >{savedGrids.length >= 2000 ? 'Next saved-grid window' : 'Load more saved grids'}</button
@@ -364,14 +356,17 @@
     Execution target and topology are inherited from the active workflow and shown in each cell's
     backend preview. Maximum 1,024 cells.
   </p>
-  <button class="primary" disabled={mutationBlocked || !draft.workflow || !axisA} onclick={prepare}
-    >{busy ? 'Working…' : 'Validate every cell'}</button
+  <button
+    class="primary"
+    disabled={mutationBlocked || !draft.workflow || !fields.axisA}
+    onclick={prepare}>{busy ? 'Working…' : 'Validate every cell'}</button
   >
   {#if error}<p class="error" role="alert">{error}</p>
     {#if dispatchPending || retryPending}<p class="muted">
         An uncertain dispatch retains its request ID. Retry the same action to reconcile; do not
         create a new preview merely to retry transport.
       </p>{/if}{/if}
+  {#if passiveError}<p class="muted" role="status">{passiveError}</p>{/if}
   {#if dispatchPending}<p role="status">
       Grid dispatch outcome is pending. Retry the same reviewed grid to reconcile its retained
       request identity.

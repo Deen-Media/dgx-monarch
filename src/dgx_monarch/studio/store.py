@@ -7,10 +7,12 @@ import os
 import sqlite3
 import stat
 import threading
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from . import preview_storage
 from .contracts import (
     EVENT_BYTE_LIMIT,
     EVENT_LIMIT,
@@ -26,6 +28,16 @@ from .contracts import (
     timestamp,
 )
 
+# Event payloads name what changed; a field too large for this share of the
+# per-event cap is listed under omitted_fields and read from the snapshot.
+EVENT_FIELD_BYTES = 16384
+CREATED_EVENT_FIELDS = {"jobs": ("state", "prompt_id", "external", "experiment_id"),
+                        "operations": ("action", "state"),
+                        "artifacts": ("job_id", "kind", "source", "intermediate")}
+# The job keeps the latest per-node progress in node_progress, so receipts
+# keep only the identity that deduplicates each message.
+RECEIPT_OMITTED_DATA: dict[Any, tuple[str, ...]] = {"progress_state": ("nodes",)}
+
 
 def private_directory(path: Path) -> Path:
     path = path.expanduser().absolute()
@@ -38,6 +50,24 @@ def private_directory(path: Path) -> Path:
     if info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) & 0o077:
         raise StudioError("unsafe_state", "State directory must belong to this user with mode 0700.")
     return path
+
+
+def _fit(value: dict[str, Any], keys: Iterable[str], budget: int = EVENT_FIELD_BYTES) -> dict[str, Any]:
+    """The named fields that fit the budget, so an event never aborts the write it reports."""
+    data: dict[str, Any] = {}
+    omitted: list[str] = []
+    for key in keys:
+        if key not in value or key in data or key in omitted:
+            continue
+        size = len(canonical(value[key])) + len(key) + 4
+        if size <= budget:
+            data[key] = value[key]
+            budget -= size
+        else:
+            omitted.append(key)
+    if omitted:
+        data["omitted_fields"] = omitted
+    return data
 
 
 class Store:
@@ -72,9 +102,13 @@ class Store:
         if row is not None and row[0] != "1":
             self.db.close()
             raise StudioError("storage_version", "Unsupported storage schema; export with the matching companion.")
+        # Additive tables keep schema 1: an older companion ignores them.
+        self.db.executescript(preview_storage.SCHEMA)
         self.db.execute("INSERT OR IGNORE INTO meta VALUES ('schema','1')")
         self.db.execute("INSERT OR IGNORE INTO meta VALUES ('client_id',?)", (identifier(),))
         self.client_id = self.db.execute("SELECT value FROM meta WHERE key='client_id'").fetchone()[0]
+        # None until recover() derives the grid-run holds; no sweep runs before that.
+        self.swept_at: float | None = None
 
     def close(self) -> None:
         self.db.close()
@@ -101,17 +135,25 @@ class Store:
             raise StudioError("record_id", "Record identity must be text.")
         with self.lock:
             row = self.db.execute("SELECT document FROM objects WHERE kind=? AND id=?", (kind, object_id)).fetchone()
-        if row is None:
-            raise StudioError("not_found", "Record not found.", 404)
-        return json.loads(row[0])
+            if row is None:
+                raise StudioError("not_found", "Record not found.", 404)
+            return preview_storage.unpack(self.db, kind, json.loads(row[0]))
 
     def list(self, kind: str, *, limit: int = 200, offset: int = 0) -> list[dict[str, Any]]:
         with self.lock:
             rows = self.db.execute("SELECT document FROM objects WHERE kind=? ORDER BY updated DESC,id LIMIT ? OFFSET ?",
                                    (kind, min(max(limit, 1), RECORD_LIMIT), max(offset, 0))).fetchall()
-        return [json.loads(row[0]) for row in rows]
+            return [preview_storage.unpack(self.db, kind, json.loads(row[0])) for row in rows]
 
     def _put(self, kind: str, value: dict[str, Any], revision: int) -> None:
+        if kind in preview_storage.SWEPT_KINDS:
+            now = timestamp()
+            if self.swept_at is not None and now - self.swept_at >= preview_storage.SWEEP_SECONDS:
+                # Expired previews leave on later preview writes, inside the writer's transaction.
+                self.swept_at = now
+                preview_storage.sweep(self.db, now)
+        if kind in preview_storage.PACKED_PATHS:
+            value = preview_storage.pack(self.db, kind, value)
         self.db.execute("INSERT OR REPLACE INTO objects VALUES (?,?,?,?,?)",
                         (kind, value["id"], revision, canonical(value), timestamp()))
 
@@ -119,7 +161,7 @@ class Store:
         """Internal reconciliation cannot truncate identities at the UI page limit."""
         with self.lock:
             rows = self.db.execute("SELECT document FROM objects WHERE kind=? ORDER BY id", (kind,)).fetchall()
-        return [json.loads(row[0]) for row in rows]
+            return [preview_storage.unpack(self.db, kind, json.loads(row[0])) for row in rows]
 
     def jobs_by_prompt(self) -> dict[str, dict[str, Any]]:
         """Read reconciliation identities without loading immutable workflow payloads."""
@@ -157,6 +199,9 @@ class Store:
                 self._event("jobs.accepted", child["id"], {"state": child["state"], "experiment_id": child.get("experiment_id")})
             if replace is not None:
                 self._put("grid_runs", replace, 1)
+            for grid in (value if kind == "grid_runs" else None, replace):
+                if grid is not None:
+                    preview_storage.hold_grid(self.db, grid)
             self._event(f"{kind}.accepted", value["id"], {"state": value.get("state")})
         return value, True
 
@@ -184,6 +229,8 @@ class Store:
             if self.db.execute("SELECT 1 FROM objects WHERE kind=? AND id=?", (kind, value["id"])).fetchone():
                 raise StudioError("exists", "The record already exists.", 409)
             self._put(kind, value, 1)
+            if kind in CREATED_EVENT_FIELDS:
+                self._event(f"{kind}.created", value["id"], _fit(value, CREATED_EVENT_FIELDS[kind]))
         return value
 
     def reserve(self, kind: str, key: Any, request: Any, value: dict[str, Any]) -> tuple[dict[str, Any], bool]:
@@ -230,7 +277,9 @@ class Store:
             if value == old:
                 return old
             self._put(kind, value, 1)
-            self._event(f"{kind}.updated", object_id, {key: value[key] for key in ("state", "prompt_id", "progress") if key in value})
+            changed = sorted(key for key in updates if key != "updated_at" and old.get(key) != value.get(key))
+            self._event(f"{kind}.updated", object_id,
+                        {**_fit(value, ("state", "prompt_id", "progress", *changed)), "changed": changed})
             return value
 
     def observe(self, job_id: str, event: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
@@ -254,6 +303,10 @@ class Store:
             elif (old.get("state") == "cancel_requested" and updates.get("state") == "running"
                   and old.get("cancellation_scope") == "atomic_prompt"):
                 updates.pop("state", None)
+            omitted = RECEIPT_OMITTED_DATA.get(event.get("type"), ())
+            data = event.get("data", {})
+            if omitted and isinstance(data, dict):
+                event = {**event, "data": {key: item for key, item in data.items() if key not in omitted}}
             receipt = {"key": event_key, "observed_at": timestamp(), **event}
             value = {**old, **updates, "backend_events": [*receipts[-127:], receipt], "updated_at": timestamp()}
             self._put("jobs", value, 1)
@@ -280,12 +333,28 @@ class Store:
                 "reset": bool(after and ((bounds[0] and after < bounds[0] - 1) or after > (bounds[1] or 0))),
                 "events": [{"cursor": row["cursor"], **json.loads(row["document"])} for row in rows]}
 
+    def sweep_previews(self) -> int:
+        """Delete every expired preview no grid run holds; return how many left."""
+        now, removed = timestamp(), 0
+        with self.lock, self.transaction():
+            preview_storage.rebuild_holds(self.db)
+            while True:
+                count = preview_storage.sweep(self.db, now, orphans=not removed)
+                removed += count
+                if count < preview_storage.SWEEP_ROWS:
+                    break
+        self.swept_at = now
+        return removed
+
     def recover(self) -> None:
         """A new process cannot infer whether an earlier dispatch completed."""
         for kind in ("jobs", "operations"):
+            # ComfyUI keeps its queue in memory, so a queued job may be gone too.
+            states = {"submitting", "running", "applying", *(("queued",) if kind == "jobs" else ())}
             for value in self.all(kind):
-                if value.get("state") in {"submitting", "running", "applying"}:
+                if value.get("state") in states:
                     self.update(kind, value["id"], {"state": "unknown", "recovery": "Reconcile before any retry."})
+        self.sweep_previews()
 
     def transaction(self) -> Any:
         from contextlib import contextmanager
@@ -297,6 +366,9 @@ class Store:
                 yield
                 self.db.execute("COMMIT")
             except BaseException:
-                self.db.execute("ROLLBACK")
+                # SQLite has already rolled back after errors such as a full
+                # disk; a second ROLLBACK would replace the real error.
+                if self.db.in_transaction:
+                    self.db.execute("ROLLBACK")
                 raise
         return begin()

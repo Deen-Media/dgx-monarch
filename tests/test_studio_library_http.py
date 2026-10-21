@@ -208,7 +208,8 @@ def test_library_copy_retains_artifact_reference_without_mutating_membership(tmp
                 assert store.get("artifacts", "artifact") == artifact
                 document = await request("GET", f"/library/export?project_id={copied_project}")
                 assert document["artifact_references"] == []
-                assert len(document["unresolved_references"]) == 2
+                # One retained row per reference: the review reason travels with it.
+                assert [row["reason"] for row in document["unresolved_references"]] == ["source_membership_review"]
                 assert all(row["reference"]["project_ids"] == [copied_project] for row in document["unresolved_references"])
                 plan = await request("POST", "/library/import/preview", json={"library": document})
     asyncio.run(scenario())

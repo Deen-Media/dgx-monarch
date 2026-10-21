@@ -30,13 +30,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# aiohttp and rich provide HTTP/CSRF/route and TUI color test coverage;
-# without these dev dependencies, those suites skip silently.
-# pillow and soundfile support sweep frame/audio comparison
-# (benchmark/sweep/compare.py). Without soundfile, audio comparison scores
-# CHECK at best.
+# aiohttp and pillow back the Studio tests, and aiohttp the HTTP, CSRF and
+# route tests; rich backs the TUI tests. Without one of them, its guarded tests
+# skip, tests/conftest.py leaves out the Studio and TUI test modules that need
+# it, and the pytest summary names what it left out. pillow and soundfile also
+# support sweep frame/audio comparison (benchmark/sweep/compare.py). Without
+# soundfile, audio comparison scores CHECK at best. aiohttp keeps the studio
+# extra's bound.
 dev = ["ruff>=0.8", "pytest>=8", "mypy>=1.8", "hypothesis>=6.100", "pyyaml>=6",
-       "aiohttp>=3.9", "rich>=13", "pillow>=10", "soundfile>=0.12",
+       "aiohttp>=3.9,<4", "rich>=13", "pillow>=10", "soundfile>=0.12",
        "CairoSVG>=2.7", "fonttools>=4", "textual>=0.80"]
 tui = ["textual>=0.80", "nvidia-ml-py"]
 studio = ["aiohttp>=3.9,<4", "pillow>=10"]

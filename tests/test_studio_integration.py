@@ -182,7 +182,8 @@ def test_complete_http_generation_provenance_and_media_flow(tmp_path, monkeypatc
             assert catalog["loras"][0]["name"] == "local-style.safetensors"
             assert catalog["loras"][0]["compatibility"] == "unknown"
             bundled = await system.request("GET", "/workflows")
-            assert len(bundled["workflows"]) == 66
+            # Counted from the checkout, so adding or removing a template does not break this test.
+            assert len(bundled["workflows"]) == len(list((Path(__file__).resolve().parents[1] / "example_workflows").glob("*.json")))
 
             workflow = json.loads((Path(__file__).parent / "fixtures/studio/app_mode_canonical.json").read_text())
             inspection = await system.request("POST", "/workflows/inspect", json={"workflow": workflow})
@@ -221,7 +222,8 @@ def test_complete_http_generation_provenance_and_media_flow(tmp_path, monkeypatc
                 "prompt": entry,
                 "status": {"completed": True, "status_str": "success", "messages": [["execution_success", {}]]},
                 "outputs": {"3": {"images": [
-                    {"filename": "result.png", "subfolder": "studio", "type": "output", "width": 1, "height": 1},
+                    # Core ComfyUI savers report only filename, subfolder and type.
+                    {"filename": "result.png", "subfolder": "studio", "type": "output"},
                     {"filename": "../private.png", "subfolder": "", "type": "output"},
                 ]}},
             }
@@ -238,7 +240,9 @@ def test_complete_http_generation_provenance_and_media_flow(tmp_path, monkeypatc
             assert any(row.get("external") and row["prompt_id"] == "external-prompt" for row in snapshot["jobs"])
             assert len(snapshot["artifacts"]) == 2
             artifact = next(row for row in snapshot["artifacts"] if row["id"] != "parent-output")
-            assert artifact["job_id"] == job_id and artifact["metadata"]["width"] == 1
+            assert artifact["job_id"] == job_id
+            # ComfyUI never reports output dimensions, so they stay unknown.
+            assert artifact["metadata"].get("width") is None and artifact["metadata"].get("height") is None
             media = await system.browser.get(f"/api/v1/artifacts/{artifact['id']}/file", headers=system.headers)
             assert media.status == 200 and media.content_type == "image/png"
             assert await media.read() == PNG
@@ -318,10 +322,12 @@ def test_project_revision_and_offline_driver_keep_host_and_version_available(tmp
             calls = []
 
             async def fake_subprocess(*argv, **kwargs):
-                assert argv == (sys.executable, "-m", "dgx_monarch", "version")
+                # -P keeps the launch directory off the child's import path.
+                assert argv == (sys.executable, "-P", "-s", "-B", "-m", "dgx_monarch", "version")
                 calls.append(argv)
                 stream = asyncio.StreamReader()
-                stream.feed_data(b"version output from an isolated process fixture\n")
+                # A version other than the companion's proves the receipt reads the child.
+                stream.feed_data(b"dgx-monarch 9.9.9 (torchmonarch pin 0.0.1)\n")
                 stream.feed_eof()
 
                 async def wait():
@@ -333,7 +339,9 @@ def test_project_revision_and_offline_driver_keep_host_and_version_available(tmp
             request = {"digest": review["digest"], "idempotency_key": "offline-version"}
             operation = await system.request("POST", f"/operations/{review['id']}/apply", expected=202, json=request)
             result = await system.store.wait_state("operations", operation["id"], "succeeded")
-            assert result["receipt"]["version"] == __version__
+            assert result["receipt"]["version"] == "9.9.9" != __version__
+            assert result["receipt"]["torchmonarch_pin"] == "0.0.1"
+            assert result["receipt"]["companion_version"] == __version__
             assert result["receipt"]["source"] == "existing_cli"
             repeated = await system.request("POST", f"/operations/{review['id']}/apply", expected=202, json=request)
             assert repeated["id"] == operation["id"] and len(calls) == 1

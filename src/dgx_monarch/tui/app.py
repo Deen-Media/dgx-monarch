@@ -21,7 +21,16 @@ from ..studio.presentation import available_memory_status, format_metric
 from .braille import EVENT_STYLES, bar, braille_rows, segmented_bar
 from .brand import header_layout, measured_activity, supports_unicode
 from .data import Poller, RingStore, event_time
-from .presentation import THEMES, gpu_summary, known_number, last_render_facts, terminal_palette
+from .presentation import (
+    THEMES,
+    breakdown_slab,
+    gpu_summary,
+    host_bar_cells,
+    known_number,
+    last_render_facts,
+    rail_columns,
+    terminal_palette,
+)
 from .readiness_view import readiness_text
 from .run_story import RunStory, StoryTrack, story_spans
 from .view_helpers import (
@@ -217,7 +226,7 @@ class DgxmTopApp:
                 if not tick or not tick.get("hosts"):
                     return Text("no host telemetry yet", style="dim")
                 out = Text()
-                width = max(24, self.size.width - 46)
+                width = host_bar_cells(self.size.width)
                 for i, (host, entry) in enumerate(sorted(tick["hosts"].items())):
                     stats = entry["stats"]
                     mem = stats.get("mem_gib", {})
@@ -233,11 +242,10 @@ class DgxmTopApp:
                     avail = mem["MemAvailable"]
                     anon = mem.get("AnonPages") or 0
                     cache = (mem.get("Cached") or 0) + (mem.get("Buffers") or 0)
-                    wmeta = tick.get("workers", {}).get(host) or {}
-                    memory = wmeta.get("memory") or {}
-                    if not all(known_number(value) for value in (
-                            mem.get("AnonPages"), mem.get("Shmem"), stats.get("gpu_proc_gib"),
-                            stats.get("pool_gib"), memory.get("slab_gib"))):
+                    # None when no Worker reports this host (driver-only or local).
+                    wmeta = tick.get("workers", {}).get(host)
+                    slab_gib = breakdown_slab(stats, wmeta)
+                    if slab_gib is None:
                         if i:
                             out.append("\n")
                         out.append(f"{host[-4:]:>5s} total {format_metric(total, 'GiB')} "
@@ -256,8 +264,8 @@ class DgxmTopApp:
                     # AnonPages counts; without this segment a slab-resident
                     # model shows as "other". Worker telemetry gives its size,
                     # capped by Shmem and by the used memory left.
-                    wmem = wmeta.get("memory") or {}
-                    slab = min(wmem.get("slab_gib") or 0,
+                    wmem = (wmeta or {}).get("memory") or {}
+                    slab = min(slab_gib,
                                mem.get("Shmem") or 0,
                                max(0.0, used - gpu_mem))
                     # The retained allocator pool is part of AnonPages and
@@ -283,7 +291,7 @@ class DgxmTopApp:
                                style=pal["good"] if available_memory_status(avail) == "ready" else pal["warn"])
                     gpu = stats.get("gpu", {})
                     if gpu:
-                        out.append("   " + gpu_summary(stats), style="dim")
+                        out.append("\n      " + gpu_summary(stats), style="dim")
                     mm = wmem
                     if mm:
                         out.append("\n      ")
@@ -316,14 +324,16 @@ class DgxmTopApp:
                 if not tick:
                     return Text("")
                 out = Text()
-                width = max(20, (self.size.width - 30) // 2)
                 hosts = sorted(tick.get("hosts", {}).items())
+                label, width = rail_columns(
+                    [f"{host} {rail}" for host, entry in hosts for rail in (entry.get("rails") or {})],
+                    self.size.width)
                 shown = False
                 for host, entry in hosts:
                     for rail, rate in sorted((entry.get("rails") or {}).items()):
                         if shown:
                             out.append("\n")
-                        out.append(f"{host} {rail} ", style=f"bold {pal['accent']}")
+                        out.append(f"{host} {rail}".ljust(label), style=f"bold {pal['accent']}")
                         for direction in ("rx", "tx"):
                             key = direction + "_gbs"
                             series = _series(
@@ -337,7 +347,7 @@ class DgxmTopApp:
                             out.append(f" {format_metric(rate.get(key), 'GB/s')}  ", style="dim")
                         shown = True
                 if shown:
-                    out.append("\n     ")
+                    out.append("\n" + " " * (label + 3))  # under the rx graph
                     out.append_text(_marker_lane(
                         self.ring, self.cursor if self.paused else -1, width))
                 return out if shown else Text("no RDMA rails visible", style="dim")

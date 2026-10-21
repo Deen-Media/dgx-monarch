@@ -14,6 +14,8 @@ export class Submission {
   pending = $state<{ key: string; preview_id: string } | null>(null);
   confirmedMissing = $state(false);
   recoveryError = $state('');
+  /** Why the pending submission is unresolved; the pending banner shows it. */
+  outcome = $state('');
   private key = '';
   private connection: Connection;
   constructor(connection: Connection) {
@@ -29,15 +31,24 @@ export class Submission {
     this.confirmed = false;
   }
 
-  async prepare(draft: Draft) {
+  /**
+   * Review a draft snapshot. The preview is dropped, and false returned, when
+   * the companion connection or the draft changed while it was prepared.
+   */
+  async prepare(draft: Draft, current: () => boolean = () => true): Promise<boolean> {
     if (this.recoveryError) throw new Error(this.recoveryError);
     if (this.pending) throw new Error('Reconcile the pending submission before reviewing another.');
-    this.review(await this.connection.client.request<JobPreview>('/jobs/preview', draft));
+    const client = this.connection.client;
+    const preview = await client.request<JobPreview>('/jobs/preview', draft);
+    if (client !== this.connection.client || !current()) return false;
+    this.review(preview);
+    return true;
   }
 
   private clearPending() {
     this.pending = null;
     this.confirmedMissing = false;
+    this.outcome = '';
     sessionStorage.removeItem(PENDING_KEY);
   }
 
@@ -67,7 +78,7 @@ export class Submission {
         this.preview = null;
         this.confirmed = false;
       } else if (this.pending) {
-        this.connection.error =
+        this.outcome =
           'Submission outcome unknown until reconciled. Do not create a new submission.';
       }
       await this.connection.refresh().catch(() => {});

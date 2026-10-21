@@ -6,13 +6,16 @@ dgx-monarch is a ComfyUI custom-node pack and cluster runtime. A ComfyUI driver
 accepts workflows, resolves model files, exposes browser telemetry, consent, and
 Attached mesh reset routes, and dispatches each Render session through
 torchmonarch actors reached through one or more Worker services. The CLI also
-reads cluster configuration and manages local or SSH Worker services.
+reads cluster configuration and manages local or SSH Worker services. The
+optional Studio companion serves a browser workspace on loopback and drives
+that same driver and CLI on the operator's behalf.
 
 Assets to protect include:
 
 - control of the driver and worker OS accounts and their GPU workloads;
 - model and LoRA files, generated outputs, and render integrity;
-- credentials present in the operator session or service environment;
+- credentials present in the operator session or service environment,
+  including the Studio companion's owner token;
 - private host, network, hardware, path, and performance details; and
 - the integrity of internal source archives, local build artifacts, workflows,
   reports, and release automation.
@@ -34,10 +37,25 @@ ignored sentinel file does not enter the archive.
 `GET /dgxm/telemetry`, `GET /dgxm/metrics`, and `GET /dgxm/consents` are
 read-only but expose runtime and topology information to clients admitted by
 the surrounding ComfyUI and proxy controls, or to any client that can reach an
-unprotected deployment. The Attached mesh reset POST and the consent POST each
-require an action header and same-origin Host/Origin, and reject
-`Sec-Fetch-Site: cross-site` when supplied. These are CSRF controls, not user
-authentication; a one-reset-at-a-time gate and bounded server deadlines limit the
+unprotected deployment.
+
+`GET /dgxm/execution-events` serves prompt-bound runtime observations of the
+same kind, and it is not read-only: every GET or HEAD renews a 30 s observer
+lease. While the lease holds, every render captures its ComfyUI execution
+context, carries one extra request key and asks its Workers for their runtime
+identity, so any admitted client can keep those hooks on. The lease grants no
+authority over sampling, teardown, ACK or retry, and its journal keeps at most
+8,192 events and 8 MiB
+([execution_event_routes.py](../src/dgx_monarch/nodes/execution_event_routes.py)).
+Every driver registers the route, whether or not Studio is installed. It has
+no action-header check: ComfyUI's own middleware refuses cross-site browser
+requests to it, as on every route, and `--enable-cors-header` opens it as it
+opens `POST /prompt`.
+
+The Attached mesh reset (`POST /dgxm/recycle`) and the consent action
+(`POST /dgxm/consent`) each require an action header and same-origin
+Host/Origin, and reject `Sec-Fetch-Site: cross-site` when supplied. These
+are CSRF controls, not user authentication; a one-reset-at-a-time gate and bounded server deadlines limit the
 resource cost of repeated calls ([FAQ](FAQ.md#install-and-first-hour),
 [routes.py](../src/dgx_monarch/nodes/routes.py),
 [route tests](../tests/test_routes_cache.py)). A network-exposed deployment
@@ -55,6 +73,107 @@ trusted application domain. Telemetry and websocket output may include host and
 GPU details, model and LoRA identifiers, configuration context and paths, ledger
 and event data, and error text; these browser-facing outputs
 are not scrubbed for secrets.
+
+### Browser to Studio companion
+
+The Studio companion (`dgxm-studio`) is an optional loopback web service that
+serves the Studio page and its `/api/` routes.
+[STUDIO.md](STUDIO.md#install-and-start) states its request rules: a loopback
+bind, an exact `Host` match, no cross-origin access, and the per-launch owner
+token as a bearer credential on every API request. This section records what
+that token can do and where it can leak; it does not restate those rules.
+
+The owner token is the companion's only credential. Whoever holds it acts as
+the operator who started the companion, through every operation that launch
+allows:
+
+- Without `--allow-management`, the token submits, cancels and retries jobs on
+  the driver, uploads input media, reads every job, output, prompt and saved
+  record the companion holds, imports and exports the library, and runs the
+  read-only reports such as status and doctor.
+- With `--allow-management`, the token also reaches setup, init, the launcher,
+  update, uninstall, service installation, Worker start, stop and restart,
+  reap, doctor and Gate repair, Sol install and smoke, client-owned actor recycle,
+  consent, the stock driver `/free` and, with `--driver-service`, driver stop,
+  start and restart. Setup and init take the interpreter path, SSH key and host list
+  from the browser and run that interpreter on every host, and update runs
+  code from the checkout the browser names. With this flag, the token is code
+  execution as the worker account on every host.
+
+Each management action still needs a review and a confirmation in the page.
+That step guards against operator mistakes, not against a token holder, who
+can send the confirmation too.
+
+The token can land in these places:
+
+- the terminal that started the companion, and anything that records that
+  terminal, such as scrollback, tmux or screen logs, or a `script` file;
+- the owner-only (`0600`) token file: the `--token-file` path whenever that
+  option is given, or otherwise a file in the companion's `0700` state
+  directory when standard output is not a terminal;
+- a service manager's journal, when an operator's own unit or wrapper copies
+  the companion's terminal output; members of the `adm` and `systemd-journal`
+  groups, and any log shipping, can read it there; and
+- the browser tab's `sessionStorage`, which keeps it until the tab closes or
+  the user disconnects.
+
+Treat the token as a password, and restart the companion to replace it after
+any copy leaks. The loopback bind and the Host, Origin and token checks stop
+other machines, other web pages and other local accounts that lack the token.
+They do not stop a process running as the same OS account, which can read
+every copy above and which this model already trusts.
+
+Imported library files, workflow JSON, prompts, filenames and
+driver-supplied metadata are untrusted content at this boundary. The page
+shows them as text, and the companion's content security policy loads
+scripts only from the companion itself
+([STUDIO.md](STUDIO.md#state-reconciliation-and-limits) gives the size
+limits).
+
+### Companion to driver, systemd and CLI
+
+The companion talks to one ComfyUI driver origin, chosen with `--driver` and
+bound to its state directory, through a fixed list of driver routes
+([STUDIO.md](STUDIO.md#install-and-start)). It is a second authorized caller of
+the driver, beside the browser panel, not a way around the driver's checks.
+For `POST /dgxm/recycle` and `POST /dgxm/consent` it sends the driver's own
+`Origin` and the action header, so the driver's CSRF checks pass as they do
+for the panel. Those checks were never authentication
+([Browser to ComfyUI driver](#browser-to-comfyui-driver)). The companion
+therefore carries the owner token's authority into the driver's recycle and
+consent actions: a token holder can reset the Attached mesh or accept a
+consent card through it.
+
+The permanent waiver ledger cannot tell those two callers apart. The consent
+route records every accept with `consent_source` set to `panel`, so a ledger
+row written through Studio reads as a panel click. Read a ledger row as an
+accept through the driver's consent route, not as proof of which interface the
+operator used. Recording the caller would add a value to the ledger's
+permanent vocabulary, so it is an owner decision.
+
+The driver is trusted at this boundary, as ComfyUI is for the panel. A hostile
+or replaced driver can report false queue, history and telemetry state, serve
+any bytes as an output, and name the files it stores uploads under. The
+companion bounds the size of every driver response it reads and treats their
+content as data, but it does not authenticate the driver beyond checking an
+HTTPS certificate, and it sends the driver no credentials. Keep the driver on
+loopback or behind HTTPS with a valid server certificate.
+
+`--driver-service` names an existing ComfyUI systemd user unit. Before it
+stops or starts that unit, the companion checks that the unit runs ComfyUI's
+`main.py` directly with a Python interpreter that only the owner or root can
+modify, that the running process matches that command and the unit's control
+group, and that the unit's ComfyUI listen address, port and scheme serve the
+`--driver` origin. It refuses any other unit. It installs no unit and adds no
+permission; stop and start go through the owner's user manager.
+
+Management actions run fixed Monarch commands with typed options, under the
+companion's account and environment. Browser JSON never becomes command text,
+but the typed values (paths, hosts, interpreter, SSH key, target ref) do reach
+those commands. That is why `--allow-management` turns the token into code
+execution, and why every rule in [CLI operator workflows](#cli-operator-workflows)
+and [SECURITY.md](../SECURITY.md#operator-workflow-boundary) applies to a
+Studio action as it does to the same command typed in a terminal.
 
 ### Driver to worker fabric
 
@@ -406,6 +525,29 @@ build identities can still be sensitive; review the file before sharing it.
   records needed for an active request's permanent use row. Reading `GET /dgxm/consents`
   discloses pending model and capability-context detail on the same
   unauthenticated terms as telemetry.
+- **Studio owner token.** A local process or log reader that obtains the token,
+  from any copy listed under
+  [Browser to Studio companion](#browser-to-studio-companion), can do
+  everything that launch allows: read prompts and outputs, submit and cancel
+  jobs and, with `--allow-management`, run setup, init or update with an
+  interpreter, host list or checkout of its choosing, which is code execution
+  as the worker account on every host. The loopback bind, the exact Host and
+  Origin checks and the per-launch token stop web pages and other machines.
+  Restarting the companion replaces the token. Start with
+  `--allow-management` only for a session that needs it.
+- **Hostile library file.** An imported library, workflow or experiment file
+  can carry hostile text, oversized fields, unknown metadata and references to
+  paths or jobs. Import builds a review plan first, applies only the reviewed
+  digest, limits documents to 4 MiB, keeps unknown metadata as data, and never
+  copies media or dispatches jobs; the page shows imported text as text. A
+  file cannot run code this way, but it can mislead an operator who applies it
+  without reading the review.
+- **Hostile driver.** A driver the operator did not mean to trust, or one
+  replaced after launch, can report false job states and outputs, serve
+  hostile media bytes and name upload files. The companion binds each state
+  directory to one driver origin, bounds driver responses and treats their
+  content as data, but it does not authenticate the driver; keep the driver
+  on loopback or behind HTTPS with a valid server certificate.
 - **Cluster configuration and lifecycle.** Operator-controlled host addresses,
   paths, environment values, and SSH lifecycle commands cross process and host
   boundaries. Typed config validation, unicast-address requirements, validated
@@ -458,8 +600,11 @@ isolation boundary against them.
   cluster-wide execution without operator action.
 - **High:** bypass of deployment authorization for destructive cluster control;
   a reachable fabric flaw that lets an untrusted peer control worker actors;
-  checkpoint parsing that produces memory corruption or code execution; or
-  broad credential disclosure from default diagnostics or artifacts.
+  checkpoint parsing that produces memory corruption or code execution;
+  broad credential disclosure from default diagnostics or artifacts; or
+  disclosure of a Studio owner token, which with `--allow-management` is code
+  execution as the worker account on every host and without it is control of
+  jobs, outputs and saved records.
 - **Medium:** repeatable denial of service by an authenticated browser user or
   adjacent fabric peer; CSRF that reaches **Reset attached mesh** or a consent
   action; private topology, paths, or hardware identifiers exposed beyond the

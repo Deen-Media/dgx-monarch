@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from dgx_monarch.studio.drafts import DraftError, apply_preset, apply_styles, expand_grid, resolve_loras, undo_preset
+from dgx_monarch.studio.drafts import DraftError, apply_preset, apply_styles, expand_grid, undo_preset
 from dgx_monarch.studio.workflows import (
     WorkflowError,
     binding_id,
@@ -239,13 +239,3 @@ def test_grid_enumerates_invalid_cells_and_explicit_exclusions():
     with pytest.raises(DraftError, match="1024"):
         expand_grid({}, [{"name": "steps", "values": list(range(1025))}], schemas,
                     seed_policy="fixed", base_seed=1)
-
-
-def test_lora_uses_catalog_compatibility_and_preserves_disabled_draft():
-    stack = [{"id": "missing", "enabled": False, "strength": 1}, {"id": "known", "strength": 0.8}]
-    catalog = {"known": {"available": True, "compatible_models": ["model"],
-                         "strengths": {"strength": {"type": "FLOAT", "min": -2, "max": 2}}}}
-    assert resolve_loras(stack, catalog, "model")[0]["strengths"] == {"strength": 0.8}
-    assert len(stack) == 2
-    with pytest.raises(DraftError, match="compatibility"):
-        resolve_loras(stack, catalog, "other")

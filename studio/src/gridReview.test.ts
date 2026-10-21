@@ -1,29 +1,44 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { GridReviewGuard } from './gridReview.ts';
+import { readFile } from 'node:fs/promises';
+import { GridReviewGuard, STALE_REVIEW, staleReview } from './gridReview.ts';
+import { defaultGridFields, GRID_FIELD_KEYS, gridDefinitionKey } from './gridState.ts';
+
+const draft = { workflow: { id: 'first' }, values: { seed: 1 } };
+const fields = { ...defaultGridFields(), axisA: 'steps' };
 
 test('changing any editable grid field invalidates its frozen review', () => {
-  const definition = {
-    draft: { workflow: { id: 'first' }, values: { seed: 1 } },
-    axisA: 'steps',
-    valuesA: '[1,2]',
-    axisB: '',
-    valuesB: '[1]',
-    seedPolicy: 'fixed',
-    seedBinding: '',
-    baseSeed: 0,
-    excluded: '',
-  };
-  for (const key of Object.keys(definition)) {
+  // The Grids view derives its definition with gridDefinitionKey and calls staleReview from its
+  // edit effect, so this drives the shipped path for every field GridDefinition edits.
+  const original = gridDefinitionKey(draft, fields);
+  for (const key of GRID_FIELD_KEYS) {
     const guard = new GridReviewGuard();
-    const original = JSON.stringify(definition);
     guard.accept(original, original);
-    assert.equal(guard.invalidate(original, false), false);
+    assert.equal(staleReview(guard, original, false, true), null);
+    const changed = { ...fields, [key]: key === 'baseSeed' ? 7 : 'changed' };
     assert.equal(
-      guard.invalidate(JSON.stringify({ ...definition, [key]: 'changed' }), false),
-      true,
+      staleReview(guard, gridDefinitionKey(draft, changed), false, true),
+      STALE_REVIEW,
       key,
     );
+  }
+  const guard = new GridReviewGuard();
+  guard.accept(original, original);
+  const edited = gridDefinitionKey({ ...draft, values: { seed: 2 } }, fields);
+  assert.equal(staleReview(guard, edited, false, true), STALE_REVIEW, 'draft');
+});
+
+test('the Grids view binds every definition field that the key covers', async () => {
+  const [view, editor] = await Promise.all(
+    ['./views/Grids.svelte', './components/GridDefinition.svelte'].map((path) =>
+      readFile(new URL(path, import.meta.url), 'utf8'),
+    ),
+  );
+  assert.match(view, /\$derived\(gridState\.gridDefinitionKey\(draft, fields\)\)/);
+  assert.match(view, /staleReview\(reviewGuard, definition, dispatchPending, !!preview\)/);
+  for (const key of GRID_FIELD_KEYS) {
+    assert.ok(view.includes(`bind:${key}={fields.${key}}`), key);
+    assert.match(editor, new RegExp(`\\b${key} = \\$bindable\\(`), key);
   }
 });
 
@@ -49,10 +64,9 @@ test('an edit during validation rejects the returned review before submission is
 test('edits preserve a pending identity until the same dispatch has reconciled', () => {
   const guard = new GridReviewGuard();
   guard.restore('restored-definition');
-  const retained = { id: 'review-1', requestKey: 'original-key' };
-  let preview: typeof retained | null = retained;
-  if (guard.invalidate('edited-definition', true)) preview = null;
-  assert.equal(preview, retained);
-  if (guard.invalidate('edited-definition', false)) preview = null;
-  assert.equal(preview, null);
+  assert.equal(staleReview(guard, 'edited-definition', true, true), null);
+  assert.equal(staleReview(guard, 'edited-definition', false, true), STALE_REVIEW);
+  const empty = new GridReviewGuard();
+  empty.restore('restored-definition');
+  assert.equal(staleReview(empty, 'edited-definition', false, false), null, 'no preview to drop');
 });

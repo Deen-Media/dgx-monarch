@@ -2,7 +2,7 @@
   import type { StudioClient } from '../api';
   import LibraryTransfer from '../components/LibraryTransfer.svelte';
   import { retainRecordPage } from '../recordRetention';
-  import { recordProjects } from '../recordPersistence';
+  import { RecordSession, recordProjects } from '../recordPersistence';
   import { recordContent } from '../recordContent';
   import { loadRecordCatalog } from '../recordCatalog';
   import type { Draft } from '../model';
@@ -74,16 +74,23 @@
     projectFilter = $state(''),
     membership = $state<string[]>([]);
   let nextOffset = $state<number | null>(null),
-    loading = $state(false);
-  let sequence = 0;
+    loading = $state(false),
+    loadError = $state('');
+  let sequence = 0,
+    loadedFor = '';
+  // A new record keeps one identity per form session until a save is confirmed.
+  const session = new RecordSession();
   let windowNotice = $state('');
   const revisionKey = $derived(
     (allRecords[recordKind] ?? []).map((row) => `${row.id}:${row.revision}`).join(','),
   );
   async function load(append = false) {
-    const ticket = ++sequence;
+    const ticket = ++sequence,
+      listing = `${recordKind}|${projectFilter}`;
     loading = true;
-    if (!append) records = [];
+    loadError = '';
+    // Keep the current rows until the new page arrives; clear only for another kind or filter.
+    if (!append && loadedFor !== listing) records = [];
     try {
       const params = new URLSearchParams({
         limit: '100',
@@ -96,6 +103,7 @@
       if (ticket !== sequence) return;
       const retained = retainRecordPage(append ? records : [], result.records);
       records = retained.records;
+      loadedFor = listing;
       windowNotice = retained.replaced
         ? 'Started the next record window. Earlier rows were released to stay within 8 MiB and 2,000 records.'
         : append
@@ -104,7 +112,7 @@
       nextOffset = result.next_offset;
     } catch (cause) {
       if (ticket === sequence) {
-        records = [];
+        loadError = cause instanceof Error ? cause.message : String(cause);
         fail(cause);
       }
     } finally {
@@ -141,15 +149,23 @@
         data = { ...data, prompt: recordText, negative_prompt: negativeText, mode: styleMode };
       else if (recordKind === 'experiments') data = { ...data, notes: recordText, grid_id: gridId };
       else if (recordKind === 'projects') data.notes = recordText;
-      await saveRecord(recordKind, data, selectedRecord?.id, selectedRecord?.revision ?? 0);
-      await load();
+      const editing = selectedRecord;
+      await saveRecord(
+        recordKind,
+        data,
+        editing?.id ?? session.id(recordKind),
+        editing?.revision ?? 0,
+      );
+      if (!editing) session.settle();
       selectedRecord = null;
       recordName = '';
       recordText = '';
       negativeText = '';
       styleMode = 'append';
       gridId = '';
+      await load();
     } catch (e) {
+      session.failed(e);
       fail(e);
     } finally {
       busy = false;
@@ -238,7 +254,9 @@
             <summary>Record content</summary>
             <pre>{JSON.stringify(record.data, null, 2)}</pre>
           </details>
-        </div>{/each}{#if !records.length}<p class="muted">No saved {recordKind}.</p>{/if}
+        </div>{/each}{#if loading && !records.length}<p role="status">
+          Loading saved {recordKind}…
+        </p>{:else if !records.length && !loadError}<p class="muted">No saved {recordKind}.</p>{/if}
       {#if nextOffset !== null}<button disabled={loading} onclick={() => void load(true)}
           >Load more records</button
         >{/if}

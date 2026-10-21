@@ -109,23 +109,6 @@ export function bindingError(b: Binding, value: unknown): string | null {
   if (options.length && !options.includes(value)) return 'Choose an available value.';
   return null;
 }
-export function gridCombinations(
-  axes: { id: string; values: unknown[] }[],
-  max = 1024,
-): Record<string, unknown>[] {
-  if (!axes.length) return [];
-  if (new Set(axes.map((a) => a.id)).size !== axes.length)
-    throw new Error('Each axis must use a different field.');
-  let result: Record<string, unknown>[] = [{}];
-  for (const axis of axes) {
-    if (!axis.id || !axis.values.length)
-      throw new Error('Each axis needs a field and at least one value.');
-    if (result.length * axis.values.length > max)
-      throw new Error(`Grid exceeds the ${max}-cell limit.`);
-    result = result.flatMap((row) => axis.values.map((value) => ({ ...row, [axis.id]: value })));
-  }
-  return result;
-}
 export function consumeEvents(current: number, events: any[]): { cursor: number; events: any[] } {
   const seen = new Set<number>();
   const accepted = events
@@ -222,4 +205,10 @@ export function formatTime(value: unknown): string {
   if (value === undefined || value === null || value === '') return 'Unknown';
   const date = new Date(typeof value === 'number' ? value * 1000 : String(value));
   return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
+}
+
+/** The driver state with its failure code, so an unavailable driver says why. */
+export function driverStatus(driver: { state?: string; code?: string } | undefined): string {
+  const state = driver?.state ?? 'unknown';
+  return state !== 'connected' && driver?.code ? `${state} (${driver.code})` : state;
 }

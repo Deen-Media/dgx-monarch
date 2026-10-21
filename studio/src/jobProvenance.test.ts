@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { StudioClient } from './api.ts';
 import type { Job } from './contracts.ts';
-import { fullJob } from './jobProvenance.ts';
+import { comparableSubmission, fullJob, RETRY_RUNTIME_FIELD } from './jobProvenance.ts';
+import { parameterDifferences } from './gallery.ts';
 
 const provenance = {
   id: 'job/a',
@@ -76,4 +77,57 @@ test('provenance actions refuse mismatched IDs or another summary from detail en
     const client = { request: async () => result } as unknown as StudioClient;
     await assert.rejects(fullJob(client, provenance.id), /requested full job provenance/);
   }
+});
+
+test('comparison reads the runtime and versions a retry recorded for itself', () => {
+  const recorded = {
+    prompt: { '1': { inputs: { seed: 1 } } },
+    versions: { dgx_monarch: '1.2.0', driver: '0.3.60' },
+    runtime_observation: { reported: { comfyui_version: '0.3.60' } },
+    schema_digest: 'old-schema',
+    schema_identity: 'old-identity',
+  };
+  const original = { id: 'original', state: 'failed', created_at: 1, submission: recorded } as Job;
+  const retry = {
+    id: 'retry',
+    state: 'succeeded',
+    created_at: 2,
+    retry_of: 'original',
+    submission: structuredClone(recorded),
+    [RETRY_RUNTIME_FIELD]: {
+      observed_at: 99,
+      versions: { dgx_monarch: '1.2.0', driver: '0.3.61' },
+      runtime_observation: { reported: { comfyui_version: '0.3.61' } },
+      schema_digest: 'new-schema',
+      schema_identity: 'new-identity',
+    },
+  } as Job;
+  const fresh = {
+    ...retry,
+    id: 'fresh',
+    retry_of: undefined,
+    submission: structuredClone(recorded),
+  };
+  fresh.submission.versions = { dgx_monarch: '1.2.0', driver: '0.3.61' };
+  fresh.submission.runtime_observation = { reported: { comfyui_version: '0.3.61' } };
+  fresh.submission.schema_digest = 'new-schema';
+  fresh.submission.schema_identity = 'new-identity';
+  delete fresh[RETRY_RUNTIME_FIELD];
+  assert.deepEqual(
+    parameterDifferences(comparableSubmission(original), comparableSubmission(retry)).map(
+      (row) => row.key,
+    ),
+    [
+      'runtime_observation.reported.comfyui_version',
+      'schema_digest',
+      'schema_identity',
+      'versions.driver',
+    ],
+  );
+  assert.deepEqual(
+    parameterDifferences(comparableSubmission(retry), comparableSubmission(fresh)),
+    [],
+  );
+  assert.equal(comparableSubmission(original), original.submission);
+  assert.equal(retry.submission.schema_digest, 'old-schema', 'the immutable request is untouched');
 });

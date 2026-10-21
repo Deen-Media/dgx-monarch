@@ -1,6 +1,7 @@
 <script lang="ts">
   import { fieldLabel, bindingType, bindingOptions, bindingError } from '../model';
   import type { Binding } from '../model';
+  import { numberField } from '../numberField';
   let {
     binding,
     value,
@@ -32,11 +33,10 @@
     <input
       id={fieldId}
       type="number"
-      value={Number(value ?? binding.schema?.default ?? binding.default ?? 0)}
       min={binding.schema?.min ?? binding.min}
       max={binding.schema?.max ?? binding.max}
       step={binding.schema?.step ?? binding.step ?? (type === 'INT' ? 1 : 'any')}
-      oninput={(e) => onchange(e.currentTarget.value === '' ? null : Number(e.currentTarget.value))}
+      use:numberField={{ value, commit: onchange, nullable: true }}
       aria-invalid={!!error}
     />
   {:else if ['BOOLEAN', 'BOOL'].includes(type)}

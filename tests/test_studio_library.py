@@ -1,9 +1,12 @@
 """Portable library transactions preserve identities without importing execution."""
+import json
 from copy import deepcopy
 
 import pytest
 
-from dgx_monarch.studio.contracts import StudioError
+import dgx_monarch.studio.library as library_module
+import dgx_monarch.studio.library_export as export_module
+from dgx_monarch.studio.contracts import RECORD_LIMIT, StudioError
 from dgx_monarch.studio.library import Library
 from dgx_monarch.studio.store import Store
 
@@ -95,3 +98,125 @@ def test_invalid_imports_refuse_without_partial_changes(library, change):
     with pytest.raises(StudioError):
         library.preview(request)
     assert library.store.all("projects") == []
+
+
+def size(document):
+    return len(json.dumps(document).encode())
+
+
+def add_artifacts(store, count, project="p1", text=20_000):
+    with store.lock, store.transaction():
+        for index in range(count):
+            # Each observed output carries a repr of the full request as search text.
+            store._put("artifacts", {"id": f"artifact-{index:05d}", "job_id": "job", "kind": "image",
+                                     "filename": f"{index}.png", "project_ids": [project], "created_at": index,
+                                     "search_text": "{'workflow': " + "x" * text + "}"}, 1)
+
+
+def test_export_and_reimport_with_artifacts_does_not_grow(library):
+    store = library.store
+    library.save("projects", "p1", {"name": "Project"}, 0)
+    add_artifacts(store, 40)
+    first = library.export("p1")
+    assert len(first["artifact_references"]) == 40
+    assert all("search_text" not in row for row in first["artifact_references"])
+    assert size(first) < 40 * 1000
+    # The gallery still searches the stored text in place.
+    assert "search_text" in store.get("artifacts", "artifact-00000")
+    plan = library.preview({"library": first})
+    assert plan["repair_list"] == []
+    apply(library, plan, "merge-round-trip")
+    second = library.export("p1")
+    assert second == first and size(second) <= size(first)
+    # A copy keeps each reference once, for review, and stops growing there.
+    result = apply(library, library.preview({"library": first, "mode": "copy"}), "copy-1")
+    copied = result["typed_id_mapping"]["projects"]["p1"]
+    third = library.export(copied)
+    assert len(third["unresolved_references"]) == 40 and len(store.all("library_references")) == 40
+    assert {row["reason"] for row in third["unresolved_references"]} == {"source_membership_review"}
+    assert all("search_text" not in row["reference"] for row in third["unresolved_references"])
+    result = apply(library, library.preview({"library": third, "mode": "copy"}), "copy-2")
+    fourth = library.export(result["typed_id_mapping"]["projects"][copied])
+    assert len(fourth["unresolved_references"]) == 40 and size(fourth) <= size(third)
+    # Two stored copies of each reference with its search text came to about 1.6 MB.
+    assert size(third) < 40 * 1000
+
+
+def test_an_older_export_with_search_text_and_doubled_references_imports_once(library):
+    library.save("projects", "p1", {"name": "Project"}, 0)
+    add_artifacts(library.store, 1)
+    reference = {**library.store.get("artifacts", "artifact-00000"), "project_ids": ["p1"]}
+    retained = {"artifact_id": reference["id"], "reference": reference, "project_ids": ["p1"]}
+    document = {"schema_version": "1.0", "records": {"projects": [{"id": "p2", "data": {"name": "Other"}}]},
+                "unresolved_references": [retained, {**retained, "reason": "source_artifact_missing"}]}
+    apply(library, library.preview({"library": document}), "older")
+    rows = library.store.all("library_references")
+    assert len(rows) == 1 and rows[0]["reason"] == "source_artifact_missing"
+    assert "search_text" not in rows[0]["reference"]
+
+
+def test_export_row_limit_matches_what_import_accepts(library):
+    assert export_module.EXPORT_ROWS == RECORD_LIMIT
+    library.save("projects", "p1", {"name": "Project"}, 0)
+    add_artifacts(library.store, RECORD_LIMIT, text=10)
+    document = library.export()
+    assert len(document["artifact_references"]) == RECORD_LIMIT
+    assert library.preview({"library": document})["ready"]
+    add_artifacts(library.store, RECORD_LIMIT + 1, text=10)
+    with pytest.raises(StudioError, match="more than 2000 artifact references, the most one import accepts"):
+        library.export()
+    with pytest.raises(StudioError, match="Artifact references must be a bounded array"):
+        library.preview({"library": {**document, "artifact_references": document["artifact_references"] * 2}})
+
+
+def test_export_refusals_do_not_send_a_project_caller_in_a_circle(library, monkeypatch):
+    library.save("projects", "p1", {"name": "Project"}, 0)
+    add_artifacts(library.store, 4, text=10)
+    monkeypatch.setattr(export_module, "EXPORT_ROWS", 3)
+    with pytest.raises(StudioError, match="export one project at a time"):
+        library.export()
+    with pytest.raises(StudioError) as caught:
+        library.export("p1")
+    assert str(caught.value).startswith("This project would export more than 3 artifact references")
+    assert "project at a time" not in str(caught.value) and "single project" not in str(caught.value)
+    monkeypatch.setattr(export_module, "EXPORT_ROWS", RECORD_LIMIT)
+    monkeypatch.setattr(library_module, "MAX_LIBRARY_BYTES", 700)
+    with pytest.raises(StudioError, match=r"^Export exceeds .*export one project at a time"):
+        library.export()
+    with pytest.raises(StudioError) as caught:
+        library.export("p1")
+    assert caught.value.code == "library_limit" and caught.value.status == 413
+    assert str(caught.value).startswith("This project's export passed")
+    assert "while adding artifact references" in str(caught.value)
+    assert "project at a time" not in str(caught.value) and "single project" not in str(caught.value)
+
+
+def browser_catalog_bytes(store, kind):
+    # The browser sums JSON.stringify of every record plus one, and two for the array.
+    return 2 + sum(len(json.dumps(row, separators=(",", ":"), ensure_ascii=False).encode()) + 1
+                   for row in store.all(kind))
+
+
+def test_record_saves_stay_inside_the_browser_catalog_window(library, monkeypatch):
+    monkeypatch.setattr(library_module, "RECORD_WINDOW_BYTES", 4000)
+    store = library.store
+    library.save("presets", "a", {"name": "A", "notes": "é" * 600}, 0)
+    library.save("presets", "b", {"name": "B", "notes": "n" * 1500}, 0)
+    cursor = store.events()["latest_cursor"]
+    with pytest.raises(StudioError) as caught:
+        library.save("presets", "c", {"name": "C", "notes": "n" * 1500}, 0)
+    assert (caught.value.code, caught.value.status) == ("record_window_limit", 413)
+    assert "8 MiB browser window" in str(caught.value)
+    assert [row["id"] for row in store.all("presets")] == ["a", "b"] and store.events()["latest_cursor"] == cursor
+    assert browser_catalog_bytes(store, "presets") <= 4000
+    # Growing an existing record past the window is refused; shrinking is not.
+    with pytest.raises(StudioError, match="browser window"):
+        library.save("presets", "b", {"name": "B", "notes": "n" * 3000}, 1)
+    library.save("presets", "b", {"name": "B", "notes": "n" * 100}, 1)
+    library.save("presets", "c", {"name": "C", "notes": "n" * 1500}, 0)
+    # A catalog already past a lowered window still takes edits that do not grow it.
+    monkeypatch.setattr(library_module, "RECORD_WINDOW_BYTES", 1000)
+    library.save("presets", "c", {"name": "D", "notes": "n" * 1500}, 1)
+    # A stale revision keeps its own refusal.
+    with pytest.raises(StudioError, match="newer version"):
+        library.save("presets", "c", {"name": "E", "notes": "n" * 9000}, 1)

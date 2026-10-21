@@ -19,7 +19,7 @@ from dgx_monarch.studio import management_observe, management_reports
 from dgx_monarch.studio.contracts import StudioError, digest
 from dgx_monarch.studio.inventory import discover_cli
 from dgx_monarch.studio.management import Management
-from dgx_monarch.studio.management_fields import parse
+from dgx_monarch.studio.management_fields import FIELDS, parse
 from dgx_monarch.studio.management_parity import bindings, validate_bindings
 from dgx_monarch.studio.operations import Operations, command_arguments
 from dgx_monarch.studio.store import Store
@@ -217,9 +217,10 @@ def test_record_append_and_replay_path_are_review_bound(tmp_path):
             asyncio.run(manager.record(params, "record", plan))
 
 
-@pytest.mark.parametrize("exit_code", [0, 1, 3])
+@pytest.mark.parametrize(("exit_code", "outcome"), [(0, "legacy_updated"), (1, "legacy_incomplete"), (2, "legacy_refused"),
+                                                    (3, "legacy_incomplete"), (75, "legacy_refused")])
 @pytest.mark.parametrize("with_config", [True, False])
-def test_frozen_child_dispatches_exact_legacy_candidate(tmp_path, monkeypatch, exit_code, with_config):
+def test_frozen_child_dispatches_exact_legacy_candidate(tmp_path, monkeypatch, exit_code, outcome, with_config):
     import hashlib
     import os
     from dataclasses import asdict
@@ -227,14 +228,19 @@ def test_frozen_child_dispatches_exact_legacy_candidate(tmp_path, monkeypatch, e
     from dgx_monarch import config as config_module
     from dgx_monarch.cli import update_command, update_inspect
     from dgx_monarch.cli.update_release import ReleaseMetadata
-    from dgx_monarch.cli.update_types import RepoSnapshot
+    from dgx_monarch.cli.update_types import RepoSnapshot, UpdateResult
     from dgx_monarch.studio import management_repository, management_update, update_controller
 
     config = tmp_path / "cluster.toml"
     config.write_text("selected config fixture")
     metadata = ReleaseMetadata("a" * 40, "1", "0.7.0", "b" * 64, "c" * 64)
+    comfy = tmp_path / "comfy"
+    (comfy / "custom_nodes").mkdir(parents=True)
+    (comfy / "custom_nodes/dgx-monarch").symlink_to(tmp_path)
     reviewed = {"controller": {"bound": True}, "checkout": {"bound": True}, "prior_release": asdict(metadata),
-                "release": {"target_sha": "d" * 40, "source_manifest": "e" * 64}, "mode": "legacy", "legacy_candidate": ["d" * 40, True]}
+                "release": {"target_sha": "d" * 40, "source_manifest": "e" * 64}, "mode": "legacy", "legacy_candidate": ["d" * 40, True],
+                "driver_identity": {"config": {"source_files": [{"path": str(comfy / "main.py")}]}},
+                "driver_checkout": {"link": str(comfy / "custom_nodes/dgx-monarch"), "resolved": str(tmp_path.resolve())}}
     calls = []
     monkeypatch.setattr(management_repository, "RepositoryOps", lambda repo:
                         SimpleNamespace(repo_snapshot=lambda target: RepoSnapshot("a" * 40, True, True)))
@@ -248,7 +254,7 @@ def test_frozen_child_dispatches_exact_legacy_candidate(tmp_path, monkeypatch, e
     def legacy(args, *, repo, load_config, driver_probe, expected_candidate, expected_source_manifest):
         calls.append(expected_candidate)
         assert expected_source_manifest == "e" * 64
-        assert args.host == "selected:8188" and load_config(args) == ("selected-config" if with_config else None)
+        assert args.host == "selected:8188" and load_config(args) == "selected-config"
         assert repo == tmp_path
         return exit_code
     monkeypatch.setattr(legacy_update, "_run_locked", legacy)
@@ -257,12 +263,23 @@ def test_frozen_child_dispatches_exact_legacy_candidate(tmp_path, monkeypatch, e
         manifest = {"request": {"reviewed": reviewed, "lock_fd": descriptor, "config": str(config) if with_config else None,
                     "config_sha256": hashlib.sha256(config.read_bytes()).hexdigest() if with_config else None, "repo": str(tmp_path),
                     "driver_host": "selected:8188", "privileged_process_inspection": False}}
-        assert update_controller.child(tmp_path, manifest) == exit_code
-        result = json.loads((tmp_path / "result.json").read_text())
-        assert result["exit_code"] == exit_code and result["receipt"]["reviewed_target"] == "d" * 40
-        assert calls == [("d" * 40, True)]
+        returned = update_controller.child(tmp_path, manifest)
     finally:
         os.close(descriptor)
+    settled = UpdateResult(**json.loads((tmp_path / "result.json").read_text()))
+    assert returned == settled.exit_code
+    if not with_config:
+        # Both modes need the selected configuration: legacy no longer runs without it.
+        assert returned == 2 and calls == [] and settled.code == "controller_refused"
+        assert settled.receipt["refusal"] == "update_config"
+        assert update_controller.settlement("legacy", settled) == "refused"
+        return
+    assert settled.exit_code == exit_code and settled.receipt["reviewed_target"] == "d" * 40
+    assert calls == [("d" * 40, True)] and settled.code == outcome
+    # The receipt says what happened; a failure no longer reads as "completed".
+    assert ("completed" in settled.message) is (exit_code == 0)
+    expected = "succeeded" if exit_code == 0 else "refused" if exit_code in {2, 75} else "unknown"
+    assert update_controller.settlement("legacy", settled) == expected
 
 
 def test_gate_repair_plan_binds_exact_ledger(monkeypatch):
@@ -297,7 +314,8 @@ def test_setup_and_init_default_destinations_preserve_cli_fallback(tmp_path, mon
 @pytest.mark.parametrize("row", discover_cli(), ids=lambda row: row["id"])
 def test_each_cli_row_resolves_to_declared_studio_capability_or_explained_surface(row, tmp_path):
     with closing(Store(tmp_path / "state")) as store:
-        ops = Operations(store, SimpleNamespace(origin="http://127.0.0.1:8188"), config=tmp_path / "config.toml", allow_management=True)
+        ops = Operations(store, SimpleNamespace(origin="http://127.0.0.1:8188"), config=tmp_path / "config.toml",
+                         allow_management=True, driver_service="comfy.service")
         capabilities = {item["id"]: item for item in ops.capabilities()}
         binding = row["studio_binding"]
         for action in binding.get("actions", []):
@@ -309,18 +327,56 @@ def test_each_cli_row_resolves_to_declared_studio_capability_or_explained_surfac
 
 
 @pytest.mark.parametrize("mode", ["legacy", "verified"])
-def test_config_free_update_is_legacy_only(tmp_path, monkeypatch, mode):
+def test_update_requires_configuration_in_every_mode(tmp_path, monkeypatch, mode):
     from dgx_monarch.studio import management_update
-    from dgx_monarch.studio.management_repository import RepositoryOps
 
-    monkeypatch.setattr(management_update, "checkout_identity", lambda repo: {})
+    monkeypatch.setattr(management_update, "checkout_identity", lambda repo: pytest.fail("checkout inspected without config"))
     manager = management_update.Updates(None, None, "http://127.0.0.1:8188", tmp_path)
     parameters = parse("update", {"repo": str(tmp_path), "mode": mode})
-    if mode == "legacy":
-        assert isinstance(manager.operations(parameters), RepositoryOps)
-    else:
-        with pytest.raises(StudioError, match="requires an existing cluster"):
-            manager.operations(parameters)
+    for review in (manager.operations, manager.preview):
+        with pytest.raises(StudioError, match="--config at companion launch, in both modes") as refused:
+            review(parameters)
+        assert refused.value.code == "update_config"
+    with closing(Store(tmp_path / "state")) as store:
+        ops = Operations(store, SimpleNamespace(origin="http://127.0.0.1:8188"), allow_management=True)
+        row = next(row for row in ops.capabilities() if row["id"] == "update")
+        # Availability names the missing --config instead of offering a config-free update.
+        assert row["available"] is False and "cluster configuration" in row["reason"]
+        review = ops.preview({"action": "update", "parameters": {"repo": str(tmp_path), "mode": mode}})
+        assert review["available"] is False and review["adapter_plan"] is None
+
+
+def test_update_is_unavailable_without_the_driver_service_and_says_why(tmp_path):
+    with closing(Store(tmp_path / "state")) as store:
+        for service, available in ((None, False), ("comfy.service", True)):
+            ops = Operations(store, SimpleNamespace(origin="http://127.0.0.1:8188"), config=tmp_path / "config.toml",
+                             allow_management=True, driver_service=service)
+            row = next(row for row in ops.capabilities() if row["id"] == "update")
+            assert row["available"] is available
+            if not available:
+                assert "--driver-service" in row["reason"] and "interpreter and checkout" in row["reason"]
+                review = ops.preview({"action": "update", "parameters": {"repo": str(tmp_path)}})
+                assert review["available"] is False and review["adapter_plan"] is None
+        # Only update needs the unit among the actions a configuration enables.
+        ops = Operations(store, SimpleNamespace(origin="http://127.0.0.1:8188"), config=tmp_path / "config.toml",
+                         allow_management=True)
+        assert {row["id"] for row in ops.capabilities() if row["reason"] and "--driver-service" in row["reason"]} == {"update"}
+
+
+def test_update_defaults_to_verified_mode_and_parity_rows_describe_both_modes():
+    assert parse("update", {"repo": "/reviewed/checkout"})["mode"] == "verified"
+    rows = bindings()
+    assert "Studio default" in rows["cli.option.update.verify"]["equivalence"]
+    assert "Both modes need --config" in rows["cli.option.update.verify"]["equivalence"]
+    host = rows["cli.option.update.host"]["equivalence"]
+    assert "--driver-service" in host and "Verified mode passes no host" in host
+    assert "silently probe" in rows["cli.option.top.host"]["equivalence"]
+    from dgx_monarch.studio.management_update import REVIEW_SCOPE
+
+    # Each review names the guards its own mode runs, rather than claiming both modes keep the same ones.
+    assert set(REVIEW_SCOPE) == set(next(entry for entry in FIELDS["update"] if entry["name"] == "mode")["choices"])
+    assert all(word in REVIEW_SCOPE["verified"] for word in ("activity", "stages the release", "exact readback"))
+    assert all(word in REVIEW_SCOPE["legacy"] for word in ("release-slot check", "Worker restart", "no rollback"))
 
 
 @pytest.mark.parametrize("hidden", [False, True])

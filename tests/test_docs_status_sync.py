@@ -1211,7 +1211,7 @@ TEST_CPU = os.path.join(HERE, "..", "scripts", "test_cpu.sh")
 LTX_ADAPTER = os.path.join(HERE, "..", "src", "dgx_monarch", "adapters", "ltx.py")
 GEN_TEMPLATES = os.path.join(HERE, "..", "tools", "gen_templates.py")
 
-_CI_RUFF = "ruff check __init__.py src tests benchmark tools"
+_CI_RUFF = "ruff check __init__.py src tests benchmark tools studio/tests"
 _CI_PYTEST = "bash scripts/test_cpu.sh"
 _LTX_COMFY_FLOOR = "bd34f338"
 

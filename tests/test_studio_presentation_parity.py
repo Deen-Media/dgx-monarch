@@ -47,8 +47,11 @@ def test_terminal_color_adapters_preserve_approved_memory_order_and_status():
         assert [color[key] for key in ("good", "warn", "bad")] == ["#4ade80", "#facc15", "#f87171"]
         indexed = terminal_palette(theme, "256")
         assert [indexed[key] for key in keys] == [f"color({n})" for n in (45, 79, 208, 141, 244, 220)]
-        basic = terminal_palette(theme, "standard")
-        assert [basic[key] for key in keys] == ["cyan", "green", "yellow", "magenta", "white", "yellow"]
+        for basic_system in ("standard", "windows"):
+            basic = terminal_palette(theme, basic_system)
+            # Pool and cache once shared yellow, so a 16-color terminal merged them.
+            assert [basic[key] for key in keys] == ["cyan", "green", "bright_red", "magenta", "white", "yellow"]
+            assert len({basic[key] for key in keys}) == len(keys)
 
 
 def test_last_render_facts_include_topology_auto_row_last_step_and_attention_pins():
@@ -72,6 +75,48 @@ def test_tui_preserves_every_host_and_both_rail_directions():
     assert text.count("rx ") == 2 and text.count("tx ") == 2
     assert "1.00 GB/s" in text and "2.00 GB/s" in text and "3.00 GB/s" in text
     assert "unknown" in text
+
+
+def _sized_app(monkeypatch, columns):
+    from textual.geometry import Size
+
+    app = DgxmTopApp()
+    monkeypatch.setattr(type(app), "size", property(lambda self: Size(columns, 46)))
+    return app
+
+
+@pytest.mark.parametrize("columns", [100, 120, 160])
+def test_tui_rows_fit_the_panel_with_every_host_and_both_directions(monkeypatch, columns):
+    """GiB units and per-host rx and tx made rows wrap mid-reading at 120 columns."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("dgxm_top_image", ROOT / "tools/gen_dgxm_top_image.py")
+    assert spec and spec.loader
+    tool = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(tool)
+    app = _sized_app(monkeypatch, columns)
+    tick = tool.sample_ticks()[-1]
+    room = columns - 4  # the panel's round border and one column of padding a side
+    hosts = app.draw_hosts(tick).plain.splitlines()
+    bars = [line for line in hosts if "[" in line]
+    assert len(bars) == 2
+    for line in bars:
+        assert len(line) <= room and line.endswith(" GiB") and " avail " in line
+    rails = [line for line in app.draw_rails(tick).plain.splitlines() if " rx " in line]
+    assert len(rails) == 2 and all(len(line) <= room and " tx " in line for line in rails)
+
+
+def test_dashboard_image_shows_the_current_dashboard_text():
+    """docs/media/dgxm-top.svg comes from tools/gen_dgxm_top_image.py, not an old capture."""
+    import html
+    import re
+
+    svg = (ROOT / "docs/media/dgxm-top.svg").read_text()
+    text = html.unescape("".join(re.findall(r"<text[^>]*>([^<]*)</text>", svg))).replace("\xa0", " ")
+    assert "avail 59.6 GiB" in text and "avail 61.6 GiB" in text
+    assert not re.search(r"\d\.\dG\b", text), "an old capture still shows G units"
+    assert text.count("mlx5_0") == 2 and text.count(" rx ") == 2 and text.count(" tx ") == 2
+    assert "Generated with" not in svg and "<!--" not in svg
 
 
 def test_tui_missing_memory_does_not_invent_capacity_or_a_zero_breakdown():

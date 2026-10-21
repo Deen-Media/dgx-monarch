@@ -29,7 +29,7 @@ to `scripts/test_cpu.sh` and rely on CI for those two files.
 Run these from the checkout in the development environment for Python changes:
 
 ```bash
-ruff check __init__.py src tests benchmark tools
+ruff check __init__.py src tests benchmark tools studio/tests
 mypy -p dgx_monarch
 bash scripts/test_cpu.sh
 ```
@@ -42,24 +42,37 @@ defaults.
 
 Choose additional checks based on the files and behavior you changed:
 
-For the optional Studio interface, also run `npm ci`, `npm run check`,
-`npm test`, and `npm run build` in `studio/`, then
-`python tools/gen_studio_inventory.py --check`. Commit the generated bundle
-with the source and verify `dgxm-studio --check` from both installed package
-formats. [Studio acceptance](docs/STUDIO_ACCEPTANCE.md) remains separate from
-CPU and mocked HTTP coverage.
-
 | Change | Validation |
 |---|---|
 | Documentation or comments | Run the affected documentation tests, check links and examples, and verify any source citations. No hardware run is needed for wording alone. |
-| Nodes or browser UI | Run the node contracts and relevant UI tests; preserve saved-workflow compatibility. Check JavaScript syntax and segment mappings. |
-| Workflow templates or model-file lists | Regenerate changed templates, then run the template checks and `python tools/check_artifacts.py --strict`. Fill each new manifest row from a public file that matches the tested file byte for byte, or mark it a placeholder with a note. Never invent a model hash. |
-| Logos or workflow cards | Run the brand-asset and template-card generators' checks. |
+| Nodes or browser UI | Run the node contracts and relevant UI tests; preserve saved-workflow compatibility. Check JavaScript syntax and segment mappings. Then regenerate and check the Studio inventory, as described below. |
+| Workflow templates or model-file lists | Regenerate changed templates, then run the template checks and `python tools/check_artifacts.py --strict`. Fill each new manifest row from a public file that matches the tested file byte for byte, or mark it a placeholder with a note. Never invent a model hash. Then regenerate and check the Studio inventory. |
+| Studio interface (`studio/`) | Follow the [Studio development steps](docs/STUDIO.md#development), which build the bundle and then regenerate and check the Studio inventory. |
+| Logos or workflow cards | Run the brand-asset and template-card generators' checks. After a `dgxm top` layout change, run `python tools/gen_dgxm_top_image.py` and render `docs/media/dgxm-top.png` again as [BRANDING](docs/BRANDING.md) describes. |
 | Runtime or distributed behavior | Run the CPU suite and relevant regression tests. A render-path change also needs an authorized hardware run before claiming it works on hardware. |
 | Model adapters or topology | Run the required cross-rank and reference comparisons described below. CPU success does not establish model accuracy. |
 
-CI still runs its full required checks for every PR. The workflow is the
-complete command reference; its additional checks include:
+The Studio inventory records the CLI flags, config fields, panel actions,
+workflow templates and shared presentation rules that Studio presents, and the
+hashes of the bundled frontend. A change to any of them, or to the Studio
+frontend, makes it stale. Regenerate it, then check it:
+
+```bash
+python tools/gen_studio_inventory.py
+python tools/gen_studio_inventory.py --check
+```
+
+Commit the regenerated `src/dgx_monarch/studio/data/*.json`,
+`src/dgx_monarch/studio/resource_hashes.py` and
+`web/js/dgx_monarch_presentation.js`, and the rebuilt bundle under
+`src/dgx_monarch/studio/static/`, with the source change. Verify
+`dgxm-studio --check` from both installed package formats after a Studio
+change. [Studio acceptance](docs/STUDIO_ACCEPTANCE.md) remains separate from
+CPU and mocked HTTP coverage.
+
+CI still runs its full required checks for every PR. The workflows under
+`.github/workflows/` are the complete command reference; their additional
+checks include:
 
 ```bash
 python tools/leak_check.py
@@ -69,7 +82,8 @@ python tools/gen_templates.py --check
 python tools/gen_brand_assets.py --check
 python tools/gen_template_cards.py --check
 python tools/check_artifacts.py --strict
-python -m compileall -q __init__.py src benchmark tests tools
+python tools/gen_studio_inventory.py --check  # after regenerating it, as above
+python -m compileall -q __init__.py src benchmark tests tools studio/tests
 for script in scripts/*.sh; do bash -n "$script"; done
 shellcheck scripts/*.sh
 for asset in web/js/*.js; do node --check "$asset"; done
@@ -120,7 +134,9 @@ See [versioning policy](docs/DESIGN.md#63-versioning-and-compatibility-policy).
 
 Submit original work or material you have the right to contribute. Identify
 external specifications, APIs or behavior that informed the change. Do not
-copy or vendor dependency implementations. xFuser remains external: its
+copy or vendor dependency implementations; the compiled Studio bundle is build
+output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle).
+xFuser remains external: its
 compatibility wheel is built locally from the verified official wheel, and
 neither the wheel nor dependency source belongs in the repository.
 

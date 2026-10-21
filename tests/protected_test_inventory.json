@@ -1744,6 +1744,9 @@
       "test_the_second_wall_catches_a_memory_drop_after_the_price": "f811aa2d09d48da1",
       "test_unsupported_slab_dtype_logs_and_falls_back_to_stock": "820791a73fe15c07"
     },
+    "tests/test_studio_execution_refusal_cap.py": {
+      "test_long_refusal_keeps_its_class_tag_remedy_and_consent_descriptor": "42e4732f3405c567"
+    },
     "tests/test_sweep_matrix.py": {
       "test_a_box_that_gives_no_reading_is_recorded_not_waited_on": "7480ed4464841a53",
       "test_a_capacity_class_checkpoint_is_flagged_whatever_the_preset": "0e0f49fb3310e52d",

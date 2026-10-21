@@ -44,7 +44,19 @@ def main() -> int:
           + "export function availableMemoryStatus(value) {\n"
           + "  if (typeof value !== 'number' || !Number.isFinite(value)) return 'unknown';\n"
           + "  const threshold = PRESENTATION.thresholds.available_memory_gib;\n"
-          + "  return value > threshold.value ? threshold.above : threshold.otherwise;\n}\n")
+          + "  return value > threshold.value ? threshold.above : threshold.otherwise;\n}\n"
+          # The browser twin of presentation.slab_reading; a Node test keeps them equal.
+          + "export function slabReading(meta) {\n"
+          + "  if (meta === null || meta === undefined) return 0;\n"
+          + "  if (typeof meta !== 'object' || Array.isArray(meta) || meta.memory_error != null) return null;\n"
+          + "  const memory = meta.memory;\n"
+          + "  if (!memory || typeof memory !== 'object' || Array.isArray(memory)) return null;\n"
+          + "  if (Object.hasOwn(memory, 'slab_gib')) {\n"
+          + "    const value = memory.slab_gib;\n"
+          + "    return typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : null;\n  }\n"
+          + "  const residency = memory.weight_residency;\n"
+          + "  if (residency == null) return Object.hasOwn(memory, 'patcher_class') || Object.hasOwn(memory, 'model') ? null : 0;\n"
+          + "  return typeof residency === 'string' && residency !== 'slab' ? 0 : null;\n}\n")
     js_target = ROOT / "web/js/dgx_monarch_presentation.js"
     if args.check:
         if not js_target.exists() or js_target.read_text(encoding="utf-8") != js:

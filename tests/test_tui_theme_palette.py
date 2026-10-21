@@ -1,8 +1,12 @@
 """Keep dgxm top's six memory segments visually distinct.
 
-Segment colors must be distinct, theme-defined, and outside the terminal's
-repaintable standard slots. The spark theme matches the browser sidebar.
-Gate chips use the same three verdict-color roles on both surfaces.
+Segment colors must be distinct and theme-defined. The guards run over the
+colors dgxm top draws, terminal_palette(theme, color_system) as Rich renders
+them, for every color system Rich reports. On 256-color and truecolor
+terminals the segments stay outside the terminal's repaintable standard slots.
+A 16-color terminal has only standard slots, so there spark and ember take six
+different ones. The spark theme matches the browser sidebar. Gate chips use the
+same three verdict-color roles on both surfaces.
 """
 from __future__ import annotations
 
@@ -17,7 +21,7 @@ import pytest
 
 pytest.importorskip("rich")
 
-from rich.color import ANSI_COLOR_NAMES, Color
+from rich.color import ANSI_COLOR_NAMES, Color, ColorSystem
 
 from dgx_monarch.tui.app import THEMES, terminal_palette
 
@@ -109,6 +113,55 @@ def test_no_segment_sits_in_a_slot_the_terminal_can_repaint():
         "of these into one, so the distance floor above proves nothing for "
         "them:\n" + "\n".join(themable)
     )
+
+
+# Each color system Rich reports for a terminal, and the table it renders with.
+RENDERED = {"truecolor": ColorSystem.TRUECOLOR, "256": ColorSystem.EIGHT_BIT,
+            "standard": ColorSystem.STANDARD, "windows": ColorSystem.WINDOWS}
+BASIC = ("standard", "windows")
+
+
+def _drawn(theme: str, system: str) -> dict[str, Color]:
+    """The segment colors dgxm top draws: the adapter's palette as Rich renders it."""
+    palette = terminal_palette(theme, system)
+    return {key: Color.parse(palette[key]).downgrade(RENDERED[system]) for key in SEGMENTS}
+
+
+@pytest.mark.parametrize("system", ("truecolor", "256"))
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_drawn_segments_stay_apart_and_out_of_repaintable_slots(theme, system):
+    drawn = _drawn(theme, system)
+    close = [f"{a} and {b}" for a, b in itertools.combinations(SEGMENTS, 2)
+             if math.dist(drawn[a].get_truecolor(), drawn[b].get_truecolor()) < MIN_DISTANCE]
+    assert not close, f"{theme} on {system}: segments a reader cannot tell apart: {close}"
+    themable = [key for key, color in drawn.items() if color.number is not None and color.number < 16]
+    assert not themable, f"{theme} on {system}: {themable} sit in a slot the terminal can repaint"
+
+
+@pytest.mark.parametrize("system", BASIC)
+@pytest.mark.parametrize("theme", ("spark", "ember"))
+def test_a_16_color_terminal_gets_six_different_slots(theme, system):
+    """Pool and cache once shared yellow here, where Rich's own downgrade kept them apart."""
+    slots = [_drawn(theme, system)[key].number for key in SEGMENTS]
+    assert len(set(slots)) == len(SEGMENTS), f"{theme} on {system}: slots {slots}"
+
+
+@pytest.mark.parametrize("system", BASIC)
+def test_mono_on_a_16_color_terminal_has_three_greys_and_the_guide_says_so(system):
+    """Sixteen colors hold three visible greys, so six mono segments cannot all differ.
+
+    This predates the shared palette, and no assignment of three greys keeps
+    every pair of neighbors apart once empty segments drop out of the bar.
+    """
+    slots = [_drawn("mono", system)[key].number for key in SEGMENTS]
+    assert len(set(slots)) == 3
+    guide = " ".join((REPO / "docs/TUI.md").read_text().split())
+    assert "has only three visible greys" in guide
+
+
+def test_a_terminal_without_color_gets_the_mono_names():
+    for theme in THEMES:
+        assert terminal_palette(theme, None) == THEMES["mono"]
 
 
 def test_spark_is_the_browser_panel_s_palette():

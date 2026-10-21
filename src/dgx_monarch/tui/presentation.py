@@ -10,6 +10,7 @@ from ..studio.presentation import (
     MEMORY_COLORS,
     STATUS_COLORS,
     format_metric,
+    slab_reading,
 )
 
 # Branding themes preserve semantic colors. Terminal adapters select the
@@ -29,6 +30,37 @@ THEMES = {
 
 def known_number(value: object) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value)
+
+
+def breakdown_slab(stats: dict[str, Any], meta: object) -> float | None:
+    """Slab GiB for the memory bar, or None when the bar cannot be drawn honestly.
+
+    ``meta`` is the host's Worker report, None when no Worker reports the host.
+    """
+    mem = stats.get("mem_gib") or {}
+    if not all(known_number(value) for value in (
+            mem.get("AnonPages"), mem.get("Shmem"), stats.get("gpu_proc_gib"), stats.get("pool_gib"))):
+        return None
+    return slab_reading(meta)
+
+
+# A panel's round border and `padding: 0 1` take four columns.
+PANEL_INSET = 4
+# "used 100.0/121.6 GiB  avail 100.0 GiB" plus the host label, brackets and spaces.
+HOST_ROW_TEXT = 46
+# "rx " before a rail graph and " 12.34 GB/s  " after it.
+RAIL_DIRECTION_TEXT = 16
+
+
+def host_bar_cells(width: int) -> int:
+    """Memory bar cells that keep the used and available readings on the bar's row."""
+    return max(24, width - PANEL_INSET - HOST_ROW_TEXT)
+
+
+def rail_columns(labels: list[str], width: int) -> tuple[int, int]:
+    """The rail label column and the graph cells per direction that fit one row."""
+    label = max((len(text) for text in labels), default=0) + 1
+    return label, max(8, (width - PANEL_INSET - label - 2 * RAIL_DIRECTION_TEXT) // 2)
 
 
 def gpu_summary(stats: dict[str, Any]) -> str:

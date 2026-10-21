@@ -3,7 +3,7 @@
   import type { StudioClient } from '../api';
   import type { Artifact, ReuseArtifact } from '../contracts';
   import ComparisonDetails from './ComparisonDetails.svelte';
-  import { displayUnknown } from '../model';
+  import { displayUnknown, formatTime } from '../model';
   import { frameTarget } from '../mediaPlayback';
   let {
     artifact = null,
@@ -323,8 +323,9 @@
     </div>{/if}
   {#if artifact}<div class="viewer-footer">
       <span class="muted"
-        >{artifact.metadata?.width ?? '?'} × {artifact.metadata?.height ?? '?'} · {artifact.id} · {artifact.created_at ??
-          'Time unknown'}</span
+        >{artifact.metadata?.width ?? '?'} × {artifact.metadata?.height ?? '?'} · {artifact.id} · {formatTime(
+          artifact.created_at,
+        )}</span
       >
       <div>
         <button onclick={() => onreuse(artifact)}>Reuse settings</button><button

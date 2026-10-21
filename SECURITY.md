@@ -164,3 +164,12 @@ Other documentation links here.
 
 See [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md) for the repository-wide trust
 boundaries and severity model.
+
+## Studio companion boundary
+
+The optional Studio companion (`dgxm-studio`) adds two boundaries:
+[Browser to Studio companion](docs/THREAT_MODEL.md#browser-to-studio-companion)
+and [Companion to driver, systemd and CLI](docs/THREAT_MODEL.md#companion-to-driver-systemd-and-cli).
+Its per-launch owner token is a password; with `--allow-management` it is
+code execution as the worker account on every host. Report a way to obtain
+the token, or to act through the companion without it, privately as above.

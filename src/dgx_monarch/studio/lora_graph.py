@@ -6,7 +6,7 @@ from typing import Any
 
 from ..constants import MODEL_TYPE
 from .contracts import StudioError, object_value
-from .drafts import validate_value
+from .drafts import DraftError, validate_value
 from .workflows import node_inputs
 
 LORA_NODES = {"LoraLoader", "LoraLoaderModelOnly", "DGXMonarchLoraLoader"}
@@ -170,7 +170,10 @@ def apply_loras(original: dict[str, Any], info: dict[str, Any], stack: Any,
         for name, value in updates.items():
             if index < existing_count and isinstance(node["inputs"].get(name), list):
                 raise StudioError("lora_binding", "LoRA asset and strengths must be editable typed inputs.")
-            node["inputs"][name] = validate_value(value, fields[name])
+            try:
+                node["inputs"][name] = validate_value(value, fields[name])
+            except DraftError as exc:
+                raise StudioError("lora_binding", f"LoRA slot {index + 1} ({nid}.{name}): {exc}") from exc
         resolved.append({"node_id": nid, "class_type": node["class_type"], "asset_id": node["inputs"].get("lora_name"),
                          **{key: value for key, value in updates.items() if key != "lora_name"}, "enabled": entry is not None,
                          "inserted": index >= existing_count, "compatibility": "pending_backend_validation"})

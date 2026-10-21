@@ -2,20 +2,8 @@
 from __future__ import annotations
 
 import json
-import math
 
-
-def _replace_nonfinite(value):
-    """Replace non-finite floats without discarding the rest of a snapshot."""
-    if isinstance(value, float):
-        return value if math.isfinite(value) else None
-    if isinstance(value, dict):
-        return {key: _replace_nonfinite(item) for key, item in value.items()}
-    if isinstance(value, list):
-        return [_replace_nonfinite(item) for item in value]
-    if isinstance(value, tuple):
-        return tuple(_replace_nonfinite(item) for item in value)
-    return value
+from ..finite_json import replace_nonfinite as _replace_nonfinite
 
 
 def _json_payload(value):

@@ -28,6 +28,10 @@ _ACTIVITY_MODULES = ("cli/comfy_ports.py", "cli/worker_health.py")
 _MUTATION_SINKS = (
     "cli/legacy_update.py", "cli/lifecycle.py", "cli/main.py", "mesh_attach.py")
 
+# Studio drives the same mutations from a browser: driver stop and restart,
+# Worker lifecycle, update and package changes. Every module in it is a sink.
+_MUTATION_SINK_TREES = ("studio/",)
+
 # A helper spelled this way answers a yes/no question about a live thing.
 _COLLAPSING = re.compile(r"^_?(running_\w+|is_\w+|healthy)$")
 
@@ -39,6 +43,12 @@ _NON_MUTATION_READERS = frozenset({
     "is_file",    # pathlib: this checkout carries a pyproject.toml
     "is_local",   # lifecycle_host: which host this process is, not who is up
     "_is_local",  # the same function under the alias lifecycle.py imports
+    "is_absolute",     # pathlib: the spelling of a path, not a live process
+    "is_relative_to",  # pathlib: one path lies under another, by spelling
+    "is_symlink",      # pathlib: a file's type on disk, not a live process
+    "is_api_prompt",   # studio.workflows: the shape of a JSON document
+    "is_link",         # studio.widget_values: the [node_id, slot] shape of a prompt value
+    "_is_widget",      # studio.widget_values: whether a schema row draws a widget
 })
 
 _TRI_STATE_READERS = ("driver_probe", "passive_unhealthy_workers")
@@ -147,7 +157,7 @@ def test_no_collapsing_helper_is_called_on_a_mutation_path():
                 and _COLLAPSING.fullmatch(node.name)
                 and node.name not in _NON_MUTATION_READERS
             )
-        if relative not in _MUTATION_SINKS:
+        if relative not in _MUTATION_SINKS and not relative.startswith(_MUTATION_SINK_TREES):
             continue
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
@@ -240,6 +250,13 @@ def test_probe_certainty_owns_the_only_unknown_vocabulary():
                 if not isinstance(node.value, (ast.Name, ast.Attribute)):
                     offenders.append(f"{relative}:{node.lineno} {target.id}")
         for node in ast.walk(tree):
+            if isinstance(node, ast.Compare):
+                # Reading the code back by its bare value is the same second
+                # literal as returning it bare.
+                if any(_int_literal(operand) == probe_certainty.UNKNOWN_EXIT
+                       for operand in _compared(node)):
+                    offenders.append(f"{relative}:{node.lineno} bare unknown exit compared")
+                continue
             if not isinstance(node, ast.Return):
                 continue
             value = node.value
@@ -247,4 +264,54 @@ def test_probe_certainty_owns_the_only_unknown_vocabulary():
                 continue
             if value.value == probe_certainty.UNKNOWN_EXIT:
                 offenders.append(f"{relative}:{node.lineno} bare unknown exit")
+    assert offenders == []
+
+
+_EXIT_CODE_NAMES = frozenset({"code", "returncode", "exit_code"})
+
+
+def _int_literal(node: ast.AST) -> int | None:
+    if isinstance(node, ast.Constant) and type(node.value) is int:
+        return node.value
+    return None
+
+
+def _compared(node: ast.Compare) -> list[ast.AST]:
+    """Every operand of a comparison, with set, tuple and list members unpacked."""
+    operands: list[ast.AST] = []
+    for operand in (node.left, *node.comparators):
+        if isinstance(operand, (ast.Set, ast.Tuple, ast.List)):
+            operands.extend(operand.elts)
+        else:
+            operands.append(operand)
+    return operands
+
+
+def _names_an_exit_code(node: ast.AST) -> bool:
+    if isinstance(node, ast.Name):
+        return node.id in _EXIT_CODE_NAMES
+    return isinstance(node, ast.Attribute) and node.attr in _EXIT_CODE_NAMES
+
+
+def test_studio_reads_child_exit_codes_only_through_documented_values():
+    """Studio turns a spawned command's exit code into a receipt state.
+
+    A comparison against a bare number other than 0 gives that number a
+    meaning the command never documented. Studio once read exit 3 as unknown
+    and every other failure as definite, while each spawned command reports an
+    unanswered probe as `probe_certainty.UNKNOWN_EXIT`. That turned an
+    unobserved status, doctor or repair result into a recorded failure.
+    """
+    offenders = []
+    for relative, tree in _modules():
+        if not relative.startswith(_MUTATION_SINK_TREES):
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Compare):
+                continue
+            operands = _compared(node)
+            if not any(_names_an_exit_code(operand) for operand in operands):
+                continue
+            if any(_int_literal(operand) not in (None, 0) for operand in operands):
+                offenders.append(f"{relative}:{node.lineno} exit code compared to a bare number")
     assert offenders == []

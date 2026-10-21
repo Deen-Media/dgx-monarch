@@ -221,3 +221,43 @@ def test_distinct_legacy_style_targets_normalize_without_losing_edits():
     assert prompt[rows["2"]["execution_node_id"]]["inputs"]["text"] == "noise, blur"
     assert values == {rows["1"]["id"]: "painted draft", rows["2"]["id"]: "noise, blur"}
     assert effective["style_bindings"] == {"prompt": rows["1"]["id"], "negative_prompt": rows["2"]["id"]}
+
+
+def _recorded_media_workflow():
+    """A subgraph holding an upload loader and a SaveVideo, as frontend 1.55 saves them."""
+    upload = {"name": "upload", "type": "IMAGEUPLOAD", "widget": {"name": "upload"}, "link": None}
+    child = {"id": "media", "inputNode": {"id": -10}, "outputNode": {"id": -20}, "inputs": [],
+             "outputs": [{"name": "IMAGE", "type": "IMAGE"}],
+             "nodes": [{"id": 1, "type": "LoadImage", "widgets_values": ["example.png", "image"], "inputs": [upload]},
+                       {"id": 2, "type": "LoadVideo", "widgets_values": ["wan_animate2_driving.mp4", "image"]},
+                       {"id": 3, "type": "SaveVideo", "widgets_values": ["clip", "mp4", "h264"],
+                        "inputs": [{"name": "video", "type": "VIDEO", "link": 2}]}],
+             "links": [{"id": 1, "origin_id": 1, "origin_slot": 0, "target_id": -20, "target_slot": 0},
+                       {"id": 2, "origin_id": 2, "origin_slot": 0, "target_id": 3, "target_slot": 0}]}
+    return {"id": "main", "nodes": [
+        {"id": 2, "type": "media", "inputs": [], "outputs": [{"name": "IMAGE", "type": "IMAGE", "links": [1]}]},
+        {"id": 3, "type": "SaveImage", "widgets_values": ["out"], "inputs": [{"name": "images", "link": 1}]},
+    ], "links": [[1, 2, 0, 3, 0, "IMAGE"]], "definitions": {"subgraphs": [child]}, "extra": {}}
+
+
+def test_subgraph_upload_slots_and_dynamic_combos_follow_the_recorded_schema():
+    import json
+    from pathlib import Path
+
+    info = json.loads((Path(__file__).parent / "fixtures/studio/object_info_bundled.json").read_text())
+    source = _recorded_media_workflow()
+    prompt = compile_workflow(source, info)
+    image, save = prompt["__studio_subgraph__2/1"], prompt["__studio_subgraph__2/3"]
+    assert image == {"class_type": "LoadImage", "inputs": {"image": "example.png"}}
+    assert prompt["3"]["inputs"]["images"] == ["__studio_subgraph__2/1", 0]
+    assert (save["inputs"]["format"], save["inputs"]["format.codec"], save["inputs"]["format.codec.encoding"]) == (
+        "mp4", "h264", "auto")
+    edited = compile_workflow(source, info, {"media:3:format": "webm", "media:3:format.codec": "av1"})
+    assert {key: value for key, value in edited["__studio_subgraph__2/3"]["inputs"].items()
+            if key.startswith("format")} == {"format": "webm", "format.codec": "av1", "format.codec.encoding": "auto"}
+    source["definitions"]["subgraphs"][0]["nodes"][0]["inputs"].append(
+        {"name": "extension_only", "type": "IMAGE", "link": 3})
+    source["definitions"]["subgraphs"][0]["links"].append(
+        {"id": 3, "origin_id": 1, "origin_slot": 0, "target_id": 1, "target_slot": 1})
+    with pytest.raises(WorkflowError, match="unsupported subgraph input sockets"):
+        compile_workflow(source, info)

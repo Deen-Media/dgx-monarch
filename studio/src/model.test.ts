@@ -1,12 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  bindingError,
-  gridCombinations,
-  consumeEvents,
-  boundedLog,
-  restoreDraft,
-} from './model.ts';
+import { bindingError, consumeEvents, boundedLog, restoreDraft, driverStatus } from './model.ts';
 test('typed limits reject unsafe values without clamping', () => {
   const b = { id: 'steps', type: 'INT', min: 1, max: 100 };
   assert.equal(bindingError(b, 10), null);
@@ -14,39 +8,6 @@ test('typed limits reject unsafe values without clamping', () => {
   assert.match(bindingError(b, 1.2)!, /whole/);
   assert.match(bindingError(b, Infinity)!, /finite/);
   assert.match(bindingError({ ...b, status: 'ambiguous' }, 20)!, /repair/);
-});
-test('grid preserves values and bounds Cartesian multiplication', () => {
-  assert.deepEqual(
-    gridCombinations([
-      { id: 'seed', values: [1, 2] },
-      { id: 'cfg', values: [3, 4] },
-    ]),
-    [
-      { seed: 1, cfg: 3 },
-      { seed: 1, cfg: 4 },
-      { seed: 2, cfg: 3 },
-      { seed: 2, cfg: 4 },
-    ],
-  );
-  assert.throws(
-    () =>
-      gridCombinations(
-        [
-          { id: 'a', values: [1, 2] },
-          { id: 'b', values: [1, 2] },
-        ],
-        3,
-      ),
-    /limit/,
-  );
-  assert.throws(
-    () =>
-      gridCombinations([
-        { id: 'a', values: [1] },
-        { id: 'a', values: [2] },
-      ]),
-    /different/,
-  );
 });
 test('delayed and duplicated events cannot regress cursor', () => {
   const result = consumeEvents(4, [{ seq: 7 }, { seq: 2 }, { seq: 5 }, { seq: 7 }, { seq: 'bad' }]);
@@ -97,4 +58,14 @@ test('optional legacy insertion targets default to empty without dropping extens
   assert.deepEqual((value as any).extension, { retained: true });
   assert.deepEqual(restoreDraft({ values: [] }).values, {});
   assert.equal(restoreDraft({ lora_insertion: null }).lora_insertion, undefined);
+});
+test('an unavailable driver shows its failure code', () => {
+  assert.equal(driverStatus({ state: 'connected', code: 'stale' }), 'connected');
+  assert.equal(
+    driverStatus({ state: 'unavailable', code: 'database_error' }),
+    'unavailable (database_error)',
+  );
+  assert.equal(driverStatus({ state: 'unavailable' }), 'unavailable');
+  assert.equal(driverStatus({}), 'unknown');
+  assert.equal(driverStatus(undefined), 'unknown');
 });
