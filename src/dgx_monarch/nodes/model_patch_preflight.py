@@ -1,11 +1,13 @@
-"""Driver preflights for the per-render model patches: Skip Layer Guidance, the SD3 shift, LoRA.
+"""Driver preflights for the per-render model patches (Skip Layer Guidance, the SD3
+shift, LoRA) and for MOSS-Image reference images.
 
-All three run once per render in nodes/render_submit.py, after the topology
+All four run once per render in nodes/render_submit.py, after the topology
 resolves and before any Worker call, so a refusal costs no dispatch. Each fails
 open where it cannot read its facts: the Worker belt (actor/guidance_render.py)
 still guards Skip Layer Guidance, the shift guard refuses only a config that
-says multiplier 1.0 outright, and the model store refuses a LoRA on a refused
-quantized file on every Worker (lora_quant_guard.py).
+says multiplier 1.0 outright, the model store refuses a LoRA on a refused
+quantized file on every Worker (lora_quant_guard.py), and the MOSS-Image
+sharded forward refuses reference images on every rank.
 """
 from __future__ import annotations
 
@@ -81,6 +83,32 @@ def preflight_lora_quant(model: Any, uncond: Any = None) -> None:
         sniffed = _sniffed_checkpoint(unet_name, family_select.override_for_model(model))
         if sniffed is not None:
             lora_quant_guard.assert_lora_quant_supported(*sniffed, list(loras))
+
+
+def renders_on_one_gpu(topo: Any) -> bool:
+    """Whether the resolved topology is one GPU: world 1 and no degree above one."""
+    degrees = [int(getattr(topo, name, 1)) for name in ("world", "ulysses", "ring", "cfg", "dp")]
+    return max(degrees) == 1 and not getattr(topo, "fsdp", False)
+
+
+def preflight_moss_image_reference_images(model: Any, ref_summary: Any, topo: Any) -> None:
+    """Refuse MOSS-Image reference images on every topology but one GPU (#130).
+
+    ``ref_summary`` is the sampler's (has references, method) pair, read from
+    the raw conditioning before the wire packs it. Stock MOSS-Image uses the
+    references whatever the method, so only their presence counts. The header
+    is read only for a render that carries references off one GPU, and an
+    unreadable one passes: the sharded forward refuses on every rank, and on
+    cfg2 and dp2, where nothing binds, stock's own forward runs.
+    """
+    if not ref_summary or not ref_summary[0] or renders_on_one_gpu(topo):
+        return
+    if _sniffed_family(model) != "moss_image":
+        return
+    from ..adapters.base import UnsupportedModelError
+    from ..adapters.moss_image_seams import REFERENCE_IMAGES_REFUSAL
+
+    raise UnsupportedModelError(REFERENCE_IMAGES_REFUSAL)
 
 
 def preflight_skip_layer_guidance(model: Any, topo: Any, request: Mapping[str, Any]) -> None:

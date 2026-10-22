@@ -13,6 +13,12 @@ order, and the output must equal stock's. Recording hooks prove the mechanism
 as well as the result: the fused-norm launches, the rotary rows, the override
 count, the prefetch order, the block replacements and the guards.
 
+Both MOSS-Image forms run here: ComfyUI 60aade0bb (2026-10-22) moved the
+block's norm behind ``modulate`` and added reference images for edit LoRAs,
+and the forward tests pass against that tree and the one before it. Reference
+images refuse on every rank before any collective; with none, the arguments
+stock passes by default leave the sharded forward exact.
+
 "Equal" follows tests/test_flux3_comfy_exactness.py: bit equality on this
 rig's aarch64 CPU, float32 rounding (allclose 2e-5) on x86. Rank against rank
 is always exact. These tests prove the plumbing; the GPU kernel branches are
@@ -120,7 +126,7 @@ def _inputs(grid, text, batch=1, seed=1, text_dim=TEXT_DIM, channels=CHANNELS):
     return x, timestep, context
 
 
-def _stock(monkeypatch, comfy, model, inputs, options):
+def _stock(monkeypatch, comfy, model, inputs, options, forward_kwargs=None):
     """Stock's forward, recording every attention call's operands."""
     kernel = comfy.model.optimized_attention
     calls: list[tuple] = []
@@ -133,14 +139,14 @@ def _stock(monkeypatch, comfy, model, inputs, options):
     monkeypatch.setattr(comfy.model, "optimized_attention", record)
     try:
         with torch.no_grad():
-            out = model(*inputs, transformer_options=copy.copy(options))
+            out = model(*inputs, transformer_options=copy.copy(options), **(forward_kwargs or {}))
     finally:
         monkeypatch.setattr(comfy.model, "optimized_attention", kernel)
     return out, calls, kernel
 
 
 def _sharded(monkeypatch, model, inputs, options, kernel, *, world=WORLD, ring_world=1,
-             harness=None, wrap_dispatch=None):
+             harness=None, wrap_dispatch=None, forward_kwargs=None):
     harness = harness if harness is not None else _StockKernelHarness(world, kernel)
     _install_stubs(monkeypatch, harness)
     monkeypatch.setattr(sys.modules["xfuser.core.distributed"],
@@ -159,7 +165,8 @@ def _sharded(monkeypatch, model, inputs, options, kernel, *, world=WORLD, ring_w
         try:
             _LOCAL.rank = rank
             with torch.no_grad():
-                outputs[rank] = models[rank](*inputs, transformer_options=copy.copy(options))
+                outputs[rank] = models[rank](*inputs, transformer_options=copy.copy(options),
+                                             **(forward_kwargs or {}))
         except BaseException as exc:  # re-raised in the test body
             errors[rank] = exc
             harness.fabric.barrier.abort()
@@ -211,13 +218,17 @@ def _marked(function):
 # (grid, text rows, batch, fused): an even stream (N 22); the boundary inside the
 # image block (N 19, rank 1 starts at row 10) and inside the text block (N 13,
 # rank 1 starts at row 7, past the 4 image rows); batch 2 at equal T, where the
-# shard is a strided chunk; split q, k, v.
+# shard is a strided chunk; split q, k, v; a long prompt, where the text block
+# outweighs the image (N 43, rank 1 starts at row 22, deep in the text, and
+# holds one pad), alone and at batch 2 (N 49).
 EXACT_CASES = {
     "even": ((4, 4), 6, 1, True),
     "image-boundary": ((4, 4), 3, 1, True),
     "text-boundary": ((2, 2), 9, 1, True),
     "batch-2": ((3, 3), 5, 2, True),
     "split-qkv": ((3, 3), 6, 1, False),
+    "long-prompt": ((2, 3), 37, 1, True),
+    "long-prompt-batch-2": ((3, 3), 40, 2, True),
 }
 
 
@@ -449,8 +460,9 @@ def test_forward_the_override_runs_once_a_block_and_never_for_text(monkeypatch, 
 
     stock_attention = comfy_moss.model.attention
 
-    def no_options(q, k, v, q_norm, k_norm, pe, heads, comfy_attention, transformer_options):
-        return stock_attention(q, k, v, q_norm, k_norm, pe, heads, comfy_attention, {})
+    def no_options(q, k, v, q_norm, k_norm, pe, heads, comfy_attention, transformer_options, *refs):
+        # Since 60aade0bb attention() also takes ref_kv and kv_out; they pass through.
+        return stock_attention(q, k, v, q_norm, k_norm, pe, heads, comfy_attention, {}, *refs)
 
     monkeypatch.setattr(comfy_moss.model, "attention", no_options)
     with torch.no_grad():
@@ -572,6 +584,103 @@ def test_forward_an_attention_keyword_the_dispatcher_drops_refuses_class_p(monke
     assert _tag(caught.value).refusal_class is RefusalClass.PHYSICS
     assert "docs/TROUBLESHOOTING.md #116" in str(caught.value)
     assert harness.fabric.counts == {}
+
+
+def _takes_references(comfy) -> bool:
+    return hasattr(comfy.model.MOSSImage, "preprocess_refs")
+
+
+# Stock's own defaults, and a reference method with no reference, which stock
+# reads only beside one: both leave the forward the plain one.
+NO_REFERENCE = {
+    "stock-defaults": {"ref_latents": [], "ref_latents_method": None, "ref_kv": None},
+    "method-alone": {"ref_latents_method": "index_timestep_zero_isolated"},
+}
+
+
+@pytest.mark.parametrize("case", sorted(NO_REFERENCE))
+def test_forward_no_reference_arguments_stay_exact(monkeypatch, comfy_moss, case):
+    """On the tree before 60aade0bb stock's **kwargs takes them; after it, its parameters."""
+    model = _tiny(comfy_moss)
+    inputs = _inputs((3, 3), 6, batch=2)
+    arguments = NO_REFERENCE[case]
+    expected, stock_calls, kernel = _stock(monkeypatch, comfy_moss, model, inputs, {}, arguments)
+    plain, _calls, _kernel = _stock(monkeypatch, comfy_moss, model, inputs, {})
+    assert torch.equal(plain, expected)
+    outputs, harness = _sharded(monkeypatch, model, inputs, {}, kernel, forward_kwargs=arguments)
+    _assert_stock_operands_and_output(stock_calls, harness, expected, outputs)
+
+
+def _references(kind: str):
+    generator = torch.Generator().manual_seed(11)
+    if kind == "ref_latents":
+        return {"ref_latents": [torch.randn(1, CHANNELS, 2, 2, generator=generator)],
+                "ref_latents_method": "index_timestep_zero"}
+    return {"ref_kv": torch.randn(1, LAYERS, 2, 4, DIM, generator=generator),
+            "ref_latents_method": "index_timestep_zero_isolated"}
+
+
+@pytest.mark.parametrize("ring_world", [1, 2], ids=["uly2", "ring2"])
+@pytest.mark.parametrize("kind", ["ref_latents", "ref_kv"])
+def test_forward_reference_images_refuse_class_p_before_any_collective(monkeypatch, comfy_moss,
+                                                                      kind, ring_world):
+    """Every rank refuses before the prelude runs, so no exchange starts (#130)."""
+    model = _tiny(comfy_moss)
+    inputs = _inputs((4, 4), 6)    # N 22: no pad, so ring2 reaches the same first guard
+    texts: list = []
+    model.text_embedder.register_forward_pre_hook(lambda module, args: texts.append(1))
+    harness = _StockKernelHarness(WORLD, comfy_moss.model.optimized_attention)
+    with pytest.raises(UnsupportedModelError, match="carries reference images") as caught:
+        _sharded(monkeypatch, model, inputs, {}, harness.kernel, harness=harness,
+                 ring_world=ring_world, forward_kwargs=_references(kind))
+    assert _tag(caught.value).refusal_class is RefusalClass.PHYSICS
+    assert str(caught.value) == moss_image_seams.REFERENCE_IMAGES_REFUSAL
+    assert harness.fabric.counts == {} and texts == []
+    assert harness.seen == {rank: [] for rank in range(WORLD)}
+
+
+def test_forward_the_bound_model_computes_stocks_reference_keys(comfy_moss):
+    """Stock's preprocess_refs calls every block with kv_out; on a bound model the
+    blocks hand it to stock's code, so the keys and values are stock's, and stock's
+    forward does use them (the premise of the refusal)."""
+    if not _takes_references(comfy_moss):
+        pytest.skip("this ComfyUI predates MOSS-Image reference images (60aade0bb)")
+    model = _tiny(comfy_moss)
+    refs = [torch.randn(1, CHANNELS, 2, 3, generator=torch.Generator().manual_seed(5))]
+    with torch.no_grad():
+        expected = model.preprocess_refs(refs)
+    bound = copy.deepcopy(model)
+    MOSSImageAdapter().inject_usp(bound, InjectionContext(topology_sp=WORLD, usp_attention=None))
+    assert all("forward" in vars(block) for block in bound.layers)
+    with torch.no_grad():
+        assert torch.equal(bound.preprocess_refs(refs), expected)
+        inputs = _inputs((3, 3), 6)
+        plain = model(*inputs, transformer_options={})
+        edited = model(*inputs, transformer_options={}, ref_kv=expected,
+                       ref_latents_method="index_timestep_zero_isolated")
+    assert expected.shape == (1, LAYERS, 2, 6, DIM)
+    assert not torch.equal(plain, edited)
+
+
+def test_forward_the_reference_rope_form_is_called_as_stock_calls_it(monkeypatch, comfy_moss):
+    """With no reference, stock passes an empty shape list and offset 0; so does each rank."""
+    if not _takes_references(comfy_moss):
+        pytest.skip("this ComfyUI predates MOSS-Image reference images (60aade0bb)")
+    stock_rope = comfy_moss.model.MOSSImage.rope
+    calls: list = []
+
+    def rope(self, h, w, text_len, device, transformer_options={}, ref_shapes=(), f_offset=0):  # noqa: B006
+        calls.append((h, w, text_len, list(ref_shapes), f_offset))
+        return stock_rope(self, h, w, text_len, device, transformer_options, ref_shapes, f_offset)
+
+    model = _tiny(comfy_moss)
+    inputs = _inputs((3, 4), 5)
+    monkeypatch.setattr(comfy_moss.model.MOSSImage, "rope", rope)
+    expected, stock_calls, kernel = _stock(monkeypatch, comfy_moss, model, inputs, {})
+    assert calls == [(3, 4, 5, [], 0)]
+    outputs, harness = _sharded(monkeypatch, model, inputs, {}, kernel)
+    assert calls == [(3, 4, 5, [], 0)] * (1 + WORLD)
+    _assert_stock_operands_and_output(stock_calls, harness, expected, outputs)
 
 
 def test_forward_a_subclass_tree_refuses_at_inject_on_the_forced_path(comfy_moss):
@@ -790,6 +899,38 @@ def test_guidance_conds_are_cond_regular_and_fold_only_at_equal_length(comfy_mos
     x_in = torch.zeros(2, CHANNELS, 4, 4)
     assert cfg_dispatch.conds_fold([[{"model_conds": short}], [{"model_conds": long}]], x_in) is False
     assert cfg_dispatch.conds_fold([[{"model_conds": short}], [{"model_conds": other}]], x_in) is True
+
+
+@pytest.mark.parametrize("method", ["index_timestep_zero_isolated", "index_timestep_zero_text_start",
+                                    "index_timestep_zero", "index"])
+def test_guidance_a_one_gpu_edit_off_inference_mode_matches_stocks_cached_keys(comfy_moss, tmp_path,
+                                                                              method):
+    """One GPU binds nothing, and a Worker samples outside inference mode, so its
+    extra_conds hands the forward the reference latents where ComfyUI caches the
+    keys and values once; stock's forward then computes them every step. Same bits."""
+    if not _takes_references(comfy_moss):
+        pytest.skip("this ComfyUI predates MOSS-Image reference images (60aade0bb)")
+    patcher, _path = _base_model(comfy_moss, tmp_path)
+    base_model = patcher.model
+    generator = torch.Generator().manual_seed(3)
+    context = torch.randn(1, 10, VENDOR_TEXT_DIM, generator=generator).to(torch.bfloat16)
+    refs = [torch.randn(1, CHANNELS, 2, 3, generator=generator)]
+    x = torch.randn(1, CHANNELS, 4, 4, generator=generator)
+    arguments = {"cross_attn": context, "noise": torch.zeros(1, CHANNELS, 4, 4),
+                 "device": torch.device("cpu"), "reference_latents": refs,
+                 "reference_latents_method": method}
+    with torch.inference_mode():
+        cached = {key: cond.cond for key, cond in base_model.extra_conds(**arguments).items()}
+    cached = {key: value.clone() if torch.is_tensor(value) else value for key, value in cached.items()}
+    worker = {key: cond.cond for key, cond in base_model.extra_conds(**arguments).items()}
+    assert "ref_kv" not in worker and "ref_latents" in worker
+    timestep = torch.tensor([0.6])
+    with torch.no_grad():
+        expected = base_model.apply_model(x, timestep, **cached)
+        out = base_model.apply_model(x, timestep, **worker)
+        plain = base_model.apply_model(x, timestep, c_crossattn=context)
+    assert torch.equal(out, expected)
+    assert not torch.equal(out, plain)
 
 
 def test_guidance_comfys_skip_is_admitted_and_the_sharded_forward_honours_it(monkeypatch, comfy_moss, tmp_path):

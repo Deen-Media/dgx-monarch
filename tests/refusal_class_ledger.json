@@ -669,6 +669,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/moss_image_seams.py::refuse_reference_images::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/moss_image_seams.py::refuse_reshaped_block_rows::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1117,6 +1123,12 @@
       "class": "C",
       "guard": "loader_footprint_preflight",
       "waivable": true
+    },
+    {
+      "site": "nodes/model_patch_preflight.py::preflight_moss_image_reference_images::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
     },
     {
       "site": "nodes/model_patch_preflight.py::preflight_shift_node::UnsupportedModelError#0",

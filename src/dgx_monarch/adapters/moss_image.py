@@ -25,6 +25,11 @@ The head norm runs after the gather, on stock's rows. The malloc graph is not
 opened in the sharded loop (the FLUX.3 precedent); the prefetch queue and its
 block-scope pops are kept. A padded ring or hybrid render refuses class K.
 
+Reference images (ComfyUI 60aade0bb's edit LoRA support) refuse class P on
+every rank before any collective, as the driver refuses them on every topology
+but one GPU before dispatch (adapters/moss_image_seams.py names why). The
+reference method alone changes nothing in stock and is ignored here too.
+
 single, cfg2 and dp2 bind nothing and run stock's forward. No pad is exact on
 cfg2 (image rows sit at RoPE f = T and the joint attention has no mask), so an
 unequal prompt pair dispatches one cond per rank. ``cfg_dispatch.
@@ -48,10 +53,10 @@ from .moss_image_seams import (
     assert_stock_tree,
     bind_norm_parity,
     refuse_control_channels,
+    refuse_reference_images,
     refuse_reshaped_block_rows,
     refuse_unsharded_attention,
     rope_call,
-    rope_with_options,
     shard_joint,
     vet_block_replacements,
 )
@@ -118,12 +123,14 @@ class MOSSImageAdapter(Adapter):
         rope = rope_call(diffusion_model)
         attn = ctx.usp_attention
 
-        def usp_forward(self, x, timestep, context, transformer_options={}, **kwargs):
+        def usp_forward(self, x, timestep, context, transformer_options={}, ref_latents=None,
+                        ref_latents_method=None, ref_kv=None, **kwargs):
             import comfy.ldm.moss_image.model as moss
             import comfy.model_prefetch
             from comfy.ldm.flux.layers import timestep_embedding
 
             # A. Guards: shapes, options and the tree only, identical on every rank.
+            refuse_reference_images(ref_latents, ref_kv)
             assert_no_foreign_attention_override(transformer_options, "moss_image")
             assert_usp_attention_patches_safe(transformer_options, "moss_image")
             B, C, H, W = x.shape
@@ -147,7 +154,7 @@ class MOSSImageAdapter(Adapter):
                                          chooser=STOCK_BACKEND_RUNS)
             text_opts = stock_attention_options({key: value for key, value in opts0.items()
                                                  if key != _OVERRIDE})
-            txt = self.text_embedder(context, pe[:, hw:], text_opts)
+            txt = self.text_embedder(context, pe[:, hw:rows], text_opts)
             img = self.video_embedder(x.flatten(2).transpose(1, 2))
             stream = torch.cat((img, txt), dim=1)
             del img, txt
@@ -189,4 +196,4 @@ class MOSSImageAdapter(Adapter):
         routable = [bind_norm_parity(block) for block in diffusion_model.layers]
         self.bind(diffusion_model, "_forward", usp_forward)
         log.info("moss_image USP injected: %d blocks, sp=%d, rope=%s", len(routable),
-                 ctx.topology_sp, "options" if rope is rope_with_options else "no options")
+                 ctx.topology_sp, rope.__name__)

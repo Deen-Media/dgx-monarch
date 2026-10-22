@@ -160,6 +160,22 @@
   `studio` joins the frozen consent-source vocabulary, so the Gate protocol
   moves to 14 and each combination re-proves once on first use
   ([TRUST](docs/TRUST.md#protocol-invariants)).
+- The `moss_image` adapter follows ComfyUI master's MOSS-Image forward of
+  2026-10-22 (commit 60aade0bb), which moved each block's norm behind
+  `modulate` and added three reference parameters to `_forward` and two
+  arguments to `rope`. The sharded blocks route whichever global the block
+  reads, the rope call follows all three forms, and the touchpoint registry
+  admits the forward with and without the reference parameters, so the
+  previous tree, d52a7a5ef, stays supported. In CPU tests the sharded
+  text-to-image forward is bit-identical to stock on both trees; it has not
+  been re-run on hardware ([MODELS](docs/MODELS.md#model-moss-image-sft)).
+- Refuse MOSS-Image reference images, which the new Text Encode MOSS-Image
+  Edit node attaches for edit LoRAs, class P on every topology but one GPU:
+  no hardware test has compared a cluster edit with stock. The driver refuses
+  before dispatch and the sharded forward on every rank before any exchange;
+  `mode=local` with `gpus_per_host=1` and Fleet KSampler run ComfyUI's own
+  forward
+  ([TROUBLESHOOTING #130](docs/TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)).
 
 ## [1.2.0] - 2026-10-16
 

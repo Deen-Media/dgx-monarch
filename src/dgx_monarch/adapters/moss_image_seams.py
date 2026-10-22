@@ -8,9 +8,18 @@ that which can refuse, route or cut: the inject-time tree and ``rope`` checks,
 the vetting of ``("single_block", i)`` replacements (an identity function, read
 from its bytecode, or a callable marked ``sequence_shard_local``), the window
 cut with its pad rows, the fused-norm route that launches both of a block's
-norm calls at stock's row count (FLUX.3's ``at_stock_rows``, prefix placement)
-and the attention ledger. Every raise sits in its own module-level function
-and goes through ``refusal()``, class P. Nothing imports ComfyUI at module level.
+norm calls at stock's row count (FLUX.3's ``at_stock_rows``, prefix placement),
+the attention ledger and the refusal of reference images. Every raise sits in
+its own module-level function and goes through ``refusal()``, class P. Nothing
+imports ComfyUI at module level.
+
+ComfyUI 60aade0bb (2026-10-22) added reference images for edit LoRAs. Its
+``Block.forward`` reaches the fused norm through ``modulate`` and the gated
+residual through ``residual``, both module globals, where the earlier form
+calls ``modulated_rms_norm`` and ``gated_residual`` itself; without a reference
+split the two forms run the same calls. ``rope`` gained the reference shapes
+and the f offset, and ``_forward`` the reference arguments. Both trees are
+supported: the route follows whichever global the block reads.
 """
 from __future__ import annotations
 
@@ -31,21 +40,30 @@ from .flux3_adaln_parity import at_stock_rows, loads_global, route_global
 
 MOSS_MODEL_MODULE = "comfy.ldm.moss_image.model"
 NORM_GLOBAL = "modulated_rms_norm"
+# Since ComfyUI 60aade0bb Block.forward calls these two, and modulate calls the norm.
+MODULATE_GLOBAL = "modulate"
+RESIDUAL_GLOBAL = "residual"
 ATTENTION_GLOBAL = "attention"
 # The keywords usp_attention applies itself (adapters/base.py); it would drop
 # any other one for an ordinary kernel.
 ADOPTED_ATTENTION_KEYWORDS = frozenset(
     {"mask", "attn_precision", "skip_reshape", "skip_output_reshape", "enable_gqa"})
 HEAD_DIM = 128
-_MASTER_ROPE = ("h", "w", "text_len", "device", "transformer_options")
+_OPTIONS_ROPE = ("h", "w", "text_len", "device", "transformer_options")
 _V042_ROPE = ("h", "w", "text_len", "device")
+_REFERENCE_ROPE = (*_OPTIONS_ROPE, "ref_shapes", "f_offset")
 _SKIPPED_OPS = frozenset({"RESUME", "NOP", "CACHE", "EXTENDED_ARG"})
 _VARIADIC = inspect.CO_VARARGS | inspect.CO_VARKEYWORDS
 
 
 def rope_with_options(model, h, w, text_len, device, options):
-    """ComfyUI master since b9b290e43: the options reach stock's table."""
+    """ComfyUI b9b290e43 up to 60aade0bb: the options reach stock's table."""
     return model.rope(h, w, text_len, device, options)
+
+
+def rope_with_references(model, h, w, text_len, device, options):
+    """ComfyUI master since 60aade0bb, called as stock's forward calls it with no reference."""
+    return model.rope(h, w, text_len, device, options, [], 0)
 
 
 def rope_without_options(model, h, w, text_len, device, options):
@@ -59,15 +77,18 @@ def rope_call(diffusion_model: Any) -> Callable[..., torch.Tensor]:
         names = tuple(inspect.signature(type(diffusion_model).rope).parameters)[1:]
     except (AttributeError, TypeError, ValueError):
         names = ()
-    if names == _MASTER_ROPE:
+    if names == _REFERENCE_ROPE:
+        return rope_with_references
+    if names == _OPTIONS_ROPE:
         return rope_with_options
     if names == _V042_ROPE:
         return rope_without_options
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
         f"moss_image: ComfyUI's MOSSImage.rope takes ({', '.join(names)}) after self, and this "
-        "release knows only the v0.42 form (h, w, text_len, device) and the later form that adds "
-        "transformer_options, so it cannot show that the sharded forward builds stock's rotary table. "
+        "release knows only the v0.42 form (h, w, text_len, device), the later form that adds "
+        "transformer_options and the form that also adds ref_shapes and f_offset, so it cannot "
+        "show that the sharded forward builds stock's rotary table. "
         "Use topology 'single' (mode=local with gpus_per_host=1), or a dgx-monarch release that "
         "supports this ComfyUI (docs/MODELS.md).",
     ))
@@ -95,9 +116,15 @@ def assert_stock_tree(diffusion_model: Any) -> None:
     text = getattr(diffusion_model, "text_embedder", None)
     if not isinstance(text, moss.TextEmbedder) or type(text).forward is not moss.TextEmbedder.forward:
         found.append(f"its text embedder is {type(text).__name__}, not stock's TextEmbedder")
-    for name in (NORM_GLOBAL, ATTENTION_GLOBAL):
-        if not loads_global(moss.Block.forward, name):
-            found.append(f"Block.forward no longer reads the module global {name}")
+    route = block_norm_route(moss.Block.forward)
+    modulate = getattr(moss, MODULATE_GLOBAL, None)
+    if route is None:
+        found.append(f"Block.forward reads neither the module global {NORM_GLOBAL} nor the pair "
+                     f"{MODULATE_GLOBAL} and {RESIDUAL_GLOBAL} alone")
+    elif route == MODULATE_GLOBAL and not (callable(modulate) and loads_global(modulate, NORM_GLOBAL)):
+        found.append(f"{MODULATE_GLOBAL} no longer reads the module global {NORM_GLOBAL}")
+    if not loads_global(moss.Block.forward, ATTENTION_GLOBAL):
+        found.append(f"Block.forward no longer reads the module global {ATTENTION_GLOBAL}")
     width = getattr(getattr(diffusion_model, "video_embedder", None), "out_features", None)
     heads = getattr(layers[0], "num_heads", None) if layers else None
     if layers and (not isinstance(heads, int) or width != heads * HEAD_DIM):
@@ -212,45 +239,81 @@ def shard_joint(stream: torch.Tensor, pe: torch.Tensor) -> JointShard:
                       drop_rows=padded_row_indices([(orig, tokens.shape[1])]))
 
 
+def block_norm_route(forward: Any) -> str | None:
+    """The global through which a ``Block.forward`` reaches its fused norm, or None.
+
+    ``modulated_rms_norm`` before ComfyUI 60aade0bb; ``modulate``, read with
+    ``residual`` and no direct norm call, since. Any other mix is unknown.
+    """
+    reads = {name for name in (NORM_GLOBAL, MODULATE_GLOBAL, RESIDUAL_GLOBAL)
+             if loads_global(forward, name)}
+    if reads == {NORM_GLOBAL}:
+        return NORM_GLOBAL
+    if reads == {MODULATE_GLOBAL, RESIDUAL_GLOBAL}:
+        return MODULATE_GLOBAL
+    return None
+
+
 def bind_norm_parity(block: Any) -> bool:
     """Bind ``block.forward`` so its two fused-norm calls run at stock's row count.
 
     With ``stock_norm_rows`` (N), stock's own ``Block.forward`` code runs with
-    its ``modulated_rms_norm`` global sent through ``at_stock_rows``; without
-    it, the call is the class forward's own. A repeat bind replaces the last;
-    the class and module never change. Returns whether the global is read.
+    the global it reaches the norm through (``block_norm_route``) sent through
+    ``at_stock_rows``: each ``modulated_rms_norm`` call on the earlier form,
+    each ``modulate`` call, stock's own, on the later one. Without it, the
+    call is the class forward's own, reference arguments included, as stock's
+    ``preprocess_refs`` makes it. A repeat bind replaces the last; the class
+    and module never change. Returns whether a route exists.
     """
     stock_forward = type(block).forward
-    routable = loads_global(stock_forward, NORM_GLOBAL)
+    route = block_norm_route(stock_forward)
 
-    def forward(self, x, mod, pe, transformer_options={}, *, stock_norm_rows=None):
-        if stock_norm_rows is None or not routable:
-            return stock_forward(self, x, mod, pe, transformer_options)
-        if not callable(stock_forward.__globals__.get(NORM_GLOBAL)):
-            refuse_stray_norm_call(f"its module's {NORM_GLOBAL} global is missing or not callable")
+    def forward(self, x, mod, pe, transformer_options={}, *references, stock_norm_rows=None,
+                **reference_options):
+        if stock_norm_rows is None or route is None:
+            return stock_forward(self, x, mod, pe, transformer_options, *references,
+                                 **reference_options)
+        refuse_reference_images(*references, *reference_options.values())
+        if not callable(stock_forward.__globals__.get(route)):
+            refuse_stray_norm_call(f"its module's {route} global is missing or not callable")
         batch, rows = x.shape[0], x.shape[1]
         calls = [0]
 
-        def make(stock_norm):
-            def parity(y, norm, scale, shift):
-                calls[0] += 1
-                fits = (calls[0] <= 2 and y.ndim == 3 and y.shape[0] == batch and y.shape[1] == rows
-                        and tuple(scale.shape) == tuple(shift.shape) == (batch, 1, y.shape[2]))
-                if not fits:
-                    refuse_stray_norm_call(
-                        f"fused-norm call {calls[0]} takes a {tuple(y.shape)} input and a "
-                        f"{tuple(getattr(scale, 'shape', ()))} scale, where stock's block makes two "
-                        f"calls over its [{batch}, {rows}, D] stream with [{batch}, 1, D] modulation")
-                return at_stock_rows(lambda call: stock_norm(call, norm, scale, shift), y, stock_norm_rows)
-            return parity
+        def check(y, scale, shift):
+            calls[0] += 1
+            fits = (calls[0] <= 2 and y.ndim == 3 and y.shape[0] == batch and y.shape[1] == rows
+                    and tuple(getattr(scale, "shape", ())) == tuple(getattr(shift, "shape", ()))
+                    == (batch, 1, y.shape[2]))
+            if not fits:
+                refuse_stray_norm_call(
+                    f"fused-norm call {calls[0]} takes a {tuple(y.shape)} input and a "
+                    f"{tuple(getattr(scale, 'shape', ()))} scale, where stock's block makes two "
+                    f"calls over its [{batch}, {rows}, D] stream with [{batch}, 1, D] modulation")
 
-        out = route_global(stock_forward, NORM_GLOBAL, make)(self, x, mod, pe, transformer_options)
+        def make(stock):
+            def parity(y, norm, scale, shift):
+                check(y, scale, shift)
+                return at_stock_rows(lambda call: stock(call, norm, scale, shift), y, stock_norm_rows)
+
+            def modulate(y, norm, block_mod, index, ref):
+                if ref is not None:
+                    refuse_stray_norm_call("a modulate call carries a reference split")
+                try:
+                    scale, shift = block_mod[index + 1], block_mod[index]
+                except (IndexError, KeyError, TypeError):
+                    scale = shift = None
+                check(y, scale, shift)
+                return at_stock_rows(lambda call: stock(call, norm, block_mod, index, None), y,
+                                     stock_norm_rows)
+            return modulate if route == MODULATE_GLOBAL else parity
+
+        out = route_global(stock_forward, route, make)(self, x, mod, pe, transformer_options)
         if calls[0] != 2:
             refuse_stray_norm_call(f"the block made {calls[0]} fused-norm calls where stock's makes two")
         return out
 
     block.forward = types.MethodType(forward, block)
-    return routable
+    return route is not None
 
 
 def refuse_stray_norm_call(detail: str) -> NoReturn:
@@ -262,6 +325,38 @@ def refuse_stray_norm_call(detail: str) -> NoReturn:
         "call it does not know is exact. Use an updated dgx-monarch, or topology 'single' (mode=local "
         "with gpus_per_host=1); canary seam 43 (moss_image block surface) names the change.",
     ))
+
+
+# The driver preflight (nodes/model_patch_preflight.py) and the sharded
+# forward raise the same text, so a render reads alike wherever it stops.
+REFERENCE_IMAGES_REFUSAL = refusal(
+    RefusalClass.PHYSICS,
+    "moss_image: this render carries reference images, which ComfyUI's Text Encode MOSS-Image "
+    "Edit node (TextEncodeMOSSImageEdit) attaches for an edit LoRA. Stock MOSS-Image appends "
+    "their tokens to the joint stream, or their keys and values to every block's attention, so "
+    "every row attends to them, and this release has not validated that on any topology but one "
+    "GPU: no hardware test has compared a sharded, cfg-parallel, data-parallel or FSDP edit "
+    "with stock. "
+    "Run this workflow on topology 'single' (mode=local with gpus_per_host=1), which runs "
+    "ComfyUI's own forward, or in plain ComfyUI on one GPU instead.",
+    troubleshooting=130,
+)
+
+
+def _carries(value: Any) -> bool:
+    """Whether a reference argument holds anything: stock's defaults are ``[]`` and None."""
+    if value is None:
+        return False
+    if isinstance(value, list | tuple):
+        return len(value) > 0
+    return True
+
+
+def refuse_reference_images(*values: Any) -> None:
+    """Refuse reference images on every rank alike, before any collective (#130)."""
+    if not any(_carries(value) for value in values):
+        return
+    raise UnsupportedModelError(REFERENCE_IMAGES_REFUSAL)
 
 
 def refuse_control_channels(channels: int, expected: int) -> None:

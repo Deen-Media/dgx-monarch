@@ -1144,10 +1144,14 @@ stacks on a repeat call.
    stock's rows. MOSS-Image calls comfy-kitchen's fused `rms_adaln` twice per
    block and its fused q and k norm and RoPE, `rms_rope_split_half`, once in
    every block. Each block gets a per-instance `forward` that runs stock's code
-   with its `modulated_rms_norm` global sent through FLUX.3's `at_stock_rows`
-   (`adapters/flux3_adaln_parity.py`): both calls are filled with zero rows to
-   the stream's N rows, the rank's window at the front, run once, and keep the
-   rank's rows, so each launch is stock's launch whatever row count
+   with the global it reaches the norm by sent through FLUX.3's `at_stock_rows`
+   (`adapters/flux3_adaln_parity.py`): `modulated_rms_norm` before ComfyUI
+   60aade0bb (2026-10-22), and `modulate` since, stock's own function, which
+   with no reference split makes the same norm call with the same scale and
+   shift. The block's `residual`, which then makes the same gated-residual
+   call, is row-local and not routed. Both norm calls are filled with zero
+   rows to the stream's N rows, the rank's window at the front, run once, and
+   keep the rank's rows, so each launch is stock's launch whatever row count
    comfy-kitchen branches on. The q and k call is not routed: on 2026-10-20,
    with comfy-kitchen 0.2.39, it returned stock's bits on every window with no
    fill ([VALIDATION](VALIDATION.md#evidence-moss-image-sft)). A fused-norm
@@ -1187,16 +1191,26 @@ stacks on a repeat call.
    the forced `family_adapter` path included, and refuses class P where it
    differs, as `matches()` refuses a `MOSSImage` subclass. It chooses the
    `rope` call once, from the loaded class's signature:
-   `(h, w, text_len, device)` in the 0.42 releases, and the form that adds
+   `(h, w, text_len, device)` in the 0.42 releases, the form that adds
    `transformer_options` on ComfyUI master since b9b290e43 (2026-10-19), which
-   reads `rope_options`; any other form refuses class P. A Ulysses degree that
+   reads `rope_options`, and the form that also adds `ref_shapes` and
+   `f_offset` since 60aade0bb, called as stock calls it with no reference: an
+   empty shape list and offset 0. Any other form refuses class P. A Ulysses degree that
    does not divide the 24 heads refuses class P at injection. Under sequence
    parallelism a latent wider than the checkpoint's, which only a color or
    depth control adapter feeds, refuses class P
    ([TROUBLESHOOTING #127](TROUBLESHOOTING.md#127-a-lora-that-changes-a-weights-shape-refuses-before-any-bake)),
    and so does a forward in which a block attended outside the sharded
    override. The sharded forward keeps FLUX.3's attention-hook and keyword
-   guards. single, cfg2 and dp2 bind nothing and run stock's forward. The
+   guards. Since 60aade0bb `_forward` takes the reference images of edit
+   LoRAs as three parameters of its own; the sharded forward names them, and
+   non-empty reference latents or cached reference keys and values refuse
+   class P on every rank before any exchange, as the driver refuses them on
+   every topology but one GPU before dispatch
+   ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)).
+   A block called with no row count, as stock's `preprocess_refs` calls each
+   block, runs stock's own code with its reference arguments.
+   single, cfg2 and dp2 bind nothing and run stock's forward. The
    adapter declares `cfg_cond_padding = "none"`: every image row's rotary
    position depends on the prompt length and the joint attention has no mask,
    so no driver pad is exact, and a prompt pair of different lengths
@@ -1205,9 +1219,13 @@ stacks on a repeat call.
    (`sp_validated_quants`); NVFP4 would reduce its shared activation scale
    over a rank's pad rows. FSDP needs no table row: `layers` is a standard
    block list, so the 42 blocks wrap one by one and the text embedder and
-   every other module fall in the root group, and `extra_conds` runs no
-   diffusion-model module, so the family needs no row in either
-   outside-forward table and no `prepare_base_model` hook. The block list is
+   every other module fall in the root group, and with no reference image
+   `extra_conds` runs no diffusion-model module. Since 60aade0bb it runs
+   `preprocess_refs`, every block, for reference images, but only in
+   inference mode, which a Worker's sampling thread is not in, and reference
+   images refuse off one GPU, so the family's one outside-forward row is in
+   the refused-call table, which replicates nothing, and it needs no
+   `prepare_base_model` hook. The block list is
    not named `blocks`, so `compile_dit` compiles nothing for this family and
    keeps requested slab residency.
 
