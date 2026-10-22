@@ -116,6 +116,61 @@ The checks:
   a multiline field and confirm that both remain.
 - **Operation review.** Review the read-only version operation and open its
   durable receipt. Do not apply any host operation.
+- **Sign-in link.** Run it at 1440x900 and 390x844, each time with a new
+  browser profile and a new state directory. With the fixture running, start
+  a companion with its output sent to a file, so that it writes its owner
+  token and a sign-in page to its state directory instead of printing them:
+
+  ```sh
+  python -m dgx_monarch.studio --port 18222 --driver http://127.0.0.1:18189 \
+    --state-dir "$SCRATCH/link" --no-open > "$EVIDENCE/link.log"
+  ```
+
+  Open `$SCRATCH/link/sign-in.html` by its `file://` path. Expect the
+  connected workspace without typing, an empty `location.hash`, and
+  `sessionStorage['dgxm.studio.token.v1']` equal to the token in
+  `$SCRATCH/link/owner-token`. Compare the two by SHA-256 and never write
+  either value down. Record the page's requests, for example through the
+  WebDriver BiDi `network.beforeRequestSent` event: no request URL and no
+  `Referer` header may contain the token. Reload and confirm that the tab
+  stays connected. Stop the companion, start it again with the same command
+  and open the old link: the page shows "This sign-in link was not accepted:
+  it is from an earlier start of Studio, or it was cut short when copied. Run
+  dgxm studio open on the Studio host for a new link." and the token form.
+  Close the browser, copy the profile's `places.sqlite` with its
+  `places.sqlite-wal` file, and record what
+  `SELECT url FROM moz_places WHERE url LIKE '%token=%'` returns, with each
+  token replaced by its SHA-256. Last, start a companion on port 18223 with
+  `--allow-management`, another new state directory and its output sent to a
+  file: no `sign-in.html` appears in its state directory, and
+  `http://127.0.0.1:18223` shows the token form.
+- **Driver not running.** Run it at 1440x900 and 390x844, each time with a
+  new browser profile and a new state directory. Write a configuration that
+  only you can read and write:
+
+  ```sh
+  (umask 077 && printf '%s\n' '[studio]' 'driver = "http://127.0.0.1:18190"' \
+    'driver_command = "echo start-the-fixture"' > "$SCRATCH/dnr.toml")
+  ```
+
+  So that the browser holds a saved draft, first start a fixture on port
+  18190 and, in another terminal, a companion that uses the configuration.
+  Sign in with its link, import the exported workflow, then stop both:
+
+  ```sh
+  python3 studio/tests/mock_driver.py --port 18190
+  python -m dgx_monarch.studio --port 18224 --driver http://127.0.0.1:18190 --config "$SCRATCH/dnr.toml" \
+    --state-dir "$SCRATCH/dnr" --no-open > "$EVIDENCE/dnr.log"
+  ```
+
+  Start the companion again with the same command while nothing listens on
+  port 18190, and sign in with its new `sign-in.html`. Expect the Driver not
+  running panel with the command `echo start-the-fixture`, a source line
+  that names `$SCRATCH/dnr.toml`, the paragraph about another address, a
+  disabled Review generation button and no red error banner. Then start the
+  fixture on port 18190 again: within 5 seconds the panel is gone, a request
+  to `/api/v1/catalog` succeeds, the button is enabled, and the restored draft
+  shows its inputs without a reload.
 
 Stop both fixture processes and delete the token file when you finish. These
 checks are synthetic integration evidence only; they are not GPU generation,

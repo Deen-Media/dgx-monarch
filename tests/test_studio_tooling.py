@@ -378,7 +378,7 @@ def test_browser_procedure_covers_every_interface_qa_browser_row():
     section = qa.split("## Browser evidence\n", 1)[1].split("\n## ", 1)[0]
     rows = [line.split("|")[1].strip() for line in section.splitlines()
             if line.startswith("| ") and not line.startswith("| Check |")]
-    assert len(rows) == 10
+    assert len(rows) == 12
     procedure = (STUDIO_TESTS / "README.md").read_text()
     for row in rows:
         assert f"**{row}.**" in procedure, row
