@@ -1046,6 +1046,72 @@ old Python modules while restarted workers load the new ones. Start ComfyUI
 again afterwards; that restart loads the updated modules, so the node set on
 the canvas matches the tree.
 
+### Upgrading from 1.2.0
+
+Read this before the first update from 1.2.0, in this order. An install on
+1.1.0 follows [Upgrading from 1.1.0](#upgrading-from-110) as well.
+
+1. The first update from 1.2.0 runs the 1.2.0 updater, the `dgxm` installed
+   now. Its release-slot refusal and dependency checks apply in both modes.
+   The check of the packaged Studio files, which this release adds to
+   verified update, release staging and setup, applies from the next update
+   on.
+2. If your Workers run from release slots, update only with
+   `dgxm update --verify`. A Worker runs from a slot when its host's
+   `~/.local/share/dgx-monarch/src` resolves into
+   `~/.local/share/dgx-monarch/releases/` (`readlink -f` shows it). Plain
+   update on 1.2.0 refuses such a host with `release_slot_worker` before it
+   fetches
+   ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
+3. This release keeps the torchmonarch pin and the required dependencies of
+   1.2.0, so neither mode installs a new pin, and the dependency check passes
+   wherever it passes on 1.2.0.
+4. The optional Studio companion needs the `studio` extra, which adds aiohttp
+   and Pillow. Neither update mode installs an extra. To use Studio, install
+   it as [Optional Studio companion](#optional-studio-companion) describes.
+   Plain update reruns the editable install with `--no-deps`, which creates
+   the `dgxm-studio` command. A verified update does not, so until you rerun
+   that install, `pip show` reports 1.2.0 and `dgxm-studio` is missing,
+   although the code that runs is already this release.
+5. MOSS-Image and Kromoss need ComfyUI 0.42.0 or newer on the driver and on
+   every Worker, with the comfy-kitchen version that ComfyUI's requirements
+   name
+   ([TROUBLESHOOTING #125](TROUBLESHOOTING.md#125-a-moss-image-checkpoint-fails-to-load-on-comfyui-older-than-0420)).
+   `dgxm update` never moves ComfyUI, so update it your own way. Every other
+   family keeps working on the older ComfyUI meanwhile.
+6. The new version and Gate protocol 14 make each model, residency and LoRA
+   combination run its first-use Gate again, once
+   ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
+7. Some saved graphs behave differently. A graph that wires Model Sampling SD3
+   (DGX Monarch) to a checkpoint whose ComfyUI config samples at multiplier
+   1.0, such as Chroma, Qwen-Image or Krea 2, rendered noise on 1.2.0 and now
+   refuses before dispatch
+   ([TROUBLESHOOTING #128](TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)).
+   A LoRA whose patch changes a weight's shape now refuses before any bake
+   ([TROUBLESHOOTING #127](TROUBLESHOOTING.md#127-a-lora-that-changes-a-weights-shape-refuses-before-any-bake)).
+   On ComfyUI 503d785f0 or later, a Qwen Image 2.1 render on a Ulysses
+   topology with the cache device `auto` refuses class P; `gpu`, `cpu` and
+   `off` still run
+   ([TROUBLESHOOTING #134](TROUBLESHOOTING.md#134-a-qwen-image-21-ulysses-render-with-the-cache-device-auto-refuses-on-comfyui-503d785f0-or-later)).
+8. FLUX.3 Klein INT8 renders on uly2 can differ at the same seed from renders
+   on 1.2.0. On 1.2.0 a Worker sent FLUX.3 Klein's `qkv` (or `q`, `k` and `v`)
+   and `mlp_in` on an INT8 weight down a route that dequantizes the weight and
+   skips activation quantization. This release runs them through
+   comfy-kitchen's INT8 GEMM, as stock does, and on 2026-10-21 FLUX.3 Klein
+   INT8 uly2 renders were bit-identical to the pin-stripped one-GPU render. No
+   hardware run rendered FLUX.3 Klein INT8 on uly2 under 1.2.0. The only
+   hardware measurement of the old route is MOSS-Image INT8 on uly2, at
+   one-step NRMS 0.027 to 0.036 against the pin-stripped one-GPU render
+   ([changelog](../CHANGELOG.md),
+   [VALIDATION](VALIDATION.md#evidence-moss-image-sft)).
+9. Add the optional `[studio]` table to cluster.toml only after the driver
+   and every checkout that reads the file run this release, and when no render
+   runs. Releases before this one refuse a cluster.toml that holds it
+   ([Optional Studio companion](#optional-studio-companion)).
+10. Run the driver and the Workers on the same release. `dgxm doctor` fails
+    the `worker release version` row of a host whose release slot carries
+    another version.
+
 ### Upgrading from 1.1.0
 
 Read this before the first update from 1.1.0, in this order.

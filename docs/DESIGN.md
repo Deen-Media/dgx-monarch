@@ -8,11 +8,11 @@ supports a Worker
 on the driver's host; [Validation](VALIDATION.md#operator-checks) records the
 update results and limits. The benchmark
 campaign covers a documented subset, not the full matrix. The package declares
-version 1.2.0 with an updated Monarch dependency. The migration has local CPU,
-native-load and [exact-source paired hardware evidence](VALIDATION.md#gpu-checks-for-the-070-migration).
+version 1.3.0 and keeps the Monarch dependency that 1.2.0 moved to. That
+migration has local CPU, native-load and [exact-source paired hardware evidence](VALIDATION.md#gpu-checks-for-the-070-migration).
 Clean cancellation remains unproven despite successful explicit recovery;
 native cancellation and fabric-failure recovery remain untested.
-[Release history](../CHANGELOG.md) records what changed since 1.1.0 and how to
+[Release history](../CHANGELOG.md) records what changed since 1.2.0 and how to
 update from it; section 9 tracks acceptance.
 The runtime also includes low-RSS LoRA residency, zero-copy slab residency,
 the identity gate and ledger, `dgxm top`, Fleet sampling, an RDMA latent-return

@@ -2,261 +2,240 @@
 
 ## [Unreleased]
 
-- Add an optional Studio companion with bundled workflow controls, durable job
-  records, project libraries, reviewed imports, grid experiments and job-bound
-  evidence; read the [acceptance record](docs/STUDIO_ACCEPTANCE.md) first.
-- Studio update needs `--config` and `--driver-service` and defaults to verified
-  mode. The owner token prints only to a terminal, otherwise to a 0600 file
-  ([Studio](docs/STUDIO.md#install-and-start), [#123](docs/TROUBLESHOOTING.md#123-studio-refuses-to-start-or-refuses-the-browsers-host-origin-or-token)).
-- `dgxm top` and the ComfyUI sidebar show memory in GiB, draw the memory bar on
-  hosts with no slab-resident model, give the six 16-color segments six colors
-  and show RX and TX rails for every box ([TUI](docs/TUI.md#what-it-shows)).
-- Drivers register GET `/dgxm/execution-events`, which grants the Studio
-  companion a 30 s observer lease; the [threat model](docs/THREAT_MODEL.md#browser-to-comfyui-driver)
-  lists it with the other driver routes.
-- Verified update, release staging and setup refuse a target whose packaged
-  Studio files are missing, extra or differ from their recorded SHA-256 table.
-- Studio shutdown waits for the threads that settle history and write live and
-  operation previews, and the store closes its database under the lock every
-  other use holds. Closing it under a running settlement crashed the companion
-  with a segmentation fault.
-- Studio's job, media, grid and runtime history pages no longer serve a row
-  twice or skip one where a page ends. Each cursor now carries the key SQLite
-  sorted the page by, not a value read back from the last row: the job and
-  grid lists re-render `created_at` at 15 significant digits, and SQLite on
-  x86-64 parses a few stored timestamps one unit in the last place high.
-- `dgxm studio` starts the Studio companion with one word. It reads the
-  driver origin, the port, an optional driver service and an optional start
-  command from a new `[studio]` table in cluster.toml
-  ([CLUSTER](docs/CLUSTER.md#studio-optional)), passes the config file `dgxm`
-  itself uses, prints where each value came from, and never probes ports.
-  `--driver` and `--config` override them. The first start on a fresh state
-  directory needs `[studio] driver` or `--driver`. Studio reads only a
-  cluster.toml no other account can write. Releases before this one refuse a
-  cluster.toml that holds `[studio]`, so add it only after every checkout
-  that reads the file and the driver run this release
-  ([Studio](docs/STUDIO.md#configure-studio-in-clustertoml)).
+## [1.3.0] - 2026-10-23
+
+**Upgrading from 1.2.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-120): the first update runs the 1.2.0
+updater, so this release's packaged Studio file check starts with the next one.
+If a host's Workers run from a release slot, use only `dgxm update --verify`
+([TROUBLESHOOTING #118](docs/TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)). The torchmonarch pin and the required dependencies do
+not change. Studio needs the `studio` extra, which neither update mode installs
+([INSTALL](docs/INSTALL.md#optional-studio-companion)). Releases before this one refuse a cluster.toml that holds
+`[studio]`, so add the table only after the driver and every checkout that
+reads the file run this release ([Studio](docs/STUDIO.md#configure-studio-in-clustertoml)). MOSS-Image and Kromoss need ComfyUI 0.42.0 or newer on the
+driver and every Worker ([TROUBLESHOOTING #125](docs/TROUBLESHOOTING.md#125-a-moss-image-checkpoint-fails-to-load-on-comfyui-older-than-0420)). A graph that wires Model
+Sampling SD3 (DGX Monarch) to a checkpoint that samples at multiplier 1.0 now
+refuses where it rendered noise ([TROUBLESHOOTING #128](docs/TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)).
+
+### Everyday use
+
+- Add an optional Studio companion, `dgxm-studio`, with bundled workflow
+  controls, durable job records, project libraries, reviewed imports, grid
+  experiments and job-bound evidence. It is a draft; read the
+  [acceptance record](docs/STUDIO_ACCEPTANCE.md) first.
+- `dgxm studio` starts Studio with one word. A new `[studio]` table in
+  cluster.toml names the driver origin, the port, an optional driver service
+  and an optional start command ([CLUSTER](docs/CLUSTER.md#studio-optional)); `--driver` and `--config`
+  override it. It passes the config file `dgxm` itself uses, prints where each
+  value came from and never probes ports. The first start on a fresh state
+  directory needs `[studio] driver` or `--driver`, and Studio reads only a
+  cluster.toml no other account can write ([Studio](docs/STUDIO.md#configure-studio-in-clustertoml)).
 - Studio opens signed in. On a terminal with a display, `dgxm studio` and
   `dgxm-studio` send the browser to `sign-in.html`, an owner-only page in the
   state directory that carries the link `http://127.0.0.1:<port>/#token=...`,
-  when `.html` files and `http` links open in the same browser; the page
-  keeps the token in the tab's session storage and removes it from the
-  address bar. The browser's history keeps the link, so treat it like a
-  password. The token never appears in a process argument dgxm starts, a
-  query string, a log or the journal. `--no-open` starts no browser. A
-  companion started with `--allow-management` never makes a link; its token
-  is typed into the form.
-- `dgxm studio up` installs and starts `dgxm-studio.service`, a user unit
-  with a fixed port; `dgxm studio down` removes it; `dgxm studio open` prints
-  the sign-in link and opens it when the session has a display, and says
-  when the service runs code older than the checkout; `dgxm studio token`
-  prints the token file and, with `--rotate`, restarts the service for a new
-  token. With `[studio] driver_service` the service also starts that driver
-  unit. `dgxm uninstall` refuses while the service is installed
-  ([Studio](docs/STUDIO.md#keep-studio-running),
-  [#132](docs/TROUBLESHOOTING.md#132-dgxm-studio-up-refuses-or-the-always-on-studio-does-not-start)).
-- `dgxm studio tunnel <host>` prints the one SSH line that reaches Studio
-  from another computer,
+  when `.html` files and `http` links open in the same browser. The page keeps
+  the token in the tab's session storage and removes it from the address bar;
+  the browser's history keeps the link, so treat it like a password. The token
+  never appears in a process argument dgxm starts, a query string, a log or
+  the journal. `--no-open` starts no browser, and a companion started with
+  `--allow-management` makes no link; its token is typed into the form.
+- `dgxm studio tunnel <host>` prints the one SSH line that reaches Studio from
+  another computer,
   `ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <host>`,
-  the address to browse and what to do when ssh cannot forward the port; the
-  line names the address the forward listens on, so with that option ssh
-  exits instead of opening a session without the forward.
-  `--run` runs it
-  ([#133](docs/TROUBLESHOOTING.md#133-the-sign-in-link-does-not-open-studio)).
-- When no driver accepts a connection, Studio shows Driver not running with
-  the command that starts it, disables Review generation, and connects by
-  itself when the driver answers
-  ([#131](docs/TROUBLESHOOTING.md#131-studio-shows-driver-not-running)).
-- `dgxm-studio` binds its port before it prints or writes the token, so a
-  busy port exits with one line and no token.
-- The README shows Studio, captured against the CPU test fixture.
-- The Studio inventory waives the `dgxm studio` rows: the page cannot start
-  or stop the companion that serves it.
-- The original Studio specification gains a dated amendment for the
-  always-on unit.
+  the address to browse and what to do when ssh cannot forward the port. The
+  line names the address the forward listens on, so ssh exits instead of
+  opening a session without the forward; `--run` runs it ([#133](docs/TROUBLESHOOTING.md#133-the-sign-in-link-does-not-open-studio)).
+- When no driver accepts a connection, Studio shows Driver not running with the
+  command that starts it, disables Review generation and connects by itself
+  when the driver answers ([#131](docs/TROUBLESHOOTING.md#131-studio-shows-driver-not-running)). The README front page shows Studio,
+  captured against the CPU test fixture.
+- `dgxm top` and the ComfyUI sidebar show memory in GiB, draw the memory bar on
+  hosts with no slab-resident model, give the six 16-color segments six colors
+  and show RX and TX rails for every box ([TUI](docs/TUI.md#what-it-shows)).
+- Add five MOSS-Image workflows, for 71 in all.
+
+### Installation and updates
+
+- Verified update, release staging and setup refuse a target whose packaged
+  Studio files are missing, extra or differ from their recorded SHA-256 table.
+  Studio's own update needs `--config` and `--driver-service` and defaults to
+  verified mode. The owner token prints only to a terminal, otherwise to a 0600
+  file ([Studio](docs/STUDIO.md#install-and-start), [#123](docs/TROUBLESHOOTING.md#123-studio-refuses-to-start-or-refuses-the-browsers-host-origin-or-token)).
+- The artifact manifest pins the six MOSS-Image DiT files, the BF16 and INT8
+  ConvRot encoders and the FLUX.2 small decoder at Comfy-Org's and lodestones'
+  commits, and the two Kromoss LoRAs.
+- `dgxm studio up` installs and starts `dgxm-studio.service`, a user unit with a
+  fixed port that also starts the `[studio] driver_service` unit when one is
+  set. `dgxm studio down` removes it and keeps the unit when its stop fails;
+  `dgxm studio open` prints the sign-in link, opens it when the session has a
+  display and says when the service runs code older than the checkout;
+  `dgxm studio token` prints the token file and, with `--rotate`, restarts the
+  service for a new token. `dgxm uninstall` refuses while the service is
+  installed ([Studio](docs/STUDIO.md#keep-studio-running), [#132](docs/TROUBLESHOOTING.md#132-dgxm-studio-up-refuses-or-the-always-on-studio-does-not-start)).
+
+### Compatibility and verification
+
+Node mappings, ordered inputs and defaults stay compatible; Skip Layer Guidance
+(DGX Monarch) is a new node. The consent route records an optional `source`,
+`panel` (the default) or `studio`, as the waiver row's `consent_source` and
+refuses any other value with a 400; Studio's accept sends `studio`
+([threat model](docs/THREAT_MODEL.md#companion-to-driver-systemd-and-cli)). The new consent source moves the Gate protocol to 14, which
+burns 13, so with the new version each combination re-proves once on first use
+([TRUST](docs/TRUST.md#protocol-invariants), [TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)). The [MOSS-Image record](docs/VALIDATION.md#evidence-moss-image-sft)
+is the release's acceptance record; on 2026-10-22 its identity legs ran again
+on ComfyUI a071826fd and matched ([VALIDATION](docs/VALIDATION.md#moss-image-on-comfyui-a071826fd)). On 2026-10-21 a Studio lifecycle pass on
+two Sparks ran Recycle, a respawn render and Fleet under the observer lease,
+then `dgxm restart`, with no failure event ([Studio acceptance](docs/STUDIO_ACCEPTANCE.md)). The
+[merged pull requests](https://github.com/Deen-Media/dgx-monarch/compare/v1.2.0...v1.3.0) hold the detail, and TROUBLESHOOTING numbers refer to
+[that file](docs/TROUBLESHOOTING.md).
+
+### Rendering
+
 - Support MOSS-Image, the OpenMOSS team's 5B single-stream text-to-image
   model, with its SFT and Base checkpoints and lodestones' Kromoss fine-tune
-  ([MODELS](docs/MODELS.md#model-moss-image-sft)). It needs ComfyUI 0.42.0 or
-  newer, the first release to carry ComfyUI's support commit e087d8f6c of
-  2026-10-16 ([TROUBLESHOOTING #125](docs/TROUBLESHOOTING.md#125-a-moss-image-checkpoint-fails-to-load-on-comfyui-older-than-0420)). The `moss_image` adapter
-  shards the joint `[image, text]` stream in one contiguous window per rank,
-  keeps the prelude and the two text-embedder blocks whole on every rank,
-  launches both fused-norm calls of each block at stock's row count, names
-  pad rows on every topology and refuses a padded ring class K. Under
-  sequence parallelism it honors a block replacement only when it is an
-  identity or marked `sequence_shard_local`, which admits ComfyUI's own Skip
-  Layer Guidance skip, and refuses any other class P, as it does a marked
-  replacement that hands the block other rows than the rank's window. Five BF16 templates
-  ship at the vendor's settings: 50 Euler steps at CFG 3 with the layer-22
-  skip for SFT, Base and Kromoss, a JSON layout graph on SFT, and 8 steps at
-  CFG 1 for Kromoss with its DMD2 LoRA. Nine testing graphs cover the INT8
-  ConvRot files, an odd grid, a 1536 square canvas, the skip turned off, the
-  second DMD LoRA, the DMD2 LoRA on Base and a LoRA slot. The artifact
-  manifest pins the six DiT files, the BF16 and INT8 ConvRot encoders and the
-  FLUX.2 small decoder at Comfy-Org's and lodestones' commits, and the two
-  Kromoss LoRAs.
+  ([MODELS](docs/MODELS.md#model-moss-image-sft)). It needs ComfyUI 0.42.0 or newer, the first release with
+  ComfyUI's support commit e087d8f6c ([TROUBLESHOOTING #125](docs/TROUBLESHOOTING.md#125-a-moss-image-checkpoint-fails-to-load-on-comfyui-older-than-0420)). The `moss_image`
+  adapter shards the joint `[image, text]` stream in one contiguous window per
+  rank, keeps the prelude and both text-embedder blocks whole on every rank,
+  runs each block's fused-norm calls at stock's row count, names pad rows on
+  every topology and refuses a padded ring class K. Under
+  sequence parallelism it honors only an identity or `sequence_shard_local`
+  block replacement, such as ComfyUI's Skip Layer Guidance skip, and refuses
+  any other class P. Five BF16 templates ship at the vendor's settings: 50
+  Euler steps at CFG 3 with the layer-22 skip for SFT, Base and Kromoss, a JSON
+  layout graph on SFT, and 8 steps at CFG 1 for Kromoss with its DMD2 LoRA.
+  Nine testing graphs cover the INT8 ConvRot files, an odd grid, a 1536 square
+  canvas, the skip turned off, the second DMD LoRA, the DMD2 LoRA on Base and a
+  LoRA slot.
+- Promote MOSS-Image SFT, MOSS-Image Base and Kromoss to **HW** on the hardware
+  ladder of 2026-10-21 at `ff8dab8300aa` with ComfyUI `d52a7a5ef`, re-measured
+  on 2026-10-21 and 2026-10-22 at `9caa6aae660b`, the head capped at 2100 MHz
+  ([VALIDATION](docs/VALIDATION.md#evidence-moss-image-sft)). BF16 uly2 was bit-identical to one GPU at one step and over
+  50 steps from 1024 to 2048 square on SFT and at 1024 and 1536 square on Base
+  and Kromoss, and on SFT to stock at one step from 512 to 2048 square; auto
+  keeps it ([BENCHMARKS](docs/BENCHMARKS.md#moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped)). FSDP renders matched resident ones, so FSDP is
+  supported. cfg2 keeps refusing on the shipped graphs, which carry the skip,
+  and gets no row; ring2 is measured, not granted. The Kromoss DMD LoRAs bake to
+  stock's merge on every key; their renders differ from stock's because stock
+  applies a LoRA at cast time.
+- The four CFG 3 MOSS-Image templates use ComfyUI's `normal` scheduler, within
+  0.0005 of the vendor pipeline's sigmas at 50 steps where `simple` sits 0.069
+  off; on 2026-10-21 the SFT graph on `normal` rendered on uly2 bit-identical to
+  one GPU and to stock. The 8-step Kromoss graph and the testing graphs keep
+  `simple`.
 - The MOSS-Image INT8 ConvRot files pin comfy-kitchen's INT8 attention on all
-  42 blocks, so single, cfg2 and dp2 ask for the Sol-Attn waiver and uly2
-  drops the pins ([TROUBLESHOOTING #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). On uly2, ring and cfg2 the
-  family admits only BF16 and INT8 ConvRot. RoPE scaling and the color and
-  depth control, on ComfyUI master only on 2026-10-20, ship no template.
-- Add Skip Layer Guidance (DGX Monarch), which carries stock
-  SkipLayerGuidanceDiTSimple's widgets to every Worker, where ComfyUI's own
-  node applies them to the render. The graph advisor suggests it in place of
-  the stock node. It refuses on a cfg topology, with a two-checkpoint guider,
-  and under sequence parallelism on any family but MOSS-Image, and Model
-  Sampling SD3 (DGX Monarch) refuses when it follows the node with a step
-  window other than 0 to 1
-  ([TROUBLESHOOTING #126](docs/TROUBLESHOOTING.md#126-skip-layer-guidance-dgx-monarch-refuses-on-cfg2-on-a-sequence-parallel-family-that-does-not-apply-block-replacement-or-with-a-two-checkpoint-guider)). `benchmark/run_matrix.py` takes the same
-  widgets as the optional `slg_double_layers`, `slg_single_layers`,
-  `slg_start_percent` and `slg_end_percent` keys.
-- Refuse a LoRA whose patch changes a weight's shape, on every family and
-  topology, before any bake. ComfyUI master since e3bee7ffc can apply such a
-  patch, for example the
-  MOSS-Image color and depth control LoRA, which widens `video_embedder` from
-  128 to 384 input channels; the bake used to fail on it with an untyped
-  error. The refusal names the key and both shapes
-  ([TROUBLESHOOTING #127](docs/TROUBLESHOOTING.md#127-a-lora-that-changes-a-weights-shape-refuses-before-any-bake)).
-- Refuse Model Sampling SD3 (DGX Monarch) on a checkpoint whose ComfyUI
-  config samples at multiplier 1.0, where the node's multiplier-1000 sampling
-  renders noise: FLUX.1 Schnell, Chroma and Radiance, Z-Image and Lumina 2,
-  OmniGen2, Boogu, Mage Flow, Qwen-Image, Qwen Image 2.1, Ideogram 4, Krea 2
-  and Kroma, MOSS-Image and Kromoss, and Anima. Such graphs rendered noise
-  before and now refuse before dispatch. The shipped graphs wire the node
-  only to Wan and Kandinsky 5, whose configs sample at multiplier 1000, and a
-  checkpoint whose config the driver cannot read is let through
-  ([TROUBLESHOOTING #128](docs/TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)). Fleet KSampler runs the same check.
+  42 blocks, so single, cfg2 and dp2 ask for the Sol-Attn waiver and uly2 drops
+  the pins ([TROUBLESHOOTING #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). On uly2, ring and cfg2 the family admits only
+  BF16 and INT8 ConvRot.
 - Run every INT8 linear of the sequence-parallel MOSS-Image and FLUX.3 Klein
   forwards through comfy-kitchen's INT8 GEMM, as stock does. Since the
-  fused-norm parity change, the rows `at_stock_rows` keeps carried the filled
-  call's leading stride at batch 1. Outside inference mode, where a Worker
-  samples, ComfyUI then sent the next linear on an INT8 weight down a route
-  that dequantizes the weight and skips activation quantization: MOSS-Image's
-  `qkv` and `ffn_up_gate`, and FLUX.3 Klein's `qkv` (or `q`, `k` and `v`) and
-  `mlp_in`. On 2026-10-21 MOSS-Image INT8 ConvRot on uly2 read one-step NRMS
-  0.027 to 0.036 against the pin-stripped one-GPU render for that reason.
-  FLUX.3 Klein's INT8 uly2 row was measured before that change. The kept rows
-  now carry a fresh tensor's strides, and the weight-only layouts (INT8 with
-  or without ConvRot, ConvRot W4A4, W4A8 and W6A8) always get a 3-D
-  activation as 2-D rows. A BF16 linear after the norm now takes stock's
-  matrix product too, where it ran as a batched product of batch 1; NVFP4
-  already got 2-D rows from ComfyUI. On 2026-10-21, after the change,
-  MOSS-Image INT8 uly2 was bit-identical to the pin-stripped one-GPU render
-  at 1024 and 1536 square and ran 0.78 to 0.79 s a step at 1024, against
-  1.01 to 1.03 s before; FLUX.3 Klein's INT8 uly2 renders were bit-identical
-  to the pin-stripped one-GPU render too, and every BF16 latent rerun was
-  unchanged.
-- Copy each component when the un-bake restore rebuilds a quantized weight.
-  On a module that lives on the CPU, the rebuilt weight and scale shared the
-  pooled read buffer that the reader refills for a later key, so an un-bake
-  to an empty LoRA stack could leave one key holding another key's bytes. A
-  module on the GPU already got a copy.
-- Refuse a LoRA on a MOSS-Image INT8 file (SFT, Base or Kromoss) on every
-  topology, class P, before any weight moves. On 2026-10-21 the Kromoss INT8
-  ConvRot file with its DMD2 LoRA on uly2 read one-step NRMS 0.985 against
-  stock ComfyUI. A probe of stock ComfyUI alone found the cause upstream:
-  with DynamicVRAM off, stock's classic loader bakes the LoRA into the INT8
-  weights and renders the pair about 1.0 NRMS from its own default, and
-  dgx-monarch's bake is that classic bake. The driver checks
-  before dispatch and Fleet KSampler before its first one, every Worker's
-  model store before any LoRA build or bake, and the sweep matrix predicts
-  those cells `refuse:P`. Stock ComfyUI on one GPU runs the pair with its
-  default DynamicVRAM loader
-  ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
-  The MOSS-Image quantization refusal now says why INT8 ConvRot is admitted
-  under sequence parallelism.
-- Promote MOSS-Image SFT, MOSS-Image Base and Kromoss to **HW** on the
-  hardware ladder of 2026-10-21, run at dgx-monarch `ff8dab8300aa` with
-  ComfyUI `d52a7a5ef` and the head capped at 2100 MHz, and re-measured on
-  2026-10-21 and 2026-10-22 at `9caa6aae660b`
-  ([VALIDATION](docs/VALIDATION.md#evidence-moss-image-sft)). BF16 uly2 was
-  bit-identical to one GPU at one step and over the full 50 steps from 1024
-  to 2048 square on SFT and at 1024 and 1536 square on Base and Kromoss, and
-  on SFT to stock ComfyUI at one step from 512 to 2048 square; auto keeps it
-  ([BENCHMARKS](docs/BENCHMARKS.md#moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped)).
-  INT8 ConvRot uly2 read one-step NRMS 0.027 to 0.036 against a pin-stripped
-  one-GPU render at the first release and was bit-identical to it at the
-  second. FSDP renders matched resident ones, so FSDP becomes supported. cfg2
-  keeps refusing on the shipped graphs, which carry the skip; with the skip
-  off it is exact on a prompt pair of different lengths and measured on a
-  pair of equal length, so MOSS-Image gets no cfg2 row. ring2 is measured,
-  not granted, and ring2 with a LoRA is not supported: every first-use Gate
-  ceremony of that pair that reached a verdict failed. The Kromoss DMD LoRAs
-  bake to stock ComfyUI's merge on every key, and their renders differ from
-  stock's because stock applies a LoRA at cast time. The color and depth
-  control LoRA refused on both ranks, and the next render ran with no
-  Recycle.
-- The four CFG 3 MOSS-Image templates, SFT, Base, the layout graph and
-  Kromoss at 50 steps, use ComfyUI's `normal` scheduler in place of `simple`.
-  `normal` lands within 0.0005 of the vendor pipeline's sigmas at 50 steps,
-  where `simple` sits 0.069 off. On 2026-10-21 the SFT graph on `normal`
-  rendered on uly2 bit-identical to one GPU and to stock; against `simple` at
-  the same seed it read latent NRMS 0.140 and PSNR 31.3 dB, a different image
-  of the same prompt. The 8-step Kromoss graph keeps `simple`, its card's
-  recipe, and the MOSS-Image testing graphs keep `simple`, the schedule the
-  sweep measured.
-- The MOSS-Image INT8 LoRA refusal says what the probe found: dgx-monarch
-  bakes the LoRA into the quantized weights as stock ComfyUI's classic loader
-  does, and stock with DynamicVRAM off renders the Kromoss INT8 file with its
-  DMD2 LoRA as far from its own default. Its remedy names stock's default
-  DynamicVRAM loader
-  ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
-- The consent route takes an optional `source` field, `panel` or `studio`,
-  and records it as the waiver row's `consent_source`. A body without it
-  records `panel`, and any other value refuses with a 400. Studio's accept
-  sends `studio`, so the ledger no longer reads it as a panel click
-  ([threat model](docs/THREAT_MODEL.md#companion-to-driver-systemd-and-cli)).
-  `studio` joins the frozen consent-source vocabulary, so the Gate protocol
-  moves to 14 and each combination re-proves once on first use
-  ([TRUST](docs/TRUST.md#protocol-invariants)).
+  fused-norm parity change some dequantized the weight instead, and MOSS-Image
+  INT8 uly2 read one-step NRMS 0.027 to 0.036 against the pin-stripped one-GPU
+  render. On 2026-10-21 both families' INT8 uly2 renders were bit-identical to
+  it, MOSS-Image ran 0.78 to 0.79 s a step at 1024 square against 1.01 to
+  1.03 s, and every BF16 latent rerun was unchanged.
+- Refuse a LoRA on a MOSS-Image INT8 file on every topology, class P, before
+  any weight moves, in the driver, Fleet KSampler and every Worker. On
+  2026-10-21 the Kromoss INT8 file with its DMD2 LoRA read one-step NRMS 0.985
+  against stock on uly2.
+  dgx-monarch bakes as stock's classic loader does, which with DynamicVRAM off
+  renders the pair about 1.0 NRMS from stock's default, so the message names
+  that default loader ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)). The quantization refusal says why
+  INT8 ConvRot is admitted under sequence parallelism.
 - The `moss_image` adapter follows ComfyUI master's MOSS-Image forward of
-  2026-10-22 (commit 60aade0bb), which moved each block's norm behind
-  `modulate` and added three reference parameters to `_forward` and two
-  arguments to `rope`. The sharded blocks route whichever global the block
-  reads, the rope call follows all three forms, and the touchpoint registry
-  admits the forward with and without the reference parameters, so the
-  previous tree, d52a7a5ef, stays supported. In CPU tests the sharded
-  text-to-image forward is bit-identical to stock on both trees; it has not
-  been re-run on hardware ([MODELS](docs/MODELS.md#model-moss-image-sft)).
-- Refuse MOSS-Image reference images, which the new Text Encode MOSS-Image
-  Edit node attaches for edit LoRAs, class P on every topology but one GPU:
-  no hardware test has compared a cluster edit with stock. The driver refuses
-  before dispatch and the sharded forward on every rank before any exchange;
-  `mode=local` with `gpus_per_host=1` and Fleet KSampler run ComfyUI's own
-  forward
-  ([TROUBLESHOOTING #130](docs/TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)).
-- A driver started with ComfyUI's `--base-directory` stamps the commit of
-  the ComfyUI checkout it runs. The stamp read Git state under the user-data
-  root that the flag names, found none and read `unknown`, so the artifact
-  parity check refused every render the driver sent to Workers, whose stamp
-  names the real commit, and Gate lookups read every PASS as stale. The stamp
-  and the runtime provenance snapshot now find the checkout one way, from the
-  directory that holds ComfyUI's `folder_paths` module, so the telemetry and
-  `dgxm top` show the right commit too.
-- A one-GPU MOSS-Image edit computes its reference images' keys and values
-  once per conditioning, as stock ComfyUI does, instead of on every model
-  call. Stock caches them only in inference mode, which a Worker's sampling
-  thread is not in, so on 2026-10-22 a one-GPU edit on hardware matched
-  stock's latent at 1.46 times stock's time a step. The adapter now runs
-  stock's `extra_conds` in inference mode on every load, as the FLUX.3
-  adapter does, and stock's own rule still picks the branch. Off one GPU
-  that step refuses reference images first, so no Worker computes them for
-  a render it refuses
-  ([ADAPTERS](docs/ADAPTERS.md#what-an-adapter-provides)).
-- The `qwen_image21` adapter follows ComfyUI master's Qwen Image 2.1
-  forward of 2026-10-22 (commit 503d785f0), which added a `prefix_cache`
-  parameter for a writable prefix K/V cache. The touchpoint registry admits
-  the forward with and without it, so the previous tree, a071826fd, stays
-  supported, and the `import-against-comfy-master` canary passes again. In
-  CPU tests on this rig the sharded forward is bit-identical to stock on both
-  trees, with the cache off and on; it has not been re-run on hardware
-  ([MODELS](docs/MODELS.md#model-qwen-image-2-1)).
-- Refuse Qwen Image 2.1 cache device `auto` class P on Ulysses topologies
-  under dynamic VRAM on ComfyUI 503d785f0 or later, where stock moved `auto`
-  to the new writable cache and no hardware test has compared a sharded render
-  with it. Every rank refuses alike before any exchange; `gpu`, `cpu` and
+  2026-10-22 (commit 60aade0bb) and keeps d52a7a5ef supported; in CPU tests the
+  sharded text-to-image forward is bit-identical to stock on both trees
+  ([MODELS](docs/MODELS.md#model-moss-image-sft)). Reference images, which the new Text Encode MOSS-Image Edit
+  node attaches, refuse class P on every topology but one GPU, at the driver
+  and on every rank before any exchange ([TROUBLESHOOTING #130](docs/TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)).
+- A one-GPU MOSS-Image edit computes its reference images' keys and values once
+  per conditioning, as stock ComfyUI does, instead of on every model call.
+  Stock caches them only in inference mode, which a Worker's sampling thread is
+  not in, so on 2026-10-22 a one-GPU edit on hardware matched stock's latent at
+  1.46 times stock's time a step. The adapter now runs stock's `extra_conds` in
+  inference mode on every load, as the FLUX.3 adapter does, and stock's own rule
+  still picks the branch ([ADAPTERS](docs/ADAPTERS.md#what-an-adapter-provides)). Off one GPU that step refuses reference
+  images first, so no Worker computes them for a render it refuses. On
+  2026-10-22 every edit and reference-free leg was bit-identical to stock, and
+  the edit ran 2.119 s a step against stock's 2.142 ([VALIDATION](docs/VALIDATION.md#moss-image-on-comfyui-a071826fd)).
+- The `qwen_image21` adapter follows ComfyUI master's Qwen Image 2.1 forward
+  of 2026-10-22 (commit 503d785f0), which added a `prefix_cache` parameter for
+  a writable prefix K/V cache, and keeps a071826fd supported; the
+  `import-against-comfy-master` canary passes again. In CPU tests the sharded
+  forward is bit-identical to stock on both trees, with the cache off and on
+  ([MODELS](docs/MODELS.md#model-qwen-image-2-1)). Cache device `auto` refuses class P on Ulysses topologies under
+  dynamic VRAM on ComfyUI 503d785f0 or later, where stock moved `auto` to the
+  new writable cache, on every rank alike before any exchange; `gpu`, `cpu` and
   `off` are not affected, and `auto` on a071826fd passes as before
   ([TROUBLESHOOTING #134](docs/TROUBLESHOOTING.md#134-a-qwen-image-21-ulysses-render-with-the-cache-device-auto-refuses-on-comfyui-503d785f0-or-later)).
+- Add Skip Layer Guidance (DGX Monarch), which carries stock
+  SkipLayerGuidanceDiTSimple's widgets to every Worker, where ComfyUI's own
+  node applies them; the graph advisor suggests it in place of the stock node.
+  It refuses on a cfg topology, with a two-checkpoint guider and under sequence
+  parallelism on any family but MOSS-Image. Model Sampling SD3 (DGX Monarch)
+  refuses after it with a step window other than 0 to 1 ([TROUBLESHOOTING #126](docs/TROUBLESHOOTING.md#126-skip-layer-guidance-dgx-monarch-refuses-on-cfg2-on-a-sequence-parallel-family-that-does-not-apply-block-replacement-or-with-a-two-checkpoint-guider)).
+- Refuse a LoRA whose patch changes a weight's shape, on every family and
+  topology, before any bake, naming the key and both shapes. ComfyUI master
+  since e3bee7ffc applies such a patch, such as the MOSS-Image color and depth
+  control LoRA, where the bake failed with an untyped error ([TROUBLESHOOTING #127](docs/TROUBLESHOOTING.md#127-a-lora-that-changes-a-weights-shape-refuses-before-any-bake)).
+- Refuse Model Sampling SD3 (DGX Monarch), in the driver and Fleet KSampler, on
+  a checkpoint whose ComfyUI config samples at multiplier 1.0: FLUX.1 Schnell,
+  Chroma and Radiance, Z-Image and Lumina 2, OmniGen2, Boogu, Mage Flow,
+  Qwen-Image, Qwen Image 2.1, Ideogram 4, Krea 2 and Kroma, MOSS-Image and
+  Kromoss, and Anima. The shipped graphs wire it only to Wan and Kandinsky 5,
+  and a config the driver cannot read is let through ([TROUBLESHOOTING #128](docs/TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)).
+- Copy each component when the un-bake restore rebuilds a quantized weight on a
+  CPU module, where an un-bake to an empty LoRA stack could leave one key
+  holding another key's bytes.
+
+### Operations
+
+- Drivers register GET `/dgxm/execution-events`, which grants the Studio
+  companion a 30 s observer lease ([threat model](docs/THREAT_MODEL.md#browser-to-comfyui-driver)).
+- Studio shutdown waits for the threads that settle history and write
+  previews, and the store closes its database under its lock; a close under a
+  running settlement crashed the companion with a segmentation fault. Studio's
+  job, media, grid and runtime history pages no longer serve a row twice or
+  skip one at a page end: each cursor carries the key SQLite sorted by.
+  `dgxm-studio` binds its port before it prints or writes the token, so a busy
+  port exits with one line and no token.
+- A driver started with ComfyUI's `--base-directory` stamps the commit of the
+  ComfyUI checkout it runs, found from the directory that holds ComfyUI's
+  `folder_paths` module. The stamp read Git state under the user-data root the
+  flag names and read `unknown`, so the artifact parity check refused every
+  render the driver sent to Workers and Gate lookups read every PASS as stale.
+  The runtime provenance snapshot, the telemetry and `dgxm top` now show the
+  right commit too.
+- A Worker's runtime directory falls back from `XDG_RUNTIME_DIR` to
+  `~/.local/state`, then to `/tmp/dgx-monarch-<uid>`, when its path would pass
+  64 bytes, so a long home directory no longer stops Workers from starting on
+  Monarch's Unix socket path limit.
+
+### Development
+
+- CI builds the Studio frontend and checks that the bundled assets reproduce
+  and that `tools/gen_studio_inventory.py` matches the source.
+  `benchmark/run_matrix.py` takes Skip Layer Guidance's widgets as
+  `slg_double_layers`, `slg_single_layers`, `slg_start_percent` and
+  `slg_end_percent`, and the sweep matrix predicts MOSS-Image INT8 LoRA cells
+  `refuse:P`. The Studio inventory waives the `dgxm studio` rows, because the
+  page cannot start or stop the companion that serves it, and the original
+  Studio specification gains a dated amendment for the always-on unit.
+
+### Limits
+
+- Studio is a draft: live update, Worker and Fleet coverage through Studio,
+  end-to-end, accessibility and performance acceptance are **NOT RUN**
+  ([acceptance record](docs/STUDIO_ACCEPTANCE.md)). On a rig, `dgxm studio token --rotate`, a restart after the
+  process is killed and a Studio unit that starts a driver unit are **NOT RUN**.
+- MOSS-Image RoPE scaling and the color and depth control, on ComfyUI master
+  only on 2026-10-20, ship no template; the control LoRA refused on both ranks
+  and the next render ran with no Recycle. No cluster edit has been compared
+  with stock. cfg2 with the skip off is exact on a prompt pair of different
+  lengths and measured on one of equal length. ring2 with a LoRA is not
+  supported: every first-use Gate ceremony of that pair that reached a verdict
+  failed.
+- The Qwen Image 2.1 forward on ComfyUI 503d785f0 has not been re-run on
+  hardware.
 
 ## [1.2.0] - 2026-10-16
 

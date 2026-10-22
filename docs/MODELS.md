@@ -693,10 +693,14 @@ and every image and text row attends to rows that come from them. No
 hardware test has compared a cluster edit with stock, so a render with
 reference images refuses class P on every topology but one GPU; run edits
 with `mode=local`, `gpus_per_host=1` and topology `single`, which runs
-ComfyUI's own forward ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)). No shipped graph uses the edit node, and no
-edit render has run on hardware. In CPU tests the text-to-image sharded
-forward on that commit stays bit-identical to stock; it has not been re-run
-on hardware.
+ComfyUI's own forward ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)). No shipped graph uses the edit node.
+On 2026-10-22, on ComfyUI a071826fd, a one-GPU edit in each of the three
+edit formats was bit-identical to stock, and with the reference cache it ran
+2.119 s a step against stock's 2.142; no cluster edit has run on hardware.
+The same day the text-to-image sharded forward on that commit was
+bit-identical on uly2, in BF16 and pin-stripped INT8, to one GPU at one step
+and over 50 steps and to stock at one step
+([VALIDATION](VALIDATION.md#moss-image-on-comfyui-a071826fd)).
 The same seed does not reproduce the vendor's diffusers pipeline image,
 because that pipeline draws its own noise and rounds its sigmas to the 1000
 training sigmas. Comfy-Org's
