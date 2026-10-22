@@ -150,6 +150,26 @@ def test_read_private_file_reports_shapes_as_value_errors(state):
         sign_in.read_private_file(path, 5)
 
 
+def test_remove_matching_removes_only_an_owner_only_file_of_the_right_shape(state, tmp_path):
+    token, page = state / sign_in.OWNER_FILE, state / sign_in.SIGN_IN_FILE
+    assert sign_in.remove_matching(token, sign_in.EARLIER_TOKEN) is False  # absent
+    _write_token(token, state)
+    sign_in.write_private_file(page, sign_in.sign_in_page(URL), state, earlier=sign_in.SIGN_IN_PAGE,
+                               taken=sign_in.SIGN_IN_TAKEN)
+    assert sign_in.remove_matching(token, sign_in.SIGN_IN_PAGE) is False and token.exists()
+    assert sign_in.remove_matching(token, sign_in.EARLIER_TOKEN) is True and not token.exists()
+    assert sign_in.remove_matching(page, sign_in.SIGN_IN_PAGE) is True and not page.exists()
+    other = state / "other"
+    other.write_text(TOKEN + "\n")
+    other.chmod(0o644)
+    assert sign_in.remove_matching(other, sign_in.EARLIER_TOKEN) is False and other.exists()
+    target = tmp_path / "target"
+    target.write_text(TOKEN + "\n")
+    target.chmod(0o600)
+    token.symlink_to(target)
+    assert sign_in.remove_matching(token, sign_in.EARLIER_TOKEN) is False and target.exists()
+
+
 def test_private_reads_refuse_a_fifo_without_blocking(state):
     fifo = state / sign_in.SIGN_IN_FILE
     os.mkfifo(fifo, 0o600)
@@ -458,20 +478,29 @@ def test_ssh_destination_rule(text):
     assert sign_in.valid_ssh_destination(text) is False
 
 
-def test_forward_line_is_the_owner_form():
-    # The owner's form with -o ExitOnForwardFailure=yes, so ssh exits instead of
-    # opening a session without the tunnel when another program holds the port.
+def test_forward_line_binds_the_browse_address_and_exits_on_forward_failure():
+    # The bind address keeps the forward on one loopback address, so a program
+    # that already holds that port makes ssh exit instead of leaving the
+    # forward on the other loopback address.
     assert sign_in.forward_line("user@192.0.2.10", 8220) == (
-        "ssh -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 user@192.0.2.10")
+        "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@192.0.2.10")
     assert sign_in.forward_line("studio-host", 8221, ssh_port=2222) == (
-        "ssh -p 2222 -o ExitOnForwardFailure=yes -L 8221:127.0.0.1:8221 studio-host")
+        "ssh -p 2222 -o ExitOnForwardFailure=yes -L 127.0.0.1:8221:127.0.0.1:8221 studio-host")
     assert sign_in.forward_line("studio-host", 8220, target="::1") == (
-        "ssh -o ExitOnForwardFailure=yes -L 8220:[::1]:8220 studio-host")
+        "ssh -o ExitOnForwardFailure=yes -L [::1]:8220:[::1]:8220 studio-host")
     assert sign_in.forward_line("studio-host", 8220, target="[::1]") == (
-        "ssh -o ExitOnForwardFailure=yes -L 8220:[::1]:8220 studio-host")
+        "ssh -o ExitOnForwardFailure=yes -L [::1]:8220:[::1]:8220 studio-host")
     assert sign_in.forward_line(sign_in.HOST_PLACEHOLDER, 8220) == (
-        "ssh -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 <host>")
+        "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 <host>")
     assert "-N" not in sign_in.forward_line("studio-host", 8220).split()
+
+
+@pytest.mark.parametrize(("target", "browse"), [("127.0.0.1", "127.0.0.1"), ("::1", "[::1]"), ("[::1]", "[::1]")])
+def test_forward_line_listens_where_the_browser_goes(target, browse):
+    words = sign_in.forward_line("studio-host", 8220, target=target).split(" ")
+    listen = words[words.index("-L") + 1]
+    assert listen == f"{browse}:8220:{browse}:8220"
+    assert listen.startswith(browse + ":")
 
 
 def test_ssh_session_destination_reads_the_third_field_and_port(monkeypatch):
@@ -499,11 +528,11 @@ def test_ssh_session_destination_drops_a_scoped_address(monkeypatch):
 
 def test_another_way_line_names_the_port_twice():
     assert sign_in.another_way_line(8220) == (
-        "If you reach this host another way, add -L 8220:127.0.0.1:8220 to the ssh command you use, or set a "
-        "local forward of port 8220 to 127.0.0.1:8220 in your SSH app.")
+        "If you reach this host another way, add -L 127.0.0.1:8220:127.0.0.1:8220 to the ssh command you use, "
+        "or set a local forward in your SSH app that listens on 127.0.0.1 port 8220 and goes to 127.0.0.1:8220.")
     assert sign_in.another_way_line(8221, target="::1") == (
-        "If you reach this host another way, add -L 8221:[::1]:8221 to the ssh command you use, or set a "
-        "local forward of port 8221 to [::1]:8221 in your SSH app.")
+        "If you reach this host another way, add -L [::1]:8221:[::1]:8221 to the ssh command you use, "
+        "or set a local forward in your SSH app that listens on [::1] port 8221 and goes to [::1]:8221.")
 
 
 def test_ssh_forward_hint_lines(monkeypatch):
@@ -511,17 +540,27 @@ def test_ssh_forward_hint_lines(monkeypatch):
     environ = {"SSH_CONNECTION": "192.0.2.20 50514 192.0.2.10 2222", "DISPLAY": ":0"}
     assert sign_in.ssh_forward_hint(environ, 8220) == [
         sign_in.SSH_SESSION,
-        "  ssh -p 2222 -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 user@192.0.2.10",
+        "  ssh -p 2222 -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@192.0.2.10",
         sign_in.another_way_line(8220),
         "Then open the sign-in link there."]
     scoped = {"SSH_CONNECTION": "fe80::2 50514 fe80::1%eth0 22"}
     assert sign_in.ssh_forward_hint(scoped, 8220) == [
         sign_in.SSH_SESSION,
-        "  ssh -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 <host>",
+        "  ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 <host>",
         sign_in.NAME_THE_STUDIO_HOST,
         sign_in.another_way_line(8220),
         "Then open the sign-in link there."]
     assert "dgxm studio tunnel" in sign_in.NAME_THE_STUDIO_HOST
+
+
+def test_ssh_forward_hint_uses_the_companion_address(monkeypatch):
+    monkeypatch.setattr(sign_in.getpass, "getuser", lambda: "user")
+    environ = {"SSH_CONNECTION": "192.0.2.20 50514 192.0.2.10 22"}
+    assert sign_in.ssh_forward_hint(environ, 8220, target="::1") == [
+        sign_in.SSH_SESSION,
+        "  ssh -o ExitOnForwardFailure=yes -L [::1]:8220:[::1]:8220 user@192.0.2.10",
+        sign_in.another_way_line(8220, target="::1"),
+        "Then open the sign-in link there."]
 
 
 # Constants

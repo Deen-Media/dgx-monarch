@@ -31,7 +31,7 @@ LINK = sign_in.sign_in_link("127.0.0.1", 8220, NEW_TOKEN)
 
 
 def _snapshot(rig: Rig) -> set[str]:
-    """Every file under the systemd user directory: up writes nothing there before step 13."""
+    """Every file under the systemd user directory: up writes nothing there before every check passes."""
     root = rig.unit_path.parent
     return {str(path.relative_to(root)) for path in root.rglob("*")} if root.exists() else set()
 
@@ -60,7 +60,7 @@ def test_up_refuses_a_working_directory_config_and_accepts_it_by_name(rig: Rig):
 
 
 def _refusals(rig: Rig, monkeypatch: pytest.MonkeyPatch) -> dict[str, tuple[object, int, str]]:
-    """Each check of design 6.4 steps 1 to 11, armed alone; the value is (arm, exit code, the refusal's start)."""
+    """Each check up makes before it writes, armed alone; the value is (arm, exit code, the refusal's start)."""
     def foreign() -> None:
         rig.unit_path.parent.mkdir(parents=True, mode=0o700)
         rig.unit_path.write_text("[Unit]\nDescription=someone else's\n")
@@ -225,6 +225,36 @@ def test_up_continues_when_the_binding_cannot_be_read(rig: Rig):
     result = _up(rig)
     assert result.code == 0, result.text
     assert studio_command.UNREADABLE_BINDING in result.out.splitlines()
+
+
+def test_up_refuses_the_default_origin_when_the_binding_cannot_be_read(rig: Rig):
+    # Only a readable binding equal to the default lets the default through.
+    unit_paths.make_private_directories(rig.state)
+    (rig.state / "studio.sqlite3").write_bytes(b"")
+    result = _up(rig, config=rig.config("port = 8220"))
+    assert (result.code, result.err.strip()) == (1, launch.NO_DRIVER_ORIGIN)
+    assert _snapshot(rig) == set()
+
+
+def test_up_restores_the_previous_unit_when_enable_fails(rig: Rig):
+    config = rig.config()
+    rig.install(rig.settings(config), driver="http://127.0.0.1:8192")
+    before = rig.unit_path.read_text()
+    rig.fails["enable"] = (1, "Failed to enable unit: Unit file is masked.")
+    result = _up(rig, config=config)
+    assert (result.code, result.err.strip()) == (
+        1, f"{studio_command.ENABLE_FAILED} Failed to enable unit: Unit file is masked.")
+    assert rig.unit_path.read_text() == before
+    verbs = [call[2] for call in rig.calls if call[:2] == ["systemctl", "--user"] and call[2] != "show"]
+    assert verbs == ["daemon-reload", "enable", "daemon-reload"]
+
+
+def test_up_reports_a_restart_systemd_refused(rig: Rig):
+    rig.fails["restart"] = (1, "Job for dgxm-studio.service failed because the control process exited.")
+    result = _up(rig)
+    assert result.code == 1
+    assert result.err.splitlines() == [
+        unit.START_FAILED, "Job for dgxm-studio.service failed because the control process exited.", *rig.journal]
 
 
 def test_up_refuses_root(rig: Rig, monkeypatch: pytest.MonkeyPatch):

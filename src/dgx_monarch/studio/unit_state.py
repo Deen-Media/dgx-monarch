@@ -13,7 +13,6 @@ import contextlib
 import errno
 import fcntl
 import os
-import re
 import shutil
 import socket
 import sqlite3
@@ -41,7 +40,7 @@ from .unit_paths import UnitRuntime, make_private_directories, printable, servic
 UNIT_BUSY = "Another dgxm studio up, down or token --rotate is running; wait for it."
 BUSY = "Studio is running a management operation; wait for it to finish, or stop the service yourself with systemctl --user stop dgxm-studio.service."
 BUSY_UNKNOWN = "Cannot tell whether Studio is running a management operation; wait, or stop the service yourself with systemctl --user stop dgxm-studio.service."
-# Filled at print time (design section 6.4 step 7, and the unit lock's own checks).
+# Filled at print time by the service command check and the unit lock's own checks.
 CHECK_FAILED = "The service command cannot start the companion:"
 CHECK_TIMEOUT = "The service command did not finish its check in 60 seconds; nothing was installed."
 UNIT_LOCK_UNSAFE = "The Studio unit lock must be a regular file you own, in a directory you own that no other account can write:"
@@ -54,7 +53,6 @@ LOCK_FILE = "companion.lock"
 UNIT_LOCK_FILE = "studio-unit.lock"
 _STATUS_PROPERTIES = ("LoadState", "ActiveState", "SubState", "MainPID", "ControlGroup", "FragmentPath",
                       "ExecMainStartTimestampMonotonic")
-_PRIVATE_LIMIT = 65536
 
 # Clocks and kernel trees are read through these names, so a test replaces
 # them without reading the machine's clocks, control groups or processes.
@@ -104,7 +102,7 @@ def show_unit(properties: Sequence[str], *, unit: str = UNIT_NAME, run: Run | No
 
 def user_manager(*, run: Run | None = None,
                  which: Callable[[str], str | None] | None = None) -> Literal["ok", "absent", "no_answer"]:
-    """Whether a systemd user manager answers here (design section 6.4 step 2)."""
+    """Whether a systemd user manager answers here; up and down ask before anything else."""
     run, which = run or subprocess.run, which or shutil.which
     if not sys.platform.startswith("linux") or which("systemctl") is None:
         return "absent"
@@ -417,8 +415,12 @@ def check_preflight(runtime: UnitRuntime, env: dict[str, str], *,
 
 def driver_unit_check(unit: str, origin: str, *, run: Run | None = None) -> tuple[
         Literal["ok", "note", "unknown_unit", "other_state", "origin", "no_answer"], str, str | None]:
-    """Design section 6.4 step 8: the outcome, its line, and the driver unit's ``ActiveState``."""
-    fields = show_unit(("LoadState", "ActiveState", "ExecStart"), unit=unit, run=run)
+    """The driver unit check of ``up``: the outcome, its line, and the driver unit's ``ActiveState``.
+
+    ExecStart is asked for only once the unit is loaded: systemd prints no
+    ExecStart= line for a unit it could not load, which is not a lost answer.
+    """
+    fields = show_unit(("LoadState", "ActiveState"), unit=unit, run=run)
     if fields is None:
         return "no_answer", NO_ANSWER, None
     active = fields["ActiveState"] or None
@@ -427,8 +429,11 @@ def driver_unit_check(unit: str, origin: str, *, run: Run | None = None) -> tupl
         return "unknown_unit", f"{DRIVER_UNIT_UNKNOWN} {unit}", active
     if load != "loaded":
         return "other_state", DRIVER_UNIT_STATE.format(unit=unit, state=printable(load)), active
+    command = show_unit(("ExecStart",), unit=unit, run=run)
+    if command is None:
+        return "no_answer", NO_ANSWER, None
     try:
-        _executable, _main, argv = _direct_command(fields["ExecStart"])
+        _executable, _main, argv = _direct_command(command["ExecStart"])
         endpoint = listen_endpoint(argv)
     except StudioError:
         return "note", DRIVER_UNIT_NOTE, active
@@ -437,34 +442,16 @@ def driver_unit_check(unit: str, origin: str, *, run: Run | None = None) -> tupl
     return "ok", "", active
 
 
-def _remove_matching(path: Path, pattern: re.Pattern[str]) -> bool:
-    """Remove an owner-only regular file whose whole content matches; the read checks its descriptor."""
-    from .sign_in import read_private_file
-
-    try:
-        before = os.lstat(path)
-        found = read_private_file(path, _PRIVATE_LIMIT)
-        if found is None or pattern.fullmatch(found[0].decode("utf-8", "replace")) is None:
-            return False
-        after = os.lstat(path)
-        if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
-            return False
-        os.unlink(path)
-    except (OSError, ValueError):
-        return False
-    return True
-
-
 def remove_leftovers(state: Path) -> list[Path]:
     """After ``down``: remove a dead token file and sign-in page, only while no companion holds the lock."""
-    from .sign_in import EARLIER_TOKEN, OWNER_FILE, SIGN_IN_FILE, SIGN_IN_PAGE
+    from .sign_in import EARLIER_TOKEN, OWNER_FILE, SIGN_IN_FILE, SIGN_IN_PAGE, remove_matching
 
     if lock_probe(state) != "free":
         return []
     removed: list[Path] = []
     for name, pattern in ((OWNER_FILE, EARLIER_TOKEN), (SIGN_IN_FILE, SIGN_IN_PAGE)):
         path = state / name
-        if _remove_matching(path, pattern):
+        if remove_matching(path, pattern):
             removed.append(path)
     return removed
 

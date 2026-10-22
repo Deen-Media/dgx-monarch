@@ -124,6 +124,15 @@ def _mismatch(exc: StudioError, store: Any, state: Path, asked: str) -> str:
 def _deliver(args: argparse.Namespace, token: str, state: Path, token_file: Path | None, cleanup: ExitStack) -> None:
     """Hand the token to a terminal, an owner-only file or the browser; never to a pipe, log or journal."""
     terminal = sign_in.terminal_stdout()
+    route = sign_in.browser_route(os.environ)
+    browser = terminal and not args.no_open and route == "local"
+    writes_token = (token_file or state / OWNER_FILE) == state / OWNER_FILE and (token_file is not None or not terminal)
+    writes_page = not args.allow_management and (token_file is not None or not terminal or browser)
+    # This start holds the state lock, so a token file or page it does not rewrite is a killed start's.
+    if not writes_token:
+        sign_in.remove_matching(state / OWNER_FILE, EARLIER_TOKEN)
+    if not writes_page:
+        sign_in.remove_matching(state / sign_in.SIGN_IN_FILE, sign_in.SIGN_IN_PAGE)
     if token_file is None and terminal:
         print(f"Owner token: {token}", flush=True)
     else:
@@ -137,10 +146,8 @@ def _deliver(args: argparse.Namespace, token: str, state: Path, token_file: Path
             print(sign_in.MANAGEMENT_NO_LINK, sign_in.STOP_HINT, sep="\n", flush=True)
         return
     url = sign_in.sign_in_link(args.host, args.port, token)
-    route = sign_in.browser_route(os.environ)
-    browser = terminal and not args.no_open and route == "local"
     page = state / sign_in.SIGN_IN_FILE
-    if token_file is not None or not terminal or browser:
+    if writes_page:
         _write(page, sign_in.sign_in_page(url), state, cleanup, earlier=sign_in.SIGN_IN_PAGE,
                taken=sign_in.SIGN_IN_TAKEN, cannot="Cannot write the sign-in page")
         if token_file is not None or not terminal:
@@ -155,7 +162,7 @@ def _deliver(args: argparse.Namespace, token: str, state: Path, token_file: Path
     else:
         lines = list(link)
         if not args.no_open and route == "ssh":
-            lines += sign_in.ssh_forward_hint(os.environ, args.port)
+            lines += sign_in.ssh_forward_hint(os.environ, args.port, target=args.host)
         elif not args.no_open:
             lines.append(sign_in.NO_DISPLAY)
     print(*lines, sign_in.STOP_HINT, sep="\n", flush=True)
@@ -179,10 +186,13 @@ def main(argv: list[str] | None = None) -> int:
     if args.check:
         return _check()
     try:
-        if not ipaddress.ip_address(args.host).is_loopback or not 1 <= args.port <= 65535:
-            parser.error("Studio binds only to a loopback IP and a port between 1 and 65535")
+        address = ipaddress.ip_address(args.host)
     except ValueError:
         parser.error("--host must be a loopback IP literal")
+    if not address.is_loopback or not 1 <= args.port <= 65535:
+        parser.error("Studio binds only to a loopback IP and a port between 1 and 65535")
+    # One spelling, the one a browser sends in Host and the sign-in link pattern takes: 0:0::1 is ::1.
+    args.host = address.compressed
     state_dir = _absolute(parser, args.state_dir, "--state-dir") or default_state_dir()
     token_file = _absolute(parser, args.token_file, "--token-file")
     try:

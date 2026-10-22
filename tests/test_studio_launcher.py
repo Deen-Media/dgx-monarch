@@ -231,6 +231,63 @@ def test_an_earlier_token_left_by_a_killed_launch_is_replaced(tmp_path, launch):
     assert not (state / OWNER_FILE).exists()
 
 
+DEAD_PAGE = sign_in.sign_in_page(f"http://127.0.0.1:8220/#token={'d' * 43}")
+
+
+def leave_dead_files(state):
+    for name, text in ((OWNER_FILE, "d" * 43 + "\n"), (sign_in.SIGN_IN_FILE, DEAD_PAGE)):
+        (state / name).write_text(text)
+        (state / name).chmod(0o600)
+
+
+@pytest.mark.parametrize("route", ["terminal_no_display", "terminal_no_open", "terminal_management",
+                                   "pipe_management", "token_file_elsewhere"])
+def test_a_start_removes_the_dead_files_it_does_not_rewrite(tmp_path, launch, monkeypatch, route):
+    # A start stopped by SIGKILL leaves both files; one that writes neither must not leave them looking live.
+    state = private(tmp_path / "state")
+    leave_dead_files(state)
+    argv = ["--state-dir", str(state)]
+    if route.startswith("terminal"):
+        monkeypatch.setattr(sys, "stdout", Terminal())
+    if route == "terminal_no_open":
+        monkeypatch.setenv("DISPLAY", ":0")
+        argv.append("--no-open")
+    if route.endswith("management"):
+        argv.append("--allow-management")
+    if route == "token_file_elsewhere":
+        elsewhere = private(tmp_path / "elsewhere")
+        argv += ["--token-file", str(elsewhere / "token")]
+    seen = {}
+    launch.during = lambda: seen.update({name: (state / name).read_text() if (state / name).exists() else None
+                                         for name in (OWNER_FILE, sign_in.SIGN_IN_FILE)})
+    assert launcher.main(argv) == 0
+    assert seen[OWNER_FILE] == (launch.token + "\n" if route == "pipe_management" else None)
+    if route == "token_file_elsewhere":
+        assert seen[sign_in.SIGN_IN_FILE] is not None and launch.token in seen[sign_in.SIGN_IN_FILE]
+    else:
+        assert seen[sign_in.SIGN_IN_FILE] is None
+
+
+def test_a_start_keeps_a_file_of_another_shape_where_the_page_would_be(tmp_path, launch, monkeypatch):
+    state = private(tmp_path / "state")
+    (state / sign_in.SIGN_IN_FILE).write_text("notes\n")
+    (state / sign_in.SIGN_IN_FILE).chmod(0o600)
+    monkeypatch.setattr(sys, "stdout", Terminal())
+    assert launcher.main(["--state-dir", str(state)]) == 0
+    assert (state / sign_in.SIGN_IN_FILE).read_text() == "notes\n"
+
+
+def test_an_uncompressed_ipv6_loopback_host_is_read_as_its_short_form(tmp_path, launch, capsys):
+    state = tmp_path / "state"
+    seen = {}
+    launch.during = lambda: seen.update(page=sign_in.read_sign_in_page(state / sign_in.SIGN_IN_FILE))
+    assert launcher.main(["--host", "0:0::1", "--port", "18220", "--state-dir", str(state)]) == 0
+    assert launch.allowed_hosts == {"[::1]:18220"}
+    assert launch.bound == [("::1", 18220)]
+    assert seen["page"][0] == f"http://[::1]:18220/#token={launch.token}"
+    assert capsys.readouterr().out.splitlines()[0] == "Studio: http://[::1]:18220"
+
+
 @pytest.mark.parametrize("case", ["shared_directory", "symlinked_directory", "missing_directory",
                                   "state_file", "other_file", "small_private_file"])
 def test_token_file_refusals_exit_cleanly_and_release_the_lock(tmp_path, launch, case):
@@ -705,7 +762,7 @@ def test_routes(tmp_path, launch, monkeypatch, session):
         return
     assert lines[4] == sign_in.SSH_SESSION and lines[-2] == sign_in.THEN_OPEN_THERE
     assert lines[4:-1] == sign_in.ssh_forward_hint(os.environ, 18220)
-    assert "-L 18220:127.0.0.1:18220" in text
+    assert "-L 127.0.0.1:18220:127.0.0.1:18220" in text
     if "fe80" in session["SSH_CONNECTION"]:
         assert "<host>" in text and "fe80" not in text and "%eth0" not in text
     else:

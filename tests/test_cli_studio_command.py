@@ -8,6 +8,7 @@ clocks or user manager. Every token is fake.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import fcntl
 import os
 import socket
@@ -91,6 +92,7 @@ class Rig:
         self.now = 1000.0
         self.later: list[tuple[float, Callable[[], None]]] = []
         self.calls: list[list[str]] = []
+        self.fails: dict[str, tuple[int, str]] = {}  # systemctl verb: its exit code and stderr
         self.opened: list[list[str]] = []
         self.started: list[list[str]] = []
         self.locks: list[int] = []
@@ -245,6 +247,8 @@ class Rig:
         out, code = "", 0
         if argv[:2] == ["systemctl", "--user"]:
             verb = argv[2]
+            if verb in self.fails:
+                return subprocess.CompletedProcess(argv, self.fails[verb][0], "", self.fails[verb][1])
             if verb == "show":
                 if not self.answers:
                     raise subprocess.TimeoutExpired(argv, 10)
@@ -252,8 +256,10 @@ class Rig:
                 target = argv[-1]
                 values = (self._studio_properties() if target == unit.UNIT_NAME else self.driver
                           if self.driver is not None and target == DRIVER_UNIT
-                          else {"LoadState": "not-found", "ActiveState": "inactive", "ExecStart": ""})
-                out = "".join(f"{name}={values.get(name, '')}\n" for name in names)
+                          else {"LoadState": "not-found", "ActiveState": "inactive"})
+                # systemd 255 prints no ExecStart= at all for a unit it could not load.
+                shown = [name for name in names if name != "ExecStart" or values.get("LoadState") == "loaded"]
+                out = "".join(f"{name}={values.get(name, '')}\n" for name in shown)
             elif verb == "daemon-reload":
                 self.load = "loaded" if unit.owned_unit_state(self.unit_path) == "ours" else "not-found"
             elif verb == "reset-failed" and self.active == "failed":
@@ -321,7 +327,7 @@ def test_studio_parser_shape():
     with pytest.raises(SystemExit) as refused:
         parser.parse_args(["studio", "token", "--value", "--rotate"])
     assert refused.value.code == 2
-    # The global --config stays in force unless one is typed after the word it belongs to (U17).
+    # The global --config stays in force unless one is typed after the word it belongs to.
     assert parser.parse_args(["--config", "X", "studio"]).config == "X"
     assert parser.parse_args(["--config", "X", "studio", "--config", "Y"]).config == "Y"
     assert parser.parse_args(["--config", "X", "studio", "up"]).config == "X"
@@ -424,6 +430,17 @@ def test_one_word_refuses_a_fresh_state_directory_without_a_driver_origin(rig: R
     db.close()
     assert rig.cli("studio").err.strip() == launch.NO_DRIVER_ORIGIN
     assert rig.started == []
+
+
+def test_one_word_refuses_the_default_origin_when_the_binding_cannot_be_read(rig: Rig):
+    # A first start that stopped inside the store leaves a zero-byte database.
+    unit_paths.make_private_directories(rig.state)
+    (rig.state / "studio.sqlite3").write_bytes(b"")
+    result = rig.cli("studio")
+    assert (result.code, result.err.strip()) == (1, launch.NO_DRIVER_ORIGIN)
+    assert rig.started == []
+    assert rig.cli("studio", "--driver", DRIVER).code == 0
+    assert rig.started[-1][:6] == ["--host", "127.0.0.1", "--port", "8220", "--driver", DRIVER]
 
 
 def test_one_word_starts_on_a_directory_bound_to_the_default(rig: Rig):
@@ -674,6 +691,34 @@ def test_rotate_prints_also_started_for_a_stopped_driver_unit(rig: Rig):
                                            f"Also started {DRIVER_UNIT}: the Studio service wants it."]
     rig.serve(at=rig.now + 0.1)
     assert "Also started" not in rig.cli("studio", "token", "--rotate").out
+
+
+def test_rotate_reads_the_unit_again_under_the_lock(rig: Rig, monkeypatch: pytest.MonkeyPatch):
+    rig.install()
+    rig.serve(at=rig.now + 0.1)
+    real_lock = unit_state.unit_lock
+
+    @contextlib.contextmanager
+    def lock_after_a_down() -> Iterator[None]:
+        # A down that finished while this rotate waited for the lock.
+        rig.unit_path.unlink()
+        rig.load, rig.active, rig.pid = "not-found", "inactive", 0
+        with real_lock():
+            yield
+
+    monkeypatch.setattr(unit_state, "unit_lock", lock_after_a_down)
+    result = rig.cli("studio", "token", "--rotate")
+    assert (result.code, result.err.strip()) == (1, unit.NO_ROTATE)
+    assert rig.systemctl("restart") == [] and rig.systemctl("reset-failed") == []
+
+
+def test_rotate_reports_a_restart_systemd_refused(rig: Rig):
+    rig.install()
+    rig.serve(at=rig.now + 0.1)
+    rig.fails["restart"] = (1, "Job for dgxm-studio.service failed.\nSee the journal for details.")
+    result = rig.cli("studio", "token", "--rotate")
+    assert result.code == 1
+    assert result.err.splitlines() == [unit.START_FAILED, "See the journal for details.", *rig.journal]
 
 
 def test_rotate_times_out_as_unknown(rig: Rig):

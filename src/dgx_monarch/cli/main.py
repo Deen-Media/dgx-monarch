@@ -321,7 +321,7 @@ def cmd_update(args) -> int:
 
 
 def cmd_uninstall(args) -> int:
-    # An installed Studio service would outlive the dgxm that removes it (design 6.10).
+    # An installed Studio service would outlive the dgxm that removes it.
     from ..studio import unit as studio_unit
 
     studio = studio_unit.owned_unit_state()

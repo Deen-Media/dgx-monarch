@@ -77,5 +77,5 @@ gpus = 1
 # [studio]
 # driver = "http://127.0.0.1:8188"           # this computer's ComfyUI driver, in canonical form
 # port = 8220                                 # Studio's loopback port; an SSH tunnel forwards it
-# driver_service = "comfyui.service"          # optional: a ComfyUI user unit started with Studio
+# driver_service = "comfyui-driver.service"   # optional: a ComfyUI user unit started with Studio
 # driver_command = "bash /home/user/start-comfyui.sh"   # optional: shown on the Driver not running page; no secrets

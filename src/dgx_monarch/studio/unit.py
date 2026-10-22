@@ -23,6 +23,7 @@ from pathlib import Path, PurePosixPath
 from typing import TYPE_CHECKING, Literal
 
 from ..cli.systemd_unit import quote
+from .driver_service import _others_can_write
 from .unit_paths import (
     SPECIFIER_WORDS,
     UNIT_DIR_UNSAFE,
@@ -67,7 +68,7 @@ MANAGEMENT_WARNING = "The service runs with --allow-management. Its token is cod
 MANAGEMENT_REMOVED = "Removed --allow-management from the service. Run dgxm studio up --allow-management to keep management."
 LINGER_NOTE = "Linger is off for this user, so the service runs only while you are logged in: it starts at your first login and stops when your last session ends. To keep it running from boot, run: sudo loginctl enable-linger $USER"
 UNINSTALL_STUDIO_FIRST = "uninstall refused: dgxm-studio.service is still installed; run dgxm studio down first, then dgxm uninstall."
-# Filled at print time (design section 6.4 steps 2, 8 and 14).
+# Filled at print time by dgxm studio up.
 NO_ANSWER = "The user manager did not answer; nothing was installed."
 DRIVER_UNIT_STATE = "[studio] driver_service names {unit}, whose LoadState is {state}."
 VENDOR_DROPIN = "Note: systemd also applies a drop-in that this system ships for every user service:"
@@ -214,7 +215,8 @@ def _read_unit(path: Path) -> tuple[UnitState, str | None]:
         return "unknown", None
     if stat.S_ISLNK(info.st_mode):
         return "symlink", None
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_size > _UNIT_LIMIT:
+    if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_size > _UNIT_LIMIT
+            or _others_can_write(info)):
         return "foreign", None
     try:
         descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC)
@@ -250,7 +252,7 @@ def _read_unit(path: Path) -> tuple[UnitState, str | None]:
 
 
 def owned_unit_state(path: Path | None = None) -> UnitState:
-    """``ours`` only for a regular file of this user whose first line is the Studio marker."""
+    """``ours`` only for a regular file of this user, that no other account can write, marked as Studio's."""
     return _read_unit(unit_path() if path is None else path)[0]
 
 

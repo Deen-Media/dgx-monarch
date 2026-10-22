@@ -493,6 +493,28 @@ def test_ownership_probe_verdicts(home, monkeypatch):
     assert unit.owned_unit_state(home.root / "nowhere" / unit.UNIT_NAME) == "absent"
 
 
+def test_ownership_probe_refuses_a_unit_another_account_can_write(home, monkeypatch):
+    import pwd
+
+    path = home.unit
+    path.parent.mkdir(parents=True)
+    ours = unit.render_unit(settings(), RUNTIME, source_digest=DIGEST)
+    write_private(path, ours)
+    owner = pwd.getpwuid(os.geteuid()).pw_name
+    group = path.stat().st_gid
+    monkeypatch.setattr(driver_service.pwd, "getpwall", lambda: [SimpleNamespace(pw_name=owner, pw_gid=group)])
+    monkeypatch.setattr(driver_service.grp, "getgrgid", lambda gid: SimpleNamespace(gr_mem=[]))
+    path.chmod(0o664)  # group write, but the group holds only this user
+    assert unit.owned_unit_state() == "ours" and unit.read_owned_unit() == ours
+    monkeypatch.setattr(driver_service.grp, "getgrgid", lambda gid: SimpleNamespace(gr_mem=[owner, "worker"]))
+    path.chmod(0o660)  # group write for a group that holds another account
+    assert unit.owned_unit_state() == "foreign" and unit.read_owned_unit() is None
+    path.chmod(0o602)  # write for every account
+    assert unit.owned_unit_state() == "foreign"
+    path.chmod(0o600)
+    assert unit.owned_unit_state() == "ours"
+
+
 def test_dropin_scan_covers_both_names_in_all_three_directories(home):
     plain = {"HOME": str(home.root), "XDG_RUNTIME_DIR": home.environ["XDG_RUNTIME_DIR"]}
     directories = unit.search_directories(plain)
@@ -922,12 +944,17 @@ def test_driver_unit_check_outcomes():
                                                                        "--port", "8191"), code=0):
         def run(argv, **kwargs):
             calls.append(argv)
-            return completed(f"LoadState={load}\nActiveState={active}\nExecStart={start}\n", code)
+            asked = argv[argv.index("--no-pager") + 1].removeprefix("--property=").split(",")
+            # systemd 255 prints no ExecStart= at all for a unit it could not load.
+            fields = {"LoadState": load, "ActiveState": active, **({"ExecStart": start} if load == "loaded" else {})}
+            return completed("".join(f"{name}={fields[name]}\n" for name in asked if name in fields), code)
         return run
 
     origin = "http://127.0.0.1:8191"
     assert unit_state.driver_unit_check("comfyui-driver.service", origin, run=answering()) == ("ok", "", "inactive")
-    assert calls[0] == ["systemctl", "--user", "show", "--no-pager", "--property=LoadState,ActiveState,ExecStart",
+    assert calls[0] == ["systemctl", "--user", "show", "--no-pager", "--property=LoadState,ActiveState",
+                        "--", "comfyui-driver.service"]
+    assert calls[1] == ["systemctl", "--user", "show", "--no-pager", "--property=ExecStart",
                         "--", "comfyui-driver.service"]
     assert unit_state.driver_unit_check("comfyui-driver.service", "http://127.0.0.1:8188",
                                         run=answering(active="active")) == (
@@ -944,6 +971,10 @@ def test_driver_unit_check_outcomes():
         "unknown_unit", f"{unit.DRIVER_UNIT_UNKNOWN} missing.service", "inactive")
     assert unit_state.driver_unit_check("masked.service", origin, run=answering(load="masked", start="")) == (
         "other_state", "[studio] driver_service names masked.service, whose LoadState is masked.", "inactive")
+    calls.clear()
+    assert unit_state.driver_unit_check("missing.service", origin, run=answering(load="not-found"))[0] == (
+        "unknown_unit")
+    assert len(calls) == 1  # no ExecStart read for a unit systemd could not load
     assert unit_state.driver_unit_check("comfyui-driver.service", origin, run=answering(code=1)) == (
         "no_answer", unit.NO_ANSWER, None)
 

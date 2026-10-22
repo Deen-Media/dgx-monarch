@@ -146,7 +146,7 @@ def rig(tmp_path, monkeypatch):
 
 
 def block(port: int, source: str, forward: str, sign: list[str], target: str = "127.0.0.1") -> list[str]:
-    """The design 7.3 lines, in order."""
+    """The printed lines, in order."""
     return [PORT_LINE.format(port=port, source=source), RUN_THIS, "  " + forward,
             sign_in.another_way_line(port, target=target), BROWSE.format(address=f"http://{target}:{port}/"),
             *sign, SAME_ADDRESS, FORWARD_FAILED]
@@ -170,24 +170,24 @@ def test_the_printed_lines_keep_their_text():
     assert NO_SSH == "ssh was not found on PATH."
 
 
-def test_the_design_block_on_the_studio_host(rig):
-    """The 7.3 example: an SSH session, a terminal, a live companion, no management."""
+def test_the_full_block_on_the_studio_host(rig):
+    """The full block: an SSH session, a terminal, a live companion, no management."""
     url = rig.companion(port=8220)
     code, out, err = rig.call(environ=SESSION)
     assert (code, err) == (0, [])
     assert out == [
         "Port: 8220 (from the running Studio)",
         "On the computer with the browser, run:",
-        "  ssh -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 user@192.0.2.10",
-        "If you reach this host another way, add -L 8220:127.0.0.1:8220 to the ssh command you use, or set a "
-        "local forward of port 8220 to 127.0.0.1:8220 in your SSH app.",
+        "  ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@192.0.2.10",
+        "If you reach this host another way, add -L 127.0.0.1:8220:127.0.0.1:8220 to the ssh command you use, "
+        "or set a local forward in your SSH app that listens on 127.0.0.1 port 8220 and goes to 127.0.0.1:8220.",
         "Then browse: http://127.0.0.1:8220/",
         "Sign in with this link in that browser:",
         "  " + url,
         "Keep 127.0.0.1 and the same port on both ends; Studio refuses localhost and any other port.",
-        "If ssh says \"Could not request local forwarding\", another program on that computer holds the port and "
-        "ssh opened the session without the tunnel: close it, free the port, and do not open the sign-in link "
-        "until the tunnel works, because a page served on that port would read the token from the link.",
+        "If ssh says \"Address already in use\" or \"Could not request local forwarding\", another program on "
+        "that computer holds the port: close the session if it opened, free the port, and do not open the sign-in "
+        "link until the tunnel works, because a page served on that port would read the token from the link.",
     ]
 
 
@@ -199,7 +199,7 @@ def test_accepted_hosts_reach_the_forward_line(rig, host):
     code, out, err = rig.call(host)
     assert (code, err) == (0, [])
     assert out == block(8220, FROM_DEFAULT, sign_in.forward_line(host, 8220), [SIGN_IN_BY_OPEN])
-    assert out[2] == f"  ssh -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 {host}"
+    assert out[2] == f"  ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 {host}"
 
 
 @pytest.mark.parametrize("host", [
@@ -215,8 +215,8 @@ def test_refused_hosts_print_bad_host_and_nothing_else(rig, host):
 
 
 @pytest.mark.parametrize("ssh_port,forward", [
-    (22, "ssh -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 user@192.0.2.10"),
-    (2222, "ssh -p 2222 -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 user@192.0.2.10"),
+    (22, "ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@192.0.2.10"),
+    (2222, "ssh -p 2222 -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@192.0.2.10"),
 ])
 def test_the_derived_host_comes_from_the_ssh_session(rig, ssh_port, forward):
     code, out, err = rig.call(environ={"SSH_CONNECTION": f"192.0.2.20 50022 192.0.2.10 {ssh_port}"})
@@ -409,10 +409,20 @@ def test_a_companion_on_ipv6_loopback_gets_the_bracketed_target(rig):
     url = rig.companion(port=8233, host="::1")
     code, out, err = rig.call(environ=SESSION)
     assert (code, err) == (0, [])
-    assert out[2] == "  ssh -o ExitOnForwardFailure=yes -L 8233:[::1]:8233 user@192.0.2.10"
+    assert out[2] == "  ssh -o ExitOnForwardFailure=yes -L [::1]:8233:[::1]:8233 user@192.0.2.10"
     assert out[4] == "Then browse: http://[::1]:8233/"
     assert out == block(8233, FROM_STUDIO, sign_in.forward_line(SESSION_HOST, 8233, target="::1"),
                         [LINK_FOLLOWS, "  " + url], target="[::1]")
+
+
+@pytest.mark.parametrize(("host", "target"), [("127.0.0.1", "127.0.0.1"), ("::1", "[::1]")])
+def test_the_forward_listens_on_the_address_the_browse_line_names(rig, host, target):
+    rig.companion(port=8234, host=host)
+    code, out, err = rig.call(environ=SESSION)
+    assert (code, err) == (0, [])
+    words = out[2].split()
+    assert words[words.index("-L") + 1] == f"{target}:8234:{target}:8234"
+    assert out[4] == f"Then browse: http://{target}:8234/"
 
 
 def test_run_execs_the_printed_argument_list_and_never_a_link(rig):
@@ -424,8 +434,9 @@ def test_run_execs_the_printed_argument_list_and_never_a_link(rig):
     assert printed[2] == "  " + forward
     assert rig.execs == [("ssh", forward.split(" "))]
     assert " ".join(rig.execs[0][1]) == forward
-    # Every line but the forward line, with the open sentence in place of the link.
-    assert err == [line for line in block(8232, FROM_STUDIO, forward, [SIGN_IN_BY_OPEN]) if line != "  " + forward]
+    # Every line but the forward line and its header, with the open sentence in place of the link.
+    assert err == [line for line in block(8232, FROM_STUDIO, forward, [SIGN_IN_BY_OPEN])
+                   if line not in ("  " + forward, RUN_THIS)]
     assert FAKE_TOKEN not in "\n".join(err)
 
 
@@ -433,16 +444,17 @@ def test_run_with_a_named_host(rig):
     code, out, err = rig.call("user@studio-host", run=True)
     forward = sign_in.forward_line("user@studio-host", 8220)
     assert (code, out) == (0, [])
-    assert rig.execs == [("ssh", ["ssh", "-o", "ExitOnForwardFailure=yes", "-L", "8220:127.0.0.1:8220",
+    assert rig.execs == [("ssh", ["ssh", "-o", "ExitOnForwardFailure=yes", "-L", "127.0.0.1:8220:127.0.0.1:8220",
                                   "user@studio-host"])]
-    assert err == [line for line in block(8220, FROM_DEFAULT, forward, [SIGN_IN_BY_OPEN]) if line != "  " + forward]
+    assert err == [line for line in block(8220, FROM_DEFAULT, forward, [SIGN_IN_BY_OPEN])
+                   if line not in ("  " + forward, RUN_THIS)]
 
 
 def test_run_for_a_non_22_session_port_keeps_the_port_words(rig):
     code, _out, _err = rig.call(run=True, environ={"SSH_CONNECTION": "192.0.2.20 50022 192.0.2.10 2222"})
     assert code == 0
     assert rig.execs == [("ssh", ["ssh", "-p", "2222", "-o", "ExitOnForwardFailure=yes", "-L",
-                                  "8220:127.0.0.1:8220", SESSION_HOST])]
+                                  "127.0.0.1:8220:127.0.0.1:8220", SESSION_HOST])]
 
 
 def test_run_without_ssh_on_path(rig, monkeypatch):

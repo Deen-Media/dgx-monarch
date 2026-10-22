@@ -70,8 +70,9 @@ THEN_OPEN_THERE = "Then open the sign-in link there."
 # The SSH session gave no usable address, so the forward line names <host>.
 NAME_THE_STUDIO_HOST = ("Replace <host> with the name or address the computer with the browser uses for this "
                         "host, as for dgxm studio tunnel <host>.")
-ANOTHER_WAY = ("If you reach this host another way, add -L {port}:{target}:{port} to the ssh command you use, "
-               "or set a local forward of port {port} to {target}:{port} in your SSH app.")
+ANOTHER_WAY = ("If you reach this host another way, add -L {target}:{port}:{target}:{port} to the ssh command "
+               "you use, or set a local forward in your SSH app that listens on {target} port {port} and goes to "
+               "{target}:{port}.")
 HANDLERS_DIFFER = ".html opens with {html}; the web browser is {http}. To change it: xdg-mime default {http} text/html"
 HANDLERS_UNKNOWN = "xdg-mime could not name the .html or http handler."
 HOST_PLACEHOLDER = "<host>"
@@ -188,6 +189,26 @@ def read_token_file(path: Path) -> tuple[str, int] | None:
     if EARLIER_TOKEN.fullmatch(found[0]) is None:
         raise StudioError("token_file", TOKEN_FILE_TAKEN)
     return found[0].rstrip("\n"), found[1]
+
+
+def remove_matching(path: Path, pattern: re.Pattern[str]) -> bool:
+    """Remove an owner-only regular file whose whole content matches pattern; True when removed.
+
+    The read checks the open descriptor, and the name must still point at the
+    file that was read, so a file swapped in meanwhile stays.
+    """
+    try:
+        before = os.lstat(path)
+        found = read_private_file(path, max(_PAGE_LIMIT, _TOKEN_LIMIT))
+        if found is None or pattern.fullmatch(found[0].decode("utf-8", "replace")) is None:
+            return False
+        after = os.lstat(path)
+        if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+            return False
+        os.unlink(path)
+    except (OSError, ValueError):
+        return False
+    return True
 
 
 def write_private_file(path: Path, text: str, state: Path, *, earlier: re.Pattern[str],
@@ -320,15 +341,19 @@ def ssh_session_destination(environ: Mapping[str, str]) -> tuple[str, int | None
 
 
 def forward_line(destination: str, port: int, *, ssh_port: int | None = None, target: str = "127.0.0.1") -> str:
-    """ssh [-p N] -o ExitOnForwardFailure=yes -L <port>:<target>:<port> <destination>.
+    """ssh [-p N] -o ExitOnForwardFailure=yes -L <target>:<port>:<target>:<port> <destination>.
 
-    ExitOnForwardFailure makes ssh exit instead of opening a session without
-    the tunnel when another program holds the port. An IPv6 target is
-    bracketed. The destination is printed as given; callers pass a value that
-    passed valid_ssh_destination, or HOST_PLACEHOLDER.
+    The bind address in -L keeps the forward on that one loopback address of
+    the browser computer, so when another program there already holds the
+    port, ssh prints "Could not request local forwarding" and
+    ExitOnForwardFailure ends the session. Without a bind address ssh listens
+    on both 127.0.0.1 and ::1 and opens the session when either one is free.
+    An IPv6 target is bracketed. The destination is printed as given; callers
+    pass a value that passed valid_ssh_destination, or HOST_PLACEHOLDER.
     """
+    bound = _bracketed(target)
     words = ["ssh", *(["-p", str(ssh_port)] if ssh_port is not None else []),
-             "-o", "ExitOnForwardFailure=yes", "-L", f"{port}:{_bracketed(target)}:{port}", destination]
+             "-o", "ExitOnForwardFailure=yes", "-L", f"{bound}:{port}:{bound}:{port}", destination]
     return " ".join(words)
 
 
@@ -337,20 +362,21 @@ def another_way_line(port: int, *, target: str = "127.0.0.1") -> str:
     return ANOTHER_WAY.format(port=port, target=_bracketed(target))
 
 
-def ssh_forward_hint(environ: Mapping[str, str], port: int) -> list[str]:
+def ssh_forward_hint(environ: Mapping[str, str], port: int, *, target: str = "127.0.0.1") -> list[str]:
     """The lines a companion or dgxm studio open prints in an SSH session, after the link lines.
 
     SSH_SESSION, the indented forward line for the address this session
     used, the "another way" line, and THEN_OPEN_THERE. Without a usable
     address the forward line names HOST_PLACEHOLDER, followed by
-    NAME_THE_STUDIO_HOST.
+    NAME_THE_STUDIO_HOST. ``target`` is the loopback address the companion
+    listens on, which both ends of the forward use.
     """
     session = ssh_session_destination(environ)
     if session is None:
-        lines = [SSH_SESSION, "  " + forward_line(HOST_PLACEHOLDER, port), NAME_THE_STUDIO_HOST]
+        lines = [SSH_SESSION, "  " + forward_line(HOST_PLACEHOLDER, port, target=target), NAME_THE_STUDIO_HOST]
     else:
-        lines = [SSH_SESSION, "  " + forward_line(session[0], port, ssh_port=session[1])]
-    return [*lines, another_way_line(port), THEN_OPEN_THERE]
+        lines = [SSH_SESSION, "  " + forward_line(session[0], port, ssh_port=session[1], target=target)]
+    return [*lines, another_way_line(port, target=target), THEN_OPEN_THERE]
 
 
 def browser_handlers(run: Runner = subprocess.run) -> tuple[str, str] | None:

@@ -99,7 +99,7 @@ def _status() -> unit_state.UnitStatus | None:
 
 
 def _config(args: argparse.Namespace) -> Config:
-    """The file, its source, its [studio] table and the Config line with its notes, or the held failure (4.4)."""
+    """The file, its source, its [studio] table and the Config line with its notes, or the held failure."""
     notes: list[str] = []
     try:
         path, source = launch.find_studio_config(getattr(args, "config", None))
@@ -133,7 +133,7 @@ def _state_dir(installed: dict[str, str]) -> Path:
 
 
 def _journal(status: unit_state.UnitStatus | None) -> list[str]:
-    """START_FAILED and the unit's journal lines since its main process started (design 6.4 step 16)."""
+    """START_FAILED and the unit's journal lines since its main process started."""
     since = 0.0
     if status is not None and status.start_monotonic_us:
         since = unit_state._realtime() - unit_state._monotonic() + status.start_monotonic_us / 1e6
@@ -148,7 +148,7 @@ def _token_now(state: Path) -> str | None:
 
 
 def _busy(status: unit_state.UnitStatus) -> None:
-    """Design 6.8: refuse while the control group holds anything but the main process."""
+    """Refuse while the unit's control group holds anything but its main process."""
     found = unit_state.busy_processes(status)
     if found is None:
         _refuse(unit_state.BUSY_UNKNOWN)
@@ -157,7 +157,7 @@ def _busy(status: unit_state.UnitStatus) -> None:
 
 
 def _one_word(args: argparse.Namespace) -> int:
-    """Design 3.3, the one word: open a running Studio, else start one in this terminal."""
+    """The one word: open a running Studio, else start one in this terminal."""
     config = path, source, table, lines, failure = _config(args)
     settings, usage = None, ""
     if failure is None:
@@ -190,7 +190,8 @@ def _one_word(args: argparse.Namespace) -> int:
         return _open(args, view=view, config=config, state=state)
     if settings.driver_source == "default":
         outcome, _bound = unit_state.origin_preflight(state, settings.driver, True)
-        if outcome == "no_origin":
+        # Only a readable binding equal to the default lets the default through.
+        if outcome in ("no_origin", "unreadable"):
             _refuse(launch.NO_DRIVER_ORIGIN)
         if outcome == "ok":
             _say(_driver_line(settings))
@@ -200,7 +201,7 @@ def _one_word(args: argparse.Namespace) -> int:
 
 
 def _live(view: View, target: Path, reader: Any, absent: str) -> tuple[str, int]:
-    """Design 3.3 open steps 3 to 5: the file's content and write time while a companion serves it."""
+    """The file's content and write time, only while a companion serves it."""
     ownership, installed, status = view
     if _running(view):
         outcome = unit_state.wait_ready(target.parent, management=installed.get("management") == "yes",
@@ -219,7 +220,7 @@ def _live(view: View, target: Path, reader: Any, absent: str) -> tuple[str, int]
 
 def _open(args: argparse.Namespace, *, view: View | None = None, config: Config | None = None,
           state: Path | None = None, browser: bool = True) -> int:
-    """Design 3.3 ``open``: the running Studio's sign-in block; a browser starts only on the local route."""
+    """``open``: the running Studio's sign-in block; a browser starts only on the local route."""
     view = view or _view()
     installed = view[1]
     state = state or _state_dir(installed)
@@ -237,7 +238,7 @@ def _open(args: argparse.Namespace, *, view: View | None = None, config: Config 
             if not no_open and sign_in.browser_route(os.environ) == "local":
                 _say(sign_in.open_plain_address(f"http://127.0.0.1:{port}/", popen=_popen))
     else:
-        # Step 7 without management: the page to a browser on the local route, or the link to a terminal only.
+        # Without management: the page to a browser on the local route, or the link to a terminal only.
         url, route = found[0], "off" if no_open else sign_in.browser_route(os.environ)
         _say(f"Studio: {url.split('/#', 1)[0]}")
         if not sign_in.terminal_stdout():
@@ -246,7 +247,9 @@ def _open(args: argparse.Namespace, *, view: View | None = None, config: Config 
             status, handler = sign_in.open_in_browser(target, run=_run, popen=_popen)
             _say(*([] if status == sign_in.OPENED else sign_in.link_lines(url)), status, *filter(None, [handler]))
         else:
-            hints = {"ssh": sign_in.ssh_forward_hint(os.environ, urlsplit(url).port or 0), "none": [sign_in.NO_DISPLAY]}
+            parts = urlsplit(url)
+            forward = sign_in.ssh_forward_hint(os.environ, parts.port or 0, target=parts.hostname or "127.0.0.1")
+            hints = {"ssh": forward, "none": [sign_in.NO_DISPLAY]}
             _say(*sign_in.link_lines(url), *hints.get(route, []))
     if view[0] == "ours":
         _notes(args, installed, config)
@@ -254,7 +257,7 @@ def _open(args: argparse.Namespace, *, view: View | None = None, config: Config 
 
 
 def _notes(args: argparse.Namespace, installed: dict[str, str], config: Config | None) -> None:
-    """Design 6.6: the drift note and the stale-code note; a failure to compute either prints nothing."""
+    """The drift note and the stale-code note; a failure to compute either prints nothing."""
     path, source, table, _seen, failure = config or _config(args)
     if failure is not None and config is None:
         _say(f"Note: {failure}")
@@ -272,21 +275,20 @@ def _notes(args: argparse.Namespace, installed: dict[str, str], config: Config |
 
 
 def _token(args: argparse.Namespace) -> int:
-    """Design 3.3 ``token``: the token file's path, the token on a terminal with --value, or a restart for
+    """``token``: the token file's path, the token on a terminal with --value, or a restart for
     --rotate under the unit lock that waits for a different token."""
     if args.value and not sign_in.terminal_stdout():
         _refuse(sign_in.NO_PIPE)
-    view = ownership, installed, status = _view()
     if not args.rotate:
-        target = _state_dir(installed) / sign_in.OWNER_FILE
+        view = _view()
+        target = _state_dir(view[1]) / sign_in.OWNER_FILE
         found = _live(view, target, sign_in.read_token_file, sign_in.NO_TOKEN_FILE)
         _say(f"Owner token file (mode 0600): {target}", *([f"Owner token: {found[0]}"] if args.value else []))
         return 0
-    if ownership == "ours" and status is None:
-        _refuse(LOST_ANSWER, code=UNKNOWN)
-    if status is None or not _running(view):
-        _refuse(unit.NO_ROTATE)
+    _rotatable()
     with unit_state.unit_lock():
+        # Read again under the lock: an up or down that finished in between changed what runs.
+        installed, status = _rotatable()
         _busy(status)
         driver, origin = installed.get("driver-service"), installed.get("driver", "")
         before = unit_state.driver_unit_check(driver, origin, run=_run)[2] if driver else None
@@ -295,13 +297,26 @@ def _token(args: argparse.Namespace) -> int:
     return _open(args, browser=False)
 
 
+def _rotatable() -> tuple[dict[str, str], unit_state.UnitStatus]:
+    """The settings and status of a running unit of ours, or the --rotate refusal."""
+    view = ownership, installed, status = _view()
+    if ownership == "ours" and status is None:
+        _refuse(LOST_ANSWER, code=UNKNOWN)
+    if status is None or not _running(view):
+        _refuse(unit.NO_ROTATE)
+    return installed, status
+
+
 def _restart(state: Path, management: bool) -> None:
-    """Design 6.4 steps 12, 15 and 16: remember the token, reset-failed, restart, then wait for a new token."""
+    """Remember the token, reset-failed, restart, then wait for a new token."""
     previous, reset = _token_now(state), _systemctl("reset-failed", "--", unit.UNIT_NAME)
     # unit_state's clocks, which a test replaces, so the stamps and the readiness check share one clock.
     epoch, started = unit_state._realtime(), unit_state._monotonic()
-    if reset is None or _systemctl("restart", "--", unit.UNIT_NAME, timeout=120) is None:
+    restarted = None if reset is None else _systemctl("restart", "--", unit.UNIT_NAME, timeout=120)
+    if restarted is None:
         _refuse(LOST_ANSWER, code=UNKNOWN)
+    if restarted.returncode != 0:
+        _refuse(unit.START_FAILED, *restarted.stderr.strip().splitlines()[-1:], *unit_state.journal_tail(epoch, run=_run))
     outcome = unit_state.wait_ready(state, management=management, after_monotonic=started,
                                     previous_token=previous, status_fn=_status)
     if outcome == "failed":
@@ -311,7 +326,7 @@ def _restart(state: Path, management: bool) -> None:
 
 
 def _also_started(driver: str | None, origin: str, before: str | None) -> list[str]:
-    """The ``Also started`` line, only when the driver unit was not active before and is active now (U15)."""
+    """The ``Also started`` line, only when the driver unit was not active before and is active now."""
     if not driver or before is None or before in ("active", "activating", "reloading"):
         return []
     now = unit_state.driver_unit_check(driver, origin, run=_run)[2]
@@ -319,7 +334,7 @@ def _also_started(driver: str | None, origin: str, before: str | None) -> list[s
 
 
 def _manager() -> None:
-    """Design 6.4 steps 1 and 2: never as root, and only with a user manager that answers."""
+    """Never as root, and only with a user manager that answers."""
     if os.geteuid() == 0:
         _refuse(unit.RUN_AS_ROOT)
     answer = unit_state.user_manager(run=_run)
@@ -330,7 +345,7 @@ def _manager() -> None:
 
 
 def _owned(ownership: str) -> None:
-    """Design 6.4 step 9: only an absent path or our own regular file passes; unknown is never read as absent."""
+    """Only an absent path or our own regular file passes; unknown is never read as absent."""
     if ownership == "symlink":
         _refuse(unit.UNIT_SYMLINK)
     if ownership not in ("absent", "ours"):
@@ -338,7 +353,7 @@ def _owned(ownership: str) -> None:
 
 
 def _install(args: argparse.Namespace) -> int:
-    """Design 6.4 steps 4 to 18, under the unit lock; nothing is written before step 13."""
+    """Install and start the unit under the unit lock; nothing is written before every check passes."""
     path, source, table, lines, failure = _config(args)
     if failure is not None:
         _refuse(f"error: {failure}", code=2)
@@ -357,7 +372,7 @@ def _install(args: argparse.Namespace) -> int:
     unit_paths.check_unit_directory(target.parent, create=False)
     _say(f"Interpreter: {runtime.interpreter}", f"Source: {runtime.source}")
     outcome, bound = unit_state.origin_preflight(state, settings.driver, from_default)
-    if outcome == "no_origin":
+    if outcome == "no_origin" or (outcome == "unreadable" and from_default):
         _refuse(launch.NO_DRIVER_ORIGIN)
     if outcome == "differs":
         _refuse(OTHER_ORIGIN, *launch.mismatch_lines(state, bound or "", settings.driver))
@@ -411,6 +426,8 @@ def _install(args: argparse.Namespace) -> int:
     if enabled is None:
         _refuse(LOST_ANSWER, code=UNKNOWN)
     if enabled.returncode != 0:
+        unit.restore_unit(previous)
+        _systemctl("daemon-reload")
         _refuse(" ".join([ENABLE_FAILED, *enabled.stderr.strip().splitlines()[-1:]]))
     _restart(state, settings.allow_management)
     if unit_state.linger_state(run=_run) != "yes":
@@ -431,7 +448,7 @@ def _install(args: argparse.Namespace) -> int:
 
 
 def _remove() -> int:
-    """Design 6.5, under the unit lock: stop, disable and remove our unit; the state directory stays."""
+    """Under the unit lock: stop, disable and remove our unit; the state directory stays."""
     ownership = unit.owned_unit_state()
     if ownership == "absent":
         _say(unit.NO_UNIT)
@@ -465,7 +482,7 @@ def _remove() -> int:
 
 
 def _tunnel(args: argparse.Namespace) -> int:
-    """Design 7: hand the typed host, port and config to the tunnel helper."""
+    """Hand the typed host, port and config to the tunnel helper."""
     try:
         typed = getattr(args, "config", None)
         return tunnel.run_tunnel(args.host, args.port, args.run, Path(typed) if typed else None,

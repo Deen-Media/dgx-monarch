@@ -31,10 +31,10 @@ NAME_THE_HOST = ("Name the Studio host the way the browser computer reaches it, 
                  "dgxm studio tunnel studio-host or dgxm studio tunnel user@studio-host.")
 NO_SSH = "ssh was not found on PATH."
 SAME_ADDRESS = "Keep 127.0.0.1 and the same port on both ends; Studio refuses localhost and any other port."
-FORWARD_FAILED = ("If ssh says \"Could not request local forwarding\", another program on that computer holds the "
-                  "port and ssh opened the session without the tunnel: close it, free the port, and do not open "
-                  "the sign-in link until the tunnel works, because a page served on that port would read the "
-                  "token from the link.")
+FORWARD_FAILED = ("If ssh says \"Address already in use\" or \"Could not request local forwarding\", another "
+                  "program on that computer holds the port: close the session if it opened, free the port, and do "
+                  "not open the sign-in link until the tunnel works, because a page served on that port would read "
+                  "the token from the link.")
 
 # The other printed lines, kept here so the tests and the docs quote one text.
 PORT_RANGE = "--port must be from 1024 to 65535"
@@ -123,7 +123,8 @@ def run_tunnel(host: str | None, port: int | None, run: bool, config: Path | Non
     if not run:
         print("\n".join([*head, "  " + forward, *tail]), file=stdout)
         return 0
-    print("\n".join([*head, *tail]), file=stderr)
+    # The forward line is what runs, so the header that introduces it stays out too.
+    print("\n".join([head[0], *tail]), file=stderr)
     stderr.flush()
     # The argument list is the printed line word by word, run with no shell:
     # the host rule refuses whitespace, so the split gives back exactly the
