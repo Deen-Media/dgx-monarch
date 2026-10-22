@@ -2,15 +2,26 @@
 from __future__ import annotations
 
 import builtins
+import os
+import socket
 import stat
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
 from dgx_monarch.cli import worker_loop, worker_process_env
+
+
+@pytest.fixture
+def short_tmp_path():
+    # pytest's descriptive tmp_path itself can exceed the Unix socket budget.
+    with tempfile.TemporaryDirectory(dir=worker_process_env._FALLBACK_RUNTIME_ROOT,
+                                     prefix="dgxm-") as path:
+        yield Path(path)
 
 
 def test_worker_environment_preserves_reviewed_runtime_and_compute_names():
@@ -101,7 +112,8 @@ def test_filter_does_not_read_rejected_values():
     assert environment == {"PATH": "/usr/bin"}
 
 
-def test_secure_runtime_uses_private_xdg_child(tmp_path: Path):
+def test_secure_runtime_uses_private_xdg_child(short_tmp_path: Path):
+    tmp_path = short_tmp_path
     tmp_path.chmod(0o700)
     environment = {"HOME": str(tmp_path / "home"), "XDG_RUNTIME_DIR": str(tmp_path)}
 
@@ -113,7 +125,8 @@ def test_secure_runtime_uses_private_xdg_child(tmp_path: Path):
     assert {environment[name] for name in ("TMPDIR", "TMP", "TEMP")} == {str(runtime)}
 
 
-def test_secure_runtime_rejects_public_xdg_and_falls_back_under_home(tmp_path: Path):
+def test_secure_runtime_rejects_public_xdg_and_falls_back_under_home(short_tmp_path: Path):
+    tmp_path = short_tmp_path
     public = tmp_path / "public-runtime"
     public.mkdir(mode=0o755)
     public.chmod(0o755)
@@ -128,7 +141,8 @@ def test_secure_runtime_rejects_public_xdg_and_falls_back_under_home(tmp_path: P
     assert environment["TMPDIR"] == str(runtime)
 
 
-def test_secure_runtime_refuses_symlink_at_final_path(tmp_path: Path):
+def test_secure_runtime_refuses_symlink_at_final_path(short_tmp_path: Path):
+    tmp_path = short_tmp_path
     tmp_path.chmod(0o700)
     outside = tmp_path / "outside"
     outside.mkdir()
@@ -136,6 +150,47 @@ def test_secure_runtime_refuses_symlink_at_final_path(tmp_path: Path):
 
     with pytest.raises(RuntimeError, match="owned directory"):
         worker_process_env.secure_worker_runtime({"XDG_RUNTIME_DIR": str(tmp_path)})
+
+
+@pytest.mark.parametrize("source", ["home", "xdg", "unicode"])
+def test_long_runtime_uses_private_short_fallback_with_room_for_actor_socket(
+    monkeypatch, short_tmp_path: Path, source: str,
+):
+    fallback_root = short_tmp_path / "fallback"
+    fallback_root.mkdir()
+    monkeypatch.setattr(worker_process_env, "_FALLBACK_RUNTIME_ROOT", fallback_root)
+    home = short_tmp_path / ("é" * 10 if source == "unicode" else "h" * 80)
+    home.mkdir(mode=0o700)
+    candidate = home / ".local" / "state" / "dgx-monarch" / "runtime"
+    if source == "unicode":
+        assert len(str(candidate)) <= worker_process_env._MAX_RUNTIME_PATH_BYTES
+    assert len(os.fsencode(candidate)) > worker_process_env._MAX_RUNTIME_PATH_BYTES
+    environment = {"HOME": str(home)}
+    if source == "xdg":
+        xdg = short_tmp_path / ("x" * 80)
+        xdg.mkdir(mode=0o700)
+        environment["XDG_RUNTIME_DIR"] = str(xdg)
+
+    runtime = worker_process_env.secure_worker_runtime(environment)
+
+    assert runtime == fallback_root / f"dgx-monarch-{os.geteuid()}"
+    assert runtime.stat().st_uid == os.geteuid()
+    assert stat.S_IMODE(runtime.stat().st_mode) == 0o700
+    assert {environment[key] for key in ("XDG_RUNTIME_DIR", "TMPDIR", "TMP", "TEMP")} == {str(runtime)}
+    # Match the pinned Monarch bootstrap's .tmpXXXXXX/<base58-proc-id> suffix.
+    with tempfile.TemporaryDirectory(dir=runtime, prefix=".tmp") as child:
+        with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as listener:
+            listener.bind(str(Path(child) / "123456789AB"))
+
+
+def test_long_runtime_fallback_rejects_symlink(monkeypatch, short_tmp_path: Path):
+    monkeypatch.setattr(worker_process_env, "_FALLBACK_RUNTIME_ROOT", short_tmp_path)
+    outside = short_tmp_path / "outside"
+    outside.mkdir()
+    (short_tmp_path / f"dgx-monarch-{os.geteuid()}").symlink_to(outside, target_is_directory=True)
+
+    with pytest.raises(RuntimeError, match="owned directory"):
+        worker_process_env.secure_worker_runtime({"HOME": str(short_tmp_path / ("h" * 80))})
 
 
 def test_prepare_worker_process_environment_sets_umask_filters_and_secures_tmp(
