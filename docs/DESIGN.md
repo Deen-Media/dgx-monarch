@@ -505,6 +505,16 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   Campaign K's bar; LongCat above 1.2 MP read the same way and got no row
   either. Auto keeps the uly2 fallback, and cfg2 stays an explicit, measured
   choice (VALIDATION.md);
+- moss_image earns no cfg2 row. Its shipped CFG 3 graphs carry Skip Layer
+  Guidance on layer 22, and cfg2 refuses class P while that skip is on
+  (TROUBLESHOOTING #126), so Campaign K measured no cfg2 cell on them. With
+  the skip off, measured on 2026-10-21 with the first Spark capped at
+  2100 MHz, cfg2 split a prompt and a negative of different lengths one call
+  per rank, bit-identical to one GPU, in 47.0 s against 93.5 s on one GPU
+  and 62.4 s on uly2 at 1024 square. A pair of equal length folds into one
+  batch-2 call on one GPU, and cfg2 read one-step NRMS 0.023 to 0.026 against
+  it, with no full render matching, so it misses Campaign K's bar as FLUX.3
+  did. Auto keeps the uly2 fallback (VALIDATION.md);
 - a cfg record can name checkpoints it measured and does not grant.
   Kroma reads family krea2, but its shipped negative zeroes the positive, so one
   GPU folds the pair into one batch-2 call, and on 2026-10-16 cfg2 read one-step
@@ -2202,6 +2212,12 @@ Every milestone must satisfy this checklist:
   80-row block. On a one-block prompt one GPU folds cond and uncond into one
   batch-2 call and cfg2 did not match it, so FLUX.3 has no cfg2 row
   (VALIDATION.md).
+- MOSS-Image cfg2 refuses on the shipped graphs, whose Skip Layer Guidance
+  runs the two passes as separate calls. With the skip off, measured on
+  2026-10-21 with the first Spark capped at 2100 MHz, cfg2 was exact and
+  faster than uly2 on a pair of different lengths at 1024 square, and read
+  one-step NRMS 0.023 to 0.026 on a pair of equal length, so MOSS-Image has
+  no cfg2 row (VALIDATION.md).
 - Ideogram4 head_dim 256, FP8 pair at 1024x1024: Ulysses2 matched
   DP2 at NRMS 0.000; Ring2 measured 0.102 against the 0.100 limit.
 - Sage attention helps only fp8 with USP at high resolution (about 5-8% at

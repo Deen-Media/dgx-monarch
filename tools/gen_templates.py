@@ -5268,9 +5268,58 @@ KROMOSS_DMD_LORA = "kromoss_8-steps-dmd-lora.safetensors"
 MOSS_LICENSE = (
     "MOSS-Image Base and SFT, Kromoss and its two LoRAs, the Qwen3.5-9B text "
     "encoder and the FLUX.2 small decoder are all released under Apache-2.0.")
-# Replaced at promotion with what the hardware tests showed, as FLUX3_HW_TESTS was.
-MOSS_HW_TESTS = ("No hardware comparison has run for MOSS-Image yet; see "
-                 "docs/MODELS.md. ")
+# What the 2026-10-21 hardware tests showed for each shipped graph. The ladder
+# ran every graph on the simple scheduler; the normal scheduler the CFG 3 graphs
+# now ship was measured on the SFT text to image graph alone.
+MOSS_HW_TESTS = {
+    "sft": ("In the 2026-10-21 hardware tests, uly2 renders of this graph "
+            "matched one GPU and stock ComfyUI exactly over all 50 steps, on "
+            "the normal scheduler and on simple, and ran about 1.5 times as "
+            "fast as one GPU with the first Spark capped at 2100 MHz; see "
+            "docs/BENCHMARKS.md for the walls and "
+            "docs/VALIDATION.md#evidence-moss-image-sft for the scope. "),
+    "layout": ("In the 2026-10-21 hardware tests, uly2 renders of this graph "
+               "matched stock ComfyUI exactly on the simple scheduler, at one "
+               "step and over all 50 steps; the normal scheduler was measured "
+               "on the MOSS-Image text to image graph, where uly2 matched too. "
+               "See docs/VALIDATION.md#evidence-moss-image-sft for the scope. "),
+    "base": ("In the 2026-10-21 hardware tests, uly2 renders of this graph "
+             "matched one GPU and stock ComfyUI exactly over all 50 steps on the "
+             "simple scheduler and ran about 1.5 times as fast as one GPU with "
+             "the first Spark capped at 2100 MHz; the normal scheduler was "
+             "measured on the MOSS-Image text to image graph, where uly2 matched "
+             "too. See docs/BENCHMARKS.md for the walls and "
+             "docs/VALIDATION.md#evidence-moss-image-base for the scope. "),
+    "kromoss": ("In the 2026-10-21 hardware tests, uly2 renders of this graph "
+                "matched one GPU and stock ComfyUI exactly over all 50 steps on "
+                "the simple scheduler and ran about 1.5 times as fast as one "
+                "GPU with the first Spark capped at 2100 MHz; the normal "
+                "scheduler was measured on the MOSS-Image text to image graph, "
+                "where uly2 matched too. See docs/BENCHMARKS.md for the walls and "
+                "docs/VALIDATION.md#evidence-kromoss for the scope. "),
+    "turbo": ("In the 2026-10-21 hardware tests, uly2 with either LoRA matched "
+              "dgx-monarch's own one-GPU render exactly at one step and ran "
+              "about 1.5 times as fast as one GPU with the first Spark capped "
+              "at 2100 MHz; see docs/BENCHMARKS.md for the walls and "
+              "docs/VALIDATION.md#evidence-kromoss for the scope. "),
+}
+# ring2 as the 2026-10-21 tests left it: measured and never granted on the
+# CFG 3 graphs, and not supported on the turbo graph, which always carries a
+# LoRA.
+MOSS_RING = ("ring2 is measured, not granted: without a LoRA it stayed within "
+             "the 0.10 one-step NRMS floor of one GPU without matching it, a "
+             "stream with an odd row count asks for the ring-pad waiver first, "
+             "and ring2 with a LoRA failed its first-use gate, so that pair is "
+             "not supported. ")
+MOSS_RING_TURBO = ("ring2 is not supported on this graph: in the 2026-10-21 tests "
+                   "ring2 with a LoRA failed its first-use gate, so use uly2. ")
+# The testing legs of the four CFG 3 graphs say why they keep simple.
+MOSS_TEST_SIMPLE_NOTE = (" It keeps ComfyUI's simple scheduler, on which the "
+                         "2026-10-21 sweep ran it, where the shipped graph runs "
+                         "normal.")
+# The testing legs of the four CFG 3 graphs keep the simple scheduler, on
+# which the 2026-10-21 sweep measured them, so each stays the graph it ran.
+MOSS_TEST_SIMPLE = {"ks": {"scheduler": "simple"}}
 
 
 def _moss_note(*, checkpoint: str, turbo: bool, layout: bool) -> str:
@@ -5289,15 +5338,23 @@ def _moss_note(*, checkpoint: str, turbo: bool, layout: bool) -> str:
             "skip layer node. The card warns against merging the LoRA into BF16 "
             "weights, because its delta sits close to the BF16 rounding step; "
             "Load LoRA (DGX Monarch) bakes it into the weights with ComfyUI's own "
-            "math, so a render can differ from the card's unmerged diffusers run. ")
+            "math, so a render can differ from the card's unmerged diffusers run. "
+            "It also differs from stock ComfyUI's default loader, which applies "
+            "the LoRA as each weight is cast: in the 2026-10-21 tests the bake "
+            "matched stock's merge on every patched weight, and at strength 1.0 "
+            "the render landed 0.0489 to 0.0635 one-step NRMS from stock's "
+            "default render. ")
     else:
         note = (
             f"{title}{' layout' if layout else ''} text to image: 1024x1024, Euler "
-            "and ComfyUI's simple scheduler at the vendor's 50 steps, CFG 3 and "
+            "and ComfyUI's normal scheduler at the vendor's 50 steps, CFG 3 and "
             "shift 5. Use at least 50 steps, and raise CFG toward 6 for a short "
-            "prompt. A render here does not reproduce the vendor's own pipeline "
-            "at the same seed: that pipeline builds its own schedule and its own "
-            "noise. ")
+            "prompt. The normal scheduler gives the sigmas the vendor's pipeline "
+            "computes before it snaps them to its 1000 training steps, so it "
+            "lands within 0.0005 of the vendor's schedule; simple lands up to "
+            "0.069 away at 50 steps and renders a different image from the same "
+            "seed. A render here still does not reproduce the vendor's pipeline "
+            "at the same seed, because that pipeline draws its own noise. ")
     note += (
         "ComfyUI's native shift of 5 is the vendor's; add no shift node. Model "
         "Sampling SD3 (DGX Monarch) samples at multiplier 1000, which would "
@@ -5358,12 +5415,27 @@ def _moss_note(*, checkpoint: str, turbo: bool, layout: bool) -> str:
     note += (
         "Comfy-Org's own MOSS-Image graphs can rewrite a short request into a full "
         "caption with Text Generate on this same encoder; that step runs on the "
-        "driver, and its memory is outside dgx-monarch's driver estimate. "
-        "The INT8 ConvRot DiT files pin an approximate attention kernel on all 42 "
-        "blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops "
-        "the pin. They also need comfy-kitchen 0.2.39 or newer. This graph uses "
-        "the BF16 file, which asks nothing. Auto picks Ulysses on a configured "
-        "pair. " + MOSS_HW_TESTS
+        "driver, and its memory is outside dgx-monarch's driver estimate. ")
+    if turbo:
+        note += (
+            "The INT8 ConvRot DiT files cannot be used on this graph, which "
+            "always carries a LoRA: with any LoRA they refuse on every topology "
+            "(docs/TROUBLESHOOTING.md #129). ")
+    else:
+        note += (
+            "The INT8 ConvRot DiT files pin an approximate attention kernel on "
+            "all 42 blocks: single, cfg2 and dp2 ask for the Sol-Attn waiver, and "
+            "uly2 drops the pin. On uly2 they exactly match one GPU running the "
+            "same file without its pins: the 2026-10-21 tests measured 0.027 to "
+            "0.036 one-step NRMS before that day's INT8 fix and an exact match "
+            "after it. With any LoRA they refuse on every topology "
+            "(docs/TROUBLESHOOTING.md #129). They also need comfy-kitchen 0.2.39 "
+            "or newer. ")
+    note += (
+        "This graph uses the BF16 file, which asks nothing. Auto picks Ulysses "
+        "on a configured pair. "
+        + MOSS_HW_TESTS["turbo" if turbo else "layout" if layout else checkpoint]
+        + (MOSS_RING_TURBO if turbo else MOSS_RING)
         + f"Expects {artifact} in models/diffusion_models, ")
     if turbo:
         note += f"{KROMOSS_TURBO_LORA} in models/loras, "
@@ -5442,8 +5514,10 @@ def _moss_template(*, checkpoint: str, turbo: bool = False, layout: bool = False
         {"key": "latent", "type": "EmptyFlux2LatentImage", "pos": (2, 3),
          "widgets": {"width": 1024, "height": 1024, "batch_size": 1}},
         {"key": "ks", "type": "DGXMonarchKSampler", "pos": (3, 1),
+         # normal follows the vendor's 50-step schedule; the Kromoss card's
+         # turbo recipe names simple.
          "widgets": {"seed": 42, "steps": steps, "cfg": cfg, "sampler_name": "euler",
-                     "scheduler": "simple", "denoise": 1.0},
+                     "scheduler": "simple" if turbo else "normal", "denoise": 1.0},
          "wire": {"model": model, "positive": ("pos", 0), "negative": ("neg", 0),
                   "latent_image": ("latent", 0)}},
         {"key": "dec", "type": "VAEDecode", "pos": (4, 1),
@@ -6113,7 +6187,8 @@ TESTING_TEMPLATES = {
         )),
     # MOSS-Image: the quantized files on each checkpoint, an odd grid, the skip
     # off, a large canvas, the second turbo LoRA, the turbo LoRA on Base, and
-    # the family's LoRA slot.
+    # the family's LoRA slot. The legs of the CFG 3 graphs hold the simple
+    # scheduler (MOSS_TEST_SIMPLE says why).
     "dgx-monarch-test-moss-image-int8": _testing_spec(
         "dgx-monarch-moss-image-t2i", "MOSS-Image INT8 ConvRot",
         "The vendor's INT8 ConvRot DiT and INT8 ConvRot text encoder. The DiT "
@@ -6121,41 +6196,45 @@ TESTING_TEMPLATES = {
         "ask for the Sol-Attn waiver, cfg2 refuses first because the skip is on, "
         "and uly2 drops the pins. ComfyUI runs these files through "
         "comfy-kitchen's fused SiTU input activation, which needs comfy-kitchen "
-        "0.2.39 or newer.",
-        widgets={"unet": {"unet_name": "moss_image_sft_int8_convrot.safetensors"},
+        "0.2.39 or newer." + MOSS_TEST_SIMPLE_NOTE,
+        widgets={**MOSS_TEST_SIMPLE,
+                 "unet": {"unet_name": "moss_image_sft_int8_convrot.safetensors"},
                  "clip": {"clip_name": MOSS_ENCODER_INT8}}),
     "dgx-monarch-test-moss-image-base-int8": _testing_spec(
         "dgx-monarch-moss-image-base-t2i", "MOSS-Image Base INT8 ConvRot",
         "The vendor's Base INT8 ConvRot DiT with the BF16 text encoder, at the "
-        "shipped Base recipe.",
-        widgets={"unet": {"unet_name": "moss_image_base_int8_convrot.safetensors"}}),
+        "shipped Base recipe apart from the scheduler." + MOSS_TEST_SIMPLE_NOTE,
+        widgets={**MOSS_TEST_SIMPLE,
+                 "unet": {"unet_name": "moss_image_base_int8_convrot.safetensors"}}),
     "dgx-monarch-test-kromoss-int8": _testing_spec(
         "dgx-monarch-kromoss-t2i", "Kromoss INT8 ConvRot",
         "Kromoss's own INT8 ConvRot DiT, made with the recipe of the vendor's "
-        "INT8 files, with the BF16 text encoder at the shipped Kromoss recipe.",
-        widgets={"unet": {"unet_name": "kromoss_int8_convrot.safetensors"}}),
+        "INT8 files, with the BF16 text encoder at the shipped Kromoss recipe "
+        "apart from the scheduler." + MOSS_TEST_SIMPLE_NOTE,
+        widgets={**MOSS_TEST_SIMPLE,
+                 "unet": {"unet_name": "kromoss_int8_convrot.safetensors"}}),
     "dgx-monarch-test-moss-image-odd": _testing_spec(
         "dgx-monarch-moss-image-t2i", "MOSS-Image on an odd grid",
         "1040x1040 is a 65 by 65 grid, 4225 image rows, an odd image block. The "
         "stream is the image rows followed by the prompt's rows, so whether uly2 "
         "pads depends on the total: an even prompt length makes it odd and pads "
-        "one row at the tail, an odd one does not.",
-        widgets={"latent": {"width": 1040, "height": 1040},
+        "one row at the tail, an odd one does not." + MOSS_TEST_SIMPLE_NOTE,
+        widgets={**MOSS_TEST_SIMPLE, "latent": {"width": 1040, "height": 1040},
                  "save": {"filename_prefix": "dgx_monarch_moss_image_odd"}}),
     "dgx-monarch-test-moss-image-slg-off": _testing_spec(
         "dgx-monarch-moss-image-t2i", "MOSS-Image without skip layer guidance",
         "An empty single_layers turns Skip Layer Guidance off, as the stock node "
         "does, so the negative pass runs every block. The vendor says this looks "
         "more realistic and can collapse some details. With the skip off, cfg2 "
-        "can split the two conditionings.",
-        widgets={"slg": {"single_layers": ""},
+        "can split the two conditionings." + MOSS_TEST_SIMPLE_NOTE,
+        widgets={**MOSS_TEST_SIMPLE, "slg": {"single_layers": ""},
                  "save": {"filename_prefix": "dgx_monarch_moss_image_slg_off"}}),
     "dgx-monarch-test-moss-image-1536px": _testing_spec(
         "dgx-monarch-moss-image-t2i", "MOSS-Image at 1536 square",
         "1536x1536 is a 96 by 96 grid, 9216 image rows: a 2.4 MP canvas, past "
         "the vendor's 2 MP recommendation and inside the 4 MP it reports "
-        "working.",
-        widgets={"latent": {"width": 1536, "height": 1536},
+        "working." + MOSS_TEST_SIMPLE_NOTE,
+        widgets={**MOSS_TEST_SIMPLE, "latent": {"width": 1536, "height": 1536},
                  "save": {"filename_prefix": "dgx_monarch_moss_image_1536"}}),
     "dgx-monarch-test-kromoss-turbo-dmd": _testing_spec(
         "dgx-monarch-kromoss-t2i-turbo", "Kromoss Turbo with the DMD LoRA",
@@ -6173,7 +6252,8 @@ TESTING_TEMPLATES = {
     "dgx-monarch-test-moss-image-lora": _testing_spec(
         "dgx-monarch-moss-image-t2i", "MOSS-Image with a LoRA slot",
         _LORA_PURPOSE + " The loader sits between the model loader and Skip Layer "
-        "Guidance (DGX Monarch).", lora_after=("unet",)),
+        "Guidance (DGX Monarch)." + MOSS_TEST_SIMPLE_NOTE, widgets=MOSS_TEST_SIMPLE,
+        lora_after=("unet",)),
     "dgx-monarch-test-hunyuan-image-refiner": _testing_spec(
         "dgx-monarch-hunyuan-image",
         "HunyuanImage 2.1 text to image with the refiner",

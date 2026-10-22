@@ -19,8 +19,8 @@ comparison fields. Times below are seconds unless marked otherwise.
 | Qwen Image 2.1 | Not timed | Not timed | Matching native output recorded for 25-step T2I and editing; no comparable timing published here |
 | FLUX.3 Klein | 10.2 s | 6.7 s | Step-distilled BF16, 1024x1024, 16 steps, CFG 1, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
 | FLUX.3 Klein Base | 29.8 s | 20.0 s | BF16, 1024x1024, 25 steps, CFG 3.5, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
-| MOSS-Image | Not timed | Not timed | SFT and Base, BF16, 1024x1024, 50 steps, CFG 3, Euler, layer-22 skip; no dgx-monarch render has been timed, and no comparable timing is published here |
-| Kromoss | Not timed | Not timed | BF16, 50 steps at CFG 3, and 8 steps at CFG 1 with a DMD LoRA; no dgx-monarch render has been timed, and no comparable timing is published here |
+| MOSS-Image | 90.0 s | 60.5 s | SFT BF16, 1024x1024, 50 steps, CFG 3, Euler/simple, layer-22 skip, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
+| Kromoss | 88.7 s | 59.9 s | BF16, 1024x1024, 50 steps, CFG 3, Euler/simple, layer-22 skip, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
 
 Krea2 and Ideogram4 use the [Ulysses comparison tests](VALIDATION.md#ulysses-comparisons).
 Their times are warm full renders of the same graph on one GPU and two GPUs. The first Spark had a 2100 MHz GPU clock cap; the second was uncapped. Separate one-step probes produced identical decoded pixels;
@@ -44,6 +44,10 @@ The
 are warm sampler walls, which leave out text encoding and VAE decode, from
 2026-10-15 and 2026-10-16. The first Spark was capped at 2100 MHz; the second
 was uncapped.
+
+The [MOSS-Image and Kromoss times](#moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped) are warm sampler walls from
+2026-10-21 on ComfyUI's `simple` scheduler, with the same cap; the shipped
+CFG 3 graphs now run `normal`, which takes the same work per step.
 
 [Qwen Image 2.1 tests](VALIDATION.md#evidence-qwen-image-2-1) compare complete
 latents and RGBA pixels against native ComfyUI. Qwen-Image 2512 timings below
@@ -421,6 +425,138 @@ table only.
 | Step-distilled NVFP4, 1024 | 15 | 1.0 | 10.52 | 7.00 | 0.47 |
 | Base INT8 ConvRot, 1024 | 25 | 3.5 | 26.18 | 25.16 | 1.01 (two passes per step) |
 | Step-distilled INT8 ConvRot, 1536 | 15 | 1.0 | 21.57 | 21.18 | 1.41 |
+
+<a id="moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped"></a>
+
+## MOSS-Image: one GPU and uly2
+
+The MOSS-Image hardware ladder timed MOSS-Image SFT, Base and Kromoss on
+2026-10-21 with dgx-monarch `ff8dab8300aa` and ComfyUI `d52a7a5ef` on both
+Sparks, and timed INT8 again on 2026-10-21 and 2026-10-22 at `9caa6aae660b`,
+the release with the INT8 dispatch fix. The first Spark was capped at
+2100 MHz, with a highest sampled SM clock of 2093 MHz; the second was
+uncapped. [VALIDATION](VALIDATION.md#evidence-moss-image-sft) records the
+ladder and its comparisons, and
+[Campaign K](#campaign-k-cfg2-against-uly2-2026-10-14-head-capped) describes
+the method this section follows.
+
+Method:
+
+- **Instrument.** `benchmark/run_matrix.py` in cluster mode, one process per
+  cell. Each Campaign K leg ran one cold render and two warm renders, and the
+  BF16 and INT8 Campaign K tables give the cold wall and the mean of the two
+  warm walls in seconds; the other tables say how many renders each wall
+  holds. A sampler wall leaves out text encoding and VAE decode. Compare
+  within each table.
+- **One GPU.** Batch row 0 of a dp2 render of batch 2: each rank renders one
+  image alone, so its wall is the capped first Spark's one-GPU wall.
+- **Recipe.** 50 Euler steps on ComfyUI's `simple` scheduler, CFG 3, layer 22
+  skipped on the negative pass over the whole schedule, the vendor's tag
+  negative, the BF16 Qwen3.5-9B encoder and Torch Flash. The shipped graphs
+  now run `normal`. One schedule computes as much as the other: in the
+  scheduler record at 1024 square, one render each with `simple` first in
+  the process, uly2 read 64.36 s on `simple` and 64.10 s on `normal`, and one
+  GPU 94.51 s and 92.46 s.
+- **Fidelity.** Bit-identical means batch row 0 of the full-schedule latent
+  and of a one-step latent both equal the one-GPU reference exactly.
+
+BF16, head capped at 2100 MHz:
+
+| Checkpoint | Size | MP | Joint rows | One GPU cold / warm | uly2 cold / warm | uly2 vs one GPU | Fidelity |
+|---|--:|--:|--:|---|---|--:|---|
+| SFT | 1024 | 1.05 | 4,233 | 92.4 / 90.0 | 64.0 / 60.5 | 1.49x | bit-identical |
+| SFT | 1152 | 1.33 | 5,321 | 121.5 / 119.1 | 82.7 / 79.3 | 1.50x | bit-identical |
+| SFT | 1216 | 1.48 | 5,913 | 136.9 / 135.1 | 89.7 / 86.4 | 1.56x | bit-identical |
+| SFT | 1280 | 1.64 | 6,537 | 153.4 / 150.9 | 102.3 / 99.0 | 1.52x | bit-identical |
+| SFT | 1408 | 1.98 | 7,881 | 190.4 / 188.0 | 125.3 / 122.1 | 1.54x | bit-identical |
+| SFT | 1536 | 2.36 | 9,353 | 233.0 / 230.6 | 153.9 / 150.9 | 1.53x | bit-identical |
+| SFT | 2048 | 4.19 | 16,521 | 486.3 / 482.4 | 307.0 / 302.7 | 1.59x | bit-identical |
+| Base | 1024 | 1.05 | 4,195 | 92.0 / 89.7 | 63.7 / 60.8 | 1.48x | bit-identical |
+| Base | 1536 | 2.36 | 9,315 | 233.1 / 230.5 | 155.5 / 151.6 | 1.52x | bit-identical |
+| Kromoss | 1024 | 1.05 | 4,125 | 91.8 / 88.7 | 63.3 / 59.9 | 1.48x | bit-identical |
+| Kromoss | 1536 | 2.36 | 9,245 | 233.7 / 230.9 | 154.3 / 152.0 | 1.52x | bit-identical |
+| SFT, empty negative | 1024 | 1.05 | 4,233 | 93.3 / 91.2 | 63.0 / 59.7 | 1.53x | bit-identical |
+| SFT, empty negative | 1536 | 2.36 | 9,353 | 235.0 / 232.7 | 152.5 / 150.2 | 1.55x | bit-identical |
+
+The joint rows are the positive pass, the salted prompt's text rows plus the
+image rows. One step, one GPU against uly2: 1.86 s against 1.26 s at 1024,
+4.70 s against 3.09 s at 1536 and 9.76 s against 6.14 s at 2048.
+
+INT8 ConvRot, SFT, head capped at 2100 MHz, at `9caa6aae660b`. The INT8 files
+pin an approximate attention kernel, so the one-GPU leg ran it under the
+Sol-Attn waiver; uly2 drops the pins and runs the exact kernel. These walls
+are recorded only and never make a row. A ratio between the two divides by
+the pinned kernel, not by the exact one-GPU path, so the table gives none.
+
+| Size | One GPU, pinned kernel, waived (warm) | uly2 (warm) | uly2 per step | uly2 against the pinned one-GPU render |
+|--:|--:|--:|--:|---|
+| 1024 | 48.1 | 39.6 | 0.79 s | one step NRMS 0.0396; full schedule NRMS 0.166, max abs 3.76 |
+| 1536 | 162.9 | 105.6 | 2.11 s | one step NRMS 0.0344; full schedule NRMS 0.250, max abs 5.21 |
+
+The exact one-GPU path is a copy of the file with its pins removed. At 1024
+square, 50 steps and the vendor's empty negative, head capped at 2100 MHz,
+renders of that copy took 52.96 to 53.48 s on one GPU (1.06 s a step) and
+41.84 to 42.02 s on uly2 (0.84 s a step) across SFT, Base and Kromoss, one
+render each, bit-identical. The INT8 dispatch fix made INT8 uly2 faster:
+
+| Measurement, uly2, 50 steps, head capped at 2100 MHz | `ff8dab8300aa` | `9caa6aae660b` |
+|---|--:|--:|
+| INT8 testing graph (pinned file, auto picks uly2) through the API at 1024, sampler s: SFT with the INT8 encoder / Base / Kromoss | 51.66 / 51.52 / 50.62 | 39.58 / 39.55 / 39.10 |
+| The same, per step | 1.01 to 1.03 s | 0.78 to 0.79 s |
+| INT8 Campaign K cell at 1024, warm, SFT | 51.5 | 39.6 |
+| INT8 Campaign K cell at 1536, warm, SFT | 126.0 | 105.6 |
+
+BF16 uly2 runs 1.24 s a step at 1024 through the same API path, so INT8 uly2
+now runs faster than BF16 uly2.
+
+Other topologies, BF16, 1024 square, 50 steps, run_matrix walls in seconds,
+head capped at 2100 MHz:
+
+| Topology | Wall | Against |
+|---|---|---|
+| `uly2+fsdp`, prefetch depth 1 | SFT 113.70, Kromoss 115.24 | uly2 63.45 and 62.49 |
+| `uly2+fsdp`, prefetch depth 2 | SFT 131.35 | uly2 72.32 in the same cell |
+| cfg2 with the skip off, prompt and negative of different lengths (bit-identical) | 47.02 | one GPU 93.46, uly2 62.37 |
+| cfg2 with the skip off, equal lengths (measured, not identical) | 44.52 | one GPU 91.08 |
+| The same at 512 square | 13.83 | one GPU 23.65 |
+| uly2 with the skip, and without it | 63.56 and 64.07 | one GPU 94.67 and 94.56 |
+| `mode=local` on one GPU, no Worker | 90.12 | stock warm 92.4 to 93.9 |
+
+Each wall in this table is one render, except in the two cfg2 rows at 1024
+square, where every wall is the median of three renders, the first of them
+cold.
+
+cfg2 refuses on the shipped graphs, which carry the skip, so it has no row
+([DESIGN](DESIGN.md#54-topology--auto-mode)).
+
+Kromoss with the DMD2 LoRA at 1.0, 8 steps, CFG 1, head capped at 2100 MHz.
+Finish-record walls in seconds, sampler seconds in brackets; the cold render
+follows a `/free`, and the warm renders take new seeds. One GPU is the local
+driver.
+
+| Topology | 1024 cold | 1024 warm | 1536 cold | 1536 warm |
+|---|---|---|---|---|
+| uly2 | 6.0 (4.81) | 4.8 (4.79), 4.9 (4.84); 0.60 s a step | 13.5 (12.35) | 12.6 (12.37), 12.5 (12.46); 1.55 s a step |
+| One GPU | 7.3 (7.26) | 7.3 (7.25), 7.3 (7.27); 0.91 s a step | 20.0 (19.16) | 18.8 (18.73), 18.8 (18.75); 2.34 s a step |
+
+uly2 ran 1.51x faster than one GPU at both sizes.
+
+Stock ComfyUI on one Spark (2026-10-21, head capped at 2100 MHz) ran the
+shipped 50-step recipe on `simple`. Walls are ComfyUI's whole-prompt times,
+encoder and decode included, so compare within this list only.
+
+- SFT at 1024, cold: 95.99 s, at 1.81 s an iteration, which is 0.905 s a
+  model call, because the skip's window runs the two passes as separate
+  batch-1 calls.
+- Warm at 1024: 92.4 to 93.9 s across SFT, Base and Kromoss, the layout graph
+  and the skip off; 90.82 s on one Kromoss render.
+- Warm at 1040: 95.58 s. Batch 2 at 1024: 181.75 s. Warm at 1536: 233.01 and
+  233.18 s.
+- One step at 1024: 8.74 to 9.08 s cold and 3.01 to 3.02 s warm; at 2048,
+  12.54 s warm.
+- Kromoss with a DMD LoRA, 8 steps, warm: 8.04 to 8.54 s.
+- On the scheduler record's graph at 1024: 97.05 s on `simple` (cold) and
+  91.13 s on `normal` (warm), in one process.
 
 <a id="campaign-render-times-stills-2026-09-12-to-2026-09-28-head-capped"></a>
 

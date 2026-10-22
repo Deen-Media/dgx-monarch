@@ -1,16 +1,19 @@
 """The MOSS-Image templates hold the vendor's recipe and their testing legs change one thing.
 
 The three CFG 3 graphs (SFT, Base, Kromoss) and the SFT layout graph run 50
-Euler steps on ComfyUI's simple scheduler at CFG 3, 1024 square, with the
-vendor's negative tags and the vendor's skip of block 22 on the negative pass
-through Skip Layer Guidance (DGX Monarch). The Kromoss Turbo graph follows the
-Kromoss card: the DMD2 LoRA at strength 1.0, 8 steps, CFG 1, a zeroed negative
-and no skip. Every graph loads the Qwen3.5-9B encoder under CLIPLoader type
-`moss_image` and the FLUX.2 small decoder, and none places a shift node: the
-SD3 node samples at multiplier 1000 and this model at 1.0. The layout graph
-feeds its JSON to CLIP Text Encode through a link, because the browser's dynamic
-prompt pass would rewrite braces typed into that box. CPU only: the graphs are
-read as JSON and through the sweep converter.
+Euler steps on ComfyUI's normal scheduler, the vendor's schedule to within
+0.0005, at CFG 3, 1024 square, with the vendor's negative tags and the
+vendor's skip of block 22 on the negative pass through Skip Layer Guidance
+(DGX Monarch). The Kromoss Turbo graph follows the Kromoss card: the DMD2 LoRA
+at strength 1.0, 8 steps, CFG 1 on the simple scheduler, a zeroed negative and
+no skip. The testing legs of the CFG 3 graphs hold the simple scheduler, on
+which the 2026-10-21 sweep measured them, and their Notes say so. Every graph
+loads the Qwen3.5-9B encoder under CLIPLoader type `moss_image` and the FLUX.2
+small decoder, and none places a shift node: the SD3 node samples at
+multiplier 1000 and this model at 1.0. The layout graph feeds its JSON to CLIP
+Text Encode through a link, because the browser's dynamic prompt pass would
+rewrite braces typed into that box. CPU only: the graphs are read as JSON and
+through the sweep converter.
 """
 from __future__ import annotations
 
@@ -40,30 +43,47 @@ VENDOR_SKIP = {"double_layers": "", "single_layers": "22", "start_percent": 0.0,
                "end_percent": 1.0}
 LATENT_RATIO = 16  # supported_models.MOSSImage
 
-# name: (DiT, steps, cfg, LoRA or None); a graph without a LoRA carries the skip.
+# name: (DiT, steps, cfg, scheduler, LoRA or None); a graph without a LoRA
+# carries the skip.
 RECIPES = {
-    "dgx-monarch-moss-image-t2i": (SFT, 50, 3.0, None),
-    "dgx-monarch-moss-image-base-t2i": (BASE, 50, 3.0, None),
-    "dgx-monarch-moss-image-layout-t2i": (SFT, 50, 3.0, None),
-    "dgx-monarch-kromoss-t2i": (KROMOSS, 50, 3.0, None),
-    "dgx-monarch-kromoss-t2i-turbo": (KROMOSS, 8, 1.0, DMD2),
+    "dgx-monarch-moss-image-t2i": (SFT, 50, 3.0, "normal", None),
+    "dgx-monarch-moss-image-base-t2i": (BASE, 50, 3.0, "normal", None),
+    "dgx-monarch-moss-image-layout-t2i": (SFT, 50, 3.0, "normal", None),
+    "dgx-monarch-kromoss-t2i": (KROMOSS, 50, 3.0, "normal", None),
+    "dgx-monarch-kromoss-t2i-turbo": (KROMOSS, 8, 1.0, "simple", DMD2),
+}
+# The scheduler every testing leg of a CFG 3 graph holds in place of normal.
+LEG_SCHEDULER = {"DGXMonarchKSampler": {"scheduler": "simple"}}
+# graph: the evidence anchor its Note cites.
+EVIDENCE = {
+    "dgx-monarch-moss-image-t2i": "docs/VALIDATION.md#evidence-moss-image-sft",
+    "dgx-monarch-moss-image-base-t2i": "docs/VALIDATION.md#evidence-moss-image-base",
+    "dgx-monarch-moss-image-layout-t2i": "docs/VALIDATION.md#evidence-moss-image-sft",
+    "dgx-monarch-kromoss-t2i": "docs/VALIDATION.md#evidence-kromoss",
+    "dgx-monarch-kromoss-t2i-turbo": "docs/VALIDATION.md#evidence-kromoss",
 }
 # leg: (base graph, {class: {widget: value}}): the only inputs the leg changes.
 LEGS = {
     "dgx-monarch-test-moss-image-int8": ("dgx-monarch-moss-image-t2i", {
+        **LEG_SCHEDULER,
         "DGXMonarchUNETLoader": {"unet_name": "moss_image_sft_int8_convrot.safetensors"},
         "CLIPLoader": {"clip_name": ENCODER_INT8}}),
     "dgx-monarch-test-moss-image-base-int8": ("dgx-monarch-moss-image-base-t2i", {
+        **LEG_SCHEDULER,
         "DGXMonarchUNETLoader": {"unet_name": "moss_image_base_int8_convrot.safetensors"}}),
     "dgx-monarch-test-kromoss-int8": ("dgx-monarch-kromoss-t2i", {
+        **LEG_SCHEDULER,
         "DGXMonarchUNETLoader": {"unet_name": "kromoss_int8_convrot.safetensors"}}),
     "dgx-monarch-test-moss-image-odd": ("dgx-monarch-moss-image-t2i", {
+        **LEG_SCHEDULER,
         "EmptyFlux2LatentImage": {"width": 1040, "height": 1040},
         "SaveImage": {"filename_prefix": "dgx_monarch_moss_image_odd"}}),
     "dgx-monarch-test-moss-image-slg-off": ("dgx-monarch-moss-image-t2i", {
+        **LEG_SCHEDULER,
         "DGXMonarchSkipLayerGuidance": {"single_layers": ""},
         "SaveImage": {"filename_prefix": "dgx_monarch_moss_image_slg_off"}}),
     "dgx-monarch-test-moss-image-1536px": ("dgx-monarch-moss-image-t2i", {
+        **LEG_SCHEDULER,
         "EmptyFlux2LatentImage": {"width": 1536, "height": 1536},
         "SaveImage": {"filename_prefix": "dgx_monarch_moss_image_1536"}}),
     "dgx-monarch-test-kromoss-turbo-dmd": ("dgx-monarch-kromoss-t2i-turbo", {
@@ -99,7 +119,7 @@ def _note(doc: dict) -> str:
 
 @pytest.mark.parametrize("name", sorted(RECIPES))
 def test_the_shipped_graph_holds_the_vendor_recipe(name):
-    dit, steps, cfg, lora = RECIPES[name]
+    dit, steps, cfg, scheduler, lora = RECIPES[name]
     graph = _api(SHIPPED / f"{name}.json")
     init_id, init = _one(graph, "DGXMonarchInit")
     unet_id, unet = _one(graph, "DGXMonarchUNETLoader")
@@ -114,7 +134,7 @@ def test_the_shipped_graph_holds_the_vendor_recipe(name):
     assert (latent["width"], latent["height"], latent["batch_size"]) == (1024, 1024, 1)
     assert (sampler["seed"], sampler["steps"], sampler["cfg"]) == (42, steps, cfg)
     assert (sampler["sampler_name"], sampler["scheduler"], sampler["denoise"]) == (
-        "euler", "simple", 1.0)
+        "euler", scheduler, 1.0)
     assert sampler["latent_image"] == [latent_id, 0]
     classes = {node["class_type"] for node in graph.values()}
     assert not {kind for kind in classes if "ModelSampling" in kind}, "native shift 5 only"
@@ -142,18 +162,37 @@ def test_the_shipped_graph_holds_the_vendor_recipe(name):
 
 @pytest.mark.parametrize("name", sorted(RECIPES))
 def test_every_note_names_its_files_its_floors_and_its_limits(name):
-    dit, _steps, _cfg, lora = RECIPES[name]
+    dit, _steps, _cfg, scheduler, lora = RECIPES[name]
     note = _note(_ui(SHIPPED / f"{name}.json"))
     for required in (dit, ENCODER, VAE, ENCODER_INT8, "CLIP type moss_image",
-                     "simple scheduler", "add no shift node", "Apache-2.0",
-                     "0.42.0 or newer", "0.2.39 or newer", "Sol-Attn waiver",
-                     "Auto picks Ulysses on a configured pair.",
-                     "No hardware comparison has run for MOSS-Image yet"):
+                     f"{scheduler} scheduler", "add no shift node", "Apache-2.0",
+                     "0.42.0 or newer", "Auto picks Ulysses on a configured pair.",
+                     # What the 2026-10-21 hardware tests showed.
+                     "In the 2026-10-21 hardware tests, uly2 ", EVIDENCE[name],
+                     "ring2 with a LoRA failed its first-use gate",
+                     "any LoRA they refuse on every topology "
+                     "(docs/TROUBLESHOOTING.md #129)"):
         assert required in note, f"{name}: the Note does not name {required!r}"
+    assert "No hardware comparison has run" not in note, name
+    # Only the layout Note quotes no speedup: the walls hold no one-GPU twin for it.
+    # Every speedup names the cap its walls ran under.
+    assert ("1.5 times as fast" in note) is ("layout" not in name), name
+    assert note.count("1.5 times as fast as one GPU with the first Spark capped "
+                      "at 2100 MHz") == note.count("1.5 times as fast"), name
     if lora is None:
         assert "cfg2 refuses while Skip Layer Guidance is on" in note
+        assert "within 0.0005 of the vendor's schedule" in note
+        for required in ("0.2.39 or newer", "Sol-Attn waiver", "an exact match after it",
+                         "ring2 is measured, not granted: without a LoRA"):
+            assert required in note, f"{name}: the Note does not name {required!r}"
     else:
         assert lora in note and DMD in note and "use one LoRA at a time" in note
+        assert "0.0489 to 0.0635 one-step NRMS from stock's default render" in note
+        # The graph always carries a LoRA, so neither ring2 nor INT8 applies.
+        assert "ring2 is not supported on this graph" in note
+        assert "ring2 is measured" not in note
+        assert "The INT8 ConvRot DiT files cannot be used on this graph" in note
+        assert "exact match" not in note
 
 
 def test_the_layout_graph_wires_its_json_to_the_text_socket():
@@ -250,6 +289,20 @@ def test_the_skip_off_leg_is_the_no_node_request():
     assert patched.skip_layer_guidance is None
     assert json.dumps(patched.request_dict(), sort_keys=True) == json.dumps(
         model.request_dict(), sort_keys=True)
+
+
+@pytest.mark.parametrize("leg", sorted((*LEGS, "dgx-monarch-test-moss-image-lora")))
+def test_every_testing_leg_runs_the_scheduler_the_sweep_measured(leg):
+    # The shipped CFG 3 graphs moved to normal after the 2026-10-21 sweep had
+    # measured every leg on simple; the legs keep simple, so the graphs stay
+    # the ones the sweep ran.
+    _, sampler = _one(_api(TESTING / f"{leg}.json"), "DGXMonarchKSampler")
+    assert sampler["scheduler"] == "simple", leg
+    # A leg whose shipped graph runs normal says why it keeps simple.
+    base = LEGS[leg][0] if leg in LEGS else "dgx-monarch-moss-image-t2i"
+    _, base_sampler = _one(_api(SHIPPED / f"{base}.json"), "DGXMonarchKSampler")
+    disclosed = "It keeps ComfyUI's simple scheduler" in _note(_ui(TESTING / f"{leg}.json"))
+    assert disclosed is (base_sampler["scheduler"] == "normal"), leg
 
 
 def test_the_lora_leg_splices_the_placeholder_before_the_skip():

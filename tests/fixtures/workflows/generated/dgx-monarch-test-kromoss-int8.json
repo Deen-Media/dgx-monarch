@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-kromoss-t2i, with only the changes needed for this test. Kromoss's own INT8 ConvRot DiT, made with the recipe of the vendor's INT8 files, with the BF16 text encoder at the shipped Kromoss recipe."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-kromoss-t2i, with only the changes needed for this test. Kromoss's own INT8 ConvRot DiT, made with the recipe of the vendor's INT8 files, with the BF16 text encoder at the shipped Kromoss recipe apart from the scheduler. It keeps ComfyUI's simple scheduler, on which the 2026-10-21 sweep ran it, where the shipped graph runs normal."
    ],
    "title": "DGX Monarch | Kromoss INT8 ConvRot"
   },
