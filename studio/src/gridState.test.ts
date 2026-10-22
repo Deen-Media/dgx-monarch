@@ -100,6 +100,7 @@ const gridsHarness = new Function(
   let recoveryBlocked = false, dispatchPending = false, retryPending = false, loadGeneration = 0;
   let busy = false, error = '', confirmed = false, preview = null, grid = null, selected = [];
   let cellPage = 0, requestKey = '', retryKey = '', retryIndices = [], reviewedFields = null;
+  let reviewedKey = null;
   let fields = { ...gridState.defaultGridFields(), axisA: 'steps', valuesA: '[10,20]' };
   const draft = { workflow: { id: 'w' } }, storage = 'dgxm.studio.grid.v1';
   const definition = gridState.gridDefinitionKey(draft, fields);
@@ -129,6 +130,100 @@ test('Grids stores the reviewed definition, not later edits, with the retained p
 test('Grids restores the reviewed fields before the review guard reads the definition', async () => {
   const view = await readFile(new URL('./views/Grids.svelte', import.meta.url), 'utf8');
   const restore = view.indexOf('gridState.restoredGridFields(');
-  const guard = view.indexOf('reviewGuard.restore(definition)');
+  const guard = view.indexOf('reviewGuard.restore(current)');
   assert.ok(restore > 0 && guard > restore, 'fields are assigned before reviewGuard.restore');
+  assert.match(view, /restoreSaved\(restored\.value\)/, 'onMount restores through restoreSaved');
+});
+
+test('a review identity names the draft and the fields, not their key order', () => {
+  const fields = { ...defaultGridFields(), axisA: 'steps' };
+  const draft = { workflow: { nodes: [{ id: 1 }] }, values: { a: 1, b: 2 } };
+  const key = gridState.reviewIdentity(draft, fields);
+  const reordered = { values: { b: 2, a: 1 }, workflow: { nodes: [{ id: 1 }] } };
+  assert.equal(gridState.reviewIdentity(reordered, { ...fields }), key);
+  assert.notEqual(gridState.reviewIdentity({ ...draft, values: { a: 1, b: 3 } }, fields), key);
+  assert.notEqual(gridState.reviewIdentity(draft, { ...fields, valuesA: '[3]' }), key);
+  assert.ok(key.length < 40, 'the stored identity is small');
+  assert.equal(gridState.restoredReview({ reviewed: key, dispatchPending: false }, key), 'fresh');
+  assert.equal(
+    gridState.restoredReview({ reviewed: 'other', dispatchPending: false }, key),
+    'stale',
+  );
+  assert.equal(gridState.restoredReview({ dispatchPending: false }, key), 'stale');
+  assert.equal(
+    gridState.restoredReview({ reviewed: 'other', dispatchPending: true }, key),
+    'pending',
+  );
+});
+
+// Run the shipped prepare and restore handlers against two drafts, as when the
+// workspace draft changes while the Grids view is closed.
+const restoreCode = await componentFunctions('./views/Grids.svelte', [
+  'prepare',
+  'remember',
+  'persist',
+  'fail',
+  'restoreSaved',
+]);
+const restoreHarness = new Function(
+  'client',
+  'gridState',
+  'GridReviewGuard',
+  'sessionStorage',
+  'draft',
+  `'use strict';
+  let recoveryBlocked = false, dispatchPending = false, retryPending = false, loadGeneration = 0;
+  let busy = false, error = '', confirmed = false, preview = null, grid = null, selected = [];
+  let cellPage = 0, requestKey = '', retryKey = '', retryIndices = [];
+  let reviewedFields = null, reviewedKey = null;
+  let fields = { ...gridState.defaultGridFields(), axisA: 'steps', valuesA: '[10,20]' };
+  const storage = 'dgxm.studio.grid.v1';
+  const definition = gridState.gridDefinitionKey(draft, fields);
+  const reviewGuard = new GridReviewGuard();
+  const $state = { snapshot: (value) => structuredClone(value) };
+  ${restoreCode}
+  return {
+    prepare,
+    restoreSaved,
+    guard: reviewGuard,
+    view: () => ({ preview, requestKey, error, fields, dispatchPending }),
+    definition: () => gridState.gridDefinitionKey(draft, fields),
+  };`,
+);
+
+test('a restored grid review is dropped when the draft changed, unless its dispatch is pending', async () => {
+  const stored = new Map<string, string>();
+  const storage = { setItem: (key: string, value: string) => stored.set(key, value) };
+  const client = { request: async () => ({ id: 'review', digest: 'd', ready: true, cells: [] }) };
+  const reviewedDraft = { workflow: { id: 'w' }, values: { prompt: 'a cat' } };
+  const editedDraft = { workflow: { id: 'w' }, values: { prompt: 'a dog' } };
+  const first = restoreHarness(client, gridState, GridReviewGuard, storage, reviewedDraft);
+  await first.prepare();
+  const saved = JSON.parse(stored.get('dgxm.studio.grid.v1')!);
+  assert.equal(saved.reviewed, gridState.reviewIdentity(reviewedDraft, saved.definition));
+  // Same draft: the review returns and a later edit still invalidates it.
+  const same = restoreHarness(client, gridState, GridReviewGuard, storage, reviewedDraft);
+  same.restoreSaved(saved);
+  assert.equal(same.view().preview?.id, 'review');
+  assert.equal(same.view().requestKey, saved.requestKey);
+  assert.equal(same.view().error, '');
+  assert.equal(same.guard.invalidate(same.definition(), false), false);
+  // Changed draft: the old preview would run the earlier prompt, so it is dropped.
+  const changed = restoreHarness(client, gridState, GridReviewGuard, storage, editedDraft);
+  changed.restoreSaved(saved);
+  assert.equal(changed.view().preview, null);
+  assert.equal(changed.view().requestKey, '');
+  assert.equal(changed.view().error, gridState.STALE_RESTORE);
+  assert.equal(JSON.parse(stored.get('dgxm.studio.grid.v1')!).preview, null);
+  // A session saved before reviews carried an identity is dropped the same way.
+  const legacy = restoreHarness(client, gridState, GridReviewGuard, storage, reviewedDraft);
+  legacy.restoreSaved({ ...saved, reviewed: undefined });
+  assert.equal(legacy.view().preview, null);
+  // An uncertain dispatch keeps its preview and request key for reconciliation.
+  const pending = restoreHarness(client, gridState, GridReviewGuard, storage, editedDraft);
+  pending.restoreSaved({ ...saved, dispatchPending: true });
+  assert.equal(pending.view().preview?.id, 'review');
+  assert.equal(pending.view().requestKey, saved.requestKey);
+  assert.equal(pending.view().dispatchPending, true);
+  assert.equal(pending.view().error, gridState.EARLIER_PENDING);
 });

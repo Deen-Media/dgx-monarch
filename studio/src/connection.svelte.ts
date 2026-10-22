@@ -6,6 +6,8 @@ import type { Capabilities, Catalog, Snapshot, WorkflowEntry } from './contracts
 import { appendTelemetry, type MetricSeries } from './telemetryHistory';
 
 const TOKEN_KEY = 'dgxm.studio.token.v1';
+/** The connect notice for a driver catalog that could not be read starts with this text. */
+export const CATALOG_NOTICE = 'Companion connected. The driver catalog could not be read:';
 
 /** Owns companion transport and reconciled host state, never unsent draft edits. */
 export class Connection {
@@ -18,8 +20,10 @@ export class Connection {
   capabilities = $state<Capabilities>({});
   workflows = $state<WorkflowEntry[]>([]);
   catalog = $state<Catalog>({});
-  /** Why the driver catalog could not be read at connect, or '' when it was read. */
+  /** Why the last driver catalog read failed, or '' when it succeeded. */
   catalogError = $state('');
+  /** The catalog read in flight; a refresh joins it rather than starting another. */
+  catalogRead?: Promise<void>;
   snapshot = $state<Snapshot>({
     jobs: [],
     artifacts: [],
@@ -39,6 +43,10 @@ export class Connection {
   private polling = false;
   private generation = 0;
   private snapshotSequence = 0;
+  /** Whether the last snapshot showed the driver connected; undefined until one arrives. */
+  private driverUp?: boolean;
+  /** Whether the catalog was already read again during this driver connection. */
+  private catalogRetried = false;
 
   async refresh() {
     if (!this.client.token) return;
@@ -49,7 +57,8 @@ export class Connection {
     // The request sequence orders responses; the host clock may step backward.
     if (generation !== this.generation || sequence !== this.snapshotSequence) return;
     const newInstance = result.instance_id !== this.instance;
-    if (this.instance && result.instance_id !== this.instance) {
+    const restarted = !!this.instance && newInstance;
+    if (restarted) {
       this.cursor = 0;
       this.logs = [];
       this.metricHistory = [];
@@ -71,6 +80,46 @@ export class Connection {
     this.state = 'connected';
     this.connected = true;
     this.error = '';
+    this.watchCatalog(restarted, result.driver?.state === 'connected');
+  }
+
+  /**
+   * Read the catalog again when the companion restarted or the driver connected again, since
+   * either may serve other files, and once while connected after a failed read. A read that
+   * keeps failing on a connected driver waits for the next connection or an explicit refresh.
+   */
+  private watchCatalog(restarted: boolean, up: boolean) {
+    const cameUp = up && this.driverUp === false;
+    this.driverUp = up;
+    if (!up) this.catalogRetried = false;
+    else if (restarted || cameUp || (this.catalogError && !this.catalogRetried)) {
+      this.catalogRetried = true;
+      void this.refreshCatalog();
+    }
+  }
+
+  /** Read the driver catalog again: its LoRA files and the node schemas LoRA controls use. */
+  refreshCatalog(): Promise<void> {
+    if (this.catalogRead) return this.catalogRead;
+    const read = this.readCatalog(this.client, this.generation, false).finally(() => {
+      if (this.catalogRead === read) this.catalogRead = undefined;
+    });
+    this.catalogRead = read;
+    return read;
+  }
+
+  private async readCatalog(client: StudioClient, generation: number, clear: boolean) {
+    try {
+      const catalog = await client.request<Catalog>('/catalog');
+      if (generation !== this.generation) return;
+      this.catalog = catalog;
+      this.catalogError = '';
+    } catch (error) {
+      if (generation !== this.generation) return;
+      // At connect nothing earlier applies; a failed refresh keeps the last list it read.
+      if (clear) this.catalog = {};
+      this.catalogError = error instanceof Error ? error.message : String(error);
+    }
   }
 
   async connect() {
@@ -91,16 +140,9 @@ export class Connection {
       const workflows = await client.request<{ workflows: WorkflowEntry[] }>('/workflows');
       if (generation !== this.generation) return;
       this.workflows = workflows.workflows ?? [];
-      try {
-        const catalog = await client.request<Catalog>('/catalog');
-        if (generation !== this.generation) return;
-        this.catalog = catalog;
-        this.catalogError = '';
-      } catch (error) {
-        if (generation !== this.generation) return;
-        this.catalog = {};
-        this.catalogError = error instanceof Error ? error.message : String(error);
-      }
+      [this.driverUp, this.catalogRetried, this.catalogRead] = [undefined, false, undefined];
+      await this.readCatalog(client, generation, true);
+      if (generation !== this.generation) return;
       try {
         sessionStorage.setItem(TOKEN_KEY, this.client.token);
       } catch {
@@ -168,7 +210,7 @@ export class Connection {
     const driver = this.snapshot.driver;
     const reason = /[.!?]$/.test(this.catalogError) ? this.catalogError : `${this.catalogError}.`;
     if (this.catalogError)
-      return `Companion connected. The driver catalog could not be read: ${reason} Management controls remain available.`;
+      return `${CATALOG_NOTICE} ${reason} Management controls remain available.`;
     return driver.state === 'connected'
       ? ''
       : `Companion connected. The driver is ${driverStatus(driver)}. Management controls remain available.`;
@@ -213,6 +255,7 @@ export class Connection {
     this.capabilities = {};
     this.catalog = {};
     this.catalogError = '';
+    [this.driverUp, this.catalogRetried, this.catalogRead] = [undefined, false, undefined];
     this.error = '';
     this.workflows = [];
     this.snapshot = {

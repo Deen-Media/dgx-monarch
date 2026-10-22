@@ -27,6 +27,8 @@ export interface Binding {
     max?: number;
     step?: number;
     default?: unknown;
+    /** A dynamic choice: changing it changes which child inputs the node declares. */
+    dynamic?: boolean;
   };
   required?: boolean;
   validation?: {

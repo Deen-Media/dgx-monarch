@@ -239,3 +239,21 @@ def test_the_grid_budget_bounds_what_preview_and_submit_write_at_its_edge(tmp_pa
     # The smallest budget that admitted the grid still bounds both writes.
     reviewed, submitted = admitted[high]
     assert reviewed <= high and submitted <= high
+
+
+def test_a_grid_axis_can_name_a_child_input_the_draft_choice_reveals(store):
+    # The saved "plain" mode has no strength input; the draft picks "tuned", so an
+    # axis over its strength child is a typed axis and each cell compiles with it.
+    driver = Driver()
+    driver.schema = {"Render": {"input": {"required": {
+        "mode": ["COMFY_DYNAMICCOMBO_V3", {"options": [
+            {"key": "plain", "inputs": {"required": {}}},
+            {"key": "tuned", "inputs": {"required": {"strength": ["INT", {"default": 1, "min": 0, "max": 9}]}}}]}],
+        "text": ["STRING", {}]}}, "output": [], "output_node": True}}
+    request = {"draft": {"workflow": {"1": {"class_type": "Render", "inputs": {"mode": "plain", "text": "cat"}}},
+                         "values": {"root:1:mode": "tuned"}, "seed_policy": "fixed", "operation": "image"},
+               "axes": [{"name": "root:1:mode.strength", "values": [2, 5]}]}
+    preview = asyncio.run(GridExperiments(Jobs(store, driver)).preview(request))
+    assert preview["ready"] and [cell["errors"] for cell in preview["cells"]] == [[], []]
+    prompts = [store.get("previews", cell["preview_id"])["prompt"]["1"]["inputs"] for cell in preview["cells"]]
+    assert [(inputs["mode"], inputs["mode.strength"]) for inputs in prompts] == [("tuned", 2), ("tuned", 5)]

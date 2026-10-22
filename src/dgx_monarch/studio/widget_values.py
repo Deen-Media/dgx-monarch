@@ -63,10 +63,11 @@ def field_schema(name: str, spec: Any) -> dict[str, Any]:
         options.update(type="COMBO", choices=options["options"])
     elif kind == DYNAMIC_COMBO:
         # The frontend draws a DynamicCombo as a combo of its option keys whose
-        # value starts at the first key.
+        # value starts at the first key. ``dynamic`` tells Studio that changing
+        # it changes which child inputs exist.
         keys = _option_keys(name, options)
         options.pop("options")
-        options.update(type="COMBO", choices=keys)
+        options.update(type="COMBO", choices=keys, dynamic=True)
         if keys:
             options.setdefault("default", keys[0])
     elif isinstance(kind, str):
@@ -131,15 +132,16 @@ def _autogrow_inputs(name: str, spec: Any) -> list[Field]:
 
 
 def finalize_inputs(info: Mapping[str, Any], live: Mapping[str, Any], *,
-                    fill_defaults: bool = False) -> list[Field]:
+                    fill_defaults: bool = False, edit: Callable[[str], Any] | None = None) -> list[Field]:
     """Expand dynamic inputs from live values, as ComfyUI does before validating.
 
     Every Autogrow name up to its maximum is declared, and only the first
     ``min`` names are required. A DynamicCombo is declared only when it has a
-    value, and ``fill_defaults`` gives a missing one its first key, as the
-    frontend's widget does. The selected option's inputs follow it with dotted
-    names. ComfyUI drops a DynamicCombo whose value names no option; Studio
-    keeps it declared, so the value check refuses a key the node would ignore.
+    value: a live one, then an ``edit``, and ``fill_defaults`` gives a missing
+    one its first key, as the frontend's widget does. The selected option's
+    inputs follow it with dotted names. ComfyUI drops a DynamicCombo whose value
+    names no option; Studio keeps it declared, so the value check refuses a key
+    the node would ignore.
     """
     result: list[Field] = []
 
@@ -157,6 +159,8 @@ def finalize_inputs(info: Mapping[str, Any], live: Mapping[str, Any], *,
             result.append((name, spec, required))
             return
         value = live.get(name, MISSING)
+        if value is MISSING and edit is not None:
+            value = edit(name)
         if value is MISSING and fill_defaults:
             value = field_schema(name, spec).get("default", MISSING)
         if value is MISSING:
@@ -183,7 +187,8 @@ def resolve_inputs(info: Mapping[str, Any], live: Mapping[str, Any], lookup: Cal
     current = dict(live)
     applied: set[str] = set()
     for _ in range(_MAX_DEPTH + 2):
-        fields = finalize_inputs(info, current, fill_defaults=fill_defaults)
+        # An API prompt can leave an optional choice out; an edit still declares it.
+        fields = finalize_inputs(info, current, fill_defaults=fill_defaults, edit=lookup)
         pending = [name for name, _, _ in fields if name not in applied]
         if not pending:
             return fields

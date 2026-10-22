@@ -203,8 +203,11 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
         body = await payload(request)
         catalog_value = await jobs.catalog()
         workflow = object_value(body.get("workflow"))
-        # Stored uploads the workflow names join image upload choices, as at preview.
-        return json_response(inspect_workflow(workflow, jobs.upload_view({"workflow": workflow}, catalog_value["object_info"])))
+        # Draft values select dynamic choices; stored uploads the workflow or the
+        # values name join image upload choices, as at preview.
+        values = object_value(body.get("values", {}), "values")
+        view = jobs.upload_view({"workflow": workflow, "values": values}, catalog_value["object_info"])
+        return json_response(inspect_workflow(workflow, view, values))
 
     async def preview(request: web.Request) -> web.Response:
         return json_response(await jobs.preview(await payload(request)))

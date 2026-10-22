@@ -36,6 +36,9 @@
     fail,
     undo,
     prepareJob,
+    rebind,
+    catalogError = '',
+    refreshCatalog,
   }: {
     client: StudioClient;
     draft: Draft;
@@ -58,6 +61,10 @@
     fail: ReportError;
     undo: () => void;
     prepareJob: () => Promise<void>;
+    /** Apply values that change a dynamic choice and rebuild the bindings from them. */
+    rebind: (values: Draft['values']) => Promise<void>;
+    catalogError?: string;
+    refreshCatalog: () => Promise<void>;
   } = $props();
   let fieldErrors = $derived(
     bindings
@@ -76,8 +83,11 @@
   $effect(() => {
     if (!busy) choosing = '';
   });
-  function fieldChange(id: string, value: unknown) {
-    changeDraft({ values: { ...draft.values, [id]: value } });
+  function fieldChange(binding: Binding, value: unknown) {
+    const values = { ...draft.values, [binding.id]: value };
+    // A dynamic choice changes which child inputs exist, so the bindings are rebuilt.
+    if (binding.schema?.dynamic) void rebind(values);
+    else changeDraft({ values });
   }
   async function importWorkflow(file: File | undefined) {
     if (!file) return;
@@ -176,7 +186,7 @@
       {#each visibleBindings as binding (binding.id)}<Field
           {binding}
           value={draft.values[binding.id]}
-          onchange={(value) => fieldChange(binding.id, value)}
+          onchange={(value) => fieldChange(binding, value)}
         />{/each}
       {#if bindingErrors.length}<div class="validation-list" role="alert">
           <h3>Workflow needs attention</h3>
@@ -238,6 +248,8 @@
       />{:else if controlTab === 'loras'}<LoraStack
         {draft}
         {catalog}
+        {catalogError}
+        {refreshCatalog}
         {connections}
         {changeDraft}
       />{:else if controlTab === 'workflow'}<WorkflowLayout

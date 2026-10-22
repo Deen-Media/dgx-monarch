@@ -9,7 +9,7 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from typing import Any
 from urllib.parse import quote, unquote
 
@@ -102,16 +102,31 @@ def widget_values(node: Mapping[str, Any], info: Mapping[str, Any], *, api: bool
 
 
 def node_fields(node: Mapping[str, Any], info: Mapping[str, Any], values: Mapping[str, Any], *,
-                api: bool) -> list[tuple[str, dict[str, Any], bool]]:
-    """Typed inputs after ComfyUI's dynamic input expansion for these values."""
-    from .widget_values import LINKED, field_schema, finalize_inputs
+                api: bool, edit: Callable[[str], Any] | None = None) -> list[tuple[str, dict[str, Any], bool]]:
+    """Typed inputs after ComfyUI's dynamic input expansion for these values.
+
+    ``edit(name)`` returns a draft edit or ``MISSING``; an edited dynamic choice
+    declares its own child inputs, as compile does.
+    """
+    from .widget_values import LINKED, MISSING, field_schema, resolve_inputs
     live = dict(values)
     if not api:
         # A linked DynamicCombo selects no option here, as in ComfyUI.
         live.update({str(socket.get("name")): LINKED for socket in node.get("inputs", [])
                      if isinstance(socket, dict) and socket.get("link") is not None})
     return [(name, field_schema(name, spec), required)
-            for name, spec, required in finalize_inputs(info, live, fill_defaults=not api)]
+            for name, spec, required in resolve_inputs(info, live, edit or (lambda _name: MISSING),
+                                                       fill_defaults=not api)]
+
+
+def _edit_lookup(edits: Mapping[str, Any], gid: str, nid: str) -> Callable[[str], Any]:
+    """Read one node's draft edits by input name, as compile reads them."""
+    from .widget_values import MISSING
+
+    def edit(name: str) -> Any:
+        key = binding_id(gid, nid, name)
+        return copy.deepcopy(edits[key]) if key in edits else MISSING
+    return edit
 
 
 def _resolve(identity: Any, name: str | None, graphs: Mapping[str, Any]) -> tuple[str, str, str | None]:
@@ -188,18 +203,28 @@ def _primitive_definition(nid: str, graph: Mapping[str, Any], info: Mapping[str,
             combined["choices"] = [value for value in combined["choices"] if value in schema["choices"]]
     kind = combined.pop("type")
     combined.pop("forceInput", None)
+    combined.pop("dynamic", None)
     combined["control_after_generate"] = True
     return {"input": {"required": {"value": [combined.pop("choices") if kind == "COMBO" else kind, combined]}}}
 
 
-def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any] | None = None) -> dict[str, Any]:
-    """Inspect all typed inputs, preserving unresolved App Mode selections."""
+def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any] | None = None,
+                     edits: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Inspect all typed inputs, preserving unresolved App Mode selections.
+
+    ``edits`` are draft values by binding ID. A dynamic choice they change lists
+    the child inputs of the edited choice; ``inactive`` names the saved choice's
+    children that the edits leave out. Subgraph instances keep their saved
+    choices' children.
+    """
     if not isinstance(workflow, dict):
         raise WorkflowError("Workflow must be an object")
     info = object_info or {}
     graphs = graph_index(workflow)
     api = is_api_prompt(workflow)
+    edited = dict(edits or {}) if api or len(graphs) == 1 else {}
     bindings: list[dict[str, Any]] = []
+    inactive: list[str] = []
     errors: list[str] = []
     for gid, graph in graphs.items():
         for nid, node in graph["nodes"].items():
@@ -213,7 +238,11 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
                 continue
             try:
                 values = widget_values(node, definition, api=api)
-                fields = node_fields(node, definition, values, api=api)
+                fields = node_fields(node, definition, values, api=api, edit=_edit_lookup(edited, gid, nid))
+                if edited:
+                    names = {name for name, _, _ in fields}
+                    inactive += [binding_id(gid, nid, name) for name, schema, _ in node_fields(
+                        node, definition, values, api=api) if name not in names and schema["type"] in SCALAR_TYPES]
             except WorkflowError as exc:
                 errors.append(f"{gid}:{nid}: {exc}")
                 continue
@@ -264,6 +293,8 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
                 gid, nid, resolved_name = _resolve(identity, name, graphs)
                 key = binding_id(gid, nid, str(resolved_name))
             key = overrides.get(key, overrides.get(unresolved_id, {})).get("target", key)
+            if key in inactive:
+                continue  # An edited choice dropped this input; the App Mode entry returns with it.
             selected_binding = lookup.get(key)
             if selected_binding is None and not api and len(graphs) > 1:
                 from .instance_bindings import select_binding
@@ -305,7 +336,7 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
         except WorkflowError as exc:
             errors.append(str(exc))
     return {"adapter_version": ADAPTER_VERSION, "workflow": copy.deepcopy(workflow),
-            "bindings": bindings, "outputs": outputs, "prompt": prompt, "errors": errors,
+            "bindings": bindings, "inactive": inactive, "outputs": outputs, "prompt": prompt, "errors": errors,
             "connections": [{"node_id": nid, "input_name": name, "type": schema["type"], "source": value}
                             for nid, node in (prompt or {}).items()
                             for name, schema, _ in node_inputs(info.get(node["class_type"], {}))
@@ -315,7 +346,9 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
 def compile_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any],
                      values: Mapping[str, Any] | None = None) -> dict[str, Any]:
     from .workflow_compile import compile_graph
-    inspection = inspect_workflow(workflow, object_info)
+    # Edits that change a dynamic choice make its new children editable. An edit
+    # to a child the change dropped stays accepted, and compile ignores it.
+    inspection = inspect_workflow(workflow, object_info, values)
     # Compilation validates the resulting values. Existing invalid defaults may be
     # repaired by explicit edits; unresolved selected identities cannot be skipped.
     unresolved = [item for item in inspection["bindings"]
@@ -323,6 +356,7 @@ def compile_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
     if unresolved or any(not item["resolved"] for item in inspection["outputs"]):
         raise WorkflowError("Resolve App Mode bindings before submission")
     editable = {key for item in inspection["bindings"] if item["resolved"] for key in (item["id"], *item.get("aliases", []))}
+    editable.update(inspection["inactive"])
     if any(key not in editable and any(row.get("definition_binding_id") == key for row in inspection["bindings"])
            for key in (values or {})):
         raise WorkflowError("Shared subgraph binding is ambiguous; choose a specific instance")

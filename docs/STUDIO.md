@@ -167,7 +167,11 @@ graph connections. The advanced view exposes all supported primitive fields.
 App Mode labels and layout can change without changing binding identity.
 Layout edits also update the workflow repair text. Validating unchanged source
 preserves edits made in typed controls; intentional JSON changes use the edited
-workflow's defaults. Multiline fields retain line breaks, and import controls
+workflow's defaults. Changing a dynamic choice, such as the codec or encoding
+mode of SaveVideo, inspects the workflow again with the draft's values: the
+controls for the new choice's inputs appear, those of the old choice leave the
+draft, and review accepts edits to the new inputs. Inside a subgraph, Studio
+lists only the inputs of the saved choice. Multiline fields retain line breaks, and import controls
 allow selecting the same file again after a success or error.
 
 Compilation preserves the original workflow and extension metadata. Unknown
@@ -191,6 +195,10 @@ the inserted node identities, connection boundaries, asset names and strengths.
 Multiple ambiguous chains or incompatible typed connections refuse execution.
 An invalid LoRA strength, a removed LoRA or an out-of-range inserted loader is
 refused at review with `lora_binding`, naming the slot and input.
+The LoRA list comes from the driver catalog Studio reads at connect. Studio
+reads it again when the driver connects again or the companion restarts, and
+once more after a failed read while the driver stays connected. Refresh list on
+the LoRA tab reads it on demand, for example after adding LoRA files.
 File names never establish model compatibility.
 Execution-time guards still check the actual model and topology. A schema-only
 preview is not a memory-admission, topology or identity-gate PASS.
@@ -223,7 +231,12 @@ dispatch until corrected or explicitly excluded. Each accepted cell has its
 own immutable submission and outcome, with selective failed/cancelled retries
 through the existing ComfyUI queue.
 Changing a grid definition invalidates its reviewed preview and confirmation;
-validate the edited cells again before submission.
+validate the edited cells again before submission. Grids keeps an identity of
+the draft and grid fields each preview came from. When Grids opens again, or the
+page reloads, it restores a saved preview only if the draft and fields still
+match; otherwise it drops the preview and asks for validation again. A dispatch
+whose outcome is unknown keeps its preview and request ID so it can be
+reconciled, and Grids says when that review came from an earlier draft.
 
 ## Runtime evidence
 
@@ -407,8 +420,8 @@ when opened or exported. Artifact lists omit only the derived search index.
 Record and history pages are limited to 8 MiB; cursors advance by actual
 returned rows. Record storage permits 2,000 editable records per kind. The
 browser bounds loaded record windows and catalogs to 8 MiB and 2,000 rows, and
-the companion refuses a save that would take a kind's catalog past that 8 MiB
-window before it commits. A new record keeps one identity per form until its
+the companion refuses a save or a library import that would take a kind's
+catalog past that 8 MiB window before it commits. A new record keeps one identity per form until its
 save is confirmed, so a retried save that already committed reads as saved.
 
 Studio decodes at most 16 megapixels (4096 x 4096 pixels) per image, for input

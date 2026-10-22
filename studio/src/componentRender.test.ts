@@ -127,6 +127,19 @@ test('an unavailable driver shows its failure code in the footer', () => {
   assert.match(body, /Driver unavailable \(database_error\)/);
 });
 
+test('the LoRA tab names an unread driver catalog and offers a refresh', () => {
+  const failed = html(
+    Generation,
+    generationProps({ controlTab: 'loras', catalogError: 'Driver unreachable.' }),
+  );
+  assert.match(failed, /The driver catalog could not be read: Driver unreachable\./);
+  assert.doesNotMatch(failed, /No matching LoRAs reported by the driver/);
+  assert.doesNotMatch(tagBefore(failed, 'Refresh list'), /disabled/);
+  const empty = html(Generation, generationProps({ controlTab: 'loras' }));
+  assert.match(empty, /No matching LoRAs reported by the driver/);
+  assert.match(empty, /Refresh list/);
+});
+
 test('the asset editor keeps its mode, target and paint across tab and view switches', () => {
   assetEditor.mode = 'mask';
   assetEditor.target = 'image';

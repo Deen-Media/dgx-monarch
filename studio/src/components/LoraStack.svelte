@@ -6,11 +6,30 @@
   let {
     draft,
     catalog,
+    catalogError = '',
+    refreshCatalog,
     changeDraft,
     connections,
-  }: { draft: Draft; catalog: Catalog; changeDraft: ChangeDraft; connections: GraphConnection[] } =
-    $props();
-  let loraQuery = $state('');
+  }: {
+    draft: Draft;
+    catalog: Catalog;
+    /** Why the last driver catalog read failed, or ''. */
+    catalogError?: string;
+    /** Read the driver's LoRA files again. */
+    refreshCatalog?: () => Promise<void>;
+    changeDraft: ChangeDraft;
+    connections: GraphConnection[];
+  } = $props();
+  let loraQuery = $state(''),
+    reading = $state(false);
+  async function refresh() {
+    reading = true;
+    try {
+      await refreshCatalog?.();
+    } finally {
+      reading = false;
+    }
+  }
   let loras = $derived(
     (catalog.loras ?? [])
       .filter((l) => !draft.lora_insertion || l.source_node === draft.lora_insertion.loader)
@@ -106,12 +125,22 @@
       >
     </div>
   </div>{/each}
-<label for="lora-search">Available LoRAs</label><input
+<div class="stack-row">
+  <label for="lora-search">Available LoRAs</label><button disabled={reading} onclick={refresh}
+    >{reading ? 'Reading…' : 'Refresh list'}</button
+  >
+</div>
+<input
   id="lora-search"
   type="search"
   placeholder="Search names and metadata…"
   bind:value={loraQuery}
 /><small>Compatibility is verified by the backend; a filename is not evidence.</small>
+{#if catalogError}<p class="warning" role="status">
+    The driver catalog could not be read: {catalogError} Refresh the list once the driver is running.
+  </p>{/if}
 {#each loras as lora}<button class="catalog-item" onclick={() => addLora(lora)}
     ><span>{lora.name ?? lora.id}<small>{lora.source_node}</small></span><span>+</span></button
-  >{/each}{#if !loras.length}<p class="muted">No matching LoRAs reported by the driver.</p>{/if}
+  >{/each}{#if !loras.length && !catalogError}<p class="muted">
+    No matching LoRAs reported by the driver.
+  </p>{/if}

@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from dgx_monarch.studio.drafts import DraftError, validate_value
-from dgx_monarch.studio.workflows import WorkflowError, compile_workflow
+from dgx_monarch.studio.workflows import WorkflowError, compile_workflow, inspect_workflow
 
 FIXTURE = json.loads((Path(__file__).parent / "fixtures/studio/object_info_bundled.json").read_text())
 # In the recording, core KSampler and rgthree's KSampler Config use these same lists.
@@ -154,6 +154,20 @@ def test_dynamic_combo_inputs_are_finalized_from_the_prompt(info):
         broken["2"]["inputs"][name] = value
         with pytest.raises(WorkflowError, match=re.escape(f"2.{name}: {message}")):
             compile_workflow(broken, info)
+
+
+def test_dynamic_choice_edits_reveal_child_inputs_in_an_api_prompt(info):
+    save = node("SaveVideo", video=["1", 0], filename_prefix="clip", format="mp4", **{"format.codec": "auto"})
+    prompt = {"1": node("LoadVideo", file="wan_animate2_driving.mp4"), "2": save}
+    edits = {"root:2:format.codec": "h264", "root:2:format.codec.encoding": "re-encode",
+             "root:2:format.codec.encoding.crf": 30.0}
+    names = [row["input_name"] for row in inspect_workflow(prompt, info, edits)["bindings"] if row["node_id"] == "2"]
+    assert names == ["filename_prefix", "format", "format.codec", "format.codec.encoding", "format.codec.encoding.crf"]
+    inputs = compile_workflow(copy.deepcopy(prompt), info, edits)["2"]["inputs"]
+    assert (inputs["format.codec"], inputs["format.codec.encoding"], inputs["format.codec.encoding.crf"]) == (
+        "h264", "re-encode", 30.0)
+    with pytest.raises(WorkflowError, match=re.escape("2.format.codec.encoding.crf: Value violates max=51.0")):
+        compile_workflow(copy.deepcopy(prompt), info, {**edits, "root:2:format.codec.encoding.crf": 99.0})
 
 
 def test_union_and_match_types_link_by_overlap(info):

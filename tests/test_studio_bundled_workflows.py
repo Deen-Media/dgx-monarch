@@ -149,6 +149,51 @@ def test_dynamic_combo_edit_reselects_child_inputs(info):
     assert (inputs["format"], inputs["format.codec"], inputs["format.codec.encoding"]) == ("webm", "av1", "auto")
 
 
+def test_an_edited_dynamic_choice_exposes_and_accepts_its_child_inputs(info):
+    # The saved "auto" codec has no encoding child. Choosing H.264 and re-encode in
+    # Studio reveals the encoding and crf inputs; inspection lists them and compile
+    # accepts edits to them.
+    workflow = _save_video(["clip", "auto", "auto"])
+    edits = {"main:2:format.codec": "h264", "main:2:format.codec.encoding": "re-encode"}
+    rows = {row["input_name"]: row for row in inspect_workflow(workflow, info, edits)["bindings"]
+            if row["node_id"] == "2"}
+    assert list(rows) == ["filename_prefix", "format", "format.codec", "format.codec.encoding",
+                          "format.codec.encoding.crf", "codec"]
+    crf = rows["format.codec.encoding.crf"]
+    assert crf["resolved"] and crf["value"] == 18.0 and crf["schema"]["type"] == "FLOAT"
+    # A binding keeps the saved graph's value; the draft holds the edit.
+    assert rows["format.codec"]["value"] == "auto"
+    assert [name for name, row in rows.items() if row["schema"].get("dynamic")] == [
+        "format", "format.codec", "format.codec.encoding", "codec"]
+    prompt = compile_workflow(workflow, info, {**edits, "main:2:format.codec.encoding.crf": 30.0})
+    assert prompt["2"]["inputs"]["format.codec.encoding.crf"] == 30.0
+    # A child stays unknown until an edit selects the choice that declares it.
+    with pytest.raises(WorkflowError, match="Unknown, connected, or unresolved input binding"):
+        compile_workflow(workflow, info, {"main:2:format.codec.encoding.crf": 30.0})
+    # An edit to a child of the saved choice is still accepted; it has no effect
+    # once another edit selects a choice without that child.
+    saved = _save_video(["clip", "mp4", "h264"])
+    stale = {"main:2:format.codec": "auto", "main:2:format.codec.encoding": "re-encode"}
+    assert "format.codec.encoding" not in compile_workflow(saved, info, stale)["2"]["inputs"]
+    names = [row["input_name"] for row in inspect_workflow(saved, info, stale)["bindings"] if row["node_id"] == "2"]
+    assert names == ["filename_prefix", "format", "format.codec", "codec"]
+
+
+def test_an_app_mode_input_on_a_child_an_edit_drops_is_set_aside_not_refused(info):
+    # App Mode shows the saved choice's encoding control; an edit that picks the
+    # automatic codec drops that input until the choice returns.
+    workflow = _save_video(["clip", "mp4", "h264"])
+    workflow["extra"]["linearData"]["inputs"] = [[2, "format.codec.encoding"]]
+    edits = {"main:2:format.codec": "auto"}
+    inspection = inspect_workflow(workflow, info, edits)
+    assert inspection["errors"] == [] and inspection["inactive"] == ["main:2:format.codec.encoding"]
+    assert not any(row["input_name"] == "format.codec.encoding" for row in inspection["bindings"])
+    assert "format.codec.encoding" not in compile_workflow(workflow, info, edits)["2"]["inputs"]
+    restored = inspect_workflow(workflow, info, {"main:2:format.codec": "h264"})
+    encoding = next(row for row in restored["bindings"] if row["input_name"] == "format.codec.encoding")
+    assert encoding["prominent"] and restored["inactive"] == []
+
+
 def test_union_widget_takes_its_widget_type(info):
     schema = info["LTXVEmptyLatentAudio"]["input"]["required"]["frame_rate"]
     assert schema[0] == "FLOAT,INT" and schema[1]["widgetType"] == "FLOAT"

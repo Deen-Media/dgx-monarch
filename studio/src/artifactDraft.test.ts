@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { artifactDraft } from './artifactDraft.ts';
+import { artifactDraft, liveArtifact } from './artifactDraft.ts';
 import type { Artifact, Job } from './contracts.ts';
 import { recordedSettings } from './recordedSettings.ts';
 
@@ -122,4 +122,12 @@ test('copied named inputs use actual random seeds and expanded text, grouped by 
   });
   assert.deepEqual(JSON.parse(recordedSettings(original, 'prompt')), original.submission.prompt);
   assert.throws(() => recordedSettings(job({ values: { stale: 5 } }), 'seed'), /unavailable/);
+});
+
+test('the viewer shows the snapshot copy of a chosen artifact and keeps one the snapshot omits', () => {
+  const chosen = { id: 'a', state: 'old' } as never;
+  const fresh = { id: 'a', state: 'new' } as never;
+  assert.equal(liveArtifact([fresh], chosen), fresh);
+  assert.equal(liveArtifact([], chosen), chosen);
+  assert.equal(liveArtifact([fresh], null), null);
 });

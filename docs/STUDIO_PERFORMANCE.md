@@ -1,7 +1,8 @@
 # Studio measurement record
 
-Asset sizes and observer timings updated: 2026-10-21 (UTC). Status: partial
-engineering measurements; performance acceptance remains **NOT RUN**.
+Asset sizes updated: 2026-10-22 (UTC). Observer timings updated: 2026-10-21
+(UTC). Status: partial engineering measurements; performance acceptance remains
+**NOT RUN**.
 
 ## Packaged asset sizes
 
@@ -12,7 +13,7 @@ not JavaScript execution, browser responsiveness or Spark overhead.
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
 | `index-Daeeztpe.css` | 30,846 | 7,622 |
-| `index-DPkdXJyt.js` | 229,120 | 79,304 |
+| `index-H7rUTCV_.js` | 232,534 | 80,620 |
 
 ## CPU observer microbenchmark
 

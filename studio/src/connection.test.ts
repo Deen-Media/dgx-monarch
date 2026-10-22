@@ -316,3 +316,93 @@ test('a catalog failure keeps its own message for the connect notice', async () 
     globalThis.fetch = originalFetch;
   }
 });
+test('a catalog read that failed while the driver was stopped is read again once it connects', async () => {
+  const connection = setup();
+  const originalFetch = globalThis.fetch;
+  let driver: Record<string, unknown> = {
+    state: 'unavailable',
+    code: 'driver_unreachable',
+    since: 5,
+  };
+  let catalogFails = true,
+    instance = 'first',
+    catalogReads = 0;
+  globalThis.fetch = async (input) => {
+    const url = String(input);
+    if (url.endsWith('/catalog')) {
+      catalogReads++;
+      return catalogFails
+        ? new Response(
+            JSON.stringify({
+              error: { code: 'driver_unreachable', message: 'Driver unreachable.' },
+            }),
+            { status: 502 },
+          )
+        : new Response(JSON.stringify({ loras: [{ id: 'a.safetensors', name: 'a.safetensors' }] }));
+    }
+    const body = url.endsWith('/capabilities')
+      ? { schema_version: '1.0' }
+      : url.endsWith('/workflows')
+        ? { workflows: [] }
+        : {
+            instance_id: instance,
+            server_time: 10,
+            jobs: [],
+            artifacts: [],
+            operations: [],
+            records: {},
+            telemetry: {},
+            driver,
+          };
+    return new Response(JSON.stringify(body));
+  };
+  const settled = async () => {
+    await connection.refresh();
+    await connection.catalogRead;
+  };
+  try {
+    connection.token = 'token';
+    await connection.connect();
+    assert.equal(connection.catalogError, 'Driver unreachable.');
+    assert.equal(catalogReads, 1);
+    // Still stopped: no second read.
+    await settled();
+    assert.equal(catalogReads, 1);
+    // The owner starts the driver through Operations; the next snapshot reads the catalog again.
+    driver = { state: 'connected' };
+    catalogFails = false;
+    await settled();
+    assert.equal(catalogReads, 2);
+    assert.equal(connection.catalogError, '');
+    assert.deepEqual(
+      connection.catalog.loras.map((lora: { id: string }) => lora.id),
+      ['a.safetensors'],
+    );
+    // A connected driver is not asked again on every poll.
+    await settled();
+    await settled();
+    assert.equal(catalogReads, 2);
+    // A failed read while the driver stays connected waits for the next connection or a refresh.
+    catalogFails = true;
+    driver = { state: 'unavailable', code: 'driver_unreachable', since: 9 };
+    await settled();
+    driver = { state: 'connected' };
+    await settled();
+    assert.equal(catalogReads, 3);
+    assert.equal(connection.catalogError, 'Driver unreachable.');
+    await settled();
+    assert.equal(catalogReads, 3);
+    // The explicit refresh reads it on demand, for example after new LoRA files.
+    catalogFails = false;
+    await connection.refreshCatalog();
+    assert.equal(catalogReads, 4);
+    assert.equal(connection.catalogError, '');
+    // A restarted companion reads its catalog again with its capabilities.
+    instance = 'second';
+    await settled();
+    assert.equal(catalogReads, 5);
+  } finally {
+    connection.stop();
+    globalThis.fetch = originalFetch;
+  }
+});

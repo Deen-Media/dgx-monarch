@@ -59,7 +59,9 @@ class GridExperiments:
         # the stored uploads the draft or an axis names to the upload choices.
         # Digests and identities keep the driver's own schema.
         view = self.jobs.upload_view({"draft": draft, "axes": request.get("axes", [])}, schema)
-        inspection = inspect_workflow(object_value(draft.get("workflow")), view)
+        # The draft's values select dynamic choices, so an axis can name a child they reveal.
+        inspection = inspect_workflow(object_value(draft.get("workflow")), view,
+                                      object_value(draft.get("values", {}), "values"))
         bindings = {row["id"]: row for row in inspection["bindings"] if row["resolved"]}
         schemas = {key: row["schema"] for key, row in bindings.items()}
         policy = request.get("seed_policy", "fixed")

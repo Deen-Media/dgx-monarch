@@ -220,3 +220,41 @@ def test_record_saves_stay_inside_the_browser_catalog_window(library, monkeypatc
     # A stale revision keeps its own refusal.
     with pytest.raises(StudioError, match="newer version"):
         library.save("presets", "c", {"name": "E", "notes": "n" * 9000}, 1)
+
+
+def presets(*names, notes=1500):
+    return {"schema_version": "1.0",
+            "records": {"presets": [{"id": name, "data": {"name": name, "notes": "n" * notes}} for name in names]}}
+
+
+def test_imports_stay_inside_the_browser_catalog_window(library, monkeypatch):
+    # Each import passes the import size limit, but together they could take a
+    # kind past the catalog window the browser loads whole.
+    monkeypatch.setattr(library_module, "RECORD_WINDOW_BYTES", 4000)
+    store = library.store
+    apply(library, library.preview({"library": presets("a", "b")}), "first")
+    assert browser_catalog_bytes(store, "presets") <= 4000
+    cursor = store.events()["latest_cursor"]
+    # The review refuses an import that would pass the window.
+    with pytest.raises(StudioError) as caught:
+        library.preview({"library": presets("c")})
+    assert (caught.value.code, caught.value.status) == ("record_window_limit", 413)
+    assert "8 MiB browser window" in str(caught.value) and "presets" in str(caught.value)
+    # Apply checks again inside its transaction: a save since the review grew the catalog.
+    monkeypatch.setattr(library_module, "RECORD_WINDOW_BYTES", 4500)
+    review = library.preview({"library": presets("c", notes=800)})
+    library.save("presets", "d", {"name": "d", "notes": "n" * 800}, 0)
+    cursor = store.events()["latest_cursor"]
+    with pytest.raises(StudioError) as caught:
+        apply(library, review, "late")
+    assert (caught.value.code, caught.value.status) == ("record_window_limit", 413)
+    assert "no records were imported" in str(caught.value)
+    assert sorted(row["id"] for row in store.all("presets")) == ["a", "b", "d"]
+    assert store.events()["latest_cursor"] == cursor and len(store.all("library_imports")) == 1
+    assert browser_catalog_bytes(store, "presets") <= 4500
+    # A catalog already past a lowered window still takes an import that shrinks it.
+    monkeypatch.setattr(library_module, "RECORD_WINDOW_BYTES", 1000)
+    smaller = presets("a", notes=10)
+    review = library.preview({"library": smaller, "choices": {"presets:a": {"action": "replace", "revision": 1}}})
+    assert apply(library, review, "shrink")["imported"] == 1
+    assert store.get("presets", "a")["data"]["notes"] == "n" * 10

@@ -25,7 +25,7 @@ FORMAT = "dgxm.studio.library"
 MAX_LIBRARY_BYTES = 4 * 1024 * 1024
 PAGE_BYTES = 8 * 1024 * 1024
 # The browser loads a whole kind as one catalog of at most 8 MiB
-# (record_window_bytes in the published limits); Library.save keeps it there.
+# (record_window_bytes in the published limits); saves and imports keep it there.
 RECORD_WINDOW_BYTES = 8 * 1024 * 1024
 AUXILIARY_LIMIT = RECORD_LIMIT
 AUXILIARY_BYTES = 16 * 1024 * 1024
@@ -56,6 +56,11 @@ def _auxiliary_rows(plan: dict[str, Any]) -> dict[str, list[dict[str, Any]]]:
 def _browser_bytes(record: dict[str, Any]) -> int:
     """What the browser catalog counts for one record: its compact UTF-8 JSON plus one."""
     return len(json.dumps(record, ensure_ascii=False, separators=(",", ":")).encode("utf-8", "surrogatepass")) + 1
+
+
+def _imported(change: dict[str, Any]) -> dict[str, Any]:
+    """The record an import change writes."""
+    return {**change["extensions"], "id": change["id"], "revision": change["revision"] + 1, "data": change["data"]}
 
 
 def project_ids(data: dict[str, Any]) -> list[str]:
@@ -139,26 +144,41 @@ class Library:
 
     def _check_window(self, kind: str, identity: str, data: dict[str, Any], revision: Any) -> None:
         """Refuse a save that would take a kind's catalog past the browser window."""
-        row = self.store.db.execute("SELECT revision,length(CAST(document AS BLOB)) FROM objects WHERE kind=? AND id=?",
-                                    (kind, identity)).fetchone()
+        row = self.store.db.execute("SELECT revision FROM objects WHERE kind=? AND id=?", (kind, identity)).fetchone()
         if type(revision) is not int or (row[0] if row else 0) != revision:
             return  # save_record refuses a stale or malformed revision in its own words.
         old = self.store.get(kind, identity) if row else {}
-        value = {**old, "id": identity, "revision": revision + 1, "data": data}
-        # The browser counts each record as compact UTF-8 JSON plus one byte,
-        # and two for the array. Stored JSON escapes non-ASCII text, so its
-        # size is an upper bound; count exactly only when that bound is past.
-        before = 2 + self.store.db.execute("SELECT COALESCE(SUM(length(CAST(document AS BLOB))+1),0) FROM objects "
-                                           "WHERE kind=?", (kind,)).fetchone()[0]
-        after = before - (row[1] + 1 if row else 0) + len(canonical(value).encode()) + 1
-        if after <= RECORD_WINDOW_BYTES:
-            return
-        before = 2 + sum(_browser_bytes(json.loads(document)) for (document,) in self.store.db.execute(
-            "SELECT document FROM objects WHERE kind=?", (kind,)))
-        after = before - (_browser_bytes(old) if row else 0) + _browser_bytes(value)
-        if after > RECORD_WINDOW_BYTES and after > before:
+        if self._exceeds_window(kind, [{**old, "id": identity, "revision": revision + 1, "data": data}]):
             raise StudioError("record_window_limit", f"Saving this record would take the {kind} catalog past the "
                               f"8 MiB browser window. Shorten this record or another {kind} record first.", 413)
+
+    def _exceeds_window(self, kind: str, values: list[dict[str, Any]]) -> bool:
+        """Whether writing these records grows a kind's catalog past the browser window.
+
+        The browser counts each record as compact UTF-8 JSON plus one byte, and
+        two for the array. Stored JSON escapes non-ASCII text, so its size is an
+        upper bound; count exactly only when that bound is past. A catalog
+        already past the window still takes writes that do not grow it.
+        """
+        written = {value["id"] for value in values}
+        stored = self.store.db.execute("SELECT id,length(CAST(document AS BLOB)) FROM objects WHERE kind=?", (kind,))
+        bound = 2 + sum(size + 1 for identity, size in stored if identity not in written)
+        if bound + sum(len(canonical(value).encode()) + 1 for value in values) <= RECORD_WINDOW_BYTES:
+            return False
+        sizes = {identity: _browser_bytes(json.loads(document)) for identity, document in self.store.db.execute(
+            "SELECT id,document FROM objects WHERE kind=?", (kind,))}
+        before = 2 + sum(sizes.values())
+        after = before - sum(sizes.get(identity, 0) for identity in written) + sum(map(_browser_bytes, values))
+        return after > RECORD_WINDOW_BYTES and after > before
+
+    def _check_import_window(self, changes: list[dict[str, Any]]) -> None:
+        """Refuse an import that would take any kind's catalog past the browser window."""
+        for kind in sorted({change["kind"] for change in changes if change["action"] != "skip"}):
+            values = [_imported(change) for change in changes if change["kind"] == kind and change["action"] != "skip"]
+            if self._exceeds_window(kind, values):
+                raise StudioError("record_window_limit", f"Importing this library would take the {kind} catalog past "
+                                  f"the 8 MiB browser window, so no records were imported. Import fewer {kind} "
+                                  f"records, or shorten or remove {kind} records here first.", 413)
 
     def page(self, kind: str, query: dict[str, str]) -> dict[str, Any]:
         if kind not in RECORD_KINDS or set(query) - {"project_id", "offset", "limit"}:
@@ -280,6 +300,7 @@ class Library:
                 count = self.store.db.execute("SELECT count(*) FROM objects WHERE kind=?", (kind,)).fetchone()[0]
                 if count + sum(row["kind"] == kind and row["action"] == "create" for row in changes) > RECORD_LIMIT:
                     raise StudioError("record_limit", f"Import would exceed the {kind} record limit.", 409)
+            self._check_import_window(changes)
             projects = {row["id"] for row in self.store.all("projects")} | {
                 row["id"] for row in changes if row["kind"] == "projects" and row["action"] != "skip"}
             missing = [{"kind": row["kind"], "id": row["id"], "project_id": project,
@@ -400,6 +421,8 @@ class Library:
             self._check_capacity("library_imports", [result], IMPORT_LIMIT, IMPORT_BYTES)
             counts = {kind: self.store.db.execute("SELECT count(*) FROM objects WHERE kind=?", (kind,)).fetchone()[0]
                       for kind in RECORD_KINDS}
+            # The catalog may have grown since the review; check before any write.
+            self._check_import_window(plan["changes"])
             for change in plan["changes"]:
                 if change["action"] == "skip":
                     continue
@@ -408,7 +431,7 @@ class Library:
                     counts[kind] += 1
                     if counts[kind] > RECORD_LIMIT:
                         raise StudioError("record_limit", "Library grew after review; no records were imported.", 409)
-                value = {**change["extensions"], "id": change["id"], "revision": change["revision"] + 1, "data": change["data"]}
+                value = _imported(change)
                 self.store._put(kind, value, value["revision"])
                 self.store._event("record.saved", change["id"], {"record_kind": kind, "revision": value["revision"]})
             for kind, values in auxiliary.items():

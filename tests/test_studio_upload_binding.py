@@ -250,6 +250,29 @@ def test_inspect_accepts_a_workflow_that_embeds_a_stored_upload(tmp_path, form):
 
 
 @pytest.mark.parametrize("form", ["legacy", "options"])
+def test_inspect_with_draft_values_keeps_an_attached_upload_a_valid_choice(tmp_path, form):
+    # A reload inspects the saved workflow with the draft's values. An upload the
+    # draft attached must stay among the field's choices, or the field shows an error.
+    async def scenario():
+        async with companion(tmp_path, form) as system:
+            status, uploaded = await system.call("POST", "/assets", json={
+                "kind": "input", "media_type": "image/png", "data_base64": png()})
+            assert status == 201
+            body = draft(uploaded["binding_value"])
+            status, inspected = await system.call("POST", "/workflows/inspect", json={
+                "workflow": body["workflow"], "values": body["values"]})
+            assert status == 200 and inspected["errors"] == []
+            image = next(row for row in inspected["bindings"] if row["id"] == "root:1:image")
+            assert uploaded["binding_value"] in image["schema"]["choices"]
+            # The saved graph still names its own value.
+            assert image["value"] == "example.png"
+            status, refused = await system.call("POST", "/workflows/inspect", json={
+                "workflow": body["workflow"], "values": ["root:1:image"]})
+            assert status == 400 and refused["error"]["code"] == "invalid_object"
+    asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("form", ["legacy", "options"])
 def test_a_grid_axis_over_stored_uploads_previews_and_submits(tmp_path, form):
     # The axis schemas come from the inspection, so it must list the stored
     # uploads the axes name, as each cell's preview does.

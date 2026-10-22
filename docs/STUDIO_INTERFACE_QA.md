@@ -40,12 +40,12 @@ and revision rather than fetched on every snapshot poll.
 
 ## Browser evidence
 
-On 2026-10-21 the ten rows below were repeated on the shipped bundle, following
+On 2026-10-21 the ten rows below were repeated on the bundle shipped then, following
 the [browser procedure](../studio/tests/README.md#browser-checks). A first run on
 the previous bundle found the video metadata panel at zero height at 1024×600.
 The viewer fix that the video row describes was made, the bundle was rebuilt, and
 all ten rows ran again on the rebuilt bundle; the results below come from that
-second run. The bundle was the set that `RESOURCE_SHA256` names:
+second run. The bundle was the set that `RESOURCE_SHA256` named then:
 `index-DPkdXJyt.js`
 (`15b3abf8f7656f30c14a5fe77eff749abd022907f8d736962eb7913557930566`),
 `index-Daeeztpe.css`
@@ -62,7 +62,9 @@ repository and the packages, and its SHA-256 is
 `4298bdb94bda062ccd2652648c9b1403e2df6379e4abbe943ac85ba25764797e`. Every row
 passed at each viewport where its check applies. The earlier runs
 that these rows replace used earlier builds of the bundle and recorded no
-browser, browser version or bundle hash.
+browser, browser version or bundle hash. On 2026-10-22 fixes to the Grids
+restore, dynamic workflow controls and the LoRA tab rebuilt the bundle as
+`index-H7rUTCV_.js`; the ten rows have not run on that bundle.
 
 | Check | Observed result and scope |
 |---|---|

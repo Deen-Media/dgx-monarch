@@ -6193,8 +6193,10 @@ one of these reasons:
   limit."), `driver_response_limit` (502, "Driver response from <endpoint>
   exceeds its 4 MiB budget.", or 16 MiB for `/object_info`),
   `record_window_limit` (413, "Saving this record would take the <kind> catalog
-  past the 8 MiB browser window. ...") and `library_limit` (413, for an export
-  past 4 MiB or 2,000 rows of one collection).
+  past the 8 MiB browser window. ..." or "Importing this library would take the
+  <kind> catalog past the 8 MiB browser window, so no records were imported.
+  ...") and `library_limit` (413, for an export past 4 MiB or 2,000 rows of one
+  collection).
 - Cancellation: `cancellation_scope` (409, "This driver has no
   prompt-specific cancellation route; only queued graph tasks can be
   cancelled.").

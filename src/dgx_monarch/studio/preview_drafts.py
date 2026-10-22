@@ -60,7 +60,7 @@ def prepare_preview(request: dict[str, Any], schema: dict[str, Any], *,
     schema = schema if view is None else view
     workflow = object_value(request.get("workflow"), "workflow")
     values = deepcopy(object_value(request.get("values", {}), "values"))
-    inspection = inspect_workflow(workflow, schema)
+    inspection = inspect_workflow(workflow, schema, values)
     bindings = {binding["id"]: binding for binding in inspection["bindings"]}
     for binding in inspection["bindings"]:
         for alias in binding.get("aliases", []):

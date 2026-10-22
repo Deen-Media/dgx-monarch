@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { restoreSession, validGrid } from '../sessionRecovery';
+  import { restoreSession, validGrid, type GridRecovery } from '../sessionRecovery';
   import RecoveryNotice from '../components/RecoveryNotice.svelte';
   import type { Binding, Draft } from '../model';
   import { requireRecordIdentity, type StudioClient } from '../api';
@@ -31,6 +31,7 @@
   } = $props();
   let fields = $state<GridFields>(gridState.defaultGridFields()),
     reviewedFields: GridFields | null = null,
+    reviewedKey: string | null = null,
     passiveError = $state('');
   let preview = $state<Grid | null>(null),
     grid = $state<Grid | null>(null),
@@ -72,7 +73,12 @@
     const session = { preview, grid, requestKey, retryKey, retryIndices, dispatchPending };
     sessionStorage.setItem(
       storage,
-      gridState.gridSessionText({ ...session, retryPending, definition: reviewedFields }),
+      gridState.gridSessionText({
+        ...session,
+        retryPending,
+        definition: reviewedFields,
+        reviewed: reviewedKey,
+      }),
     );
   }
   function persist() {
@@ -112,7 +118,8 @@
     selected = [];
     cellPage = 0;
     const requestedDefinition = definition,
-      requested = $state.snapshot(fields);
+      requested = $state.snapshot(fields),
+      requestedKey = gridState.reviewIdentity($state.snapshot(draft), requested);
     try {
       const { axisA, axisB, valuesA, valuesB, seedPolicy, seedBinding, baseSeed } = requested;
       const axes = [{ name: axisA, values: JSON.parse(valuesA) }];
@@ -130,7 +137,7 @@
         excluded: exclusions,
       });
       reviewGuard.accept(requestedDefinition, definition);
-      reviewedFields = requested;
+      [reviewedFields, reviewedKey] = [requested, requestedKey];
       preview = reviewed;
       requestKey = crypto.randomUUID();
       remember();
@@ -280,20 +287,31 @@
       savedLoading = false;
     }
   }
+  /** Restore a saved session. A review made from another draft is dropped unless its dispatch is pending. */
+  function restoreSaved(saved: GridRecovery & { definition?: unknown; reviewed?: unknown }) {
+    preview = gridState.gridIdentity(saved.preview);
+    grid = gridState.gridIdentity(saved.grid);
+    ({ requestKey, retryKey, retryIndices, dispatchPending, retryPending } = saved);
+    if (!preview) return;
+    // Restore the reviewed fields before the guard reads the definition they produced.
+    const reviewed = gridState.restoredGridFields(saved.definition);
+    if (reviewed) [fields, reviewedFields] = [{ ...reviewed }, reviewed];
+    const current = gridState.gridDefinitionKey(draft, fields);
+    const verdict = gridState.restoredReview(saved, gridState.reviewIdentity(draft, fields));
+    if (verdict === 'stale') {
+      [preview, requestKey, reviewedFields, confirmed] = [null, '', null, false];
+      error = gridState.STALE_RESTORE;
+      return persist();
+    }
+    reviewedKey = typeof saved.reviewed === 'string' ? saved.reviewed : null;
+    if (verdict === 'pending') error = gridState.EARLIER_PENDING;
+    reviewGuard.restore(current);
+  }
   onMount(() => {
     void loadSavedGrids();
     const restored = restoreSession(storage, validGrid);
     recoveryBlocked = restored.blocked;
-    if (restored.value) {
-      const saved = restored.value;
-      preview = gridState.gridIdentity(saved.preview);
-      grid = gridState.gridIdentity(saved.grid);
-      ({ requestKey, retryKey, retryIndices, dispatchPending, retryPending } = saved);
-      // Restore the reviewed fields before the guard reads the definition they produced.
-      const reviewed = gridState.restoredGridFields((saved as { definition?: unknown }).definition);
-      if (preview && reviewed) [fields, reviewedFields] = [{ ...reviewed }, reviewed];
-      if (preview) reviewGuard.restore(definition);
-    }
+    if (restored.value) restoreSaved(restored.value);
     if (preview) {
       const id = preview.id,
         ticket = loadGeneration;

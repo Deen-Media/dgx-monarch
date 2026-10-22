@@ -40,3 +40,8 @@ export function artifactDraft(artifact: Artifact, job: Job, operation?: string):
   }
   return structuredClone(restoreDraft(draft));
 }
+
+/** The snapshot's current copy of a chosen artifact, or the chosen copy when the snapshot omits it. */
+export function liveArtifact(artifacts: Artifact[], item: Artifact | null): Artifact | null {
+  return item ? (artifacts.find((artifact) => artifact.id === item.id) ?? item) : null;
+}

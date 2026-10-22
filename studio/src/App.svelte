@@ -3,7 +3,7 @@
   import { fullJob } from './jobProvenance';
   import { initialWorkspace } from './initialWorkspace';
   import { Submission } from './submission.svelte';
-  import { Connection } from './connection.svelte';
+  import { CATALOG_NOTICE, Connection } from './connection.svelte';
   import { emptyDraft, restoreDraft, driverStatus } from './model';
   import { DraftAutosave } from './draftAutosave.svelte';
   import { InspectionGuard, droppedInspection, DROPPED_REVIEW } from './inspectionGuard';
@@ -20,8 +20,8 @@
   } from './contracts';
   import { isActiveJob, requestJobAction } from './jobActions';
   import { persistRecord } from './recordPersistence';
-  import { artifactDraft } from './artifactDraft';
-  import { inspectDraft } from './workflowInspector';
+  import { artifactDraft, liveArtifact } from './artifactDraft';
+  import { inspectDraft, rebuildBindings } from './workflowInspector';
   import StatusMessages from './components/StatusMessages.svelte';
   import AppShell from './components/AppShell.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
@@ -67,16 +67,8 @@
   let palettePanel: CommandPalette, previewPanel: SubmissionReview;
   let jobs = $derived(connection.snapshot.jobs),
     activeJobs = $derived(jobs.filter(isActiveJob));
-  const displayedArtifact = $derived(
-    selected
-      ? (connection.snapshot.artifacts.find((item) => item.id === selected?.id) ?? selected)
-      : null,
-  );
-  const displayedComparison = $derived(
-    comparison
-      ? (connection.snapshot.artifacts.find((item) => item.id === comparison?.id) ?? comparison)
-      : null,
-  );
+  const displayedArtifact = $derived(liveArtifact(connection.snapshot.artifacts, selected)),
+    displayedComparison = $derived(liveArtifact(connection.snapshot.artifacts, comparison));
   const refresh = () => connection.refresh();
   function navigate(id: string) {
     view = id;
@@ -123,7 +115,6 @@
     notice = message;
     error = '';
   }
-
   function fail(e: unknown) {
     error = e instanceof Error ? e.message : String(e);
   }
@@ -136,14 +127,12 @@
     dirty = true;
     submission.preview = null;
   }
-
   async function undo() {
     if (undoDraft) {
       await importDraft(undoDraft);
       if (!error) setNotice('Draft change undone.');
     }
   }
-
   async function inspect(
     workflow: Workflow,
     name: string,
@@ -157,13 +146,20 @@
       const state = guard.inspected(ticket, connection.client);
       if (state !== 'current')
         return void (state !== 'newer' && fail(droppedInspection(name, state)));
-      bindings = result.bindings;
-      connections = result.connections;
-      bindingErrors = result.errors;
+      ({ bindings, connections, errors: bindingErrors } = result);
       changeDraft(result.patch);
       workflowId = templateId;
       rawWorkflow = result.rawWorkflow;
       controlTab = result.controlTab;
+    });
+  }
+
+  /** A dynamic choice changes which inputs exist, so inspect again with the edited values. */
+  async function rebind(values: Draft['values']) {
+    changeDraft({ values });
+    await withBusy(async () => {
+      const rebuilt = await rebuildBindings(connection, guard, () => draft, values);
+      if (rebuilt) ({ bindings, connections, errors: bindingErrors, draft } = rebuilt);
     });
   }
 
@@ -269,6 +265,10 @@
 
   $effect(() => {
     if (submission.observe(jobs)) setNotice('Submission reconciled.');
+  });
+  $effect(() => {
+    // The catalog was read again after the connect notice reported it unread.
+    if (!connection.catalogError && notice.startsWith(CATALOG_NOTICE)) notice = '';
   });
   async function withBusy(action: () => Promise<void>) {
     pendingActions++;
@@ -386,6 +386,9 @@
           {fail}
           {undo}
           {prepareJob}
+          {rebind}
+          catalogError={connection.catalogError}
+          refreshCatalog={() => connection.refreshCatalog()}
         /><WorkspaceOutput
           client={connection.client}
           selected={displayedArtifact}
