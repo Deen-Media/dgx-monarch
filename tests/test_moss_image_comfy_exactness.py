@@ -169,9 +169,16 @@ def _sharded(monkeypatch, model, inputs, options, kernel, *, world=WORLD, ring_w
         thread.start()
     for thread in threads:
         thread.join(timeout=120)
-    for error in errors:
-        if error is not None:
+    # The rank that refused aborted the fabric barrier, so the other rank can
+    # end in BrokenBarrierError whichever thread ran first. Raise the refusal
+    # (any error that is not the barrier's) so the test sees the cause, not
+    # the thread order; only an all-barrier failure raises the barrier error.
+    raised = [error for error in errors if error is not None]
+    for error in raised:
+        if not isinstance(error, threading.BrokenBarrierError):
             raise error
+    for error in raised:
+        raise error
     return outputs, harness
 
 
