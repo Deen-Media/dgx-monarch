@@ -69,7 +69,9 @@ def test_declarations_match_the_spec():
     assert adapter.cfg_batch_constant is None
     assert adapter.dp_cond_exempt_keys == frozenset()
     assert adapter.model_detection_attrs == ()
-    for absent in ("prepare_base_model", "inject_cfg_pad_forward", "dual_model_cfg_supported"):
+    # The cond bind (tests/test_moss_image_cond_branch.py) is the family's own hook.
+    assert "prepare_base_model" in vars(MOSSImageAdapter)
+    for absent in ("inject_cfg_pad_forward", "dual_model_cfg_supported"):
         assert not hasattr(adapter, absent), absent
     assert type(adapter).attention_dispatch is base.Adapter.attention_dispatch
 

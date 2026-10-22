@@ -1382,7 +1382,7 @@
       "test_a_vetted_patch_receives_rank_rows_and_a_parity_bound_original_block": "1fcb83434079f89f",
       "test_an_even_ring_render_and_a_waived_padded_ring_proceed": "fa422213b007170d",
       "test_an_unrouted_attention_refuses_class_p_after_the_loop": "ceb53a44b6796d82",
-      "test_declarations_match_the_spec": "6cbcaf8a556f6786",
+      "test_declarations_match_the_spec": "c5ccd2cc941238f3",
       "test_drop_rows_follow_the_parity_of_n": "0f3e3dc5305ddc72",
       "test_every_norm_call_holds_stocks_rows": "79154b5542a02dc7",
       "test_inject_checks_then_binds_every_block_and_the_forward": "5d5e7b0094906b14",

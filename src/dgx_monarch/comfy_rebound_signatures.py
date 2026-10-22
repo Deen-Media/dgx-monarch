@@ -134,6 +134,11 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "self x timestep context transformer_options", 4, variadic_keyword="kwargs",
         optional_trailing=("ref_latents", "ref_latents_method", "ref_kv"),
     ),
+    # MOSS-Image's cond bind wraps this one as FLUX.3's wraps Flux3.extra_conds.
+    _rebound(
+        "comfy.model_base", "MOSSImage.extra_conds", ("moss_image",), ("conds",),
+        "self", 1, variadic_keyword="kwargs",
+    ),
     _rebound(
         "comfy.ldm.chroma.model", "Chroma.forward_orig", ("chroma",), ("usp",),
         "self img img_ids txt txt_ids timesteps guidance control transformer_options attn_mask",

@@ -30,7 +30,10 @@ every rank before any collective, as the driver refuses them on every topology
 but one GPU before dispatch (adapters/moss_image_seams.py names why). The
 reference method alone changes nothing in stock and is ignored here too.
 
-single, cfg2 and dp2 bind nothing and run stock's forward. No pad is exact on
+single, cfg2 and dp2 bind no forward and run stock's. On every topology
+``prepare_base_model`` runs stock's ``extra_conds`` under inference mode, as
+FLUX.3's does, so a one-GPU edit takes stock's once-per-conditioning cache of
+the references' keys and values. No pad is exact on
 cfg2 (image rows sit at RoPE f = T and the joint attention has no mask), so an
 unequal prompt pair dispatches one cond per rank. ``cfg_dispatch.
 cross_attn_pair_folds`` models CONDCrossAttn's repeat rule and overstates
@@ -47,6 +50,7 @@ from ..refusal import RefusalClass, refusal
 from .attention_inputs import STOCK_BACKEND_RUNS, note_preferred_attention
 from .attention_patches import assert_no_foreign_attention_override, assert_usp_attention_patches_safe
 from .base import Adapter, InjectionContext, UnsupportedModelError, sp_gather, usp_options
+from .flux3 import _normal
 from .flux3_packing import joint_pad_count, refuse_indivisible_heads, refuse_padded_ring, ulysses_degree
 from .moss_image_seams import (
     AttentionLedger,
@@ -114,6 +118,31 @@ class MOSSImageAdapter(Adapter):
             "for an unreviewed derivative, or, for a finetune that keeps the plain MOSSImage "
             "forward, set family_adapter='moss_image' on the Init node (docs/MODELS.md).",
         ))
+
+    def prepare_base_model(self, base_model) -> None:
+        """Run stock MOSSImage.extra_conds under inference mode, as stock ComfyUI does.
+
+        FLUX.3's bind (adapters/flux3.py), on this family's method: stock's
+        own predicate still picks the reference branch, every inference
+        tensor in the output is cloned out, and the first reference call per
+        load logs the branch. docs/ADAPTERS.md has the paragraph.
+        """
+        stock = type(base_model).extra_conds
+        reported: list[bool] = []
+
+        def extra_conds(self, **kwargs):
+            with torch.inference_mode():
+                out = stock(self, **kwargs)
+            for cond in out.values():
+                if hasattr(cond, "cond"):
+                    cond.cond = _normal(cond.cond)
+            if not reported and ("ref_kv" in out or "ref_latents" in out):
+                reported.append(True)
+                log.info("moss_image reference branch: %s", "keys and values given (extra_conds cache)"
+                         if "ref_kv" in out else "references computed in the forward")
+            return out
+
+        self.bind(base_model, "extra_conds", extra_conds)
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
         assert_stock_tree(diffusion_model)

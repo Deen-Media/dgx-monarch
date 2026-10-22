@@ -184,6 +184,14 @@
   and the runtime provenance snapshot now find the checkout one way, from the
   directory that holds ComfyUI's `folder_paths` module, so the telemetry and
   `dgxm top` show the right commit too.
+- A one-GPU MOSS-Image edit computes its reference images' keys and values
+  once per conditioning, as stock ComfyUI does, instead of on every model
+  call. Stock caches them only in inference mode, which a Worker's sampling
+  thread is not in, so on 2026-10-22 a one-GPU edit on hardware matched
+  stock's latent at 1.46 times stock's time a step. The adapter now runs
+  stock's `extra_conds` in inference mode on every load, as the FLUX.3
+  adapter does, and stock's own rule still picks the branch
+  ([ADAPTERS](docs/ADAPTERS.md#what-an-adapter-provides)).
 
 ## [1.2.0] - 2026-10-16
 

@@ -6508,18 +6508,18 @@ conditioning before dispatch and the family from the checkpoint header, so
 the refusal costs no Worker call. If the driver cannot read the header, the
 sharded forward refuses on every rank alike before any exchange, so by
 design the next render runs on the same fleet, which no hardware test has
-observed yet; on cfg2 and dp2, where nothing binds, stock's own forward
-would run the edit. A Worker samples outside inference mode, so
-ComfyUI hands its forward the reference latents rather than keys and values
-computed once, and stock's forward computes them again at every step. On
-2026-10-22 a CPU test on a small model found that path bit-identical to the
-path that computes them once; on a GPU it adds that work to every step, and
-no hardware test has measured it.
+observed yet; on cfg2 and dp2, where no forward binds, stock's own forward
+would run the edit. Stock computes the references' keys and values once
+per conditioning only in inference mode, which a Worker's sampling thread is
+not in, so on 2026-10-22 a one-GPU edit recomputed them at every step and ran
+1.46 times stock's time a step, with stock's latent. Since then the adapter
+runs that step in inference mode on every Worker, as stock does
+([ADAPTERS](ADAPTERS.md#what-an-adapter-provides)).
 
 **Fix:** run the edit on one GPU: set the Init node to `mode=local` with
-`gpus_per_host=1` and topology `single`, which binds nothing and runs
-ComfyUI's own forward, or render it in plain ComfyUI. Fleet KSampler runs
-each job on one GPU with stock's forward, so it is not refused. A
+`gpus_per_host=1` and topology `single`, which runs ComfyUI's own forward,
+or render it in plain ComfyUI. Fleet KSampler runs each job on one GPU with
+stock's forward, so it is not refused. A
 text-to-image render without the edit node is not affected. The refusal
 stays until a hardware test compares a sharded edit with stock; as of
-2026-10-22 no edit render, on one GPU or a cluster, has run on hardware.
+2026-10-22 no cluster edit render has run on hardware.
