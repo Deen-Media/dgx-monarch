@@ -89,9 +89,34 @@ before 2026-10-21 recorded no browser, browser version or bundle hash.
 | Sign-in link | Opening `sign-in.html` by its `file://` path connected the workspace without typing in 0.31 seconds at both viewports. `location.hash` was empty, and the token the tab kept matched the companion's token file by SHA-256. None of the 30 requests recorded at each viewport carried the token in its request line or a `Referer` header; Firefox reported the document address with its fragment in that event, and a browser never sends the fragment. A reload stayed connected. After a restart, the old link showed the stale-link sentence in the page's error notice, above the token form. The closed profile's history database held one row for `token=`: the old link, visited twice, so the link stays in browser history. A companion started with `--allow-management` wrote no `sign-in.html` and showed the token form. |
 | Driver not running | Against a closed driver port and a mode-0600 configuration whose `driver_command` is `echo start-the-fixture`, the page showed the Driver not running panel with that command, a source line naming the configuration file, the paragraph about another address and a disabled Review generation button, with no red banner, at both viewports. The catalog answered 503 with `driver_not_running`, and the restored draft waited uninspected. 1.78 seconds after the fixture listened on that port, the panel was gone, the button was enabled and the draft's three fields showed, without a reload; the catalog then answered 200. |
 
-The live service rows on a rig, `dgxm studio up`, the sign-in link of the
-installed service, a restart after a crash and `dgxm studio down`, are
-**NOT RUN** yet.
+On 2026-10-22 the live service ran on the driver Spark of the maintainer's rig,
+from the code of the `dgxm studio` launch, with a mode-0600 copy of
+cluster.toml whose `[studio]` table named the driver at `127.0.0.1:8191`, port
+8220 and the driver's start command. `dgxm studio up` wrote, enabled and
+started `dgxm-studio.service`; a second `up` left the unit file unchanged,
+issued a new token and started a new process. The unit file was mode 600 with
+its marker line, loaded, active and enabled, with no drop-ins, no
+`--allow-management` and no `Wants=`. Port 8220 belonged to its main process,
+the token file and `sign-in.html` were mode 600 in a mode-700 directory, and
+the journal named the address and both files but never the token. The
+companion answered `/` with 200, its Content-Security-Policy and
+`Referrer-Policy: no-referrer`. It refused a request without the token with
+401 and the host name `localhost` with 403, reported the configured start
+command and configuration file, and read the running driver as connected.
+With its output sent to a file, `dgxm studio open` wrote the sign-in page and
+printed its path, and against the real cluster.toml it named the fields that
+differ. In a terminal it printed the link and opened no browser, because that
+desktop opens `.html` files with another program than its web browser. The one
+word acted as `open`. `--driver` beside the running unit, `token --value` to a
+file and `tunnel` without a host refused with their texts. `tunnel studio-host`
+and `tunnel` inside an SSH session printed the bound forward and no link.
+`dgxm studio down` stopped and removed the unit and its link, left no token
+file or page, and kept `studio.sqlite3` bound to the driver origin; a second
+`down` changed nothing. No output, log or record held the token. The results
+file is kept in the maintainer's private evidence store, and its SHA-256 is
+`9b57551debc32d832399fa966151796d7c739f2c3e8596616b16fadd70a2d3f8`.
+`dgxm studio token --rotate` and a restart after the process is killed are
+**NOT RUN** on a rig.
 
 Headless Firefox could not show Chromium or Safari behavior, native phone
 operating-system behavior, native select pop-ups or video control internals, or
