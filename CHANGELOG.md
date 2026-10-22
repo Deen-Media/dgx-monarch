@@ -20,6 +20,11 @@
   operation previews, and the store closes its database under the lock every
   other use holds. Closing it under a running settlement crashed the companion
   with a segmentation fault.
+- Studio's job, media, grid and runtime history pages no longer serve a row
+  twice or skip one where a page ends. Each cursor now carries the key SQLite
+  sorted the page by, not a value read back from the last row: the job and
+  grid lists re-render `created_at` at 15 significant digits, and SQLite on
+  x86-64 parses a few stored timestamps one unit in the last place high.
 - Support MOSS-Image, the OpenMOSS team's 5B single-stream text-to-image
   model, with its SFT and Base checkpoints and lodestones' Kromoss fine-tune
   ([MODELS](docs/MODELS.md#model-moss-image-sft)). It needs ComfyUI 0.42.0 or
