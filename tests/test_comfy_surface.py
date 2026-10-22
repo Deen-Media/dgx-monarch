@@ -1024,16 +1024,20 @@ def test_version_tolerant_contracts_are_exactly_the_reviewed_set():
         "comfy.ldm.minimax.model.MiniMaxH3Model._forward": (
             "denoise_mask", "audio_denoise_mask",
         ),
+        "comfy.ldm.moss_image.model.MOSSImage._forward": (
+            "ref_latents", "ref_latents_method", "ref_kv",
+        ),
     }
 
 
-def test_a_tolerated_trailing_suffix_admits_both_pinned_signatures():
-    """Comfy ff6c8a8 appended H3's mask parameters; both trees stay supported."""
-    contract = next(
-        contract
-        for contract in REBOUND_METHOD_CONTRACTS
-        if contract.optional_trailing
-    )
+@pytest.mark.parametrize(
+    "contract",
+    [contract for contract in REBOUND_METHOD_CONTRACTS if contract.optional_trailing],
+    ids=lambda contract: contract.path,
+)
+def test_a_tolerated_trailing_suffix_admits_both_pinned_signatures(contract):
+    """Comfy ff6c8a8 appended H3's mask parameters and 60aade0bb MOSS-Image's
+    reference parameters; both trees stay supported for each."""
     declared = inspect.signature(_rebound_callable(contract))
     assert rebound_signature_incompatibility(declared, contract) is None
     tolerated = _signature_with_trailing(contract, contract.optional_trailing)

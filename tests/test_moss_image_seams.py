@@ -1,15 +1,18 @@
 """adapters/moss_image_seams.py on the CPU, with no ComfyUI import.
 
 The seams the MOSS-Image sharded forward refuses, routes and cuts through:
-the two ``rope`` forms and the third that refuses, the identity predicate
+the three ``rope`` forms and the fourth that refuses, the identity predicate
 behind Skip Layer Guidance and the vetting of block replacements, the joint
 window with its rotary rows and pad rows, the fused-norm route that launches
-both of a block's norm calls at stock's row count, the stock-tree check, the
-control-channel refusal and the attention ledger. The stand-in block below
-mirrors stock's ``Block.forward`` call shape: it reads ``modulated_rms_norm``
-and ``attention`` as module globals of this file, which is what the route and
-the tree check read. tests/test_moss_image_comfy_exactness.py runs the same
-seams through ComfyUI's own MOSS-Image model.
+both of a block's norm calls at stock's row count on either block form, the
+stock-tree check, the control-channel refusal, the reference-image refusal
+and the attention ledger. The stand-in blocks below mirror stock's
+``Block.forward`` call shapes: ``FakeBlock`` reads ``modulated_rms_norm`` and
+``attention`` as module globals of this file, the form before ComfyUI
+60aade0bb, and ``FakeRefBlock`` reads ``modulate``, ``residual`` and
+``attention``, the form since, which is what the route and the tree check
+read. tests/test_moss_image_comfy_exactness.py runs the same seams through
+ComfyUI's own MOSS-Image model.
 
 The stand-ins are shared with tests/test_moss_image_adapter.py.
 """
@@ -31,15 +34,19 @@ from dgx_monarch.adapters.attention_patches import (
 from dgx_monarch.adapters.base import UnsupportedModelError
 from dgx_monarch.adapters.flux3_packing import refuse_indivisible_heads
 from dgx_monarch.adapters.moss_image_seams import (
+    REFERENCE_IMAGES_REFUSAL,
     AttentionLedger,
     assert_stock_tree,
     bind_norm_parity,
+    block_norm_route,
     is_identity_block_patch,
     refuse_control_channels,
+    refuse_reference_images,
     refuse_reshaped_block_rows,
     refuse_unsharded_attention,
     rope_call,
     rope_with_options,
+    rope_with_references,
     rope_without_options,
     shard_joint,
     vet_block_replacements,
@@ -60,6 +67,20 @@ def modulated_rms_norm(x, norm, scale, shift):
     """Stock's fused norm stand-in: row-local, and it records each call it gets."""
     NORM_CALLS.append(x.detach().clone())
     return x * (1 + scale) + shift
+
+
+def modulate(x, norm, mod, i, ref):
+    """Stock's modulate since 60aade0bb: the norm with mod[i] as shift, mod[i + 1] as scale."""
+    if ref is None:
+        return modulated_rms_norm(x, norm, mod[i + 1], mod[i])
+    s, ref_mod = ref
+    return torch.cat((modulated_rms_norm(x[:, :s], norm, mod[i + 1], mod[i]),
+                      modulated_rms_norm(x[:, s:], norm, ref_mod[i + 1], ref_mod[i])), dim=1)
+
+
+def residual(x, y, mod, i, ref):
+    """Stock's residual since 60aade0bb, without the reference split."""
+    return x + y * mod[i]
 
 
 def _backend(q, k, v, heads, **kwargs):
@@ -96,6 +117,19 @@ class FakeBlock(torch.nn.Module):
                           transformer_options) * gate_a
         y = modulated_rms_norm(x, None, scale_f, shift_f)
         return x + y * gate_f
+
+
+class FakeRefBlock(FakeBlock):
+    """Stock ``Block.forward``'s call shape since 60aade0bb: modulate and residual, reference arguments."""
+
+    def forward(self, x, mod, pe, transformer_options=None, ref=None, ref_kv=None, kv_out=None):
+        if kv_out is not None:
+            kv_out.fill_(1.0)
+        y = modulate(x, None, mod, 0, ref)
+        x = residual(x, attention(y, y, y, None, None, pe, self.num_heads, self.comfy_attention,
+                                  transformer_options), mod, 2, ref)
+        y = modulate(x, None, mod, 3, ref)
+        return residual(x, y, mod, 5, ref)
 
 
 class FakeTextBlock(torch.nn.Module):
@@ -204,6 +238,23 @@ def test_rope_call_drops_options_on_the_v042_form():
     assert rope is rope_without_options
     assert rope(model, 2, 3, 4, "cpu", {"rope_options": {"shift_t": 1.0}}).shape[1] == 10
     assert seen == [(2, 3, 4, "cpu")]
+
+
+def test_rope_call_passes_no_reference_on_the_reference_form():
+    seen: list = []
+
+    class Referenced(FakeMOSSImage):
+        def rope(self, h, w, text_len, device, transformer_options=None, ref_shapes=(), f_offset=0):
+            seen.append((transformer_options, ref_shapes, f_offset))
+            return torch.zeros(1, h * w + text_len, 1, 2, 2, 2)
+
+    model = Referenced()
+    rope = rope_call(model)
+    assert rope is rope_with_references
+    options = {"rope_options": {"shift_t": 1.0}}
+    assert rope(model, 2, 3, 4, "cpu", options).shape[1] == 10
+    # Stock's forward with no reference passes an empty shape list and offset 0.
+    assert seen == [(options, [], 0)]
 
 
 def test_an_unknown_rope_signature_refuses_class_p():
@@ -481,6 +532,124 @@ def test_bind_reports_an_unroutable_forward():
     assert torch.equal(block(x, mod, None, {}, stock_norm_rows=9), x + 1)
 
 
+# --- the reference form (ComfyUI 60aade0bb) ----------------------------------------
+
+
+def test_the_reference_form_launches_both_modulate_calls_at_stock_rows():
+    x, mod = _window()
+    expected = FakeRefBlock()(x.clone(), mod, torch.zeros(1, 5), {})
+    assert [tuple(call.shape) for call in NORM_CALLS] == [(2, 5, D)] * 2
+    NORM_CALLS.clear()
+    block = FakeRefBlock()
+    assert bind_norm_parity(block)
+    out = block(x.clone(), mod, torch.zeros(1, 5), {}, stock_norm_rows=9)
+    assert [tuple(call.shape) for call in NORM_CALLS] == [(2, 9, D)] * 2
+    assert torch.equal(NORM_CALLS[0][:, :5], x)
+    for call in NORM_CALLS:
+        assert torch.count_nonzero(call[:, 5:]) == 0
+    assert torch.equal(out, expected)
+
+
+def test_the_reference_form_routes_modulate_and_leaves_its_module_untouched():
+    x, mod = _window()
+    module_modulate, module_norm = globals()["modulate"], globals()["modulated_rms_norm"]
+    block = FakeRefBlock()
+    for _ in range(2):
+        bind_norm_parity(block)
+    block(x.clone(), mod, torch.zeros(1, 5), {}, stock_norm_rows=9)
+    assert [tuple(call.shape) for call in NORM_CALLS] == [(2, 9, D)] * 2
+    assert globals()["modulate"] is module_modulate
+    assert globals()["modulated_rms_norm"] is module_norm
+
+
+def test_without_stock_rows_the_reference_form_passes_reference_arguments_through():
+    """Stock's preprocess_refs calls a block with kv_out; the bound block hands it on."""
+    x, mod = _window()
+    block = FakeRefBlock()
+    bind_norm_parity(block)
+    kv_out = torch.zeros(2, 2, 5, D)
+    expected = FakeRefBlock()(x.clone(), mod, torch.zeros(1, 5), {})
+    out = block(x.clone(), mod, torch.zeros(1, 5), {}, kv_out=kv_out)
+    assert torch.equal(out, expected) and bool((kv_out == 1).all())
+    split = (3, mod_tuple(2, seed=5))
+    expected = FakeRefBlock()(x.clone(), mod, torch.zeros(1, 5), {}, split)
+    assert torch.equal(block(x.clone(), mod, torch.zeros(1, 5), {}, split), expected)
+
+
+@pytest.mark.parametrize("arguments", [
+    {"ref": (3, None)},
+    {"ref_kv": torch.zeros(2, 2, 4, D)},
+    {"kv_out": torch.zeros(2, 2, 5, D)},
+], ids=["ref", "ref-kv", "kv-out"])
+def test_reference_arguments_on_the_routed_path_refuse_class_p(arguments):
+    x, mod = _window()
+    block = FakeRefBlock()
+    bind_norm_parity(block)
+    with pytest.raises(UnsupportedModelError, match="reference images") as caught:
+        block(x.clone(), mod, torch.zeros(1, 5), {}, stock_norm_rows=9, **arguments)
+    assert refusal_class(caught.value) is RefusalClass.PHYSICS
+    assert NORM_CALLS == [] and ATTENTION_CALLS == []
+
+
+class _RefSplit(FakeRefBlock):
+    def forward(self, x, mod, pe, transformer_options=None, ref=None, ref_kv=None, kv_out=None):
+        y = modulate(x, None, mod, 0, (2, mod))
+        return residual(x, y, mod, 2, None)
+
+
+class _ThirdModulate(FakeRefBlock):
+    def forward(self, x, mod, pe, transformer_options=None, ref=None, ref_kv=None, kv_out=None):
+        x = residual(x, modulate(x, None, mod, 0, None), mod, 2, None)
+        x = residual(x, modulate(x, None, mod, 3, None), mod, 5, None)
+        return modulate(x, None, mod, 0, None)
+
+
+class _BadIndex(FakeRefBlock):
+    def forward(self, x, mod, pe, transformer_options=None, ref=None, ref_kv=None, kv_out=None):
+        y = modulate(x, None, mod, 5, None)
+        return residual(y, y, mod, 5, None)
+
+
+@pytest.mark.parametrize("block_class,named", [
+    (_RefSplit, "reference split"),
+    (_ThirdModulate, "fused-norm call 3"),
+    (_BadIndex, "fused-norm call 1"),
+], ids=["reference-split", "third-call", "bad-index"])
+def test_a_stray_modulate_call_refuses_class_p(block_class, named):
+    x, mod = _window()
+    block = block_class()
+    assert bind_norm_parity(block)
+    with pytest.raises(UnsupportedModelError, match=named) as caught:
+        block(x.clone(), mod, torch.zeros(1, 5), {}, stock_norm_rows=9)
+    assert refusal_class(caught.value) is RefusalClass.PHYSICS
+    assert "canary seam 43" in str(caught.value)
+
+
+@pytest.mark.parametrize("values", [
+    (), (None,), ([],), ((),), ([], None), (None, None, None),
+], ids=["nothing", "none", "empty-list", "empty-tuple", "stock-defaults", "block-defaults"])
+def test_stocks_default_reference_arguments_pass(values):
+    refuse_reference_images(*values)
+
+
+@pytest.mark.parametrize("values", [
+    ([torch.zeros(1, 128, 2, 2)], None),
+    ([], torch.zeros(1, 3, 2, 4, D)),
+    (None, None, torch.zeros(1)),
+    ((3, None),),
+], ids=["ref-latents", "ref-kv", "kv-out", "ref-split"])
+def test_reference_images_refuse_class_p_and_name_the_single_route(values):
+    with pytest.raises(UnsupportedModelError) as caught:
+        refuse_reference_images(*values)
+    text = str(caught.value)
+    assert text == REFERENCE_IMAGES_REFUSAL
+    assert refusal_class(caught.value) is RefusalClass.PHYSICS
+    assert text.split("] ", 1)[1].startswith("moss_image: this render carries reference images")
+    assert "TextEncodeMOSSImageEdit" in text
+    assert "topology 'single' (mode=local with gpus_per_host=1)" in text
+    assert text.endswith("See docs/TROUBLESHOOTING.md #130.")
+
+
 # --- the stock tree ---------------------------------------------------------------
 
 
@@ -561,8 +730,54 @@ def test_the_stock_tree_check_refuses_a_block_without_the_two_globals(monkeypatc
     model.layers = torch.nn.ModuleList([Bare(), Bare()])
     with pytest.raises(UnsupportedModelError) as caught:
         assert_stock_tree(model)
-    for name in ("modulated_rms_norm", "attention"):
-        assert f"no longer reads the module global {name}" in str(caught.value)
+    assert ("Block.forward reads neither the module global modulated_rms_norm nor the pair "
+            "modulate and residual alone") in str(caught.value)
+    assert "no longer reads the module global attention" in str(caught.value)
+
+
+def _reference_tree(monkeypatch, **overrides):
+    install_fake_moss_module(monkeypatch, **{"Block": FakeRefBlock, "modulate": modulate,
+                                             "residual": residual, **overrides})
+    model = FakeMOSSImage()
+    model.layers = torch.nn.ModuleList([FakeRefBlock() for _ in range(3)])
+    return model
+
+
+def test_the_stock_tree_check_passes_the_reference_form(monkeypatch):
+    assert_stock_tree(_reference_tree(monkeypatch))
+
+
+def test_the_stock_tree_check_refuses_a_modulate_that_skips_the_norm_global(monkeypatch):
+    def own_modulate(x, norm, mod, i, ref):
+        return x * (1 + mod[i + 1]) + mod[i]
+
+    model = _reference_tree(monkeypatch, modulate=own_modulate)
+    with pytest.raises(UnsupportedModelError) as caught:
+        assert_stock_tree(model)
+    assert refusal_class(caught.value) is RefusalClass.PHYSICS
+    assert "modulate no longer reads the module global modulated_rms_norm" in str(caught.value)
+
+
+class _BothForms(FakeRefBlock):
+    def forward(self, x, mod, pe, transformer_options=None, ref=None, ref_kv=None, kv_out=None):
+        x = residual(x, modulate(x, None, mod, 0, ref), mod, 2, ref)
+        return modulated_rms_norm(x, None, mod[1], mod[0])
+
+
+class _ModulateOnly(FakeRefBlock):
+    def forward(self, x, mod, pe, transformer_options=None, ref=None, ref_kv=None, kv_out=None):
+        return modulate(x, None, mod, 0, ref)
+
+
+@pytest.mark.parametrize("forward,route", [
+    (FakeBlock.forward, "modulated_rms_norm"),
+    (FakeRefBlock.forward, "modulate"),
+    (_BothForms.forward, None),
+    (_ModulateOnly.forward, None),
+    (_NoNorm.forward, None),
+], ids=["v042-form", "reference-form", "both", "modulate-only", "no-norm"])
+def test_the_norm_route_names_one_known_form_or_none(forward, route):
+    assert block_norm_route(forward) == route
 
 
 # --- the control channels and the attention ledger -------------------------------
@@ -621,6 +836,8 @@ def test_the_head_refusal_names_the_family_it_is_given():
 def test_the_module_names_comfys_globals():
     assert moss_image_seams.MOSS_MODEL_MODULE == "comfy.ldm.moss_image.model"
     assert moss_image_seams.NORM_GLOBAL == "modulated_rms_norm"
+    assert moss_image_seams.MODULATE_GLOBAL == "modulate"
+    assert moss_image_seams.RESIDUAL_GLOBAL == "residual"
     assert moss_image_seams.ATTENTION_GLOBAL == "attention"
     assert moss_image_seams.ADOPTED_ATTENTION_KEYWORDS == {
         "mask", "attn_precision", "skip_reshape", "skip_output_reshape", "enable_gqa"}

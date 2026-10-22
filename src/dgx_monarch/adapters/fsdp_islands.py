@@ -85,6 +85,17 @@ CLASS_OUTSIDE_FORWARD_MODULE_PATHS: dict[str, tuple[str, ...]] = {
     "Flux3": ("txt_in", "time_in", "emb_in", "early_stream_modulations",
               "txt_mode_blocks", "content_mode_blocks.image_cond"),
 }
+# Diffusion-model methods a family's extra_conds calls only for an input this
+# release refuses before dispatch on every topology that wraps the model, so
+# nothing is replicated for them. MOSSImage.extra_conds (ComfyUI 60aade0bb)
+# runs preprocess_refs, every block over the reference images, and only in
+# inference mode, which a Worker's sampling thread is not in; reference images
+# refuse class P on every topology but one GPU (TROUBLESHOOTING #130).
+# Replicating what that method reaches would keep the whole model on every
+# rank. The canary holds this table as it holds the two above.
+REFUSED_OUTSIDE_FORWARD_CALLS: dict[str, tuple[str, ...]] = {
+    "MOSSImage": ("preprocess_refs",),
+}
 
 
 def islands_within_ceiling(fp32_bytes: int, total_bytes: int) -> bool:

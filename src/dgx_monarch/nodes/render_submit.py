@@ -312,6 +312,7 @@ def _submit_render_guarded(
             model, latent, cfg_value, world)
         topo, sage, reason = resolved
         render_preflight.preflight_krea2_reference_latents(model, ref_summary, topo)
+        model_patch_preflight.preflight_moss_image_reference_images(model, ref_summary, topo)
         render_preflight.preflight_minimax_h3_topology(model, topo)
         model_patch_preflight.preflight_model_patches(model, topo, request)
         sample_attention = resolve_sample_attention(spec.attention, sage)

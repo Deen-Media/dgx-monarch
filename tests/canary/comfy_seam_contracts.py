@@ -83,7 +83,8 @@ The seams, in run order:
                               exactly it, and that a matching uuid moves nothing
  33. outside forward modules  which supported families reach a diffusion-model
                               method from extra_conds, and the modules that
-                              method runs, which FSDP has to replicate
+                              method runs, which FSDP has to replicate, or the
+                              method an input refused off one GPU alone reaches
  34. flux family text         the widths flux2 and longcat hand the model, and
                               that no text row either of them reads is masked
  35. cogvideox layout         the key the CogVideoX config is detected from, the
@@ -129,11 +130,17 @@ The seams, in run order:
  42. moss_image conds         CONDRegular text that folds only at equal length,
                               no constant, no mask, no cond branch, rope.bands
                               popped, flow at multiplier 1.0 and shift 5.0, the
-                              Flux2 latent, and the tokenizer's 10 and 23 rows
- 43. moss_image block surface  the two fused-norm calls a block makes, the
-                              rotary table, the [image, text] join, the block
-                              keys, the replace call, the malloc graph and the
-                              attention call shape the sharded forward re-runs
+                              Flux2 latent, and the tokenizer's 10 and 23 rows;
+                              since 60aade0bb, the reference keys the edit node
+                              sets, the latents extra_conds hands the forward
+                              outside inference mode, and the keys and values
+                              it caches inside it
+ 43. moss_image block surface  the two fused-norm calls a block makes, directly
+                              or through modulate, which equals the norm with
+                              no reference, the rotary table, the [image, text]
+                              join, the block keys, the replace call, the
+                              malloc graph and the attention call shape the
+                              sharded forward re-runs
  44. skip layer guidance simple  the stock node's widgets, and the two
                               single-cond calls with an identity skip it makes
                               inside its window, one call outside or at CFG 1
@@ -3297,6 +3304,7 @@ def _assert_outside_forward_module_seam() -> None:
         CLASS_OUTSIDE_FORWARD_MODULE_PATHS,
         FORWARD_PATH_NAME_OWNERS,
         OUTSIDE_FORWARD_MODULE_ATTRS,
+        REFUSED_OUTSIDE_FORWARD_CALLS,
         outside_forward_module_attrs,
     )
 
@@ -3313,7 +3321,27 @@ def _assert_outside_forward_module_seam() -> None:
             called = _calls_on_self(inspect.getsource(extra_conds), "diffusion_model")
             if called:
                 reaching.setdefault(klass.__name__, set()).update(called)
-    tabled = set(OUTSIDE_FORWARD_MODULE_ATTRS) | set(CLASS_OUTSIDE_FORWARD_MODULE_PATHS)
+    # A refused row names methods an input reaches that the driver refuses off
+    # one GPU; a tree whose model lacks every such method (before ComfyUI
+    # 60aade0bb for MOSSImage) reaches none of them, and the row is inert there.
+    live_refused: set = set()
+    for class_name, methods in REFUSED_OUTSIDE_FORWARD_CALLS.items():
+        assert class_name in supported, (
+            f"outside forward modules seam: the refused row {class_name} is no longer a "
+            "supported comfy model_base class")
+        assert class_name not in OUTSIDE_FORWARD_MODULE_ATTRS and (
+            class_name not in CLASS_OUTSIDE_FORWARD_MODULE_PATHS), (
+            f"outside forward modules seam: {class_name} is both refused and replicated")
+        unet_class = _unet_class_of(getattr(comfy.model_base, class_name))
+        present = {method for method in methods if hasattr(unet_class, method)}
+        assert reaching.get(class_name, set()) == present, (
+            f"outside forward modules seam: {class_name}.extra_conds now calls "
+            f"{sorted(reaching.get(class_name, ()))} on the diffusion model, and the refused "
+            f"row names {sorted(present)} of the methods this tree has")
+        if present:
+            live_refused.add(class_name)
+    tabled = (set(OUTSIDE_FORWARD_MODULE_ATTRS) | set(CLASS_OUTSIDE_FORWARD_MODULE_PATHS)
+              | live_refused)
     assert set(reaching) == tabled, (
         "outside forward modules seam: the supported families whose extra_conds "
         f"calls a diffusion-model method are {sorted(reaching)}, and the tables "
@@ -4914,6 +4942,84 @@ def _assert_moss_image_conds_seam() -> None:
     assert lengths == {"": [10], _MOSS_NEGATIVE: [23]}, (
         f"moss_image conds seam: the MOSS tokenizer now gives {lengths} tokens for the empty "
         "negative and the vendor tags; the hardware legs pick N's parity by these counts")
+    if hasattr(type(dm), "preprocess_refs"):
+        _assert_moss_image_reference_conds(base)
+
+
+# Stock's reference methods, and whether one-GPU ComfyUI caches the keys and
+# values for it in extra_conds (inference mode, no hooks).
+_MOSS_REFERENCE_METHODS = {None: True, "index": False, "index_timestep_zero": False,
+                           "index_timestep_zero_isolated": True,
+                           "index_timestep_zero_text_start": True}
+
+
+def _assert_moss_image_reference_conds(base) -> None:
+    """What MOSS-Image reference images publish since ComfyUI 60aade0bb (#130).
+
+    Text Encode MOSS-Image Edit sets ``reference_latents`` and
+    ``reference_latents_method`` with conditioning_set_values, the two keys the
+    driver's summary reads before the wire packs a cond. Outside inference
+    mode, where a Worker's sampling thread runs, extra_conds hands the
+    latents to the forward as a CONDList whatever the method, and runs nothing
+    of the model; inside it, as one-GPU ComfyUI runs, the isolated methods
+    cache every block's keys and values once through preprocess_refs. Either
+    way the forward takes them as its own three reference parameters, which the
+    sharded forward refuses before any collective.
+    """
+    import inspect
+
+    import comfy.conds
+    import comfy.model_base
+    import torch
+    from comfy_extras import nodes_moss_image
+
+    edit = nodes_moss_image.TextEncodeMOSSImageEdit
+    assert edit.define_schema().node_id == "TextEncodeMOSSImageEdit", (
+        "moss_image conds seam: the edit node's id moved, and the #130 refusal names it")
+    source = inspect.getsource(edit.execute)
+    assert '"reference_latents"' in source and '"reference_latents_method"' in source, (
+        "moss_image conds seam: the edit node no longer sets reference_latents and "
+        "reference_latents_method, the keys the driver preflight reads")
+    assert "torch.is_inference_mode_enabled()" in inspect.getsource(
+        comfy.model_base.MOSSImage.extra_conds), (
+        "moss_image conds seam: extra_conds no longer gates its reference cache on inference "
+        "mode, so a Worker may now run preprocess_refs outside the forward")
+    dm = base.diffusion_model
+    names = tuple(inspect.signature(type(dm)._forward).parameters)
+    assert names[5:8] == ("ref_latents", "ref_latents_method", "ref_kv"), (
+        f"moss_image conds seam: the forward's reference parameters are now {names}")
+
+    cpu = torch.device("cpu")
+    generator = torch.Generator().manual_seed(7)
+    context = torch.randn(1, 10, 4096, generator=generator)
+    refs = [torch.randn(1, 128, 2, 2, generator=generator)]
+    noise = torch.zeros(1, 128, 4, 4)
+    ran: list = []
+    stock = dm.preprocess_refs
+    dm.preprocess_refs = lambda latents, *args, **kwargs: ran.append(len(latents)) or stock(
+        latents, *args, **kwargs)
+    try:
+        def publish(method):
+            extra = {} if method is None else {"reference_latents_method": method}
+            return base.extra_conds(cross_attn=context, noise=noise, device=cpu,
+                                    reference_latents=refs, **extra)
+
+        for method in _MOSS_REFERENCE_METHODS:
+            out = publish(method)
+            assert type(out.get("ref_latents")) is comfy.conds.CONDList and "ref_kv" not in out, (
+                f"moss_image conds seam: outside inference mode, method {method} now publishes "
+                f"{sorted(out)}")
+            assert ("ref_latents_method" in out) is (method is not None), (
+                f"moss_image conds seam: method {method} publishes {sorted(out)}")
+        assert ran == [], "moss_image conds seam: extra_conds ran preprocess_refs outside inference mode"
+        with torch.inference_mode():
+            cached = {method: "ref_kv" in publish(method) for method in _MOSS_REFERENCE_METHODS}
+    finally:
+        del dm.preprocess_refs
+    assert cached == _MOSS_REFERENCE_METHODS, (
+        f"moss_image conds seam: inside inference mode the methods that cache are now {cached}")
+    assert ran == [1] * sum(_MOSS_REFERENCE_METHODS.values()), (
+        f"moss_image conds seam: preprocess_refs ran {ran} inside inference mode")
 
 
 def _assert_moss_image_block_surface_seam() -> None:
@@ -4921,17 +5027,22 @@ def _assert_moss_image_block_surface_seam() -> None:
 
     adapters/moss_image.py keeps stock's prelude, cuts the joint stream into
     one window per rank and runs stock's own ``Block.forward`` there, with the
-    block's two fused-norm calls launched at stock's row count through its
-    ``modulated_rms_norm`` global (adapters/moss_image_seams.py). Pinned on a
-    tiny real MOSSImage: ``Block.forward`` reads both globals and makes exactly
+    block's two fused-norm calls launched at stock's row count through the
+    global it reaches the norm by (adapters/moss_image_seams.py):
+    ``modulated_rms_norm`` before ComfyUI 60aade0bb, ``modulate`` since, which
+    with no reference returns the norm's bits with ``mod[i + 1]`` as scale and
+    ``mod[i]`` as shift, as ``residual`` returns ``gated_residual``'s. Pinned on a
+    tiny real MOSSImage: ``Block.forward`` reads one known form and makes exactly
     two norm calls over its whole stream with ``[B, 1, D]`` modulation; the
     text embedder calls its blocks positionally; ``_forward`` builds one table
     for all N rows with a known ``rope`` form, hands the text embedder its last
     T rows, joins ``[image, text]``, sets ``total_blocks`` and ``block_type``
     before the prefetch queue and ``block_index`` before the replace lookup,
     calls a ``("single_block", i)`` patch with five keys and
-    ``original_block``, opens and closes the malloc graph around the loop, and
-    runs the head norm on the image rows; the table is ``[1, N, 1, 64, 2, 2]``,
+    ``original_block``, hands each block no reference (none, or None twice on
+    the later form), opens and closes the malloc graph around the loop, and
+    runs the head norm on the image rows; with no reference, the later rope
+    form gets an empty shape list and offset 0; the table is ``[1, N, 1, 64, 2, 2]``,
     contiguous, image rows first; master's ``rope`` reads ``rope_options``; an
     identity skip equals dropping the block; ``attention()`` hands
     ``optimized_attention`` (q, k, v, heads) plus ``transformer_options`` and
@@ -4946,16 +5057,22 @@ def _assert_moss_image_block_surface_seam() -> None:
 
     from dgx_monarch.adapters.flux3_adaln_parity import loads_global
     from dgx_monarch.adapters.moss_image_seams import (
+        block_norm_route,
         is_identity_block_patch,
         rope_call,
         vet_block_replacements,
     )
 
-    for name in ("modulated_rms_norm", "attention"):
-        assert loads_global(moss.Block.forward, name), (
-            f"moss_image block surface: Block.forward no longer reads the module global {name}")
+    route = block_norm_route(moss.Block.forward)
+    assert route is not None, (
+        "moss_image block surface: Block.forward reads neither modulated_rms_norm nor the pair "
+        "modulate and residual alone")
+    assert loads_global(moss.Block.forward, "attention"), (
+        "moss_image block surface: Block.forward no longer reads the module global attention")
     model = _tiny_moss(seed=43)
-    rope_call(model)    # refuses class P on a third rope form
+    rope_call(model)    # refuses class P on a fourth rope form
+    if route == "modulate":
+        _assert_moss_modulate_is_the_norm(moss, model)
     x, timestep, context = _moss_inputs()
     hw, text = x.shape[2] * x.shape[3], context.shape[1]
     rows = hw + text
@@ -4991,7 +5108,7 @@ def _assert_moss_image_block_surface_seam() -> None:
 
     def rope(*args):
         table = stock_rope(model, *args)
-        seen["ropes"].append((len(args), table))
+        seen["ropes"].append((len(args), table, args[5:]))
         return table
 
     def replace(args, extra):
@@ -5007,7 +5124,10 @@ def _assert_moss_image_block_surface_seam() -> None:
     def text_block(module, args, kwargs):
         seen["text_blocks"].append((len(args), sorted(kwargs)))
 
+    block_args: list = []
     hooks = [
+        model.layers[0].register_forward_pre_hook(
+            lambda module, args, kwargs: block_args.append((args[4:], sorted(kwargs))), with_kwargs=True),
         model.video_embedder.register_forward_hook(lambda module, args, out: keep("image", out)),
         model.text_embedder.register_forward_pre_hook(lambda module, args: keep("text_pe", args[1])),
         model.text_embedder.register_forward_hook(lambda module, args, out: keep("text", out)),
@@ -5046,8 +5166,12 @@ def _assert_moss_image_block_surface_seam() -> None:
     assert seen["text_blocks"] == [(3, [])] * len(model.text_embedder.blocks), (
         "moss_image block surface: TextEmbedder no longer calls its blocks positionally with "
         f"(x, pe, transformer_options): {seen['text_blocks']}")
-    assert len(seen["ropes"]) == 1 and seen["ropes"][0][0] in (4, 5), (
+    assert len(seen["ropes"]) == 1 and seen["ropes"][0][0] in (4, 5, 7), (
         f"moss_image block surface: _forward built {len(seen['ropes'])} rotary tables")
+    assert seen["ropes"][0][2] in ((), ([], 0)), (
+        f"moss_image block surface: with no reference stock's rope now gets {seen['ropes'][0][2]}")
+    assert block_args in ([((), [])], [((None, None), [])]), (
+        f"moss_image block surface: with no reference a block now gets {block_args}")
     table = seen["ropes"][0][1]
     assert tuple(table.shape) == (1, rows, 1, 64, 2, 2) and table.is_contiguous() and (
         table.dtype == torch.float32), (
@@ -5081,7 +5205,7 @@ def _assert_moss_image_block_surface_seam() -> None:
         f"moss_image block surface: attention() now hands optimized_attention {seen['attention']}")
     assert out.shape == x.shape, f"moss_image block surface: the output is {tuple(out.shape)}"
 
-    if seen["ropes"][0][0] == 5:
+    if seen["ropes"][0][0] >= 5:
         moved = stock_rope(model, 3, 3, text, torch.device("cpu"), {"rope_options": {"shift_t": 1.0}})
         assert not torch.equal(moved, table), (
             "moss_image block surface: master's rope no longer reads rope_options")
@@ -5101,6 +5225,42 @@ def _assert_moss_image_block_surface_seam() -> None:
         without = dropped(x, timestep, context, transformer_options={})
     assert torch.equal(with_skip, without), (
         "moss_image block surface: an identity skip on block 1 no longer equals dropping block 1")
+
+
+def _assert_moss_modulate_is_the_norm(moss, model) -> None:
+    """Since 60aade0bb: with no reference, modulate and residual are the two older calls.
+
+    The sharded block launches stock's own ``modulate`` at stock's rows, so
+    the norm it wraps must still be row-local and read as a module global;
+    with a reference split, the rows past it take the other modulation, which
+    is why the sharded forward refuses references.
+    """
+    import torch
+
+    from dgx_monarch.adapters.flux3_adaln_parity import loads_global
+
+    assert loads_global(moss.modulate, "modulated_rms_norm"), (
+        "moss_image block surface: modulate no longer reads the module global modulated_rms_norm")
+    generator = torch.Generator().manual_seed(44)
+    width = model.video_embedder.out_features
+    x = torch.randn(2, 7, width, generator=generator)
+    y = torch.randn(2, 7, width, generator=generator)
+    mod = tuple(torch.randn(2, 1, width, generator=generator) * 0.1 for _ in range(6))
+    norm = model.layers[0].norm1
+    with torch.no_grad():
+        for index in (0, 3):
+            assert torch.equal(moss.modulate(x, norm, mod, index, None),
+                               moss.modulated_rms_norm(x, norm, mod[index + 1], mod[index])), (
+                f"moss_image block surface: modulate({index}) with no reference is no longer the norm")
+        for index in (2, 5):
+            assert torch.equal(moss.residual(x.clone(), y, mod, index, None),
+                               moss.gated_residual(x.clone(), y, mod[index])), (
+                f"moss_image block surface: residual({index}) with no reference is no longer "
+                "gated_residual")
+        split = moss.modulate(x, norm, mod, 0, (4, mod[::-1]))
+        assert torch.equal(split[:, :4], moss.modulated_rms_norm(x[:, :4], norm, mod[1], mod[0])) and (
+            not torch.equal(split[:, 4:], moss.modulated_rms_norm(x[:, 4:], norm, mod[1], mod[0]))), (
+            "moss_image block surface: a reference split no longer modulates the rows past it apart")
 
 
 def _assert_skip_layer_guidance_simple_seam() -> None:

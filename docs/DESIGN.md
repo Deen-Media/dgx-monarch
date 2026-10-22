@@ -1732,8 +1732,9 @@ dgx-monarch/
 │   │   ├── gate_provenance.py # mandatory all-rank Gate source bracket
 │   │   ├── gate_verdict.py    # verdict derivation, lever quarantine, publication
 │   │   ├── metrics_route.py   # bounded finite Prometheus projection
-│   │   ├── model_patch_preflight.py # driver refusals for the per-render skip
-│   │   │                      #   and shift patches
+│   │   ├── model_patch_preflight.py # driver refusals for the per-render skip,
+│   │   │                      #   shift and LoRA patches and MOSS-Image
+│   │   │                      #   reference images
 │   │   ├── pending.py         # terminal sample-result ownership and cleanup
 │   │   ├── pipeline.py        # bounded FIFO submission/abort orchestration
 │   │   ├── recycle_guard.py   # reset single-flight/rate ownership past HTTP timeout

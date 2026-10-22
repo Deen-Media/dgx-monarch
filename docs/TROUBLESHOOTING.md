@@ -6483,3 +6483,43 @@ observed the driver's refusal before dispatch, and the next renders ran on
 the same fleet with no Recycle. The Workers' own check in the model store
 has not been observed on hardware yet: every shipped path runs the driver's
 check first.
+
+## 130. A MOSS-Image render with reference images refuses on every topology but one GPU
+
+**Symptom:** a `moss_image` render (MOSS-Image SFT, Base or Kromoss) whose
+conditioning comes from ComfyUI's Text Encode MOSS-Image Edit node refuses
+class P before dispatch, or on every Worker before the first block, with a
+message that opens "moss_image: this render carries reference images" and
+names topology `single` with `mode=local` and `gpus_per_host=1`.
+
+**Cause:** ComfyUI commit 60aade0bb of 2026-10-22 added edit LoRAs to
+MOSS-Image. Its Text Encode MOSS-Image Edit node encodes the reference
+images with the VAE and attaches them to the conditioning, and stock's
+forward uses them in one of the layouts its `edit_format` widget picks:
+either the reference rows join the joint stream at timestep 0 with their own
+modulation, or each block's keys and values for them are computed once and
+joined to that block's attention. Either way every image and text row
+attends to rows that come from the references. The sharded forward cuts the
+joint stream into one window per rank and has no rule for those rows, and no
+hardware test has compared a uly2, ring2, cfg2, dp2 or FSDP edit with stock,
+so this release refuses reference images on each of those topologies rather
+than render them unmeasured. The driver reads the references from the
+conditioning before dispatch and the family from the checkpoint header, so
+the refusal costs no Worker call. If the driver cannot read the header, the
+sharded forward refuses on every rank alike before any exchange, so by
+design the next render runs on the same fleet, which no hardware test has
+observed yet; on cfg2 and dp2, where nothing binds, stock's own forward
+would run the edit. A Worker samples outside inference mode, so
+ComfyUI hands its forward the reference latents rather than keys and values
+computed once, and stock's forward computes them again at every step. On
+2026-10-22 a CPU test on a small model found that path bit-identical to the
+path that computes them once; on a GPU it adds that work to every step, and
+no hardware test has measured it.
+
+**Fix:** run the edit on one GPU: set the Init node to `mode=local` with
+`gpus_per_host=1` and topology `single`, which binds nothing and runs
+ComfyUI's own forward, or render it in plain ComfyUI. Fleet KSampler runs
+each job on one GPU with stock's forward, so it is not refused. A
+text-to-image render without the edit node is not affected. The refusal
+stays until a hardware test compares a sharded edit with stock; as of
+2026-10-22 no edit render, on one GPU or a cluster, has run on hardware.

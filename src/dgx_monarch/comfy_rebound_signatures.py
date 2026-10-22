@@ -125,10 +125,14 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "comfy.model_base", "Flux3.extra_conds", ("flux3",), ("conds",),
         "self", 1, variadic_keyword="kwargs",
     ),
-    # Identical on v0.42.0 and master; only rope's signature moved between them.
+    # Comfy 60aade0bb appended the three reference parameters of edit LoRAs.
+    # Trees on either side of that commit are both admitted; the adapter
+    # refuses references that are actually set rather than dropping them into
+    # its own **kwargs.
     _rebound(
         "comfy.ldm.moss_image.model", "MOSSImage._forward", ("moss_image",), ("usp",),
         "self x timestep context transformer_options", 4, variadic_keyword="kwargs",
+        optional_trailing=("ref_latents", "ref_latents_method", "ref_kv"),
     ),
     _rebound(
         "comfy.ldm.chroma.model", "Chroma.forward_orig", ("chroma",), ("usp",),

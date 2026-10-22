@@ -112,10 +112,12 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     # FLUX.3's sharded blocks read this global from Block.forward's own module
     # and launch each call at stock's row count (adapters/flux3_adaln_parity.py).
     _call("comfy.ldm.flux3.model", "modulated_norm", positional=("x", "norm", "scale", "shift")),
-    # MOSS-Image's sharded blocks read both globals from Block.forward's own
+    # MOSS-Image's sharded blocks read these globals from Block.forward's own
     # module: the fused norm launches at stock's rows (adapters/moss_image_seams.py),
-    # and the head calls the norm itself on the gathered rows. The class sits
-    # here, ahead of its rebound _forward, so a missing class is named first.
+    # directly or, since 60aade0bb, through the module's modulate, which the
+    # inject-time tree check requires on that form only, and the head calls
+    # the norm itself on the gathered rows. The class sits here, ahead of its
+    # rebound _forward, so a missing class is named first.
     _attr("comfy.ldm.moss_image.model", "MOSSImage"),
     _call("comfy.ldm.moss_image.model", "modulated_rms_norm",
           positional=("x", "norm", "scale", "shift")),
@@ -205,8 +207,9 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ldm.flux3.model", "Block.forward",
           positional=("self", "x", "spans", "pe", "transformer_options")),
     # MOSS-Image's sharded forward checks the stock tree at inject, calls
-    # stock's rope in either form (five names admit v0.42.0 and master), and
-    # runs stock's Block and TextEmbedder code on stock's call shapes.
+    # stock's rope in each of its three forms (five names are the prefix all
+    # three share; the seam picks the call by the exact names), and runs
+    # stock's Block and TextEmbedder code on stock's call shapes.
     _attr("comfy.ldm.moss_image.model", "Block"),
     _attr("comfy.ldm.moss_image.model", "TextEmbedder"),
     _call("comfy.ldm.moss_image.model", "MOSSImage.rope",
