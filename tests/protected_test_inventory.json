@@ -1120,7 +1120,7 @@
       "test_unscoped_damage_does_not_pollute_an_unmatched_identity_state": "ced6c7e245b27915",
       "test_v11_pass_reads_stale_under_v12": "4e875b9c7beb500b",
       "test_v12_pass_reads_stale_under_v13": "45878818c49f2e83",
-      "test_v13_pass_reads_stale_under_v14": "8b1cb8cd4d2d6422",
+      "test_v13_pass_reads_stale_under_v14": "b911bc2a98f2e3de",
       "test_v5_pass_without_frozen_transaction_inputs_reads_stale": "0f8f33314a7a66d8",
       "test_v7_pass_without_fsdp_clean_reload_reads_stale_under_v8": "5a84fc7e1da4b8e0",
       "test_v8_pass_without_the_byte_verify_rule_reads_stale_under_v9": "6f7f57c001d31f38",

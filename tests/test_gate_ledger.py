@@ -916,30 +916,42 @@ def test_v12_pass_reads_stale_under_v13(tmp_path):
     assert led.lookup("fresh", "artifact", "commit", context) == "pass"
 
 
-def test_v13_pass_reads_stale_under_v14(tmp_path):
+def test_v13_pass_reads_stale_under_v14(tmp_path, monkeypatch):
     """v13 PASS rows predate the ``studio`` consent source in the frozen vocabulary.
 
     A new member of the frozen audit vocabulary advances the protocol, so every
-    v13 PASS re-proves once.
+    v13 PASS re-proves once. Both rows carry the current source digest, so the
+    protocol number alone separates the stale row from the live one.
     """
+    source = "a" * 64
+    monkeypatch.setattr(
+        ledger_mod.runtime_provenance,
+        "cached_dgx_source_manifest_sha256",
+        lambda: source,
+    )
     led = GateLedger(str(tmp_path))
     context = {
         "worker_args": {"slab_weights": True, "lora_low_rss": False},
         "world": 2,
     }
-    row = {
-        "key": "k",
-        "artifacts": "artifact",
-        "comfy": "commit",
-        "verdict": "PASS",
-        "gate_protocol": 13,
-        "dgx_monarch": ledger_mod.__version__,
-        "capability_context": led._context_value(context),
-    }
+    rows = [
+        {
+            "key": key,
+            "artifacts": "artifact",
+            "comfy": "commit",
+            "verdict": "PASS",
+            "gate_protocol": protocol,
+            "dgx_monarch": ledger_mod.__version__,
+            "dgx_source": source,
+            "capability_context": led._context_value(context),
+        }
+        for key, protocol in (("k", 13), ("current", ledger_mod.GATE_PROTOCOL_VERSION))
+    ]
     with open(led.path, "w") as f:
-        f.write(json.dumps(row) + "\n")
+        f.write("".join(json.dumps(row) + "\n" for row in rows))
 
     assert led.lookup("k", "artifact", "commit", context) == "stale"
+    assert led.lookup("current", "artifact", "commit", context) == "pass"
     led.record("fresh", "artifact", "commit", "PASS", context=context)
     assert led.lookup("fresh", "artifact", "commit", context) == "pass"
 
