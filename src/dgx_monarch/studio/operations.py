@@ -17,6 +17,7 @@ from .management_consent import consent_plan
 from .management_fields import COMMAND_FIELDS, FIELDS, FIXED_COMMANDS, NO_CONFIG, parse
 from .operation_reservations import reserve_review
 from .store import Store
+from .threads import blocking
 
 LOG = logging.getLogger(__name__)
 
@@ -169,12 +170,12 @@ class Operations:
         if request.get("action") == "gate.last" and self.allow_management:
             parameters = parse("gate.last", request.get("parameters", {}))
             plan = await self.management.gate_preview(parameters)
-            return await asyncio.to_thread(self.preview, request, plan)
+            return await blocking(self.preview, request, plan)
         if request.get("action") == "consent.apply" and self.allow_management:
             # Only the driver lists the exact pending key and id an accept needs.
             pending = await self.client.request("GET", "/dgxm/consents")
-            return await asyncio.to_thread(self.preview, request, pending)
-        return await asyncio.to_thread(self.preview, request)
+            return await blocking(self.preview, request, pending)
+        return await blocking(self.preview, request)
 
     def preview(self, request: dict[str, Any], remote_plan: Any = None) -> dict[str, Any]:
         action, parameters = request.get("action"), request.get("parameters", {})

@@ -16,6 +16,10 @@
   lists it with the other driver routes.
 - Verified update, release staging and setup refuse a target whose packaged
   Studio files are missing, extra or differ from their recorded SHA-256 table.
+- Studio shutdown waits for the threads that settle history and write live and
+  operation previews, and the store closes its database under the lock every
+  other use holds. Closing it under a running settlement crashed the companion
+  with a segmentation fault.
 - Support MOSS-Image, the OpenMOSS team's 5B single-stream text-to-image
   model, with its SFT and Base checkpoints and lodestones' Kromoss fine-tune
   ([MODELS](docs/MODELS.md#model-moss-image-sft)). It needs ComfyUI 0.42.0 or

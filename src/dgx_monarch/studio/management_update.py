@@ -1,7 +1,6 @@
 """Source-bound Studio updates and explicitly reviewed driver restoration."""
 from __future__ import annotations
 
-import asyncio
 import grp
 import os
 import pwd
@@ -26,6 +25,7 @@ from .driver_service import DriverService
 from .management_config import absolute
 from .management_repository import RepositoryOps
 from .store import private_directory
+from .threads import blocking, settle
 
 REVIEW_SCOPE = {
     "verified": ("Exact source and dependency selection. Studio stops the bound driver service if it runs and checks "
@@ -43,31 +43,6 @@ DRIVER_SERVICE_REQUIRED = ("Update requires the ComfyUI driver service selected 
                            "the driver's interpreter and checkout.")
 RESTART_POLICY = ("Restore the stopped driver only after the update succeeds or the backend refuses before it changes "
                   "anything, and only while the stopped driver identity still matches.")
-
-
-async def blocking(function: Callable[..., Any], *args: Any) -> Any:
-    """Do not release transaction locks while a cancelled thread still mutates."""
-    return await settle(asyncio.to_thread(function, *args))
-
-
-async def settle(awaitable: Any) -> Any:
-    task = asyncio.create_task(awaitable)
-    cancellation = None
-    while True:
-        try:
-            result = await asyncio.shield(task)
-        except asyncio.CancelledError as exc:
-            if task.cancelled():
-                raise
-            cancellation = exc
-            continue
-        except BaseException:
-            if cancellation is not None:
-                raise cancellation from None
-            raise
-        if cancellation is not None:
-            raise cancellation
-        return result
 
 
 def writers_trusted(info: os.stat_result) -> bool:

@@ -36,6 +36,7 @@ from .submission_guard import (
     stored_upload_names,
     upload_view,
 )
+from .threads import blocking
 from .workflows import node_inputs
 
 LOG = logging.getLogger(__name__)
@@ -346,7 +347,7 @@ class Jobs:
                     async with self.observation_lock:
                         if message.get("type") == "preview_frame":
                             from .live_preview import accept_preview
-                            await asyncio.to_thread(accept_preview, self.store, message)
+                            await blocking(accept_preview, self.store, message)
                         else:
                             self.consume_event(message)
                     failures, self.events_fault = 0, None

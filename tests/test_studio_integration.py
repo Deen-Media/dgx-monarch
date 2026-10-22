@@ -9,6 +9,7 @@ import asyncio
 import base64
 import json
 import sys
+import threading
 from contextlib import asynccontextmanager
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,15 +34,20 @@ PNG = base64.b64decode(
 
 
 class EventStore(Store):
-    """Observe real durable updates without adding polling sleeps to tests."""
+    """Observe real durable updates without adding polling sleeps to tests.
+
+    Settlement writes on a worker thread and an asyncio.Event belongs to the
+    loop thread, so every notification reaches the loop through call_soon_threadsafe.
+    """
 
     def __init__(self, path):
         super().__init__(path)
+        self.loop = asyncio.get_running_loop()
         self.changed = asyncio.Event()
 
     def _event(self, kind, object_id, data):
         super()._event(kind, object_id, data)
-        self.changed.set()
+        self.loop.call_soon_threadsafe(self.changed.set)
 
     async def wait_state(self, kind, object_id, state):
         async def observe():
@@ -167,6 +173,43 @@ async def companion(tmp_path, monkeypatch):
                                       operations=operations, browser=browser, headers=headers, request=request)
         finally:
             store.close()
+
+
+def test_settlement_events_set_the_asyncio_event_only_on_the_loop_thread(tmp_path, monkeypatch):
+    """Settlement runs on a worker thread; asyncio.Event.set must still run on the loop thread."""
+    writers, setters = [], []
+    original_set, original_event = asyncio.Event.set, EventStore._event
+
+    def recording_set(event):
+        setters.append(threading.get_ident())
+        original_set(event)
+
+    def recording_event(store, kind, object_id, data):
+        writers.append(threading.get_ident())
+        original_event(store, kind, object_id, data)
+
+    monkeypatch.setattr(asyncio.Event, "set", recording_set)
+    monkeypatch.setattr(EventStore, "_event", recording_event)
+
+    async def scenario():
+        loop_thread = threading.get_ident()
+        async with companion(tmp_path, monkeypatch) as system:
+            system.store.create("jobs", {"id": "job", "state": "queued", "prompt_id": "prompt-x",
+                                         "submission": {"prompt": {}, "workflow": {}, "digest": "d"}})
+            system.protocol.history["prompt-x"] = {
+                "prompt": [1, "prompt-x", {}, {}, []],
+                "status": {"completed": True, "status_str": "success", "messages": [["execution_success", {}]]},
+                "outputs": {"3": {"images": [{"filename": "result.png", "subfolder": "studio", "type": "output"}]}}}
+            writers.clear()
+            setters.clear()
+            waiter = asyncio.create_task(system.store.wait_state("jobs", "job", "succeeded"))
+            await system.jobs.reconcile()
+            assert (await waiter)["state"] == "succeeded"
+        return loop_thread
+
+    loop_thread = asyncio.run(scenario())
+    assert any(ident != loop_thread for ident in writers), "settlement wrote on the loop thread; the premise is gone"
+    assert setters and set(setters) == {loop_thread}
 
 
 def test_complete_http_generation_provenance_and_media_flow(tmp_path, monkeypatch):

@@ -9,7 +9,6 @@ absence: it shrinks for large workflows and drops entries past its count.
 """
 from __future__ import annotations
 
-import asyncio
 import math
 import time
 from typing import TYPE_CHECKING, Any
@@ -17,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from .contracts import TERMINAL_STATES, StudioError, bounded_key, digest, identifier, timestamp
 from .job_artifacts import import_artifacts
 from .store import Store
+from .threads import blocking
 
 if TYPE_CHECKING:
     from .jobs import Jobs
@@ -155,8 +155,8 @@ async def reconcile_cycle(owner: Jobs) -> None:
             owner.driver["history"] = {"state": "unavailable", "code": exc.code, "limit": getattr(client, "history_limit", None)}
         outcomes = await _lookups(owner, known, history, active)
         in_flight = frozenset(getattr(owner, "cancel_dispatches", ()))
-        await asyncio.to_thread(_settle, owner, history, known, quarantined,
-                                outcomes if queue is not None else {}, snapshot_at, in_flight)
+        await blocking(_settle, owner, history, known, quarantined,
+                       outcomes if queue is not None else {}, snapshot_at, in_flight)
         if quarantined:
             owner.driver["quarantine"] = {"count": len(quarantined), "rows": quarantined[:QUARANTINE_ROWS],
                                           "reason": "Driver rows that could not be read were skipped; other jobs reconciled."}
