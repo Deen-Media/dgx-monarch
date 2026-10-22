@@ -65,9 +65,9 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "Flux2"): ("flux2", "HW"),
     ("image", "FLUX.3 Klein"): ("flux3", "HW"),
     ("image", "FLUX.3 Klein Base"): ("flux3", "HW"),
-    ("image", "MOSS-Image SFT"): ("moss_image", "impl"),
-    ("image", "MOSS-Image Base"): ("moss_image", "impl"),
-    ("image", "Kromoss"): ("moss_image", "impl"),
+    ("image", "MOSS-Image SFT"): ("moss_image", "HW"),
+    ("image", "MOSS-Image Base"): ("moss_image", "HW"),
+    ("image", "Kromoss"): ("moss_image", "HW"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),
@@ -130,6 +130,23 @@ _REQUIRED_DETAIL_EVIDENCE: dict[
         "VALIDATION.md",
         '<a id="evidence-flux-3-klein-base"></a>',
         ("NRMS 0.0094", "1.88x to 1.98x", "0.023 to 0.031", "no cfg2 row"),
+    ),
+    "MOSS-Image SFT": (
+        "VALIDATION.md",
+        '<a id="evidence-moss-image-sft"></a>',
+        ("bit-identical to the pin-stripped one-GPU render", "Refused class P (#126)",
+         "0.0229", "PSNR 31.3 dB", "0 of 378 keys", "0.9977",
+         "f96738d8116d78b7316b57c663d8c98591ddafab7488f48e3099b7655e34ab6f"),
+    ),
+    "MOSS-Image Base": (
+        "VALIDATION.md",
+        '<a id="evidence-moss-image-base"></a>',
+        ("FSDP rests on the sweep only", "1.48x and 1.52x", "0.0401", "0.449"),
+    ),
+    "Kromoss": (
+        "VALIDATION.md",
+        '<a id="evidence-kromoss"></a>',
+        ("0.0233", "168 patched keys", "0.0635", "0.9977", "#129"),
     ),
     "LTX 2.5 (t2v/AV packed)": (
         "VALIDATION.md",
@@ -761,6 +778,22 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
         "granted", "2026-10-15 one step bit-identical to one GPU and stock at 1024 and 1536 "
         "(BF16, NVFP4) and odd 1040 and 1552 (BF16); 2026-10-15 and 2026-10-16 full "
         "schedule bit-identical to one GPU at 1024 to 1536 on both prompt kinds"),
+    ("MOSS-Image SFT", "uly"): (
+        "granted", "2026-10-21 one step and full schedule bit-identical to one GPU at 1024, "
+        "1152, 1216, 1280, 1408, 1536 and 2048 square; one step bit-identical to stock "
+        "at 512, 640, 704, 768, 1024, 1040, 1456, 1536 and 2048 square; full schedule "
+        "to stock at 1024, 1040 and 1536; INT8 ConvRot bit-identical to a pin-stripped "
+        "one-GPU render at 1024 and 1536 after the INT8 dispatch fix"),
+    ("MOSS-Image Base", "uly"): (
+        "granted", "2026-10-21 one step and full schedule bit-identical to one GPU at 1024 "
+        "and 1536 square; one step to stock at 1024, 1040 and 1536; full schedule to "
+        "stock at 1024; INT8 ConvRot bit-identical to a pin-stripped one-GPU render at "
+        "1024 and 1536 after the INT8 dispatch fix"),
+    ("Kromoss", "uly"): (
+        "granted", "2026-10-21 one step and full schedule bit-identical to one GPU at 1024 "
+        "and 1536 square; one step to stock at 1024, 1040 and 1536; full schedule to "
+        "stock at 1024; INT8 ConvRot bit-identical to a pin-stripped one-GPU render at "
+        "1024 and 1536 after the INT8 dispatch fix"),
     ("LongCat-Image", "cfg2"): ("granted", "2026-08-11 DP2 NRMS 0.009"),
     ("LongCat-Image", "uly"): ("granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 DP2 NRMS 0.097"),
     ("HunyuanImage 2.1 (+refiner)", "uly"): (
@@ -815,9 +848,11 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
         "granted", "2026-08-07 carried-audio scope, NRMS 0.000 per stream"),
 }
 
-# FSDP cells whose artifacts FSDP admits but no FSDP comparison qualifies; each
-# must read constrained (_CONSTRAINED_MARK). The name dates from before
-# 2026-08-26, when the bf16-only FSDP precision grant refused these artifacts.
+# Cells that must read constrained (_CONSTRAINED_MARK): FSDP cells whose
+# artifacts FSDP admits but no FSDP comparison qualifies, and cfg2 and ring
+# cells that a typed refusal guards on the row's shipped graphs. The name dates
+# from before 2026-08-26, when the bf16-only FSDP precision grant refused the
+# FSDP artifacts.
 # The rule is one-directional: the constrained mark also covers cells with no
 # entry here, such as Ideogram4 ring measuring over the fidelity limit or Flux 1
 # cfg2 being unreachable on a distilled checkpoint.
@@ -831,6 +866,25 @@ _TYPED_REFUSAL: dict[tuple[str, str], str] = {
     ("HunyuanVideo 1.5 (+SR)", "fsdp"): (
         "the FP8 SR and fp16 Video artifacts are admitted but no FSDP render of "
         "them has run"),
+    ("MOSS-Image SFT", "cfg2"): (
+        "the shipped graph carries Skip Layer Guidance, and cfg2 refuses class P "
+        "while the skip is on (TROUBLESHOOTING #126)"),
+    ("MOSS-Image Base", "cfg2"): (
+        "the shipped graph carries Skip Layer Guidance, and cfg2 refuses class P "
+        "while the skip is on (TROUBLESHOOTING #126)"),
+    ("Kromoss", "cfg2"): (
+        "the 50-step graph carries Skip Layer Guidance, and cfg2 refuses class P "
+        "while the skip is on (TROUBLESHOOTING #126); the 8-step graph at CFG 1 "
+        "leaves cfg2 nothing to split"),
+    ("MOSS-Image SFT", "ring"): (
+        "a padded ring refuses class K unless waived, and ring2 is measured, not "
+        "granted"),
+    ("MOSS-Image Base", "ring"): (
+        "a padded ring refuses class K unless waived, and ring2 is measured, not "
+        "granted"),
+    ("Kromoss", "ring"): (
+        "a padded ring refuses class K unless waived, and ring2 is measured, not "
+        "granted"),
 }
 
 
@@ -956,8 +1010,9 @@ def test_every_starred_hardware_cell_shows_the_state_of_its_grant() -> None:
 def test_documented_typed_refusals_read_as_constrained_cells() -> None:
     """Each _TYPED_REFUSAL cell reads constrained, not supported.
 
-    FSDP admits the row's artifacts, but no FSDP comparison qualifies them
-    (the Known limitations in docs/MODELS.md).
+    Either FSDP admits the row's artifacts but no FSDP comparison qualifies
+    them, or a typed refusal guards the mode on the row's shipped graphs (the
+    Known limitations in docs/MODELS.md).
     """
     rows = _support_matrix_rows()
     failures = [

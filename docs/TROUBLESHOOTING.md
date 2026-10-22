@@ -6343,8 +6343,10 @@ skip node on the chain. For the shift refusal, wire Model
 Sampling SD3 (DGX Monarch) before the skip node, the order every Worker
 applies them in. The refusal needs no Recycle: the driver raises it before
 dispatch, and a Worker raises it on every rank alike before the first step, so
-the next render runs on the same fleet, by design; no hardware test has
-observed it yet. Fleet KSampler does not run the driver check; there the
+the next render runs on the same fleet, by design. On 2026-10-21 a hardware
+test observed the driver's refusal on MOSS-Image, and the next render ran on
+the same fleet with no Recycle; no hardware test has observed the Workers'
+refusal yet. Fleet KSampler does not run the driver check; there the
 Workers refuse instead.
 
 ## 127. A LoRA that changes a weight's shape refuses before any bake
@@ -6385,8 +6387,9 @@ rows and no test has shown that exact.
 **Fix:** remove the shape-changing LoRA from Load LoRA (DGX Monarch), or run
 the control graph in plain ComfyUI on one GPU. An ordinary LoRA keeps every
 shape and is not affected. Every rank refuses alike before any bake, so the
-next render runs on the same fleet, by design; no hardware test has observed
-it yet.
+next render runs on the same fleet. On 2026-10-21 a hardware test loaded the
+MOSS-Image color and depth control LoRA on uly2: both ranks refused class P
+at load, and the next render ran on the same fleet with no Recycle.
 
 ## 128. Model Sampling SD3 (DGX Monarch) refuses on a family whose ComfyUI sampling multiplier is 1.0
 
@@ -6438,29 +6441,41 @@ docs/TROUBLESHOOTING.md #129."
 **Cause:** on 2026-10-21 the Kromoss INT8 ConvRot file with the DMD2 LoRA at
 strength 1.0, rendered on uly2 at 1024 square, read one-step NRMS 0.985
 against stock ComfyUI's render of the same file and LoRA on one GPU, far past
-the 0.10 floor. The result was a wrong prediction, not noise, and two runs,
-one through ComfyUI's classic bake and one through a cold load and a lazy
-swap, were bit-identical, so it does not depend on swap history. A CPU
-reproduction of the store's bake on the real file and LoRA finds every step
-correct: the capture, the restore, the FP16 dequantize, the LoRA math on the
-q, k and v slices of the fused `qkv` weight, and the requantize. The fault
-therefore sits below dgx-monarch's Python code, on the GPU, and its cause is
-under investigation. Only uly2 was measured. The Workers bake a LoRA into an
-INT8 weight the same way on single, dp2 and mode=local, so the refusal
-covers every topology, while stock ComfyUI's dynamic VRAM path applies the
-LoRA another way, in BF16 on each weight cast. The driver reads each
-checkpoint header before dispatch, for the model and for the unconditional
-model of a two-checkpoint guider, and Fleet KSampler runs the same check
-before its first dispatch. The model store refuses the same pair on every
-Worker before any LoRA build or bake, which covers a header the driver
-cannot read. The same release routes the sharded forward's INT8 linears back
-through comfy-kitchen's INT8 GEMM; no hardware run has shown whether that
-alone repairs this render, so the refusal stays until one does. Other
-families' INT8 ConvRot files share the bake. On 2026-10-21, with
-comfy-kitchen 0.2.39, none of them had a measured INT8 render with a LoRA,
-and they are not refused.
+the 0.10 floor, and a rerun was bit-identical. A probe run after the message
+above was written found the fault upstream, in stock ComfyUI's classic INT8
+ConvRot bake. With its default DynamicVRAM loader, stock applies a LoRA at
+cast time. With DynamicVRAM off (`--disable-dynamic-vram`), stock ComfyUI
+alone on one GPU loads the INT8 file in full, bakes the LoRA into the INT8
+weights, and renders the same graph 0.998 NRMS from its own default at one
+step and 0.989 at 8 steps; without the LoRA the two loaders agree exactly.
+dgx-monarch's store bakes the LoRA the way that classic loader does, and the
+cluster render sits with stock's classic render: both move the latent about
+2.8 NRMS from the render without the LoRA, where every other LoRA path moves
+it about 1.5. Every patched key bakes to within rounding of its exact sum, in
+the store and in stock's own bake, so the mechanism inside the classic INT8
+render is still open; the LoRA's delta is 13 to 29 times smaller than the
+noise each INT8 requantization adds. dgx-monarch bakes a LoRA into an INT8
+weight the same way on every topology, `mode=local` included, so the refusal
+covers every topology. The driver reads each checkpoint header before
+dispatch, for the model and for the unconditional model of a two-checkpoint
+guider, and Fleet KSampler runs the same check before its first dispatch. The
+model store refuses the same pair on every Worker before any LoRA build or
+bake, which covers a header the driver cannot read. On some topologies an
+older guard answers first with its own refusal: dp2 at batch 1, cfg2 with the
+skip on (#126), and `uly2+fsdp` and `cfg2+fsdp`, through the FSDP LoRA
+admission rule, refuse class P, and `ring2+fsdp` refuses class K. The INT8
+dispatch fix of the same release made INT8 uly2 without a LoRA bit-identical
+to a one-GPU render of the pin-stripped copy and does not change the bake.
+Other families' INT8 ConvRot files share the bake. On 2026-10-21, with
+comfy-kitchen 0.2.39, none of them had a measured INT8 render with a LoRA, and
+they are not refused.
 
-**Fix:** render the graph in stock ComfyUI on one GPU, or remove the LoRA
-from the DGX Monarch LoRA loader, or use the BF16 file with the LoRA. Every
-rank refuses alike before any bake, so the next render runs on the same
-fleet, by design; no hardware test has observed it yet.
+**Fix:** render the graph in stock ComfyUI on one GPU with its default
+DynamicVRAM loader; with DynamicVRAM off, stock fails the same way. Or remove
+the LoRA from the DGX Monarch LoRA loader, or use the BF16 file with the
+LoRA, which is not refused. Every rank refuses alike before any bake, so the
+next render runs on the same fleet, by design. On 2026-10-21 a hardware test
+observed the driver's refusal before dispatch, and the next renders ran on
+the same fleet with no Recycle. The Workers' own check in the model store
+has not been observed on hardware yet: every shipped path runs the driver's
+check first.

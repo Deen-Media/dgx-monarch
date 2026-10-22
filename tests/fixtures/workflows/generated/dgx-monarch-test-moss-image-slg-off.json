@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-moss-image-t2i, with only the changes needed for this test. An empty single_layers turns Skip Layer Guidance off, as the stock node does, so the negative pass runs every block. The vendor says this looks more realistic and can collapse some details. With the skip off, cfg2 can split the two conditionings."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-moss-image-t2i, with only the changes needed for this test. An empty single_layers turns Skip Layer Guidance off, as the stock node does, so the negative pass runs every block. The vendor says this looks more realistic and can collapse some details. With the skip off, cfg2 can split the two conditionings. It keeps ComfyUI's simple scheduler, on which the 2026-10-21 sweep ran it, where the shipped graph runs normal."
    ],
    "title": "DGX Monarch | MOSS-Image without skip layer guidance"
   },

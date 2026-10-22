@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-moss-image-t2i, with only the changes needed for this test. The vendor's INT8 ConvRot DiT and INT8 ConvRot text encoder. The DiT pins comfy-kitchen's INT8 attention on all 42 blocks, so single and dp2 ask for the Sol-Attn waiver, cfg2 refuses first because the skip is on, and uly2 drops the pins. ComfyUI runs these files through comfy-kitchen's fused SiTU input activation, which needs comfy-kitchen 0.2.39 or newer."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-moss-image-t2i, with only the changes needed for this test. The vendor's INT8 ConvRot DiT and INT8 ConvRot text encoder. The DiT pins comfy-kitchen's INT8 attention on all 42 blocks, so single and dp2 ask for the Sol-Attn waiver, cfg2 refuses first because the skip is on, and uly2 drops the pins. ComfyUI runs these files through comfy-kitchen's fused SiTU input activation, which needs comfy-kitchen 0.2.39 or newer. It keeps ComfyUI's simple scheduler, on which the 2026-10-21 sweep ran it, where the shipped graph runs normal."
    ],
    "title": "DGX Monarch | MOSS-Image INT8 ConvRot"
   },

@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-moss-image-t2i, with only the changes needed for this test. 1040x1040 is a 65 by 65 grid, 4225 image rows, an odd image block. The stream is the image rows followed by the prompt's rows, so whether uly2 pads depends on the total: an even prompt length makes it odd and pads one row at the tail, an odd one does not."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-moss-image-t2i, with only the changes needed for this test. 1040x1040 is a 65 by 65 grid, 4225 image rows, an odd image block. The stream is the image rows followed by the prompt's rows, so whether uly2 pads depends on the total: an even prompt length makes it odd and pads one row at the tail, an odd one does not. It keeps ComfyUI's simple scheduler, on which the 2026-10-21 sweep ran it, where the shipped graph runs normal."
    ],
    "title": "DGX Monarch | MOSS-Image on an odd grid"
   },

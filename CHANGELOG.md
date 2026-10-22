@@ -17,8 +17,7 @@
 - Verified update, release staging and setup refuse a target whose packaged
   Studio files are missing, extra or differ from their recorded SHA-256 table.
 - Support MOSS-Image, the OpenMOSS team's 5B single-stream text-to-image
-  model, with its SFT and Base checkpoints and lodestones' Kromoss fine-tune,
-  at status `impl` with no hardware test yet
+  model, with its SFT and Base checkpoints and lodestones' Kromoss fine-tune
   ([MODELS](docs/MODELS.md#model-moss-image-sft)). It needs ComfyUI 0.42.0 or
   newer, the first release to carry ComfyUI's support commit e087d8f6c of
   2026-10-16 ([TROUBLESHOOTING #125](docs/TROUBLESHOOTING.md#125-a-moss-image-checkpoint-fails-to-load-on-comfyui-older-than-0420)). The `moss_image` adapter
@@ -83,8 +82,12 @@
   or without ConvRot, ConvRot W4A4, W4A8 and W6A8) always get a 3-D
   activation as 2-D rows. A BF16 linear after the norm now takes stock's
   matrix product too, where it ran as a batched product of batch 1; NVFP4
-  already got 2-D rows from ComfyUI. No hardware run has measured the change
-  yet.
+  already got 2-D rows from ComfyUI. On 2026-10-21, after the change,
+  MOSS-Image INT8 uly2 was bit-identical to the pin-stripped one-GPU render
+  at 1024 and 1536 square and ran 0.78 to 0.79 s a step at 1024, against
+  1.01 to 1.03 s before; FLUX.3 Klein's INT8 uly2 renders were bit-identical
+  to the pin-stripped one-GPU render too, and every BF16 latent rerun was
+  unchanged.
 - Copy each component when the un-bake restore rebuilds a quantized weight.
   On a module that lives on the CPU, the rebuilt weight and scale shared the
   pooled read buffer that the reader refills for a later key, so an un-bake
@@ -93,13 +96,47 @@
 - Refuse a LoRA on a MOSS-Image INT8 file (SFT, Base or Kromoss) on every
   topology, class P, before any weight moves. On 2026-10-21 the Kromoss INT8
   ConvRot file with its DMD2 LoRA on uly2 read one-step NRMS 0.985 against
-  stock ComfyUI, and the cause is under investigation. The driver checks
+  stock ComfyUI. A probe of stock ComfyUI alone found the cause upstream:
+  with DynamicVRAM off, stock's classic loader bakes the LoRA into the INT8
+  weights and renders the pair about 1.0 NRMS from its own default, and
+  dgx-monarch's bake is that classic bake. The driver checks
   before dispatch and Fleet KSampler before its first one, every Worker's
   model store before any LoRA build or bake, and the sweep matrix predicts
-  those cells `refuse:P`. Stock ComfyUI on one GPU runs the pair
+  those cells `refuse:P`. Stock ComfyUI on one GPU runs the pair with its
+  default DynamicVRAM loader
   ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
   The MOSS-Image quantization refusal now says why INT8 ConvRot is admitted
   under sequence parallelism.
+- Promote MOSS-Image SFT, MOSS-Image Base and Kromoss to **HW** on the
+  hardware ladder of 2026-10-21, run at dgx-monarch `ff8dab8300aa` with
+  ComfyUI `d52a7a5ef` and the head capped at 2100 MHz, and re-measured on
+  2026-10-21 and 2026-10-22 at `9caa6aae660b`
+  ([VALIDATION](docs/VALIDATION.md#evidence-moss-image-sft)). BF16 uly2 was
+  bit-identical to one GPU at one step and over the full 50 steps from 1024
+  to 2048 square on SFT and at 1024 and 1536 square on Base and Kromoss, and
+  on SFT to stock ComfyUI at one step from 512 to 2048 square; auto keeps it
+  ([BENCHMARKS](docs/BENCHMARKS.md#moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped)).
+  INT8 ConvRot uly2 read one-step NRMS 0.027 to 0.036 against a pin-stripped
+  one-GPU render at the first release and was bit-identical to it at the
+  second. FSDP renders matched resident ones, so FSDP becomes supported. cfg2
+  keeps refusing on the shipped graphs, which carry the skip; with the skip
+  off it is exact on a prompt pair of different lengths and measured on a
+  pair of equal length, so MOSS-Image gets no cfg2 row. ring2 is measured,
+  not granted, and ring2 with a LoRA is not supported: every first-use Gate
+  ceremony of that pair that reached a verdict failed. The Kromoss DMD LoRAs
+  bake to stock ComfyUI's merge on every key, and their renders differ from
+  stock's because stock applies a LoRA at cast time. The color and depth
+  control LoRA refused on both ranks, and the next render ran with no
+  Recycle.
+- The four CFG 3 MOSS-Image templates, SFT, Base, the layout graph and
+  Kromoss at 50 steps, use ComfyUI's `normal` scheduler in place of `simple`.
+  `normal` lands within 0.0005 of the vendor pipeline's sigmas at 50 steps,
+  where `simple` sits 0.069 off. On 2026-10-21 the SFT graph on `normal`
+  rendered on uly2 bit-identical to one GPU and to stock; against `simple` at
+  the same seed it read latent NRMS 0.140 and PSNR 31.3 dB, a different image
+  of the same prompt. The 8-step Kromoss graph keeps `simple`, its card's
+  recipe, and the MOSS-Image testing graphs keep `simple`, the schedule the
+  sweep measured.
 
 ## [1.2.0] - 2026-10-16
 

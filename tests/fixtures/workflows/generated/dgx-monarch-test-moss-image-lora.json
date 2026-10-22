@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-moss-image-t2i, with only the changes needed for this test. Load LoRA (DGX Monarch) connects the model loader to the sampler. Replace test_lora_placeholder.safetensors with your LoRA file; the placeholder strength is 0.8. The loader sits between the model loader and Skip Layer Guidance (DGX Monarch)."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-moss-image-t2i, with only the changes needed for this test. Load LoRA (DGX Monarch) connects the model loader to the sampler. Replace test_lora_placeholder.safetensors with your LoRA file; the placeholder strength is 0.8. The loader sits between the model loader and Skip Layer Guidance (DGX Monarch). It keeps ComfyUI's simple scheduler, on which the 2026-10-21 sweep ran it, where the shipped graph runs normal."
    ],
    "title": "DGX Monarch | MOSS-Image with a LoRA slot"
   },

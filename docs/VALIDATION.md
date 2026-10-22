@@ -820,6 +820,19 @@ header read with the release's gate code on 2026-10-16. They hold 557 of 953
 ComfyUI-layout NVFP4 files, so they are distinct files, not another layout of
 the same bytes.
 
+**INT8 on uly2 after the INT8 dispatch fix.** On 2026-10-21, at dgx-monarch
+`9caa6aae660b` with ComfyUI `d52a7a5ef` and the first Spark capped at
+2100 MHz, the [MOSS-Image](#evidence-moss-image-sft) re-measurement rendered
+both INT8 ConvRot checkpoints on uly2 again. Against the pin-stripped
+one-GPU render in the same cell, dp2 row 0, uly2 was bit-identical at 1024
+and 1536 square, one step and full schedule (16 steps at CFG 1; 25 steps at
+CFG 3.5), 8 of 8, and the pinned files dropped their 33 pins and equaled the
+pin-stripped renders, 16 of 16. No stock FLUX.3 render exists on that
+ComfyUI, so the reference is the one-GPU render; on MOSS-Image that render
+equaled stock at every INT8 size measured. No FLUX.3 INT8 uly2 render ran
+between the fused-norm parity change and the fix, so that window is
+unmeasured.
+
 **The prompt upsampler.** The vendor's upsampler ran on the driver ahead of
 CLIP Text Encode for a step-distilled uly2 render and a base cfg2 render; both
 were finite. During the uly2 leg the first Spark's lowest sampled available
@@ -991,14 +1004,241 @@ cfg2 refused class P.
 
 ### MOSS-Image SFT
 
-Status impl: no hardware leg has run on the SFT checkpoint. Support follows
-ComfyUI e087d8f6c ("feat: Add MOSS-image support", 2026-10-16), first released
-in ComfyUI 0.42.0 together with the fused feed-forward activation of
-a639f187a. On 2026-10-20 the RoPE scaling options (b9b290e43, 2026-10-19) and
-the color and depth control (e3bee7ffc, 2026-10-20) were on ComfyUI master
-only, in no release. ComfyUI 0.42.0 requires comfy-kitchen 0.2.39. On
-2026-10-20 the forward, LoRA and guidance tests of
-`tests/test_moss_image_comfy_exactness.py`, the tests in
+**2026-10-21, dgx-monarch `ff8dab8300aa`, ComfyUI `d52a7a5ef` on both
+Sparks; re-measured on 2026-10-21 and 2026-10-22 at `9caa6aae660b`.** The
+hardware ladder ran the release that added the family, with comfy-kitchen
+0.2.39, torch 2.12.0+cu132, NCCL 2.32.3 and torchmonarch 0.7.0, on two NVIDIA
+GB10 GPUs with TORCH_FLASH. The first Spark was capped at 2100 MHz, with a
+highest sampled SM clock of 2093 MHz; the second was uncapped. ComfyUI
+`d52a7a5ef` is a master commit that carries the control LoRA support of
+e3bee7ffc. The 11 manifest files in the table below matched their SHA-256 on
+both Sparks. Release `9caa6aae660b` adds the INT8 dispatch fix and the #129
+refusal; the re-measurement ran on it with the same ComfyUI and the same cap:
+the INT8 set, BF16 spot checks, the scheduler record, the #129 legs, a stock
+LoRA probe and the two INT8 Campaign K cells. This record covers all three
+checkpoints; [MOSS-Image Base](#evidence-moss-image-base) and
+[Kromoss](#evidence-kromoss) add their own readings. The Studio lifecycle
+pass ran on the first release as well
+([Studio acceptance](STUDIO_ACCEPTANCE.md)).
+
+The ladder compared each candidate with stock ComfyUI on one GPU, which ran
+on the first Spark in fresh processes of one or more graphs each, and with
+batch row 0 of a same-build dp2 render of batch 2, which carries one-GPU math.
+Every dp2 reference scored against stock equaled its stock render, so the two
+references agree. Legs used the shipped recipe unless a row says otherwise:
+50 Euler steps on ComfyUI's `simple` scheduler, CFG 3, layer 22 skipped on
+the negative pass over the whole schedule, the vendor's tag negative, the
+BF16 Qwen3.5-9B encoder and the FLUX.2 small decoder. A salt on the prompt
+set the parity of the joint stream, the image rows plus the text rows: at
+1024 square the template's prompt gives 4,233 rows (odd) and the salted one
+4,234 (even). One-step comparisons use the 0.10 NRMS floor. Multi-step
+comparisons across topologies are recorded, not gated.
+
+| Phase | What ran | Verdict |
+|---|---|---|
+| 0, preparation | The release slot on both Sparks, the SHA-256 of 14 files on both, pin-stripped copies of the three INT8 files, the CPU suite and the canaries | Every check matched; the import canary, which needs a visible GPU, has no GPU-visible run at this release |
+| 1, regression null and first numbers | The five regression cells from the FLUX.3 ladder (Anima, Kandinsky 5, Wan 2.1, Kroma `uly2+fsdp` and FLUX.3 Klein uly2), run on the previous dev release and again on this one, and 7 candidate cells: 12 cells at this release | 10 of 10 null latents equal across the two releases; the uly2, skip and cfg2 readings below |
+| 2, stock references | 21 stock jobs, 71 graphs, first Spark only | All finite and non-black; two stock processes gave identical output |
+| 3, run_matrix candidates | 20 cells | Every gated comparison passed or refused as expected; INT8 uly2 read CHECK, below |
+| 4, API legs | 68 legs in three driver sessions, then a per-key bake probe | 66 as expected; two failed twice, below; the probe found 0 of 378 keys different from stock's |
+| 5, auto-table measurement | 15 Campaign K cells | 26 of 26 BF16 rows identical, one step and full schedule; INT8 recorded only |
+| 6, scoped sweep | The 14 MOSS-Image templates: 28 local cells and 224 cluster cells | 252 of 252 PASS, no finding |
+| 7, re-measurement at `9caa6aae660b` | 22 cells (INT8 identity, FLUX.3 Klein INT8, BF16 spot checks, the scheduler record and two INT8 Campaign K cells), 6 API legs, the 36 sweep cells of two of the four LoRA templates and a stock probe on one GPU | INT8 uly2 bit-identical; every BF16 latent unchanged; #129 refused every INT8 + LoRA cell that ran, as labelled |
+
+The final scoring at `ff8dab8300aa` read 507 comparisons: 393 PASS, 39
+harness controls equal to stock, 34 RECORDED, 35 CHECK, 3 MISSING, 1 second
+batch row identical to its reference and 2 FAIL. Of the CHECK rows, 25 are
+INT8 uly2 readings, the kind the dispatch fix closed, and 3 the BF16 LoRA
+renders against stock, below. Six are LoRA legs whose journals explain the
+reading: a first-use load before the hot swaps, or a residency change before
+a reload.
+The last is a batch-2 second row. The two FAILs are below. The three MISSING
+rows are pinned-kernel record rows at 1536 that no stock job rendered. The
+rescore at `9caa6aae660b` read 240 comparisons: 191 PASS, 28 harness
+controls, 18 RECORDED and 3 MISSING, with no CHECK and no FAIL. The 24 INT8
+uly2 comparisons it shares with the first release moved from CHECK to
+identical, and no shared comparison moved the other way.
+
+| Comparison | Checkpoints | Result |
+|---|---|---|
+| uly2, one step, 1024 square, both joint parities, and without the skip, BF16 | All three | Identical to one GPU and to stock, 18 of 18 |
+| uly2, one step, 512, 640, 704 and 768 square, both parities at 512 and 768, and a long prompt of 6,347 joint rows, BF16 | SFT | Identical to one GPU and to stock, 16 of 16 |
+| uly2, one step, odd 1040 square grid and 1456 square, BF16 | SFT and Kromoss at 1040 with both parities, Base at 1040, SFT at 1456 with both parities | Identical, 14 of 14 |
+| uly2, one step, 1536 square, and batch 2 at 1024, BF16 | All three; SFT batch 2 | Identical, 7 of 7, both batch rows against stock's batch-2 render |
+| uly2, one step and full schedule, 2048 square (16,521 joint rows), BF16 | SFT | Identical |
+| uly2, full schedule, Campaign K | SFT at 1024, 1152, 1216, 1280, 1408, 1536 and 2048 square, also with an empty negative at 1024 and 1536; Base and Kromoss at 1024 and 1536 | Identical to one GPU at every size, one step and full schedule, 26 of 26 |
+| uly2, full schedule, with the skip and without it | SFT | Both identical to one GPU and to stock; skip on against skip off read NRMS 0.558 (max abs 5.64), as two different recipes must |
+| auto, 1024 and 1536 with and without the skip, CFG 1, and 2048 | SFT | Resolved uly2 (row 99) in all six cases, identical |
+| The shipped graphs through the graph rewrite path, auto, full schedule | All three at 1024; SFT at 1040, at 1536 and with the skip off | Identical to stock |
+| The layout graph | SFT | uly2 and single identical to stock at one step (4,238 joint rows); auto identical to stock over the full schedule |
+| `mode=local` on one GPU | SFT one step and 50 steps; Kromoss one step | Identical to stock |
+| The INT8 Qwen3.5-9B encoder on the cluster | SFT | Identical to stock with that encoder; stock with the INT8 encoder against the BF16 one read NRMS 0.0276, recorded |
+| dp2 batch 2, full schedule | SFT | Row 0 identical to stock's batch-1 render; row 1 NRMS 0.129 against row 1 of stock's batch-2 render (CHECK, batch shape) |
+| Determinism | SFT | Identical across a Recycle, a second driver process and a respawn, and between two stock processes; renders after each `comfy_managed` policy change identical |
+| `uly2+fsdp`, prefetch depth 1 | SFT BF16: one step and full schedule with the skip, one step without it; Kromoss BF16: one step and full schedule; SFT INT8: one step | Identical to resident uly2 |
+| `uly2+fsdp`, prefetch depth 2, full schedule | SFT BF16 | Identical to resident uly2 |
+| `cfg2+fsdp` dispatch pair; `dp2+fsdp`, both rows | SFT BF16 | Identical to resident cfg2; identical to resident dp2 |
+| `uly2+fsdp` against its resident twin in the sweep, full schedule | All three | BF16 14 of 14 and INT8 10 of 10 identical |
+| cfg2 on the shipped graphs, which carry the skip | All three | Refused class P (#126) at the driver preflight, before dispatch; the next render ran with no Recycle |
+| cfg2 with the skip off, a prompt and negative of different lengths (the dispatch pair) | SFT | Identical to one GPU and to uly2, one step and full schedule |
+| cfg2 with the skip off, a pair of equal length (the fold pair) | SFT | 1024: one step NRMS 0.0229 (max abs 0.125), full schedule 0.0775 (2.31); 512: one step 0.0258 (0.141), full schedule 0.0307 (0.551). Measured, not identical |
+| cfg2 at CFG 1, the 8-step DMD graph | Kromoss | Refused class P before the render, inside the first-use Gate |
+| ring2, odd joint stream | SFT and Kromoss | Refused class K with the ring-pad card |
+| ring2, one step, even joint stream, against stock | SFT; Kromoss | NRMS 0.0264; 0.0233. Under the floor, not identical |
+| ring2 in the sweep, one step, BF16 | All three | Without a LoRA, NRMS 0.0025 to 0.031 against one GPU on ten padded graphs rendered under the ring-pad waiver. With a LoRA, 0.0034 to 0.0041 on the three unpadded 8-step graphs, rendered after their first-use Gate ceremonies failed, and 0.045 on the padded SFT LoRA graph |
+| uly2, one step, 1024 and 1536 square, INT8 ConvRot on the pin-stripped copy | All three | At `ff8dab8300aa` NRMS 0.0268 to 0.0363 against the pin-stripped one-GPU render and stock (CHECK); at `9caa6aae660b` identical to both, 12 of 12 |
+| uly2, full schedule, 1024 square, INT8 ConvRot on the pin-stripped copy | All three | At `9caa6aae660b` identical to one GPU, 3 of 3 |
+| uly2 on the pinned INT8 file, one step | All three | Dropped the 42 pins and equaled the pin-stripped uly2 render at both releases; at `9caa6aae660b` also the pin-stripped one-GPU and stock renders, 18 of 18 |
+| The pinned INT8 file on dp2, cfg2 and single | SFT | Each showed the Sol-Attn card (class K); under the grant, dp2 row 0 equaled stock's pinned render |
+| INT8 `cfg2+fsdp` and `dp2+fsdp` | SFT | Refused class K (`FsdpGateProofError`) |
+| BF16 with a DMD LoRA at 0.8 and 1.0, uly2 against single | Kromoss; Base and SFT in the sweep | Identical on uly2 and auto in every sweep template |
+| The same, against stock with the same LoRA | Kromoss | One step NRMS 0.0365 (DMD2 at 0.8), 0.0489 (DMD at 1.0) and 0.0635 (DMD2 at 1.0); 8 steps 0.36 to 0.44. Recorded: stock applies the LoRA at cast time |
+| INT8 ConvRot with the DMD2 LoRA, uly2, one step | Kromoss | At `ff8dab8300aa` NRMS 0.985 against stock, twice (FAIL); at `9caa6aae660b` refused class P (#129) |
+| The color and depth control LoRA | SFT | Both ranks refused class P (#127) at load; the next render ran with no Recycle |
+| `MOSSImageControl` with the color map and no control LoRA | SFT | No refusal: stock ComfyUI drops the map without the LoRA, and the Workers matched stock |
+| The scheduler record: `normal` against `simple`, full schedule, 1024 square | SFT | uly2 identical to one GPU and to stock on each scheduler; `normal` against `simple` at the same seed read latent NRMS 0.140 (max abs 4.33) and pixel NRMS 0.116 (max abs 235), PSNR 31.3 dB |
+
+**The INT8 dispatch fix.** At `ff8dab8300aa` INT8 ConvRot on uly2 read
+one-step NRMS 0.0268 to 0.0363 against the pin-stripped one-GPU render at
+1024 and 1536 square, under the floor and not identical. A CPU reproduction
+found the cause: since the fused-norm parity change, the rows
+`at_stock_rows` kept carried the filled call's leading stride at batch 1, and
+outside inference mode, where a Worker samples, ComfyUI sent the next linear
+on an INT8 weight, `qkv` and `ffn_up_gate`, down a route that dequantizes the
+weight and skips activation quantization. Release `9caa6aae660b` gives the
+kept rows a fresh tensor's strides. On 2026-10-21 at that release INT8 uly2
+was bit-identical to the pin-stripped one-GPU render and to pin-stripped
+stock at one step, at 1024 and 1536 square for all three checkpoints, and to
+one GPU over the full 50 steps at 1024. Every BF16 latent rerun at that
+release, 42 of them, equaled its latent from the first release, and so did
+every INT8 one-GPU latent. INT8 uly2 also got faster: 0.78 to 0.79 s a step
+at 1024 against 1.01 to 1.03 s before
+([Benchmarks](BENCHMARKS.md#moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped)).
+
+**Quantized files.** Each INT8 ConvRot file pins comfy-kitchen's INT8
+attention on its 42 blocks with a `layers.N.comfy_attention.config` tensor.
+Removing those 42 tensors left the other 715 byte-identical, 5,413,693,208
+bytes, and that copy is the exact reference for uly2, which drops the pins.
+These copies are test inputs, not manifest rows. Stock ComfyUI on the pinned
+file against stock on the copy, one step at 1024, read NRMS 0.0404 (SFT),
+0.0401 (Base) and 0.0357 (Kromoss): the pinned kernel's own difference.
+Against stock on the pinned file, uly2 read 0.0402, 0.0400 and 0.0356 at
+`9caa6aae660b`, that same difference. INT8 renders on a topology without
+sequence parallelism only under the Sol-Attn waiver, so INT8 walls and
+comparisons there are recorded, never granted.
+
+**LoRA.** ComfyUI maps the separate q, k and v keys of the Kromoss DMD LoRAs
+onto slices of the fused `qkv` weight, so each rank bakes 168 keys: `qkv`,
+`o`, `ffn_up_gate` and `ffn_down` on 42 blocks. A per-key probe on one GPU
+read the store's bake against stock ComfyUI's merge at four stages, the base
+weights, DMD2, the hot swap to DMD and the un-bake: 0 of 378 keys differed at
+any stage, and 0 of the 42 `qkv` keys. The FSDP bake and the hot swap each
+gave the resident bake's render, and the un-bake gave the render without the
+LoRA. A hot swap took 1.1 to 1.8 s on one GPU, 1.6 to 1.8 s resident on the
+pair and 3.2 to 3.4 s under FSDP, and the un-bake captured 168 keys as
+checkpoint references instead of 8.86 GiB of backup. Inside dgx-monarch, uly2
+with a LoRA equals one GPU. Against stock with the same LoRA it read one-step
+NRMS 0.0365 to 0.0635 at strengths 0.8 and 1.0, because under DynamicVRAM
+stock applies a LoRA at cast time and dgx-monarch bakes it, as on FLUX.3
+Klein. The slab rung with a LoRA was not exercised: the first-use Gate kept
+that leg on stock residency. ring2 with a LoRA is not supported. In the
+sweep's cluster session on 2026-10-21, every first-use Gate ceremony of ring2
+with a LoRA that reached a verdict failed, six in all, three of them on BF16
+files with a largest latent difference of 1.02 to 2.35, and each quarantined
+the low-RSS LoRA residency for its pair; the renders then ran without it. The
+SFT LoRA graph's ceremony met the ring-pad guard first and reached no verdict.
+The cause has not been investigated. Every other LoRA ceremony read 0.0, on
+uly2, auto, `uly2+fsdp` and single.
+
+**INT8 with a LoRA (#129).** At `ff8dab8300aa` the Kromoss INT8 file with the
+DMD2 LoRA at 1.0 on uly2 read one-step NRMS 0.985 against stock ComfyUI with
+the same file and LoRA, twice, and the sweep's SFT INT8 graph with DMD2 at 0.8
+read 0.277 on uly2 against dgx-monarch's own one-GPU render on the pinned
+kernel. Release `9caa6aae660b` refuses a LoRA on any `moss_image` INT8 file,
+class P. On 2026-10-21 the API leg refused at the driver preflight with the
+#129 text, before dispatch, so no lease existed to read; the next renders ran
+on the same driver and fleet with no Recycle. The sweep ran two of the four
+LoRA templates again, the SFT LoRA graph and the Kromoss DMD graph, and all 18
+of their INT8 + LoRA cells refused: 9 with #129 (single in `mode=local`, auto,
+uly2, ring2, and cfg2 on the CFG 1 graph), 7 with an older class P guard that
+answers first (dp2 at batch 1, cfg2 on the skip graph, `uly2+fsdp` and
+`cfg2+fsdp`) and 2 with the class K guard of `ring2+fsdp`. Their 10 BF16 +
+LoRA cells rendered with the readings of the first release. The other two LoRA
+templates, the shipped Kromoss Turbo graph and the Base DMD2 graph, carry the
+new label and have not run again. The Workers' own #129 check in the model
+store was not reached: every shipped path runs the driver's check first.
+
+A probe of stock ComfyUI alone on one GPU found the cause upstream. With its
+default DynamicVRAM loader, stock applies the LoRA at cast time. With
+DynamicVRAM off it loads the INT8 file in full and bakes the LoRA into the
+INT8 weights, and that render read NRMS 0.9977 at one step and 0.9894 at 8
+steps against the DynamicVRAM render of the same graph. Without the LoRA the
+two loaders gave identical output, and on the BF16 file with the LoRA they
+read 0.066 apart. The cluster render belongs with stock's classic bake: both
+moved the latent about 2.8 NRMS from the render without the LoRA (2.80 and
+2.81), where every other LoRA path moved it 1.52 to 1.59, and they sat 0.28
+apart. On the GPU every one of the 168 keys baked to within 0.0061 of the
+exact sum, in the store and in stock's own bake, the bake changed no other
+weight, no cast-time LoRA remained after it, and DMD2 at 2.0 sat 0.91 from
+the classic bake at 1.0, so it is not a doubled LoRA. The DMD2 delta is 13 to
+29 times smaller than the requantization noise each INT8 bake adds, and the
+mechanism inside the classic INT8 render is still open. dgx-monarch's store
+bakes classically on every topology, `mode=local` included, so #129 refuses
+on every topology.
+
+**cfg2.** cfg2 refuses on the shipped graphs: inside the skip's window ComfyUI
+runs the two passes as separate calls, and cfg2 can split only a call that
+carries both. The refusal came from the driver preflight before dispatch,
+from `benchmark/run_matrix.py` and from the API, and the next render needed
+no Recycle. With the skip off, a pair of different lengths splits one call
+per rank with stock's math, and a pair of equal length folds into one
+batch-2 call on one GPU, which cfg2's two batch-1 calls do not reproduce, as
+on FLUX.3 Klein Base and Chroma. At 1024 square the dispatch pair ran 47.0 s
+against 93.5 s on one GPU and 62.4 s on uly2. The fold pair misses Campaign
+K's bar, so MOSS-Image has no cfg2 row
+([DESIGN 5.4](DESIGN.md#54-topology--auto-mode)). At CFG 1 the 8-step graph
+leaves cfg2 nothing to split, and it refused class P.
+
+**Refusals on hardware.** Observed: #126 at the driver, #127 on both ranks
+while the model loaded (the lease read CONSUMED), the ring-pad card on the
+Workers (CONSUMED), the Sol-Attn card on dp2, cfg2 and single (CONSUMED)
+and #129 at the driver. Not observed: the Workers' own #126 check, which a
+Fleet KSampler with the skip on under cfg2 would reach, and the Workers' own
+#129 check. With the shipped nodes, no graph reaches a Worker-side refusal of
+a non-identity block replacement. `MOSSImageControl` with its color map and
+no control LoRA does not refuse: stock ComfyUI adds the control channels
+only when a control adapter has widened `video_embedder`, so without one it
+drops the map, the Workers match stock, and with one #127 refuses first.
+
+**The scheduler record.** The four CFG 3 public graphs run ComfyUI's
+`normal` scheduler. On 2026-10-21 at `9caa6aae660b` the shipped SFT graph at
+1024 square, 50 steps, CFG 3, with the skip and seed 42, rendered on both
+schedulers in one process. On each, uly2 was identical to one GPU and to
+stock. `normal` against `simple` at the same seed read latent NRMS 0.140
+(max abs 4.33) and pixel NRMS 0.116 (max abs 235, mean abs 2.70), PSNR
+31.3 dB: a different render of the same prompt. ComfyUI's own
+`calculate_sigmas` on MOSS-Image's sampling, shift 5 and multiplier 1, puts
+`normal` within 0.0005 of the vendor pipeline's schedule at 4, 8, 25 and 50
+steps, while `simple` sits 0.0686 off at 50 steps, 0.148 at 25, 0.393 at 8
+and 0.601 at 4. The Base and Kromoss graphs were not rendered on `normal`.
+Every other reading in this record ran on `simple`. The 8-step Kromoss graph
+keeps `simple`, the Kromoss card's ComfyUI recipe.
+
+**Incidents that changed the evidence.** No power cut, wedge, abort or
+fault-driven Recycle occurred at either release. Two API legs failed twice,
+and their reruns were bit-identical to the first attempts. The Kromoss INT8 +
+LoRA render (0.985) led to #129 and the stock probe above. The control node
+leg expected a refusal that stock's behavior makes unreachable, as above. The
+INT8 uly2 CHECK rows led to the dispatch fix and the re-measurement. The
+first release had no scheduler record; the re-measurement added it.
+
+**CPU and file checks.** Support follows ComfyUI e087d8f6c ("feat: Add
+MOSS-image support", 2026-10-16), first released in ComfyUI 0.42.0 together
+with the fused feed-forward activation of a639f187a. On 2026-10-20 the RoPE
+scaling options (b9b290e43, 2026-10-19) and the color and depth control
+(e3bee7ffc, 2026-10-20) were on ComfyUI master only, in no release. ComfyUI
+0.42.0 requires comfy-kitchen 0.2.39. On 2026-10-20 the forward, LoRA and
+guidance tests of `tests/test_moss_image_comfy_exactness.py`, the tests in
 `tests/test_skip_layer_guidance_comfy.py`, `tests/test_lora_shape_guard.py`
 and `tests/test_moss_image_skip_end_to_end.py`, and the custom-node
 entrypoint canary passed on a `git archive` export of ComfyUI v0.42.0
@@ -1050,8 +1290,8 @@ and the BF16 GEMMs of the four block shapes (q, k and v 3072 to 9216, the
 output 3072 to 3072, the gated feed-forward input 3072 to 16384 and its
 output 8192 to 3072) returned stock's bits on every window with no fill, and
 so did the INT8 ConvRot linears, the SiTU activation of the feed-forward
-output included. These are kernel results, not a render: uly2 is exact by
-construction on these facts, pending the hardware legs.
+output included. These kernel results made uly2 exact by construction; the
+hardware legs above confirm it on renders.
 
 Canary seams 42 to 46 (`moss_image conds`, `moss_image block surface`,
 `skip layer guidance simple`, `lora shape-changing set` and `dynamic prompt
@@ -1077,30 +1317,91 @@ and the VAE is the same file as `diffusion_pytorch_model.safetensors` in
 `black-forest-labs/FLUX.2-small-decoder` at `a3efc24f`, by size and SHA-256.
 No decode has compared the VAE files.
 
+Tested files and SHA-256 identities, matched on both Sparks:
+
+| Artifact | SHA-256 |
+|---|---|
+| `moss_image_sft_bf16.safetensors` | `f96738d8116d78b7316b57c663d8c98591ddafab7488f48e3099b7655e34ab6f` |
+| `moss_image_base_bf16.safetensors` | `cacd158728a1fb9e57c408a922b54752ec71fceb566b3821269927964e62b41f` |
+| `kromoss_bf16.safetensors` | `54c863b9392f7b6a02f557d32a416b22765b4ffbee322ade9945e379f09adaba` |
+| `moss_image_sft_int8_convrot.safetensors` | `b4d1475bc7eeffd7b809e82ea13a1fba1fb85c4e18365af3813722faa5c0fe4f` |
+| `moss_image_base_int8_convrot.safetensors` | `f601c1e1161915fb3fea003da0c1782e374dd960fbb3978bc0e4e3fa1f2d8e6f` |
+| `kromoss_int8_convrot.safetensors` | `cacff0dd25cd2cf531e1f5ddae7872c3d57a54dbf66f1a1279f2f118514e7905` |
+| `qwen3.5_9b_bf16.safetensors` | `7e6e9f08d598f829cb940e60ac0c698e1f1c27a47daffd7e598cd78c78b4cc53` |
+| `qwen3.5_9b_int8_convrot.safetensors` | `32e3787472f708fa5f83624acbf5ef23f7fc89c439e05065ea57cfe5a97f025a` |
+| `flux2-vae_small.safetensors` | `d8d52ba036475f5fb07c8b435e176d3d97ebfa82f0d1a1c317f9cc1e25bd013b` |
+| `kromoss_8-steps-dmd2-lora.safetensors` | `7683fe1fb51f73f5d690f24dd6b7f46f31ab9a9873729a854ac5c9a420ffe6f2` |
+| `kromoss_8-steps-dmd-lora.safetensors` | `f0e6cd07f222dfaea798afe3b796e2c2995cadfd44ad56e02ca616f0467aec28` |
+
+The control LoRA leg used the MOSS-Image color and depth control LoRA, a
+community file of 313,063,368 bytes, matched on both Sparks; no template or
+manifest row names it.
+
+Records: the private evidence directory, record `ff8dab8300aa` of 2026-10-21
+with its re-measurement at `9caa6aae660b` of 2026-10-21 and 2026-10-22: the
+ladder state, the comparison summaries and pairs of both releases, the
+auto-table summaries, the API leg records, the matrix cell results, the stock
+job records, the per-key bake probe, the sweep summaries, the operator notes
+and the INT8 investigation with its stock probe.
+
 <a id="evidence-moss-image-base"></a>
 
 ### MOSS-Image Base
 
-Status impl: no hardware leg has run on the base checkpoint. The CPU, kernel
-and canary evidence and the file readings under
-[MOSS-Image SFT](#evidence-moss-image-sft) cover it as well. Support follows
-ComfyUI e087d8f6c, first released in ComfyUI 0.42.0.
+**2026-10-21, as [MOSS-Image SFT](#evidence-moss-image-sft).** That record
+covers this checkpoint's skip, cfg2, INT8, LoRA and scheduler results. Its own
+readings follow, from the same ladder, release and cap. uly2 was identical to
+one GPU and to stock at one step at 1024 square with both joint parities and
+without the skip, at 1040 square with the template's prompt and at 1536
+square. In Campaign K uly2 was identical to one GPU over the full 50 steps at
+1024 and 1536 square, 1.48x and 1.52x faster than one GPU, and the shipped
+graph through the rewrite path equaled stock over the full schedule. FSDP
+rests on the sweep only: BF16 and INT8 `uly2+fsdp` equaled their resident uly2
+twins, and no run_matrix FSDP cell ran Base. The INT8 file at `9caa6aae660b`
+was identical on uly2 to its pin-stripped one-GPU render and to pin-stripped
+stock at 1024 and 1536 square; stock's pinned kernel against the copy read
+0.0401. With the Kromoss DMD2 LoRA at 8 steps, Base rendered and read NRMS
+0.449 against stock with the same LoRA, recorded, and its ring2 first-use
+ceremonies with that LoRA failed in the sweep, BF16 with a largest latent
+difference of 2.35. Support follows ComfyUI e087d8f6c, first released in
+ComfyUI 0.42.0.
 
 <a id="evidence-kromoss"></a>
 
 ### Kromoss
 
-Status impl: no hardware leg has run on Kromoss or its LoRAs. The record pins
-`lodestones/Kromoss` at revision `7f9bb7b06d7b` (update 11000, 2026-10-20);
-the vendor publishes new weights under the same file names. The CPU, kernel
-and canary evidence under [MOSS-Image SFT](#evidence-moss-image-sft) covers
-the architecture. On 2026-10-20 both LoRAs read as 756 FP32 tensors in
-`lora_down`, `lora_up` and `alpha` keys on every block's q, k, v, o and
-feed-forward projections, rank 128 and alpha 128, and hold the same bytes as `lora.safetensors` and
-`lora_dmd2.safetensors` in `lodestones/MOSS-Image-Base-8-steps-dmd`. The LoRA
-half of the CPU evidence uses a rank-4 LoRA in the same key layout on a tiny
-real model; no test has loaded either Kromoss LoRA, on the BF16 or the INT8
-file.
+**2026-10-21, as [MOSS-Image SFT](#evidence-moss-image-sft).** That record
+covers this checkpoint's skip, cfg2, INT8, LoRA and #129 results. The ladder
+ran `lodestones/Kromoss` at revision `7f9bb7b06d7b` (update 11000,
+2026-10-20); the vendor publishes new weights under the same file names. On
+2026-10-20 both LoRAs read as 756 FP32 tensors in `lora_down`, `lora_up` and
+`alpha` keys on every block's q, k, v, o and feed-forward projections, rank
+128 and alpha 128, and hold the same bytes as `lora.safetensors` and
+`lora_dmd2.safetensors` in `lodestones/MOSS-Image-Base-8-steps-dmd`.
+
+uly2 was identical to one GPU and to stock at one step at 1024 square with
+both joint parities and without the skip, at 1040 square with both parities
+and at 1536 square. In Campaign K uly2 was identical to one GPU over the full
+50 steps at 1024 and 1536 square, 1.48x and 1.52x faster than one GPU, and the
+shipped graph through the rewrite path equaled stock over the full schedule.
+`uly2+fsdp` at prefetch depth 1 equaled resident uly2 at one step and over the
+full schedule. `mode=local` equaled stock at one step. ring2 at an even joint
+stream read one-step NRMS 0.0233 against stock, under the floor, and an odd
+stream refused class K. cfg2 at CFG 1 on the 8-step DMD graph refused class P.
+
+With the DMD2 and DMD LoRAs the store baked 168 patched keys per rank, and a
+per-key probe found each equal to stock ComfyUI's merge at the base, DMD2, hot
+swap and un-bake stages. On uly2 the 8-step graph with DMD2 at 1.0 ran 0.60 s
+a step at 1024 square against 0.91 s on one GPU, and with the LoRA uly2
+equaled single inside dgx-monarch. Against stock with the same LoRA it read
+one-step NRMS 0.0365 (DMD2 at 0.8), 0.0489 (DMD at 1.0) and 0.0635 (DMD2 at
+1.0), and the 8-step graphs, shipped and testing, read 0.36 to 0.37 after 8
+steps, recorded, because stock applies the LoRA at cast time. The ring2
+first-use ceremonies with either LoRA failed in the sweep, BF16 with a largest
+latent difference of 1.02 and 1.69. The INT8 file with DMD2 at 1.0 read 0.985
+on uly2 against stock at the first release and refuses class P (#129) from
+`9caa6aae660b`; stock ComfyUI with DynamicVRAM off renders that pair 0.9977
+from its own default.
 
 <a id="evidence-longcat-image"></a>
 
@@ -1876,7 +2177,9 @@ Kroma BF16 was measured on 2026-10-16 and row 15 excludes it
 Where an equal pair was measured, the slice path stayed under the floor but
 did not match one GPU: Chroma BF16 read NRMS 0.034 ([Chroma](#evidence-chroma)),
 FLUX.3 Klein Base 0.009 to 0.031
-([FLUX.3 Klein Base](#evidence-flux-3-klein-base)) and Kroma BF16 0.009 to 0.011.
+([FLUX.3 Klein Base](#evidence-flux-3-klein-base)), Kroma BF16 0.009 to 0.011 and
+MOSS-Image SFT with its skip off 0.023 to 0.026
+([MOSS-Image SFT](#evidence-moss-image-sft)).
 At world 4 a batch-1 render on a cfg row refuses class K. An evidence record
 has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
 under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength

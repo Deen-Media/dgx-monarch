@@ -1152,7 +1152,16 @@ stacks on a repeat call.
    with comfy-kitchen 0.2.39, it returned stock's bits on every window with no
    fill ([VALIDATION](VALIDATION.md#evidence-moss-image-sft)). A fused-norm
    call stock's block does not make, another call count or a missing norm
-   global refuses class P, and canary seam 43 names the change.
+   global refuses class P, and canary seam 43 names the change. The kept
+   rows go on with a fresh tensor's strides, as stock's norm output does
+   (`adapters/int8_linear_layout.py`): outside inference mode, where a
+   Worker samples, ComfyUI picks a quantized linear's route by its input's
+   strides, and rows that kept the filled call's stride sent `qkv` and
+   `ffn_up_gate` on an INT8 file down a route that dequantizes the weight
+   and skips activation quantization. On 2026-10-21 that read one-step NRMS
+   0.027 to 0.036 against a pin-stripped one-GPU render; with fresh strides
+   INT8 uly2 was bit-identical to it, and the INT8 linears run comfy-kitchen's
+   INT8 GEMM as stock's do.
 
    An odd joint total pads at world 2, from an odd image grid or from a
    prompt length that makes N = HW + T odd. A pad row takes the shared shift,
@@ -1202,7 +1211,20 @@ stacks on a repeat call.
    not named `blocks`, so `compile_dit` compiles nothing for this family and
    keeps requested slab residency.
 
-   Hardware results: none yet. On the CPU,
+   Hardware results (2026-10-21): uly2 one-step latents equaled stock
+   ComfyUI on one GPU from 512 to 2048 square, on both joint parities where
+   both ran, on the odd 1040 grid and at batch 2, for SFT, Base and Kromoss
+   where each ran, and full 50-step renders equaled one GPU from 1024 to 2048
+   square with the skip on, and at 1024 with it off. The 42 sharded blocks
+   run their Linears on a window's rows, and the measured latents show they
+   keep stock's bits at those row counts. INT8 ConvRot on uly2 equaled a
+   one-GPU render of the pin-stripped copy after the stride fix above. ring2
+   misses one GPU's bits with or without a pad, so it is measured, never
+   granted: without a LoRA it read one-step NRMS 0.023 to 0.026 against
+   stock on an even joint stream, which needs no pad, and 0.0025 to 0.031
+   against one GPU on padded streams under the waiver, where the ring also
+   attends the pad ([VALIDATION](VALIDATION.md#evidence-moss-image-sft)).
+   On the CPU,
    `tests/test_moss_image_comfy_exactness.py` builds ComfyUI's own
    `MOSSImage` at toy size in float32 and shows every kernel call of the
    two-rank forward receiving stock's q, k and v for its heads in stock order
@@ -1213,11 +1235,15 @@ stacks on a repeat call.
    row-local patch. That proves operands and order, not a GPU kernel; the
    kernel facts the route relies on are in the VALIDATION record.
 
-   Performance cost, not timed. Per model call: 42 times four joint
-   all-to-alls and one final all-gather, the replicated prelude and text
-   embedder on every rank, and the fused-norm route, which runs each block's
-   two `rms_adaln` calls over all N rows on every rank. By block rows uly2
-   leaves each rank about half of one GPU's Linear and attention work.
+   Performance cost, sequence parallelism only. Per model call: 42 times
+   four joint all-to-alls and one final all-gather, the replicated prelude
+   and text embedder on every rank, and the fused-norm route, which runs
+   each block's two `rms_adaln` calls over all N rows on every rank. By
+   block rows uly2 leaves each rank about half of one GPU's Linear and
+   attention work. Measured on 2026-10-21 with the first Spark capped at
+   2100 MHz, BF16 uly2 sampler walls ran 1.48x to 1.59x faster than one GPU
+   from 1024 to 2048 square, and the 8-step Kromoss graph with its DMD2
+   LoRA 1.51x ([BENCHMARKS](BENCHMARKS.md#moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped)).
 
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,

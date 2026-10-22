@@ -215,15 +215,42 @@ read one-step NRMS 0.117 against one GPU, and text to image on ring2 read
 0.183 ([VALIDATION](VALIDATION.md#evidence-flux-3-klein)). The edit reading
 predates the fused-norm parity change, which VALIDATION describes.
 
-MOSS-Image joins at `impl` before any of its sweep cells has run. Its scoped
-sweep runs after the family merges, and a later change records it here. The
-matrix reads the widgets of each Skip Layer Guidance (DGX Monarch) node on a
-sampler's or guider's model chain with the runtime's own test, so every cfg
-cell of a graph whose skip on that chain names a layer is predicted
+The scoped sweep of MOSS-Image's 14 templates, the five public graphs and
+nine testing graphs, ran on 2026-10-21 at dgx-monarch `ff8dab8300aa`, with
+Torch Flash and the first Spark capped at 2100 MHz. The matrix gave 252
+cells: 124 predicted to render, 81 to refuse class P and 47 to refuse class
+K. The local session ran 28 cells and the cluster session 224, and every
+cell read PASS with no finding and no CHECK. Eight ring2 cells met the
+ring-pad card on a padded joint stream, where the matrix had predicted a
+render, and rendered under the runner's grant, and seven cold legs rendered
+under a grant an earlier cell had left live. BF16 uly2,
+auto and `uly2+fsdp` were identical to their references in every template,
+and INT8 `uly2+fsdp` in every template without a LoRA. On ring2, BF16
+without a LoRA read one-step NRMS 0.0025 to 0.031 under the ring-pad waiver.
+The graphs with a LoRA read 0.0034 to 0.0041 on the three unpadded 8-step
+graphs and 0.045 on the SFT LoRA graph. In the cluster session every
+first-use Gate ceremony of ring2 with a LoRA that reached a verdict failed,
+six in all, which is why MOSS-Image does not support ring2 with a LoRA
+([VALIDATION](VALIDATION.md#evidence-moss-image-sft)).
+The sweep ran every graph on ComfyUI's `simple` scheduler. The four CFG 3
+public graphs have since moved to `normal`, while the nine testing graphs
+keep `simple`, so their cells still match the graphs that ran.
+
+The matrix reads the widgets of each Skip Layer Guidance (DGX Monarch) node
+on a sampler's or guider's model chain with the runtime's own test, so every
+cfg cell of a graph whose skip on that chain names a layer is predicted
 `refuse:P`. A node no sampler or guider reads its model from claims nothing.
-A cell that puts a LoRA on a MOSS-Image INT8 file is predicted `refuse:P` on
-every topology and in both sessions, as the driver refuses it
-([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
+A cell that puts a LoRA on a MOSS-Image INT8 file is predicted `refuse:P`
+in both sessions ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)),
+except where a guard that answers first predicts its own class:
+`ring2+fsdp` refuses class K. On 2026-10-21 at `9caa6aae660b`, the release
+that added that label, 19 INT8 + LoRA cells moved to `refuse:P` across the
+four LoRA templates. The 36 cells of two of them, the SFT LoRA graph and the
+Kromoss DMD graph, ran again: all 36 read PASS, every INT8 + LoRA cell
+refused as labelled and every BF16 + LoRA cell rendered with its earlier
+reading. The other two templates' INT8 + LoRA cells, on the shipped Kromoss
+Turbo graph and the Base DMD2 graph, carry the new label and have not run
+again.
 
 ## 3. Adding a template
 
