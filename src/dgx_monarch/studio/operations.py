@@ -117,8 +117,11 @@ def fingerprint(path: Path | None) -> str | None:
 
 class Operations:
     def __init__(self, store: Store, client: ComfyClient, *, config: Path | None = None,
-                 allow_management: bool = False, driver_service: str | None = None):
+                 allow_management: bool = False, driver_service: str | None = None,
+                 driver_start: dict[str, str | None] | None = None):
         self.store, self.client = store, client
+        # The command the first-run page shows (studio/driver_hint.py), read once at launch; never run.
+        self.driver_start = driver_start or {"command": None, "source": None, "config": None}
         # Children run with -P, so the selection cannot lean on the launch directory.
         self.config = config.expanduser().absolute() if config is not None else None
         self.allow_management = allow_management

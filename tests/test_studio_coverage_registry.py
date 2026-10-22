@@ -17,6 +17,7 @@ import pytest
 from dgx_monarch.studio import inventory_registry
 from dgx_monarch.studio.inventory import build_inventory, load_inventory
 from dgx_monarch.studio.inventory_registry import (
+    CONFIGURATION,
     KIND_VIEWS,
     PANEL,
     STATUSES,
@@ -28,6 +29,19 @@ from dgx_monarch.studio.inventory_registry import (
 
 ROOT = Path(__file__).resolve().parents[1]
 INVENTORY = load_inventory()
+# Written out, not read from management_parity, so a drift in the waiver list
+# fails here instead of moving with it.
+STUDIO_TREE = {
+    "cli.command.studio", "cli.command.studio.up", "cli.command.studio.down", "cli.command.studio.open",
+    "cli.command.studio.token", "cli.command.studio.tunnel",
+    "cli.option.studio.help", "cli.option.studio.config", "cli.option.studio.driver", "cli.option.studio.state_dir",
+    "cli.option.studio.allow_management", "cli.option.studio.no_open",
+    "cli.option.studio.up.help", "cli.option.studio.up.config", "cli.option.studio.up.allow_management",
+    "cli.option.studio.down.help", "cli.option.studio.open.help",
+    "cli.option.studio.token.help", "cli.option.studio.token.value", "cli.option.studio.token.rotate",
+    "cli.option.studio.tunnel.help", "cli.option.studio.tunnel.config", "cli.option.studio.tunnel.host",
+    "cli.option.studio.tunnel.port", "cli.option.studio.tunnel.run",
+}
 PANEL_JS = ROOT / "web/js/dgx_monarch_panel.js"
 TUI_APP = ROOT / "src/dgx_monarch/tui/app.py"
 
@@ -84,7 +98,7 @@ def test_a_new_row_kind_needs_its_own_rule():
 def test_registries_name_only_operations_and_routes_studio_serves():
     operations, routes = studio_operations(ROOT), studio_routes(ROOT)
     assert {"driver.free", "actors.recycle", "consent.apply", "top.record", "gate.inspect"} <= operations
-    for view in [*PANEL.values(), *TUI.values(), *KIND_VIEWS.values()]:
+    for view in [*PANEL.values(), *TUI.values(), *KIND_VIEWS.values(), *CONFIGURATION.values()]:
         assert view["status"] in STATUSES
         if view["status"] == "operation":
             assert view["operation"] in operations
@@ -123,8 +137,12 @@ def test_every_checked_in_row_carries_a_reviewed_view_and_no_unserved_label():
         by_kind.setdefault(row["kind"], set()).add(row["interfaces"]["studio"]["status"])
     assert by_kind["panel_action"] <= {"operation", "route", "not_represented"}
     assert by_kind["tui_action"] <= {"operation", "route", "equivalent", "not_represented"}
-    assert by_kind["cli_command"] == {"operation"}
-    assert by_kind["cli_option"] <= {"operation", "equivalent"}
+    assert by_kind["cli_command"] <= {"operation", "not_represented"}
+    assert by_kind["cli_option"] <= {"operation", "equivalent", "not_represented"}
+    waived = {row["id"] for row in INVENTORY["rows"] if row["kind"] in {"cli_command", "cli_option"}
+              and row["interfaces"]["studio"]["status"] == "not_represented"}
+    assert len(STUDIO_TREE) == 25
+    assert waived == STUDIO_TREE
     assert {row["id"] for row in INVENTORY["rows"] if row["kind"] == "panel_action"} == PANEL.keys()
     assert {row["id"] for row in INVENTORY["rows"] if row["kind"] == "tui_action"} == TUI.keys()
 
@@ -136,8 +154,30 @@ def test_cli_rows_take_their_view_from_the_validated_binding():
         view, binding = row["interfaces"]["studio"], row["studio_binding"]
         if binding["kind"] in {"adapter", "parameter", "selector"}:
             assert view["operations"] == binding["actions"]
+        elif binding["kind"] == "companion":
+            assert view == {"status": "not_represented", "reason": binding["reason"]}
         else:
             assert view == {"status": "equivalent", "equivalence": binding["equivalence"]}
+
+
+def test_a_configuration_view_without_its_row_fails(monkeypatch):
+    monkeypatch.setitem(CONFIGURATION, "config.studio.host", inventory_registry.waiver("No such key."))
+    with pytest.raises(ValueError, match=r"Configuration view names no row: stale=\['config\.studio\.host'\]"):
+        build_inventory(ROOT)
+
+
+def test_context_texts_name_both_ways_to_launch():
+    rows = {row["id"]: row["interfaces"]["studio"] for row in INVENTORY["rows"]}
+    assert rows["cli.option.global.config"] == {"status": "equivalent", "equivalence": (
+        "Owner selects --config at companion launch, or dgxm studio passes the file dgxm itself reads; "
+        "each review binds the selected file identity. The companion never discovers another config.")}
+    for command in ("diagnostics", "top", "gate"):
+        assert rows[f"cli.option.{command}.host"] == {"status": "equivalent", "equivalence": (
+            "Owner selects --driver at companion launch, or dgxm studio passes [studio] driver from cluster.toml; "
+            "all authenticated requests use that fixed origin. Studio never probes for drivers.")}
+    assert rows["config.cluster.client_bind"] == {"status": "equivalent", "equivalence": (
+        "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; "
+        "Studio does not edit it.")}
 
 
 def test_building_the_inventory_never_imports_the_http_layer():

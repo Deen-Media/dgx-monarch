@@ -70,3 +70,12 @@ gpus = 1
 # metrics = false
 # otlp_endpoint = ""
 # otlp_logs = false  # a nonempty endpoint also exports raw upstream logs; explicit opt-in required
+
+# Optional Studio settings, read only by dgxm studio commands (docs/CLUSTER.md).
+# Add the table only after the driver runs a release with dgxm studio, and when
+# no render runs: any byte change retires the fleet.
+# [studio]
+# driver = "http://127.0.0.1:8188"           # this computer's ComfyUI driver, in canonical form
+# port = 8220                                 # Studio's loopback port; an SSH tunnel forwards it
+# driver_service = "comfyui.service"          # optional: a ComfyUI user unit started with Studio
+# driver_command = "bash /home/user/start-comfyui.sh"   # optional: shown on the Driver not running page; no secrets

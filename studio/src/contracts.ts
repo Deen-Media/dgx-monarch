@@ -149,6 +149,13 @@ export interface Capabilities {
   instance_id?: string;
   operations?: OperationCapability[];
   limits?: { request_bytes?: number; [key: string]: unknown };
+  driver_origin?: string;
+  /** The command the page shows when no driver accepts a connection; Studio never runs it. */
+  driver_start?: {
+    command: string | null;
+    source: 'driver_service' | 'driver_command' | 'launcher' | null;
+    config: string | null;
+  };
   [key: string]: unknown;
 }
 export interface Telemetry {

@@ -240,7 +240,7 @@ test('a 401 during polling returns to the token form and stops retrying the old 
     assert.equal(connection.connected, false);
     assert.equal(connection.state, 'unavailable');
     assert.match(connection.error, /refused the owner token/);
-    assert.match(connection.error, /Enter the current token to reconnect/);
+    assert.match(connection.error, /Enter the current token to reconnect, or run dgxm studio open/);
     assert.equal(connection.stopped, true);
     await connection.poll();
     assert.equal(calls, 1);

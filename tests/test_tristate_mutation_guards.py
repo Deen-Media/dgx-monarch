@@ -24,9 +24,10 @@ _ACTIVITY_MODULES = ("cli/comfy_ports.py", "cli/worker_health.py")
 
 # Modules scanned for a collapsing call before a pull, pin or restart.
 # `cli/lifecycle.py` is here because it owns `restart`, the third sink above;
-# the two modules that call it are already on the list.
+# the two modules that call it are already on the list. `cli/studio_command.py`
+# installs, restarts and removes the Studio user service.
 _MUTATION_SINKS = (
-    "cli/legacy_update.py", "cli/lifecycle.py", "cli/main.py", "mesh_attach.py")
+    "cli/legacy_update.py", "cli/lifecycle.py", "cli/main.py", "cli/studio_command.py", "mesh_attach.py")
 
 # Studio drives the same mutations from a browser: driver stop and restart,
 # Worker lifecycle, update and package changes. Every module in it is a sink.

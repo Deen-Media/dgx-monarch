@@ -4,9 +4,9 @@
     "workflows": 71
   },
   "counts": {
-    "cli_command": 18,
-    "cli_option": 83,
-    "configuration": 47,
+    "cli_command": 24,
+    "cli_option": 102,
+    "configuration": 51,
     "node": 19,
     "node_input": 129,
     "panel_action": 7,
@@ -679,6 +679,264 @@
     {
       "applicability": "Requires the owning backend capability and its runtime validation.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "backend_symbol": "studio",
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "cli.command.studio",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_command",
+      "name": "dgxm studio",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "backend_symbol": null,
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "cli.command.studio.down",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio down",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_command",
+      "name": "dgxm studio down",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "backend_symbol": null,
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "cli.command.studio.open",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio open",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_command",
+      "name": "dgxm studio open",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "backend_symbol": null,
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "cli.command.studio.token",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio token",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_command",
+      "name": "dgxm studio token",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "backend_symbol": null,
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "cli.command.studio.tunnel",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio tunnel",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_command",
+      "name": "dgxm studio tunnel",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "backend_symbol": null,
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "cli.command.studio.up",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio up",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_command",
+      "name": "dgxm studio up",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "backend_symbol": "top",
       "choices": null,
       "datatype": "action",
@@ -1116,7 +1374,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+          "equivalence": "Owner selects --driver at companion launch, or dgxm studio passes [studio] driver from cluster.toml; all authenticated requests use that fixed origin. Studio never probes for drivers.",
           "status": "equivalent"
         },
         "tui": {
@@ -1135,7 +1393,7 @@
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
       "studio_binding": {
-        "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+        "equivalence": "Owner selects --driver at companion launch, or dgxm studio passes [studio] driver from cluster.toml; all authenticated requests use that fixed origin. Studio never probes for drivers.",
         "kind": "context"
       },
       "units": null,
@@ -1781,7 +2039,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+          "equivalence": "Owner selects --driver at companion launch, or dgxm studio passes [studio] driver from cluster.toml; all authenticated requests use that fixed origin. Studio never probes for drivers.",
           "status": "equivalent"
         },
         "tui": {
@@ -1800,7 +2058,7 @@
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
       "studio_binding": {
-        "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+        "equivalence": "Owner selects --driver at companion launch, or dgxm studio passes [studio] driver from cluster.toml; all authenticated requests use that fixed origin. Studio never probes for drivers.",
         "kind": "context"
       },
       "units": null,
@@ -2157,7 +2415,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "Owner selects --config at companion launch; each review binds the selected file identity. Studio does not silently discover another config.",
+          "equivalence": "Owner selects --config at companion launch, or dgxm studio passes the file dgxm itself reads; each review binds the selected file identity. The companion never discovers another config.",
           "status": "equivalent"
         },
         "tui": {
@@ -2176,7 +2434,7 @@
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
       "studio_binding": {
-        "equivalence": "Owner selects --config at companion launch; each review binds the selected file identity. Studio does not silently discover another config.",
+        "equivalence": "Owner selects --config at companion launch, or dgxm studio passes the file dgxm itself reads; each review binds the selected file identity. The companion never discovers another config.",
         "kind": "context"
       },
       "units": null,
@@ -4723,6 +4981,960 @@
       "applicability": "Requires the owning backend capability and its runtime validation.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choices": null,
+      "constant": true,
+      "datatype": "boolean",
+      "default": false,
+      "destination": "allow_management",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "authorize individually confirmed owner management operations; the token is then typed into the page, never sent by link",
+      "id": "cli.option.studio.allow_management",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio --allow-management",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--allow-management",
+      "nargs": 0,
+      "option_strings": [
+        "--allow-management"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "config",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "cluster.toml to read instead of the usual search; the same as dgxm --config",
+      "id": "cli.option.studio.config",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio --config",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--config",
+      "nargs": null,
+      "option_strings": [
+        "--config"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "help",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "show this help message and exit",
+      "id": "cli.option.studio.down.help",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio down --help",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--help",
+      "nargs": 0,
+      "option_strings": [
+        "-h",
+        "--help"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": null,
+      "destination": "driver",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "driver origin to use instead of [studio] driver",
+      "id": "cli.option.studio.driver",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio --driver",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--driver",
+      "nargs": null,
+      "option_strings": [
+        "--driver"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "help",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "show this help message and exit",
+      "id": "cli.option.studio.help",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio --help",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--help",
+      "nargs": 0,
+      "option_strings": [
+        "-h",
+        "--help"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": true,
+      "datatype": "boolean",
+      "default": false,
+      "destination": "no_open",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "print the sign-in link and never start a browser",
+      "id": "cli.option.studio.no_open",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio --no-open",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--no-open",
+      "nargs": 0,
+      "option_strings": [
+        "--no-open"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "help",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "show this help message and exit",
+      "id": "cli.option.studio.open.help",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio open --help",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--help",
+      "nargs": 0,
+      "option_strings": [
+        "-h",
+        "--help"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": null,
+      "destination": "state_dir",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "absolute state directory to use instead of the default",
+      "id": "cli.option.studio.state_dir",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio --state-dir",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--state-dir",
+      "nargs": null,
+      "option_strings": [
+        "--state-dir"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "help",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "show this help message and exit",
+      "id": "cli.option.studio.token.help",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio token --help",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--help",
+      "nargs": 0,
+      "option_strings": [
+        "-h",
+        "--help"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": true,
+      "datatype": "boolean",
+      "default": false,
+      "destination": "rotate",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "restart dgxm-studio.service and read its new token",
+      "id": "cli.option.studio.token.rotate",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio token --rotate",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--rotate",
+      "nargs": 0,
+      "option_strings": [
+        "--rotate"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": true,
+      "datatype": "boolean",
+      "default": false,
+      "destination": "value",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "print the token itself; terminal only",
+      "id": "cli.option.studio.token.value",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio token --value",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--value",
+      "nargs": 0,
+      "option_strings": [
+        "--value"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "config",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "cluster.toml to read the Studio port from",
+      "id": "cli.option.studio.tunnel.config",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio tunnel --config",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--config",
+      "nargs": null,
+      "option_strings": [
+        "--config"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "help",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "show this help message and exit",
+      "id": "cli.option.studio.tunnel.help",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio tunnel --help",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--help",
+      "nargs": 0,
+      "option_strings": [
+        "-h",
+        "--help"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": null,
+      "destination": "host",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "SSH destination of the Studio host, as [user@]host; inside an SSH session the default is the address you connected to",
+      "id": "cli.option.studio.tunnel.host",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio tunnel host",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "host",
+      "nargs": "?",
+      "option_strings": [],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "int",
+      "default": null,
+      "destination": "port",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "Studio port (default: [studio] port, then 8220)",
+      "id": "cli.option.studio.tunnel.port",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio tunnel --port",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--port",
+      "nargs": null,
+      "option_strings": [
+        "--port"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": true,
+      "datatype": "boolean",
+      "default": false,
+      "destination": "run",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "run the ssh command instead of printing it",
+      "id": "cli.option.studio.tunnel.run",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio tunnel --run",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--run",
+      "nargs": 0,
+      "option_strings": [
+        "--run"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": true,
+      "datatype": "boolean",
+      "default": false,
+      "destination": "up_allow_management",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "write --allow-management into the service; its token is then code execution as the worker account on every host",
+      "id": "cli.option.studio.up.allow_management",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio up --allow-management",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--allow-management",
+      "nargs": 0,
+      "option_strings": [
+        "--allow-management"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "config",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "cluster.toml to write into the service instead of the usual search",
+      "id": "cli.option.studio.up.config",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio up --config",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--config",
+      "nargs": null,
+      "option_strings": [
+        "--config"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "constant": null,
+      "datatype": "string",
+      "default": "==SUPPRESS==",
+      "destination": "help",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "help": "show this help message and exit",
+      "id": "cli.option.studio.up.help",
+      "interfaces": {
+        "cli": {
+          "command": "dgxm studio up --help",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "cli_option",
+      "name": "--help",
+      "nargs": 0,
+      "option_strings": [
+        "-h",
+        "--help"
+      ],
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "required": false,
+      "source": "src/dgx_monarch/cli/arguments.py:build_parser",
+      "studio_binding": {
+        "kind": "companion",
+        "reason": "Starts, stops, opens or reaches the companion process that serves Studio; the page cannot run these for itself."
+      },
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
       "constant": null,
       "datatype": "string",
       "default": "==SUPPRESS==",
@@ -4795,7 +6007,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+          "equivalence": "Owner selects --driver at companion launch, or dgxm studio passes [studio] driver from cluster.toml; all authenticated requests use that fixed origin. Studio never probes for drivers.",
           "status": "equivalent"
         },
         "tui": {
@@ -4814,7 +6026,7 @@
       "required": false,
       "source": "src/dgx_monarch/cli/arguments.py:build_parser",
       "studio_binding": {
-        "equivalence": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers.",
+        "equivalence": "Owner selects --driver at companion launch, or dgxm studio passes [studio] driver from cluster.toml; all authenticated requests use that fixed origin. Studio never probes for drivers.",
         "kind": "context"
       },
       "units": null,
@@ -5689,7 +6901,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -5727,7 +6939,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -5765,7 +6977,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -5803,7 +7015,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -5841,7 +7053,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -5879,7 +7091,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -5917,7 +7129,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -5955,7 +7167,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -5993,7 +7205,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6031,7 +7243,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6069,7 +7281,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6107,7 +7319,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6145,7 +7357,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6183,7 +7395,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6221,7 +7433,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6259,7 +7471,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6297,7 +7509,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6335,7 +7547,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6373,7 +7585,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6411,7 +7623,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6449,7 +7661,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6487,7 +7699,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6525,7 +7737,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6563,7 +7775,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6601,7 +7813,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6639,7 +7851,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6677,7 +7889,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6715,7 +7927,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6753,7 +7965,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6791,7 +8003,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6806,6 +8018,158 @@
       "source": "src/dgx_monarch/monarch_policy.py:MonarchPolicy.startup_timeout_s",
       "units": "s",
       "validation": "dgx_monarch.config.load_config / dgx_monarch.monarch_policy.parse_policy"
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "str | None",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "config.studio.driver",
+      "interfaces": {
+        "cli": {
+          "representation": "cluster.toml through dgxm studio",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Read by dgxm studio before the companion starts; the page cannot change how its own companion was launched.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "configuration",
+      "name": "studio.driver",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/config_schema.py:validate_studio_table",
+      "units": null,
+      "validation": "dgx_monarch.config_schema.validate_studio_table"
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "str | None",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "config.studio.driver_command",
+      "interfaces": {
+        "cli": {
+          "representation": "cluster.toml through dgxm studio",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
+          "status": "equivalent"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "configuration",
+      "name": "studio.driver_command",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/config_schema.py:validate_studio_table",
+      "units": null,
+      "validation": "dgx_monarch.config_schema.validate_studio_table"
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "str | None",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "config.studio.driver_service",
+      "interfaces": {
+        "cli": {
+          "representation": "cluster.toml through dgxm studio",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Read by dgxm studio before the companion starts; the page cannot change how its own companion was launched.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "configuration",
+      "name": "studio.driver_service",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/config_schema.py:validate_studio_table",
+      "units": null,
+      "validation": "dgx_monarch.config_schema.validate_studio_table"
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "int",
+      "default": 8220,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "config.studio.port",
+      "interfaces": {
+        "cli": {
+          "representation": "cluster.toml through dgxm studio",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Read by dgxm studio before the companion starts; the page cannot change how its own companion was launched.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "configuration",
+      "name": "studio.port",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/config_schema.py:validate_studio_table",
+      "units": null,
+      "validation": "dgx_monarch.config_schema.validate_studio_table"
     },
     {
       "applicability": "Requires the owning backend capability and its runtime validation.",
@@ -6830,7 +8194,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6869,7 +8233,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6908,7 +8272,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6947,7 +8311,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -6986,7 +8350,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7025,7 +8389,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7064,7 +8428,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7103,7 +8467,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7142,7 +8506,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7181,7 +8545,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7220,7 +8584,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7259,7 +8623,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7298,7 +8662,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7337,7 +8701,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7376,7 +8740,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7415,7 +8779,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {
@@ -7454,7 +8818,7 @@
           "status": "unavailable"
         },
         "studio": {
-          "equivalence": "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it.",
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
           "status": "equivalent"
         },
         "tui": {

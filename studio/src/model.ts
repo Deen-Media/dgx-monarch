@@ -1,3 +1,5 @@
+import { DRIVER_NOT_RUNNING } from './firstRun.ts';
+
 export interface Binding {
   id: string;
   aliases?: string[];
@@ -209,8 +211,12 @@ export function formatTime(value: unknown): string {
   return Number.isNaN(date.getTime()) ? 'Unknown' : date.toLocaleString();
 }
 
+/** The driver label when nothing accepts a connection at the driver origin. */
+export const NOT_RUNNING = 'not running';
+
 /** The driver state with its failure code, so an unavailable driver says why. */
 export function driverStatus(driver: { state?: string; code?: string } | undefined): string {
   const state = driver?.state ?? 'unknown';
+  if (state !== 'connected' && driver?.code === DRIVER_NOT_RUNNING) return NOT_RUNNING;
   return state !== 'connected' && driver?.code ? `${state} (${driver.code})` : state;
 }

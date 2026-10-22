@@ -171,6 +171,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
         from .presentation import presentation_contract
         return json_response({**schema_document(), "instance_id": instance, "operations": ops.capabilities(),
                                   "presentation": presentation_contract(), "driver_origin": client.origin,
+                                  "driver_start": ops.driver_start,
                                   "support_status": "draft; see docs/STUDIO_ACCEPTANCE.md for unimplemented acceptance criteria"})
 
     async def snapshot(request: web.Request) -> web.Response:

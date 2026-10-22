@@ -269,4 +269,50 @@ def build_parser(commands: Mapping[str, Command]) -> argparse.ArgumentParser:
         help="stop and remove the worker services and units, and offer to delete cluster.toml; "
         "models and venvs stay",
     ).set_defaults(func=commands["uninstall"])
+    _add_studio(sub, commands["studio"])
     return parser
+
+
+def _add_studio(sub, command: Command) -> None:
+    """``dgxm studio`` and its five actions.
+
+    Every default is a constant, because inventory discovery records it. Each
+    ``--config`` uses SUPPRESS, so the global ``--config`` (and the launcher
+    wrapper that prepends it) stays in force unless one is typed after the
+    word it belongs to.
+    """
+    studio = sub.add_parser("studio", help="start Studio with settings from cluster.toml, or manage its user service")
+    studio.add_argument("--config", default=argparse.SUPPRESS,
+                        help="cluster.toml to read instead of the usual search; the same as dgxm --config")
+    studio.add_argument("--driver", default=None, help="driver origin to use instead of [studio] driver")
+    studio.add_argument("--state-dir", default=None,
+                        help="absolute state directory to use instead of the default")
+    studio.add_argument("--allow-management", action="store_true",
+                        help="authorize individually confirmed owner management operations; "
+                        "the token is then typed into the page, never sent by link")
+    studio.add_argument("--no-open", action="store_true", help="print the sign-in link and never start a browser")
+    studio.set_defaults(func=command, studio_action=None)
+    actions = studio.add_subparsers(dest="studio_action", required=False)
+    up = actions.add_parser("up", help="install dgxm-studio.service with settings from cluster.toml, "
+                            "then start or restart it")
+    up.add_argument("--config", default=argparse.SUPPRESS,
+                    help="cluster.toml to write into the service instead of the usual search")
+    up.add_argument("--allow-management", dest="up_allow_management", action="store_true",
+                    help="write --allow-management into the service; its token is then code execution "
+                    "as the worker account on every host")
+    actions.add_parser("down", help="stop and remove the dgxm-studio user service; Studio's records stay")
+    actions.add_parser("open", help="print the sign-in link of the running Studio and open it "
+                       "when this session has a display")
+    token = actions.add_parser("token", help="print where the running Studio keeps its owner token")
+    token_mode = token.add_mutually_exclusive_group()
+    token_mode.add_argument("--value", action="store_true", help="print the token itself; terminal only")
+    token_mode.add_argument("--rotate", action="store_true",
+                            help="restart dgxm-studio.service and read its new token")
+    tunnel = actions.add_parser("tunnel", help="print the ssh command that brings the Studio port "
+                                "to another computer, and the address to browse there")
+    tunnel.add_argument("--config", default=argparse.SUPPRESS, help="cluster.toml to read the Studio port from")
+    tunnel.add_argument("host", nargs="?", default=None, metavar="HOST",
+                        help="SSH destination of the Studio host, as [user@]host; inside an SSH session "
+                        "the default is the address you connected to")
+    tunnel.add_argument("--port", type=int, default=None, help="Studio port (default: [studio] port, then 8220)")
+    tunnel.add_argument("--run", action="store_true", help="run the ssh command instead of printing it")

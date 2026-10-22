@@ -3,7 +3,7 @@
   import { fullJob } from './jobProvenance';
   import { initialWorkspace } from './initialWorkspace';
   import { Submission } from './submission.svelte';
-  import { CATALOG_NOTICE, Connection } from './connection.svelte';
+  import { CATALOG_NOTICE, Connection, errorText } from './connection.svelte';
   import { emptyDraft, restoreDraft, driverStatus } from './model';
   import { DraftAutosave } from './draftAutosave.svelte';
   import { InspectionGuard, droppedInspection, DROPPED_REVIEW } from './inspectionGuard';
@@ -116,7 +116,7 @@
     error = '';
   }
   function fail(e: unknown) {
-    error = e instanceof Error ? e.message : String(e);
+    error = errorText(e, connection.fromLink);
   }
 
   function changeDraft(change: Partial<Draft>) {

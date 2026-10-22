@@ -25,7 +25,9 @@
     <span class="eyebrow">CONNECT TO COMPANION</span>
     <h2>Welcome to Studio</h2>
     <p class="muted">
-      Use the launch token your Monarch Studio companion printed or wrote to its token file. It
+      Open Studio with the sign-in link that <code>dgxm studio</code> prints or opens; to get a new
+      one, run <code>dgxm studio open</code> on the Studio host. You can also paste the link or the
+      token here; a Studio started with <code>--allow-management</code> takes its token only here. It
       stays in this browser tab's session.
     </p>
     <label for="token">Launch token</label><input
@@ -39,9 +41,9 @@
       class="primary"
       disabled={busy || !token.trim()}>{busy ? 'Connecting…' : 'Open workspace →'}</button
     ><small
-      >Host: {location.host}<br />If the companion is not running, start it again on the host with
-      <code>dgxm-studio</code>. Each launch makes a new token, which it prints or writes to the
-      token file it names. This page cannot start the companion.</small
+      >Host: {location.host}<br />If Studio is not running, start it on the host with
+      <code>dgxm studio</code>, or keep it running with <code>dgxm studio up</code>. Each start
+      makes a new token. This page cannot start Studio.</small
     >
   </form>
 </section>

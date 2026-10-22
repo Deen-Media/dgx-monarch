@@ -216,7 +216,7 @@ def test_output_path_precedes_global_config_and_global_precedes_default():
 def test_real_parser_namespace_maps_opt_in_setup_selections():
     names = (
         "version", "diagnostics", "launcher", "sol_install", "sol_smoke", "doctor", "init", "setup", "up", "down", "reap", "top",
-        "gate", "restart", "status", "install_service", "update", "uninstall",
+        "gate", "restart", "status", "install_service", "update", "uninstall", "studio",
     )
     parser = arguments.build_parser({name: lambda _args: 0 for name in names})
     namespace = parser.parse_args([

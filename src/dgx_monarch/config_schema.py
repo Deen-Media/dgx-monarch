@@ -4,9 +4,11 @@ from __future__ import annotations
 import ipaddress
 import math
 import re
+import socket
 from itertools import pairwise
 from pathlib import Path
 from typing import Literal, TypedDict, cast
+from urllib.parse import urlsplit
 
 
 class ClusterConfigError(ValueError):
@@ -17,7 +19,9 @@ MAX_CLUSTER_HOSTS = 64
 MAX_GPUS_PER_HOST = 64
 MAX_WORLD_SIZE = 256
 
-_ROOT_KEYS = frozenset({"cluster", "fabric", "hosts", "worker_args", "monarch"})
+# Every reader admits [studio]; only Studio's own readers look inside it
+# (validate_studio_table), so a typo there never stops a render.
+_ROOT_KEYS = frozenset({"cluster", "fabric", "hosts", "worker_args", "monarch", "studio"})
 _CLUSTER_KEYS = frozenset({
     "auto_heal",
     "client_bind",
@@ -287,3 +291,141 @@ def validate_plain_string(value: object, field: str, path: Path, *, nonempty: bo
     if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
         raise ClusterConfigError(f"{path}: {field} must not contain control characters")
     return value
+
+
+# [studio]: read only by dgxm studio and the companion's driver hint, never by
+# load_cluster_config, so ClusterConfig and the Gate trust fingerprint stay as they are.
+_STUDIO_KEYS = frozenset({"driver", "port", "driver_service", "driver_command"})
+DEFAULT_STUDIO_DRIVER = "http://127.0.0.1:8188"
+DEFAULT_STUDIO_PORT = 8220
+# A systemd user service by exact name; used with fullmatch.
+DRIVER_UNIT_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.@-]*\.service")
+_ORIGIN_LIMIT = 2048
+_COMMAND_LIMIT = 512
+_DRIVER_SHAPE = ("studio.driver must be an http or https origin with a host and no user, path, query, "
+                 "fragment or zone")
+_DRIVER_LISTEN = ("studio.driver names a listen address; use the address a client connects to, "
+                  "such as http://127.0.0.1:8191")
+_DRIVER_LOCAL = ("studio.driver must name this computer (127.0.0.1, [::1] or localhost); "
+                 "for a driver on another computer pass dgxm studio --driver")
+
+
+class StudioTable(TypedDict):
+    """The [studio] table with its defaults filled in."""
+
+    driver: str | None
+    port: int
+    driver_service: str | None
+    driver_command: str | None
+
+
+def canonical_driver_origin(origin: str) -> str:
+    """The form a Studio state directory binds: lowercase host, bracketed IPv6, default port dropped."""
+    parsed = urlsplit(origin)
+    host = (parsed.hostname or "").lower()
+    if ":" in host:
+        host = f"[{host}]"
+    port = parsed.port
+    authority = host if port is None or (parsed.scheme, port) in {("http", 80), ("https", 443)} else f"{host}:{port}"
+    return f"{parsed.scheme}://{authority}"
+
+
+def _unspecified(host: str) -> bool:
+    """Whether a host is a listen-everywhere address in any spelling, 0 and 0x0 included."""
+    try:
+        return ipaddress.ip_address(host).is_unspecified
+    except ValueError:
+        pass
+    if not re.fullmatch(r"[0-9A-Fa-fXx.]+", host):
+        return False
+    try:
+        # inet_aton takes the short forms a connect also takes, such as 0 and 0.0.
+        return socket.inet_aton(host) == bytes(4)
+    except OSError:
+        return False
+
+
+def _this_computer(host: str) -> bool:
+    if host == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(host)
+    except ValueError:
+        return False
+    if address.version == 4:
+        return address in ipaddress.ip_network("127.0.0.0/8")
+    return address == ipaddress.IPv6Address("::1")
+
+
+def validate_driver_origin(value: str, *, local_only: bool) -> str:
+    """Return a Studio driver origin unchanged when it is valid and canonical.
+
+    The rules of the [studio] driver key: at most 2048 printable characters,
+    http or https, a host, no user, password, path other than an empty one or
+    "/", query or fragment, a port urlsplit can parse, no "%" anywhere (no IPv6
+    zone), no listen-everywhere address, and the value must equal
+    canonical_driver_origin(value), so "http://127.0.0.1:8191/" is refused with
+    the slashless form named. With local_only the host must also be a
+    127.0.0.0/8 literal, ::1 or localhost; a typed --driver skips only that rule.
+    Raises ValueError whose text is the refusal without a path prefix.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError("studio.driver must be a non-empty string")
+    if any(ord(ch) < 32 or ord(ch) == 127 for ch in value):
+        raise ValueError("studio.driver must not contain control characters")
+    if len(value) > _ORIGIN_LIMIT or "%" in value or not all(33 <= ord(ch) <= 126 for ch in value):
+        raise ValueError(_DRIVER_SHAPE)
+    try:
+        parsed = urlsplit(value)
+        _ = parsed.port  # urlsplit checks the port only when it is read
+    except ValueError as exc:
+        raise ValueError(_DRIVER_SHAPE) from exc
+    host = parsed.hostname or ""
+    if (parsed.scheme not in {"http", "https"} or not host or "@" in parsed.netloc
+            or parsed.path not in {"", "/"} or parsed.query or parsed.fragment):
+        raise ValueError(_DRIVER_SHAPE)
+    if _unspecified(host):
+        raise ValueError(_DRIVER_LISTEN)
+    if local_only and not _this_computer(host):
+        raise ValueError(_DRIVER_LOCAL)
+    canonical_origin = canonical_driver_origin(value)
+    if value != canonical_origin:
+        raise ValueError(f"studio.driver must be written as '{canonical_origin}'")
+    return value
+
+
+def validate_studio_table(values: object, path: Path) -> StudioTable:
+    """Check the [studio] table and fill its defaults; ClusterConfigError names the file."""
+    if not isinstance(values, dict):
+        raise ClusterConfigError(f"{path}: [studio] must be a table")
+    _reject_unknown_keys(values, _STUDIO_KEYS, context=f"{path}: [studio]")
+    table = StudioTable(driver=None, port=DEFAULT_STUDIO_PORT, driver_service=None, driver_command=None)
+    if "driver" in values:
+        driver = validate_plain_string(values["driver"], "studio.driver", path, nonempty=True)
+        try:
+            table["driver"] = validate_driver_origin(driver, local_only=True)
+        except ValueError as exc:
+            raise ClusterConfigError(f"{path}: {exc}") from exc
+    if "port" in values:
+        port = values["port"]
+        if isinstance(port, bool) or not isinstance(port, int) or not 1024 <= port <= 65535:
+            raise ClusterConfigError(f"{path}: studio.port must be an integer from 1024 to 65535")
+        table["port"] = port
+    if "driver_service" in values:
+        unit = values["driver_service"]
+        if not isinstance(unit, str) or not DRIVER_UNIT_PATTERN.fullmatch(unit):
+            raise ClusterConfigError(
+                f"{path}: studio.driver_service must name a systemd user service, such as comfyui.service")
+        if "worker" in unit.lower():
+            raise ClusterConfigError(f"{path}: studio.driver_service must not name a Worker unit")
+        if unit == "dgxm-studio.service":
+            raise ClusterConfigError(f"{path}: studio.driver_service must not name dgxm-studio.service")
+        table["driver_service"] = unit
+    if "driver_command" in values:
+        command = values["driver_command"]
+        if (not isinstance(command, str) or not 1 <= len(command) <= _COMMAND_LIMIT
+                or not all(32 <= ord(ch) <= 126 for ch in command)):
+            raise ClusterConfigError(
+                f"{path}: studio.driver_command must be 1 to 512 printable ASCII characters")
+        table["driver_command"] = command
+    return table

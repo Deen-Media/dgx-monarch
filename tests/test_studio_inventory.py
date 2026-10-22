@@ -150,6 +150,53 @@ def test_all_cli_options_and_commands_are_independently_enumerated():
     assert expected_options == {r["interfaces"]["cli"]["command"] for r in INVENTORY["rows"] if r["kind"] == "cli_option"}
 
 
+def test_the_studio_tree_is_waived_with_one_reason():
+    """dgxm studio starts, stops, opens or reaches Studio's own process, so no page operation stands for it."""
+    reason = ("Starts, stops, opens or reaches the companion process that serves Studio; "
+              "the page cannot run these for itself.")
+    rows = {row["id"]: row for row in INVENTORY["rows"] if row["kind"] in {"cli_command", "cli_option"}
+            and (row["interfaces"]["cli"]["command"] + " ").startswith("dgxm studio ")}
+    commands = {row["interfaces"]["cli"]["command"] for row in rows.values() if row["kind"] == "cli_command"}
+    assert commands == {"dgxm studio", "dgxm studio up", "dgxm studio down", "dgxm studio open", "dgxm studio token",
+                        "dgxm studio tunnel"}
+    assert sum(row["kind"] == "cli_option" for row in rows.values()) == 19
+    for row in rows.values():
+        assert row["studio_binding"] == {"kind": "companion", "reason": reason}
+        assert row["interfaces"]["studio"] == {"status": "not_represented", "reason": reason}
+    host = rows["cli.option.studio.tunnel.host"]
+    assert (host["option_strings"], host["destination"], host["nargs"]) == ([], "host", "?")
+    assert rows["cli.option.studio.up.allow_management"]["destination"] == "up_allow_management"
+    for path in ("studio", "studio.up", "studio.tunnel"):
+        assert rows[f"cli.option.{path}.config"]["default"] == argparse.SUPPRESS
+    assert not any(row["interfaces"]["studio"]["status"] == "not_represented" for row in INVENTORY["rows"]
+                   if row["kind"] in {"cli_command", "cli_option"} and row["id"] not in rows)
+
+
+def test_config_studio_rows_take_their_views():
+    from dgx_monarch import config_schema
+
+    rows = {row["id"]: row for row in INVENTORY["rows"] if row["id"].startswith("config.studio.")}
+    assert set(rows) == {"config.studio.driver", "config.studio.port", "config.studio.driver_service",
+                         "config.studio.driver_command"}
+    launch = {"status": "not_represented", "reason":
+              "Read by dgxm studio before the companion starts; the page cannot change how its own companion was launched."}
+    for key in ("driver", "port", "driver_service"):
+        assert rows[f"config.studio.{key}"]["interfaces"]["studio"] == launch
+    assert rows["config.studio.driver_command"]["interfaces"]["studio"] == {"status": "equivalent", "equivalence": (
+        "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; "
+        "Studio does not edit it.")}
+    # The config key has no default origin; DEFAULT_STUDIO_DRIVER is only the dgxm-studio --driver default.
+    assert config_schema.DEFAULT_STUDIO_PORT == 8220
+    assert {key: row["default"] for key, row in rows.items()} == {
+        "config.studio.driver": None, "config.studio.port": 8220,
+        "config.studio.driver_service": None, "config.studio.driver_command": None}
+    for row in rows.values():
+        assert row["kind"] == "configuration"
+        assert row["source"] == "src/dgx_monarch/config_schema.py:validate_studio_table"
+        assert row["validation"] == "dgx_monarch.config_schema.validate_studio_table"
+        assert row["interfaces"]["cli"] == {"status": "available", "representation": "cluster.toml through dgxm studio"}
+
+
 def test_live_node_registry_and_pinned_inputs_are_all_represented():
     tree = ast.parse((ROOT / "src/dgx_monarch/nodes/__init__.py").read_text())
     assignment = next(n for n in tree.body if isinstance(n, ast.Assign)

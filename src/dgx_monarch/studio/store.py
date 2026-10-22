@@ -10,8 +10,8 @@ import threading
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
 
+from ..config_schema import canonical_driver_origin
 from . import preview_storage
 from .contracts import (
     EVENT_BYTE_LIMIT,
@@ -125,13 +125,7 @@ class Store:
 
     def bind_driver(self, origin: str) -> None:
         """Keep durable prompts and media descriptors on their original driver."""
-        parsed = urlsplit(origin)
-        host = (parsed.hostname or "").lower()
-        if ":" in host:
-            host = f"[{host}]"
-        port = parsed.port
-        authority = host if port is None or (parsed.scheme, port) in {("http", 80), ("https", 443)} else f"{host}:{port}"
-        canonical_origin = f"{parsed.scheme}://{authority}"
+        canonical_origin = canonical_driver_origin(origin)
         with self.lock, self.transaction():
             row = self.db.execute("SELECT value FROM meta WHERE key='driver_origin'").fetchone()
             if row is not None and row[0] != canonical_origin:
@@ -139,6 +133,12 @@ class Store:
                                   "This state directory belongs to a different driver origin. "
                                   "Use its original driver or choose a separate --state-dir.", 409)
             self.db.execute("INSERT OR IGNORE INTO meta VALUES ('driver_origin',?)", (canonical_origin,))
+
+    def bound_driver(self) -> str | None:
+        """The driver origin this state directory is bound to, or None before the first bind."""
+        with self.lock:
+            row = self.db.execute("SELECT value FROM meta WHERE key='driver_origin'").fetchone()
+        return None if row is None else str(row[0])
 
     def get(self, kind: str, object_id: str) -> dict[str, Any]:
         if not isinstance(object_id, str):

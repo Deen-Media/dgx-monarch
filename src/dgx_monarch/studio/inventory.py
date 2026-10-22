@@ -336,6 +336,17 @@ def discover_config() -> list[dict[str, Any]]:
                datatype="mapping[string,scalar]", default={}, validation="Only validated NCCL_/GLOO_/UCX_ variables; NCCL_PROTO and loader/path injection refused.")
     row["interfaces"]["cli"] = {"status": "available", "representation": "cluster.toml through --config"}
     rows.append(row)
+    # load_cluster_config admits [studio] and ignores it; only dgxm studio and
+    # the companion's driver hint validate it. Defaults come from that validator.
+    studio = dict(config_schema.validate_studio_table({}, Path("cluster.toml")))
+    for name, datatype in config_schema.StudioTable.__annotations__.items():
+        row = _row("config.studio." + name, "configuration", "studio." + name,
+                   "src/dgx_monarch/config_schema.py:validate_studio_table",
+                   datatype=getattr(datatype, "__forward_arg__", str(datatype)), default=_json_value(studio[name]),
+                   units=_units(name))
+        row["validation"] = "dgx_monarch.config_schema.validate_studio_table"
+        row["interfaces"]["cli"] = {"status": "available", "representation": "cluster.toml through dgxm studio"}
+        rows.append(row)
     return rows
 
 
