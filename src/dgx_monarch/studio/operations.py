@@ -309,7 +309,8 @@ class Operations:
     async def driver_action(self, action: str, parameters: dict[str, Any]) -> tuple[str, dict[str, Any]]:
         body = dict(parameters)
         if action == "consent.apply":
-            body["action"] = "accept"
+            # The driver records this accept in the waiver ledger as a Studio consent.
+            body.update(action="accept", source="studio")
         try:
             result = await self.client.request("POST", HTTP_ACTIONS[action], body)
         except StudioError as exc:

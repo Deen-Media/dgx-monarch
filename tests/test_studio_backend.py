@@ -364,9 +364,10 @@ def test_authority_is_rechecked_after_waiting_for_operation_lock(store):
     asyncio.run(scenario())
 
 
-def test_consent_adapter_sends_fixed_accept_action_and_exact_pending_identity(store):
+def test_consent_adapter_sends_fixed_accept_action_source_and_exact_pending_identity(store):
     # The review reads the driver's pending requests first, so the fake
-    # driver answers GET /dgxm/consents with the one request it accepts.
+    # driver answers GET /dgxm/consents with the one request it accepts. The
+    # accept names Studio as its source, which the driver's ledger records.
     class PendingDriver(FakeDriver):
         async def request(self, method, path, data=None):
             if (method, path) == ("GET", "/dgxm/consents"):
@@ -382,5 +383,6 @@ def test_consent_adapter_sends_fixed_accept_action_and_exact_pending_identity(st
         ops.apply(plan["id"], {"digest": plan["digest"], "confirmed": True, "idempotency_key": "consent-once"})
         await asyncio.gather(*ops.tasks)
         assert driver.calls == [("GET", "/dgxm/consents", None),
-                                ("POST", "/dgxm/consent", {"action": "accept", "key": "exact-key", "id": "pending-id"})]
+                                ("POST", "/dgxm/consent", {"action": "accept", "source": "studio",
+                                                           "key": "exact-key", "id": "pending-id"})]
     asyncio.run(scenario())

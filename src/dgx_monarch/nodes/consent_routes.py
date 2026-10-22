@@ -32,6 +32,7 @@ _READ_TIMEOUT_S = 5.0
 _ACTION_TIMEOUT_S = 20.0
 # The ledger refuses a longer reason (gate_audit_vocab.check_text).
 REASON_MAX_CHARS = 400
+BODY_SOURCES = ("panel", "studio")  # a body's "source"; absent means the panel. A tuple never raises on a list.
 
 # Process lifetime: one token bucket limits writes to the shared ledger.
 _RATE: dict[str, float] = {"tokens": float(RATE_LIMIT_N), "t": 0.0}
@@ -231,7 +232,7 @@ def _consent_payload(record: consent_store.ConsentRecord, key: str) -> dict[str,
     }
 
 
-def _accept(key: str, pending_id: str) -> tuple[int, dict[str, Any]]:
+def _accept(key: str, pending_id: str, source: str = "panel") -> tuple[int, dict[str, Any]]:
     entry = consent_pending.peek_pending(key, pending_id)
     if entry is None:
         # Require a live server-issued question to prevent preauthorization.
@@ -274,7 +275,7 @@ def _accept(key: str, pending_id: str) -> tuple[int, dict[str, Any]]:
         kind=desc.kind,
         target_guard=desc.target_guard,
         consent_id=consent_id,
-        consent_source="panel",
+        consent_source=source,
         reason=reason,
         combo_key=desc.combo_key,
         artifacts=desc.artifacts,
@@ -301,7 +302,7 @@ def _accept(key: str, pending_id: str) -> tuple[int, dict[str, Any]]:
         memo_context=dict(desc.memo_context),
         granted_at=time.strftime("%Y-%m-%d %H:%M:%S"),
         granted_epoch=time.time(),
-        consent_source="panel",
+        consent_source=source,
         reason=reason,
         ledger_key=ledger_key,
         combo_key=desc.combo_key,
@@ -389,7 +390,7 @@ STANDING_REASON = ("Capacity rescue is allowed without asking: when stock reside
                    "against the checkpoint, and the gate ledger records each combination it rescues.")
 
 
-def _auto_rescue(value: object) -> tuple[int, dict[str, Any]]:
+def _auto_rescue(value: object, source: str = "panel") -> tuple[int, dict[str, Any]]:
     if not isinstance(value, bool):
         return 400, {"ok": False, "detail": "auto_rescue needs a boolean value"}
     # Audit the standing decision separately from each later rescue event.
@@ -398,7 +399,7 @@ def _auto_rescue(value: object) -> tuple[int, dict[str, Any]]:
         kind=STANDING_KIND,
         target_guard=None,
         consent_id=consent_pending.new_consent_id(),
-        consent_source="panel",
+        consent_source=source,
         reason=STANDING_REASON,
         combo_key=STANDING_COMBO,
         artifacts="0" * 64,
@@ -420,18 +421,18 @@ def _auto_rescue(value: object) -> tuple[int, dict[str, Any]]:
     # Enabling clears open eligible cards; later rescues still write per-load
     # rows. Class K is never eligible. Disabling revokes nothing.
     cleared = consent_pending.clear_auto_eligible() if value else 0
-    log.info("auto-rescue on capacity set to %s from the panel (%d card(s) cleared)",
-             value, cleared)
+    log.info("auto-rescue on capacity set to %s from the %s (%d card(s) cleared)", value, source, cleared)
     return 200, {"ok": True, "auto_rescue": value, "cleared": cleared}
 
 
 def handle_action(body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
-    """One POST, resolved synchronously off the event loop."""
-    action = body.get("action")
+    """One POST, resolved synchronously off the event loop; ``source`` names the caller's interface."""
+    action, source = body.get("action"), body.get("source", "panel")
+    if source not in BODY_SOURCES:
+        return 400, {"ok": False, "detail": "consent source must be panel or studio"}
     if action == "auto_rescue":
-        return _auto_rescue(body.get("value"))
-    key = body.get("key")
-    pending_id = body.get("id")
+        return _auto_rescue(body.get("value"), source)
+    key, pending_id = body.get("key"), body.get("id")
     if not isinstance(key, str) or not key:
         return 400, {"ok": False, "detail": "consent action needs a key"}
     if action == "revoke":
@@ -439,7 +440,7 @@ def handle_action(body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
     if not isinstance(pending_id, str) or not pending_id:
         return 400, {"ok": False, "detail": "consent action needs the pending id"}
     if action == "accept":
-        return _accept(key, pending_id)
+        return _accept(key, pending_id, source)
     if action == "dismiss":
         # Dismissal removes only the invitation and writes no consent.
         dismissed = consent_pending.take_pending(key, pending_id) is not None

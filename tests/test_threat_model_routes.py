@@ -203,16 +203,15 @@ def test_the_token_scope_claims_match_the_management_inputs():
     assert not {"setup", "init", "update", "launcher", "actors.recycle", "consent.apply"} & read_only
 
 
-def test_the_waiver_ledger_note_tracks_the_hard_coded_consent_source():
-    source = (SRC / "nodes" / "consent_routes.py").read_text()
+def test_the_waiver_ledger_note_names_every_source_the_consent_route_takes():
+    tree = ast.parse((SRC / "nodes" / "consent_routes.py").read_text())
+    sources = next(ast.literal_eval(node.value) for node in tree.body if isinstance(node, ast.Assign)
+                   and any(isinstance(target, ast.Name) and target.id == "BODY_SOURCES" for target in node.targets))
     driver = _flat(_section(THREAT_MODEL, "### Companion to driver, systemd and CLI"))
-    if 'consent_source="panel"' in source:
-        assert "`consent_source` set to `panel`" in driver
-        assert "reads as a panel click" in driver
-    else:
-        assert "reads as a panel click" not in driver, (
-            "consent_routes.py no longer hard-codes the panel source; update the threat model"
-        )
+    assert "reads as a panel click" not in driver
+    assert "A body without the field records `panel`" in driver
+    for source in sources:
+        assert f"`{source}`" in driver, source
 
 
 def test_attacker_stories_and_severity_cover_the_companion():

@@ -10,6 +10,8 @@ file with one stay open at every site.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -28,6 +30,7 @@ from store_ensure_helpers import STACK
 from store_ensure_helpers import rig as rig  # a fixture tests ask for by name.
 
 LORA = [{"name": "dmd.safetensors", "strength": 1.0}]
+TROUBLESHOOTING = Path(__file__).resolve().parents[1] / "docs" / "TROUBLESHOOTING.md"
 
 
 def _class_p(exc: BaseException) -> str:
@@ -63,6 +66,20 @@ def test_the_refusal_names_the_lora_the_measurement_date_and_the_remedy():
     assert "mode=local on one GPU included" in text
     assert "Render this graph in stock ComfyUI on one GPU instead" in text
     assert "a BF16 file with a LoRA is not refused" in text
+
+
+def test_the_refusal_names_the_classic_bake_and_the_entry_quotes_it_word_for_word():
+    """The #129 Symptom quotes the message around the LoRA names, so a reworded message moves both."""
+    with pytest.raises(UnsupportedModelError) as caught:
+        lora_quant_guard.assert_lora_quant_supported("moss_image", "int8", LORA)
+    text = _class_p(caught.value)
+    assert "under investigation" not in text
+    assert "dgx-monarch bakes the LoRA into the quantized weights as stock's classic loader does" in text
+    assert "Render this graph in stock ComfyUI on one GPU instead, with its default DynamicVRAM loader" in text
+    entry = TROUBLESHOOTING.read_text().split("\n## 129. ", 1)[1].split("\n## ", 1)[0]
+    symptom = " ".join(entry.split("**Symptom:**", 1)[1].split("**Cause:**", 1)[0].split())
+    opener, tail = re.findall(r'"([^"]+)"', symptom)
+    assert text.split("] ", 1)[1] == f"{opener} (dmd.safetensors) {tail}"
 
 
 # --- the driver -----------------------------------------------------------------

@@ -137,6 +137,20 @@
   of the same prompt. The 8-step Kromoss graph keeps `simple`, its card's
   recipe, and the MOSS-Image testing graphs keep `simple`, the schedule the
   sweep measured.
+- The MOSS-Image INT8 LoRA refusal says what the probe found: dgx-monarch
+  bakes the LoRA into the quantized weights as stock ComfyUI's classic loader
+  does, and stock with DynamicVRAM off renders the Kromoss INT8 file with its
+  DMD2 LoRA as far from its own default. Its remedy names stock's default
+  DynamicVRAM loader
+  ([TROUBLESHOOTING #129](docs/TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
+- The consent route takes an optional `source` field, `panel` or `studio`,
+  and records it as the waiver row's `consent_source`. A body without it
+  records `panel`, and any other value refuses with a 400. Studio's accept
+  sends `studio`, so the ledger no longer reads it as a panel click
+  ([threat model](docs/THREAT_MODEL.md#companion-to-driver-systemd-and-cli)).
+  `studio` joins the frozen consent-source vocabulary, so the Gate protocol
+  moves to 14 and each combination re-proves once on first use
+  ([TRUST](docs/TRUST.md#protocol-invariants)).
 
 ## [1.2.0] - 2026-10-16
 

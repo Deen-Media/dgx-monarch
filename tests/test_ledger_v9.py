@@ -112,7 +112,7 @@ def test_waiver_row_round_trips_every_field(tmp_path):
     assert row["verdict"] == "WAIVER"
     assert row["artifacts"] == _artifacts().current
     assert row["comfy"] == COMMIT
-    assert row["gate_protocol"] == ledger_mod.GATE_PROTOCOL_VERSION == 13
+    assert row["gate_protocol"] == ledger_mod.GATE_PROTOCOL_VERSION == 14
     assert row["dgx_monarch"] == ledger_mod.__version__
     assert row["waiver_kind"] == "rescue-slab"
     assert row["waiver_class"] == "C"
@@ -212,10 +212,11 @@ def test_the_frozen_vocabulary_is_complete():
     """Every enum member ships with the protocol bump that introduces it.
 
     A member added later burns the current number and must ship the next one,
-    so the vocabulary is pinned here. It has happened twice:
+    so the vocabulary is pinned here. It has happened three times:
     ``waive-known-wrong:sol-attn`` burned v10 and shipped in v11 (2026-08-15),
-    and ``waive-known-wrong:shard-quant`` burned v12 and shipped in v13
-    (2026-09-05).
+    ``waive-known-wrong:shard-quant`` burned v12 and shipped in v13
+    (2026-09-05), and the ``studio`` consent source burned v13 and shipped in
+    v14 (2026-10-22).
     """
     assert set(WAIVER_KINDS) == {
         "rescue-slab", "auto-rescue-standing",
@@ -224,7 +225,7 @@ def test_the_frozen_vocabulary_is_complete():
         "waive-known-wrong:ring-pad", "waive-known-wrong:pixeldit-sp",
         "waive-known-wrong:sol-attn", "waive-known-wrong:shard-quant"}
     assert set(ACTIONS) == {"grant", "use", "revoke"}
-    assert set(CONSENT_SOURCES) == {"panel", "env", "auto_rescue", "cli"}
+    assert set(CONSENT_SOURCES) == {"panel", "env", "auto_rescue", "cli", "studio"}
     assert set(REVOKED_BY) == {"user", "gate_fail", "file_change"}
     assert set(RESIDENCY_KINDS) == {"slab"}
     assert "driver_footprint_preflight" in MEASURED_PROBES

@@ -1,4 +1,4 @@
-"""Refuse a LoRA on the quantized files whose cluster bake renders wrong (#129).
+"""Refuse a LoRA on the quantized files whose baked LoRA renders wrong (#129).
 
 One predicate and one refusal, read by the driver before dispatch
 (nodes/model_patch_preflight.py and Fleet KSampler) and by every Worker's
@@ -41,9 +41,11 @@ def assert_lora_quant_supported(family: str | None, quant_kind: str | None,
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
         f"{family}: an {str(quant_kind).upper()} file with a LoRA ({names}) rendered far "
-        "from stock ComfyUI on the cluster on 2026-10-21, and the cause is under "
-        "investigation, so this release refuses the pair on every topology before any "
-        "weight moves: each one bakes the LoRA the same way, mode=local on one GPU "
-        "included. Render this graph in stock ComfyUI on one GPU instead, or remove the "
-        "LoRA; a BF16 file with a LoRA is not refused.",
+        "from stock ComfyUI on the cluster on 2026-10-21. dgx-monarch bakes the LoRA into "
+        "the quantized weights as stock's classic loader does, and stock with DynamicVRAM "
+        "off rendered the Kromoss INT8 file with its DMD2 LoRA as far from its own default, "
+        "so this release refuses the pair on every topology before any weight moves: each "
+        "one bakes the LoRA the same way, mode=local on one GPU included. Render this graph "
+        "in stock ComfyUI on one GPU instead, with its default DynamicVRAM loader, or remove "
+        "the LoRA; a BF16 file with a LoRA is not refused.",
         troubleshooting=129))

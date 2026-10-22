@@ -237,8 +237,8 @@ def record_waiver_grant(ledger: GateLedger, artifacts: str | ArtifactSetSignatur
     row = build_waiver_row(action="grant", **fields)
     if not _record(ledger, row, artifacts, commit):
         raise WaiverNotAuditedError(
-            "this consent could not be written to the identity-gate ledger. If it came from the panel, it was "
-            "not granted; a standing or environment bypass still applies without its audit row. "
+            "this consent could not be written to the identity-gate ledger. If it came from the panel or "
+            "Studio, it was not granted; a standing or environment bypass still applies without its audit row. "
             "Check that the ComfyUI output directory is writable; the next click or load tries again.")
     return row.detail
 

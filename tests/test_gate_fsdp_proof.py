@@ -509,7 +509,7 @@ def test_the_priced_stop_writes_one_inconclusive_capacity_row(monkeypatch, tmp_p
     assert all(record[3] != "CAPACITY_CERTIFIED" for record in ledger.records)
     # The row uses existing vocabulary, so it needs no protocol bump; the
     # comment on gate_ledger.GATE_PROTOCOL_VERSION says what does.
-    assert GATE_PROTOCOL_VERSION == 13
+    assert GATE_PROTOCOL_VERSION == 14
 
 
 @pytest.mark.parametrize(
