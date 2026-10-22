@@ -303,7 +303,10 @@ The companion refuses a relative `XDG_STATE_HOME` or `--state-dir`, so launching
 from another directory never opens a second database. Use `--state-dir` to
 choose another private directory. Directories must be owner-only (0700); the
 SQLite database uses 0600, WAL and full synchronous transactions. A process lock
-permits one companion per state directory. A schema mismatch refuses startup;
+permits one companion per state directory. One connection serves the event loop
+and the worker threads that settle driver history and write live and operation
+previews. Every use of it, closing included, holds one lock, and shutdown waits
+for those threads before the database closes. A schema mismatch refuses startup;
 this first schema has no older migration. A state directory, lock or database
 refusal exits with one line. Preserve the directory to preserve shared records.
 

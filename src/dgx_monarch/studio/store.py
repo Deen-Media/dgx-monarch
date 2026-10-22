@@ -71,6 +71,13 @@ def _fit(value: dict[str, Any], keys: Iterable[str], budget: int = EVENT_FIELD_B
 
 
 class Store:
+    """One SQLite connection shared by the event loop and worker threads.
+
+    Every use of ``db``, close included, holds ``lock``, so one thread at a time
+    uses the connection. The store touches no asyncio primitive: settlement and
+    preview writes run on worker threads.
+    """
+
     def __init__(self, path: Path):
         self.directory = private_directory(path)
         db_path = self.directory / "studio.sqlite3"
@@ -111,7 +118,10 @@ class Store:
         self.swept_at: float | None = None
 
     def close(self) -> None:
-        self.db.close()
+        # A statement in flight on another thread finishes first; closing under
+        # it crashes the interpreter. Later use raises sqlite3.ProgrammingError.
+        with self.lock:
+            self.db.close()
 
     def bind_driver(self, origin: str) -> None:
         """Keep durable prompts and media descriptors on their original driver."""
