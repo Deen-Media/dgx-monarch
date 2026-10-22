@@ -20,6 +20,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .runtime_identity import _stat_tuple
+from .runtime_identity import comfy_checkout_root as _comfy_checkout_root
 from .runtime_identity import machine_identity_sha256 as _machine_identity_sha256
 from .runtime_identity import resolved_artifact_identities as _resolved_artifact_identities
 from .runtime_identity import runtime_instance_sha256 as _runtime_instance_sha256
@@ -450,7 +451,6 @@ def runtime_provenance_snapshot(
         )
     import comfy
     import comfy.model_management as comfy_model_management
-    import folder_paths
 
     from .gate_ledger import GATE_PROTOCOL_VERSION
     from .runtime_module_origins import (
@@ -460,7 +460,7 @@ def runtime_provenance_snapshot(
 
     package_root = Path(__file__).resolve().parent
     checkout_root = package_root.parents[1]
-    comfy_root = Path(folder_paths.__file__).resolve().parent
+    comfy_root = _comfy_checkout_root()
     comfy_origin = Path(comfy_model_management.__file__).resolve()
     comfy_paths = [Path(path).resolve() for path in comfy.__path__]
     if comfy_paths != [(comfy_root / "comfy").resolve()] or not comfy_origin.is_relative_to(
