@@ -324,7 +324,7 @@ capability namespace no trust context can emit, with verdicts the
 authorization lookup does not accept, so audit evidence cannot become gate
 authority. A v8 PASS must re-prove once per combination because it predates
 the pre-gate certificate requirement. The current version is
-`GATE_PROTOCOL_VERSION` in `gate_ledger.py`, 13; every version change
+`GATE_PROTOCOL_VERSION` in `gate_ledger.py`, 14; every version change
 requires a new proof for each combination on first use, and a burned number is never
 reused.
 

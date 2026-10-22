@@ -6433,23 +6433,25 @@ families needs stock ComfyUI on one GPU.
 Kromoss) with a LoRA in its stack refuses class P before dispatch, or on
 every Worker while the model loads, with a message that opens "moss_image:
 an INT8 file with a LoRA", names the LoRA, and goes on "rendered far from
-stock ComfyUI on the cluster on 2026-10-21, and the cause is under
-investigation, so this release refuses the pair on every topology before any
-weight moves: each one bakes the LoRA the same way, mode=local on one GPU
-included. Render this graph in stock ComfyUI on one GPU instead, or remove
-the LoRA; a BF16 file with a LoRA is not refused. See
-docs/TROUBLESHOOTING.md #129."
+stock ComfyUI on the cluster on 2026-10-21. dgx-monarch bakes the LoRA into
+the quantized weights as stock's classic loader does, and stock with
+DynamicVRAM off rendered the Kromoss INT8 file with its DMD2 LoRA as far from
+its own default, so this release refuses the pair on every topology before
+any weight moves: each one bakes the LoRA the same way, mode=local on one GPU
+included. Render this graph in stock ComfyUI on one GPU instead, with its
+default DynamicVRAM loader, or remove the LoRA; a BF16 file with a LoRA is
+not refused. See docs/TROUBLESHOOTING.md #129."
 
 **Cause:** on 2026-10-21 the Kromoss INT8 ConvRot file with the DMD2 LoRA at
 strength 1.0, rendered on uly2 at 1024 square, read one-step NRMS 0.985
 against stock ComfyUI's render of the same file and LoRA on one GPU, far past
-the 0.10 floor, and a rerun was bit-identical. A probe run after the message
-above was written found the fault upstream, in stock ComfyUI's classic INT8
-ConvRot bake. With its default DynamicVRAM loader, stock applies a LoRA at
-cast time. With DynamicVRAM off (`--disable-dynamic-vram`), stock ComfyUI
-alone on one GPU loads the INT8 file in full, bakes the LoRA into the INT8
-weights, and renders the same graph 0.998 NRMS from its own default at one
-step and 0.989 at 8 steps; without the LoRA the two loaders agree exactly.
+the 0.10 floor, and a rerun was bit-identical. A probe found the fault
+upstream, in stock ComfyUI's classic INT8 ConvRot bake. With its default
+DynamicVRAM loader, stock applies a LoRA at cast time. With DynamicVRAM off
+(`--disable-dynamic-vram`), stock ComfyUI alone on one GPU loads the INT8
+file in full, bakes the LoRA into the INT8 weights, and renders the same
+graph 0.998 NRMS from its own default at one step and 0.989 at 8 steps;
+without the LoRA the two loaders agree exactly.
 dgx-monarch's store bakes the LoRA the way that classic loader does, and the
 cluster render sits with stock's classic render: both move the latent about
 2.8 NRMS from the render without the LoRA, where every other LoRA path moves

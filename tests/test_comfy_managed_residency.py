@@ -124,7 +124,7 @@ def test_no_new_guard_was_added_to_the_frozen_registry():
     assert "comfy_managed" not in refusal.GUARDS
     assert not any("comfy_managed" in name or "aimdo" in name for name in refusal.GUARDS)
     assert RESIDENCY_KINDS == frozenset({"slab"})
-    assert GATE_PROTOCOL_VERSION == 13
+    assert GATE_PROTOCOL_VERSION == 14
 
 
 def test_rung_zero_outranks_an_explicit_slab_request(rung_on):

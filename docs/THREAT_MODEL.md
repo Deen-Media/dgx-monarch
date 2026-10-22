@@ -144,12 +144,14 @@ therefore carries the owner token's authority into the driver's recycle and
 consent actions: a token holder can reset the Attached mesh or accept a
 consent card through it.
 
-The permanent waiver ledger cannot tell those two callers apart. The consent
-route records every accept with `consent_source` set to `panel`, so a ledger
-row written through Studio reads as a panel click. Read a ledger row as an
-accept through the driver's consent route, not as proof of which interface the
-operator used. Recording the caller would add a value to the ledger's
-permanent vocabulary, so it is an owner decision.
+The permanent waiver ledger records which of those two callers accepted, as
+the caller states it. Studio adds `source` set to `studio` to the consent
+request body, and the route records that value as the row's `consent_source`.
+A body without the field records `panel`, and any other value refuses with a
+400 before anything is written. The field is a label the caller sends, not
+authentication: anything that passes the route's CSRF checks can send either
+value. Read the source as the interface the request named, not as proof of
+which interface the operator used.
 
 The driver is trusted at this boundary, as ComfyUI is for the panel. A hostile
 or replaced driver can report false queue, history and telemetry state, serve

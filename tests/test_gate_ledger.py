@@ -258,7 +258,7 @@ def test_pass_is_bound_to_protocol_version_and_capability_context(tmp_path):
     row = led.entries()[0]
     # The comment above GATE_PROTOCOL_VERSION in gate_ledger.py records why each
     # version from v4 on was added or burned. Older PASSes re-prove.
-    assert ledger_mod.GATE_PROTOCOL_VERSION == 13
+    assert ledger_mod.GATE_PROTOCOL_VERSION == 14
     assert row["gate_protocol"] == ledger_mod.GATE_PROTOCOL_VERSION
     assert row["dgx_monarch"]
 
@@ -905,6 +905,34 @@ def test_v12_pass_reads_stale_under_v13(tmp_path):
         "comfy": "commit",
         "verdict": "PASS",
         "gate_protocol": 12,
+        "dgx_monarch": ledger_mod.__version__,
+        "capability_context": led._context_value(context),
+    }
+    with open(led.path, "w") as f:
+        f.write(json.dumps(row) + "\n")
+
+    assert led.lookup("k", "artifact", "commit", context) == "stale"
+    led.record("fresh", "artifact", "commit", "PASS", context=context)
+    assert led.lookup("fresh", "artifact", "commit", context) == "pass"
+
+
+def test_v13_pass_reads_stale_under_v14(tmp_path):
+    """v13 PASS rows predate the ``studio`` consent source in the frozen vocabulary.
+
+    A new member of the frozen audit vocabulary advances the protocol, so every
+    v13 PASS re-proves once.
+    """
+    led = GateLedger(str(tmp_path))
+    context = {
+        "worker_args": {"slab_weights": True, "lora_low_rss": False},
+        "world": 2,
+    }
+    row = {
+        "key": "k",
+        "artifacts": "artifact",
+        "comfy": "commit",
+        "verdict": "PASS",
+        "gate_protocol": 13,
         "dgx_monarch": ledger_mod.__version__,
         "capability_context": led._context_value(context),
     }

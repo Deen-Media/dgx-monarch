@@ -75,7 +75,7 @@ KIND_GUARD_PREFIXES: dict[str, str] = {
 _SCOPE_RE = re.compile(r"^[a-z0-9_]+$")
 
 ACTIONS = frozenset({"grant", "use", "revoke"})
-CONSENT_SOURCES = frozenset({"panel", "env", "auto_rescue", "cli"})
+CONSENT_SOURCES = frozenset({"panel", "env", "auto_rescue", "cli", "studio"})
 REVOKED_BY = frozenset({"user", "gate_fail", "file_change"})
 
 CERTIFICATE_ORIGINS = frozenset({"rescue_load", "gate_cross_leg"})

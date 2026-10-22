@@ -87,7 +87,9 @@ records failed with the driver's short reason; a 5xx or a lost response records
 unknown. Consent apply reads the driver's pending consent requests at review.
 Leave key and id empty to list them; with one pending request the review selects
 it. Studio offers accept only; dismiss, revoke and the automatic rescue setting
-stay in the ComfyUI panel. A Sol install review with no plan token reuses the
+stay in the ComfyUI panel. The driver's waiver ledger records a Studio accept
+with `consent_source` set to `studio`, where a panel click records `panel`. A
+Sol install review with no plan token reuses the
 staging of a live review of the same plan. Each review first removes, on every
 host, staging that only expired or replaced Studio reviews used; staging an
 apply used and staging for a token you supplied stay.

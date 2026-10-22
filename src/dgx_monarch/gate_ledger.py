@@ -42,11 +42,11 @@ LEDGER_NAME = "dgxm_gate_ledger.jsonl"
 # or mutation-guard packed modalities. v7 was the first protocol to combine both.
 # v8 gave resolved no-LoRA FSDP its own exact clean-reload proof scope.
 # v9 adds audit/slab checks; v10 binds source and rejects divergent-repeat PASS.
-# v10 cannot be reused: a class-K member's audit fields changed
-# meaning; v11 for slab proof counting replies without binding each to its exact
-# rank/world/setup-generation cohort; v12 for a fourth class-K kind, shard-quant.
+# v10 cannot be reused: a class-K member's audit fields changed meaning; v11 for slab
+# proof counting replies without binding each to its exact rank/world/setup-generation
+# cohort; v12 for a fourth class-K kind, shard-quant; v13 for the studio consent source.
 # Numbers are single-use, so a semantic change advances rather than redefines one.
-GATE_PROTOCOL_VERSION = 13
+GATE_PROTOCOL_VERSION = 14
 
 
 def _canonical_capability_context(context: dict) -> str:

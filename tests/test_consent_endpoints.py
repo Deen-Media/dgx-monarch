@@ -828,6 +828,70 @@ def test_one_click_writes_one_ledger_row_then_the_memo(tmp_path, monkeypatch):
     assert consent_pending.pending_count() == 0
 
 
+@pytest.mark.parametrize(("sent", "recorded_as"), [
+    ({}, "panel"), ({"source": "panel"}, "panel"), ({"source": "studio"}, "studio"),
+], ids=["absent", "panel", "studio"])
+def test_an_accept_is_recorded_under_the_interface_that_sent_it(tmp_path, monkeypatch, sent, recorded_as):
+    """Studio's accept names Studio in the row, the memo and the grant; no field is the panel."""
+    recorded: list = []
+    monkeypatch.setattr(consent_routes, "record_waiver", _fake_recorder(recorded))
+    path = _checkpoint(tmp_path)
+    card = consent_pending.register_pending(_descriptor(path))
+    assert card is not None
+
+    async def scenario():
+        client = await _build_client(monkeypatch)
+        try:
+            resp = await _post(client, {"action": "accept", "key": card["key"], "id": card["id"], **sent})
+            assert resp.status == 200
+            assert (await resp.json())["consent"]["consent_source"] == recorded_as
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+    assert [row["consent_source"] for row in recorded] == [recorded_as]
+    grant = consent_pending.resolve(kind="rescue-slab", path=path, context=CONTEXT)
+    assert grant is not None and grant.consent_source == recorded_as
+    assert consent_store.list_active()[0]["consent_source"] == recorded_as
+
+
+@pytest.mark.parametrize("source", ["cli", "env", "auto_rescue", "Studio", "", None, ["studio"], {"studio": 1}, 1],
+                         ids=["cli", "env", "auto-rescue", "capitalized", "empty", "null", "list", "object",
+                              "number"])
+def test_an_unknown_source_refuses_with_the_400_shape_and_writes_nothing(tmp_path, monkeypatch, source):
+    recorded: list = []
+    monkeypatch.setattr(consent_routes, "record_waiver", _fake_recorder(recorded))
+    path = _checkpoint(tmp_path)
+    card = consent_pending.register_pending(_descriptor(path))
+    assert card is not None
+
+    async def scenario():
+        client = await _build_client(monkeypatch)
+        try:
+            for body in ({"action": "accept", "key": card["key"], "id": card["id"]},
+                         {"action": "auto_rescue", "value": True}):
+                resp = await _post(client, {**body, "source": source})
+                assert resp.status == 400
+                assert await resp.json() == {"ok": False, "detail": "consent source must be panel or studio"}
+        finally:
+            await client.close()
+
+    asyncio.run(scenario())
+
+    assert recorded == []
+    assert consent_pending.pending_count() == 1
+    assert consent_store.read()["consents"] == {} and consent_store.auto_rescue() is False
+
+
+def test_the_standing_toggle_records_the_interface_that_set_it(monkeypatch):
+    recorded: list = []
+    monkeypatch.setattr(consent_routes, "record_waiver", _fake_recorder(recorded))
+    assert consent_routes.handle_action({"action": "auto_rescue", "value": True, "source": "studio"})[0] == 200
+    assert consent_routes.handle_action({"action": "auto_rescue", "value": False})[0] == 200
+    assert [(row["action"], row["consent_source"]) for row in recorded] == [("grant", "studio"), ("revoke", "panel")]
+
+
 def test_a_checkpoint_that_changed_since_the_refusal_is_refused_not_laundered(
         tmp_path, monkeypatch):
     """The card was minted for the bytes that were on disk when the render
@@ -1163,6 +1227,15 @@ def test_the_ledger_seam_writes_a_real_v9_waiver_row(tmp_path, monkeypatch):
     from dgx_monarch.gate_audit import trust_rows
 
     assert trust_rows(rows) == []
+
+
+def test_the_ledger_seam_writes_a_studio_row(tmp_path):
+    """The ledger's own builder takes the Studio source, so a Studio accept is never refused as a 503."""
+    key = consent_routes.record_waiver(**_seam_fields(consent_source="studio"))
+    assert key == f"audit:waiver:rescue-slab:{COMBO}"
+    with open(os.path.join(str(tmp_path), "dgxm_gate_ledger.jsonl")) as handle:
+        rows = [json.loads(line) for line in handle]
+    assert [(row["action"], row["consent_source"]) for row in rows] == [("grant", "studio")]
 
 
 def test_the_ledger_seam_fails_closed(tmp_path, monkeypatch):

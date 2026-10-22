@@ -20,9 +20,9 @@ coverage in [`test_gate_ledger.py:23-27`](../tests/test_gate_ledger.py#L23-L27 "
 [`test_gate_ledger.py:311-343`](../tests/test_gate_ledger.py#L311-L343 "anchor:test_burned_v4_rows_read_stale_not_current_trust"),
 [`test_gate_ledger.py:346-350`](../tests/test_gate_ledger.py#L346-L350 "anchor:test_recorded_unknown_commit_never_grants_pass"), and
 [`test_gate_ledger.py:353-360`](../tests/test_gate_ledger.py#L353-L360 "anchor:test_contextual_pass_is_invalidated_by_package_version"),
-[`test_gate_ledger.py:946-973`](../tests/test_gate_ledger.py#L946-L973 "anchor:test_contextual_authority_and_token_bind_exact_dgx_source"),
-[`test_gate_ledger.py:976-1003`](../tests/test_gate_ledger.py#L976-L1003 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"), and
-[`test_gate_ledger.py:1006-1048`](../tests/test_gate_ledger.py#L1006-L1048 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset").
+[`test_gate_ledger.py:974-1001`](../tests/test_gate_ledger.py#L974-L1001 "anchor:test_contextual_authority_and_token_bind_exact_dgx_source"),
+[`test_gate_ledger.py:1004-1031`](../tests/test_gate_ledger.py#L1004-L1031 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"), and
+[`test_gate_ledger.py:1034-1076`](../tests/test_gate_ledger.py#L1034-L1076 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset").
 
 > **Re-verify these invariants when changing gate code.** Changes to the ledger,
 > ceremony, artifact binding, slab proof, automatic gate, quarantine, Fleet
@@ -98,9 +98,9 @@ coverage in [`test_gate_ledger.py:23-27`](../tests/test_gate_ledger.py#L23-L27 "
   [`gate_ledger.py:62-69`](../src/dgx_monarch/gate_ledger.py#L62-L69 "anchor:gate_verdict_token"),
   [`gate_ledger.py:380-407`](../src/dgx_monarch/gate_ledger.py#L380-L407 "anchor:_entry"), and
   [`gate_ledger.py:260-343`](../src/dgx_monarch/gate_ledger.py#L260-L343 "anchor:lookup_with_integrity"), covered by
-  [`test_gate_ledger.py:946-973`](../tests/test_gate_ledger.py#L946-L973 "anchor:test_contextual_authority_and_token_bind_exact_dgx_source"),
-  [`test_gate_ledger.py:976-1003`](../tests/test_gate_ledger.py#L976-L1003 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"), and
-  [`test_gate_ledger.py:1006-1048`](../tests/test_gate_ledger.py#L1006-L1048 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
+  [`test_gate_ledger.py:974-1001`](../tests/test_gate_ledger.py#L974-L1001 "anchor:test_contextual_authority_and_token_bind_exact_dgx_source"),
+  [`test_gate_ledger.py:1004-1031`](../tests/test_gate_ledger.py#L1004-L1031 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"), and
+  [`test_gate_ledger.py:1034-1076`](../tests/test_gate_ledger.py#L1034-L1076 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
   [`test_runtime_provenance.py:132-149`](../tests/test_runtime_provenance.py#L132-L149 "anchor:test_source_inventory_rejects_unreadable_included_subtree"),
   [`test_gate_orchestration.py:3415-3433`](../tests/test_gate_orchestration.py#L3415-L3433 "anchor:test_normal_render_source_manifest_failure_forces_stock_without_grant"), and
   [`test_fleet.py:1471-1499`](../tests/test_fleet.py#L1471-L1499 "anchor:test_fleet_source_manifest_failure_forces_stock_without_a_grant").
@@ -119,7 +119,7 @@ coverage in [`test_gate_ledger.py:23-27`](../tests/test_gate_ledger.py#L23-L27 "
    row normalization and stamps are covered by
    [`test_gate_ledger.py:208-212`](../tests/test_gate_ledger.py#L208-L212 "anchor:test_record_normalizes_explicit_artifact_set_to_current_digest"),
    [`test_gate_ledger.py:247-269`](../tests/test_gate_ledger.py#L247-L269 "anchor:test_pass_is_bound_to_protocol_version_and_capability_context") and
-   [`test_gate_ledger.py:946-973`](../tests/test_gate_ledger.py#L946-L973 "anchor:test_contextual_authority_and_token_bind_exact_dgx_source").
+   [`test_gate_ledger.py:974-1001`](../tests/test_gate_ledger.py#L974-L1001 "anchor:test_contextual_authority_and_token_bind_exact_dgx_source").
    A write `OSError` is logged. The covered pre-open failure leaves no row;
    durable reuse depends only on what a later lookup finds on disk. The
    failure path is
@@ -184,10 +184,10 @@ Atomic multi-context denial, malformed-guard refusal, strict write/lock
 failure, and side-effect ordering are covered by
 [`test_gate_ledger.py:490-525`](../tests/test_gate_ledger.py#L490-L525 "anchor:test_retest_guard_atomically_denies_every_context_until_exact_finals"),
 [`test_gate_ledger.py:582-606`](../tests/test_gate_ledger.py#L582-L606 "anchor:test_retest_guard_missing_runtime_identity_cannot_resurrect_older_pass"),
-[`test_gate_ledger.py:976-1003`](../tests/test_gate_ledger.py#L976-L1003 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"),
+[`test_gate_ledger.py:1004-1031`](../tests/test_gate_ledger.py#L1004-L1031 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"),
 [`test_gate_ledger.py:609-622`](../tests/test_gate_ledger.py#L609-L622 "anchor:test_retest_guard_write_failure_is_not_best_effort"),
 [`test_gate_ledger.py:625-639`](../tests/test_gate_ledger.py#L625-L639 "anchor:test_retest_guard_requires_lock_support_but_record_remains_best_effort"),
-[`test_gate_ledger.py:1096-1113`](../tests/test_gate_ledger.py#L1096-L1113 "anchor:test_retest_source_manifest_failure_is_typed_and_writes_nothing"),
+[`test_gate_ledger.py:1124-1141`](../tests/test_gate_ledger.py#L1124-L1141 "anchor:test_retest_source_manifest_failure_is_typed_and_writes_nothing"),
 [`test_gate_orchestration.py:1657-1686`](../tests/test_gate_orchestration.py#L1657-L1686 "anchor:test_ceremony_durably_guards_every_potential_grant_before_unload"), and
 [`test_gate_orchestration.py:1689-1715`](../tests/test_gate_orchestration.py#L1689-L1715 "anchor:test_required_retest_guard_failure_aborts_before_any_ceremony_leg").
 
@@ -197,12 +197,14 @@ requires a new proof. That boundary is explicit at
 [`gate_ledger.py:260-343`](../src/dgx_monarch/gate_ledger.py#L260-L343 "anchor:lookup_with_integrity") and is
 covered by
 [`test_gate_ledger.py:247-269`](../tests/test_gate_ledger.py#L247-L269 "anchor:test_pass_is_bound_to_protocol_version_and_capability_context") and
-[`test_gate_ledger.py:1116-1141`](../tests/test_gate_ledger.py#L1116-L1141 "anchor:test_source_failure_preserves_unscoped_diagnostics_and_audit_rows").
+[`test_gate_ledger.py:1144-1169`](../tests/test_gate_ledger.py#L1144-L1169 "anchor:test_source_failure_preserves_unscoped_diagnostics_and_audit_rows").
 
 ## Protocol invariants
 
-These are the v13 invariants. v13 adds the fourth frozen class-K waiver kind,
-the sharded-quant scale bar (`shard_quant_scale`). It carries the
+These are the v14 invariants. v14 adds `studio` to the frozen consent-source
+vocabulary, so the waiver ledger names an accept sent through Studio as
+Studio's. It carries the v13 fourth frozen class-K waiver kind, the
+sharded-quant scale bar (`shard_quant_scale`), the
 v12 rule that every slab-cycle response binds to one exact rank, world, and
 current setup generation before it can be conclusive, active, or eligible for a
 no-material session skip, the
@@ -212,7 +214,7 @@ and waiver guarantees, the v8 FSDP clean-reload guarantees, and the v7
 packed-latent guarantees, all re-verified against the current tree rather than
 copied from historical evidence.
 
-1. **`GATE_PROTOCOL_VERSION == 13`; v4 through v12 are burned forever.** v4
+1. **`GATE_PROTOCOL_VERSION == 14`; v4 through v13 are burned forever.** v4
    records rejected `slab_unreferenced` PASS authority and bidirectional
    `auto`/`on` sibling stamping. v5 lacks the deep immutable transaction,
    exact normal-render grant, and crash-durable multi-context retest boundary.
@@ -242,8 +244,9 @@ copied from historical evidence.
    duplicate, missing, out-of-range, wrong-world, or stale-generation row
    grants neither a conclusive/active proof nor a no-material skip. v13 adds
    a fourth class-K waiver kind, so a row written under the three-kind
-   vocabulary cannot stand as current. Every
-   v12-and-older PASS therefore re-proves once per (combination, artifact digest,
+   vocabulary cannot stand as current. v14 adds the `studio` consent source,
+   so a row written under the four-source vocabulary cannot stand as current.
+   Every v13-and-older PASS therefore re-proves once per (combination, artifact digest,
    comfy commit, capability context, Gate protocol, package version,
    package-source manifest) on first use. There is no migration and no
    backfill: the JSONL keeps every older row, and older rows stay stale.
@@ -251,15 +254,16 @@ copied from historical evidence.
    [`gate_ledger.py:49-49`](../src/dgx_monarch/gate_ledger.py#L49-L49 "anchor:GATE_PROTOCOL_VERSION") and
    [`gate_ledger.py:260-343`](../src/dgx_monarch/gate_ledger.py#L260-L343 "anchor:lookup_with_integrity"); stale v5 and v6
    authority, both rejected v4 shapes, and the v7-to-v8, v8-to-v9, v9-to-v10,
-   v11-to-v12, and v12-to-v13 burns are covered by
+   v11-to-v12, v12-to-v13, and v13-to-v14 burns are covered by
    [`test_gate_ledger.py:272-288`](../tests/test_gate_ledger.py#L272-L288 "anchor:test_v5_pass_without_frozen_transaction_inputs_reads_stale") and
    [`test_gate_ledger.py:291-308`](../tests/test_gate_ledger.py#L291-L308 "anchor:test_divergent_v6_lineages_read_stale_under_current_protocol"),
    [`test_gate_ledger.py:802-830`](../tests/test_gate_ledger.py#L802-L830 "anchor:test_v7_pass_without_fsdp_clean_reload_reads_stale_under_v8"),
    [`test_gate_ledger.py:833-860`](../tests/test_gate_ledger.py#L833-L860 "anchor:test_v8_pass_without_the_byte_verify_rule_reads_stale_under_v9"),
-   [`test_gate_ledger.py:919-943`](../tests/test_gate_ledger.py#L919-L943 "anchor:test_v9_cross_mode_pass_without_repeat_identity_reads_stale_under_v10"),
+   [`test_gate_ledger.py:947-971`](../tests/test_gate_ledger.py#L947-L971 "anchor:test_v9_cross_mode_pass_without_repeat_identity_reads_stale_under_v10"),
    [`test_gate_ledger.py:311-343`](../tests/test_gate_ledger.py#L311-L343 "anchor:test_burned_v4_rows_read_stale_not_current_trust"),
-   [`test_gate_ledger.py:863-887`](../tests/test_gate_ledger.py#L863-L887 "anchor:test_v11_pass_reads_stale_under_v12"), and
-   [`test_gate_ledger.py:891-916`](../tests/test_gate_ledger.py#L891-L916 "anchor:test_v12_pass_reads_stale_under_v13").
+   [`test_gate_ledger.py:863-887`](../tests/test_gate_ledger.py#L863-L887 "anchor:test_v11_pass_reads_stale_under_v12"),
+   [`test_gate_ledger.py:891-916`](../tests/test_gate_ledger.py#L891-L916 "anchor:test_v12_pass_reads_stale_under_v13"), and
+   [`test_gate_ledger.py:919-944`](../tests/test_gate_ledger.py#L919-L944 "anchor:test_v13_pass_reads_stale_under_v14").
 2. **PASS binds to capability context, protocol version, package version, and
    canonical package-source manifest; any change re-proves.** Contextual rows
    are stamped and selected at
@@ -306,9 +310,9 @@ copied from historical evidence.
    [`test_gate_ledger.py:272-288`](../tests/test_gate_ledger.py#L272-L288 "anchor:test_v5_pass_without_frozen_transaction_inputs_reads_stale"),
    [`test_gate_ledger.py:311-343`](../tests/test_gate_ledger.py#L311-L343 "anchor:test_burned_v4_rows_read_stale_not_current_trust"), and
    [`test_gate_ledger.py:353-360`](../tests/test_gate_ledger.py#L353-L360 "anchor:test_contextual_pass_is_invalidated_by_package_version"),
-   [`test_gate_ledger.py:946-973`](../tests/test_gate_ledger.py#L946-L973 "anchor:test_contextual_authority_and_token_bind_exact_dgx_source"),
-   [`test_gate_ledger.py:976-1003`](../tests/test_gate_ledger.py#L976-L1003 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"), and
-   [`test_gate_ledger.py:1006-1048`](../tests/test_gate_ledger.py#L1006-L1048 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset").
+   [`test_gate_ledger.py:974-1001`](../tests/test_gate_ledger.py#L974-L1001 "anchor:test_contextual_authority_and_token_bind_exact_dgx_source"),
+   [`test_gate_ledger.py:1004-1031`](../tests/test_gate_ledger.py#L1004-L1031 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"), and
+   [`test_gate_ledger.py:1034-1076`](../tests/test_gate_ledger.py#L1034-L1076 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset").
 3. **Same-context FAIL is sticky; automatic gating does not retry it into PASS
    without an identity change.** Stickiness is scoped to the same combination,
    artifact, current protocol/package/context, and survives both ComfyUI commit
@@ -320,8 +324,8 @@ copied from historical evidence.
    [`auto_gate.py:274-473`](../src/dgx_monarch/nodes/auto_gate.py#L274-L473 "anchor:maybe_auto_gate").
    Coverage is
    [`test_gate_ledger.py:363-368`](../tests/test_gate_ledger.py#L363-L368 "anchor:test_fail_quarantine_is_sticky_across_commit_uncertainty"),
-   [`test_gate_ledger.py:1006-1048`](../tests/test_gate_ledger.py#L1006-L1048 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
-   [`test_gate_ledger.py:1053-1087`](../tests/test_gate_ledger.py#L1053-L1087 "anchor:test_foreign_source_row_cannot_displace_sticky_fail_or_revive_older_pass"), and
+   [`test_gate_ledger.py:1034-1076`](../tests/test_gate_ledger.py#L1034-L1076 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
+   [`test_gate_ledger.py:1081-1115`](../tests/test_gate_ledger.py#L1081-L1115 "anchor:test_foreign_source_row_cannot_displace_sticky_fail_or_revive_older_pass"), and
    [`test_gate_orchestration.py:1203-1229`](../tests/test_gate_orchestration.py#L1203-L1229 "anchor:test_persisted_fail_quarantines_fresh_model_before_setup").
 4. **`auto` to explicit `on` stamping is one-directional.** A sibling
    grant is emitted only for `PASS`, all-rank active slab residency, a passing
@@ -655,7 +659,7 @@ copied from historical evidence.
     [`test_gate_orchestration.py:3692-3717`](../tests/test_gate_orchestration.py#L3692-L3717 "anchor:test_post_provenance_malformed_row_cannot_publish_a_terminal_row").
     Later normal and Fleet workers independently recompute the same source-bound
     token before model load. Source-token and driver/worker skew are covered by
-    [`test_gate_ledger.py:1006-1048`](../tests/test_gate_ledger.py#L1006-L1048 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
+    [`test_gate_ledger.py:1034-1076`](../tests/test_gate_ledger.py#L1034-L1076 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset"),
     [`test_runtime_remediation.py:1675-1712`](../tests/test_runtime_remediation.py#L1675-L1712 "anchor:test_fleet_grant_rejects_driver_worker_source_manifest_mismatch"), and
     [`test_runtime_remediation.py:1715-1741`](../tests/test_runtime_remediation.py#L1715-L1741 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
 13. **v9 audit rows are permanent evidence and can never become authority.**
@@ -680,18 +684,18 @@ copied from historical evidence.
     the records required for its permanent use row. This boundary is
     [`consent_waiver.py:276-319`](../src/dgx_monarch/nodes/consent_waiver.py#L276-L319 "anchor:stamp_request") and
     [`consent_waiver.py:322-344`](../src/dgx_monarch/nodes/consent_waiver.py#L322-L344 "anchor:_remember_audit"), covered by
-    [`test_accuracy_waivers.py:677-690`](../tests/test_accuracy_waivers.py#L677-L690 "anchor:test_a_513th_outstanding_waived_dispatch_is_not_stamped").
+    [`test_accuracy_waivers.py:704-717`](../tests/test_accuracy_waivers.py#L704-L717 "anchor:test_a_513th_outstanding_waived_dispatch_is_not_stamped").
     The vocabulary, builders and namespace are
     [`gate_audit_vocab.py:20-20`](../src/dgx_monarch/gate_audit_vocab.py#L20-L20 "anchor:AUDIT_KEY_PREFIX") and
     [`gate_audit.py:218-226`](../src/dgx_monarch/gate_audit.py#L218-L226 "anchor:record_waiver"), and the
     neutrality, non-damage, no-grant and no-displacement properties are covered
     by
-    [`test_ledger_v9.py:245-267`](../tests/test_ledger_v9.py#L245-L267 "anchor:test_audit_context_can_never_equal_a_trust_context"),
-    [`test_ledger_v9.py:270-282`](../tests/test_ledger_v9.py#L270-L282 "anchor:test_audit_rows_are_trust_neutral"),
-    [`test_ledger_v9.py:285-294`](../tests/test_ledger_v9.py#L285-L294 "anchor:test_audit_rows_are_not_damage"),
-    [`test_ledger_v9.py:297-304`](../tests/test_ledger_v9.py#L297-L304 "anchor:test_audit_context_lookup_never_grants"), and
-    [`test_ledger_v9.py:307-324`](../tests/test_ledger_v9.py#L307-L324 "anchor:test_waiver_row_never_becomes_latest_for_a_gated_combo"), and
-    [`test_gate_ledger.py:1116-1141`](../tests/test_gate_ledger.py#L1116-L1141 "anchor:test_source_failure_preserves_unscoped_diagnostics_and_audit_rows").
+    [`test_ledger_v9.py:246-268`](../tests/test_ledger_v9.py#L246-L268 "anchor:test_audit_context_can_never_equal_a_trust_context"),
+    [`test_ledger_v9.py:271-283`](../tests/test_ledger_v9.py#L271-L283 "anchor:test_audit_rows_are_trust_neutral"),
+    [`test_ledger_v9.py:286-295`](../tests/test_ledger_v9.py#L286-L295 "anchor:test_audit_rows_are_not_damage"),
+    [`test_ledger_v9.py:298-305`](../tests/test_ledger_v9.py#L298-L305 "anchor:test_audit_context_lookup_never_grants"), and
+    [`test_ledger_v9.py:308-325`](../tests/test_ledger_v9.py#L308-L325 "anchor:test_waiver_row_never_becomes_latest_for_a_gated_combo"), and
+    [`test_gate_ledger.py:1144-1169`](../tests/test_gate_ledger.py#L1144-L1169 "anchor:test_source_failure_preserves_unscoped_diagnostics_and_audit_rows").
 14. **A consent is an availability grant, never an accuracy grant.** A consent
     memo permits a residency change so a render can run. It does not establish
     output accuracy. It cannot clear a quarantine: the authoritative
@@ -730,7 +734,7 @@ copied from historical evidence.
     A later current-source PASS permits a fresh consent, and the older FAIL
     then stays in the ledger only as audit history. These rules are implemented in
     [`consent_quarantine.py:230-303`](../src/dgx_monarch/nodes/consent_quarantine.py#L230-L303 "anchor:quarantine_decisions") and
-    [`consent_routes.py:140-180`](../src/dgx_monarch/nodes/consent_routes.py#L140-L180 "anchor:_live_rows"), and covered by
+    [`consent_routes.py:141-181`](../src/dgx_monarch/nodes/consent_routes.py#L141-L181 "anchor:_live_rows"), and covered by
     [`test_consent_endpoints.py:459-477`](../tests/test_consent_endpoints.py#L459-L477 "anchor:test_accept_refuses_a_card_after_persisted_gate_fail"),
     [`test_consent_endpoints.py:480-501`](../tests/test_consent_endpoints.py#L480-L501 "anchor:test_consent_state_omits_quarantined_rows_without_mutating_them"),
     [`test_consent_endpoints.py:504-528`](../tests/test_consent_endpoints.py#L504-L528 "anchor:test_consent_state_uses_one_memo_snapshot_for_rows_and_quarantine"),
@@ -766,7 +770,7 @@ copied from historical evidence.
     was allowed; the FAIL
     records what was later proven unsafe and governs trust lookup. Quarantine
     after a certified load fails is covered by
-    [`test_ledger_v9.py:509-532`](../tests/test_ledger_v9.py#L509-L532 "anchor:test_a_certified_load_that_later_fails_still_quarantines").
+    [`test_ledger_v9.py:510-533`](../tests/test_ledger_v9.py#L510-L533 "anchor:test_a_certified_load_that_later_fails_still_quarantines").
 15. **An approximate attention kernel skips the ceremony instead of passing
    it.** The ceremony compares residency under one kernel, so it cannot judge an
    approximate one. Under the Sol-Attn kernel no ceremony runs, no ledger row is
@@ -810,7 +814,7 @@ copied from historical evidence.
   [`test_gate_ledger.py:247-269`](../tests/test_gate_ledger.py#L247-L269 "anchor:test_pass_is_bound_to_protocol_version_and_capability_context"),
   [`test_gate_ledger.py:346-350`](../tests/test_gate_ledger.py#L346-L350 "anchor:test_recorded_unknown_commit_never_grants_pass"),
   [`test_gate_ledger.py:353-360`](../tests/test_gate_ledger.py#L353-L360 "anchor:test_contextual_pass_is_invalidated_by_package_version"), and
-  [`test_gate_ledger.py:1006-1048`](../tests/test_gate_ledger.py#L1006-L1048 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset").
+  [`test_gate_ledger.py:1034-1076`](../tests/test_gate_ledger.py#L1034-L1076 "anchor:test_same_version_source_change_invalidates_after_process_cache_reset").
 - For automatic first use, `unknown`, `stale`, or uncached `inconclusive` starts
   the canonical ceremony before the full render. A returned PASS is discarded
   if the artifact/context token changed during that ceremony. This is enforced
@@ -829,7 +833,7 @@ copied from historical evidence.
   [`auto_gate.py:274-473`](../src/dgx_monarch/nodes/auto_gate.py#L274-L473 "anchor:maybe_auto_gate") and, for the best-effort append,
   [`gate_verdict.py:236-267`](../src/dgx_monarch/nodes/gate_verdict.py#L236-L267 "anchor:publish_ceremony_verdict"), covered by
   [`test_gate_ledger.py:490-525`](../tests/test_gate_ledger.py#L490-L525 "anchor:test_retest_guard_atomically_denies_every_context_until_exact_finals"),
-  [`test_gate_ledger.py:976-1003`](../tests/test_gate_ledger.py#L976-L1003 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"),
+  [`test_gate_ledger.py:1004-1031`](../tests/test_gate_ledger.py#L1004-L1031 "anchor:test_contextual_legacy_authority_without_dgx_source_reads_stale"),
   [`test_gate_orchestration.py:3229-3255`](../tests/test_gate_orchestration.py#L3229-L3255 "anchor:test_known_commit_pass_can_be_session_cached_when_persistence_fails"), and
   [`test_gate_orchestration.py:214-236`](../tests/test_gate_orchestration.py#L214-L236 "anchor:test_auto_gate_does_not_cache_unconsumable_pass_over_retesting").
 - An unknown-ComfyUI PASS follows the same session-only rule and never becomes
@@ -1075,7 +1079,7 @@ v4/v5/v6-to-v7 history, the v7-to-v8, v8-to-v9, and v9-to-v10 burns are covered 
 [`test_gate_ledger.py:291-308`](../tests/test_gate_ledger.py#L291-L308 "anchor:test_divergent_v6_lineages_read_stale_under_current_protocol"),
 [`test_gate_ledger.py:802-830`](../tests/test_gate_ledger.py#L802-L830 "anchor:test_v7_pass_without_fsdp_clean_reload_reads_stale_under_v8"),
 [`test_gate_ledger.py:833-860`](../tests/test_gate_ledger.py#L833-L860 "anchor:test_v8_pass_without_the_byte_verify_rule_reads_stale_under_v9"),
-[`test_gate_ledger.py:919-943`](../tests/test_gate_ledger.py#L919-L943 "anchor:test_v9_cross_mode_pass_without_repeat_identity_reads_stale_under_v10"), and
+[`test_gate_ledger.py:947-971`](../tests/test_gate_ledger.py#L947-L971 "anchor:test_v9_cross_mode_pass_without_repeat_identity_reads_stale_under_v10"), and
 [`test_gate_ledger.py:311-343`](../tests/test_gate_ledger.py#L311-L343 "anchor:test_burned_v4_rows_read_stale_not_current_trust").
 The v11-to-v12 burn is covered by
 [`test_gate_ledger.py:863-887`](../tests/test_gate_ledger.py#L863-L887 "anchor:test_v11_pass_reads_stale_under_v12").
@@ -1097,7 +1101,10 @@ accepts a response count without binding each response to its exact
 rank/world/current-generation cohort. v13 burns v12 because it adds a fourth
 class-K kind to the frozen waiver vocabulary, `waive-known-wrong:shard-quant`,
 for the sharded-quant scale bar; invariant 1 cites its burn test,
-`test_v12_pass_reads_stale_under_v13`. Rows written under a burned number stay
+`test_v12_pass_reads_stale_under_v13`. v14 burns v13 because it adds `studio`
+to the frozen consent-source vocabulary, so a Studio accept is recorded as
+Studio's rather than as a panel click; invariant 1 cites its burn test,
+`test_v13_pass_reads_stale_under_v14`. Rows written under a burned number stay
 on disk and stay stale.
 
 

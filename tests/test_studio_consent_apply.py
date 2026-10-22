@@ -78,7 +78,8 @@ def test_empty_fields_select_the_one_pending_request_and_accept_it_exactly(store
     result = apply(ops, plan)
     assert result["state"] == "succeeded"
     assert driver.calls == [("GET", "/dgxm/consents", None),
-                            ("POST", "/dgxm/consent", {"key": CARD["key"], "id": CARD["id"], "action": "accept"})]
+                            ("POST", "/dgxm/consent", {"key": CARD["key"], "id": CARD["id"], "action": "accept",
+                                                       "source": "studio"})]
 
 
 def test_typed_identity_must_match_a_pending_request(store):

@@ -593,6 +593,33 @@ def test_a_reserved_guard_refuses_even_while_its_kind_is_granted(rig, monkeypatc
     assert accuracy_waiver.waived(H3_RING_PAD) is False
 
 
+def test_a_studio_accept_waives_the_render_and_its_rows_name_studio(rig):
+    """A class-K waiver accepted through Studio installs and proceeds as the panel's does.
+
+    The Worker checks the grant's channel against the ledger vocabulary before
+    installing it, so a channel missing there would refuse the waived render.
+    """
+    from dgx_monarch.nodes.consent_rescue import artifacts_digest, combo_identity
+
+    combo, artifacts = combo_identity(UNET, {}, rig.checkpoint)
+    card = consent_pending.register_pending(consent_pending.ConsentDescriptor(
+        kind=RING_KIND, path=rig.checkpoint,
+        memo_context=accuracy_waiver.waiver_context(combo_key=combo, topology=RING2, world=2),
+        combo_key=combo, artifacts=artifacts_digest(artifacts), unet_name=UNET,
+        target_guard=H3_RING_PAD, loras=0))
+    assert card is not None
+    status, payload = consent_routes.handle_action(
+        {"action": "accept", "key": card["key"], "id": card["id"], "source": "studio"})
+    assert status == 200 and payload["consent"]["consent_source"] == "studio", payload
+    request = _worker_request(rig, _model(), render_id="r-studio")
+    assert accuracy_waiver.activate(request) == 1
+    _bind_worker()
+    base.assert_ulysses_only_padding(2, 1)
+    consent_waiver.stamp_result({"samples": None}, [{"waived": accuracy_waiver.stamps()}])
+    rows = [row for row in rig.ledger.entries() if row["verdict"] == "WAIVER"]
+    assert [(row["action"], row["consent_source"]) for row in rows] == [("grant", "studio"), ("use", "studio")]
+
+
 def test_a_grant_whose_channel_this_build_cannot_name_installs_nothing(rig):
     """An unreadable `consent_source` refuses instead of rendering unaudited.
 

@@ -64,7 +64,7 @@ def _sniffed_family(model: Any) -> str | None:
 
 
 def preflight_lora_quant(model: Any, uncond: Any = None) -> None:
-    """Refuse a LoRA on a quantized file whose cluster bake renders wrong (#129).
+    """Refuse a LoRA on a quantized file whose baked LoRA renders wrong (#129).
 
     Checks the model and the unconditional model of a two-checkpoint guider,
     a ModelSpec or a model request dict alike. A header is read only for a
