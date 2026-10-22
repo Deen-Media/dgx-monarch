@@ -5,9 +5,9 @@ troubleshooting=N)``, and some texts name the entry inline. Entries are
 numbered in order, so a merge that renumbers them leaves a pointer on a
 neighboring entry with the suite green unless something reads the headings.
 The first test reads every pointer in src. The second raises the MOSS-Image,
-Skip Layer Guidance, LoRA quantization and reference-image refusals and checks
-that each lands on its own entry, and the third checks the documentation links
-to those entries.
+Skip Layer Guidance, LoRA quantization, reference-image and Qwen Image 2.1
+writable-cache refusals and checks that each lands on its own entry, and the
+third checks the documentation links to those entries.
 """
 from __future__ import annotations
 
@@ -24,6 +24,7 @@ from dgx_monarch import lora_quant_guard
 from dgx_monarch.actor import guidance_render
 from dgx_monarch.adapters.base import UnsupportedModelError
 from dgx_monarch.adapters.moss_image_seams import refuse_control_channels, refuse_reference_images
+from dgx_monarch.adapters.qwen_image21 import refuse_writable_prefix_cache
 from dgx_monarch.nodes import model_patch_preflight as preflight
 from dgx_monarch.nodes.common import MeshSpec, ModelSpec
 from dgx_monarch.nodes.model_sampling import DGXMonarchModelSamplingSD3
@@ -39,6 +40,7 @@ SHIFT = "Model Sampling SD3 (DGX Monarch) refuses on a family whose ComfyUI samp
 FLOOR = "A MOSS-Image checkpoint fails to load on ComfyUI older than 0.42.0"
 LORA_QUANT = "A MOSS-Image INT8 render with a LoRA refuses on every topology"
 REFERENCES = "A MOSS-Image render with reference images refuses on every topology but one GPU"
+WRITABLE_CACHE = "A Qwen Image 2.1 Ulysses render with the cache device auto refuses on ComfyUI 503d785f0"
 
 
 def _headings() -> dict[int, str]:
@@ -123,6 +125,11 @@ def _driver_references(monkeypatch) -> None:
                                                     topology_from_preset("uly2", 2))
 
 
+def _worker_writable_cache() -> None:
+    model = SimpleNamespace(current_patcher=SimpleNamespace(is_dynamic=lambda: True))
+    refuse_writable_prefix_cache(model, None, {"device": "auto", "dtype": "default"}, True)
+
+
 def _multiplier_one(monkeypatch) -> None:
     stub = types.ModuleType("folder_paths")
     stub.get_full_path = lambda _kind, _name: "/home/user/models/diffusion_models/m.safetensors"
@@ -141,8 +148,9 @@ def _multiplier_one(monkeypatch) -> None:
     (_lora_quant, LORA_QUANT),
     (_worker_references, REFERENCES),
     (_driver_references, REFERENCES),
+    (_worker_writable_cache, WRITABLE_CACHE),
 ], ids=["driver-skip", "worker-skip", "shift-after-skip", "control-channels", "multiplier-one",
-        "lora-quant", "worker-references", "driver-references"])
+        "lora-quant", "worker-references", "driver-references", "qwen21-writable-cache"])
 def test_the_moss_and_carrier_refusals_land_on_their_own_entries(monkeypatch, raise_it, title):
     with pytest.raises(UnsupportedModelError) as caught:
         if raise_it in (_multiplier_one, _driver_references):
@@ -164,7 +172,7 @@ def test_the_lora_shape_guard_points_at_its_entry():
 
 def test_the_documentation_links_to_the_moss_entries_name_their_headings():
     headings = _headings()
-    titles = (FLOOR, SKIP, SHAPE, SHIFT, LORA_QUANT, REFERENCES)
+    titles = (FLOOR, SKIP, SHAPE, SHIFT, LORA_QUANT, REFERENCES, WRITABLE_CACHE)
     entries = {number: title for number, title in headings.items() if title.startswith(titles)}
     assert sorted(title[:24] for title in entries.values()) == sorted(title[:24] for title in titles)
     anchor = re.compile(r"(?:TROUBLESHOOTING\.md)?#(\d+)-([\w\-]+)\)")

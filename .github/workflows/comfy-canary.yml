@@ -49,6 +49,7 @@ on:
       - "tests/test_lora_shape_guard.py"
       - "tests/test_mage_flow_comfy_differential.py"
       - "tests/test_qwen_image21_adapter.py"
+      - "tests/test_qwen_image21_prefix_cache.py"
       - "tests/test_qwen_text_projections.py"
       - "tests/test_render_memory_price.py"
       - "tests/test_wan_variants.py"
@@ -246,11 +247,13 @@ jobs:
         run: pytest -q tests/test_flux3_cond_branch.py
       # These two steps bind comfy's native Qwen Image 2.1 and Wan Animate 2
       # model classes from master and compare the injected sequence-parallel
-      # forwards with stock on CPU. The ordinary CI job has no ComfyUI.
+      # forwards with stock on CPU. The ordinary CI job has no ComfyUI. The
+      # Qwen step also checks the writable prefix cache refusal against
+      # master's forward.
       - name: Qwen Image 2.1 native forward vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
-        run: pytest -q tests/test_qwen_image21_adapter.py
+        run: pytest -q tests/test_qwen_image21_adapter.py tests/test_qwen_image21_prefix_cache.py
       - name: Wan Animate 2 native forward vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
@@ -326,6 +329,7 @@ jobs:
           tests/test_flux3_comfy_exactness.py
           tests/test_flux3_cond_branch.py
           tests/test_qwen_image21_adapter.py
+          tests/test_qwen_image21_prefix_cache.py
           tests/test_wan_variants.py
           tests/test_int8_linear_layout.py
           tests/test_render_memory_price.py

@@ -243,6 +243,20 @@
   that step refuses reference images first, so no Worker computes them for
   a render it refuses
   ([ADAPTERS](docs/ADAPTERS.md#what-an-adapter-provides)).
+- The `qwen_image21` adapter follows ComfyUI master's Qwen Image 2.1
+  forward of 2026-10-22 (commit 503d785f0), which added a `prefix_cache`
+  parameter for a writable prefix K/V cache. The touchpoint registry admits
+  the forward with and without it, so the previous tree, a071826fd, stays
+  supported, and the `import-against-comfy-master` canary passes again. In
+  CPU tests on this rig the sharded forward is bit-identical to stock on both
+  trees, with the cache off and on; it has not been re-run on hardware
+  ([MODELS](docs/MODELS.md#model-qwen-image-2-1)).
+- Refuse Qwen Image 2.1 cache device `auto` class P on Ulysses topologies
+  under dynamic VRAM on ComfyUI 503d785f0 or later, where stock moved `auto`
+  to the new writable cache and no hardware test has compared a sharded render
+  with it. Every rank refuses alike before any exchange; `gpu`, `cpu` and
+  `off` are not affected, and `auto` on a071826fd passes as before
+  ([TROUBLESHOOTING #134](docs/TROUBLESHOOTING.md#134-a-qwen-image-21-ulysses-render-with-the-cache-device-auto-refuses-on-comfyui-503d785f0-or-later)).
 
 ## [1.2.0] - 2026-10-16
 

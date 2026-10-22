@@ -6826,3 +6826,49 @@ on the Studio host for a new link."
 - Give `tunnel` a host as a name, an SSH config alias, an IP address or
   `user@host`, and install `ssh` for `--run`. Keep `127.0.0.1` and the same
   port on both ends.
+2026-10-22 no edit render, on one GPU or a cluster, has run on hardware.
+
+## 134. A Qwen Image 2.1 Ulysses render with the cache device auto refuses on ComfyUI 503d785f0 or later
+
+**Symptom:** a `qwen_image21` render on a Ulysses topology, such as uly2,
+whose Qwen Image 2.1 Cache (DGX Monarch) node sets the device to `auto`
+refuses class P on every Worker before the first block, with a message that
+opens "qwen_image21: the Qwen Image 2.1 cache device is 'auto'" and names
+`gpu`, `cpu`, `off` and topology `single`. On ComfyUI a071826fd the same
+graph does not refuse.
+
+**Cause:** ComfyUI commit 503d785f0 of 2026-10-22 (Comfy-Aimdo 0.6.0 and
+dynamic VRAM K/V caches) changed what `auto` does for Qwen Image 2.1 under
+dynamic VRAM. Before it, `auto` put the prefix cache in spare VRAM or pinned
+host memory through the model's `select_prefix_cache`. That is the cache the
+sharded forward fills on every rank, and the ten-reference 25-step render
+with `auto` matched native ComfyUI on hardware. From that commit, with a
+dynamic patcher, the model base sizes a writable K/V cache for each
+conditioning before sampling, admits it only when a free-memory or
+pinned-memory check on that GPU passes, and hands it to the forward as
+`prefix_cache`. When it admits none, stock recomputes the prefix at every
+step and never calls `select_prefix_cache`. The sharded forward has no rule
+for that cache, the admission check can differ from rank to rank, and no
+hardware test has compared a sharded render with stock's new path. So this
+release refuses `auto` there rather than render it unmeasured. The refusal
+reads only facts every rank shares: the cache policy, the forward's
+parameter list and the patcher class. Every rank therefore refuses alike
+before any exchange, and by design the next render runs on the same fleet;
+no hardware test has observed this refusal yet. The driver does not refuse
+before dispatch, because it cannot see whether the Workers run dynamic VRAM.
+
+`gpu`, `cpu` and `off` are not affected: stock still takes
+`select_prefix_cache` for them, as the sharded forward does. With a static
+patcher, when dynamic VRAM is off, `auto` takes it too and passes. On
+ComfyUI before 503d785f0, a071826fd included, `auto` passes as before. On
+cfg2 and dp2 the adapter binds nothing, so stock's forward runs on each GPU
+with the new cache when stock admits it; no hardware test has measured that
+either.
+
+**Fix:** set the cache node's device to `gpu` or `cpu`, which keep the cache
+this release has measured, or to `off`. Or run on topology `single`: set the
+Init node to `mode=local` with `gpus_per_host=1`, which binds nothing and
+runs ComfyUI's own forward with the new cache. Fleet KSampler runs each job
+on one GPU with stock's forward, so it is not refused. The refusal stays
+until a hardware test compares a sharded `auto` render on such a ComfyUI with
+stock; as of 2026-10-22 none has run.

@@ -267,11 +267,15 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "transformer_options control",
         4, variadic_keyword="kwargs",
     ),
+    # Comfy 503d785f0 appended prefix_cache, the writable prefix K/V cache that
+    # dynamic VRAM admits for a cache device of "auto". Trees on either side of
+    # that commit are both admitted; the adapter refuses "auto" there on every
+    # rank, and any cache handed over, rather than drop it into its **kwargs.
     _rebound(
         "comfy.ldm.qwen_image21.model", "QwenImage21Transformer2DModel._forward",
         ("qwen_image21",), ("usp",),
         "self x timesteps context ref_latents image_slots transformer_options",
-        4, variadic_keyword="kwargs",
+        4, variadic_keyword="kwargs", optional_trailing=("prefix_cache",),
     ),
     _rebound(
         "comfy.ldm.wan.model", "WanModel.forward_orig", ("wan",), ("usp",),

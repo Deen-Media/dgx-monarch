@@ -13,9 +13,19 @@ prefix. Each distributed run starts with the cache off (actor/qwen_image21_cache
 until the Qwen Image 2.1 Cache (DGX Monarch) node opts in. The distributed cache
 keeps prefix K/V replicated on every rank, keys it on comfy's native prefix key
 plus the sequence-parallel cohort, and has every rank take the same branch.
+
+ComfyUI 503d785f0 (2026-10-22) added a writable prefix K/V cache: under dynamic
+VRAM, for a cache device of ``auto``, the model base admits one per sampling
+run and hands it to ``_forward`` as ``prefix_cache``, and stock's ``auto`` no
+longer reaches ``select_prefix_cache``. The sharded forward takes the new
+parameter and refuses that case on every rank before any collective
+(``refuse_writable_prefix_cache``); ``off``, ``gpu`` and ``cpu`` take the same
+branch as stock on both trees.
 """
 from __future__ import annotations
 
+import inspect
+from collections.abc import Mapping
 from typing import Any
 
 import torch
@@ -135,6 +145,56 @@ def agree_prefix_cache(cache: Any, cached: bool, device: torch.device) -> tuple[
     if not bool(cohort[:, 0].all()):
         return None, False
     return cache, bool(cohort[:, 1].all())
+
+
+# The sharded forward raises this on every rank alike; TROUBLESHOOTING #134.
+WRITABLE_PREFIX_CACHE_REFUSAL = refusal(
+    RefusalClass.PHYSICS,
+    "qwen_image21: the Qwen Image 2.1 cache device is 'auto' on a ComfyUI whose forward takes "
+    "a writable prefix K/V cache (prefix_cache, ComfyUI 503d785f0), under dynamic VRAM. There "
+    "stock keeps the prefix keys and values in that cache, or recomputes them when it admits "
+    "none, where the sequence-parallel forward fills its own cache; no hardware test has "
+    "compared the two on a cluster. "
+    "Set the Qwen Image 2.1 Cache (DGX Monarch) node's device to 'gpu', 'cpu' or 'off', or run "
+    "on topology 'single' (mode=local with gpus_per_host=1), which runs ComfyUI's own forward.",
+    troubleshooting=134,
+)
+
+
+def stock_forward_takes_prefix_cache(model_class: Any) -> bool:
+    """Whether a model class's stock ``_forward`` takes ``prefix_cache`` (503d785f0 on)."""
+    try:
+        return "prefix_cache" in inspect.signature(model_class._forward).parameters
+    except (AttributeError, TypeError, ValueError):
+        return False
+
+
+def _patcher_is_dynamic(model: Any) -> bool:
+    """Whether the attached patcher is dynamic. One that cannot say counts as dynamic,
+    where stock's own ``is_dynamic()`` call would raise."""
+    is_dynamic = getattr(getattr(model, "current_patcher", None), "is_dynamic", None)
+    return True if not callable(is_dynamic) else bool(is_dynamic())
+
+
+def refuse_writable_prefix_cache(model: Any, prefix_cache: Any, cache_options: Any,
+                                 writable_seam: bool) -> None:
+    """Refuse stock's writable prefix cache on every rank alike, before any collective (#134).
+
+    The rule reads facts every rank shares: the cache policy the actor sets
+    on every load (absent reads ``off``, as in the sharded forward), the
+    tree's forward and the patcher class. Stock's admission of the cache is a
+    local memory check, so a rank can hold one where its peer holds none;
+    ``auto`` refuses whether or not it was admitted, because stock without one
+    recomputes the prefix where ``select_prefix_cache`` would fill a cache. A
+    ``prefix_cache`` that still arrives refuses too; no ComfyUI path sends one
+    for another device. ``off``, ``gpu``, ``cpu`` and a static patcher pass:
+    stock takes ``select_prefix_cache`` there as the sharded forward does.
+    """
+    device = cache_options.get("device", "off") if isinstance(cache_options, Mapping) else None
+    if prefix_cache is None and not (
+            writable_seam and device == "auto" and _patcher_is_dynamic(model)):
+        return
+    raise UnsupportedModelError(WRITABLE_PREFIX_CACHE_REFUSAL)
 
 
 def _optimized_attention(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor, heads: int,
@@ -258,9 +318,13 @@ class QwenImage21Adapter(Adapter):
         reset = getattr(diffusion_model, "reset_prefix_cache", None)
         if callable(reset):
             reset(False)
+        writable_seam = stock_forward_takes_prefix_cache(type(diffusion_model))
 
         def usp_forward(self, x, timesteps, context, ref_latents=None, image_slots=None,
-                        transformer_options={}, **kwargs):
+                        transformer_options={}, prefix_cache=None, **kwargs):
+            refuse_writable_prefix_cache(self, prefix_cache,
+                                         transformer_options.get("qwen_image21_cache"),
+                                         writable_seam)
             # This path keeps local target Q and gathers target K/V itself, then
             # calls native Comfy attention. It does not call the xFuser
             # dispatcher, so any worker kernel but TORCH_FLASH refuses here,

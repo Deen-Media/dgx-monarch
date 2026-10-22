@@ -771,6 +771,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/qwen_image21.py::refuse_writable_prefix_cache::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/qwen_image21.py::validate_reference_count::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

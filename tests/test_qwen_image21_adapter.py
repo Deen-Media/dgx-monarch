@@ -1,5 +1,6 @@
 """CPU contract coverage for the separate Qwen-Image-2.1 adapter."""
 import os
+import platform
 import sys
 import tempfile
 import types
@@ -50,6 +51,19 @@ def test_native_attention_container_is_taken_but_tensor_path_is_unchanged(monkey
     assert container.tensor is None
     with pytest.raises(TypeError, match="unsupported attention input"):
         _take_native_attention_tensor(object())
+
+
+_EXACT_GEMM = platform.machine() == "aarch64"
+
+
+def _same(candidate: torch.Tensor, reference: torch.Tensor, tolerance: float) -> bool:
+    """Equal bits on the rig's aarch64 CPU, whose GEMMs agree row for row (the
+    FLUX.3 exactness rule), else float32 rounding within ``tolerance``."""
+    if candidate.shape != reference.shape:
+        return False
+    if _EXACT_GEMM:
+        return torch.equal(candidate, reference)
+    return torch.allclose(candidate, reference, atol=tolerance, rtol=tolerance)
 
 
 def _comfy_dir() -> Path | None:
@@ -342,7 +356,7 @@ def _gloo_qwen21_worker(rank, init_file, result_file):
             model, InjectionContext(topology_sp=2, usp_attention=types.SimpleNamespace(
                 effective_kernel="TORCH_FLASH")))
         candidate = model._forward(x, t, context, ref_latents=refs, image_slots=slots)
-        answers.append(torch.allclose(stock, candidate, atol=2e-6, rtol=2e-6))
+        answers.append(_same(candidate, stock, 2e-6))
         model._forward = type(model)._forward.__get__(model, type(model))
     if rank == 0:
         Path(result_file).write_text(repr(answers))
@@ -360,8 +374,14 @@ def test_tiny_pinned_comfy_qwen21_injected_two_rank_gloo_cpu():
         assert Path(result_file).read_text() == "[True, True, True, True]"
 
 
-def _gloo_qwen21_cache_worker(rank, init_file, result_file, cache_dtype, agreement_case=None):
-    """Exercise cache fill, reuse and fresh slots through comfy's real module."""
+def _gloo_qwen21_cache_worker(rank, init_file, result_file, cache_dtype, agreement_case=None,
+                              cache_device="gpu"):
+    """Exercise cache fill, reuse and fresh slots through comfy's real module.
+
+    Both patchers are static (``is_dynamic`` False): since ComfyUI 503d785f0
+    stock reads that for ``auto``, and a static patcher keeps ``auto`` on
+    ``select_prefix_cache`` there, the branch the sharded forward takes.
+    """
     _configure_pinned_comfy_for_cpu()
     import comfy.ops
     import torch.distributed as dist
@@ -406,9 +426,10 @@ def _gloo_qwen21_cache_worker(rank, init_file, result_file, cache_dtype, agreeme
         axes_dims_rope=(16, 16, 32), operations=comfy.ops.disable_weight_init,
     )
     stock.load_state_dict(model.state_dict())
-    stock.current_patcher = types.SimpleNamespace(get_free_memory=lambda _device: 1 << 60)
+    stock.current_patcher = types.SimpleNamespace(get_free_memory=lambda _device: 1 << 60,
+                                                  is_dynamic=lambda: False)
     stock.reset_prefix_cache(True)
-    options = {"qwen_image21_cache": {"device": "gpu", "dtype": cache_dtype}}
+    options = {"qwen_image21_cache": {"device": cache_device, "dtype": cache_dtype}}
     expected = [
         stock._forward(x, torch.tensor([.25, .75]), context, ref_latents=refs, image_slots=slots,
                        transformer_options=options),
@@ -422,7 +443,8 @@ def _gloo_qwen21_cache_worker(rank, init_file, result_file, cache_dtype, agreeme
     QwenImage21Adapter().inject_usp(
         model, InjectionContext(topology_sp=2, usp_attention=types.SimpleNamespace(
             effective_kernel="TORCH_FLASH")))
-    model.current_patcher = types.SimpleNamespace(get_free_memory=lambda _device: 1 << 60)
+    model.current_patcher = types.SimpleNamespace(get_free_memory=lambda _device: 1 << 60,
+                                                  is_dynamic=lambda: False)
     model.reset_prefix_cache(agreement_case != "mixed-enabled" or rank == 0)
     agreement = q21.agree_prefix_cache
     traces = []
@@ -453,8 +475,7 @@ def _gloo_qwen21_cache_worker(rank, init_file, result_file, cache_dtype, agreeme
         model._forward(x, torch.tensor([.25, .75]), context, ref_latents=[refs[0] + 0.1], image_slots=[2],
                        transformer_options=options),
     ])
-    answers = [torch.allclose(left, right, atol=3e-6, rtol=3e-6)
-               for left, right in zip(expected, actual, strict=True)]
+    answers = [_same(right, left, 3e-6) for left, right in zip(expected, actual, strict=True)]
     slots_used = len(model.prefix_cache.slots) if model.prefix_cache is not None else 0
     trace = torch.tensor(traces[1], dtype=torch.int8)
     cohort_trace = [torch.empty_like(trace) for _ in range(2)]
@@ -478,6 +499,26 @@ def test_tiny_pinned_comfy_qwen21_cache_two_rank_gloo_cpu(cache_dtype):
                  args=(init_file, result_file, cache_dtype), nprocs=2, join=True)
         # The first two forwards share one prefix slot; the changed text and the
         # changed reference each allocate another, so three slots.
+        assert Path(result_file).read_text() == "([True, True, True, True], 3)"
+
+
+@pytest.mark.parametrize("cache_dtype", ["default", "int8"])
+def test_tiny_pinned_comfy_qwen21_auto_cache_on_a_static_patcher_two_rank_gloo_cpu(cache_dtype):
+    """``auto`` with a static patcher stays exact against stock on both trees.
+
+    On ComfyUI 503d785f0 and later stock sends ``auto`` under a dynamic
+    patcher to its writable cache, which the sharded forward refuses
+    (tests/test_qwen_image21_prefix_cache.py); a static one still reaches
+    ``select_prefix_cache``, as every ``auto`` did before that commit.
+    """
+    _require_pinned_comfy()
+    import torch.multiprocessing as mp
+
+    with tempfile.TemporaryDirectory() as directory:
+        init_file = str(Path(directory) / "gloo-init")
+        result_file = str(Path(directory) / "result")
+        mp.spawn(_gloo_qwen21_cache_worker,
+                 args=(init_file, result_file, cache_dtype, None, "auto"), nprocs=2, join=True)
         assert Path(result_file).read_text() == "([True, True, True, True], 3)"
 
 
