@@ -88,7 +88,7 @@ when you run `dgxm studio up`, and that service is one user unit for the
 companion itself ([Keep Studio running](#keep-studio-running)). The Host
 check accepts only the literal bind address and port, so `localhost` is refused.
 For a remote browser, the one working shape is an SSH tunnel to the same port,
-`ssh -L <port>:127.0.0.1:<port> <host>`, browsed at `http://127.0.0.1:<port>`.
+`ssh -L 127.0.0.1:<port>:127.0.0.1:<port> <host>`, browsed at `http://127.0.0.1:<port>`.
 `dgxm studio tunnel <host>` prints that line and the address to browse
 ([Reach Studio from another computer](#reach-studio-from-another-computer)).
 TLS termination, Host rewriting and a different local port are not supported;
@@ -423,7 +423,8 @@ update was cut off. Studio records the interrupted operation as unknown; check
 the checkout and the cluster before you render again.
 
 Run `dgxm studio down` before `dgxm uninstall`; uninstall refuses while the
-unit is installed.
+unit is installed. The page's own uninstall operation, under
+`--allow-management`, makes no such check and leaves the Studio unit in place.
 
 `dgxm studio up --allow-management` writes `--allow-management` into the unit.
 Its token is then code execution as the worker account on every host for the
@@ -445,7 +446,7 @@ through an SSH local forward of the same port to the same address. The first
 time, from a laptop:
 
 1. On the laptop, open an SSH session with the forward:
-   `ssh -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 user@studio-host`.
+   `ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@studio-host`.
 2. In that session, run `dgxm studio`, or nothing new when the service already
    runs: `dgxm studio` then acts as `dgxm studio open`. The session is an SSH
    session, so Studio prints the sign-in link and the line to run on the
@@ -461,13 +462,13 @@ port, and prints the sign-in link:
 ```text
 Port: 8220 (from the running Studio)
 On the computer with the browser, run:
-  ssh -o ExitOnForwardFailure=yes -L 8220:127.0.0.1:8220 user@192.0.2.10
-If you reach this host another way, add -L 8220:127.0.0.1:8220 to the ssh command you use, or set a local forward of port 8220 to 127.0.0.1:8220 in your SSH app.
+  ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@192.0.2.10
+If you reach this host another way, add -L 127.0.0.1:8220:127.0.0.1:8220 to the ssh command you use, or set a local forward in your SSH app that listens on 127.0.0.1 port 8220 and goes to 127.0.0.1:8220.
 Then browse: http://127.0.0.1:8220/
 Sign in with this link in that browser:
   http://127.0.0.1:8220/#token=<token>
 Keep 127.0.0.1 and the same port on both ends; Studio refuses localhost and any other port.
-If ssh says "Could not request local forwarding", another program on that computer holds the port and ssh opened the session without the tunnel: close it, free the port, and do not open the sign-in link until the tunnel works, because a page served on that port would read the token from the link.
+If ssh says "Address already in use" or "Could not request local forwarding", another program on that computer holds the port: close the session if it opened, free the port, and do not open the sign-in link until the tunnel works, because a page served on that port would read the token from the link.
 ```
 
 With a named host, on another computer, without a terminal, with `--run`, or
@@ -486,22 +487,25 @@ derived line wrong.
 - The port comes from `--port`, then from the running Studio (only for the host
   read from the SSH session), then from `[studio] port`, then 8220. Each source
   is named on the `Port:` line.
-- `--run` runs the ssh command itself, with no shell, after it prints the other
-  lines to standard error, and never prints a link. It needs `ssh` on `PATH`
+- `--run` runs the ssh command itself, with no shell, after it prints the
+  other lines, except `On the computer with the browser, run:`, to standard
+  error, and never prints a link. It needs `ssh` on `PATH`
   and dgx-monarch on the browser computer, such as a Linux laptop or a second
   Spark; most laptops paste the printed line. Its exit code is ssh's, and
   Ctrl+C closes the tunnel.
 - The printed command has no `-N`, so the same session gives a shell on the
   Studio host, where `dgxm studio open` prints the link.
 
-The printed command carries `-o ExitOnForwardFailure=yes`: when another
-program on the browser computer already listens on the port, ssh prints
+The printed command names `127.0.0.1` as the address the forward listens on
+and carries `-o ExitOnForwardFailure=yes`: when another program on the browser
+computer already holds that port, ssh prints `Address already in use` and
 `Could not request local forwarding` and exits instead of opening the session
-without the forward. An ssh command or SSH app set up another way, as the
-"another way" line describes, may open the session after that warning; the
-last line of the output is for that case. A page served on that port then
-reads the token from the link, so do not open the link after that warning;
-free the port and connect again. The token crosses the SSH connection inside the terminal
+without the forward. A forward written without that address, as in many ssh
+commands and SSH apps set up another way, listens on both `127.0.0.1` and
+`::1`, opens the session when either one is free, and prints only the
+`Address already in use` line; the last line of the output is for that case.
+A page served on that port then reads the token from the link, so do not open
+the link after either message; free the port and connect again. The token crosses the SSH connection inside the terminal
 session and lands in the laptop terminal's scrollback and the laptop browser,
 its history included.
 
@@ -605,6 +609,10 @@ The command, first match wins:
    terminal you keep open.
 4. Otherwise the panel asks you to start your driver so it listens at the
    origin, and suggests `driver_command` to show your own command there.
+
+When Studio refuses the companion's `--config`, for example because another
+account can write it, neither 2 nor 3 applies, since the launcher command
+would pass that file on; the panel shows the text of 4.
 
 With `--allow-management` and `--driver-service` the panel adds that
 Operations can start the driver too. Studio never runs the command: the page

@@ -126,13 +126,17 @@ The token can land in these places:
   could read. dgxm starts a browser only when `xdg-mime` names the same desktop
   entry for `.html` files and `http` links, so the page never goes to another
   program. A link the user clicks in a terminal goes to that terminal's own
-  opener, usually on a command line;
+  opener, usually on a command line, where other local accounts can read it
+  while that opener runs unless `/proc` is mounted with `hidepid`;
 - a service manager's journal, when an operator's own unit or wrapper copies
   the companion's terminal output; members of the `adm` and `systemd-journal`
   groups, and any log shipping, can read it there. The `dgxm-studio.service`
   unit that `dgxm studio up` installs does not put the token there: its output
   is not a terminal, so the journal gets only the plain address and file
   paths;
+- the clipboard, when the user copies the printed link or token; a clipboard
+  history manager can keep it there, and clipboard sync can copy it to other
+  devices. The page's own Copy buttons never copy the token;
 - the browser's address bar and session history, from the moment the link
   loads until the page's script removes the fragment with
   `history.replaceState`, and the browser profile's history database, which
@@ -169,14 +173,18 @@ of the service, and the page signs in only through its form. A link with a
 wrong token only makes that tab show the token form.
 
 `dgxm studio tunnel` prints an SSH line, the plain address to browse, and the
-sign-in link only to a terminal on the Studio host. Its forward listens on the
-other computer's loopback port, which other accounts there can reach with a
-request but not with the token. The printed line carries
+sign-in link only to a terminal on the Studio host. The line names
+`127.0.0.1` as the address its forward listens on, so the forward stays on the
+other computer's `127.0.0.1`, which other accounts there can reach with a
+request but not with the token, and a `GatewayPorts yes` setting in that
+computer's ssh configuration does not widen it. The printed line carries
 `-o ExitOnForwardFailure=yes`, so when another program there already listens
-on that port, ssh prints `Could not request local forwarding` and exits. An ssh
-command or app set up another way can warn the same and open the session
-without the forward; a page served on that port then reads the token from the
-link, so the link must not be opened after that warning.
+on that address and port, ssh prints `Could not request local forwarding` and
+exits. A forward written without the address, as an ssh command or app set up
+another way may be, listens on both `127.0.0.1` and `::1`, opens the session
+when either one is free, and prints only an `Address already in use` line; a
+page served on that port then reads the token from the link, so the link must
+not be opened after either message.
 
 The loopback bind and the Host, Origin and token checks stop
 other machines, other web pages and other local accounts that lack the token.
@@ -266,7 +274,7 @@ holder reads them. On a desktop the companion and `dgxm studio open` run
 token.
 
 `dgxm studio tunnel` prints, or with `--run` executes without a shell, one
-`ssh -o ExitOnForwardFailure=yes -L <port>:127.0.0.1:<port> <host>` command
+`ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <host>` command
 after validating the host, which may not carry an IPv6 zone or start with
 `-`. It adds no listener and no proxy.
 

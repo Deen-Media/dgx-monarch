@@ -187,7 +187,8 @@ def test_the_threat_model_records_both_studio_companion_boundaries():
 def test_the_threat_model_records_the_sign_in_link_and_the_service():
     browser = _flat(_section(THREAT_MODEL, "### Browser to Studio companion"))
     for fact in ("`#token=`", "`history.replaceState`", "`sign-in.html`", "process arguments",
-                 "history database", "never signs in by link", "Could not request local forwarding"):
+                 "history database", "never signs in by link", "Could not request local forwarding",
+                 "`hidepid`", "clipboard", "`GatewayPorts yes`", "Address already in use"):
         assert fact in browser, fact
     driver = _flat(_section(THREAT_MODEL, "### Companion to driver, systemd and CLI"))
     for fact in ("`dgxm-studio.service`", "`Wants=`", "control group", "token --rotate", "`xdg-open`",

@@ -57,9 +57,10 @@
   [#132](docs/TROUBLESHOOTING.md#132-dgxm-studio-up-refuses-or-the-always-on-studio-does-not-start)).
 - `dgxm studio tunnel <host>` prints the one SSH line that reaches Studio
   from another computer,
-  `ssh -o ExitOnForwardFailure=yes -L <port>:127.0.0.1:<port> <host>`, the
-  address to browse and what to do when ssh cannot forward the port; with
-  that option ssh exits instead of opening a session without the forward.
+  `ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <host>`,
+  the address to browse and what to do when ssh cannot forward the port; the
+  line names the address the forward listens on, so with that option ssh
+  exits instead of opening a session without the forward.
   `--run` runs it
   ([#133](docs/TROUBLESHOOTING.md#133-the-sign-in-link-does-not-open-studio)).
 - When no driver accepts a connection, Studio shows Driver not running with

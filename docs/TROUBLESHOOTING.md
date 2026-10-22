@@ -6163,7 +6163,7 @@ startup, before it does anything else
 - Open the exact sign-in link the companion printed, or run
   `dgxm studio open`, and do not swap `127.0.0.1` for `localhost`. Through an
   SSH tunnel, forward the same port on both ends
-  (`ssh -L <port>:127.0.0.1:<port>`) and browse `http://127.0.0.1:<port>`;
+  (`ssh -L 127.0.0.1:<port>:127.0.0.1:<port>`) and browse `http://127.0.0.1:<port>`;
   `dgxm studio tunnel <host>` prints the SSH line and the address to browse.
 - After a token refusal, enter the token this launch made: the one it printed,
   or the contents of the token file it named, or open its sign-in link.
@@ -6746,7 +6746,7 @@ or a `dgxm studio` command prints one of these lines:
 - `Name the Studio host the way the browser computer reaches it, for example dgxm studio tunnel studio-host or dgxm studio tunnel user@studio-host.`
 - `ssh was not found on PATH.`
 - `Keep 127.0.0.1 and the same port on both ends; Studio refuses localhost and any other port.`
-- `If ssh says "Could not request local forwarding", another program on that computer holds the port and ssh opened the session without the tunnel: close it, free the port, and do not open the sign-in link until the tunnel works, because a page served on that port would read the token from the link.`
+- `If ssh says "Address already in use" or "Could not request local forwarding", another program on that computer holds the port: close the session if it opened, free the port, and do not open the sign-in link until the tunnel works, because a page served on that port would read the token from the link.`
 
 The page itself can say "This sign-in link was not accepted: it is from an
 earlier start of Studio, or it was cut short when copied. Run dgxm studio open
@@ -6767,18 +6767,21 @@ on the Studio host for a new link."
   line such as `.html opens with <entry>; the web browser is <entry>.`
   followed by the `xdg-mime default` command that fixes it.
 - Confined browser: a snap or Flatpak browser may be unable to read
-  `sign-in.html` under `~/.local/state`, and shows an error.
+  `sign-in.html` under `~/.local/state`, and shows an error. Studio has
+  already counted the page as sent, so it printed no link.
 - SSH session, tmux or screen: nothing opens by design, because a browser
   started there could draw on the Studio host's own screen.
 - Old or short link: a link from history after a restart, or a link cut short
   by a narrow terminal, holds a token the running companion does not accept.
   The page shows the sentence above and the token form; a good token stored
   in the tab is not replaced.
-- Tunnel: the printed ssh line carries `-o ExitOnForwardFailure=yes`, so ssh
-  exits with `Could not request local forwarding` when another program on the
-  browser computer holds the port. An ssh command or app set up another way
-  opens the session without the forward after the same warning, and a page
-  served on that port would read the token from the link.
+- Tunnel: the printed ssh line names `127.0.0.1` as the address the forward
+  listens on and carries `-o ExitOnForwardFailure=yes`, so ssh prints
+  `Address already in use` and `Could not request local forwarding` and exits
+  when another program on the browser computer holds the port. An ssh command
+  or app that forwards without that address listens on `::1` too, opens the
+  session after the `Address already in use` line, and a page served on that
+  port would read the token from the link.
 - `localhost` in the address bar, or a different local port, fails the Host
   check ([#123](#123-studio-refuses-to-start-or-refuses-the-browsers-host-origin-or-token)).
 
@@ -6794,16 +6797,18 @@ on the Studio host for a new link."
   `dgxm studio token --value` prints into the page's form.
 - On a desktop that opens `.html` files elsewhere, click the printed link, or
   run the printed `xdg-mime default` command to make the web browser open
-  `.html` files too. With a confined browser, click the printed link, or use a
-  browser installed another way.
+  `.html` files too. With a confined browser, run `dgxm studio --no-open` in a
+  second terminal, which acts as `dgxm studio open` and prints the link, or
+  open `http://127.0.0.1:<port>/` and paste the printed `Owner token:` into its
+  form, or use a browser installed another way.
 - In an SSH session, tmux or screen, click or paste the printed link. For a
   browser on another computer, run `dgxm studio tunnel <host>` and follow its
   lines ([STUDIO.md](STUDIO.md#reach-studio-from-another-computer)).
 - For an old or cut link, run `dgxm studio open` on the Studio host for a new
   one, and copy it whole.
-- After `Could not request local forwarding`, do not open the link. Close
-  the session if it opened, free the port on the browser computer, and connect
-  again.
+- After `Address already in use` or `Could not request local forwarding`, do
+  not open the link. Close the session if it opened, free the port on the
+  browser computer, and connect again.
 - Give `tunnel` a host as a name, an SSH config alias, an IP address or
   `user@host`, and install `ssh` for `--run`. Keep `127.0.0.1` and the same
   port on both ends.

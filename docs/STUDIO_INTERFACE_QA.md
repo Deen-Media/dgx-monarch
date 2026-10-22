@@ -89,9 +89,9 @@ before 2026-10-21 recorded no browser, browser version or bundle hash.
 | Sign-in link | Opening `sign-in.html` by its `file://` path connected the workspace without typing in 0.31 seconds at both viewports. `location.hash` was empty, and the token the tab kept matched the companion's token file by SHA-256. None of the 30 requests recorded at each viewport carried the token in its request line or a `Referer` header; Firefox reported the document address with its fragment in that event, and a browser never sends the fragment. A reload stayed connected. After a restart, the old link showed the stale-link sentence in the page's error notice, above the token form. The closed profile's history database held one row for `token=`: the old link, visited twice, so the link stays in browser history. A companion started with `--allow-management` wrote no `sign-in.html` and showed the token form. |
 | Driver not running | Against a closed driver port and a mode-0600 configuration whose `driver_command` is `echo start-the-fixture`, the page showed the Driver not running panel with that command, a source line naming the configuration file, the paragraph about another address and a disabled Review generation button, with no red banner, at both viewports. The catalog answered 503 with `driver_not_running`, and the restored draft waited uninspected. 1.78 seconds after the fixture listened on that port, the panel was gone, the button was enabled and the draft's three fields showed, without a reload; the catalog then answered 200. |
 
-The live service rows on the maintainer's rig, `dgxm studio up`, the sign-in
-link of the installed service, a restart after a crash and `dgxm studio down`,
-are **NOT RUN**: held for the owner's go.
+The live service rows on a rig, `dgxm studio up`, the sign-in link of the
+installed service, a restart after a crash and `dgxm studio down`, are
+**NOT RUN** yet.
 
 Headless Firefox could not show Chromium or Safari behavior, native phone
 operating-system behavior, native select pop-ups or video control internals, or
