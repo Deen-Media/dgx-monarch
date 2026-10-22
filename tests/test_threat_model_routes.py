@@ -184,6 +184,17 @@ def test_the_threat_model_records_both_studio_companion_boundaries():
     assert "carries the owner token's authority" in driver
 
 
+def test_the_threat_model_records_the_sign_in_link_and_the_service():
+    browser = _flat(_section(THREAT_MODEL, "### Browser to Studio companion"))
+    for fact in ("`#token=`", "`history.replaceState`", "`sign-in.html`", "process arguments",
+                 "history database", "never signs in by link", "Could not request local forwarding"):
+        assert fact in browser, fact
+    driver = _flat(_section(THREAT_MODEL, "### Companion to driver, systemd and CLI"))
+    for fact in ("`dgxm-studio.service`", "`Wants=`", "control group", "token --rotate", "`xdg-open`",
+                 "working directory"):
+        assert fact in driver, fact
+
+
 def test_the_token_scope_claims_match_the_management_inputs():
     # The threat model says setup and init run a browser-supplied interpreter
     # with a browser-supplied key on browser-supplied hosts, and that only the
@@ -300,7 +311,17 @@ def test_studio_spec_is_marked_as_the_original_specification():
     for stale in ("proposed work, not existing features", "proposed engineering work",
                   "The known backend currently mounts", "unless the user explicitly enables its service"):
         assert stale not in text, stale
-    assert "Studio installs no service" in text
+    # The original sentence stays, and the dated amendment follows it in the
+    # same paragraph, covering the unit, the CLI command and the config table.
+    paragraph = next(block for block in text.split("\n\n") if "Studio installs no service" in block)
+    original = paragraph.index("Studio installs no service")
+    amendment = paragraph.index("Amended 2026-10-22 with the owner's approval:")
+    assert original < amendment
+    amended = _flat(paragraph[amendment:])
+    for fact in ("`dgxm studio up` installs one systemd user unit", "`dgxm-studio.service`",
+                 "`dgxm studio down` removes it", "`dgxm studio` joins the CLI and `[studio]` joins cluster.toml",
+                 "(STUDIO.md#keep-studio-running)"):
+        assert fact in amended, fact
 
 
 def test_the_three_studio_docs_share_one_status_word():

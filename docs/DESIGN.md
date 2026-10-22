@@ -1882,8 +1882,9 @@ dgx-monarch/
 │   │                          #   normalization for the driver and companion
 │   ├── studio_resource_validation.py # data-only check of packaged Studio files,
 │   │                          #   run by setup, update and Worker cleanup
-│   ├── studio/                # optional Studio companion and its compiled
-│   │                          #   bundle (frontend source in studio/); see
+│   ├── studio/                # optional Studio companion and its optional
+│   │                          #   user unit, with the compiled bundle
+│   │                          #   (frontend source in studio/); see
 │   │                          #   docs/STUDIO.md for its contracts
 │   ├── transfer.py            # messaging + RDMA return paths
 │   ├── transfer_utils.py      # pure tensor-tree/split/read helpers
@@ -1978,6 +1979,8 @@ dgx-monarch/
 │       ├── setup_services_storage_scripts.py # private release reservation/cleanup
 │       ├── setup_source.py     # imported source identity/manifest binding
 │       ├── setup_verification.py # doctor-first cluster-smoke evidence adapter
+│       ├── studio_command.py   # dgxm studio: config-derived launch, the Studio
+│       │                       #   user unit, tunnel line
 │       ├── update_activity.py  # read-only driver activity and opt-in
 │       │                       #   privileged process checks
 │       ├── update_cancellation.py # cancellation-precedence helper

@@ -167,9 +167,18 @@ boundaries and severity model.
 
 ## Studio companion boundary
 
-The optional Studio companion (`dgxm-studio`) adds two boundaries:
+The optional Studio companion (`dgxm studio`, or `dgxm-studio`) adds two
+boundaries:
 [Browser to Studio companion](docs/THREAT_MODEL.md#browser-to-studio-companion)
 and [Companion to driver, systemd and CLI](docs/THREAT_MODEL.md#companion-to-driver-systemd-and-cli).
-Its per-launch owner token is a password; with `--allow-management` it is
-code execution as the worker account on every host. Report a way to obtain
-the token, or to act through the companion without it, privately as above.
+Its owner token is a password, new at every start of the companion or its
+service; with `--allow-management` it is code execution as the worker account
+on every host. A browser that dgxm starts receives the token through a private
+page, never a command line, and the sign-in link stays in browser history. A
+companion with `--allow-management` never makes a sign-in link.
+`dgxm studio up` installs its user service only on that explicit request.
+Approved by the owner on 2026-10-22 for Studio, it is one request that
+installs, enables and starts the unit; guided setup keeps its separate
+requests ([operator-workflow boundary](#operator-workflow-boundary)). Report a
+way to obtain the token, or to act through the companion without it,
+privately as above.
