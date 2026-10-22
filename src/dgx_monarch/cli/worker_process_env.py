@@ -109,6 +109,11 @@ _DANGEROUS_EXACT = frozenset({
 # runtime or home directory. The child path is UID-specific, atomically created,
 # ownership-checked, symlink-rejected, and forced to 0700 before use.
 _FALLBACK_RUNTIME_ROOT = Path("/tmp")  # noqa: S108
+# Monarch appends a temporary directory and a proc id for each Unix socket.
+# Leave at least 39 bytes below macOS's 104-byte sockaddr_un limit (108 on
+# Linux), including separators and the terminating NUL. Count encoded bytes,
+# since a short-looking non-ASCII home can still exceed the socket limit.
+_MAX_RUNTIME_PATH_BYTES = 64
 
 
 def _has_marker(name: str, marker: str) -> bool:
@@ -178,13 +183,16 @@ def _trusted_runtime_base(value: str | None) -> Path | None:
 def secure_worker_runtime(environ: MutableMapping[str, str]) -> Path:
     """Create a private runtime directory and route child scratch into it."""
     xdg_base = _trusted_runtime_base(environ.get("XDG_RUNTIME_DIR"))
-    if xdg_base is not None:
+    if (xdg_base is not None
+            and len(os.fsencode(xdg_base / "dgx-monarch")) <= _MAX_RUNTIME_PATH_BYTES):
         runtime = _private_directory(xdg_base / "dgx-monarch", create_parents=False)
     else:
         home = environ.get("HOME")
         if home and Path(home).is_absolute():
             candidate = Path(home) / ".local" / "state" / "dgx-monarch" / "runtime"
         else:
+            candidate = _FALLBACK_RUNTIME_ROOT / f"dgx-monarch-{os.geteuid()}"
+        if len(os.fsencode(candidate)) > _MAX_RUNTIME_PATH_BYTES:
             candidate = _FALLBACK_RUNTIME_ROOT / f"dgx-monarch-{os.geteuid()}"
         try:
             runtime = _private_directory(candidate, create_parents=True)
