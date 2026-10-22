@@ -144,13 +144,16 @@ The token can land in these places:
   without a token, both headless and in a window, so that test says nothing
   about the link; treat every browser's history as holding it. The Sign-in
   link row of the [interface QA record](STUDIO_INTERFACE_QA.md#browser-evidence)
-  reads the profile's `places.sqlite` after a real sign-in; on 2026-10-22 that
-  row is **NOT RUN**. From the history database the address bar can suggest
-  the link, browser sync can copy it to other devices and to the sync service,
-  and an extension with the `tabs`, `history` or `webNavigation` permission
-  can read it without any host permission. In the tunnel journey that is the
-  other computer's browser. A fragment is never sent to the companion, so it
-  reaches no request line, `Referer` or log; and
+  confirmed that on 2026-10-22 after a real sign-in: in each of its two runs,
+  headless Firefox 158 opened `sign-in.html`, the page removed the fragment
+  from the address bar, and once the browser had closed, its profile's
+  `places.sqlite` held one row with `token=`, the link with its token, visited
+  twice. From the history database the address bar can suggest the link,
+  browser sync can copy it to other devices and to the sync service, and an
+  extension with the `tabs`, `history` or `webNavigation` permission can read
+  it without any host permission. In the tunnel journey that is the other
+  computer's browser. A fragment is never sent to the companion, so it reaches
+  no request line, `Referer` or log; and
 - the browser tab's `sessionStorage`, which keeps it until the tab closes or
   the user disconnects. The page stores a link's token only after the
   companion accepts it.
