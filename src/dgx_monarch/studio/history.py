@@ -86,11 +86,15 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     direction = "DESC" if order == "newest" else "ASC"
     with store.lock:
         # All SQL fragments are constants selected above; user values are bound parameters.
-        rows = store.db.execute(f"SELECT {projection(kind)} FROM objects WHERE {' AND '.join(clauses)} "  # noqa: S608
+        rows = store.db.execute(f"SELECT {projection(kind)},{created},id FROM objects WHERE {' AND '.join(clauses)} "  # noqa: S608
                                 f"ORDER BY {created} {direction},id {direction} LIMIT ?", [*params, limit + 1])
         items: list[dict[str, Any]] = []
         byte_count = 4096  # Response envelope and cursor.
         more = False
+        # The cursor names the key SQLite sorted by: list projections re-render
+        # created_at at 15 significant digits, and even a stored value can parse
+        # an ulp apart, so a key read back from a row would repeat or skip one.
+        boundary: tuple[Any, str] = (0, "")
         for row in rows:
             value = json.loads(row[0])
             size = len(canonical(value).encode()) + 1
@@ -100,12 +104,12 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
                 more = True
                 break
             items.append(value)
+            boundary = (row[1], row[2])
             byte_count += size
     next_cursor = None
     if more:
-        last = items[-1]
-        next_cursor = base64.urlsafe_b64encode(canonical({"filter": fingerprint, "time": last.get("created_at") or 0,
-                                                        "id": last["id"]}).encode()).decode()
+        next_cursor = base64.urlsafe_b64encode(canonical({"filter": fingerprint, "time": boundary[0],
+                                                        "id": boundary[1]}).encode()).decode()
     return {"items": items, "next_cursor": next_cursor}
 
 

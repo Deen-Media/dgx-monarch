@@ -37,11 +37,14 @@ def page_runtime(store: Store, job_id: str, query: dict[str, str]) -> dict[str, 
         clauses.append(f"({created}>? OR ({created}=? AND id>?))")
         parameters.extend([cursor["time"], cursor["time"], cursor["id"]])
     with store.lock:
-        rows = store.db.execute("SELECT document FROM objects WHERE " + " AND ".join(clauses) +  # noqa: S608
+        rows = store.db.execute(f"SELECT document,{created},id FROM objects WHERE " + " AND ".join(clauses) +  # noqa: S608
                                 f" ORDER BY {created},id LIMIT ?", [*parameters, limit + 1]).fetchall()
     items = [json.loads(row[0]) for row in rows[:limit]]
     next_cursor = None
     if len(rows) > limit:
-        last = items[-1]
-        next_cursor = base64.urlsafe_b64encode(canonical({"kind": kind, "job": job_id, "time": last.get("created_at") or 0, "id": last["id"]}).encode()).decode()
+        # The cursor names the key SQLite sorted by. Its own parse of the
+        # stored text can differ from Python's by an ulp, and a Python-side
+        # key would serve the last row again or skip the next one.
+        last = rows[limit - 1]
+        next_cursor = base64.urlsafe_b64encode(canonical({"kind": kind, "job": job_id, "time": last[1], "id": last[2]}).encode()).decode()
     return {"items": items, "next_cursor": next_cursor}
