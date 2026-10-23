@@ -10,6 +10,7 @@ from typing import Any
 
 from .. import __version__
 from ..cli.probe_certainty import UNKNOWN_EXIT
+from . import operations_lock
 from .comfy import ComfyClient
 from .contracts import StudioError, digest, identifier, timestamp
 from .driver_service import DriverService
@@ -167,6 +168,14 @@ class Operations:
         return rows
 
     async def prepare(self, request: dict[str, Any]) -> dict[str, Any]:
+        """Publish a review under a shared hold on the operations lock, so up, down and --rotate wait for it."""
+        hold = operations_lock.hold(self.store.directory)
+        try:
+            return await self._prepare(request)
+        finally:
+            operations_lock.release(hold)
+
+    async def _prepare(self, request: dict[str, Any]) -> dict[str, Any]:
         """Obtain authenticated remote evidence before publishing a review."""
         if not isinstance(request.get("parameters", {}), dict):
             raise StudioError("operation_fields", "Operation parameters must be an object.")
@@ -266,12 +275,20 @@ class Operations:
         if fingerprint(self.config) != plan["config_fingerprint"]:
             raise StudioError("config_changed", "Configuration changed after review; prepare another operation.", 409)
         value = {**plan, "id": identifier(), "review_id": operation_id, "state": "applying"}
-        value, created = reserve_review(self.store, request.get("idempotency_key"),
-                                        {**request, "operation_id": operation_id}, value)
-        if created:
-            task = asyncio.create_task(self.execute(value))
-            self.tasks.add(task)
-            task.add_done_callback(self.tasks.discard)
+        # The admitted operation holds the operations lock shared until it settles; no await runs in between.
+        hold = operations_lock.hold(self.store.directory)
+        created = False
+        try:
+            value, created = reserve_review(self.store, request.get("idempotency_key"),
+                                            {**request, "operation_id": operation_id}, value)
+            if created:
+                task = asyncio.create_task(self.execute(value))
+                self.tasks.add(task)
+                task.add_done_callback(self.tasks.discard)
+                task.add_done_callback(lambda _task: operations_lock.release(hold))
+        finally:
+            if not created:
+                operations_lock.release(hold)
         return value
 
     async def execute(self, operation: dict[str, Any]) -> None:

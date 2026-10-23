@@ -80,6 +80,7 @@ class Rig:
         self.load, self.active, self.pid, self.start_us = "not-found", "inactive", 0, 0
         self.answers = True        # False: systemctl show times out
         self.start = "ok"          # what a restart does: ok, fail or hang
+        self.stops = True          # False: disable --now exits 0 but the unit stays active
         self.driver: dict[str, str] | None = None
         self.driver_starts = True  # Wants= starts the driver unit with the Studio unit
         self.linger = "yes"
@@ -266,7 +267,7 @@ class Rig:
                 self.active = "inactive"
             elif verb == "restart":
                 self._restart()
-            elif verb == "disable":
+            elif verb == "disable" and self.stops:
                 self.active, self.pid = "inactive", 0
         elif argv[0] == "journalctl":
             out = "".join(line + "\n" for line in self.journal)

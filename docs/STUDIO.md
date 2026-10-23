@@ -408,11 +408,20 @@ refusal. The token, the link and the content of `sign-in.html` never reach it.
 
 Lock and busy check. `up`, `down` and `token --rotate` take a per-user lock,
 `~/.local/state/dgx-monarch/studio-unit.lock`, against each other. Before they
-stop or restart the service, they read its control group and refuse while any
-process other than the companion runs there, such as an update controller, a
+stop or restart the service, they take `operations.lock` in its state
+directory, which the companion holds for each review it prepares and each
+operation it runs, from the moment it accepts one until it settles. While a
+review or operation holds it they refuse; once they hold it, the companion
+refuses new reviews and operations with `operation_unavailable` until the
+restart or stop has finished. They create that file when it is missing, as
+they create `studio-unit.lock`, and a command that ends for any reason releases
+both. They also read the service's control group and refuse while any process
+other than the companion runs there, such as an update controller, a
 management command or a status report, and print one line per process. Wait for
 it to finish, or stop the service yourself with
-`systemctl --user stop dgxm-studio.service`.
+`systemctl --user stop dgxm-studio.service`. `down` removes the unit file only
+after systemd reports the service stopped; when the stop fails it keeps the
+file and says so.
 
 A stop from outside dgxm, such as `systemctl --user stop`, a logout without
 linger or a shutdown, ends any management command the companion started, and

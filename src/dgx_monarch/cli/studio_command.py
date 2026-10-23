@@ -17,7 +17,7 @@ from urllib.parse import urlsplit
 
 from .. import runtime_provenance
 from ..config import ClusterConfigError
-from ..studio import launch, sign_in, tunnel, unit, unit_paths, unit_state
+from ..studio import launch, operations_lock, sign_in, tunnel, unit, unit_paths, unit_state
 from ..studio.contracts import StudioError
 from . import probe_certainty
 
@@ -54,8 +54,9 @@ def run(args: argparse.Namespace) -> int:
     try:
         if action in ("up", "down"):
             _manager()
-            with unit_state.unit_lock():
-                return _install(args) if action == "up" else _remove()
+            # The stack holds the operations lock, once taken, until the restart or stop has finished.
+            with unit_state.unit_lock(), contextlib.ExitStack() as hold:
+                return _install(args, hold) if action == "up" else _remove(hold)
         return {None: _one_word, "open": _open, "token": _token, "tunnel": _tunnel}[action](args)
     except StudioError as exc:
         _refuse(str(exc))
@@ -145,15 +146,6 @@ def _token_now(state: Path) -> str | None:
         found = sign_in.read_token_file(state / sign_in.OWNER_FILE)
         return found[0] if found else None
     return None
-
-
-def _busy(status: unit_state.UnitStatus) -> None:
-    """Refuse while the unit's control group holds anything but its main process."""
-    found = unit_state.busy_processes(status)
-    if found is None:
-        _refuse(unit_state.BUSY_UNKNOWN)
-    if found:
-        _refuse(unit_state.BUSY, *found)
 
 
 def _one_word(args: argparse.Namespace) -> int:
@@ -289,10 +281,10 @@ def _token(args: argparse.Namespace) -> int:
     with unit_state.unit_lock():
         # Read again under the lock: an up or down that finished in between changed what runs.
         installed, status = _rotatable()
-        _busy(status)
-        driver, origin = installed.get("driver-service"), installed.get("driver", "")
-        before = unit_state.driver_unit_check(driver, origin, run=_run)[2] if driver else None
-        _restart(_state_dir(installed), installed.get("management") == "yes")
+        with operations_lock.quiesced(_state_dir(installed), status):
+            driver, origin = installed.get("driver-service"), installed.get("driver", "")
+            before = unit_state.driver_unit_check(driver, origin, run=_run)[2] if driver else None
+            _restart(_state_dir(installed), installed.get("management") == "yes")
         _say(ROTATED, *_also_started(driver, origin, before))
     return _open(args, browser=False)
 
@@ -352,7 +344,7 @@ def _owned(ownership: str) -> None:
         _refuse(f"{unit.FOREIGN_UNIT} {unit.unit_path()}")
 
 
-def _install(args: argparse.Namespace) -> int:
+def _install(args: argparse.Namespace, hold: contextlib.ExitStack) -> int:
     """Install and start the unit under the unit lock; nothing is written before every check passes."""
     path, source, table, lines, failure = _config(args)
     if failure is not None:
@@ -403,7 +395,7 @@ def _install(args: argparse.Namespace) -> int:
         _refuse(unit.NO_ANSWER, code=UNKNOWN)
     running = ownership == "ours" and unit_state.unit_active(status)
     if running:
-        _busy(status)
+        hold.enter_context(operations_lock.quiesced(_state_dir(installed), status))
     elif unit_state.lock_probe(state) == "held":
         _refuse(unit.LOCK_HELD)
     if (not running or installed.get("port") != str(settings.port)) and unit_state.port_in_use(settings.port):
@@ -447,8 +439,8 @@ def _install(args: argparse.Namespace) -> int:
     return 0
 
 
-def _remove() -> int:
-    """Under the unit lock: stop, disable and remove our unit; the state directory stays."""
+def _remove(hold: contextlib.ExitStack) -> int:
+    """Under the unit lock: stop and disable our unit, then remove it once it reads stopped; the state stays."""
     ownership = unit.owned_unit_state()
     if ownership == "absent":
         _say(unit.NO_UNIT)
@@ -459,9 +451,13 @@ def _remove() -> int:
     if status is None:
         _refuse(LOST_ANSWER, code=UNKNOWN)
     if unit_state.unit_active(status):
-        _busy(status)
-    if _systemctl("disable", "--now", "--", unit.UNIT_NAME, timeout=120) is None:
+        hold.enter_context(operations_lock.quiesced(_state_dir(installed), status))
+    stopped = _systemctl("disable", "--now", "--", unit.UNIT_NAME, timeout=120)
+    after = None if stopped is None else _status()
+    if stopped is None or after is None:
         _refuse(LOST_ANSWER, code=UNKNOWN)
+    if stopped.returncode != 0 or unit_state.unit_active(after):
+        _refuse(f"{unit.NOT_STOPPED} ActiveState={after.active_state}", *stopped.stderr.strip().splitlines()[-1:])
     unit.remove_unit()  # checks ownership again; a foreign file is never removed
     props = None if _systemctl("daemon-reload") is None else unit_state.show_unit(
         ("LoadState", "ActiveState"), run=_run)

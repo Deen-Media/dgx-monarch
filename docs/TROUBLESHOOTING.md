@@ -6228,7 +6228,9 @@ one of these reasons:
   prompt-specific cancellation route; only queued graph tasks can be
   cancelled.").
 - Operations: `operation_unavailable` (409, "Restart the companion with
-  --allow-management to write a diagnostics file."), `operation_fields` (400,
+  --allow-management to write a diagnostics file.", or "Studio is stopping or
+  restarting for dgxm studio up, down or token --rotate, so it accepted
+  nothing; try again once Studio answers."), `operation_fields` (400,
   "Enter both the pending consent key and id, or leave both empty to list
   pending requests."), `operation_path` (400, "Management paths must be
   absolute."), `consent_state` (502), `gate_sampler` and `gate_history` (409),
@@ -6270,6 +6272,9 @@ refuses Workers that run from release slots. A driver service must serve the
   from ComfyUI; Studio kept the cancellation intent and its key unspent.
 - For `driver_service_identity`, pass the `--driver` origin the unit serves,
   or select the unit that runs that driver.
+- When `dgxm studio up`, `down` or `token --rotate` is stopping or restarting
+  Studio, nothing was accepted or changed; review the operation again once
+  Studio answers.
 - For update refusals, start the companion with `--config` and
   `--driver-service`, select the checkout the driver's
   `custom_nodes/dgx-monarch` links to, and start Studio from that checkout.
@@ -6604,6 +6609,7 @@ failure shows the driver as unavailable with `driver_unknown`.
 - `Studio did not start; its journal lines follow.`
 - `Studio has not reported ready after 30 seconds; check systemctl --user status dgxm-studio.service.`
 - `The Studio unit is still loaded or active after removal; check systemctl --user status dgxm-studio.service.`
+- `Studio is still running or still enabled after systemctl --user disable --now, so dgxm studio down kept its unit file; stop it with systemctl --user stop dgxm-studio.service, then run dgxm studio down again.`
 - `No always-on Studio to rotate; a Studio started with dgxm studio makes a new token each time it starts.`
 - `Removed --allow-management from the service. Run dgxm studio up --allow-management to keep management.`
 - `Linger is off for this user, so the service runs only while you are logged in: it starts at your first login and stops when your last session ends. To keep it running from boot, run: sudo loginctl enable-linger $USER`
@@ -6669,9 +6675,14 @@ preflight takes more than 60 seconds, `up` exits 75 and installs nothing.
   script only prints the note above.
 - Running companions: a Studio started in a terminal holds the state
   directory's lock, another `up`, `down` or `token --rotate` holds the unit
-  lock, and a management operation the service started (an update
-  controller, a management command or a status report) keeps the service from
-  being stopped. A control group that cannot be read counts as busy.
+  lock, and a review or management operation the service accepted (an
+  update, even before its controller starts, a management command or a status
+  report) keeps the service from being stopped. A control group that cannot
+  be read counts as busy.
+- Stop: `down` keeps the unit file when `systemctl --user disable --now`
+  fails or the service still runs afterwards, and prints the `ActiveState`
+  it read and systemctl's last error line, so a later `down` still finds the
+  unit.
 - Start: a start that fails prints the service's journal lines. Common causes
   are a busy port, a Studio in a terminal holding the state lock, an
   interpreter that moved, and a state directory bound to another origin.
@@ -6710,6 +6721,9 @@ preflight takes more than 60 seconds, `up` exits 75 and installs nothing.
   another `up`, `down` or `--rotate` to end, and for a management operation to
   finish, or stop the service yourself with
   `systemctl --user stop dgxm-studio.service`.
+- When `down` kept the unit file, read systemctl's line, run
+  `systemctl --user status dgxm-studio.service`, stop the service with
+  `systemctl --user stop dgxm-studio.service`, then run `down` again.
 - After a failed start, read the journal lines `up` printed, or
   `journalctl --user -u dgxm-studio.service -n 20`, fix the cause and run
   `up` again; `up` resets the start limit. After a timeout, check

@@ -13,7 +13,8 @@ import pytest
 
 from dgx_monarch.cli import main as cli_main
 from dgx_monarch.cli import probe_certainty, studio_command
-from dgx_monarch.studio import launch, sign_in, unit, unit_paths, unit_state
+from dgx_monarch.studio import launch, operations_lock, sign_in, unit, unit_paths, unit_state
+from dgx_monarch.studio.contracts import StudioError
 from test_cli_studio_command import (
     DIRECT,
     DRIVER,
@@ -387,3 +388,102 @@ def test_up_records_its_settings_for_open_and_tunnel(rig: Rig):
     installed = unit.unit_settings(rig.unit_path.read_text())
     assert {key: installed[key] for key in ("state", "port", "driver", "config", "management")} == {
         "state": str(rig.state), "port": "8230", "driver": DRIVER, "config": str(config), "management": "no"}
+
+
+# The operations lock (studio/operations_lock.py): what the companion holds for each review and operation.
+
+COMMANDS = {"up": ["studio", "up"], "down": ["studio", "down"], "rotate": ["studio", "token", "--rotate"]}
+
+
+def _running(rig: Rig) -> list[str]:
+    """A running unit of ours and the --config words every command below passes."""
+    config = rig.config()
+    rig.install(rig.settings(config))
+    rig.serve(at=rig.now + 0.1)
+    return ["--config", str(config)]
+
+
+def _admits(rig: Rig) -> str:
+    """What the companion answers a review or operation now: admitted, or its refusal."""
+    try:
+        operations_lock.release(operations_lock.hold(rig.state))
+    except StudioError as exc:
+        return f"{exc.code} {exc.status}: {exc}"
+    return "admitted"
+
+
+@pytest.mark.parametrize("name", list(COMMANDS))
+def test_an_admitted_operation_with_no_child_yet_keeps_studio_running(rig: Rig, name: str):
+    """The window the control group cannot see: an operation admitted whose child has not started."""
+    config = _running(rig)
+    admitted = operations_lock.hold(rig.state)  # what Operations.apply takes before it reserves the review
+    try:
+        result = rig.cli(*config, *COMMANDS[name])
+    finally:
+        operations_lock.release(admitted)
+    assert rig.busy == [] and (result.code, result.err.strip()) == (1, unit_state.BUSY)
+    assert rig.unit_path.exists()
+    assert not any(call[2:3] in (["daemon-reload"], ["restart"], ["disable"]) for call in rig.calls)
+    assert _admits(rig) == "admitted"  # the refusal let go of the lock
+    assert rig.cli(*config, *COMMANDS[name]).code == 0
+
+
+@pytest.mark.parametrize(("name", "verb"), [("up", "restart"), ("down", "disable"), ("rotate", "restart")])
+def test_up_down_and_rotate_hold_the_operations_lock_through_the_restart_or_stop(
+        rig: Rig, monkeypatch: pytest.MonkeyPatch, name: str, verb: str):
+    """An operation that reaches the companion after the busy check is refused until the command ends."""
+    config = _running(rig)
+    seen: list[str] = []
+
+    def run(argv: list[str], **options: object) -> object:
+        if argv[:3] == ["systemctl", "--user", verb]:
+            seen.append(_admits(rig))
+        return rig.run(argv, **options)
+
+    monkeypatch.setattr(studio_command, "_run", run)
+    assert rig.cli(*config, *COMMANDS[name]).code == 0
+    assert seen == [f"operation_unavailable 409: {operations_lock.DRAINING}"]
+    assert _admits(rig) == "admitted"
+
+
+@pytest.mark.parametrize("active", ["active", "inactive"])
+def test_down_keeps_the_unit_when_systemd_refuses_the_stop(rig: Rig, active: str):
+    rig.install(active=active)
+    rig.serve(at=rig.now + 0.1)
+    rig.fails["disable"] = (1, "Failed to disable unit.\nFailed to stop dgxm-studio.service: Access denied")
+    result = rig.cli("studio", "down")
+    assert result.code == 1
+    assert result.err.splitlines() == [f"{unit.NOT_STOPPED} ActiveState={active}",
+                                       "Failed to stop dgxm-studio.service: Access denied"]
+    assert rig.unit_path.exists() and rig.systemctl("daemon-reload") == []
+    assert (rig.state / sign_in.OWNER_FILE).exists()
+    # The next down still finds the unit, rather than reporting that none is installed.
+    del rig.fails["disable"]
+    result = rig.cli("studio", "down")
+    assert (result.code, result.out.splitlines()) == (0, [studio_command.REMOVED.format(state=rig.state)])
+    assert not rig.unit_path.exists()
+
+
+def test_down_keeps_the_unit_when_it_still_runs_after_a_clean_exit(rig: Rig):
+    rig.install()
+    rig.serve(at=rig.now + 0.1)
+    rig.stops = False
+    result = rig.cli("studio", "down")
+    assert (result.code, result.err.splitlines()) == (1, [f"{unit.NOT_STOPPED} ActiveState=active"])
+    assert rig.unit_path.exists() and rig.systemctl("daemon-reload") == []
+
+
+def test_down_keeps_the_unit_when_the_stop_readback_gets_no_answer(rig: Rig, monkeypatch: pytest.MonkeyPatch):
+    rig.install()
+    rig.serve(at=rig.now + 0.1)
+
+    def run(argv: list[str], **options: object) -> object:
+        done = rig.run(argv, **options)
+        if argv[:3] == ["systemctl", "--user", "disable"]:
+            rig.answers = False
+        return done
+
+    monkeypatch.setattr(studio_command, "_run", run)
+    result = rig.cli("studio", "down")
+    assert (result.code, result.err.strip()) == (probe_certainty.UNKNOWN_EXIT, studio_command.LOST_ANSWER)
+    assert rig.unit_path.exists() and rig.systemctl("daemon-reload") == []

@@ -257,9 +257,13 @@ account can write. With `[studio] driver_service` the unit declares `Wants=`
 and `After=` on that driver unit, after `up` checked that the unit serves the
 configured origin; it never edits the driver unit, whose own dependencies
 `--driver-service` checks. `up`, `down` and `token --rotate` take a per-user
-lock against each other. Before they stop the service, they read its control
-group and refuse while any process other than the companion runs there, such
-as an update controller or a management command. A stop from anywhere else,
+lock against each other. Before they stop the service, they take the
+companion's operations lock, which it holds from accepting a review or
+operation until that settles, so an operation accepted after the check is
+refused rather than cut off; they also read its control group and refuse while
+any process other than the companion runs there, such as an update controller
+or a management command. `down` removes the unit file only after systemd
+reports the service stopped. A stop from anywhere else,
 such as `systemctl --user stop`, a logout without linger or a shutdown, ends
 any management command the companion started, and so does a crash of the
 companion: systemd then restarts Studio, and `Wants=` starts the driver unit

@@ -60,6 +60,8 @@ START_FAILED = "Studio did not start; its journal lines follow."
 NOT_READY = "Studio has not reported ready after 30 seconds; check systemctl --user status dgxm-studio.service."
 UNIT_NOT_READY = "dgxm-studio.service runs but has not written its sign-in page or token file yet; see journalctl --user -u dgxm-studio.service -n 20."
 STILL_PRESENT = "The Studio unit is still loaded or active after removal; check systemctl --user status dgxm-studio.service."
+# Filled at print time with the ActiveState read back after the stop, then systemctl's last error line.
+NOT_STOPPED = "Studio is still running or still enabled after systemctl --user disable --now, so dgxm studio down kept its unit file; stop it with systemctl --user stop dgxm-studio.service, then run dgxm studio down again."
 NO_UNIT = "No always-on Studio is installed."
 NO_ROTATE = "No always-on Studio to rotate; a Studio started with dgxm studio makes a new token each time it starts."
 DRIFT_NOTE = "Note: the installed service differs from what dgxm studio up would write now; run dgxm studio up from the environment and config you want it to use. Fields that differ:"
