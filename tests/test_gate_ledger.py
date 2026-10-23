@@ -156,6 +156,7 @@ def test_artifact_set_signature_pins_current_digest_and_legacy_boundary():
 def test_comfy_commit_reads_loose_packed_and_detached_git_state(tmp_path, monkeypatch):
     folder_paths = types.ModuleType("folder_paths")
     folder_paths.base_path = str(tmp_path)
+    folder_paths.__file__ = str(tmp_path / "folder_paths.py")
     monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
     git = tmp_path / ".git"
     refs = git / "refs" / "heads"
@@ -1231,3 +1232,55 @@ def test_a_directory_that_will_not_sync_leaves_the_row_written(tmp_path, monkeyp
     monkeypatch.setattr(ledger_mod.os, "open", refuse)
     assert gate.record("combo", "sig", "commit", "PASS")
     assert gate.lookup("combo", "sig", "commit") == "pass"
+
+
+def _git_branch_head(root, commit):
+    """A minimal checkout ``.git``: HEAD on a branch whose loose ref holds ``commit``."""
+    refs = root / ".git" / "refs" / "heads"
+    refs.mkdir(parents=True)
+    (root / ".git" / "HEAD").write_text("ref: refs/heads/master\n")
+    (refs / "master").write_text(commit + "\n")
+
+
+def _folder_paths_stub(monkeypatch, *, base_path, module_file):
+    folder_paths = types.ModuleType("folder_paths")
+    folder_paths.base_path = str(base_path)
+    folder_paths.__file__ = str(module_file)
+    monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+    return folder_paths
+
+
+def test_comfy_commit_reads_the_code_checkout_under_base_directory(tmp_path, monkeypatch):
+    """--base-directory moves folder_paths.base_path to the user-data root, so a
+    driver started with it must still stamp the commit of the checkout it imported,
+    which is the commit every Worker stamps."""
+    checkout = tmp_path / "ComfyUI"
+    _git_branch_head(checkout, "a" * 40)
+    data = tmp_path / "comfy-data"
+    data.mkdir()
+    folder_paths = _folder_paths_stub(
+        monkeypatch, base_path=data, module_file=checkout / "folder_paths.py")
+    assert ledger_mod.comfy_commit() == "a" * 12
+
+    # A data root that is itself a Git repository never lends its commit.
+    _git_branch_head(data, "b" * 40)
+    assert ledger_mod.comfy_commit() == "a" * 12
+
+    # A driver that imports the checkout through a symlink stamps the same commit.
+    link = tmp_path / "comfy-link"
+    link.symlink_to(checkout, target_is_directory=True)
+    folder_paths.__file__ = str(link / "folder_paths.py")
+    assert ledger_mod.comfy_commit() == "a" * 12
+
+
+def test_comfy_commit_is_unknown_only_when_the_checkout_has_no_git(tmp_path, monkeypatch):
+    checkout = tmp_path / "ComfyUI"
+    checkout.mkdir()
+    data = tmp_path / "comfy-data"
+    data.mkdir()
+    _folder_paths_stub(monkeypatch, base_path=data, module_file=checkout / "folder_paths.py")
+    assert ledger_mod.comfy_commit() == "unknown"
+
+    # Git state under the data root is not the ComfyUI commit either.
+    _git_branch_head(data, "b" * 40)
+    assert ledger_mod.comfy_commit() == "unknown"

@@ -60,6 +60,19 @@ def runtime_versions() -> dict[str, str]:
     return result
 
 
+def comfy_checkout_root() -> Path:
+    """The ComfyUI code checkout this process imported, never its user-data root.
+
+    ComfyUI points ``folder_paths.base_path`` at ``--base-directory`` when that
+    flag is given (models, input, output, custom_nodes), so only the module's
+    own file names the checkout whose commit and sources the process runs. The
+    Gate's commit stamp and the runtime provenance snapshot both read it here.
+    """
+    import folder_paths
+
+    return Path(folder_paths.__file__).resolve().parent
+
+
 def resolved_artifact_identities(manifest: object) -> list[dict[str, object]]:
     import folder_paths
 

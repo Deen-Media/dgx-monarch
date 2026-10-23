@@ -572,6 +572,22 @@ def test_managed_pythonpath_rejects_every_sibling_entry(tmp_path: Path):
         provenance._validate_managed_pythonpath(package)
 
 
+def test_comfy_checkout_root_is_the_imported_checkout_not_the_data_root(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    checkout = tmp_path / "ComfyUI"
+    checkout.mkdir()
+    link = tmp_path / "comfy-link"
+    link.symlink_to(checkout, target_is_directory=True)
+    folder_paths = types.ModuleType("folder_paths")
+    folder_paths.base_path = str(tmp_path / "comfy-data")
+    folder_paths.__file__ = str(link / "folder_paths.py")
+    monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+
+    assert identity.comfy_checkout_root() == checkout.resolve()
+    assert provenance._comfy_checkout_root is identity.comfy_checkout_root
+
+
 def test_resolved_artifact_identity_binds_actual_comfy_resolution(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):

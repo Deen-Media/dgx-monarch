@@ -263,6 +263,45 @@ def test_artifact_parity_compares_workers_to_driver():
         assert_artifact_parity(workers, driver)
 
 
+def test_artifact_parity_accepts_a_base_directory_driver_and_workers_on_one_checkout(
+    tmp_path, monkeypatch
+):
+    from dgx_monarch.actor import store_identity
+    from dgx_monarch.mesh_safety import assert_artifact_parity
+
+    checkout = tmp_path / "ComfyUI"
+    refs = checkout / ".git" / "refs" / "heads"
+    refs.mkdir(parents=True)
+    (checkout / ".git" / "HEAD").write_text("ref: refs/heads/master\n")
+    (refs / "master").write_text("c" * 40 + "\n")
+    data = tmp_path / "comfy-data"
+    data.mkdir()
+    monkeypatch.setattr(
+        "dgx_monarch.gate_ledger.artifact_signature", lambda path: f"sig:{path}")
+
+    def identity(base_path):
+        folder_paths = types.ModuleType("folder_paths")
+        folder_paths.base_path = str(base_path)
+        folder_paths.__file__ = str(checkout / "folder_paths.py")
+        monkeypatch.setitem(sys.modules, "folder_paths", folder_paths)
+        return store_identity.build_request_artifact_identity(
+            "model.safetensors", [{"name": "style.safetensors"}],
+            lambda kind, name: f"/{kind}/{name}")
+
+    # ComfyUI started with --base-directory points base_path at the data root;
+    # a Worker bootstraps ComfyUI without the flag, so its base_path is the checkout.
+    driver = identity(data)
+    worker = identity(checkout)
+    assert driver["comfy"] == worker["comfy"] == "c" * 12
+    assert_artifact_parity(
+        [
+            {"host": "one", "rank": 0, "artifact_sets": [worker]},
+            {"host": "two", "rank": 1, "artifact_sets": [worker]},
+        ],
+        [driver],
+    )
+
+
 def test_artifact_parity_fails_closed_without_worker_identity():
     from dgx_monarch.mesh_safety import assert_artifact_parity
 

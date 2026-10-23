@@ -176,6 +176,14 @@
   `mode=local` with `gpus_per_host=1` and Fleet KSampler run ComfyUI's own
   forward
   ([TROUBLESHOOTING #130](docs/TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)).
+- A driver started with ComfyUI's `--base-directory` stamps the commit of
+  the ComfyUI checkout it runs. The stamp read Git state under the user-data
+  root that the flag names, found none and read `unknown`, so the artifact
+  parity check refused every render the driver sent to Workers, whose stamp
+  names the real commit, and Gate lookups read every PASS as stale. The stamp
+  and the runtime provenance snapshot now find the checkout one way, from the
+  directory that holds ComfyUI's `folder_paths` module, so the telemetry and
+  `dgxm top` show the right commit too.
 
 ## [1.2.0] - 2026-10-16
 

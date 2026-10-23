@@ -26,6 +26,7 @@ from dataclasses import dataclass
 from . import __version__, runtime_provenance
 from .gate_artifacts import artifact_signature as artifact_signature
 from .log import get_logger
+from .runtime_identity import comfy_checkout_root
 
 log = get_logger(__name__)
 
@@ -124,11 +125,9 @@ def artifact_set_signature(signatures: Iterable[str]) -> ArtifactSetSignature:
 
 
 def comfy_commit() -> str:
-    """Best-effort comfy git commit (no subprocess: read .git directly)."""
+    """Best-effort commit of the ComfyUI code checkout (no subprocess: read .git directly)."""
     try:
-        import folder_paths
-
-        git = os.path.join(folder_paths.base_path, ".git")
+        git = os.path.join(comfy_checkout_root(), ".git")
         head = open(os.path.join(git, "HEAD")).read().strip()
         if head.startswith("ref: "):
             ref = head[5:]
