@@ -6547,7 +6547,11 @@ inference mode, which a Worker's sampling thread is not in, so on 2026-10-22
 a one-GPU edit recomputed them at every step and ran 1.46 times stock's time
 a step, with stock's latent. Since then the adapter runs that step in
 inference mode on every Worker, as stock does
-([ADAPTERS](ADAPTERS.md#what-an-adapter-provides)).
+([ADAPTERS](ADAPTERS.md#what-an-adapter-provides)), and on 2026-10-22 the
+one-GPU edit was bit-identical to stock at 2.119 s a step against stock's
+2.142 ([VALIDATION](VALIDATION.md#moss-image-on-comfyui-a071826fd)). The same
+day the driver refused an edit graph on uly2 before dispatch, and the next
+render ran on the same fleet with no Recycle.
 
 **Fix:** run the edit on one GPU: set the Init node to `mode=local` with
 `gpus_per_host=1` and topology `single`, which runs ComfyUI's own forward,

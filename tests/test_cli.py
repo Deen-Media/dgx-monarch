@@ -363,7 +363,7 @@ def test_recovery_commands_refuse_an_unacknowledged_transport_before_the_pin_pro
 def test_package_version_has_one_source_of_truth():
     repo = Path(__file__).resolve().parents[1]
     data = tomllib.loads((repo / "pyproject.toml").read_text())
-    assert __version__ == "1.2.0"
+    assert __version__ == "1.3.0"
     assert "version" not in data["project"]
     assert data["project"]["dynamic"] == ["version"]
     assert data["tool"]["setuptools"]["dynamic"]["version"] == {

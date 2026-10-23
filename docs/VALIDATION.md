@@ -1344,6 +1344,60 @@ auto-table summaries, the API leg records, the matrix cell results, the stock
 job records, the per-key bake probe, the sweep summaries, the operator notes
 and the INT8 investigation with its stock probe.
 
+<a id="moss-image-on-comfyui-a071826fd"></a>
+
+**ComfyUI a071826fd and the edit reference cache, 2026-10-22.** ComfyUI
+commit 60aade0bb added MOSS-Image edit LoRAs and moved the model's forward. A
+verified update then put both Workers on dgx-monarch `de36a06a6d3d`, which
+follows that forward and refuses reference images off one GPU, at Gate
+protocol 14, and `dgxm doctor` reported 44 checks with 0 failures. Both Sparks
+ran ComfyUI 0.42.0 at `a071826fd` with comfy-kitchen 0.2.40, torch
+2.12.0+cu132 and torchmonarch 0.7.0, with TORCH_FLASH. The first Spark was
+capped at 2100 MHz in every leg, with a highest sampled SM clock of 2093 MHz,
+and the second was uncapped. Stock references were rendered again on
+`a071826fd`; no candidate was scored against a render from another ComfyUI
+commit. Identity means equal float32 sampler latents and, where a leg decodes,
+equal uint8 pixels. The SFT checkpoint ran every leg at 1024 square unless the
+row says otherwise. A step's wall is the full render at seed 43 minus the
+one-step render at seed 42, divided by 49.
+
+| Leg | Compared with | Result | Seconds a step |
+|---|---|---|---|
+| BF16 uly2, one step, both joint parities, skip and plain | One GPU (dp2 row 0) and stock | Identical, 3 of 3 against each | One step only |
+| BF16 uly2, 50 steps | One GPU | Identical over the full schedule | uly2 1.217, one GPU 1.849 (1.52x) |
+| INT8 ConvRot pin-stripped uly2, one step, 1024 and 1536 square | One GPU and stock | Identical, 2 of 2 against each | One step only |
+| INT8 ConvRot pinned on uly2, pins dropped, one step, 1024 and 1536 square | The pin-stripped references | Identical, 6 of 6 | One step only |
+| INT8 ConvRot pin-stripped uly2, 50 steps | One GPU | Identical over the full schedule | uly2 0.839, one GPU 1.058 (1.26x) |
+| One-GPU edit: ai-toolkit format with and without the KV cache, and Moss-Image-Edit; one step and 50 steps | Stock | Identical latents and pixels | 3.136, stock 2.142 |
+| One-GPU render with no reference, one step and 50 steps | Stock | Identical latents and pixels | 1.769, stock 1.784 |
+| Edit graph on uly2 | None | Refused class P (#130) at the driver before dispatch | None |
+| uly2 render with no reference, before and after that refusal on the same fleet, no Recycle | Stock, and each other | Identical latents and pixels | One step only |
+
+The comparison made 80 comparisons: 71 identical, 5 dp2 rows equal to stock,
+3 recorded without a bar and 1 missing, with no CHECK and no FAIL. The
+recorded rows are uly2 against stock running the pinned kernel at 1024, NRMS
+0.0402, the stock kernel delta, NRMS 0.0404, and the edit refusal's lease row,
+which holds no lease because the refusal came before dispatch. The missing row
+is the pinned-kernel reading at 1536, which no stock job renders, as at every
+earlier release. The Gate wrote INCONCLUSIVE `no_material` rows and
+quarantined nothing.
+
+The one-GPU edit matched stock at 1.46 times stock's time a step, because
+stock caches the reference images' keys and values only in inference mode,
+which a Worker's sampling thread is not in. The reference cache change,
+dgx-monarch `812d011547a7` on the same stack, ran the same nine one-GPU legs
+from a local-mode driver whose Workers import the driver's source. Its
+review round later added the refusal off one GPU, which a one-GPU leg does
+not reach. Every latent and decoded image equaled stock's: 43 comparisons, 42
+identical and the stock kernel delta recorded. The edit ran 2.119 s a step
+against stock's 2.142 (0.99x), and the render with no reference 1.798 against
+1.784 (1.01x).
+
+Records: the private evidence directory, record `de36a06a6d3d` of 2026-10-22
+with its update receipt, comparison summaries, leg records and operator
+notes, the stock records on `a071826fd`, and the reference cache record with
+its comparison log.
+
 <a id="evidence-moss-image-base"></a>
 
 ### MOSS-Image Base
