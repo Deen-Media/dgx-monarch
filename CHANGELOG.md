@@ -190,7 +190,9 @@
   thread is not in, so on 2026-10-22 a one-GPU edit on hardware matched
   stock's latent at 1.46 times stock's time a step. The adapter now runs
   stock's `extra_conds` in inference mode on every load, as the FLUX.3
-  adapter does, and stock's own rule still picks the branch
+  adapter does, and stock's own rule still picks the branch. Off one GPU
+  that step refuses reference images first, so no Worker computes them for
+  a render it refuses
   ([ADAPTERS](docs/ADAPTERS.md#what-an-adapter-provides)).
 
 ## [1.2.0] - 2026-10-16

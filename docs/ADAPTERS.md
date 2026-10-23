@@ -1220,19 +1220,25 @@ than stacks on a repeat call.
    that path on a Worker: on 2026-10-22 it matched stock's latent at 1.46
    times stock's time a step. Stock's predicate still picks the branch, the
    keys and values are stock's own, and every inference tensor in the output
-   is cloned. The adapter declares `cfg_cond_padding = "none"`: every image
-   row's rotary position depends on the prompt length and the joint attention
-   has no mask, so no driver pad is exact, and a prompt pair of different
-   lengths dispatches one condition per rank.
+   is cloned. Off one GPU, a Worker whose process group holds more than one
+   rank, the bind refuses reference images class P before stock's method
+   runs, so no rank runs a block over references its render refuses, and a
+   driver that cannot read the header still refuses on cfg2 and dp2, with
+   or without FSDP, where no sharded forward binds. The adapter declares
+   `cfg_cond_padding = "none"`: every image row's rotary position depends on
+   the prompt length and the joint attention has no mask, so no driver pad is
+   exact, and a prompt pair of different lengths dispatches one condition per
+   rank.
    On uly2, ring and cfg2 only BF16 and INT8 ConvRot run
    (`sp_validated_quants`); NVFP4 would reduce its shared activation scale
    over a rank's pad rows. FSDP needs no table row: `layers` is a standard
    block list, so the 42 blocks wrap one by one and the text embedder and
    every other module fall in the root group, and with no reference image
    `extra_conds` runs no diffusion-model module. Since 60aade0bb it runs
-   `preprocess_refs`, every block, for reference images, and reference
-   images refuse off one GPU, so the family's one outside-forward row is in
-   the refused-call table, which replicates nothing. The block list is
+   `preprocess_refs`, every block, for reference images, and the bind
+   refuses reference images off one GPU before that call, so the family's
+   one outside-forward row is in the refused-call table, which replicates
+   nothing. The block list is
    not named `blocks`, so `compile_dit` compiles nothing for this family and
    keeps requested slab residency.
 

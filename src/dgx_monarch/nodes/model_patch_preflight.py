@@ -98,8 +98,9 @@ def preflight_moss_image_reference_images(model: Any, ref_summary: Any, topo: An
     the raw conditioning before the wire packs it. Stock MOSS-Image uses the
     references whatever the method, so only their presence counts. The header
     is read only for a render that carries references off one GPU, and an
-    unreadable one passes: the sharded forward refuses on every rank, and on
-    cfg2 and dp2, where nothing binds, stock's own forward runs.
+    unreadable one passes: on every topology but one GPU each Worker's cond
+    bind (adapters/moss_image.py) refuses alike before stock runs a block over
+    the references, and the sharded forward refuses again.
     """
     if not ref_summary or not ref_summary[0] or renders_on_one_gpu(topo):
         return

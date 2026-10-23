@@ -21,6 +21,13 @@ without the bind the same path recomputes the references on every call, to
 the same latent. The bound conds equal stock's and hold no inference tensor.
 The bind is idempotent and survives patcher and LoRA clones, and the
 persistence canary takes it through the store's whole LoRA life cycle.
+
+Off one GPU, a Worker whose process group holds more than one rank, the bind
+refuses reference images with #130's class P text before stock's method
+runs, so no rank calls ``preprocess_refs`` or the model for a render that
+refuses, even when the driver could not read the header and let it through.
+A group of one, which topology single and every Fleet KSampler job open,
+keeps stock's cache, and a cluster render without references passes.
 """
 from __future__ import annotations
 
@@ -32,7 +39,10 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from dgx_monarch.adapters.base import UnsupportedModelError
 from dgx_monarch.adapters.moss_image import MOSSImageAdapter
+from dgx_monarch.adapters.moss_image_seams import REFERENCE_IMAGES_REFUSAL, worker_on_one_gpu
+from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
 from test_moss_image_comfy_exactness import (  # noqa: F401  (fixture re-exported)
     _LORA_UNITS,
     CHANNELS,
@@ -43,6 +53,9 @@ from test_moss_image_comfy_exactness import (  # noqa: F401  (fixture re-exporte
 )
 
 _SINGLE = {"cfg": 1, "ulysses": 1, "ring": 1, "dp": 1, "fsdp": False}
+# The two world-2 topologies that bind no sharded forward: before the cond
+# bind refused, a driver that could not read the header let stock run the edit.
+_UNSHARDED_CLUSTER = {"cfg2": {**_SINGLE, "cfg": 2}, "dp2": {**_SINGLE, "dp": 2}}
 # Stock's reference methods (comfy_extras/nodes_moss_image.py's three edit
 # formats and the default) and whether stock caches their keys and values.
 METHODS = {None: True, "index": False, "index_timestep_zero": False,
@@ -60,8 +73,8 @@ def moss(request):
     return moss
 
 
-def _inject(monkeypatch, patcher) -> None:
-    """The Worker's load hook on topology single; the registry picks the adapter."""
+def _inject(monkeypatch, patcher, topology=_SINGLE, world=1) -> None:
+    """The Worker's load hook, on topology single by default; the registry picks the adapter."""
     from dgx_monarch.actor import partial_load_guard, store_fsdp
     from dgx_monarch.actor import worker as worker_mod
 
@@ -69,7 +82,7 @@ def _inject(monkeypatch, patcher) -> None:
     monkeypatch.setattr(partial_load_guard, "install", lambda *a, **k: None)
     monkeypatch.setattr(worker_mod, "_maybe_compile_dit", lambda *a, **k: None)
     attn = SimpleNamespace(bind_capability=lambda *a: None, effective_kernel="TORCH_FLASH")
-    worker = SimpleNamespace(topology=dict(_SINGLE), world=1, _attn=attn,
+    worker = SimpleNamespace(topology=dict(topology), world=world, _attn=attn,
                              store=SimpleNamespace(family_override=None))
     worker_mod.GPUWorker._inject_for_topology(worker, patcher, "bf16", [], None)
 
@@ -304,3 +317,123 @@ def test_the_bound_branch_survives_sample_bake_hot_swap_and_unbake(moss, tmp_pat
         assert torch.equal(live_tensor(patcher.model, key), file_state[key[len("diffusion_model."):]]), key
     assert torch.equal(sample(patcher), first)
     assert calls == [True] * 8
+
+
+# --- Off one GPU: the bind refuses reference images before stock's method ------------
+
+
+def _process_group(monkeypatch, world: int) -> None:
+    """The process group a Worker's setup opens, at ``world`` ranks."""
+    import torch.distributed as dist
+
+    monkeypatch.setattr(dist, "is_available", lambda: True)
+    monkeypatch.setattr(dist, "is_initialized", lambda: True)
+    monkeypatch.setattr(dist, "get_world_size", lambda group=None: world)
+
+
+def _extra_conds_kwargs(**spec) -> dict:
+    positive, _negative = _conds(**spec)
+    context, options = positive[0]
+    return {"cross_attn": context, "noise": torch.zeros(1, CHANNELS, 4, 4),
+            "device": torch.device("cpu"), **options}
+
+
+def _count_forwards(patcher) -> list[int]:
+    dm = patcher.model.diffusion_model
+    stock = dm.forward
+    calls: list[int] = []
+
+    def counted(*args, **kwargs):
+        calls.append(1)
+        return stock(*args, **kwargs)
+
+    dm.forward = counted
+    return calls
+
+
+def test_only_no_process_group_or_a_group_of_one_counts_as_one_gpu(monkeypatch):
+    import torch.distributed as dist
+
+    monkeypatch.setattr(dist, "is_initialized", lambda: False)
+    assert worker_on_one_gpu()
+    _process_group(monkeypatch, 1)
+    assert worker_on_one_gpu()
+    _process_group(monkeypatch, 2)
+    assert not worker_on_one_gpu()
+
+
+@pytest.mark.parametrize("method", list(METHODS), ids=[str(method) for method in METHODS])
+@pytest.mark.parametrize("name", sorted(_UNSHARDED_CLUSTER))
+def test_a_cluster_worker_refuses_references_in_extra_conds_before_any_reference_block(
+        monkeypatch, moss, tmp_path, name, method):
+    """A world-2 Worker loaded on cfg2 or dp2, where no sharded forward binds,
+    samples an edit the driver let through: #130's class P text, raised while
+    ComfyUI builds the conditioning, with no preprocess_refs call and no model
+    call, whatever the method."""
+    import comfy.sample
+
+    patcher, _path = _base_model(moss, tmp_path)
+    _inject(monkeypatch, patcher, _UNSHARDED_CLUSTER[name], world=2)
+    assert "extra_conds" in vars(patcher.model)
+    refs, forwards = _count_preprocess_refs(patcher), _count_forwards(patcher)
+    _process_group(monkeypatch, 2)
+    positive, negative = _conds(method)
+    noise, latent = torch.randn(1, CHANNELS, 4, 4), torch.zeros(1, CHANNELS, 4, 4)
+    with ThreadPoolExecutor(1) as pool, pytest.raises(UnsupportedModelError) as caught:
+        pool.submit(comfy.sample.sample, patcher, noise, STEPS, CFG, "euler", "simple",
+                    positive, negative, latent, seed=SEED).result()
+    assert str(caught.value) == REFERENCE_IMAGES_REFUSAL
+    assert parse_leading_refusal_tag(str(caught.value)).refusal_class is RefusalClass.PHYSICS
+    assert "TROUBLESHOOTING.md #130" in str(caught.value)
+    assert refs == [] and forwards == []
+
+
+@pytest.mark.parametrize("world", [2, 4])
+def test_the_bound_call_refuses_before_stock_on_any_group_above_one(monkeypatch, moss, tmp_path,
+                                                                     world):
+    """uly2, ring2 and FSDP take the same bind: the refusal precedes stock's
+    method, so the sharded forward's own guard is no longer the first."""
+    patcher, _path = _base_model(moss, tmp_path)
+    MOSSImageAdapter().prepare_base_model(patcher.model)
+    refs = _count_preprocess_refs(patcher)
+    _process_group(monkeypatch, world)
+    with ThreadPoolExecutor(1) as pool, pytest.raises(UnsupportedModelError) as caught:
+        pool.submit(lambda: patcher.model.extra_conds(**_extra_conds_kwargs())).result()
+    assert str(caught.value) == REFERENCE_IMAGES_REFUSAL
+    assert refs == []
+
+
+@pytest.mark.parametrize("case", ["no-reference", "empty-list", "method-alone"])
+def test_a_cluster_render_without_references_passes_the_bind(monkeypatch, moss, tmp_path, case):
+    """Text to image on a cluster: stock's conds, the text tensor as is. An
+    empty list and a method with no latents carry nothing, as stock reads them."""
+    kwargs = _extra_conds_kwargs(refs=False)
+    if case == "empty-list":
+        kwargs["reference_latents"] = []
+    elif case == "method-alone":
+        kwargs["reference_latents_method"] = "index_timestep_zero_isolated"
+    patcher, _path = _base_model(moss, tmp_path)
+    MOSSImageAdapter().prepare_base_model(patcher.model)
+    refs = _count_preprocess_refs(patcher)
+    _process_group(monkeypatch, 2)
+    with ThreadPoolExecutor(1) as pool:
+        out = pool.submit(lambda: patcher.model.extra_conds(**kwargs)).result()
+    assert "c_crossattn" in out and out["c_crossattn"].cond is kwargs["cross_attn"]
+    assert "ref_kv" not in out and "ref_latents" not in out
+    assert refs == []
+
+
+def test_a_group_of_one_keeps_stocks_cache_to_stocks_latent(monkeypatch, moss, tmp_path):
+    """Topology single and every Fleet job open a group of one: the Worker's
+    path calls preprocess_refs once per conditioning, two a render, in
+    inference mode, and lands on stock's latent."""
+    positive, negative = _conds()
+    stock, _path = _base_model(moss, tmp_path)
+    expected = _stock_sample(stock, positive, negative)
+    bound, _path = _base_model(moss, tmp_path)
+    _inject(monkeypatch, bound)
+    refs = _count_preprocess_refs(bound)
+    _process_group(monkeypatch, 1)
+    samples = _worker_sample(monkeypatch, bound, positive, negative)
+    assert refs == [True, True]
+    assert torch.equal(samples, expected)

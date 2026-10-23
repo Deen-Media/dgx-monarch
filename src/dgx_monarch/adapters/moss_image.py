@@ -33,7 +33,9 @@ reference method alone changes nothing in stock and is ignored here too.
 single, cfg2 and dp2 bind no forward and run stock's. On every topology
 ``prepare_base_model`` runs stock's ``extra_conds`` under inference mode, as
 FLUX.3's does, so a one-GPU edit takes stock's once-per-conditioning cache of
-the references' keys and values. No pad is exact on
+the references' keys and values. Off one GPU that bind refuses reference
+images first, before stock's method runs a block over them, so a driver that
+cannot read the header still refuses on every topology. No pad is exact on
 cfg2 (image rows sit at RoPE f = T and the joint attention has no mask), so an
 unequal prompt pair dispatches one cond per rank. ``cfg_dispatch.
 cross_attn_pair_folds`` models CONDCrossAttn's repeat rule and overstates
@@ -63,6 +65,7 @@ from .moss_image_seams import (
     rope_call,
     shard_joint,
     vet_block_replacements,
+    worker_on_one_gpu,
 )
 from .stock_attention import stock_attention_options
 
@@ -125,12 +128,21 @@ class MOSSImageAdapter(Adapter):
         FLUX.3's bind (adapters/flux3.py), on this family's method: stock's
         own predicate still picks the reference branch, every inference
         tensor in the output is cloned out, and the first reference call per
-        load logs the branch. docs/ADAPTERS.md has the paragraph.
+        load logs the branch. Off one GPU, reference images refuse class P
+        (#130) before stock's method runs, so no Worker runs a block over
+        references its render refuses, and cfg2 and dp2, with or without FSDP,
+        which bind no sharded forward, refuse them too. A setup change drops
+        every resident, so the process group this reads is the one the load
+        bound under. docs/ADAPTERS.md has the paragraph.
         """
         stock = type(base_model).extra_conds
         reported: list[bool] = []
 
         def extra_conds(self, **kwargs):
+            # Off one GPU stock would run every block over the references here,
+            # before the forward refuses them, so refuse first, on every rank alike.
+            if not worker_on_one_gpu():
+                refuse_reference_images(kwargs.get("reference_latents"))
             with torch.inference_mode():
                 out = stock(self, **kwargs)
             for cond in out.values():

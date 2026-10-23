@@ -89,8 +89,8 @@ CLASS_OUTSIDE_FORWARD_MODULE_PATHS: dict[str, tuple[str, ...]] = {
 # release refuses before dispatch on every topology that wraps the model, so
 # nothing is replicated for them. MOSSImage.extra_conds (ComfyUI 60aade0bb)
 # runs preprocess_refs, every block over the reference images, in inference
-# mode, which the adapter's cond bind enters on every Worker; reference images
-# refuse class P on every topology but one GPU (TROUBLESHOOTING #130).
+# mode, which the adapter's cond bind enters on every Worker; off one GPU that
+# bind refuses reference images class P before the call (TROUBLESHOOTING #130).
 # Replicating what that method reaches would keep the whole model on every
 # rank. The canary holds this table as it holds the two above.
 REFUSED_OUTSIDE_FORWARD_CALLS: dict[str, tuple[str, ...]] = {

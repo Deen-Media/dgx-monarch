@@ -6505,15 +6505,16 @@ hardware test has compared a uly2, ring2, cfg2, dp2 or FSDP edit with stock,
 so this release refuses reference images on each of those topologies rather
 than render them unmeasured. The driver reads the references from the
 conditioning before dispatch and the family from the checkpoint header, so
-the refusal costs no Worker call. If the driver cannot read the header, the
-sharded forward refuses on every rank alike before any exchange, so by
-design the next render runs on the same fleet, which no hardware test has
-observed yet; on cfg2 and dp2, where no forward binds, stock's own forward
-would run the edit. Stock computes the references' keys and values once
-per conditioning only in inference mode, which a Worker's sampling thread is
-not in, so on 2026-10-22 a one-GPU edit recomputed them at every step and ran
-1.46 times stock's time a step, with stock's latent. Since then the adapter
-runs that step in inference mode on every Worker, as stock does
+the refusal costs no Worker call. If the driver cannot read the header,
+every Worker refuses alike while ComfyUI builds the conditioning, before
+stock runs a block over the references and before any exchange, on cfg2,
+dp2 and FSDP as on the sharded topologies, so by design the next render
+runs on the same fleet, which no hardware test has observed yet. Stock
+computes the references' keys and values once per conditioning only in
+inference mode, which a Worker's sampling thread is not in, so on 2026-10-22
+a one-GPU edit recomputed them at every step and ran 1.46 times stock's time
+a step, with stock's latent. Since then the adapter runs that step in
+inference mode on every Worker, as stock does
 ([ADAPTERS](ADAPTERS.md#what-an-adapter-provides)).
 
 **Fix:** run the edit on one GPU: set the Init node to `mode=local` with

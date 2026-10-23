@@ -327,8 +327,9 @@ def refuse_stray_norm_call(detail: str) -> NoReturn:
     ))
 
 
-# The driver preflight (nodes/model_patch_preflight.py) and the sharded
-# forward raise the same text, so a render reads alike wherever it stops.
+# The driver preflight (nodes/model_patch_preflight.py), the Worker's cond
+# bind (adapters/moss_image.py) and the sharded forward raise the same text,
+# so a render reads alike wherever it stops.
 REFERENCE_IMAGES_REFUSAL = refusal(
     RefusalClass.PHYSICS,
     "moss_image: this render carries reference images, which ComfyUI's Text Encode MOSS-Image "
@@ -357,6 +358,19 @@ def refuse_reference_images(*values: Any) -> None:
     if not any(_carries(value) for value in values):
         return
     raise UnsupportedModelError(REFERENCE_IMAGES_REFUSAL)
+
+
+def worker_on_one_gpu() -> bool:
+    """Whether this process renders alone: it has no process group, or a group of one.
+
+    A Worker's setup opens its group at the render's world before any load,
+    and Fleet KSampler's at one (actor/worker_env.py, mesh_setup.py). Every
+    FSDP preset has a degree of two, so a group of one matches the driver's
+    rule (nodes/model_patch_preflight.renders_on_one_gpu).
+    """
+    import torch.distributed as dist
+
+    return not (dist.is_available() and dist.is_initialized()) or dist.get_world_size() == 1
 
 
 def refuse_control_channels(channels: int, expected: int) -> None:

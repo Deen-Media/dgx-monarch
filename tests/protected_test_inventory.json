@@ -1420,6 +1420,18 @@
       "test_lora_the_load_pops_rope_bands_and_holds_no_fp32_parameter": "dbd552279098dc85",
       "test_lora_the_stores_bake_equals_comfys_own_merge_on_every_patched_key": "1b8ffe686c37ef70"
     },
+    "tests/test_moss_image_cond_branch.py": {
+      "test_a_cluster_render_without_references_passes_the_bind": "7789a4817900bce5",
+      "test_a_cluster_worker_refuses_references_in_extra_conds_before_any_reference_block": "71dba39d07216e68",
+      "test_a_group_of_one_keeps_stocks_cache_to_stocks_latent": "07eee5f2c6e0e4d3",
+      "test_a_one_gpu_edit_computes_its_references_once_per_render_to_stocks_latent": "85fdcd014608c524",
+      "test_only_no_process_group_or_a_group_of_one_counts_as_one_gpu": "fcd557a5372eb7b2",
+      "test_the_bind_is_idempotent_and_survives_a_patcher_clone_and_a_lora_clone": "41198a7c04b78e1d",
+      "test_the_bound_branch_survives_sample_bake_hot_swap_and_unbake": "9d1f1944c19568d1",
+      "test_the_bound_call_refuses_before_stock_on_any_group_above_one": "ccb25aa2f1fe014e",
+      "test_the_bound_conds_equal_stocks_in_inference_mode_and_hold_no_inference_tensor": "8b75536a3bebd39b",
+      "test_the_workers_load_hook_binds_extra_conds_on_a_one_gpu_load": "ff1578940630f00c"
+    },
     "tests/test_moss_image_reference_preflight.py": {
       "test_a_render_without_references_never_reads_a_header": "4cb581e1d0774bf5",
       "test_every_reference_method_refuses_and_none_is_needed": "5b76541d45882b36",
