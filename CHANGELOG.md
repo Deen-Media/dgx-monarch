@@ -48,6 +48,16 @@ refuses where it rendered noise ([TROUBLESHOOTING #128](docs/TROUBLESHOOTING.md#
   command that starts it, disables Review generation and connects by itself
   when the driver answers ([#131](docs/TROUBLESHOOTING.md#131-studio-shows-driver-not-running)). The README front page shows Studio,
   captured against the CPU test fixture.
+- Studio's Review generation takes empty text in a required input, as ComfyUI
+  does. It had blocked 23 of the 71 bundled workflows as shipped, among them
+  the MOSS-Image ones, which leave `double_layers` empty, and those with an
+  empty negative prompt. A missing value or an unavailable choice still blocks
+  review, and an Operations field the companion requires still asks for a value.
+- A library import that the companion refuses with `record_window_limit`,
+  because the catalog grew past the browser window after the review, clears
+  the pending import, so file selection and a new review work again. The page
+  had kept the import pending, and each retry resent the refused plan until it
+  expired or the catalog shrank.
 - `dgxm top` and the ComfyUI sidebar show memory in GiB, draw the memory bar on
   hosts with no slab-resident model, give the six 16-color segments six colors
   and show RX and TX rails for every box ([TUI](docs/TUI.md#what-it-shows)).

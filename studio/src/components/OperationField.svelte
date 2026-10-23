@@ -86,6 +86,8 @@
       label: field.name,
       type: field.type === 'CHOICE' ? 'COMBO' : field.type,
       required: field.required,
+      // The companion refuses an empty required operation parameter.
+      validation: { nonEmpty: field.required },
       options: field.choices,
       min: field.min,
       max: field.max,
