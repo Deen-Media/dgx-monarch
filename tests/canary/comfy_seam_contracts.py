@@ -4859,9 +4859,9 @@ def _assert_moss_image_conds_seam() -> None:
     so a prompt pair of different lengths runs as two calls that cfg-parallel
     dispatches one per rank, and an equal pair folds into one call. Every image
     row's RoPE position depends on the prompt length, so no driver pad is exact
-    (``cfg_cond_padding = "none"``). ``extra_conds`` runs nothing of the
-    diffusion model, so the adapter binds no cond branch; a plain model's
-    ``concat_cond`` gives no control input; the load pops ``rope.bands``; the
+    (``cfg_cond_padding = "none"``). With no reference ``extra_conds`` runs
+    nothing of the diffusion model; a plain model's ``concat_cond`` gives no
+    control input; the load pops ``rope.bands``; the
     sampling is flow at multiplier 1.0 and shift 5.0 (so the SD3 shift node,
     multiplier 1000, would be noise); the latent is Flux2 at 128 channels and
     ratio 16; no attention mask reaches the model; and ComfyUI's MOSS tokenizer
@@ -4959,14 +4959,18 @@ def _assert_moss_image_reference_conds(base) -> None:
     Text Encode MOSS-Image Edit sets ``reference_latents`` and
     ``reference_latents_method`` with conditioning_set_values, the two keys the
     driver's summary reads before the wire packs a cond. Outside inference
-    mode, where a Worker's sampling thread runs, extra_conds hands the
-    latents to the forward as a CONDList whatever the method, and runs nothing
-    of the model; inside it, as one-GPU ComfyUI runs, the isolated methods
-    cache every block's keys and values once through preprocess_refs. Either
-    way the forward takes them as its own three reference parameters, which the
-    sharded forward refuses before any collective.
+    mode extra_conds hands the latents to the forward as a CONDList whatever
+    the method, and runs nothing of the model; inside it, as one-GPU ComfyUI
+    runs, the isolated methods cache every block's keys and values once
+    through preprocess_refs. Either way the forward takes them as its own
+    three reference parameters, which the sharded forward refuses before any
+    collective. A Worker samples on a thread outside inference mode, so the
+    adapter's ``prepare_base_model`` runs stock ``extra_conds`` under it
+    (adapters/moss_image.py): from a fresh thread the bound call must return
+    stock's in-mode output for every method, with no inference tensor.
     """
     import inspect
+    from concurrent.futures import ThreadPoolExecutor
 
     import comfy.conds
     import comfy.model_base
@@ -5020,6 +5024,37 @@ def _assert_moss_image_reference_conds(base) -> None:
         f"moss_image conds seam: inside inference mode the methods that cache are now {cached}")
     assert ran == [1] * sum(_MOSS_REFERENCE_METHODS.values()), (
         f"moss_image conds seam: preprocess_refs ran {ran} inside inference mode")
+
+    from dgx_monarch.adapters.moss_image import MOSSImageAdapter
+
+    def tensors(value):
+        if isinstance(value, list):
+            for item in value:
+                yield from tensors(item)
+        elif torch.is_tensor(value):
+            yield value
+
+    stock_conds = {}
+    with torch.inference_mode():
+        for method in _MOSS_REFERENCE_METHODS:
+            stock_conds[method] = publish(method)
+    MOSSImageAdapter().prepare_base_model(base)
+    with ThreadPoolExecutor(1) as pool:
+        assert not pool.submit(torch.is_inference_mode_enabled).result(), (
+            "moss_image conds seam: a fresh executor thread now inherits inference mode")
+        bound = {method: pool.submit(publish, method).result() for method in _MOSS_REFERENCE_METHODS}
+    for method, out in bound.items():
+        stock_out = stock_conds[method]
+        assert set(out) == set(stock_out) and ("ref_kv" in out) is _MOSS_REFERENCE_METHODS[method], (
+            f"moss_image conds seam: the bound extra_conds publishes {sorted(out)} for method "
+            f"{method}, stock in inference mode {sorted(stock_out)}")
+        for key, cond in out.items():
+            got, want = list(tensors(cond.cond)), list(tensors(stock_out[key].cond))
+            assert len(got) == len(want) and all(
+                torch.equal(a, b) for a, b in zip(got, want, strict=True)), (
+                f"moss_image conds seam: the bound {key} for method {method} differs from stock's")
+            assert not any(tensor.is_inference() for tensor in got), (
+                f"moss_image conds seam: the bound {key} for method {method} holds an inference tensor")
 
 
 def _assert_moss_image_block_surface_seam() -> None:

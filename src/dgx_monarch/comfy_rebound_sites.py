@@ -77,6 +77,8 @@ ADAPTER_BIND_SITES: tuple[AdapterBindSite, ...] = (
     _site("moss_image.py", "MOSSImageAdapter.inject_usp", "diffusion_model", "_forward",
           "usp_forward", ("moss_image",), "usp",
           ("comfy.ldm.moss_image.model.MOSSImage._forward",)),
+    _site("moss_image.py", "MOSSImageAdapter.prepare_base_model", "base_model", "extra_conds",
+          "extra_conds", ("moss_image",), "conds", ("comfy.model_base.MOSSImage.extra_conds",)),
     _site("flux_family.py", "ChromaAdapter.inject_usp", "diffusion_model", "forward_orig",
           "usp_forward_orig", ("chroma",), "usp",
           ("comfy.ldm.chroma.model.Chroma.forward_orig",

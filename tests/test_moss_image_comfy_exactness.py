@@ -905,9 +905,10 @@ def test_guidance_conds_are_cond_regular_and_fold_only_at_equal_length(comfy_mos
                                     "index_timestep_zero", "index"])
 def test_guidance_a_one_gpu_edit_off_inference_mode_matches_stocks_cached_keys(comfy_moss, tmp_path,
                                                                               method):
-    """One GPU binds nothing, and a Worker samples outside inference mode, so its
-    extra_conds hands the forward the reference latents where ComfyUI caches the
-    keys and values once; stock's forward then computes them every step. Same bits."""
+    """Outside inference mode stock's extra_conds hands the forward the reference
+    latents where ComfyUI's prompt thread caches the keys and values once; stock's
+    forward then computes them every step. Same bits: the Worker's cond bind
+    (tests/test_moss_image_cond_branch.py) changes the work, not the result."""
     if not _takes_references(comfy_moss):
         pytest.skip("this ComfyUI predates MOSS-Image reference images (60aade0bb)")
     patcher, _path = _base_model(comfy_moss, tmp_path)

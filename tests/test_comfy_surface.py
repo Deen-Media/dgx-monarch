@@ -661,8 +661,8 @@ def test_broad_adapter_subclass_branches_name_their_exact_rebound_targets():
 def test_adapter_bind_sites_and_rebound_contracts_are_a_bijection():
     actual_sites = _adapter_bind_site_keys()
     declared_sites = [site.ast_key for site in ADAPTER_BIND_SITES]
-    assert len(actual_sites) == len(set(actual_sites)) == 48
-    assert len(declared_sites) == len(set(declared_sites)) == 48
+    assert len(actual_sites) == len(set(actual_sites)) == 49
+    assert len(declared_sites) == len(set(declared_sites)) == 49
     assert set(actual_sites) == set(declared_sites), (
         "Adapter.bind/self.bind sites differ from ADAPTER_BIND_SITES: "
         f"undeclared={sorted(set(actual_sites) - set(declared_sites))}, "
@@ -670,7 +670,7 @@ def test_adapter_bind_sites_and_rebound_contracts_are_a_bijection():
     )
 
     contract_paths = [contract.path for contract in REBOUND_METHOD_CONTRACTS]
-    assert len(contract_paths) == len(set(contract_paths)) == 42
+    assert len(contract_paths) == len(set(contract_paths)) == 43
     referenced_targets = {
         target for site in ADAPTER_BIND_SITES for target in site.targets
     }
@@ -702,7 +702,7 @@ def test_adapter_bind_sites_and_rebound_contracts_are_a_bijection():
         touchpoint.path for touchpoint in REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS
     }
     assert rebound_paths == set(contract_paths)
-    assert (len(rebound_paths), len(caller_paths), len(callee_paths)) == (42, 2, 19)
+    assert (len(rebound_paths), len(caller_paths), len(callee_paths)) == (43, 2, 19)
     assert rebound_paths.isdisjoint(caller_paths | callee_paths)
 
 
@@ -748,7 +748,7 @@ def test_every_declared_replacement_accepts_its_target_stock_call_shapes():
                             f"shape for {target}: {exc}"
                         )
                 checked.append((key, replacement_name, target))
-    assert len(checked) == len(set(checked)) == 56
+    assert len(checked) == len(set(checked)) == 57
 
 
 def test_model_detection_source_anchors_are_executable_and_name_missing_assignment():
