@@ -26,6 +26,41 @@ DGX Monarch provides model loaders, samplers, memory controls, and 71 example wo
 - **Start with a model workflow.** Choose a template, select your files, and queue it. Automatic selection chooses a supported GPU layout for the model; the model guide explains the manual options.
 - **See what the pair is doing.** The ComfyUI sidebar and `dgxm top` show memory use, render progress, connection state, and errors.
 
+## Studio
+
+Studio is an optional browser workspace for the pair. Pick a bundled
+workflow, write the prompt, queue renders on the driver and follow them on
+one page, with Gallery, Queue, Grids, Fleet and Library views beside it.
+Studio listens only on this computer. It signs your browser in with a link
+that holds its access token; treat that link like a password. Install the
+`studio` extra ([INSTALL](docs/INSTALL.md#optional-studio-companion)), tell
+Studio once where ComfyUI listens, in `cluster.toml`
+([CLUSTER](docs/CLUSTER.md#studio-optional)):
+
+```toml
+[studio]
+driver = "http://127.0.0.1:8188"
+```
+
+Use the address your ComfyUI listens on; Studio keeps its records for the
+first driver address it uses. Then start it on the computer that runs
+ComfyUI:
+
+```bash
+dgxm studio
+```
+
+`dgxm studio` reads your `cluster.toml`, starts Studio and opens it in your
+browser, or prints the link when there is no display. `dgxm studio up` keeps
+it running as a user service, and `dgxm studio tunnel <host>` prints the SSH
+line that reaches it from a laptop.
+
+[![DGX Monarch Studio with test fixture data](docs/media/dgxm-studio.png)](docs/STUDIO.md)
+
+Shown with the CPU test fixture, so no model ran. Studio is a draft; the
+[Studio guide](docs/STUDIO.md) covers setup, remote access and what is not
+finished yet.
+
 ## Featured workflows
 
 <table>

@@ -26,8 +26,9 @@ optional and is not part of production startup. Serve the production bundle from
 the Python companion to use its same-origin authenticated API.
 
 The client negotiates schema major version 1, sends `X-DGXM-Schema: 1.0`, and
-retains a user-entered bearer token in tab-scoped session storage. Rendered
-workflow metadata is text, never HTML. There is no arbitrary shell-command input.
+keeps the bearer token, which arrives through a sign-in link or the token form,
+in tab-scoped session storage. Rendered workflow metadata is text, never HTML.
+There is no arbitrary shell-command input.
 Operation controls come from capability parameter schemas and require the exact
 preview digest. Workflow controls come from inspected typed bindings; unresolved
 and connected inputs are not silently replaced with strings.

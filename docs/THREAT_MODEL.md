@@ -76,8 +76,9 @@ are not scrubbed for secrets.
 
 ### Browser to Studio companion
 
-The Studio companion (`dgxm-studio`) is an optional loopback web service that
-serves the Studio page and its `/api/` routes.
+The Studio companion (`dgxm-studio`, started by `dgxm studio` or by the
+`dgxm-studio.service` user unit that `dgxm studio up` installs) is an optional
+loopback web service that serves the Studio page and its `/api/` routes.
 [STUDIO.md](STUDIO.md#install-and-start) states its request rules: a loopback
 bind, an exact `Host` match, no cross-origin access, and the per-launch owner
 token as a bearer credential on every API request. This section records what
@@ -107,18 +108,85 @@ can send the confirmation too.
 The token can land in these places:
 
 - the terminal that started the companion, and anything that records that
-  terminal, such as scrollback, tmux or screen logs, or a `script` file;
+  terminal, such as scrollback, tmux or screen logs, or a `script` file. The
+  companion prints the token there only when standard output is a terminal,
+  and prints the sign-in link `http://127.0.0.1:<port>/#token=<token>`, which
+  carries the token in its `#token=` fragment, only when it did not send the
+  sign-in page to a browser. `dgxm studio open`,
+  `token --value`, `up` and `tunnel` print them only to the terminal they run
+  in;
 - the owner-only (`0600`) token file: the `--token-file` path whenever that
   option is given, or otherwise a file in the companion's `0700` state
   directory when standard output is not a terminal;
+- `sign-in.html`, an owner-only (`0600`) page in the same state directory that
+  sends the browser to the link. The companion writes it when the token goes
+  to a file or when it sends the page to a browser, and removes it when it
+  exits. A browser that dgxm starts gets that file's path, so the token never
+  appears in process arguments that dgxm creates, which other local accounts
+  could read. dgxm starts a browser only when `xdg-mime` names the same desktop
+  entry for `.html` files and `http` links, so the page never goes to another
+  program. A link the user clicks in a terminal goes to that terminal's own
+  opener, usually on a command line, where other local accounts can read it
+  while that opener runs unless `/proc` is mounted with `hidepid`;
 - a service manager's journal, when an operator's own unit or wrapper copies
   the companion's terminal output; members of the `adm` and `systemd-journal`
-  groups, and any log shipping, can read it there; and
+  groups, and any log shipping, can read it there. The `dgxm-studio.service`
+  unit that `dgxm studio up` installs does not put the token there: its output
+  is not a terminal, so the journal gets only the plain address and file
+  paths;
+- the clipboard, when the user copies the printed link or token; a clipboard
+  history manager can keep it there, and clipboard sync can copy it to other
+  devices. The page's own Copy buttons never copy the token;
+- the browser's address bar and session history, from the moment the link
+  loads until the page's script removes the fragment with
+  `history.replaceState`, and the browser profile's history database, which
+  keeps the link with its token after the strip until the user clears
+  history. Measured on 2026-10-22, Firefox 158 kept both a link opened through
+  `sign-in.html` and a link opened directly in its history database
+  (`moz_places` and `moz_historyvisits`). Brave, driven through its developer
+  protocol on 2026-10-22, wrote no history entry at all, not even for a page
+  without a token, both headless and in a window, so that test says nothing
+  about the link; treat every browser's history as holding it. The Sign-in
+  link row of the [interface QA record](STUDIO_INTERFACE_QA.md#browser-evidence)
+  confirmed that on 2026-10-22 after a real sign-in: in each of its two runs,
+  headless Firefox 158 opened `sign-in.html`, the page removed the fragment
+  from the address bar, and once the browser had closed, its profile's
+  `places.sqlite` held one row with `token=`, the link with its token, visited
+  twice. From the history database the address bar can suggest the link,
+  browser sync can copy it to other devices and to the sync service, and an
+  extension with the `tabs`, `history` or `webNavigation` permission can read
+  it without any host permission. In the tunnel journey that is the other
+  computer's browser. A fragment is never sent to the companion, so it reaches
+  no request line, `Referer` or log; and
 - the browser tab's `sessionStorage`, which keeps it until the tab closes or
-  the user disconnects.
+  the user disconnects. The page stores a link's token only after the
+  companion accepts it.
 
 Treat the token as a password, and restart the companion to replace it after
-any copy leaks. The loopback bind and the Host, Origin and token checks stop
+any copy leaks; `dgxm studio token --rotate` restarts the service. A token
+copied into a browser profile stays valid until then. A companion started
+with `--allow-management` never signs in by link: it writes no
+`sign-in.html`, prints no link and starts no browser with a token, because its
+token is code execution as the worker account on every host and its service
+keeps it for weeks; the token file is then a standing credential for the life
+of the service, and the page signs in only through its form. A link with a
+wrong token only makes that tab show the token form.
+
+`dgxm studio tunnel` prints an SSH line, the plain address to browse, and the
+sign-in link only to a terminal on the Studio host. The line names
+`127.0.0.1` as the address its forward listens on, so the forward stays on the
+other computer's `127.0.0.1`, which other accounts there can reach with a
+request but not with the token, and a `GatewayPorts yes` setting in that
+computer's ssh configuration does not widen it. The printed line carries
+`-o ExitOnForwardFailure=yes`, so when another program there already listens
+on that address and port, ssh prints `Could not request local forwarding` and
+exits. A forward written without the address, as an ssh command or app set up
+another way may be, listens on both `127.0.0.1` and `::1`, opens the session
+when either one is free, and prints only an `Address already in use` line; a
+page served on that port then reads the token from the link, so the link must
+not be opened after either message.
+
+The loopback bind and the Host, Origin and token checks stop
 other machines, other web pages and other local accounts that lack the token.
 They do not stop a process running as the same OS account, which can read
 every copy above and which this model already trusts.
@@ -168,6 +236,51 @@ modify, that the running process matches that command and the unit's control
 group, and that the unit's ComfyUI listen address, port and scheme serve the
 `--driver` origin. It refuses any other unit. It installs no unit and adds no
 permission; stop and start go through the owner's user manager.
+
+`dgxm studio up` installs one systemd user unit, `dgxm-studio.service`, only
+on that request ([STUDIO.md](STUDIO.md#keep-studio-running)). The unit runs
+`python -m dgx_monarch.studio` with an emptied environment,
+`NoNewPrivileges=yes` and explicit arguments: the loopback address, the fixed
+port, the configured driver origin, the state directory, the config path and
+`--no-open`, plus `--allow-management` only when `up` was given that flag. The
+unit carries no token. Its file is mode `0600` and starts with the line
+`# dgxm-managed-studio-unit-v1`; `up` and `down` refuse a file they did not
+write, a symbolic link, a drop-in in `dgxm-studio.service.d` or
+`dgxm-.service.d`, and a unit that systemd loads from another path or with
+drop-ins from a directory this account or the administrator writes. `up`
+refuses an interpreter, source or dependency path that another account can
+write, and a `PYTHONPATH` in its own environment. `up` writes the absolute
+path of the cluster.toml it used into the unit, and every management command
+the service runs uses that file; it refuses a cluster.toml found in the
+working directory, and every Studio command refuses a cluster.toml another
+account can write. With `[studio] driver_service` the unit declares `Wants=`
+and `After=` on that driver unit, after `up` checked that the unit serves the
+configured origin; it never edits the driver unit, whose own dependencies
+`--driver-service` checks. `up`, `down` and `token --rotate` take a per-user
+lock against each other. Before they stop the service, they take the
+companion's operations lock, which it holds from accepting a review or
+operation until that settles, so an operation accepted after the check is
+refused rather than cut off; they also read its control group and refuse while
+any process other than the companion runs there, such as an update controller
+or a management command. `down` removes the unit file only after systemd
+reports the service stopped. A stop from anywhere else,
+such as `systemctl --user stop`, a logout without linger or a shutdown, ends
+any management command the companion started, and so does a crash of the
+companion: systemd then restarts Studio, and `Wants=` starts the driver unit
+again, possibly on a checkout whose update was cut off. `dgxm uninstall`
+refuses while the unit is installed.
+
+The capabilities response carries the driver start command (`driver_start`)
+and the config path it came from, which can name home paths; only a token
+holder reads them. On a desktop the companion and `dgxm studio open` run
+`xdg-mime query default` twice and then `xdg-open` with the path of
+`sign-in.html`, or, for a management service, with the plain address and no
+token.
+
+`dgxm studio tunnel` prints, or with `--run` executes without a shell, one
+`ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <host>` command
+after validating the host, which may not carry an IPv6 zone or start with
+`-`. It adds no listener and no proxy.
 
 Management actions run fixed Monarch commands with typed options, under the
 companion's account and environment. Browser JSON never becomes command text,
@@ -529,13 +642,17 @@ build identities can still be sensitive; review the file before sharing it.
   unauthenticated terms as telemetry.
 - **Studio owner token.** A local process or log reader that obtains the token,
   from any copy listed under
-  [Browser to Studio companion](#browser-to-studio-companion), can do
-  everything that launch allows: read prompts and outputs, submit and cancel
-  jobs and, with `--allow-management`, run setup, init or update with an
-  interpreter, host list or checkout of its choosing, which is code execution
-  as the worker account on every host. The loopback bind, the exact Host and
-  Origin checks and the per-launch token stop web pages and other machines.
-  Restarting the companion replaces the token. Start with
+  [Browser to Studio companion](#browser-to-studio-companion), including the
+  sign-in link, `sign-in.html` and the browser profile's history database,
+  can do everything that launch allows: read prompts and outputs, submit and
+  cancel jobs and, with `--allow-management`, run setup, init or update with
+  an interpreter, host list or checkout of its choosing, which is code
+  execution as the worker account on every host. The loopback bind, the exact
+  Host and Origin checks and the per-launch token stop web pages and other
+  machines. A token lives as long as one companion process, which for the
+  `dgxm-studio.service` unit can be weeks. Restarting the companion replaces
+  the token; `dgxm studio token --rotate` restarts the service. A management
+  service signs in only through the page's form, never by link. Start with
   `--allow-management` only for a session that needs it.
 - **Hostile library file.** An imported library, workflow or experiment file
   can carry hostile text, oversized fields, unknown metadata and references to

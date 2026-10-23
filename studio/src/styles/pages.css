@@ -280,6 +280,39 @@
   background: transparent;
   padding: 4px 7px;
 }
+.notice.driver-setup {
+  display: block;
+  background: #332d1e;
+  color: #edcf8c;
+  border-color: #4c4228;
+}
+.driver-setup h2 {
+  font-size: 13px;
+  margin-bottom: 8px;
+  color: var(--text);
+}
+.driver-setup p {
+  margin-bottom: 6px;
+  max-width: 920px;
+}
+.driver-command {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  max-width: 920px;
+  margin-bottom: 6px;
+}
+.driver-command code {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border: 1px solid #4c4228;
+  border-radius: 4px;
+  background: #1d1a12;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
 .console-panel {
   height: 200px;
   min-height: 100px;

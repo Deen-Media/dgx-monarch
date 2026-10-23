@@ -321,6 +321,14 @@ def cmd_update(args) -> int:
 
 
 def cmd_uninstall(args) -> int:
+    # An installed Studio service would outlive the dgxm that removes it.
+    from ..studio import unit as studio_unit
+
+    studio = studio_unit.owned_unit_state()
+    if studio in ("ours", "unknown"):
+        print(("" if studio == "ours" else "note: ") + studio_unit.UNINSTALL_STUDIO_FIRST, file=sys.stderr)
+        if studio == "ours":
+            return 1
     config = _load_config(args)
     acted = config is not None and bool(config.hosts)
     ok = True
@@ -380,6 +388,12 @@ def cmd_launcher(args) -> int:
     return run(args)
 
 
+def cmd_studio(args) -> int:
+    from .studio_command import run
+
+    return run(args)
+
+
 def cmd_sol_install(args) -> int:
     from .sol_install import run
 
@@ -416,6 +430,7 @@ def main(argv: list[str] | None = None) -> int:
         "install_service": cmd_install_service,
         "update": cmd_update,
         "uninstall": cmd_uninstall,
+        "studio": cmd_studio,
     })
     args = parser.parse_args(argv)
     return args.func(args)

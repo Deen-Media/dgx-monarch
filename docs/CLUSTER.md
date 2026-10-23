@@ -23,8 +23,10 @@ processes are not confirmed stopped, replacement is blocked to prevent two
 fleets from holding models or rendezvous ports at once.
 
 Unknown keys fail config loading at the root, in `[cluster]`, `[[hosts]]`,
-`[worker_args]`, and every `[fabric.<name>]` table, including unselected
-profiles. This catches misspelled security and transport settings before attach.
+`[worker_args]`, and every `[fabric.<name>]` table. The `[studio]` table is
+the one exception: only `dgxm studio` commands check it, so a typo there
+never stops a render. Unselected fabric profiles are checked too, which
+catches misspelled security and transport settings before attach.
 
 ## Guided setup profiles
 
@@ -436,6 +438,65 @@ Each Worker host also needs `/usr/bin/python3` (Python 3.9 or newer, standard
 library only): the Worker lifecycle helpers run on it, not on `python`, so they
 still work while that venv is broken or being replaced, and `dgxm doctor` checks
 that it starts and is new enough.
+
+## `[studio]` (optional)
+
+Settings for `dgxm studio`, which starts the Studio companion
+([STUDIO.md](STUDIO.md)) and installs its user service. Only Studio reads this
+table: the `dgxm studio` commands, and the companion for `driver_command`. The
+driver, the Worker commands and the TUI ignore what it holds.
+
+| key | default | meaning |
+|---|---|---|
+| `driver` | none | The ComfyUI driver origin on this computer, such as `http://127.0.0.1:8191`. Write it in canonical form: `http` or `https`, a lowercase host, no default port (`:80` for http, `:443` for https), and no path (not even a trailing `/`), query, fragment, user or password; Studio names the canonical spelling when it refuses another. The host must name this computer: an address in `127.0.0.0/8`, `[::1]` or `localhost`. Listen addresses such as `0.0.0.0` and `[::]` and IPv6 zones (`%`) are refused. For a driver on another computer, type `dgxm studio --driver` instead. |
+| `port` | `8220` | Studio's own port, from `1024` to `65535`. Studio always binds `127.0.0.1`; an SSH tunnel forwards this port. |
+| `driver_service` | none | A ComfyUI systemd user unit, such as `comfyui-driver.service`, that the Studio service starts with it. `dgxm studio up` checks that the unit serves `driver`. Studio stops or restarts it only when it runs with `--allow-management`. It must not name a Worker unit or `dgxm-studio.service`. |
+| `driver_command` | none | Text the Driver not running page shows as the command that starts the driver. Studio never runs it. It must be 1 to 512 printable ASCII characters, so no control, bidirectional or zero-width character can make the text on the page differ from what Copy writes. Everyone with the Studio token can read it, so it must hold no secret. |
+
+```toml
+[studio]
+driver = "http://127.0.0.1:8191"
+port = 8220
+driver_service = "comfyui-driver.service"
+driver_command = "bash /home/user/start-comfyui.sh"
+```
+
+There is no key for management, the state directory, the bind address or a
+token file. Management comes only from the `--allow-management` flag, typed
+for `dgxm studio` or `dgxm studio up`.
+
+Write `127.0.0.1` rather than `localhost`. Studio accepts both but treats them
+as two origins, and a state directory keeps the first origin it binds.
+
+A Studio state directory binds its records to the first driver origin it
+uses. `dgxm studio` does not start Studio on a new state directory until
+`driver` is set here or `--driver` is typed, so Studio never binds its records
+to a default address by accident. A state directory already bound to
+`http://127.0.0.1:8188`, the `dgxm-studio` default, keeps starting without the
+key. When the origins differ, Studio refuses to start and prints the `mv`
+command that moves the old records aside.
+
+`dgxm studio` reads this file only when it is a regular file you own that no
+other account can write. Group write counts only when the group holds another
+account, so the usual umask `0002` setup with a group of your own passes.
+`dgxm studio up` never writes a cluster.toml found in the working directory
+into its service: name it with `--config`, or keep it at
+`~/.config/dgx-monarch/cluster.toml`.
+
+Before you add the table:
+
+1. Deploy order. Earlier releases refuse any unknown root key in every reader,
+   the driver's Init node and the Worker commands included. Add `[studio]`
+   only after every checkout that reads this file runs a release with
+   `dgxm studio`, and after the driver has restarted on it.
+2. A byte edit retires the fleet. In cluster mode the Init node fingerprints
+   the file's bytes on every Queue, so adding or editing `[studio]` retires
+   the attached fleet like any other edit. Edit it when no render runs.
+3. Re-setup drops the table. `dgxm setup --apply`, `dgxm init` and Studio's
+   init adapter write a new file without `[studio]`, as they drop `[monarch]`
+   and `[fabric.*]`; the reviewed diff shows the removal. Add the table again
+   afterwards. An installed Studio service keeps the values it was written
+   with, and `dgxm studio open` names the fields that differ.
 
 ## Worker transport security
 

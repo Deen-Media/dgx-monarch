@@ -2,12 +2,16 @@
 
 import json
 import re
+import struct
+import zlib
 from pathlib import Path
 
 import pytest
 
 REPO = Path(__file__).resolve().parents[1]
 PUBLIC_GUIDES = ("README.md", "docs/MODELS.md", "docs/BENCHMARKS.md", "docs/VALIDATION.md")
+PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+CRITICAL_PNG_CHUNKS = {b"IHDR", b"PLTE", b"IDAT", b"IEND"}
 EVIDENCE_ANCHORS = {
     "evidence-krea2-raw-turbo",
     "evidence-kroma",
@@ -87,6 +91,36 @@ def test_readme_links_to_installation_and_current_support():
     text = (REPO / "README.md").read_text()
     for target in ("docs/INSTALL.md", "docs/MODELS.md", "docs/BENCHMARKS.md", "docs/VALIDATION.md"):
         assert re.search(r"\]\(" + re.escape(target) + r"(?:#[^)]*)?\)", text), target
+
+
+def _png_chunk_types(data: bytes) -> list[bytes]:
+    """Chunk types in file order; each chunk's CRC must match and nothing may follow IEND."""
+    assert data.startswith(PNG_SIGNATURE), "not a PNG"
+    types: list[bytes] = []
+    offset = len(PNG_SIGNATURE)
+    while offset < len(data):
+        (length,) = struct.unpack(">I", data[offset:offset + 4])
+        kind = data[offset + 4:offset + 8]
+        body = data[offset + 8:offset + 8 + length]
+        (crc,) = struct.unpack(">I", data[offset + 8 + length:offset + 12 + length])
+        assert zlib.crc32(kind + body) == crc, f"bad CRC in {kind!r}"
+        types.append(kind)
+        offset += 12 + length
+        if kind == b"IEND":
+            break
+    assert offset == len(data), "bytes after IEND"
+    return types
+
+
+def test_readme_images_carry_only_critical_png_chunks():
+    """Text, time and EXIF chunks can carry a capture's host, path or software, so
+    the images the README shows keep only the chunks that draw pixels."""
+    names = sorted(set(re.findall(r"docs/media/[A-Za-z0-9_.-]+\.png", (REPO / "README.md").read_text())))
+    assert names
+    for name in names:
+        types = _png_chunk_types((REPO / name).read_bytes())
+        assert types[0] == b"IHDR" and types[-1] == b"IEND", name
+        assert set(types) <= CRITICAL_PNG_CHUNKS, (name, sorted(set(types) - CRITICAL_PNG_CHUNKS))
 
 
 def test_workflow_notes_do_not_cite_private_tickets():

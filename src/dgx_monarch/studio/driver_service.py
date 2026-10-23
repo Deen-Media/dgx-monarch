@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
+from ..config_schema import DRIVER_UNIT_PATTERN
 from .contracts import StudioError, digest
 
 _PROPERTIES = (
@@ -41,7 +42,7 @@ def _refuse(message: str) -> StudioError:
 
 
 def validate_unit_name(unit: str) -> None:
-    if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.@-]*\.service", unit):
+    if not DRIVER_UNIT_PATTERN.fullmatch(unit):
         raise _refuse("Select an existing systemd user service by exact unit name.")
     if "worker" in unit.lower():
         raise _refuse("Persistent Monarch Worker services cannot be selected as the ComfyUI driver.")

@@ -6,7 +6,8 @@ waived with the reason Studio does not represent it. ``apply_studio_views``
 refuses a discovered surface with no entry and an entry with no surface, as
 ``management_parity.validate_bindings`` does for CLI rows. CLI rows take their
 view from that validated binding. Every other row kind has one rule here, so a
-new kind also fails until someone reviews it.
+new kind also fails until someone reviews it; the only per-row exceptions are
+the ``[studio]`` launch keys in ``CONFIGURATION``.
 
 Operation names and route paths are read from source without importing the
 HTTP layer, so building the inventory never needs aiohttp.
@@ -81,15 +82,24 @@ KIND_VIEWS = {
     "workflow": route("GET", "/api/v1/workflows", "The bundled workflow catalog serves every shipped example."),
     "telemetry": route("GET", "/api/v1/snapshot", "Fleet view metric charts draw every presentation contract metric from the snapshot."),
     "configuration": {"status": "equivalent", "equivalence":
-                      "The owner selects the cluster configuration with --config at companion launch; Studio does not edit it."},
+                      "The owner selects the cluster configuration with --config at companion launch, "
+                      "or dgxm studio passes it; Studio does not edit it."},
     "node": {"status": "source_only", "reason":
              "Studio reads node schemas from the connected driver's object_info at run time; no closed registry checks this row."},
     "node_input": {"status": "source_only", "reason":
                    "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row."},
 }
 
+# dgxm studio turns these [studio] keys into companion flags before the
+# companion starts, so the companion never reads them. They take this view
+# instead of the configuration kind's. driver_command keeps the kind's view,
+# because the companion reads it from its own --config.
+CONFIGURATION = {f"config.studio.{key}": waiver(
+    "Read by dgxm studio before the companion starts; the page cannot change how its own companion was launched.")
+    for key in ("driver", "port", "driver_service")}
+
 _CLI_KINDS = {"adapter": "operation", "parameter": "operation", "selector": "operation",
-              "presentation": "equivalent", "context": "equivalent"}
+              "presentation": "equivalent", "context": "equivalent", "companion": "not_represented"}
 
 
 def studio_operations(root: Path) -> frozenset[str]:
@@ -116,6 +126,8 @@ def _cli_view(binding: dict[str, Any]) -> dict[str, Any]:
     status = _CLI_KINDS[binding["kind"]]
     if status == "operation":
         return {"status": status, "operations": list(binding["actions"]), "binding": binding["kind"]}
+    if status == "not_represented":
+        return waiver(binding["reason"])
     return {"status": status, "equivalence": binding["equivalence"]}
 
 
@@ -142,6 +154,9 @@ def apply_studio_views(rows: list[dict[str, Any]], root: Path) -> None:
         if found != registry.keys():
             raise ValueError(f"{label} coverage changed: missing={sorted(found - registry.keys())}; "
                              f"stale={sorted(registry.keys() - found)}")
+    stale = CONFIGURATION.keys() - {row["id"] for row in rows if row["kind"] == "configuration"}
+    if stale:
+        raise ValueError(f"Configuration view names no row: stale={sorted(stale)}")
     operations, routes = studio_operations(root), studio_routes(root)
     for row in rows:
         kind = row["kind"]
@@ -149,6 +164,8 @@ def apply_studio_views(rows: list[dict[str, Any]], root: Path) -> None:
             view = dict(REGISTRIES[kind][1][row["id"]])
         elif kind in {"cli_command", "cli_option"}:
             view = _cli_view(row["studio_binding"])
+        elif kind == "configuration" and row["id"] in CONFIGURATION:
+            view = dict(CONFIGURATION[row["id"]])
         elif kind in KIND_VIEWS:
             view = dict(KIND_VIEWS[kind])
         else:

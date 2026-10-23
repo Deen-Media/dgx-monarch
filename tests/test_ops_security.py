@@ -33,6 +33,12 @@ from dgx_monarch.nodes.samplers import DGXMonarchKSamplerPipeline
 
 
 @pytest.fixture(autouse=True)
+def _no_studio_unit(monkeypatch):
+    """cmd_uninstall checks the user's Studio unit first; these cases test the Worker path."""
+    monkeypatch.setattr("dgx_monarch.studio.unit.owned_unit_state", lambda path=None: "absent")
+
+
+@pytest.fixture(autouse=True)
 def _systemd_unit_renderer_uses_the_declared_remote_host(monkeypatch):
     """Answer the ``worker`` fixture host as remote without a lookup.
 

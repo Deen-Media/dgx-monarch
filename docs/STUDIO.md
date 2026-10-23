@@ -27,28 +27,70 @@ wheel or source archive.
 
 ```sh
 dgxm-studio --check
-dgxm-studio --driver http://127.0.0.1:8188
 ```
 
 `dgxm-studio --check` compares every packaged Studio file with its recorded
 SHA-256 and reports whether the studio extra is installed; it needs neither the
 extra nor a driver.
 
-Open the printed loopback URL. When standard output is a terminal, the companion
-prints the owner token there. Otherwise, for example when output goes to a file,
-a pipe or a service journal, it writes the token to `owner-token` (mode 0600) in
-the state directory and prints only that path. `--token-file /absolute/path`
-writes the token to another file instead, whose directory must belong to you
-with mode 0700. The companion removes the file it wrote when it exits. Treat the
-token as a local password. It changes on each launch, and it can land in
-terminal scrollback, the token file and the browser's session storage.
+Tell Studio once where ComfyUI listens, in the `[studio]` table of
+cluster.toml, then start it on the computer that runs ComfyUI:
+
+```toml
+[studio]
+driver = "http://127.0.0.1:8188"
+```
+
+```sh
+dgxm studio
+```
+
+`dgxm studio` reads the `[studio]` table of the cluster.toml that `dgxm` uses,
+starts the companion and signs your browser in: when this computer has a
+display it sends the browser a sign-in page, and otherwise it prints a sign-in
+link. The first start needs the driver address, from `[studio] driver` or
+`--driver`; Studio keeps its records for the first driver address it uses, so
+use the address your ComfyUI listens on.
+[Configure Studio in cluster.toml](#configure-studio-in-clustertoml) lists the
+keys. `dgxm studio` runs the same companion as `dgxm-studio`, with explicit
+flags. `dgxm-studio` itself stays available for another port, an IPv6 bind or
+a `--token-file`, and takes its driver from `--driver`.
+
+When standard output is a terminal, the companion prints the owner token there,
+and prints the sign-in link `http://127.0.0.1:<port>/#token=<token>` on a line
+of its own only when it did not send the sign-in page to a browser. Otherwise,
+for example when output goes to a file, a pipe or a service journal, it writes
+the token to `owner-token` and the sign-in page to `sign-in.html` (both mode
+0600) in the state directory and prints only their paths. The companion removes
+both files when it exits. While it runs, `dgxm studio open` turns them into a
+link. `--token-file /absolute/path`, a `dgxm-studio` option, writes the token
+to another file instead, whose directory must belong to you with mode 0700.
+Treat the token as a local password. It changes on each launch, and it can land
+in terminal scrollback, the token file and the browser's session storage. The
+sign-in link holds the token, and the browser keeps it in its history; treat it
+like a password. A Studio started with `--allow-management` never makes a link:
+paste its token into the form.
+
+The companion starts a browser only on a terminal with a display, outside an
+SSH session and outside tmux or screen, and only when the desktop opens `.html`
+files and `http` links with the same program. It hands that browser the path of
+`sign-in.html`, never the token, and prints
+`Sent the sign-in page to your web browser.` Inside tmux or screen, or in an
+SSH session, nothing opens: click or paste the printed link. On a desktop where
+`.html` files open in another program than the web browser, nothing opens
+either, and the companion prints the `xdg-mime default` line that fixes it.
+`--no-open` prints the link and never starts a browser.
 
 Studio binds only to a loopback IP, verifies Host and Origin, requires bearer
 authentication for every API request and disables cross-origin access. It does
-not open a public port, configure a reverse proxy or install a service. The Host
+not open a public port or configure a reverse proxy. It installs a service only
+when you run `dgxm studio up`, and that service is one user unit for the
+companion itself ([Keep Studio running](#keep-studio-running)). The Host
 check accepts only the literal bind address and port, so `localhost` is refused.
 For a remote browser, the one working shape is an SSH tunnel to the same port,
-`ssh -L <port>:127.0.0.1:<port> <host>`, browsed at `http://127.0.0.1:<port>`.
+`ssh -L 127.0.0.1:<port>:127.0.0.1:<port> <host>`, browsed at `http://127.0.0.1:<port>`.
+`dgxm studio tunnel <host>` prints that line and the address to browse
+([Reach Studio from another computer](#reach-studio-from-another-computer)).
 TLS termination, Host rewriting and a different local port are not supported;
 the companion refuses their Host or Origin. ComfyUI itself must stay on a
 trusted local connection or behind HTTPS with a valid server certificate. The
@@ -58,10 +100,21 @@ Each state directory is bound to one canonical driver origin. A different
 driver requires a separate `--state-dir`; this prevents old artifact names from
 being served by an unrelated driver. Existing unbound draft databases adopt the
 selected origin on their first upgraded start, so use their original driver.
+`[studio] driver` must already be in that canonical form and must name this
+computer, and a typed `dgxm studio --driver` must be canonical too, so the
+string you write is the one Studio binds its records to. When a launch asks for
+another driver than the one the state directory is bound to, the companion
+refuses and prints two more lines: the origin the directory is bound to and the
+one the launch asked for, then an `mv` command that moves the old records aside
+under a name that does not exist yet, so the next start makes a fresh state
+directory. To keep the old records, export the library from the old directory
+and import the export into the new one.
 
 Pass an existing `--config /absolute/path/cluster.toml` to use the supported
 cluster reporting actions; a relative `--config` resolves against the launch
-directory at startup. Management actions additionally require
+directory at startup. `dgxm studio` passes the cluster.toml that `dgxm` itself
+finds, made absolute, prints its path, and says when it came from the working
+directory. `dgxm studio --config PATH` works too. Management actions additionally require
 `--allow-management` and an explicit review/apply confirmation in the browser.
 Without the flag only these read-only actions run: version, status, doctor, reap
 preview, gate inspect, gate repair preview, top replay, diagnostics and
@@ -96,6 +149,8 @@ apply used and staging for a token you supplied stay.
 
 The optional `--driver-service` setting names an already installed owner-managed
 ComfyUI systemd user unit. It neither installs a unit nor grants permissions.
+`[studio] driver_service` passes it, and also orders the Studio unit after
+that driver unit ([Start Studio with the driver](#start-studio-with-the-driver)).
 The companion refuses unrecognized driver ownership and does not interpret
 Worker-service controls as driver controls. The selected unit must serve the
 `--driver` origin: Studio reads its ComfyUI `--listen`, `--port` and TLS options
@@ -119,8 +174,10 @@ succeeds or the backend refuses before it changes anything; any other outcome
 leaves the driver stopped and keeps the controller and the backend's reason for
 recovery.
 
-The generated inventory maps all 101 CLI command and option rows to typed
-actions, parameters, selectors, launch context or presentation behavior.
+The generated inventory maps all 126 CLI command and option rows. 101 map to
+typed actions, parameters, selectors, launch context or presentation behavior.
+The 25 rows of `dgxm studio` start, stop, open or reach the companion itself;
+the inventory waives them with that reason.
 Diagnostics capture and capabilities, last-gate inspection, reap grace,
 Worker synchronization choices and recording/replay controls have explicit
 mappings. Inventory validation rejects missing mappings and mismatched
@@ -129,6 +186,451 @@ closed check: each maps to a Studio operation, route or equivalent control, or
 carries a written waiver. Node schema and node input rows record source
 coverage only, because Studio reads them from the driver's live object_info. Live availability still depends on the
 selected configuration, permissions and backend guards.
+
+## Configure Studio in cluster.toml
+
+`dgxm studio` reads an optional `[studio]` table from the cluster.toml that
+every `dgxm` command uses: `--config` (before or after the word `studio`),
+else `$DGXM_CLUSTER_TOML`, else `./cluster.toml`, else
+`~/.config/dgx-monarch/cluster.toml`. It never probes ports or looks for a
+driver. Before anything else it prints the file and where the driver origin
+came from:
+
+```text
+Config: /home/user/.config/dgx-monarch/cluster.toml
+Driver: http://127.0.0.1:8191 (from [studio] driver)
+```
+
+A file found in the working directory reads
+`Config: /home/user/work/cluster.toml (from the working directory)`, and a
+typed `--driver` reads `(from --driver)`.
+
+```toml
+[studio]
+driver = "http://127.0.0.1:8191"
+port = 8220
+driver_service = "comfyui-driver.service"
+driver_command = "bash /home/user/start-comfyui.sh"
+```
+
+| Key | Default | Meaning and rule |
+|---|---|---|
+| `driver` | none | The ComfyUI driver origin on this computer. An `http` or `https` origin with a host and nothing else: no user, password, path (not even `/`), query, fragment or `%`. The host is a `127.0.0.0/8` address, `[::1]` or `localhost`; a listen address such as `0.0.0.0` is refused. It must already be in canonical form (lowercase host, no default port), and a refusal names the canonical spelling. |
+| `port` | `8220` | Studio's own loopback port, 1024 to 65535. The SSH tunnel forwards this port. |
+| `driver_service` | none | A ComfyUI systemd user unit that the Studio unit starts first ([Start Studio with the driver](#start-studio-with-the-driver)). It must name a `.service` unit, not a Worker unit and not `dgxm-studio.service`. |
+| `driver_command` | none | Text the Driver not running panel shows as the command that starts your driver ([When the driver is not running](#when-the-driver-is-not-running)). 1 to 512 printable ASCII characters. Studio never runs it, and every token holder can read it, so it must hold no secret. |
+
+Prefer `127.0.0.1` to `localhost`; they are different origins to Studio. A
+driver on another computer needs a typed `dgxm studio --driver <origin>` or
+`dgxm-studio --driver`: a cluster.toml can be picked up from the working
+directory, so a file may not send Studio's prompts and uploads to another
+computer. There is no key for management, the state directory, the bind host or
+a token file. Management stays the typed `--allow-management` flag, and the
+bind host is always `127.0.0.1`.
+
+Only `dgxm studio` commands check the table. Every other reader, the driver's
+nodes and the Workers included, admits it and ignores its contents, so a typo
+there never stops a render. A broken table exits 2 with a message that names
+the file and the key; [CLUSTER.md](CLUSTER.md#studio-optional) lists the same
+rules.
+
+Studio reads cluster.toml only when it is a regular file you own that no other
+account can write; a group that holds only you counts as yours.
+`dgxm studio up` takes no file from the working directory: a service outlives
+the shell that chose it, so pass `--config` with the path to use such a file. A
+cluster.toml without `[[hosts]]` still gives Studio its table; cluster actions
+then stay unavailable, and Studio says so.
+
+The first start on a fresh state directory needs `[studio] driver` or
+`--driver`. Studio refuses to guess, because it keeps its records for the first
+driver address it uses. A state directory already bound to
+`http://127.0.0.1:8188`, the `dgxm-studio --driver` default, keeps starting
+without one.
+
+Adding the table has three consequences:
+
+1. Deploy order. Releases before this one refuse a cluster.toml that holds
+   `[studio]`, in every reader: the CLI, the driver's Init node, mesh setup,
+   service observations, the TUI and Studio's management actions. Add the
+   table only after every checkout that reads the file runs this release and
+   the driver has restarted on it, and when no render runs.
+2. A byte edit retires the fleet. In cluster mode the Init node fingerprints
+   the file's bytes on every Queue, and any byte change, a comment included,
+   retires the old fleet before attaching a replacement. Edit `[studio]` when
+   no render runs.
+3. Re-setup drops the table. `dgxm setup --apply`, `dgxm init` and Studio's
+   init action write a new file without `[studio]`, as they drop `[monarch]`
+   and `[fabric.*]`; the reviewed diff shows the removal. Add the table again
+   afterwards. An installed Studio service keeps the values it was written
+   with, and `dgxm studio open` names the fields that differ.
+
+## Keep Studio running
+
+`dgxm studio up` installs `dgxm-studio.service`, a systemd user unit that runs
+the companion with the settings of the `[studio]` table, enables it, and starts
+or restarts it. Run it from the environment and with the config you want the
+service to use:
+
+```sh
+dgxm studio up
+```
+
+On a terminal it prints:
+
+```text
+Config: /home/user/.config/dgx-monarch/cluster.toml
+Driver: http://127.0.0.1:8191 (from [studio] driver)
+Interpreter: /home/user/monarch-env/bin/python
+Source: /home/user/projects/dgx-monarch/src
+Wrote /home/user/.config/systemd/user/dgxm-studio.service (starts with comfyui-driver.service)
+Started dgxm-studio.service on http://127.0.0.1:8220.
+Also started comfyui-driver.service: the Studio service wants it.
+Sign-in link:
+  http://127.0.0.1:8220/#token=<token>
+Run dgxm studio or dgxm studio open to open it in a browser.
+```
+
+`Wrote` reads `Unchanged` when the unit already holds the same text. `up` never
+starts a browser, and without a terminal it prints the token file's path in
+place of the link. Nothing is written until every check has passed: the config,
+the interpreter and source paths, the state directory's driver binding, a
+preflight run of the exact service command with `--check`, the driver unit, the
+unit path and its drop-ins, a companion already running on the state
+directory, and the port. `up` then waits up to 30 seconds for the service to
+write its token file and sign-in page. A start that fails prints the service's
+journal lines and leaves the unit installed and enabled.
+
+The other actions:
+
+- `dgxm studio` while the service runs acts as `dgxm studio open`. It refuses
+  `--driver`, `--state-dir` and `--allow-management` then, because they would
+  not reach the service.
+- `dgxm studio open` prints the sign-in link of the running Studio and opens it
+  when this session has a display. While the service is starting it waits up to
+  30 seconds for a sign-in page newer than the service's start.
+- `dgxm studio token` prints where the token file is. `--value` also prints the
+  token itself, on a terminal only. `--rotate` restarts the service for a new
+  token; tabs signed in with the old one need the new link.
+- `dgxm studio down` stops, disables and removes the unit and leaves Studio's
+  records in the state directory; `dgxm studio up` starts it again. It never
+  stops the driver unit.
+
+`up` always restarts the service, so every `up` issues a new token. Run
+`dgxm studio up` after `dgxm update`, which does not restart Studio. A
+long-running service imports some modules on first use, so after an update
+replaces the code on disk it can mix old and new code until it restarts.
+`dgxm studio open` says when the code on disk changed after the service
+started, and names the settings that differ from what `up` would write now.
+
+The unit text, with `driver_service` set and without management:
+
+```ini
+# dgxm-managed-studio-unit-v1
+# dgxm-studio-state=/home/user/.local/state/dgx-monarch/studio
+# dgxm-studio-port=8220
+# dgxm-studio-driver=http://127.0.0.1:8191
+# dgxm-studio-config=/home/user/.config/dgx-monarch/cluster.toml
+# dgxm-studio-driver-service=comfyui-driver.service
+# dgxm-studio-management=no
+# dgxm-studio-interpreter=/home/user/monarch-env/bin/python
+# dgxm-studio-pythonpath=/home/user/projects/dgx-monarch/src:/home/user/monarch-env/lib/python3.12/site-packages
+# dgxm-studio-source=<64 hex characters>
+[Unit]
+Description=DGX Monarch Studio companion
+Documentation=https://github.com/Deen-Media/dgx-monarch/blob/main/docs/STUDIO.md#keep-studio-running
+Wants=comfyui-driver.service
+After=comfyui-driver.service
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Service]
+UnsetEnvironment=PYTHONHOME PYTHONUSERBASE PYTHONSTARTUP PYTHONINSPECT PYTHONWARNINGS LD_ASSUME_KERNEL LD_AUDIT LD_BIND_NOT LD_BIND_NOW LD_DEBUG LD_DEBUG_OUTPUT LD_DYNAMIC_WEAK LD_HWCAP_MASK LD_LIBRARY_PATH LD_ORIGIN_PATH LD_POINTER_GUARD LD_PREFER_MAP_32BIT_EXEC LD_PRELOAD LD_PROFILE LD_PROFILE_OUTPUT LD_SHOW_AUXV LD_TRACE_LOADED_OBJECTS LD_TRACE_PRELINKING LD_USE_LOAD_BIAS LD_VERBOSE LD_WARN GLIBC_TUNABLES GCONV_PATH LOCPATH NLSPATH
+WorkingDirectory=/
+ExecStart="/usr/bin/env" "-i" "HOME=%h" "USER=%u" "LOGNAME=%u" "XDG_RUNTIME_DIR=%t" "PATH=/usr/bin:/bin" "LANG=C.UTF-8" "PYTHONPATH=/home/user/projects/dgx-monarch/src:/home/user/monarch-env/lib/python3.12/site-packages" "PYTHONNOUSERSITE=1" "PYTHONSAFEPATH=1" "PYTHONDONTWRITEBYTECODE=1" "PYTHONPYCACHEPREFIX=/proc/self/fd/2147483647" "/home/user/monarch-env/bin/python" "-S" "-P" "-s" "-B" "-m" "dgx_monarch.studio" "--host" "127.0.0.1" "--port" "8220" "--driver" "http://127.0.0.1:8191" "--state-dir" "/home/user/.local/state/dgx-monarch/studio" "--config" "/home/user/.config/dgx-monarch/cluster.toml" "--driver-service" "comfyui-driver.service" "--no-open"
+UMask=0077
+NoNewPrivileges=yes
+Restart=on-failure
+RestartSec=3
+KillMode=control-group
+SendSIGKILL=yes
+TimeoutStopSec=75
+
+[Install]
+WantedBy=default.target
+```
+
+Line by line:
+
+- The first line marks a unit dgxm wrote. `up` and `down` refuse any other file
+  at that path, a symbolic link, and any file in a `dgxm-studio.service.d` or
+  `dgxm-.service.d` drop-in directory. After the reload, `up` reads back where
+  systemd loaded the unit from and refuses a unit that systemd loads from
+  another file or with a drop-in from a directory this account or the
+  administrator writes; a vendor drop-in under `/usr/lib/systemd/user` only
+  prints a note.
+- The `# dgxm-studio-` lines record the settings; systemd ignores them. `open`,
+  `token` and `tunnel` read the state directory and port from them, and `open`
+  compares them with what `up` would write now. `# dgxm-studio-source=` is a
+  digest of the dgx_monarch source the service imports.
+- `Wants=` and `After=` appear only with `[studio] driver_service`.
+- `StartLimitIntervalSec=60` and `StartLimitBurst=5` stop a restart loop after
+  five failed starts in a minute; `up` clears a tripped limit with
+  `systemctl --user reset-failed` before it restarts the unit.
+- `UnsetEnvironment=` and `/usr/bin/env -i` empty the environment, as in the
+  hardened Worker unit. The service gets no `DISPLAY`, so it never starts a
+  browser, and no `XDG_STATE_HOME`, `DGXM_CLUSTER_TOML` or value that
+  `systemctl --user set-environment` placed in the user manager.
+  `XDG_RUNTIME_DIR=%t` lets the companion reach the user manager for
+  `--driver-service`.
+- `PYTHONPATH` names the source and dependency directories of the `dgxm` that
+  ran `up`, so the service imports the same checkout as that `dgxm`. On an
+  editable install that is the checkout the driver imports, which Studio update
+  requires. `up` refuses while `PYTHONPATH` is set in its own environment, so a
+  service started at boot never runs a worktree by accident, and it refuses an
+  interpreter, source or dependency path that another account can change.
+- `WorkingDirectory=/` matches the preflight run of the service command.
+  `NoNewPrivileges=yes` and `UMask=0077` need no privilege.
+- `KillMode=control-group` ends every process the companion started when the
+  service stops. `TimeoutStopSec=75` exceeds aiohttp's 60-second graceful
+  shutdown, so a normal stop removes the token file and the sign-in page.
+- Every companion flag is explicit and absolute. `--no-open` is always there;
+  `--allow-management` appears only after `dgxm studio up --allow-management`.
+  The unit holds no token.
+
+Linger. Without linger the service runs only while you are logged in: it starts
+at your first login and stops when your last session ends, and `up` prints a
+note. To keep it running from boot, run `sudo loginctl enable-linger $USER`.
+
+Journal. The unit's output goes to the user journal: at each start the plain
+address, the token file path and the sign-in page path, plus any startup
+refusal. The token, the link and the content of `sign-in.html` never reach it.
+`journalctl --user -u dgxm-studio.service -n 20` shows the latest lines.
+
+Lock and busy check. `up`, `down` and `token --rotate` take a per-user lock,
+`~/.local/state/dgx-monarch/studio-unit.lock`, against each other. Before they
+stop or restart the service, they take `operations.lock` in its state
+directory, which the companion holds for each review it prepares and each
+operation it runs, from the moment it accepts one until it settles. While a
+review or operation holds it they refuse; once they hold it, the companion
+refuses new reviews and operations with `operation_unavailable` until the
+restart or stop has finished. They create that file when it is missing, as
+they create `studio-unit.lock`, and a command that ends for any reason releases
+both. They also read the service's control group and refuse while any process
+other than the companion runs there, such as an update controller, a
+management command or a status report, and print one line per process. Wait for
+it to finish, or stop the service yourself with
+`systemctl --user stop dgxm-studio.service`. `down` removes the unit file only
+after systemd reports the service stopped; when the stop fails it keeps the
+file and says so.
+
+A stop from outside dgxm, such as `systemctl --user stop`, a logout without
+linger or a shutdown, ends any management command the companion started, and
+so does a crash of the companion. systemd then stops the unit's whole control
+group, which ends a Studio update's controller, restarts Studio three seconds
+later, and `Wants=` starts the driver unit again, possibly on a checkout whose
+update was cut off. Studio records the interrupted operation as unknown; check
+the checkout and the cluster before you render again.
+
+Run `dgxm studio down` before `dgxm uninstall`; uninstall refuses while the
+unit is installed. The page's own uninstall operation, under
+`--allow-management`, makes no such check and leaves the Studio unit in place.
+
+`dgxm studio up --allow-management` writes `--allow-management` into the unit.
+Its token is then code execution as the worker account on every host for the
+life of the service, and the token file is a standing credential until the
+service restarts. Such a service never signs in by link: `up`, `open` and
+`token --value` print the token on a terminal, and the page takes it only
+through its form. Running `up` again without the flag removes it, and `up`
+says so.
+
+A foreground `dgxm studio --state-dir /absolute/path` is invisible to `open`,
+`token` and `tunnel`, which read the unit's state directory or the default
+one. On a terminal it prints its own link or token.
+
+## Reach Studio from another computer
+
+The companion listens on `127.0.0.1` only, and its Host check accepts only the
+literal `127.0.0.1:<port>` it bound. A browser on another computer reaches it
+through an SSH local forward of the same port to the same address. The first
+time, from a laptop:
+
+1. On the laptop, open an SSH session with the forward:
+   `ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@studio-host`.
+2. In that session, run `dgxm studio`, or nothing new when the service already
+   runs: `dgxm studio` then acts as `dgxm studio open`. The session is an SSH
+   session, so Studio prints the sign-in link and the line to run on the
+   laptop, which is harmless when the forward already exists.
+3. Click or paste the link in the laptop's browser. It loads
+   `http://127.0.0.1:8220/` through the forward, takes the token from the link
+   and connects.
+
+`dgxm studio tunnel [HOST]` prints that line. Run inside the SSH session on the
+Studio host, it fills in the address you connected to and the running Studio's
+port, and prints the sign-in link:
+
+```text
+Port: 8220 (from the running Studio)
+On the computer with the browser, run:
+  ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:8220:127.0.0.1:8220 user@192.0.2.10
+If you reach this host another way, add -L 127.0.0.1:8220:127.0.0.1:8220 to the ssh command you use, or set a local forward in your SSH app that listens on 127.0.0.1 port 8220 and goes to 127.0.0.1:8220.
+Then browse: http://127.0.0.1:8220/
+Sign in with this link in that browser:
+  http://127.0.0.1:8220/#token=<token>
+Keep 127.0.0.1 and the same port on both ends; Studio refuses localhost and any other port.
+If ssh says "Address already in use" or "Could not request local forwarding", another program on that computer holds the port: close the session if it opened, free the port, and do not open the sign-in link until the tunnel works, because a page served on that port would read the token from the link.
+```
+
+With a named host, on another computer, without a terminal, with `--run`, or
+when no Studio runs, the two sign-in lines become one that points at
+`dgxm studio open` in an SSH session on the Studio host; for a management
+service it points at `dgxm studio token --value`. `Then browse:` and the
+"another way" line always print: a jump host, a router port forward, a stale
+SSH session variable in an old tmux pane or a phone SSH app can make the
+derived line wrong.
+
+- `HOST` is a name, an SSH config alias, an IP address or `user@host`. Spaces,
+  shell characters, an IPv6 zone (`%`) and a leading `-` are refused, so the
+  printed line is safe to paste into a shell. With a named host, `tunnel`
+  never reads this computer's Studio state, so it can run on the browser
+  computer too.
+- The port comes from `--port`, then from the running Studio (only for the host
+  read from the SSH session), then from `[studio] port`, then 8220. Each source
+  is named on the `Port:` line.
+- `--run` runs the ssh command itself, with no shell, after it prints the
+  other lines, except `On the computer with the browser, run:`, to standard
+  error, and never prints a link. It needs `ssh` on `PATH`
+  and dgx-monarch on the browser computer, such as a Linux laptop or a second
+  Spark; most laptops paste the printed line. Its exit code is ssh's, and
+  Ctrl+C closes the tunnel.
+- The printed command has no `-N`, so the same session gives a shell on the
+  Studio host, where `dgxm studio open` prints the link.
+
+The printed command names `127.0.0.1` as the address the forward listens on
+and carries `-o ExitOnForwardFailure=yes`: when another program on the browser
+computer already holds that port, ssh prints `Address already in use` and
+`Could not request local forwarding` and exits instead of opening the session
+without the forward. A forward written without that address, as in many ssh
+commands and SSH apps set up another way, listens on both `127.0.0.1` and
+`::1`, opens the session when either one is free, and prints only the
+`Address already in use` line; the last line of the output is for that case.
+A page served on that port then reads the token from the link, so do not open
+the link after either message; free the port and connect again. The token crosses the SSH connection inside the terminal
+session and lands in the laptop terminal's scrollback and the laptop browser,
+its history included.
+
+Out of scope: a `--trusted-origin` list, Tailscale Serve and a LAN bind. Studio
+sets none of them up, and a different local port or `localhost` in the address
+bar fails the Host check.
+
+## Start Studio with the driver
+
+With `[studio] driver_service`, the Studio unit declares `Wants=` and `After=`
+on that ComfyUI user unit. Starting Studio, at boot with linger or through
+`up` or `--rotate`, then starts the driver first, and `http://127.0.0.1:8220`,
+opened with `dgxm studio`, is the one address you need. With linger, the
+enabled Studio unit pulls the driver in at boot even when the driver unit is
+not enabled itself. The driver unit's file is never edited, and there is no
+`Requires=`, `BindsTo=` or `PartOf=`: stopping the driver leaves Studio
+running with the Driver not running panel, and `dgxm studio down` never stops
+the driver. A restart of Studio starts a stopped driver unit again, so a driver
+you stopped to free memory comes back; `up` and `--rotate` then print
+`Also started <unit>: the Studio service wants it.`
+
+Studio's driver controls and Studio update accept a driver unit that runs an
+absolute Python and an absolute ComfyUI `main.py` directly, with no
+`ExecStartPre` or other extra commands, no `EnvironmentFile=`,
+`KillMode=mixed`, no dependency on another `.service`, and a name without
+`worker`. This one copies the exports and the arguments of
+`scripts/comfy-driver.sh`. Replace `/home/user` and the interpreter with yours:
+
+```ini
+# ~/.config/systemd/user/comfyui-driver.service
+[Unit]
+Description=ComfyUI driver with DGX Monarch
+
+[Service]
+WorkingDirectory=/home/user/ComfyUI
+Environment=CUDA_CACHE_MAXSIZE=4294967296 CUDA_MODULE_LOADING=LAZY OMP_NUM_THREADS=16
+Environment=TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas DGXM_CLUSTER_TOML=/home/user/.config/dgx-monarch/cluster.toml
+UnsetEnvironment=NCCL_P2P_DISABLE NCCL_PROTO
+ExecStart=/home/user/monarch-env/bin/python /home/user/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --disable-pinned-memory --disable-async-offload --reserve-vram 2 --bf16-vae --bf16-text-enc --dont-upcast-attention --disable-auto-launch
+KillMode=mixed
+Restart=on-failure
+
+[Install]
+WantedBy=default.target
+```
+
+Then add the table, reload the user manager and install Studio:
+
+```toml
+[studio]
+driver = "http://127.0.0.1:8188"
+driver_service = "comfyui-driver.service"
+```
+
+```sh
+systemctl --user daemon-reload
+dgxm studio up
+sudo loginctl enable-linger $USER
+```
+
+The last command starts both at boot. Once `driver_service` is set, start
+ComfyUI only through that unit; a second launch on the same port makes the
+unit fail. `up` checks that the unit serves `[studio] driver` before it writes
+the Studio unit, and refuses a unit that the user manager does not know.
+
+A unit whose `ExecStart` runs a wrapper script, such as your own launcher,
+works for the ordering (`Wants=` and `After=`), for the command the Driver not
+running panel shows and for starting Studio. Studio cannot read the address
+such a command serves, so `up` prints a note, and Studio's own driver stop,
+start and restart, and Studio update, refuse the unit. A unit in the form above
+is needed only for those.
+
+## When the driver is not running
+
+While nothing accepts a connection at the driver origin, the connected page
+shows a Driver not running panel in place of the yellow notice, and the footer
+and Settings read `not running`. The panel names the origin and shows the
+command that starts the driver with a Copy button and the place the command
+came from. It also says that if ComfyUI already runs at another address,
+`driver` in the `[studio]` table must name that address, and that the
+records belong to the current origin, so a new address needs fresh records
+([Install and start](#install-and-start)). Review generation stays disabled
+until the driver answers. Studio checks every few seconds and connects by
+itself when the driver answers: the workspace reads the catalog and inspects
+the restored draft again, with no click.
+
+The command, first match wins:
+
+1. `[studio] driver_service`: `systemctl --user start <unit>`, with the
+   journal command to read if the start fails.
+2. `[studio] driver_command` in the companion's `--config`, shown verbatim
+   with the config path it came from. Studio reads it when it starts, so restart
+   Studio after an edit, and edit cluster.toml when no render runs.
+3. The repository launcher, with the Python that runs Studio, when the origin
+   is on this computer and a ComfyUI checkout is known: dgx-monarch is
+   installed under `<comfy>/custom_nodes` as [INSTALL.md](INSTALL.md)
+   describes, or `[cluster] comfy_dir` names the checkout. The command is
+   `bash <script> --comfy-dir <comfy> --python <python> --listen 127.0.0.1 --port <port> --no-browser`,
+   where `<script>` is that checkout's `scripts/comfy-driver.sh`, plus
+   `--cluster-config <config>` when the companion has `--config`. Run it in a
+   terminal you keep open.
+4. Otherwise the panel asks you to start your driver so it listens at the
+   origin, and suggests `driver_command` to show your own command there.
+
+When Studio refuses the companion's `--config`, for example because another
+account can write it, neither 2 nor 3 applies, since the launcher command
+would pass that file on; the panel shows the text of 4.
+
+With `--allow-management` and `--driver-service` the panel adds that
+Operations can start the driver too. Studio never runs the command: the page
+shows it as text, and only a token holder reads it, with any home paths in it.
+The catalog and workflow inspection answer HTTP 503 with the code
+`driver_not_running`, which Studio uses only for a refused connection; a
+timeout or a DNS or TLS failure stays unavailable with `driver_unknown`. A job
+dispatched while no driver listens still settles `unknown`, which is why the
+page disables Review generation.
 
 ## Workspace controls and media
 
@@ -461,7 +963,8 @@ Storage access failures leave authentication available in memory, but requests
 requiring a saved recovery identity remain blocked. Malformed imported draft
 controls are rejected before replacing the working draft.
 A 401 while polling returns to the token form, because a restarted companion
-issues a new token. A workflow inspection or job review is discarded, with a
+issues a new token. A sign-in link from before a restart stops working the
+same way; `dgxm studio open` prints a new one. A workflow inspection or job review is discarded, with a
 notice, when the workflow, its values or the connection change while it runs;
 edits to other draft controls do not discard an inspection.
 
@@ -507,6 +1010,12 @@ not a live observation. If a schema changes, refresh capabilities and re-preview
 the job; if a record revision conflicts, reload and explicitly reapply changes.
 For startup, Host, Origin and token refusals, see
 [TROUBLESHOOTING #123](TROUBLESHOOTING.md#123-studio-refuses-to-start-or-refuses-the-browsers-host-origin-or-token).
+For the Driver not running panel, see
+[#131](TROUBLESHOOTING.md#131-studio-shows-driver-not-running); for
+`dgxm studio up` and the always-on Studio, see
+[#132](TROUBLESHOOTING.md#132-dgxm-studio-up-refuses-or-the-always-on-studio-does-not-start);
+and for a sign-in link or `dgxm studio tunnel`, see
+[#133](TROUBLESHOOTING.md#133-the-sign-in-link-does-not-open-studio).
 
 Do not delete state, resubmit uncertain jobs, bypass guards or restart Workers
 as a connection-repair shortcut. An operation receipt reports only the boundary

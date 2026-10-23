@@ -80,13 +80,29 @@ PRESENTATION = {
     "top.theme": "Terminal palette selection is a presentation-only option; Studio uses its shared semantic palette.",
 }
 CONTEXT = {
-    "global.config": "Owner selects --config at companion launch; each review binds the selected file identity. Studio does not silently discover another config.",
-    **{f"{command}.host": "Owner selects --driver at companion launch; all authenticated requests use that fixed origin. Studio does not silently probe alternative drivers."
+    "global.config": "Owner selects --config at companion launch, or dgxm studio passes the file dgxm itself reads; "
+                     "each review binds the selected file identity. The companion never discovers another config.",
+    **{f"{command}.host": "Owner selects --driver at companion launch, or dgxm studio passes [studio] driver from "
+                          "cluster.toml; all authenticated requests use that fixed origin. Studio never probes for drivers."
        for command in ("diagnostics", "top", "gate")},
     "update.host": "Update binds the driver through --driver-service, then stops it if it runs and checks it again. "
                    "Verified mode passes no host, since with --verify an explicit --host always refuses; legacy mode "
                    "checks an http --driver origin first. Both backends also probe the local ComfyUI ports.",
 }
+
+# The studio tree starts, stops, opens or reaches the process that serves
+# Studio. A page cannot run these for itself, so each row is waived here by its
+# full path, help rows included, and a new studio flag fails until reviewed.
+COMPANION_REASON = ("Starts, stops, opens or reaches the companion process that serves Studio; "
+                    "the page cannot run these for itself.")
+COMPANION_COMMANDS = ("studio", "studio.up", "studio.down", "studio.open", "studio.token", "studio.tunnel")
+COMPANION_OPTIONS = (
+    "studio.help", "studio.config", "studio.driver", "studio.state_dir", "studio.allow_management", "studio.no_open",
+    "studio.up.help", "studio.up.config", "studio.up.allow_management",
+    "studio.down.help", "studio.open.help",
+    "studio.token.help", "studio.token.value", "studio.token.rotate",
+    "studio.tunnel.help", "studio.tunnel.config", "studio.tunnel.host", "studio.tunnel.port", "studio.tunnel.run",
+)
 
 
 def bindings() -> dict[str, dict[str, Any]]:
@@ -105,6 +121,9 @@ def bindings() -> dict[str, dict[str, Any]]:
     for command in ("global", *COMMANDS):
         result[f"cli.option.{command}.help"] = {"kind": "presentation", "equivalence":
             "Capability descriptions, typed parameters and availability reasons replace terminal argparse help."}
+    for key in (*(f"cli.command.{command}" for command in COMPANION_COMMANDS),
+                *(f"cli.option.{option}" for option in COMPANION_OPTIONS)):
+        result[key] = {"kind": "companion", "reason": COMPANION_REASON}
     return result
 
 

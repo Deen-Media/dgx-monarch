@@ -1,17 +1,31 @@
 import { ApiError, StudioClient } from './api';
 import { savedToken } from './sessionRecovery';
+import { launchToken, tokenFromInput } from './launchToken';
+import { driverWaiting, unreachableText } from './firstRun';
 import { consumeEvents, boundedLog, formatTime, driverStatus } from './model';
 import type { Capabilities, Catalog, Snapshot, WorkflowEntry } from './contracts';
 
 import { appendTelemetry, type MetricSeries } from './telemetryHistory';
 
+export { errorText } from './firstRun';
+
 const TOKEN_KEY = 'dgxm.studio.token.v1';
 /** The connect notice for a driver catalog that could not be read starts with this text. */
 export const CATALOG_NOTICE = 'Companion connected. The driver catalog could not be read:';
+/** A token this tab used before was refused: the companion most likely restarted. */
+const restarted = (message: string) =>
+  `${message} The companion may have restarted with a new owner token. Enter the current token to reconnect, or run dgxm studio open on the Studio host for a new sign-in link.`;
 
 /** Owns companion transport and reconciled host state, never unsent draft edits. */
 export class Connection {
-  token = $state(savedToken(TOKEN_KEY));
+  /** The token of the sign-in link this tab opened with, until a connect succeeds. */
+  private link = launchToken();
+  /** The token this tab restored or last saw accepted; a 401 for it means a restart. */
+  private accepted = savedToken(TOKEN_KEY);
+  /** A link token wins over an older stored one; storage is written only after it works. */
+  token = $state(this.link || this.accepted);
+  /** Whether the token in use came from a sign-in link; cleared after a successful connect. */
+  fromLink = !!this.link;
   client = $state(new StudioClient(this.token));
   connected = $state(false);
   state = $state('unavailable');
@@ -22,6 +36,8 @@ export class Connection {
   catalog = $state<Catalog>({});
   /** Why the last driver catalog read failed, or '' when it succeeded. */
   catalogError = $state('');
+  /** The error code of the last failed catalog read, or '' when it succeeded. */
+  catalogCode = $state('');
   /** The catalog read in flight; a refresh joins it rather than starting another. */
   catalogRead?: Promise<void>;
   snapshot = $state<Snapshot>({
@@ -114,12 +130,19 @@ export class Connection {
       if (generation !== this.generation) return;
       this.catalog = catalog;
       this.catalogError = '';
+      this.catalogCode = '';
     } catch (error) {
       if (generation !== this.generation) return;
       // At connect nothing earlier applies; a failed refresh keeps the last list it read.
       if (clear) this.catalog = {};
       this.catalogError = error instanceof Error ? error.message : String(error);
+      this.catalogCode = error instanceof ApiError ? (error.code ?? '') : '';
     }
+  }
+
+  /** Whether nothing accepts a connection at the driver origin, so the page says how to start it. */
+  get driverNotRunning(): boolean {
+    return driverWaiting(this.snapshot.driver, this.catalogCode);
   }
 
   async connect() {
@@ -127,7 +150,11 @@ export class Connection {
     const generation = this.generation;
     this.state = 'reconnecting';
     this.error = '';
-    const client = new StudioClient(this.token.trim());
+    // The form also takes a whole sign-in link, pasted.
+    const typed = this.token.trim(),
+      token = tokenFromInput(typed);
+    this.fromLink = typed.includes('#token=') || (!!this.link && token === this.link);
+    const client = new StudioClient(token);
     this.client = client;
     try {
       const cap = await client.request<Capabilities>('/capabilities');
@@ -148,6 +175,7 @@ export class Connection {
       } catch {
         // Authentication works in memory; mutation owners separately require durable identities.
       }
+      [this.accepted, this.link, this.fromLink] = [token, '', false];
       await this.refresh();
       if (generation !== this.generation) return;
       this.backoff = 1500;
@@ -158,6 +186,13 @@ export class Connection {
       if (generation !== this.generation) return;
       this.connected = false;
       this.state = 'unavailable';
+      if (
+        error instanceof ApiError &&
+        error.status === 401 &&
+        !this.fromLink &&
+        token === this.accepted
+      )
+        throw new ApiError(401, restarted(error.message), error.code);
       throw error;
     }
   }
@@ -193,11 +228,12 @@ export class Connection {
           this.stop();
           this.connected = false;
           this.state = 'unavailable';
-          this.error = `${error.message} The companion may have restarted with a new owner token. Enter the current token to reconnect.`;
+          this.error = restarted(error.message);
           return;
         }
         this.state = 'stale';
-        this.error = error instanceof Error ? error.message : String(error);
+        // Nothing answered: the companion stopped, or the tunnel to it closed.
+        this.error = error instanceof ApiError ? error.message : unreachableText(location.host);
         this.backoff = Math.min(30000, this.backoff * 2);
       }
     }
@@ -207,6 +243,8 @@ export class Connection {
 
   /** Explain a connection that works but cannot drive generation yet, or ''. */
   degradedNotice(): string {
+    // The driver-not-running panel replaces this notice.
+    if (this.driverNotRunning) return '';
     const driver = this.snapshot.driver;
     const reason = /[.!?]$/.test(this.catalogError) ? this.catalogError : `${this.catalogError}.`;
     if (this.catalogError)
@@ -255,6 +293,8 @@ export class Connection {
     this.capabilities = {};
     this.catalog = {};
     this.catalogError = '';
+    this.catalogCode = '';
+    [this.accepted, this.link, this.fromLink] = ['', '', false];
     [this.driverUp, this.catalogRetried, this.catalogRead] = [undefined, false, undefined];
     this.error = '';
     this.workflows = [];

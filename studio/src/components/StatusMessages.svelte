@@ -3,6 +3,7 @@
   import type { Submission } from '../submission.svelte';
   import type { DraftAutosave } from '../draftAutosave.svelte';
   import type { Draft } from '../model';
+  import DriverNotRunning from './DriverNotRunning.svelte';
   let {
     messages,
     connection,
@@ -67,6 +68,7 @@
     <span>Connection stale. Last sample {connection.lastSeen || 'unknown'}. {connection.error}</span
     ><button onclick={() => void connect()}>Reconnect</button>
   </div>{/if}
+<DriverNotRunning {connection} {connect} />
 {#if connection.connected && connection.snapshot.driver?.history?.state === 'unavailable'}<div
     class="notice warning"
     role="status"

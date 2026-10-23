@@ -1,6 +1,13 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { bindingError, consumeEvents, boundedLog, restoreDraft, driverStatus } from './model.ts';
+import {
+  bindingError,
+  consumeEvents,
+  boundedLog,
+  restoreDraft,
+  driverStatus,
+  NOT_RUNNING,
+} from './model.ts';
 test('typed limits reject unsafe values without clamping', () => {
   const b = { id: 'steps', type: 'INT', min: 1, max: 100 };
   assert.equal(bindingError(b, 10), null);
@@ -68,4 +75,9 @@ test('an unavailable driver shows its failure code', () => {
   assert.equal(driverStatus({ state: 'unavailable' }), 'unavailable');
   assert.equal(driverStatus({}), 'unknown');
   assert.equal(driverStatus(undefined), 'unknown');
+});
+test('a driver origin that refuses connections reads as not running', () => {
+  assert.equal(driverStatus({ state: 'unavailable', code: 'driver_not_running' }), 'not running');
+  assert.equal(NOT_RUNNING, 'not running');
+  assert.equal(driverStatus({ state: 'connected', code: 'driver_not_running' }), 'connected');
 });

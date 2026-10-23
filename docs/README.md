@@ -41,7 +41,7 @@ Start with [Contributing](../CONTRIBUTING.md) and the
 | Review deployment boundaries | [Security](../SECURITY.md) and [threat model](THREAT_MODEL.md) |
 | Update logos or workflow cards | [Brand assets](BRANDING.md) |
 | Maintain generated test graphs | [Workflow fixtures](../tests/fixtures/workflows/README.md) |
-| Develop the optional Studio draft | [Studio](STUDIO.md), [specification](STUDIO_SPEC.md), and [acceptance gaps](STUDIO_ACCEPTANCE.md) |
+| Start and develop the optional Studio draft | [Studio](STUDIO.md), [specification](STUDIO_SPEC.md), and [acceptance gaps](STUDIO_ACCEPTANCE.md) |
 
 [License notes](../LICENSE-NOTES.md) explain dependency and contribution terms.
 [Changelog](../CHANGELOG.md) describes releases.

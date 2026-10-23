@@ -903,7 +903,24 @@ Review the dependency plan and verify torch afterward; do not run an
 unconstrained extras install. Node is needed only to rebuild the frontend,
 never to install or run the companion. `dgxm update` installs with
 `--no-deps`, so it never adds this extra either.
-[STUDIO.md](STUDIO.md#install-and-start) covers starting the companion.
+
+Then tell Studio once where ComfyUI listens, in the `[studio]` table of
+cluster.toml ([CLUSTER.md](CLUSTER.md#studio-optional)), and start it on the
+computer that runs ComfyUI with `dgxm studio`, which runs the companion
+(`dgxm-studio`) with those settings:
+
+```toml
+[studio]
+driver = "http://127.0.0.1:8188"
+```
+
+```bash
+dgxm studio
+```
+
+Use the address your ComfyUI listens on; Studio keeps its records for the
+first driver address it uses. [STUDIO.md](STUDIO.md#install-and-start) covers
+starting the companion, signing in and keeping it running.
 
 ### Optional Sol-Attention
 
@@ -1121,6 +1138,14 @@ flags need `--verify`: `--target` selects the exact commit or ref
 activation prompt, and
 `--receipt` selects an absolute path for the sanitized receipt. None of them
 bypasses an activity, source, config, dependency, or ownership guard.
+
+Releases before this one refuse a cluster.toml that holds the optional
+`[studio]` table, in every reader of the file, so update every checkout that
+reads it first. Add the `[studio]` table to cluster.toml only after the driver
+has restarted on this release, and when no render runs. If
+`dgxm studio up` installed the Studio service, run `dgxm studio up` again after
+an update; the service keeps running the code it started with until it
+restarts.
 
 Plain `dgxm update` is the compatibility path. It installs both torchmonarch
 and dgx-monarch with `--no-deps`. Neither mode resolves or replaces torch,

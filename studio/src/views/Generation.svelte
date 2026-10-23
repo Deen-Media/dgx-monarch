@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Binding, Draft } from '../model';
-  import { fieldLabel, bindingType, bindingError } from '../model';
+  import { fieldLabel, bindingType, bindingError, NOT_RUNNING } from '../model';
   import type {
     Catalog,
     WorkflowEntry,
@@ -78,6 +78,8 @@
       : bindings.filter((b) => b.prominent || b.display?.prominent)
     ).sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
   );
+  // Nothing accepts a connection at the driver origin, so a review could not be queued.
+  let stopped = $derived(driverState === NOT_RUNNING);
   // The template being inspected shows until the inspection ends; then the draft's own.
   let choosing = $state('');
   $effect(() => {
@@ -271,9 +273,11 @@
     <button
       class="primary generate"
       onclick={prepareJob}
-      disabled={busy || !draft.workflow || !!fieldErrors.length || pending}
+      disabled={busy || !draft.workflow || !!fieldErrors.length || pending || stopped}
       >Review generation <span>↗</span></button
-    >{#if fieldErrors.length || bindingErrors.length}<small class="warning"
+    >{#if stopped}<small class="warning"
+        >Start the driver first; see Driver not running above.</small
+      >{:else if fieldErrors.length || bindingErrors.length}<small class="warning"
         >{fieldErrors.length
           ? `Resolve ${fieldErrors.length} field issue(s).`
           : 'Workflow inspection reported issues. Review revalidates the edited inputs.'}</small

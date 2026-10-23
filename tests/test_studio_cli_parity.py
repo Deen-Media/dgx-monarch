@@ -35,23 +35,28 @@ def no_commands(monkeypatch):
 
 
 def test_all_parser_rows_have_explicit_executable_or_surface_mapping():
+    # Keyed by full command path, and a positional by its dest, the same rule
+    # as inventory discovery, so dgxm studio up never collides with dgxm up.
     parser = build_parser(defaultdict(lambda: lambda args: 0))
-    expected, pending = set(), [("global", parser)]
+    expected: set[str] = set()
+    pending: list[tuple[tuple[str, ...], argparse.ArgumentParser]] = [((), parser)]
     while pending:
-        command, current = pending.pop()
+        path, current = pending.pop()
         for action in current._actions:
             if isinstance(action, argparse._SubParsersAction):
                 for name, child in action.choices.items():
-                    expected.add(f"cli.command.{name}")
-                    pending.append((name, child))
+                    expected.add(".".join(("cli.command", *path, name)))
+                    pending.append(((*path, name), child))
             else:
-                option = action.option_strings[-1].lstrip("-").replace("-", "_")
-                expected.add(f"cli.option.{command}.{option}")
+                option = action.option_strings[-1] if action.option_strings else action.dest
+                expected.add(".".join(("cli.option", *(path or ("global",)), option.lstrip("-").replace("-", "_"))))
+    assert {"cli.command.up", "cli.command.studio.up", "cli.option.studio.tunnel.host"} <= expected
     assert expected == bindings().keys()
     rows = discover_cli()
     assert validate_bindings(rows) == bindings()
     assert all(row["studio_binding"] == bindings()[row["id"]] for row in rows)
-    for mutation in ({"id": "cli.option.top.new_option"},):
+    for mutation in ({"id": "cli.option.top.new_option"}, {"id": "cli.option.studio.up.driver"},
+                     {"id": "cli.command.studio.restart"}):
         with pytest.raises(ValueError, match="coverage changed"):
             validate_bindings([*rows, mutation])
     changed = deepcopy(rows)
@@ -370,7 +375,7 @@ def test_update_defaults_to_verified_mode_and_parity_rows_describe_both_modes():
     assert "Both modes need --config" in rows["cli.option.update.verify"]["equivalence"]
     host = rows["cli.option.update.host"]["equivalence"]
     assert "--driver-service" in host and "Verified mode passes no host" in host
-    assert "silently probe" in rows["cli.option.top.host"]["equivalence"]
+    assert "Studio never probes for drivers" in rows["cli.option.top.host"]["equivalence"]
     from dgx_monarch.studio.management_update import REVIEW_SCOPE
 
     # Each review names the guards its own mode runs, rather than claiming both modes keep the same ones.

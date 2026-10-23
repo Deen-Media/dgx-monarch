@@ -25,6 +25,55 @@
   sorted the page by, not a value read back from the last row: the job and
   grid lists re-render `created_at` at 15 significant digits, and SQLite on
   x86-64 parses a few stored timestamps one unit in the last place high.
+- `dgxm studio` starts the Studio companion with one word. It reads the
+  driver origin, the port, an optional driver service and an optional start
+  command from a new `[studio]` table in cluster.toml
+  ([CLUSTER](docs/CLUSTER.md#studio-optional)), passes the config file `dgxm`
+  itself uses, prints where each value came from, and never probes ports.
+  `--driver` and `--config` override them. The first start on a fresh state
+  directory needs `[studio] driver` or `--driver`. Studio reads only a
+  cluster.toml no other account can write. Releases before this one refuse a
+  cluster.toml that holds `[studio]`, so add it only after every checkout
+  that reads the file and the driver run this release
+  ([Studio](docs/STUDIO.md#configure-studio-in-clustertoml)).
+- Studio opens signed in. On a terminal with a display, `dgxm studio` and
+  `dgxm-studio` send the browser to `sign-in.html`, an owner-only page in the
+  state directory that carries the link `http://127.0.0.1:<port>/#token=...`,
+  when `.html` files and `http` links open in the same browser; the page
+  keeps the token in the tab's session storage and removes it from the
+  address bar. The browser's history keeps the link, so treat it like a
+  password. The token never appears in a process argument dgxm starts, a
+  query string, a log or the journal. `--no-open` starts no browser. A
+  companion started with `--allow-management` never makes a link; its token
+  is typed into the form.
+- `dgxm studio up` installs and starts `dgxm-studio.service`, a user unit
+  with a fixed port; `dgxm studio down` removes it; `dgxm studio open` prints
+  the sign-in link and opens it when the session has a display, and says
+  when the service runs code older than the checkout; `dgxm studio token`
+  prints the token file and, with `--rotate`, restarts the service for a new
+  token. With `[studio] driver_service` the service also starts that driver
+  unit. `dgxm uninstall` refuses while the service is installed
+  ([Studio](docs/STUDIO.md#keep-studio-running),
+  [#132](docs/TROUBLESHOOTING.md#132-dgxm-studio-up-refuses-or-the-always-on-studio-does-not-start)).
+- `dgxm studio tunnel <host>` prints the one SSH line that reaches Studio
+  from another computer,
+  `ssh -o ExitOnForwardFailure=yes -L 127.0.0.1:<port>:127.0.0.1:<port> <host>`,
+  the address to browse and what to do when ssh cannot forward the port; the
+  line names the address the forward listens on, so with that option ssh
+  exits instead of opening a session without the forward.
+  `--run` runs it
+  ([#133](docs/TROUBLESHOOTING.md#133-the-sign-in-link-does-not-open-studio)).
+- When no driver accepts a connection, Studio shows Driver not running with
+  the command that starts it, disables Review generation, and connects by
+  itself when the driver answers
+  ([#131](docs/TROUBLESHOOTING.md#131-studio-shows-driver-not-running)).
+- `dgxm-studio` binds its port before it prints or writes the token, so a
+  busy port exits with one line and no token.
+- The README shows Studio, captured against the CPU test fixture.
+- The Studio inventory waives the `dgxm studio` rows: the page cannot start
+  or stop the companion that serves it.
+- The original Studio specification gains a dated amendment for the
+  always-on unit.
 - Support MOSS-Image, the OpenMOSS team's 5B single-stream text-to-image
   model, with its SFT and Base checkpoints and lodestones' Kromoss fine-tune
   ([MODELS](docs/MODELS.md#model-moss-image-sft)). It needs ComfyUI 0.42.0 or

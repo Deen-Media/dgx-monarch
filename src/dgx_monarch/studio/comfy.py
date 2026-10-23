@@ -1,6 +1,7 @@
 """Fixed-endpoint adapter to an operator-selected ComfyUI driver."""
 from __future__ import annotations
 
+import errno
 import unicodedata
 from collections.abc import AsyncIterator
 from pathlib import PurePosixPath
@@ -26,6 +27,8 @@ HISTORY_WINDOW = 200
 HISTORY_REGROW_BYTES = MAX_BODY_BYTES // 2
 HISTORY_REGROW_PAGES = 3
 HISTORY_HOLD_LIMIT = 64
+# Only a refused connect is an observed "nothing listens"; every other failure stays unknown.
+DRIVER_NOT_RUNNING = "No driver accepted a connection at the driver origin; start the driver."
 
 
 def safe_descriptor(value: dict[str, Any]) -> dict[str, str]:
@@ -262,6 +265,10 @@ class ComfyClient:
         except StudioError:
             raise
         except (aiohttp.ClientError, TimeoutError, ValueError, RecursionError, OverflowError) as exc:
+            if (isinstance(exc, aiohttp.ClientConnectorError)
+                    and getattr(exc.os_error, "errno", None) == errno.ECONNREFUSED):
+                # Nothing accepted the connection, so the request never reached a driver.
+                raise StudioError("driver_not_running", DRIVER_NOT_RUNNING, 503) from exc
             # ValueError covers malformed JSON, bad UTF-8 and integers past the
             # digit limit; RecursionError covers JSON nested too deeply.
             raise StudioError("driver_unknown", "The driver did not return a complete response; "
