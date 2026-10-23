@@ -6826,7 +6826,6 @@ on the Studio host for a new link."
 - Give `tunnel` a host as a name, an SSH config alias, an IP address or
   `user@host`, and install `ssh` for `--run`. Keep `127.0.0.1` and the same
   port on both ends.
-2026-10-22 no edit render, on one GPU or a cluster, has run on hardware.
 
 ## 134. A Qwen Image 2.1 Ulysses render with the cache device auto refuses on ComfyUI 503d785f0 or later
 
