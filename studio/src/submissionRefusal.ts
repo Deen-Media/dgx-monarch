@@ -8,6 +8,8 @@ const DEFINITE_REFUSALS = {
     'revision_conflict',
     'record_limit',
     'library_limit',
+    // The catalog grew past the browser window after review; nothing was imported.
+    'record_window_limit',
   ],
   // A changed driver schema or a choice it no longer offers refuses a retry before it is reserved.
   'grid-retry': ['grid_retry', 'schema_changed', 'choice_unavailable', 'preview_expired'],

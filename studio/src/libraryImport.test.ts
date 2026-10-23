@@ -128,17 +128,50 @@ for (const failure of [
     assert.equal(submissionRefused(failure, 'library'), false);
   });
 }
-for (const code of [
-  'library_confirmation',
-  'library_preview',
-  'revision_conflict',
-  'record_limit',
-  'library_limit',
-]) {
+for (const [code, status] of [
+  ['library_confirmation', 409],
+  ['library_preview', 409],
+  ['revision_conflict', 409],
+  ['record_limit', 409],
+  ['library_limit', 409],
+  ['record_window_limit', 413],
+] as const) {
   test(`${code} allows import re-review after definitive refusal`, () => {
-    assert.equal(submissionRefused(new ApiError(409, 'Not imported', code), 'library'), true);
+    assert.equal(submissionRefused(new ApiError(status, 'Not imported', code), 'library'), true);
   });
 }
+// Run the same handler against a companion that answers the import with `failure`.
+const runRefused = new Function(
+  'failure',
+  'submissionRefused',
+  `'use strict';
+  return (async () => {
+    let recoveryBlocked = false, plan = { id: 'plan', digest: 'digest', ready: true },
+      confirmed = true, busy = false, reading = false, error = '', uncertain = false,
+      key = 'original-key', name = 'fixture', notice = '', document = null, sent = 0;
+    const kept = new Map(), storage = 'pending', $state = { snapshot: value => value },
+      sessionStorage = { setItem: (k, v) => kept.set(k, v), removeItem: (k) => kept.delete(k) },
+      requireLibraryReceipt = () => {}, onrefresh = async () => {},
+      client = { request: async () => { sent++; throw failure; } };
+    ${applyCode}
+    await apply();
+    return { uncertain, sent, busy, error, retained: kept.has(storage) };
+  })();`,
+);
+test('a catalog that grew past the browser window after review clears the pending import', async () => {
+  const refusal = new ApiError(413, 'No records were imported.', 'record_window_limit');
+  const state = await runRefused(refusal, submissionRefused);
+  assert.deepEqual(
+    { uncertain: state.uncertain, sent: state.sent, busy: state.busy, retained: state.retained },
+    { uncertain: false, sent: 1, busy: false, retained: false },
+  );
+  assert.match(state.error, /Review the import again before retrying\./);
+  // A lost answer still keeps the retained identity for a retry.
+  const lost = await runRefused(new Error('response lost'), submissionRefused);
+  assert.equal(lost.uncertain, true);
+  assert.equal(lost.retained, true);
+  assert.match(lost.error, /Retry uses the same import identity\./);
+});
 for (const value of [
   {},
   null,

@@ -38,6 +38,8 @@ export interface Binding {
     max?: number;
     step?: number;
     options?: unknown[];
+    /** A required value may not be empty text, as management operations require. */
+    nonEmpty?: boolean;
   };
   display?: {
     label?: string;
@@ -98,7 +100,10 @@ export function bindingError(b: Binding, value: unknown): string | null {
   const status = b.resolution_status ?? b.status;
   if (status && !['resolved', 'supported', 'ok'].includes(status))
     return `Binding ${status}; repair workflow before submission.`;
-  if (b.required && (value === undefined || value === '')) return 'A value is required.';
+  // ComfyUI takes empty text for a required input, such as an empty negative prompt;
+  // only the input's own rule refuses it.
+  if (b.required && (value === undefined || (value === '' && b.validation?.nonEmpty)))
+    return 'A value is required.';
   const type = bindingType(b);
   if (['INT', 'INTEGER', 'FLOAT', 'NUMBER'].includes(type)) {
     if (typeof value !== 'number' || !Number.isFinite(value)) return 'Enter a finite number.';

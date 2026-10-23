@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFile } from 'node:fs/promises';
 import {
   bindingError,
   consumeEvents,
@@ -15,6 +16,45 @@ test('typed limits reject unsafe values without clamping', () => {
   assert.match(bindingError(b, 1.2)!, /whole/);
   assert.match(bindingError(b, Infinity)!, /finite/);
   assert.match(bindingError({ ...b, status: 'ambiguous' }, 20)!, /repair/);
+});
+test('a required text input may be empty unless its own rule forbids it', () => {
+  const text = { id: 'negative', type: 'STRING', required: true };
+  assert.equal(bindingError(text, ''), null);
+  assert.equal(bindingError({ ...text, schema: { type: 'STRING', default: 'x' } }, ''), null);
+  assert.equal(bindingError(text, undefined), 'A value is required.');
+  assert.equal(
+    bindingError({ ...text, validation: { nonEmpty: true } }, ''),
+    'A value is required.',
+  );
+  assert.equal(bindingError({ ...text, validation: { nonEmpty: true } }, 'repo'), null);
+  // A choice with no match and a number still refuse empty text by their own rules.
+  const choice = { id: 'sampler', type: 'COMBO', required: true, options: ['euler', 'dpmpp_2m'] };
+  assert.equal(bindingError(choice, ''), 'Choose an available value.');
+  assert.equal(bindingError({ ...choice, options: ['', 'euler'] }, ''), null);
+  assert.equal(
+    bindingError({ id: 'steps', type: 'INT', required: true }, ''),
+    'Enter a finite number.',
+  );
+});
+test('the shipped MOSS-Image workflows leave double_layers empty and pass the field check', async () => {
+  const read = async (path: string) =>
+    JSON.parse(await readFile(new URL(path, import.meta.url), 'utf8'));
+  const { workflows } = await read('../../src/dgx_monarch/studio/data/workflows.json');
+  const contract = await read('../../tests/node_input_contract.json');
+  const [, type, fallback] = contract.DGXMonarchSkipLayerGuidance.required.find(
+    ([name]: [string]) => name === 'double_layers',
+  );
+  const shipped = workflows.flatMap((row: { id: string; workflow: { nodes: any[] } }) =>
+    row.workflow.nodes
+      .filter((node) => node.type === 'DGXMonarchSkipLayerGuidance')
+      .map((node) => [row.id, node.dgxm_widgets.double_layers]),
+  );
+  assert.ok(shipped.some(([id]: [string]) => id === 'workflow.dgx-monarch-moss-image-t2i'));
+  assert.ok(shipped.some(([, value]: [string, unknown]) => value === ''));
+  for (const [id, value] of shipped) {
+    const binding = { id, required: true, schema: { type, default: fallback } };
+    assert.equal(bindingError(binding, value), null, id);
+  }
 });
 test('delayed and duplicated events cannot regress cursor', () => {
   const result = consumeEvents(4, [{ seq: 7 }, { seq: 2 }, { seq: 5 }, { seq: 7 }, { seq: 'bad' }]);

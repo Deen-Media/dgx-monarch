@@ -45,6 +45,7 @@ const component = async (path: string) => (await import(path)).default;
 const Generation = await component('./views/Generation.svelte');
 const AssetEditor = await component('./components/AssetEditor.svelte');
 const Field = await component('./components/Field.svelte');
+const OperationField = await component('./components/OperationField.svelte');
 const StatusMessages = await component('./components/StatusMessages.svelte');
 const Connect = await component('./views/Connect.svelte');
 const DriverNotRunning = await component('./components/DriverNotRunning.svelte');
@@ -108,6 +109,29 @@ test('Generation enables Review only for a valid, unblocked draft', () => {
       tagBefore(html(Generation, generationProps(blocked)), 'Review generation'),
       /disabled/,
     );
+});
+
+test('Generation reviews a required text input left empty, but not a missing one', () => {
+  const layers = { id: 'double_layers', schema: { type: 'STRING' }, required: true };
+  const bindings = [...generationProps().bindings, layers];
+  const draft = (values: Record<string, unknown>) => ({ ...generationProps().draft, values });
+  const empty = html(
+    Generation,
+    generationProps({ bindings, draft: draft({ steps: 20, double_layers: '' }) }),
+  );
+  assert.doesNotMatch(tagBefore(empty, 'Review generation'), /disabled/);
+  const missing = html(Generation, generationProps({ bindings, draft: draft({ steps: 20 }) }));
+  assert.match(tagBefore(missing, 'Review generation'), /disabled/);
+  assert.match(missing, /Resolve 1 field issue\(s\)\./);
+});
+
+test('an empty required operation parameter keeps its notice, as the companion refuses it', () => {
+  const field = { name: 'repo', type: 'STRING', required: true };
+  const body = (props: Record<string, unknown>) =>
+    html(OperationField, { field, value: '', onchange() {}, ...props });
+  assert.match(body({}), /A value is required\./);
+  assert.doesNotMatch(body({ value: '/srv/dgx-monarch' }), /A value is required\./);
+  assert.doesNotMatch(body({ field: { ...field, required: false } }), /A value is required\./);
 });
 
 test('the workflow select shows the tracked workflow, not the first template it loaded', () => {

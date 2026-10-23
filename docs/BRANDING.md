@@ -133,10 +133,10 @@ bundle that `RESOURCE_SHA256` names:
 
 | File | SHA-256 |
 |---|---|
-| `studio/static/index.html` | `84ab96c19208b78e7ab568d0b5706ceed06d3d7ab4cf6dd89ade63b429a9db72` |
+| `studio/static/index.html` | `f122a293b96e90a39f28ee0cd9d47f05e901d083549e1523b0abf3541b5e1f5b` |
 | `studio/static/assets/index-DNoOs9Sm.css` | `36e26466b55bed1f628f85576de439d43a6be8e2b1f862207e4e57604de0e25a` |
-| `studio/static/assets/index-Db4Yq18N.js` | `9bbb542027ab717e60a29b58f4d16beccd3b19ffa7a17d578fea70933ae61c34` |
+| `studio/static/assets/index-BAFK232V.js` | `2a35c594d11aff6563cfe2ec9b89982556580db46e08a889219a0e8e9b50f505` |
 
-The image is 164,962 bytes, with SHA-256
-`2d6fbb5c05edcc3638a8b74f15a590e09cac59897c15651fdfb4a64ab1411379`. It shows
+The image is 165,149 bytes, with SHA-256
+`08b557b582b74767ce54079959f462fae65e70dcb0b93960e2740792d570b36f`. It shows
 no real render: the fixture ran no model, and no job was queued.
