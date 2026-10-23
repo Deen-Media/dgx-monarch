@@ -1580,6 +1580,16 @@
       "test_pending_timeout_cancel_baseexception_wins_after_cleanup": "a775c2d52c9a60f3",
       "test_pending_timeout_reports_only_terminal_cancel_failure": "abddc9fe110dfae8"
     },
+    "tests/test_qwen_image21_prefix_cache.py": {
+      "test_a_cache_handed_over_refuses_whatever_the_device": "e864de6941a5ec64",
+      "test_auto_on_the_writable_tree_refuses_before_the_sequence_or_any_collective": "92fc1a5f33f422f9",
+      "test_real_comfy_admits_the_tree_and_refuses_auto_only_where_stock_moved": "933fcbe8eb7364a7",
+      "test_stocks_own_branch_passes_the_guard": "911183ba5c76563b",
+      "test_the_bound_forward_names_prefix_cache_and_the_contract_admits_it": "d508be2430e202df",
+      "test_the_refusal_is_class_p_and_names_its_way_out": "2a7f9e66ee32de7d",
+      "test_the_rule_reads_only_facts_every_rank_shares": "33759ffec045a5d0",
+      "test_the_seam_reads_the_class_forward": "84e59e03d906552e"
+    },
     "tests/test_refusal_classes.py": {
       "test_class_rules_hold_at_every_classified_site": "4ee2e1b5b2a46a3d",
       "test_classified_refusal_sites_match_the_ledger": "ee29c1431639accd",

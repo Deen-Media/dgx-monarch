@@ -968,7 +968,10 @@ Category **"DGX Monarch"**. The node surface is small by design:
 - `DGXMonarchQwenImage21Cache`: sets Qwen Image 2.1's replicated prefix KV
   cache on every worker, off by default. `default` storage is lossless; `int8`
   and `int4` use ComfyUI's compressed K/V cache and are approximate. The policy
-  rides in the loader options, so it is part of `base_key` (§5.5).
+  rides in the loader options, so it is part of `base_key` (§5.5). On ComfyUI
+  503d785f0 or later, `auto` under dynamic VRAM refuses on Ulysses, because
+  stock then uses its writable K/V cache instead
+  ([TROUBLESHOOTING #134](TROUBLESHOOTING.md#134-a-qwen-image-21-ulysses-render-with-the-cache-device-auto-refuses-on-comfyui-503d785f0-or-later)).
 - `DGXMonarchKSampler` + `DGXMonarchKSamplerAdvanced`: stock sampler semantics,
   with the same widget names in the same order as the stock nodes.
 - `DGXMonarchKSamplerPipeline`: a seed sweep that takes a seeds string (one

@@ -1027,6 +1027,9 @@ def test_version_tolerant_contracts_are_exactly_the_reviewed_set():
         "comfy.ldm.moss_image.model.MOSSImage._forward": (
             "ref_latents", "ref_latents_method", "ref_kv",
         ),
+        "comfy.ldm.qwen_image21.model.QwenImage21Transformer2DModel._forward": (
+            "prefix_cache",
+        ),
     }
 
 
@@ -1036,18 +1039,23 @@ def test_version_tolerant_contracts_are_exactly_the_reviewed_set():
     ids=lambda contract: contract.path,
 )
 def test_a_tolerated_trailing_suffix_admits_both_pinned_signatures(contract):
-    """Comfy ff6c8a8 appended H3's mask parameters and 60aade0bb MOSS-Image's
-    reference parameters; both trees stay supported for each."""
+    """Comfy ff6c8a8 appended H3's mask parameters, 60aade0bb MOSS-Image's
+    reference parameters and 503d785f0 Qwen Image 2.1's prefix_cache; both
+    trees stay supported for each."""
     declared = inspect.signature(_rebound_callable(contract))
     assert rebound_signature_incompatibility(declared, contract) is None
     tolerated = _signature_with_trailing(contract, contract.optional_trailing)
     assert rebound_signature_incompatibility(tolerated, contract) is None
 
-    for rejected in (
+    # A one-name suffix has no partial or reordered form, so those two drop
+    # out there; an extra name and a renamed last name refuse for every suffix.
+    candidates = (
         contract.optional_trailing[:1],
         (*contract.optional_trailing, "third_mask"),
         tuple(reversed(contract.optional_trailing)),
-    ):
+        (*contract.optional_trailing[:-1], "renamed_cache"),
+    )
+    for rejected in (c for c in candidates if c != contract.optional_trailing):
         assert rebound_signature_incompatibility(
             _signature_with_trailing(contract, rejected), contract
         ) == "exact explicit parameter list changed", rejected
