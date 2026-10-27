@@ -51,6 +51,12 @@
   uly2+cfg2 a bias on one prompt refuses the whole render instead of one cfg
   group refusing while the other waits. single, cfg2 and dp2 still run stock's
   forward with the bias ([#135](docs/TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
+- Every Worker rank reads both prompts of a MOSS-Image render for the edit
+  node's text attention bias after the load and before sampling, and refuses
+  it class P under sequence parallelism, so a bias on one prompt alone refuses
+  every rank together on uly2+cfg2 even when the driver cannot read the
+  checkpoint header. The driver preflight and the sharded forward behave as
+  before and share one scan.
 ### Development
 
 - The comfy canary runs daily against both ComfyUI master and the newest

@@ -1411,6 +1411,21 @@
       "test_stock_forward_presets_pass_without_reading_a_header": "f5ea80f6dba14880",
       "test_the_driver_and_the_worker_decide_on_one_predicate": "f182fd54f2e8a755"
     },
+    "tests/test_moss_image_attention_bias_worker.py": {
+      "test_a_bias_the_predicate_cannot_read_passes_the_scan_as_on_the_driver": "9686a6e4ca653f4a",
+      "test_a_sequence_parallel_worker_refuses_a_bias_in_any_prompt_before_sampling": "5ad082d16807c55a",
+      "test_a_stock_forward_worker_samples_with_the_bias": "3f005d3ffdcf4915",
+      "test_an_all_zero_bias_passes_on_a_sequence_parallel_worker": "5c70d03524a91fed",
+      "test_another_family_passes_on_uly2": "f1ba27805b0b11c8",
+      "test_both_sides_call_the_scan_in_the_seams_module": "3352acf04b4ae793",
+      "test_every_effective_value_refuses_on_uly2": "16a1051b09f838ce",
+      "test_every_guider_kind_counts": "4ca864a3c8ddf371",
+      "test_malformed_conditioning_passes_as_on_the_driver": "2aee5add8959b711",
+      "test_run_sample_scans_once_after_the_readiness_exchange_and_before_any_conditioning_read": "2ed0d8d86e2c1bd7",
+      "test_the_driver_and_the_worker_read_one_scan_on_one_predicate": "10d7d1ad24be9aac",
+      "test_two_real_ranks_refuse_a_bias_on_one_prompt_together_before_sampling": "823b5d2f492d4a15",
+      "test_without_the_scan_the_group_without_the_bias_waits_at_the_cfg_gather": "ee4ef3868014d5d8"
+    },
     "tests/test_moss_image_comfy_exactness.py": {
       "test_forward_a_marked_patch_is_honoured_and_the_same_patch_unmarked_refuses": "7785fe2503c61978",
       "test_forward_a_marked_patch_that_changes_the_window_rows_refuses_class_p": "8ce8411667b5347c",

@@ -29,7 +29,8 @@ refuses, even when the driver could not read the header and let it through.
 A group of one, which topology single and every Fleet KSampler job open,
 keeps stock's cache, and a cluster render without references passes. The
 text attention bias of ComfyUI 9fe7ef764 passes the bind on every topology:
-stock's method only wraps it, and only the sharded forward refuses it (#135).
+stock's method only wraps it, and under sequence parallelism the Worker's
+request scan before sampling and the sharded forward refuse it (#135).
 """
 from __future__ import annotations
 

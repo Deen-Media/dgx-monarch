@@ -36,7 +36,9 @@ a bias to its logits, so an effective one refuses class P at the same point
 (#135); an all-zero one adds nothing in stock, and the forward runs without
 it. The driver reads the bias from both prompts and, when it can read the
 header, refuses it under sequence parallelism before dispatch, uly2+cfg2
-included (nodes/model_patch_preflight.py).
+included (nodes/model_patch_preflight.py). When it cannot, every Worker rank
+reads both prompts of the whole request the same way before sampling
+(actor/sample_protocol.py), so uly2+cfg2 still refuses on every rank alike.
 
 single, cfg2 and dp2 bind no forward and run stock's. On every topology
 ``prepare_base_model`` runs stock's ``extra_conds`` under inference mode, as
@@ -145,7 +147,9 @@ class MOSSImageAdapter(Adapter):
         which bind no sharded forward, refuse them too. A setup change drops
         every resident, so the process group this reads is the one the load
         bound under. The text attention bias passes through untouched: stock
-        only wraps it, and on a Worker only the sharded forward refuses it (#135).
+        only wraps it, and under sequence parallelism a Worker's request scan
+        before sampling (actor/sample_protocol.py) and the sharded forward
+        refuse it (#135).
         docs/ADAPTERS.md has the paragraph.
         """
         stock = type(base_model).extra_conds

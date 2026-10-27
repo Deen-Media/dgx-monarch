@@ -9,8 +9,9 @@ the vetting of ``("single_block", i)`` replacements (an identity function, read
 from its bytecode, or a callable marked ``sequence_shard_local``), the window
 cut with its pad rows, the fused-norm route that launches both of a block's
 norm calls at stock's row count (FLUX.3's ``at_stock_rows``, prefix placement),
-the attention ledger and the refusals of reference images and of a text
-attention bias. Every raise sits in its own module-level function and goes
+the attention ledger, the refusals of reference images and of a text attention
+bias, and the scan of a whole request for that bias, which the driver and every
+Worker rank share. Every raise sits in its own module-level function and goes
 through ``refusal()``, class P. Nothing imports ComfyUI at module level.
 
 ComfyUI 60aade0bb (2026-10-22) added reference images for edit LoRAs. Its
@@ -30,7 +31,7 @@ from __future__ import annotations
 import dis
 import inspect
 import types
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import Any, NoReturn
 
@@ -364,9 +365,10 @@ def refuse_reference_images(*values: Any) -> None:
     raise UnsupportedModelError(REFERENCE_IMAGES_REFUSAL)
 
 
-# The driver preflight (nodes/model_patch_preflight.py) and the sharded forward
-# raise this under sequence parallelism alone: cfg2 and dp2 bind no forward, so
-# stock's own applies the bias there.
+# The driver preflight (nodes/model_patch_preflight.py), every Worker rank's
+# request scan (actor/sample_protocol.py) and the sharded forward raise this
+# under sequence parallelism alone: cfg2 and dp2 bind no forward, so stock's
+# own applies the bias there.
 CONTEXT_ATTENTION_BIAS_REFUSAL = refusal(
     RefusalClass.PHYSICS,
     "moss_image: this render carries an attention bias on its text tokens, which ComfyUI's Text "
@@ -387,7 +389,8 @@ def context_attention_bias_is_effective(bias: Any) -> bool:
     logit, so the forward runs without it. Anything else would, so no bias is
     ever dropped unread: a boolean one too, which stock pads with False into a
     mask that hides the image keys, and a value that is not a tensor. The
-    driver preflight and the sharded forward both decide on this predicate.
+    driver preflight, the Workers' request scan and the sharded forward all
+    decide on this predicate.
     """
     return not (bias is None or (isinstance(bias, torch.Tensor) and bias.is_floating_point()
                                  and _mask_is_noop(bias)))
@@ -398,6 +401,34 @@ def refuse_context_attention_bias(bias: Any) -> None:
     if not context_attention_bias_is_effective(bias):
         return
     raise UnsupportedModelError(CONTEXT_ATTENTION_BIAS_REFUSAL)
+
+
+def carries_context_attention_bias(request: Any) -> bool:
+    """Whether a prompt of the render carries an effective text attention bias (#135).
+
+    Reads both prompts where the sampler puts them: the request's own pair,
+    or the guider's on SamplerCustom. ``pack_conditioning`` keeps each
+    ``[tensor, extras]`` entry and only moves its tensors to the CPU, so the
+    driver and every Worker rank read the same entries. A malformed request
+    or entry passes, and so does a bias the predicate cannot read.
+    """
+    if not isinstance(request, Mapping):
+        return False
+    guider = request.get("guider")
+    prompts = [request.get("positive"), request.get("negative")]
+    if isinstance(guider, Mapping):
+        prompts += [guider.get("positive"), guider.get("negative")]
+    for prompt in prompts:
+        for entry in prompt if isinstance(prompt, list | tuple) else ():
+            extras = entry[1] if isinstance(entry, list | tuple) and len(entry) > 1 else None
+            if not isinstance(extras, Mapping):
+                continue
+            try:
+                if context_attention_bias_is_effective(extras.get("context_attention_bias")):
+                    return True
+            except Exception:
+                continue
+    return False
 
 
 def worker_on_one_gpu() -> bool:

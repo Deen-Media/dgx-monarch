@@ -6,9 +6,9 @@ resolves and before any Worker call, so a refusal costs no dispatch. Each fails
 open where it cannot read its facts: the Worker belt (actor/guidance_render.py)
 still guards Skip Layer Guidance, the shift guard refuses only a config that
 says multiplier 1.0 outright, the model store refuses a LoRA on a refused
-quantized file on every Worker (lora_quant_guard.py), and the MOSS-Image
-sharded forward refuses reference images on every rank and the bias on every
-rank that holds it.
+quantized file on every Worker (lora_quant_guard.py), the MOSS-Image sharded
+forward refuses reference images on every rank, and every Worker rank scans the
+whole request for the bias before sampling (actor/sample_protocol.py).
 """
 from __future__ import annotations
 
@@ -116,29 +116,12 @@ def preflight_moss_image_reference_images(model: Any, ref_summary: Any, topo: An
 def carries_context_attention_bias(request: Mapping[str, Any]) -> bool:
     """Whether a prompt of the render carries an effective MOSS-Image text attention bias.
 
-    Reads both prompts where the sampler puts them: the request's own pair,
-    or the guider's on SamplerCustom. ``pack_conditioning`` keeps each
-    ``[tensor, extras]`` entry and only moves its tensors to the CPU. The
-    Worker's sharded forward decides on the same predicate. A malformed
-    entry passes, and so does a bias the predicate cannot read.
+    The one scan of both prompts lives beside the predicate in
+    adapters/moss_image_seams.py, where every Worker rank reads it too.
     """
-    from ..adapters.moss_image_seams import context_attention_bias_is_effective
+    from ..adapters.moss_image_seams import carries_context_attention_bias as scan
 
-    guider = request.get("guider")
-    prompts = [request.get("positive"), request.get("negative")]
-    if isinstance(guider, Mapping):
-        prompts += [guider.get("positive"), guider.get("negative")]
-    for prompt in prompts:
-        for entry in prompt if isinstance(prompt, list | tuple) else ():
-            extras = entry[1] if isinstance(entry, list | tuple) and len(entry) > 1 else None
-            if not isinstance(extras, Mapping):
-                continue
-            try:
-                if context_attention_bias_is_effective(extras.get("context_attention_bias")):
-                    return True
-            except Exception:
-                continue
-    return False
+    return scan(request)
 
 
 def preflight_moss_image_attention_bias(model: Any, request: Mapping[str, Any], topo: Any) -> None:
@@ -150,8 +133,8 @@ def preflight_moss_image_attention_bias(model: Any, request: Mapping[str, Any], 
     render here, where the forward would refuse in one cfg group while the
     other waits at the cfg gather. The header is read only for a render that
     carries an effective bias under sequence parallelism, and an unreadable
-    one passes: the sharded forward then refuses on every rank that holds
-    the bias.
+    one passes: every Worker rank then reads both prompts the same way before
+    sampling and refuses alike (actor/sample_protocol.py).
     """
     sp = int(getattr(topo, "ulysses", 1)) * int(getattr(topo, "ring", 1))
     if sp <= 1 or not isinstance(request, Mapping) or not carries_context_attention_bias(request):

@@ -6889,8 +6889,8 @@ from ComfyUI's Text Encode MOSS-Image Edit node with `image_strength` other
 than 1.0 refuses class P before dispatch, with a message that opens
 "moss_image: this render carries an attention bias on its text tokens" and
 names topology `single` with `mode=local` and `gpus_per_host=1`. If the
-driver cannot read the checkpoint header, then on uly2 and ring2 every Worker
-refuses alike with that message before the first block.
+driver cannot read the checkpoint header, every Worker rank refuses alike with
+that message before sampling, on uly2+cfg2 too.
 
 **Cause:** ComfyUI commit 9fe7ef764 of 2026-10-23, released in v0.43.0,
 added `image_strength` to the Text Encode MOSS-Image Edit node. When the
@@ -6910,15 +6910,17 @@ refusal costs no Worker call. Because it reads both prompts, it also refuses
 a uly2+cfg2 render with a bias on one prompt alone. That prompt reaches one
 cfg group only, which would refuse in its forward while the other group
 waited at the cfg exchange. If the driver cannot read the header, the
-Workers refuse instead. Their check reads only the bias, which on uly2 and
-ring2 every rank holds, so both Workers refuse alike before any exchange,
-and by design the next render runs on the same fleet. On uly2+cfg2 a bias
-on one prompt alone would then still refuse in one cfg group only. On
+Workers refuse instead. Each Worker rank reads both prompts of the whole
+request after the load and before sampling, as the driver does, so every
+rank refuses alike, uly2+cfg2 included, and by design the next render runs
+on the same fleet. On
 2026-10-27 a hardware run observed the driver refusal on uly2 and ring2,
 and the next render on the same fleet matched stock with no Recycle; no
 hardware test has reached the Workers' refusal
-([VALIDATION](VALIDATION.md#moss-image-bias-on-comfyui-426f5eea)). An
-all-zero bias adds nothing in stock, and the sharded forward runs without it.
+([VALIDATION](VALIDATION.md#moss-image-bias-on-comfyui-426f5eea)). The
+Workers' scan of the whole request came later and has no hardware leg yet.
+An all-zero bias adds nothing in stock, and the sharded forward runs without
+it.
 The node never attaches one, since the log of a strength above 0 and other
 than 1.0 is never 0, so only CPU tests cover that path. On cfg2 and dp2 the
 adapter binds no forward, so stock's applies the bias on each GPU. On
