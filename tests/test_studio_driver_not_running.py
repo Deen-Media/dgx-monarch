@@ -216,3 +216,35 @@ def test_snapshot_reports_driver_not_running_then_connected(tmp_path, monkeypatc
             await runner.cleanup()
             store.close()
     asyncio.run(scenario())
+
+
+def test_an_observer_cycle_publishes_the_driver_state_only_when_it_ends(tmp_path):
+    """The snapshot route reads Jobs.driver at every await of an observer cycle.
+
+    A cycle whose queue read succeeds still reads history and telemetry, so it
+    must publish the state it reports only when it ends.
+    """
+    seen: list[tuple[str, dict]] = []
+    listening = {"on": False}
+
+    class Starting:
+        async def request(self, method, path, data=None):
+            seen.append((path, dict(jobs.driver)))
+            if not listening["on"]:
+                raise StudioError("driver_not_running", DRIVER_NOT_RUNNING, 503)
+            return {"queue_running": [], "queue_pending": []} if path == "/queue" else {}
+
+    store = Store(tmp_path / "state")
+    try:
+        jobs = Jobs(store, Starting())
+        asyncio.run(jobs.reconcile())
+        down = dict(jobs.driver)
+        assert down["state"] == "unavailable" and down["code"] == "driver_not_running"
+        listening["on"] = True
+        seen.clear()
+        asyncio.run(jobs.reconcile())
+        assert [path for path, _view in seen] == ["/queue", "/history", "/dgxm/telemetry"]
+        assert [view for _path, view in seen if view != down] == [], seen
+        assert jobs.driver["state"] == "connected" and "code" not in jobs.driver
+    finally:
+        store.close()
