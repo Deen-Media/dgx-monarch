@@ -6,6 +6,10 @@ permissions:
 # Track ComfyUI nightly (DESIGN.md §6.3): import the node pack and build
 # node schemas against master on CPU each day. Behavioral seam checks
 # (DESIGN.md §5.10) catch changes that leave names and signatures intact.
+# A second matrix entry runs the same steps against the newest ComfyUI
+# release tag. That entry changes only when ComfyUI tags a release, so a red
+# master beside a green release indicates an upstream change, and a red
+# release on an unchanged tag indicates a change in this repository.
 
 on:
   schedule:
@@ -91,7 +95,14 @@ on:
       - ".github/workflows/comfy-canary.yml"
 
 jobs:
-  import-against-comfy-master:
+  import-against-comfy:
+    # The master entry keeps the job's original check name.
+    name: import-against-comfy-${{ matrix.comfy }}
+    strategy:
+      # The pair is the signal, so one failing entry must not cancel the other.
+      fail-fast: false
+      matrix:
+        comfy: [master, release]
     # Pin the runner image; review Ubuntu upgrades explicitly.
     runs-on: ubuntu-24.04
     timeout-minutes: 60
@@ -101,9 +112,30 @@ jobs:
         with:
           python-version: "3.12"
       - name: Clone ComfyUI master
+        if: matrix.comfy == 'master'
         run: |
           git clone --depth 1 https://github.com/comfyanonymous/ComfyUI ../ComfyUI
           git -C ../ComfyUI rev-parse HEAD
+      # Resolve the newest release at run time. Only vX.Y.Z tags count, since
+      # sort -V ranks a pre-release such as v0.44.0rc1 above v0.44.0. The run
+      # shell has no pipefail, so a failed ls-remote shows as an empty tag.
+      - name: Clone the newest ComfyUI release tag
+        if: matrix.comfy == 'release'
+        run: |
+          tag="$(git ls-remote --tags --refs https://github.com/comfyanonymous/ComfyUI 'v*' \
+            | cut -f2 | sed 's#^refs/tags/##' \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -n 1)"
+          if [ -z "$tag" ]; then
+            echo "::error::found no ComfyUI vX.Y.Z release tag"
+            exit 1
+          fi
+          git clone --depth 1 --branch "$tag" https://github.com/comfyanonymous/ComfyUI ../ComfyUI
+          commit="$(git -C ../ComfyUI rev-parse HEAD)"
+          master="$(git ls-remote https://github.com/comfyanonymous/ComfyUI HEAD | cut -f1)"
+          echo "ComfyUI $tag at $commit; master at $master"
+          if [ "$commit" = "$master" ]; then
+            echo "::notice::ComfyUI $tag is master's commit, so both entries test the same code."
+          fi
       - name: Install
         run: |
           # PEP 639 requires setuptools>=77 with --no-build-isolation; torch

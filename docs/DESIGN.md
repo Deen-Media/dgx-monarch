@@ -1568,7 +1568,7 @@ transaction that stops asserting fails the unit tier without Comfy installed.
 behavioral contracts. `tests/test_comfy_seam_contracts.py` checks that its
 module docstring lists the same contracts in run order. Consult that canary
 file for the current inventory. The behavioral tier runs on the comfy-canary
-schedule against comfy master; the signature tier is
+schedule against comfy master and the newest release tag; the signature tier is
 `comfy_surface.TOUCHPOINTS`, aggregated and re-exported by
 `comfy_forward_contracts.py`. Exact rebound contracts live in
 `comfy_rebound_signatures.py`, the static `self.bind`/`Adapter.bind` inventory
@@ -1705,7 +1705,11 @@ Skills call `dgxm` rather than reimplementing operations.
 - xFuser is pinned to the local `0.7.0+dgxm.npuimport1` compatibility wheel
   until an official release replaces it (section 3.1, rule 3).
 - ComfyUI: track nightly (project policy), with a CI canary job that runs the
-  node-pack import and a CPU-only graph-build against comfy master daily.
+  node-pack import and a CPU-only graph-build daily against comfy master and
+  the newest release tag. The release entry changes only when ComfyUI tags a
+  release, so a red master beside a green release indicates an upstream
+  change, and a red release on an unchanged tag indicates a change in this
+  repository.
 
 ---
 
@@ -2030,8 +2034,9 @@ dgx-monarch/
 ├── docs/                      # DESIGN.md (this), INSTALL, CLUSTER, MODELS,
 │                              #   TROUBLESHOOTING, VALIDATION, ADAPTERS
 ├── skills/                    # §6.2
-└── .github/workflows/         # lint+unit (x86 CPU), daily comfy-master and
-                               #   weekly torchmonarch canaries
+└── .github/workflows/         # lint+unit (x86 CPU), daily comfy canary on
+                               #   master and the newest release tag, weekly
+                               #   torchmonarch canary
 ```
 
 Maintainability rules: type public and internal boundaries; run ruff, mypy and
@@ -2164,7 +2169,7 @@ Sparks, and passing CPU checks does not establish hardware acceptance.
 | A dependency exception hides an unrelated failure | [Dependency-check guards and tests](TRUST.md#installation-dependency-checks); [the maintained exception procedure](TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform) |
 | Per-family attention complexity | each adapter lands behind its own cross-rank identity and fidelity gates |
 | Wan 2.2 MoE and capacity constraints | FSDP capacity mode and an independent family acceptance gate |
-| ComfyUI nightly breakage | daily canary against Comfy master; bind to model classes; wrap stock nodes instead of copying them (§5.7) |
+| ComfyUI nightly breakage | daily canary against Comfy master and the newest release tag; bind to model classes; wrap stock nodes instead of copying them (§5.7) |
 | Bare-metal Monarch behavior lacks upstream detail | runnable probes, symptom-first diagnoses, and focused upstream repros |
 | Single-maintainer continuity | contributor skills, canonical docs, and a CPU test suite and canaries that run on hosted CI |
 | GPL-3 runtime-host boundary | distribution boundary and dependency inventory in LICENSE-NOTES.md |

@@ -213,7 +213,8 @@ group or drop it, and keep the section within about 110 lines.
 
 Release maintainers must complete these checks on the intended release commit:
 
-1. CI and the [ComfyUI-master canary](.github/workflows/comfy-canary.yml) pass.
+1. CI and the [ComfyUI canary](.github/workflows/comfy-canary.yml) pass against
+   both ComfyUI master and the newest release tag.
    The canary checks node-pack import, schemas, adapters, bake/slab behavior,
    every committed template and the stock API contracts in
    `tests/canary/comfy_seam_contracts.py` on CPU.
