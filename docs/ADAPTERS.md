@@ -1211,8 +1211,8 @@ than stacks on a repeat call.
    Since 9fe7ef764 the sharded forward also names `context_attention_bias`,
    the logit bias on the text keys that the edit node's `image_strength` sets,
    which the sharded kernel cannot add: an effective bias refuses class P at
-   the same point, and an all-zero one, which adds nothing in stock, runs
-   without it
+   the same point, as the driver refuses it under sequence parallelism before
+   dispatch, and an all-zero one, which adds nothing in stock, runs without it
    ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
    A block called with no row count, as stock's `preprocess_refs` calls each
    block, runs stock's own code with its reference arguments.

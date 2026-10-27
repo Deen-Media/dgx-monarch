@@ -364,7 +364,8 @@ def refuse_reference_images(*values: Any) -> None:
     raise UnsupportedModelError(REFERENCE_IMAGES_REFUSAL)
 
 
-# The sharded forward alone raises this: cfg2 and dp2 bind no forward, so
+# The driver preflight (nodes/model_patch_preflight.py) and the sharded forward
+# raise this under sequence parallelism alone: cfg2 and dp2 bind no forward, so
 # stock's own applies the bias there.
 CONTEXT_ATTENTION_BIAS_REFUSAL = refusal(
     RefusalClass.PHYSICS,
@@ -379,16 +380,22 @@ CONTEXT_ATTENTION_BIAS_REFUSAL = refusal(
 )
 
 
-def refuse_context_attention_bias(bias: Any) -> None:
-    """Refuse an effective text attention bias on every rank alike, before any collective (#135).
+def context_attention_bias_is_effective(bias: Any) -> bool:
+    """Whether stock's forward would change a logit for this text attention bias (#135).
 
-    None and an all-zero floating bias pass: stock adds zero to every logit,
-    so the forward runs without it. Anything else refuses, so no bias is ever
-    dropped unread: a boolean one too, which stock pads with False into a
-    mask that hides the image keys, and a value that is not a tensor.
+    None and an all-zero floating bias would not: stock adds zero to every
+    logit, so the forward runs without it. Anything else would, so no bias is
+    ever dropped unread: a boolean one too, which stock pads with False into a
+    mask that hides the image keys, and a value that is not a tensor. The
+    driver preflight and the sharded forward both decide on this predicate.
     """
-    if bias is None or (isinstance(bias, torch.Tensor) and bias.is_floating_point()
-                        and _mask_is_noop(bias)):
+    return not (bias is None or (isinstance(bias, torch.Tensor) and bias.is_floating_point()
+                                 and _mask_is_noop(bias)))
+
+
+def refuse_context_attention_bias(bias: Any) -> None:
+    """Refuse an effective text attention bias on every rank alike, before any collective (#135)."""
+    if not context_attention_bias_is_effective(bias):
         return
     raise UnsupportedModelError(CONTEXT_ATTENTION_BIAS_REFUSAL)
 

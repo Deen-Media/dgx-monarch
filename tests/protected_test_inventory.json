@@ -1393,6 +1393,24 @@
       "test_the_quant_gate": "fe7c8043cef454ca",
       "test_the_text_embedder_gets_the_stock_backend_and_the_blocks_the_usp_override": "32db0a621eea7335"
     },
+    "tests/test_moss_image_attention_bias_preflight.py": {
+      "test_a_bias_on_the_negative_alone_refuses": "fc1003113f94ee88",
+      "test_a_bias_refuses_class_p_under_every_sequence_parallel_preset": "1ace223735df60e1",
+      "test_a_bias_the_predicate_cannot_read_passes_on_the_driver": "6d101877cc9c7851",
+      "test_a_guider_without_a_bias_or_a_negative_passes": "5b05fd16668aebdb",
+      "test_a_render_without_the_edit_node_never_reads_a_header": "7f2ffd5f7f7e77db",
+      "test_an_inert_bias_passes_without_reading_a_header": "44af2e19b45d4610",
+      "test_every_effective_value_refuses_on_uly2": "9f677ae873663221",
+      "test_malformed_conditioning_passes_and_never_raises": "93ffb3ee25c135f1",
+      "test_missing_checkpoint_file_fails_open": "c34c5c76bec2241b",
+      "test_other_families_are_left_to_their_own_guards": "e678058ca1efe409",
+      "test_preflight_runs_before_worker_dispatch": "0256ace33b264ced",
+      "test_render_submit_runs_the_bias_preflight_once_right_after_the_reference_preflight": "f9568d7d7ca79d29",
+      "test_samplercustom_guider_prompts_count": "b759d706ef325147",
+      "test_sniff_checkpoint_raising_fails_open": "6cefcc3f69594a73",
+      "test_stock_forward_presets_pass_without_reading_a_header": "f5ea80f6dba14880",
+      "test_the_driver_and_the_worker_decide_on_one_predicate": "f182fd54f2e8a755"
+    },
     "tests/test_moss_image_comfy_exactness.py": {
       "test_forward_a_marked_patch_is_honoured_and_the_same_patch_unmarked_refuses": "7785fe2503c61978",
       "test_forward_a_marked_patch_that_changes_the_window_rows_refuses_class_p": "8ce8411667b5347c",

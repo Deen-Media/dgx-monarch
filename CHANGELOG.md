@@ -23,6 +23,15 @@
   canary's signature contract and seam checks follow the same tree, so the
   daily canary runs green on ComfyUI master again.
 
+### Rendering
+
+- The driver refuses a MOSS-Image render whose prompt carries an effective
+  text attention bias before dispatch when Ulysses or ring is above one, on
+  the same predicate the Worker's sharded forward uses, so no Worker loads
+  the model for a render it would refuse. It reads both prompts, so on
+  uly2+cfg2 a bias on one prompt refuses the whole render instead of one cfg
+  group refusing while the other waits. single, cfg2 and dp2 still run stock's
+  forward with the bias ([#135](docs/TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
 ### Development
 
 - The comfy canary runs daily against both ComfyUI master and the newest

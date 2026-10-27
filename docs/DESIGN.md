@@ -1741,7 +1741,7 @@ dgx-monarch/
 │   │   ├── metrics_route.py   # bounded finite Prometheus projection
 │   │   ├── model_patch_preflight.py # driver refusals for the per-render skip,
 │   │   │                      #   shift and LoRA patches and MOSS-Image
-│   │   │                      #   reference images
+│   │   │                      #   reference images and text attention bias
 │   │   ├── pending.py         # terminal sample-result ownership and cleanup
 │   │   ├── pipeline.py        # bounded FIFO submission/abort orchestration
 │   │   ├── recycle_guard.py   # reset single-flight/rate ownership past HTTP timeout

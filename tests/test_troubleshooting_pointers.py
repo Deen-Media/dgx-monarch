@@ -135,6 +135,16 @@ def _worker_text_bias() -> None:
     refuse_context_attention_bias(torch.tensor([[0.0, -1.5]]))
 
 
+def _driver_text_bias(monkeypatch) -> None:
+    stub = types.ModuleType("folder_paths")
+    stub.get_full_path = lambda _kind, _name: "/home/user/models/diffusion_models/m.safetensors"
+    monkeypatch.setitem(sys.modules, "folder_paths", stub)
+    monkeypatch.setattr("dgx_monarch.adapters.detect.sniff_checkpoint",
+                        lambda _path: ("moss_image", "bf16"))
+    request = {"positive": [[torch.zeros(1, 2, 4), {"context_attention_bias": torch.tensor([[0.0, -1.5]])}]]}
+    preflight.preflight_moss_image_attention_bias(_model(), request, topology_from_preset("uly2", 2))
+
+
 def _worker_writable_cache() -> None:
     model = SimpleNamespace(current_patcher=SimpleNamespace(is_dynamic=lambda: True))
     refuse_writable_prefix_cache(model, None, {"device": "auto", "dtype": "default"}, True)
@@ -159,13 +169,14 @@ def _multiplier_one(monkeypatch) -> None:
     (_worker_references, REFERENCES),
     (_driver_references, REFERENCES),
     (_worker_text_bias, TEXT_BIAS),
+    (_driver_text_bias, TEXT_BIAS),
     (_worker_writable_cache, WRITABLE_CACHE),
 ], ids=["driver-skip", "worker-skip", "shift-after-skip", "control-channels", "multiplier-one",
         "lora-quant", "worker-references", "driver-references", "worker-text-bias",
-        "qwen21-writable-cache"])
+        "driver-text-bias", "qwen21-writable-cache"])
 def test_the_moss_and_carrier_refusals_land_on_their_own_entries(monkeypatch, raise_it, title):
     with pytest.raises(UnsupportedModelError) as caught:
-        if raise_it in (_multiplier_one, _driver_references):
+        if raise_it in (_multiplier_one, _driver_references, _driver_text_bias):
             raise_it(monkeypatch)
         else:
             raise_it()
