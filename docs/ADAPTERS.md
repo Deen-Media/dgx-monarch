@@ -1214,6 +1214,9 @@ than stacks on a repeat call.
    the same point, as the driver refuses it under sequence parallelism before
    dispatch, and an all-zero one, which adds nothing in stock, runs without it
    ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
+   Before sampling, every Worker rank also reads both prompts of the whole
+   request and refuses an effective bias under sequence parallelism, so
+   uly2+cfg2 refuses on every rank alike when the driver cannot read the header.
    A block called with no row count, as stock's `preprocess_refs` calls each
    block, runs stock's own code with its reference arguments.
    single, cfg2 and dp2 bind no forward and run stock's. On every load

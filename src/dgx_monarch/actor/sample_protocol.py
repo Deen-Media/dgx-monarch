@@ -147,6 +147,28 @@ def dual_model_cfg2_slot(worker, request: dict) -> str | None:
     return "cond" if cfg_rank() == 0 else "uncond"
 
 
+def refuse_moss_image_attention_bias(worker, request: dict, family: str | None) -> None:
+    """Refuse a MOSS-Image text attention bias under sequence parallelism on every rank (#135).
+
+    The driver refuses it before dispatch only when it can read the checkpoint
+    header (nodes/model_patch_preflight.py). Here each rank reads both prompts
+    of the whole request with the driver's own scan, and decides on the loaded
+    model's family and its own topology. Every rank holds the same request,
+    family and topology, and the scan issues no collective, so on uly2+cfg2 a
+    bias on one prompt refuses every rank alike, where the sharded forward
+    would refuse in one cfg group while the other waited at the cfg gather.
+    single, cfg2 and dp2 run stock's forward with the bias, so they pass.
+    """
+    topo = getattr(worker, "topology", {}) or {}
+    if int(topo.get("ulysses", 1)) * int(topo.get("ring", 1)) <= 1 or family != "moss_image":
+        return
+    from ..adapters.base import UnsupportedModelError
+    from ..adapters.moss_image_seams import CONTEXT_ATTENTION_BIAS_REFUSAL, carries_context_attention_bias
+
+    if carries_context_attention_bias(request):
+        raise UnsupportedModelError(CONTEXT_ATTENTION_BIAS_REFUSAL)
+
+
 def run_sample(
     worker,
     request: dict,
@@ -289,6 +311,12 @@ def run_sample(
         # not. Outside the try so its own refusal is never re-caught above.
         readiness.ready_or_raise()
     raise_if_sample_cancelled(cancel_event)
+    # Class P on the resident the load guard read (#135). Every rank holds the
+    # same request, topology and family and issues no collective here, so a
+    # sharded MOSS-Image bias refuses every rank together before the sampler's
+    # first collective; a readiness exchange, where one runs, every rank has
+    # already crossed alike.
+    refuse_moss_image_attention_bias(worker, request, getattr(resident, "family", None))
 
     # Opt-in proof only: full-content file identities are stable-read after
     # ModelStore has adopted and checked every requested resident, but before
