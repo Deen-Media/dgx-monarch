@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import contextmanager
 from copy import deepcopy
 
 import pytest
@@ -11,9 +12,10 @@ from aiohttp.test_utils import TestServer
 
 from dgx_monarch.studio import job_artifacts, reconcile
 from dgx_monarch.studio.comfy import ComfyClient
-from dgx_monarch.studio.contracts import MAX_BODY_BYTES, StudioError
+from dgx_monarch.studio.contracts import MAX_BODY_BYTES, TERMINAL_STATES, StudioError
 from dgx_monarch.studio.jobs import Jobs
 from dgx_monarch.studio.store import Store
+from dgx_monarch.studio.wire_records import snapshot_window
 
 
 class Driver:
@@ -407,6 +409,30 @@ def test_artifact_time_is_the_driver_completion_time_with_its_source(store):
     asyncio.run(Jobs(store, driver).reconcile())
     other = next(row for row in store.all("artifacts") if row["job_id"] == "other")
     assert other["created_at_source"] == "companion_observation" and other["created_at"] == other["observed_at"]
+
+
+def test_no_snapshot_lists_a_settled_job_before_its_outputs(store, monkeypatch):
+    """Settlement runs on a worker thread, and the snapshot route reads between its commits.
+
+    A client that sees a job succeed reads its outputs from that same snapshot,
+    so settlement must commit the artifacts before the terminal state.
+    """
+    saved(store, "job", "running", "prompt")
+    driver = Driver()
+    driver.history = {"prompt": completed("prompt")}
+    begin, views = store.transaction, []
+
+    @contextmanager
+    def observed():
+        with begin():
+            yield
+        rows, _omitted, _cursor = snapshot_window(store)
+        views.append(({row["id"]: row["state"] for row in rows["jobs"]}, [row["job_id"] for row in rows["artifacts"]]))
+    monkeypatch.setattr(store, "transaction", observed)
+    asyncio.run(Jobs(store, driver).reconcile())
+    early = [view for view in views if view[0].get("job") in TERMINAL_STATES and "job" not in view[1]]
+    assert not early, views
+    assert views[-1] == ({"job": "succeeded"}, ["job"])
 
 
 def test_driver_history_window_is_reported(store):

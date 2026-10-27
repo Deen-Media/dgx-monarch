@@ -129,7 +129,9 @@ async def reconcile_cycle(owner: Jobs) -> None:
             # A long queue of large graphs can pass the response budget while
             # the driver is healthy. Without a queue snapshot nothing is absent.
             queue, queue_state = None, {"state": "over_budget", "code": exc.code}
-        owner.driver = {"state": "connected", "timestamp": timestamp(), "queue": queue_state}
+        # The snapshot route reads owner.driver at every await below, so this
+        # cycle builds its report here and publishes it once, when it ends.
+        driver: dict[str, Any] = {"state": "connected", "timestamp": timestamp(), "queue": queue_state}
         active: set[str] = set()
         for state, key in (("running", "queue_running"), ("queued", "queue_pending")):
             rows = queue.get(key, []) if queue is not None else []
@@ -146,23 +148,20 @@ async def reconcile_cycle(owner: Jobs) -> None:
             history = await client.request("GET", "/history")
             if not isinstance(history, dict):
                 raise StudioError("driver_schema", "Driver history snapshot is malformed.", 502)
-            owner.driver["history"] = {"state": "connected", "limit": getattr(client, "history_limit", None)}
+            driver["history"] = {"state": "connected", "limit": getattr(client, "history_limit", None)}
         except StudioError as exc:
             # A large or unavailable history must not hide the queue that
             # was observed successfully. Exact known identities can still
             # reconcile through the per-prompt route below.
             history = {}
-            owner.driver["history"] = {"state": "unavailable", "code": exc.code, "limit": getattr(client, "history_limit", None)}
+            driver["history"] = {"state": "unavailable", "code": exc.code, "limit": getattr(client, "history_limit", None)}
         outcomes = await _lookups(owner, known, history, active)
         in_flight = frozenset(getattr(owner, "cancel_dispatches", ()))
         await blocking(_settle, owner, history, known, quarantined,
                        outcomes if queue is not None else {}, snapshot_at, in_flight)
         if quarantined:
-            owner.driver["quarantine"] = {"count": len(quarantined), "rows": quarantined[:QUARANTINE_ROWS],
-                                          "reason": "Driver rows that could not be read were skipped; other jobs reconciled."}
-        events_fault = getattr(owner, "events_fault", None)
-        if events_fault:
-            owner.driver["events"] = dict(events_fault)
+            driver["quarantine"] = {"count": len(quarantined), "rows": quarantined[:QUARANTINE_ROWS],
+                                    "reason": "Driver rows that could not be read were skipped; other jobs reconciled."}
         await owner.runtime_events.poll()
         owner.telemetry["runtime_events"] = owner.runtime_events.status
         try:
@@ -172,6 +171,11 @@ async def reconcile_cycle(owner: Jobs) -> None:
             owner.telemetry_clock = time.monotonic()
         except StudioError:
             owner.telemetry = {**owner.telemetry, "state": "stale" if owner.telemetry else "unavailable"}
+        # Read the event watcher's fault after the last await, so the report is current.
+        events_fault = getattr(owner, "events_fault", None)
+        if events_fault:
+            driver["events"] = dict(events_fault)
+        owner.driver = driver
     except StudioError as exc:
         owner.degrade(exc.code)
 
@@ -240,12 +244,15 @@ def _settle_entry(owner: Jobs, prompt_id: str, value: Any, known: dict[str, Any]
     types = {row[0] for row in messages if isinstance(row, list) and row and isinstance(row[0], str)}
     state = "cancelled" if "execution_interrupted" in types else "failed" if status.get("status_str") == "error" else (
         "succeeded" if status.get("completed") is True else "unknown")
+    # Store the outputs before any write that can make the job terminal. This
+    # runs on a worker thread and the snapshot route reads between its commits,
+    # so a job that reads as succeeded must already list its artifacts.
+    # Record the digest last, so the next cycle retries an interrupted settlement.
+    import_artifacts(store, job["id"], value.get("outputs", {}), state=state,
+                     completed_at=completion_time(messages), prompt_id=prompt_id)
     for message in messages:
         if isinstance(message, (list, tuple)) and len(message) == 2 and isinstance(message[1], dict):
             owner.consume_event({"type": message[0], "data": message[1]}, known=known)
-    # Import before recording the digest, so an interrupted import is retried.
-    import_artifacts(store, job["id"], value.get("outputs", {}), state=state,
-                     completed_at=completion_time(messages), prompt_id=prompt_id)
     updates: dict[str, Any] = {"state": state, "prompt_id": prompt_id, "backend_status": status, "progress": None,
                                "reconciliation": {"source": "driver_history", "digest": settled}}
     if job.get("absent") or job.get("absence"):

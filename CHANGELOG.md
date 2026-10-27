@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Everyday use
+
+- Studio history settlement stores a finished job's artifacts before it
+  writes the job's terminal state, so a snapshot never shows a succeeded job
+  without its outputs. This fixes the rare HTTP smoke test failure in which
+  the snapshot route read between those two commits.
+- The Studio observer publishes its driver state once per completed cycle,
+  so a snapshot never reports the driver connected before the cycle that
+  observed it has finished, and a lasting event-watcher fault no longer
+  blinks off and on mid-cycle.
+
 ### Installation and updates
 
 - `dgxm update`, guided service setup and the Comfy updater's verify step no
