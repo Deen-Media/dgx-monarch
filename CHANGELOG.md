@@ -22,6 +22,14 @@
   ComfyUI's own forward, and text-to-image renders are unaffected. The comfy
   canary's signature contract and seam checks follow the same tree, so the
   daily canary runs green on ComfyUI master again.
+- A hardware run on ComfyUI v0.43.0 on 2026-10-27 observed the MOSS-Image
+  text attention bias refusal (#135) at the driver before dispatch on uly2 and
+  ring2, and the next render on the same fleet matched stock with no Recycle.
+  With the bias, renders on single and cfg2 and row 0 of a dp2 batch were
+  bit-identical to stock on one GPU at one step and over 50 steps, and
+  text-to-image uly2 stayed bit-identical to one GPU at one step and over
+  50 steps, and to stock at one step
+  ([VALIDATION](docs/VALIDATION.md#moss-image-bias-on-comfyui-426f5eea)).
 
 ### Rendering
 
