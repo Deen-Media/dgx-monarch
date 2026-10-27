@@ -134,13 +134,16 @@ The seams, in run order:
                               since 60aade0bb, the reference keys the edit node
                               sets, the latents extra_conds hands the forward
                               outside inference mode, and the keys and values
-                              it caches inside it
+                              it caches inside it; since 9fe7ef764, the text
+                              bias the node sets, published as CONDRegular
  43. moss_image block surface  the two fused-norm calls a block makes, directly
                               or through modulate, which equals the norm with
                               no reference, the rotary table, the [image, text]
                               join, the block keys, the replace call, the
                               malloc graph and the attention call shape the
-                              sharded forward re-runs
+                              sharded forward re-runs; since 9fe7ef764, the
+                              text bias as a key mask, where all zeros change
+                              no bit
  44. skip layer guidance simple  the stock node's widgets, and the two
                               single-cond calls with an identity skip it makes
                               inside its window, one call outside or at CFG 1
@@ -4967,7 +4970,11 @@ def _assert_moss_image_reference_conds(base) -> None:
     collective. A Worker samples on a thread outside inference mode, so the
     adapter's ``prepare_base_model`` runs stock ``extra_conds`` under it
     (adapters/moss_image.py): from a fresh thread the bound call must return
-    stock's in-mode output for every method, with no inference tensor.
+    stock's in-mode output for every method, with no inference tensor. Since
+    9fe7ef764 the node also sets ``context_attention_bias`` from its
+    ``image_strength``, and extra_conds publishes it as a CONDRegular for the
+    forward's parameter of that name, which the sharded forward refuses
+    unless it is all zeros (#135).
     """
     import inspect
     from concurrent.futures import ThreadPoolExecutor
@@ -4984,20 +4991,33 @@ def _assert_moss_image_reference_conds(base) -> None:
     assert '"reference_latents"' in source and '"reference_latents_method"' in source, (
         "moss_image conds seam: the edit node no longer sets reference_latents and "
         "reference_latents_method, the keys the driver preflight reads")
+    # 9fe7ef764's text bias: the #135 refusal names the node and this widget.
+    widgets = {item.id: item for item in edit.define_schema().inputs}
+    assert '"context_attention_bias"' in source and getattr(
+        widgets.get("image_strength"), "default", None) == 1.0, (
+        "moss_image conds seam: the edit node no longer sets context_attention_bias from an "
+        "image_strength that defaults to 1.0, as the #135 refusal says")
     assert "torch.is_inference_mode_enabled()" in inspect.getsource(
         comfy.model_base.MOSSImage.extra_conds), (
         "moss_image conds seam: extra_conds no longer gates its reference cache on inference "
         "mode, so a Worker may now run preprocess_refs outside the forward")
     dm = base.diffusion_model
     names = tuple(inspect.signature(type(dm)._forward).parameters)
-    assert names[5:8] == ("ref_latents", "ref_latents_method", "ref_kv"), (
-        f"moss_image conds seam: the forward's reference parameters are now {names}")
+    assert names[5:] == ("ref_latents", "ref_latents_method", "ref_kv", "context_attention_bias",
+                         "kwargs"), (
+        f"moss_image conds seam: the forward's reference and bias parameters are now {names}")
 
     cpu = torch.device("cpu")
     generator = torch.Generator().manual_seed(7)
     context = torch.randn(1, 10, 4096, generator=generator)
     refs = [torch.randn(1, 128, 2, 2, generator=generator)]
     noise = torch.zeros(1, 128, 4, 4)
+    bias = torch.zeros(1, 10)
+    published = base.extra_conds(cross_attn=context, noise=noise, device=cpu,
+                                 context_attention_bias=bias).get("context_attention_bias")
+    assert type(published) is comfy.conds.CONDRegular and published.cond is bias, (
+        f"moss_image conds seam: extra_conds publishes the text bias as {published}, "
+        "not a CONDRegular holding it")
     ran: list = []
     stock = dm.preprocess_refs
     dm.preprocess_refs = lambda latents, *args, **kwargs: ran.append(len(latents)) or stock(
@@ -5069,20 +5089,23 @@ def _assert_moss_image_block_surface_seam() -> None:
     ``mod[i]`` as shift, as ``residual`` returns ``gated_residual``'s. Pinned on a
     tiny real MOSSImage: ``Block.forward`` reads one known form and makes exactly
     two norm calls over its whole stream with ``[B, 1, D]`` modulation; the
-    text embedder calls its blocks positionally; ``_forward`` builds one table
-    for all N rows with a known ``rope`` form, hands the text embedder its last
-    T rows, joins ``[image, text]``, sets ``total_blocks`` and ``block_type``
-    before the prefetch queue and ``block_index`` before the replace lookup,
-    calls a ``("single_block", i)`` patch with five keys and
-    ``original_block``, hands each block no reference (none, or None twice on
-    the later form), opens and closes the malloc graph around the loop, and
-    runs the head norm on the image rows; with no reference, the later rope
+    text embedder calls its blocks positionally, with a None mask fourth since
+    ComfyUI 9fe7ef764; ``_forward`` builds one table for all N rows with a
+    known ``rope`` form, hands the text embedder its last T rows, joins
+    ``[image, text]``, sets ``total_blocks`` and ``block_type`` before the
+    prefetch queue and ``block_index`` before the replace lookup, calls a
+    ``("single_block", i)`` patch with five keys and ``original_block``, hands
+    each block no reference (none, or None twice on the later form) and, since
+    9fe7ef764, ``mask=None``, opens and closes the malloc graph around the
+    loop, and runs the head norm on the image rows; with no reference, the later rope
     form gets an empty shape list and offset 0; the table is ``[1, N, 1, 64, 2, 2]``,
     contiguous, image rows first; master's ``rope`` reads ``rope_options``; an
     identity skip equals dropping the block; ``attention()`` hands
     ``optimized_attention`` (q, k, v, heads) plus ``transformer_options`` and
-    ``preferred_attention``; no ``patches`` hook is read; ComfyUI's own skip
-    passes the identity test the vetting runs on this interpreter.
+    ``preferred_attention``, and a None ``mask`` since 9fe7ef764; no
+    ``patches`` hook is read; ComfyUI's own skip passes the identity test the
+    vetting runs on this interpreter. On that tree the text bias is the key
+    mask ``_assert_moss_text_bias_is_a_key_mask`` pins.
     """
     import copy
 
@@ -5108,6 +5131,8 @@ def _assert_moss_image_block_surface_seam() -> None:
     rope_call(model)    # refuses class P on a fourth rope form
     if route == "modulate":
         _assert_moss_modulate_is_the_norm(moss, model)
+    # ComfyUI 9fe7ef764 added the text bias; every call it touches then names a mask.
+    takes_bias = "context_attention_bias" in inspect.signature(moss.MOSSImage._forward).parameters
     x, timestep, context = _moss_inputs()
     hw, text = x.shape[2] * x.shape[3], context.shape[1]
     rows = hw + text
@@ -5122,7 +5147,7 @@ def _assert_moss_image_block_surface_seam() -> None:
         return saved["modulated_rms_norm"](x, norm_module, scale, shift)
 
     def attention(*args, **kwargs):
-        seen["attention"].append((len(args), sorted(kwargs)))
+        seen["attention"].append((len(args), sorted(kwargs), kwargs.get("mask") is None))
         return saved["optimized_attention"](*args, **kwargs)
 
     def make_prefetch_queue(queue, device, options):
@@ -5157,12 +5182,13 @@ def _assert_moss_image_block_surface_seam() -> None:
         captured.setdefault(name, value.detach().clone())
 
     def text_block(module, args, kwargs):
-        seen["text_blocks"].append((len(args), sorted(kwargs)))
+        seen["text_blocks"].append((len(args), sorted(kwargs), args[3:]))
 
     block_args: list = []
     hooks = [
         model.layers[0].register_forward_pre_hook(
-            lambda module, args, kwargs: block_args.append((args[4:], sorted(kwargs))), with_kwargs=True),
+            lambda module, args, kwargs: block_args.append(
+                (args[4:], sorted(kwargs), kwargs.get("mask") is None)), with_kwargs=True),
         model.video_embedder.register_forward_hook(lambda module, args, out: keep("image", out)),
         model.text_embedder.register_forward_pre_hook(lambda module, args: keep("text_pe", args[1])),
         model.text_embedder.register_forward_hook(lambda module, args, out: keep("text", out)),
@@ -5198,15 +5224,18 @@ def _assert_moss_image_block_surface_seam() -> None:
     assert seen["norms"] == [((1, rows, width), (1, 1, width), (1, 1, width))] * (2 * blocks) + [
         ((1, hw, width), (1, 1, width), (1, 1, width))], (
         f"moss_image block surface: the fused-norm calls are now {seen['norms']}")
-    assert seen["text_blocks"] == [(3, [])] * len(model.text_embedder.blocks), (
+    text_call = (4, [], (None,)) if takes_bias else (3, [], ())
+    assert seen["text_blocks"] == [text_call] * len(model.text_embedder.blocks), (
         "moss_image block surface: TextEmbedder no longer calls its blocks positionally with "
-        f"(x, pe, transformer_options): {seen['text_blocks']}")
+        f"(x, pe, transformer_options{', None' if takes_bias else ''}): {seen['text_blocks']}")
     assert len(seen["ropes"]) == 1 and seen["ropes"][0][0] in (4, 5, 7), (
         f"moss_image block surface: _forward built {len(seen['ropes'])} rotary tables")
     assert seen["ropes"][0][2] in ((), ([], 0)), (
         f"moss_image block surface: with no reference stock's rope now gets {seen['ropes'][0][2]}")
-    assert block_args in ([((), [])], [((None, None), [])]), (
-        f"moss_image block surface: with no reference a block now gets {block_args}")
+    plain_calls = [[((None, None), ["mask"], True)]] if takes_bias else [
+        [((), [], True)], [((None, None), [], True)]]
+    assert block_args in plain_calls, (
+        f"moss_image block surface: with no reference or bias a block now gets {block_args}")
     table = seen["ropes"][0][1]
     assert tuple(table.shape) == (1, rows, 1, 64, 2, 2) and table.is_contiguous() and (
         table.dtype == torch.float32), (
@@ -5235,7 +5264,8 @@ def _assert_moss_image_block_surface_seam() -> None:
     assert seen["replace"] == [(["img", "mod", "pe", "transformer_options", "vec"],
                                 ["original_block"], 1)], (
         f"moss_image block surface: a single_block patch now gets {seen['replace']}")
-    assert seen["attention"] == [(4, ["preferred_attention", "transformer_options"])] * (
+    keywords = (["mask"] if takes_bias else []) + ["preferred_attention", "transformer_options"]
+    assert seen["attention"] == [(4, keywords, True)] * (
         blocks + len(model.text_embedder.blocks)), (
         f"moss_image block surface: attention() now hands optimized_attention {seen['attention']}")
     assert out.shape == x.shape, f"moss_image block surface: the output is {tuple(out.shape)}"
@@ -5244,6 +5274,8 @@ def _assert_moss_image_block_surface_seam() -> None:
         moved = stock_rope(model, 3, 3, text, torch.device("cpu"), {"rope_options": {"shift_t": 1.0}})
         assert not torch.equal(moved, table), (
             "moss_image block surface: master's rope no longer reads rope_options")
+    if takes_bias:
+        _assert_moss_text_bias_is_a_key_mask(moss, model, x, timestep, context)
 
     _patched, _conds, calls, _result = _moss_slg_step(_tiny_moss_patcher(), 0.5)
     skip = calls[1][1]["transformer_options"]["patches_replace"]["dit"][("single_block", 1)]
@@ -5296,6 +5328,66 @@ def _assert_moss_modulate_is_the_norm(moss, model) -> None:
         assert torch.equal(split[:, :4], moss.modulated_rms_norm(x[:, :4], norm, mod[1], mod[0])) and (
             not torch.equal(split[:, 4:], moss.modulated_rms_norm(x[:, 4:], norm, mod[1], mod[0]))), (
             "moss_image block surface: a reference split no longer modulates the rows past it apart")
+
+
+def _assert_moss_text_bias_is_a_key_mask(moss, model, x, timestep, context) -> None:
+    """Since 9fe7ef764: the text bias is an additive mask on the text keys alone.
+
+    Stock hands each text block ``bias[:, None, None]`` and each block the bias
+    padded with zeros over the image rows, ``[B, 1, 1, N]``, and ``attention()``
+    hands either to ``optimized_attention`` as ``mask``, so every query's logits
+    for the text keys move and the image keys' do not. The sharded kernel takes
+    no such mask, so the sharded forward refuses a bias (#135); an all-zero one
+    returns stock's unbiased bits, so the sharded forward drops it instead.
+    """
+    import torch
+
+    hw, text = x.shape[2] * x.shape[3], context.shape[1]
+    bias = torch.zeros(1, text)
+    bias[:, 1:3] = -1.5
+    masks: dict = {"text": [], "blocks": [], "attention": []}
+    stock_attention = moss.optimized_attention
+
+    def attention(*args, **kwargs):
+        masks["attention"].append(kwargs.get("mask"))
+        return stock_attention(*args, **kwargs)
+
+    hooks = [block.register_forward_pre_hook(lambda module, args: masks["text"].append(args[3]))
+             for block in model.text_embedder.blocks] + [
+        block.register_forward_pre_hook(
+            lambda module, args, kwargs: masks["blocks"].append(kwargs.get("mask")), with_kwargs=True)
+        for block in model.layers]
+    moss.optimized_attention = attention
+    try:
+        with torch.no_grad():
+            biased = model(x, timestep, context, transformer_options={}, context_attention_bias=bias)
+    finally:
+        for hook in hooks:
+            hook.remove()
+        moss.optimized_attention = stock_attention
+    text_mask = bias[:, None, None]
+    joint_mask = torch.cat((torch.zeros(1, hw), bias), dim=1)[:, None, None]
+    texts, blocks = len(model.text_embedder.blocks), len(model.layers)
+    assert len(masks["text"]) == texts and all(
+        torch.is_tensor(mask) and torch.equal(mask, text_mask) for mask in masks["text"]), (
+        f"moss_image block surface: the text blocks now get masks {masks['text']}, not bias[:, None, None]")
+    assert len(masks["blocks"]) == blocks and all(
+        torch.is_tensor(mask) and torch.equal(mask, joint_mask) for mask in masks["blocks"]), (
+        "moss_image block surface: the blocks no longer get the bias padded with zeros over the "
+        f"image rows: {masks['blocks']}")
+    expected = [text_mask] * texts + [joint_mask] * blocks
+    assert len(masks["attention"]) == len(expected) and all(
+        torch.is_tensor(mask) and torch.equal(mask, want)
+        for mask, want in zip(masks["attention"], expected, strict=True)), (
+        "moss_image block surface: attention() no longer hands optimized_attention the bias as mask")
+    with torch.no_grad():
+        plain = model(x, timestep, context, transformer_options={})
+        zero = model(x, timestep, context, transformer_options={},
+                     context_attention_bias=torch.zeros(1, text))
+    assert torch.equal(zero, plain), (
+        "moss_image block surface: an all-zero text bias no longer returns the unbiased bits")
+    assert not torch.equal(biased, plain), (
+        "moss_image block surface: a text bias no longer moves the output")
 
 
 def _assert_skip_layer_guidance_simple_seam() -> None:

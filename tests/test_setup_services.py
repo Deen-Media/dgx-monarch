@@ -6,7 +6,9 @@ import re
 import stat
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -442,6 +444,59 @@ def test_comfy_candidate_scan_refuses_incomplete_process_rows(monkeypatch: pytes
         lambda _attrs, *, ad_value: (Process(["python", "main.py", "--port", "8188"]),)
     )
     assert platform.comfy_ports.comfy_candidate_count() == 1
+
+
+def test_comfy_candidate_scan_skips_dead_rows_but_not_denied_ones(monkeypatch: pytest.MonkeyPatch) -> None:
+    """psutil hands back ad_value for a zombie as well as for a denied read.
+
+    A zombie, or a process that exits before the scan reads it again, cannot be
+    ComfyUI, so the scan skips it and keeps counting. A denied read, or a row
+    the scan cannot classify, still leaves the count unknown.
+    """
+
+    # Real psutil derives ZombieProcess from NoSuchProcess. These do not share
+    # a base, so the scan must name both.
+    class ZombieProcess(Exception):
+        pass
+
+    class NoSuchProcess(Exception):
+        pass
+
+    class AccessDenied(Exception):
+        pass
+
+    class Process:
+        def __init__(self, command: object, reread: object = None) -> None:
+            self.info = {"cmdline": command}
+            self.reread = reread
+
+        def cmdline(self) -> object:
+            if isinstance(self.reread, Exception):
+                raise self.reread
+            return self.reread
+
+    def scan(rows: Callable[[object], list[object]]) -> int | None:
+        psutil = SimpleNamespace(
+            ZombieProcess=ZombieProcess,
+            NoSuchProcess=NoSuchProcess,
+            AccessDenied=AccessDenied,
+            process_iter=lambda _attrs, *, ad_value: rows(ad_value),
+        )
+        monkeypatch.setitem(sys.modules, "psutil", psutil)
+        return platform.comfy_ports.comfy_candidate_count()
+
+    comfy = ["python", "main.py", "--port", "8188"]
+    # The scan skips a zombie or vanished row and counts the row after it.
+    assert scan(lambda withheld: [Process(withheld, ZombieProcess()), Process(comfy)]) == 1
+    assert scan(lambda withheld: [Process(withheld, NoSuchProcess()), Process(comfy)]) == 1
+    # A withheld row that reads cleanly the second time counts as usual.
+    assert scan(lambda withheld: [Process(withheld, comfy)]) == 1
+    # A denied read leaves the count unknown, even after a Comfy row.
+    assert scan(lambda withheld: [Process(comfy), Process(withheld, AccessDenied())]) is None
+    # So does a row with no command line to read again.
+    assert scan(lambda withheld: [
+        Process(withheld, ZombieProcess()), SimpleNamespace(info={"cmdline": withheld}),
+    ]) is None
 
 
 def test_platform_stages_all_hosts_into_exact_slots_and_compensates(

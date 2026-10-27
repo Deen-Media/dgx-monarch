@@ -9,9 +9,9 @@ the vetting of ``("single_block", i)`` replacements (an identity function, read
 from its bytecode, or a callable marked ``sequence_shard_local``), the window
 cut with its pad rows, the fused-norm route that launches both of a block's
 norm calls at stock's row count (FLUX.3's ``at_stock_rows``, prefix placement),
-the attention ledger and the refusal of reference images. Every raise sits in
-its own module-level function and goes through ``refusal()``, class P. Nothing
-imports ComfyUI at module level.
+the attention ledger and the refusals of reference images and of a text
+attention bias. Every raise sits in its own module-level function and goes
+through ``refusal()``, class P. Nothing imports ComfyUI at module level.
 
 ComfyUI 60aade0bb (2026-10-22) added reference images for edit LoRAs. Its
 ``Block.forward`` reaches the fused norm through ``modulate`` and the gated
@@ -19,7 +19,11 @@ residual through ``residual``, both module globals, where the earlier form
 calls ``modulated_rms_norm`` and ``gated_residual`` itself; without a reference
 split the two forms run the same calls. ``rope`` gained the reference shapes
 and the f offset, and ``_forward`` the reference arguments. Both trees are
-supported: the route follows whichever global the block reads.
+supported: the route follows whichever global the block reads. ComfyUI
+9fe7ef764 (2026-10-23) added ``context_attention_bias``, an additive logit
+bias on the text keys that the edit node sets from its image_strength;
+067f85330 (2026-10-24) frees tensors sooner in ``Block.forward``, which makes
+the same calls in the same order.
 """
 from __future__ import annotations
 
@@ -35,7 +39,7 @@ import torch
 from ..refusal import RefusalClass, refusal
 from .attention_inputs import refuse_unadopted_keywords
 from .attention_patches import SEQUENCE_SHARD_LOCAL_CAPABILITY, _has_capability
-from .base import UnsupportedModelError, padded_row_indices, shard_seq
+from .base import UnsupportedModelError, _mask_is_noop, padded_row_indices, shard_seq
 from .flux3_adaln_parity import at_stock_rows, loads_global, route_global
 
 MOSS_MODEL_MODULE = "comfy.ldm.moss_image.model"
@@ -358,6 +362,35 @@ def refuse_reference_images(*values: Any) -> None:
     if not any(_carries(value) for value in values):
         return
     raise UnsupportedModelError(REFERENCE_IMAGES_REFUSAL)
+
+
+# The sharded forward alone raises this: cfg2 and dp2 bind no forward, so
+# stock's own applies the bias there.
+CONTEXT_ATTENTION_BIAS_REFUSAL = refusal(
+    RefusalClass.PHYSICS,
+    "moss_image: this render carries an attention bias on its text tokens, which ComfyUI's Text "
+    "Encode MOSS-Image Edit node (TextEncodeMOSSImageEdit) attaches when its image_strength is not "
+    "1.0. Stock MOSS-Image adds the bias to every query's attention logits for those keys, and the "
+    "sharded attention kernel cannot apply an additive key bias, so a sharded render would drop it "
+    "and ignore image_strength. "
+    "Run this workflow on topology 'single' (mode=local with gpus_per_host=1), which runs "
+    "ComfyUI's own forward, or in plain ComfyUI on one GPU instead.",
+    troubleshooting=135,
+)
+
+
+def refuse_context_attention_bias(bias: Any) -> None:
+    """Refuse an effective text attention bias on every rank alike, before any collective (#135).
+
+    None and an all-zero floating bias pass: stock adds zero to every logit,
+    so the forward runs without it. Anything else refuses, so no bias is ever
+    dropped unread: a boolean one too, which stock pads with False into a
+    mask that hides the image keys, and a value that is not a tensor.
+    """
+    if bias is None or (isinstance(bias, torch.Tensor) and bias.is_floating_point()
+                        and _mask_is_noop(bias)):
+        return
+    raise UnsupportedModelError(CONTEXT_ATTENTION_BIAS_REFUSAL)
 
 
 def worker_on_one_gpu() -> bool:

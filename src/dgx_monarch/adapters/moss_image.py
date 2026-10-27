@@ -28,16 +28,24 @@ block-scope pops are kept. A padded ring or hybrid render refuses class K.
 Reference images (ComfyUI 60aade0bb's edit LoRA support) refuse class P on
 every rank before any collective, as the driver refuses them on every topology
 but one GPU before dispatch (adapters/moss_image_seams.py names why). The
-reference method alone changes nothing in stock and is ignored here too.
+reference method alone changes nothing in stock and is ignored here too. The
+forward names ``context_attention_bias`` (ComfyUI 9fe7ef764), the logit bias
+on the text keys that the edit node attaches when its image_strength is not
+1.0, so it never falls into ``**kwargs`` unread. The sharded kernel cannot add
+a bias to its logits, so an effective one refuses class P at the same point
+(#135); an all-zero one adds nothing in stock, and the forward runs without
+it. The driver does not read the bias before dispatch.
 
 single, cfg2 and dp2 bind no forward and run stock's. On every topology
 ``prepare_base_model`` runs stock's ``extra_conds`` under inference mode, as
 FLUX.3's does, so a one-GPU edit takes stock's once-per-conditioning cache of
 the references' keys and values. Off one GPU that bind refuses reference
 images first, before stock's method runs a block over them, so a driver that
-cannot read the header still refuses on every topology. No pad is exact on
-cfg2 (image rows sit at RoPE f = T and the joint attention has no mask), so an
-unequal prompt pair dispatches one cond per rank. ``cfg_dispatch.
+cannot read the header still refuses on every topology. It does not refuse
+the bias: stock's method only wraps it in a CONDRegular and runs no block, and
+cfg2 and dp2 apply it in stock's forward as one GPU does. No pad is exact on
+cfg2 (image rows sit at RoPE f = T and the joint attention has no padding
+mask), so an unequal prompt pair dispatches one cond per rank. ``cfg_dispatch.
 cross_attn_pair_folds`` models CONDCrossAttn's repeat rule and overstates
 MOSS-Image folding (CONDRegular folds only at equal shapes); it decides only
 NVFP4's cfg scale, which this family refuses under sharding, so a later NVFP4
@@ -58,6 +66,7 @@ from .moss_image_seams import (
     AttentionLedger,
     assert_stock_tree,
     bind_norm_parity,
+    refuse_context_attention_bias,
     refuse_control_channels,
     refuse_reference_images,
     refuse_reshaped_block_rows,
@@ -82,8 +91,8 @@ class MOSSImageAdapter(Adapter):
     family = "moss_image"
     model_base_classes = _MOSS_EXACT
     exact_model_base_classes = _MOSS_EXACT
-    # Image rows sit at RoPE f = T and the joint attention has no mask, so no
-    # driver pad is exact; an unequal pair dispatches.
+    # Image rows sit at RoPE f = T and the joint attention has no padding
+    # mask, so no driver pad is exact; an unequal pair dispatches.
     cfg_cond_padding = "none"
     attention_head_dim = 128
     sp_validated_quants = frozenset({"bf16", "int8"})
@@ -133,7 +142,9 @@ class MOSSImageAdapter(Adapter):
         references its render refuses, and cfg2 and dp2, with or without FSDP,
         which bind no sharded forward, refuse them too. A setup change drops
         every resident, so the process group this reads is the one the load
-        bound under. docs/ADAPTERS.md has the paragraph.
+        bound under. The text attention bias passes through untouched: stock
+        only wraps it, and only the sharded forward refuses it (#135).
+        docs/ADAPTERS.md has the paragraph.
         """
         stock = type(base_model).extra_conds
         reported: list[bool] = []
@@ -165,13 +176,15 @@ class MOSSImageAdapter(Adapter):
         attn = ctx.usp_attention
 
         def usp_forward(self, x, timestep, context, transformer_options={}, ref_latents=None,
-                        ref_latents_method=None, ref_kv=None, **kwargs):
+                        ref_latents_method=None, ref_kv=None, context_attention_bias=None,
+                        **kwargs):
             import comfy.ldm.moss_image.model as moss
             import comfy.model_prefetch
             from comfy.ldm.flux.layers import timestep_embedding
 
             # A. Guards: shapes, options and the tree only, identical on every rank.
             refuse_reference_images(ref_latents, ref_kv)
+            refuse_context_attention_bias(context_attention_bias)
             assert_no_foreign_attention_override(transformer_options, "moss_image")
             assert_usp_attention_patches_safe(transformer_options, "moss_image")
             B, C, H, W = x.shape
