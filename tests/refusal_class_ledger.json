@@ -1137,6 +1137,12 @@
       "waivable": true
     },
     {
+      "site": "nodes/model_patch_preflight.py::preflight_moss_image_attention_bias::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "nodes/model_patch_preflight.py::preflight_moss_image_reference_images::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

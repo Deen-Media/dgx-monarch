@@ -6886,10 +6886,11 @@ stock; as of 2026-10-22 none has run.
 **Symptom:** a `moss_image` render (MOSS-Image SFT, Base or Kromoss) on a
 sequence-parallel topology, such as uly2 or ring2, whose conditioning comes
 from ComfyUI's Text Encode MOSS-Image Edit node with `image_strength` other
-than 1.0 refuses class P on every Worker before the first block, with a
-message that opens "moss_image: this render carries an attention bias on its
-text tokens" and names topology `single` with `mode=local` and
-`gpus_per_host=1`.
+than 1.0 refuses class P before dispatch, with a message that opens
+"moss_image: this render carries an attention bias on its text tokens" and
+names topology `single` with `mode=local` and `gpus_per_host=1`. If the
+driver cannot read the checkpoint header, then on uly2 and ring2 every Worker
+refuses alike with that message before the first block.
 
 **Cause:** ComfyUI commit 9fe7ef764 of 2026-10-23, released in v0.43.0,
 added `image_strength` to the Text Encode MOSS-Image Edit node. When the
@@ -6903,12 +6904,18 @@ to its logits, so a sharded render would drop it and render as if the
 strength were 1.0; this release refuses it instead. With a VAE the edit also
 carries reference images, which refuse first
 ([#130](#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu));
-without one the bias comes alone. The refusal reads only the bias, which
-every rank of the render holds, so on uly2 and ring2 both Workers refuse
-alike before any exchange, and by design the next render runs on the same
-fleet; no hardware test has observed this refusal yet. The driver does not
-read the bias, so it does not refuse before dispatch. An all-zero bias adds
-nothing in stock, and the sharded forward runs without it. On cfg2 and dp2
+without one the bias comes alone. The driver reads the bias from both
+prompts, and the family from the checkpoint header, before dispatch, so the
+refusal costs no Worker call. Because it reads both prompts, it also refuses
+a uly2+cfg2 render with a bias on one prompt alone. That prompt reaches one
+cfg group only, which would refuse in its forward while the other group
+waited at the cfg exchange. If the driver cannot read the header, the
+Workers refuse instead. Their check reads only the bias, which on uly2 and
+ring2 every rank holds, so both Workers refuse alike before any exchange,
+and by design the next render runs on the same fleet. On uly2+cfg2 a bias
+on one prompt alone would then still refuse in one cfg group only. No
+hardware test has observed either refusal yet. An all-zero bias adds nothing in
+stock, and the sharded forward runs without it. On cfg2 and dp2
 the adapter binds no forward, so stock's applies the bias on each GPU; no
 hardware test has measured that either. dgx-monarch 1.3.0 does not know the
 bias: on uly2 and ring2 it drops the bias with no error and renders as if
