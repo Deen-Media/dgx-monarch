@@ -976,7 +976,7 @@ addresses from `192.0.2.0/24`, which the address rule does not match.
 
 ## 26. Comfy canary reports `Comfy touchpoint missing` or `incompatible`
 
-**Symptom:** the scheduled/PR ComfyUI-master job, or a local run of
+**Symptom:** the scheduled/PR comfy-canary job, or a local run of
 `tests/canary/comfy_entrypoint_canary.py`, exits with a dotted Comfy path and
 possibly a missing signature parameter.
 
@@ -989,7 +989,12 @@ compares its exact parameter names, kinds, required/optional status, and
 variadics; drift is incompatible even if the replacement has `**kwargs` and
 Python would accept it silently.
 
-**Fix:** first reproduce against the same Comfy commit with
+**Fix:** compare the job's two entries. The release entry tests the newest
+ComfyUI release tag and changes only when ComfyUI tags a release. A red master
+entry beside a green release entry indicates a change on ComfyUI master. A red
+release entry on the tag of its last green run indicates this repository, or a
+dependency that each run installs at its newest allowed version, such as the
+CPU torch wheel. Then reproduce against the same Comfy commit with
 `COMFYUI_DIR=/path/to/ComfyUI python tests/canary/comfy_entrypoint_canary.py`.
 If the two hosts run different Comfy revisions, align them and retry. If master
 changed, update the affected dgx-monarch call site and its

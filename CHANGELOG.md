@@ -23,6 +23,14 @@
   canary's signature contract and seam checks follow the same tree, so the
   daily canary runs green on ComfyUI master again.
 
+### Development
+
+- The comfy canary runs daily against both ComfyUI master and the newest
+  ComfyUI release tag, as two entries of one job. The release entry changes only when
+  ComfyUI tags a release, so a red master beside a green release points at an
+  upstream change, and a red release on an unchanged tag points at this
+  repository.
+
 ## [1.3.0] - 2026-10-23
 
 **Upgrading from 1.2.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-120): the first update runs the 1.2.0
