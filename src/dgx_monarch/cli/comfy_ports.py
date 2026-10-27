@@ -50,17 +50,38 @@ def looks_like_comfy(cmdline: list) -> bool:
     )
 
 
+class _NeverRaised(Exception):
+    """Stands in for a psutil error class that a stub psutil lacks."""
+
+
 def comfy_candidate_count() -> int | None:
-    """Count Comfy-shaped processes, or return unknown on an incomplete scan."""
+    """Count Comfy-shaped processes, or return unknown on an incomplete scan.
+
+    A zombie, or a process that exits during the scan, cannot be ComfyUI, so
+    the scan skips it. A denied read, or a row the scan cannot classify, still
+    leaves the count unknown.
+    """
     try:
         import psutil
 
-        denied = object()
+        withheld = object()
+        zombie = getattr(psutil, "ZombieProcess", _NeverRaised)
+        gone = getattr(psutil, "NoSuchProcess", _NeverRaised)
+        denied = getattr(psutil, "AccessDenied", _NeverRaised)
         count = 0
-        for process in psutil.process_iter(["cmdline"], ad_value=denied):
-            command = process.info.get("cmdline", denied)
-            if command is denied:
-                return None
+        for process in psutil.process_iter(["cmdline"], ad_value=withheld):
+            command = process.info.get("cmdline", withheld)
+            if command is withheld:
+                # psutil hands back ad_value for a zombie as well as for a
+                # denied read. A zombie exists for an instant whenever any
+                # subprocess on the box exits. Read the command line again to
+                # tell the two apart.
+                try:
+                    command = process.cmdline()
+                except (zombie, gone):
+                    continue
+                except denied:
+                    return None
             if isinstance(command, (list, tuple)) and looks_like_comfy(list(command)):
                 count += 1
     except Exception:

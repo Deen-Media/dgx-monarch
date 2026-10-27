@@ -2,6 +2,27 @@
 
 ## [Unreleased]
 
+### Installation and updates
+
+- `dgxm update`, guided service setup and the Comfy updater's verify step no
+  longer refuse an idle host because a subprocess somewhere on the box exited
+  during the ComfyUI process scan. The scan skips zombie and exited processes;
+  a denied read of a command line still leaves the result unknown.
+
+### Compatibility and verification
+
+- The `moss_image` adapter follows ComfyUI v0.43.0's MOSS-Image forward
+  (commit 9fe7ef764), which takes a text attention bias that the Text Encode
+  MOSS-Image Edit node attaches when its `image_strength` is not 1.0. Under
+  sequence parallelism such a render now refuses class P on every Worker
+  before the first block, because the sharded attention kernel cannot add the
+  bias; 1.3.0 dropped it and rendered as if the strength were 1.0
+  ([#135](docs/TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
+  An all-zero bias still renders, single, cfg2 and dp2 apply the bias in
+  ComfyUI's own forward, and text-to-image renders are unaffected. The comfy
+  canary's signature contract and seam checks follow the same tree, so the
+  daily canary runs green on ComfyUI master again.
+
 ## [1.3.0] - 2026-10-23
 
 **Upgrading from 1.2.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-120): the first update runs the 1.2.0

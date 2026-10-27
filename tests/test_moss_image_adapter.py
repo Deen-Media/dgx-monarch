@@ -14,6 +14,7 @@ quantization gate. The registry rows (adapters/__init__.py) are the lead's.
 """
 from __future__ import annotations
 
+import inspect
 import sys
 import types
 
@@ -30,7 +31,10 @@ from dgx_monarch.adapters.attention_patches import (
 from dgx_monarch.adapters.base import InjectionContext, UnsupportedModelError
 from dgx_monarch.adapters.cfg_parallel import assert_sp_quant_supported
 from dgx_monarch.adapters.moss_image import MOSSImageAdapter
+from dgx_monarch.adapters.moss_image_seams import CONTEXT_ATTENTION_BIAS_REFUSAL
 from dgx_monarch.adapters.stock_attention import default_attention_override
+from dgx_monarch.comfy_rebound_signatures import REBOUND_METHOD_CONTRACTS
+from dgx_monarch.comfy_rebound_validation import rebound_signature_incompatibility
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
 from fake_model_base_helpers import install_fake_model_base
 from test_moss_image_seams import (
@@ -42,6 +46,9 @@ from test_moss_image_seams import (
 )
 
 D = fakes.D
+CONTRACT = next(contract for contract in REBOUND_METHOD_CONTRACTS
+                if contract.path == "comfy.ldm.moss_image.model.MOSSImage._forward")
+_VARIADIC = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
 
 
 def _tag(exc: BaseException):
@@ -150,14 +157,19 @@ def _injected(attention, layers: int = 3) -> FakeMOSSImage:
     return model
 
 
-def _run(model, grid=(2, 2), text=3, options=None, channels=None, batch=1):
+def _run(model, grid=(2, 2), text=3, options=None, channels=None, batch=1, **forward_kwargs):
     x = torch.randn(batch, channels or model.latent_channels, *grid)
     context = torch.randn(batch, text, D)
     NORM_CALLS.clear()
     ATTENTION_CALLS.clear()
     with torch.no_grad():
         return model._forward(x, torch.tensor([0.5] * batch), context,
-                              transformer_options=dict(options or {}))
+                              transformer_options=dict(options or {}), **forward_kwargs)
+
+
+def _explicit(function) -> list[str]:
+    return [name for name, parameter in inspect.signature(function).parameters.items()
+            if parameter.kind not in _VARIADIC]
 
 
 def test_inject_checks_then_binds_every_block_and_the_forward(monkeypatch, one_rank):
@@ -262,6 +274,31 @@ def test_the_forward_runs_its_guards_before_any_tensor_work(one_rank, case):
         assert tag.guard == base.RING_PAD_GUARD and tag.waivable
     assert work == [] and model.ropes == [] and model.text_seen == []
     assert calls == [] and ATTENTION_CALLS == [] and NORM_CALLS == []
+
+
+def test_the_bound_forward_names_every_parameter_the_contract_admits(one_rank):
+    """Stock's reference parameters and its text attention bias are named, so
+    none falls into **kwargs unread, and the contract admits the bound form."""
+    _pops, _calls, _ring, attention = one_rank
+    usp_forward = _injected(attention)._forward.__func__
+    assert _explicit(usp_forward) == [*CONTRACT.positional_or_keyword, *CONTRACT.optional_trailing]
+    assert CONTRACT.optional_trailing[-1] == "context_attention_bias"
+    assert rebound_signature_incompatibility(inspect.signature(usp_forward), CONTRACT) is None
+
+
+def test_an_attention_bias_refuses_before_any_tensor_work_and_a_zero_one_runs(one_rank):
+    _pops, calls, _ring, attention = one_rank
+    model = _injected(attention)
+    work = _spied(model)
+    with pytest.raises(UnsupportedModelError, match="image_strength") as caught:
+        _run(model, text=3, context_attention_bias=torch.tensor([[0.0, -1.5, 0.0]]))
+    assert str(caught.value) == CONTEXT_ATTENTION_BIAS_REFUSAL
+    assert _tag(caught.value).refusal_class is RefusalClass.PHYSICS
+    assert work == [] and model.ropes == [] and model.text_seen == []
+    assert calls == [] and ATTENTION_CALLS == [] and NORM_CALLS == []
+    out = _run(model, text=3, context_attention_bias=torch.zeros(1, 3))
+    assert out.shape == (1, model.latent_channels, 2, 2)
+    assert len(calls) == 3 and all(call["kwargs"] == {} for call in calls)
 
 
 def test_an_even_ring_render_and_a_waived_padded_ring_proceed(monkeypatch, one_rank):

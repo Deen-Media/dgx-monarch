@@ -125,14 +125,17 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         "comfy.model_base", "Flux3.extra_conds", ("flux3",), ("conds",),
         "self", 1, variadic_keyword="kwargs",
     ),
-    # Comfy 60aade0bb appended the three reference parameters of edit LoRAs.
-    # Trees on either side of that commit are both admitted; the adapter
-    # refuses references that are actually set rather than dropping them into
-    # its own **kwargs.
+    # Comfy 60aade0bb appended the three reference parameters of edit LoRAs,
+    # and 9fe7ef764 (2026-10-23) the text attention bias after them. v0.42.x
+    # has neither and v0.43.0 has all four; the three-name form lived on
+    # master for a day, in no release, so it reads as drift. The adapter
+    # refuses references and an effective bias that are actually set rather
+    # than dropping them into its own **kwargs.
     _rebound(
         "comfy.ldm.moss_image.model", "MOSSImage._forward", ("moss_image",), ("usp",),
         "self x timestep context transformer_options", 4, variadic_keyword="kwargs",
-        optional_trailing=("ref_latents", "ref_latents_method", "ref_kv"),
+        optional_trailing=("ref_latents", "ref_latents_method", "ref_kv",
+                           "context_attention_bias"),
     ),
     # MOSS-Image's cond bind wraps this one as FLUX.3's wraps Flux3.extra_conds.
     _rebound(

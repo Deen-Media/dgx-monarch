@@ -17,7 +17,9 @@ Both MOSS-Image forms run here: ComfyUI 60aade0bb (2026-10-22) moved the
 block's norm behind ``modulate`` and added reference images for edit LoRAs,
 and the forward tests pass against that tree and the one before it. Reference
 images refuse on every rank before any collective; with none, the arguments
-stock passes by default leave the sharded forward exact.
+stock passes by default leave the sharded forward exact. The text attention
+bias of ComfyUI 9fe7ef764 follows the same rule: an effective one refuses
+alike, and an all-zero one, which adds nothing in stock, leaves it exact.
 
 "Equal" follows tests/test_flux3_comfy_exactness.py: bit equality on this
 rig's aarch64 CPU, float32 rounding (allclose 2e-5) on x86. Rank against rank
@@ -460,9 +462,12 @@ def test_forward_the_override_runs_once_a_block_and_never_for_text(monkeypatch, 
 
     stock_attention = comfy_moss.model.attention
 
-    def no_options(q, k, v, q_norm, k_norm, pe, heads, comfy_attention, transformer_options, *refs):
-        # Since 60aade0bb attention() also takes ref_kv and kv_out; they pass through.
-        return stock_attention(q, k, v, q_norm, k_norm, pe, heads, comfy_attention, {}, *refs)
+    def no_options(q, k, v, q_norm, k_norm, pe, heads, comfy_attention, transformer_options, *refs,
+                   **mask):
+        # Since 60aade0bb attention() also takes ref_kv and kv_out, and since 9fe7ef764
+        # a mask, positional from a block and keyword from a text block; all pass through.
+        return stock_attention(q, k, v, q_norm, k_norm, pe, heads, comfy_attention, {}, *refs,
+                               **mask)
 
     monkeypatch.setattr(comfy_moss.model, "attention", no_options)
     with torch.no_grad():
@@ -593,7 +598,8 @@ def _takes_references(comfy) -> bool:
 # Stock's own defaults, and a reference method with no reference, which stock
 # reads only beside one: both leave the forward the plain one.
 NO_REFERENCE = {
-    "stock-defaults": {"ref_latents": [], "ref_latents_method": None, "ref_kv": None},
+    "stock-defaults": {"ref_latents": [], "ref_latents_method": None, "ref_kv": None,
+                       "context_attention_bias": None},
     "method-alone": {"ref_latents_method": "index_timestep_zero_isolated"},
 }
 
@@ -680,6 +686,52 @@ def test_forward_the_reference_rope_form_is_called_as_stock_calls_it(monkeypatch
     assert calls == [(3, 4, 5, [], 0)]
     outputs, harness = _sharded(monkeypatch, model, inputs, {}, kernel)
     assert calls == [(3, 4, 5, [], 0)] * (1 + WORLD)
+    _assert_stock_operands_and_output(stock_calls, harness, expected, outputs)
+
+
+def _takes_attention_bias(comfy) -> bool:
+    return "context_attention_bias" in inspect.signature(comfy.model.MOSSImage._forward).parameters
+
+
+@pytest.mark.parametrize("ring_world", [1, 2], ids=["uly2", "ring2"])
+def test_forward_an_attention_bias_refuses_class_p_before_any_collective(monkeypatch, comfy_moss,
+                                                                         ring_world):
+    """The text bias Text Encode MOSS-Image Edit sets from image_strength (#135):
+    stock adds it to every query's logits, the sharded kernel cannot, so every
+    rank refuses before the prelude runs and no exchange starts."""
+    model = _tiny(comfy_moss)
+    inputs = _inputs((4, 4), 6)    # N 22: no pad, so ring2 reaches the same first guard
+    bias = torch.tensor([[0.0, 0.0, -1.5, -1.5, 0.0, 0.0]])
+    if _takes_attention_bias(comfy_moss):
+        with torch.no_grad():
+            plain = model(*inputs, transformer_options={})
+            biased = model(*inputs, transformer_options={}, context_attention_bias=bias)
+        assert not torch.equal(plain, biased)    # the premise: stock reads it
+    texts: list = []
+    model.text_embedder.register_forward_pre_hook(lambda module, args: texts.append(1))
+    harness = _StockKernelHarness(WORLD, comfy_moss.model.optimized_attention)
+    with pytest.raises(UnsupportedModelError, match="image_strength") as caught:
+        _sharded(monkeypatch, model, inputs, {}, harness.kernel, harness=harness,
+                 ring_world=ring_world, forward_kwargs={"context_attention_bias": bias})
+    assert _tag(caught.value).refusal_class is RefusalClass.PHYSICS
+    assert str(caught.value) == moss_image_seams.CONTEXT_ATTENTION_BIAS_REFUSAL
+    assert harness.fabric.counts == {} and texts == []
+    assert harness.seen == {rank: [] for rank in range(WORLD)}
+
+
+@pytest.mark.parametrize("batch", [1, 2])
+def test_forward_an_all_zero_attention_bias_runs_without_it_and_stays_exact(monkeypatch, comfy_moss,
+                                                                            batch):
+    """A zero bias adds nothing to stock's logits, so the sharded forward drops it
+    and still hands every kernel stock's operands and returns stock's bits. The
+    bias comes as comfy's process_cond ships it, one row per batch entry."""
+    model = _tiny(comfy_moss)
+    inputs = _inputs((3, 3), 6, batch=batch)
+    zero = {"context_attention_bias": torch.zeros(batch, 6)}
+    expected, stock_calls, kernel = _stock(monkeypatch, comfy_moss, model, inputs, {}, zero)
+    plain, _calls, _kernel = _stock(monkeypatch, comfy_moss, model, inputs, {})
+    assert torch.equal(plain, expected)
+    outputs, harness = _sharded(monkeypatch, model, inputs, {}, kernel, forward_kwargs=zero)
     _assert_stock_operands_and_output(stock_calls, harness, expected, outputs)
 
 

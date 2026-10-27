@@ -6875,3 +6875,44 @@ runs ComfyUI's own forward with the new cache. Fleet KSampler runs each job
 on one GPU with stock's forward, so it is not refused. The refusal stays
 until a hardware test compares a sharded `auto` render on such a ComfyUI with
 stock; as of 2026-10-22 none has run.
+
+## 135. A MOSS-Image edit with an image strength other than 1.0 refuses under sequence parallelism
+
+**Symptom:** a `moss_image` render (MOSS-Image SFT, Base or Kromoss) on a
+sequence-parallel topology, such as uly2 or ring2, whose conditioning comes
+from ComfyUI's Text Encode MOSS-Image Edit node with `image_strength` other
+than 1.0 refuses class P on every Worker before the first block, with a
+message that opens "moss_image: this render carries an attention bias on its
+text tokens" and names topology `single` with `mode=local` and
+`gpus_per_host=1`.
+
+**Cause:** ComfyUI commit 9fe7ef764 of 2026-10-23, released in v0.43.0,
+added `image_strength` to the Text Encode MOSS-Image Edit node. When the
+text encoder sees the images, as it does for the two ai-toolkit edit formats
+and whenever the node has no VAE, a strength above 0 and other than 1.0
+attaches a bias to the conditioning: the log of the strength on each image's
+tokens in the prompt, and 0 on the other tokens. Stock's forward adds that
+bias to every query's attention logits for those text keys, in the text
+embedder and in every block. The sharded attention kernel cannot add a bias
+to its logits, so a sharded render would drop it and render as if the
+strength were 1.0; this release refuses it instead. With a VAE the edit also
+carries reference images, which refuse first
+([#130](#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu));
+without one the bias comes alone. The refusal reads only the bias, which
+every rank of the render holds, so on uly2 and ring2 both Workers refuse
+alike before any exchange, and by design the next render runs on the same
+fleet; no hardware test has observed this refusal yet. The driver does not
+read the bias, so it does not refuse before dispatch. An all-zero bias adds
+nothing in stock, and the sharded forward runs without it. On cfg2 and dp2
+the adapter binds no forward, so stock's applies the bias on each GPU; no
+hardware test has measured that either. dgx-monarch 1.3.0 does not know the
+bias: on uly2 and ring2 it drops the bias with no error and renders as if
+the strength were 1.0.
+
+**Fix:** keep `image_strength` at 1.0, which attaches no bias, or run the
+edit on one GPU: set the Init node to `mode=local` with `gpus_per_host=1`
+and topology `single`, which runs ComfyUI's own forward, or render it in
+plain ComfyUI. Fleet KSampler runs each job on one GPU with stock's forward,
+so it is not refused. A text-to-image render without the edit node is not
+affected. The refusal stays until the sharded kernel can apply the bias and
+a hardware test compares such a render with stock.

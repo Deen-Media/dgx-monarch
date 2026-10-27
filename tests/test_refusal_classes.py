@@ -99,6 +99,9 @@ NOT_REFUSAL_CLASSES = frozenset({
     # doctrine's rank-symmetry rule; actor/failure.py states it for the latch).
     "SampleStallError",
     "CudaContextPoisonedError",
+    # cli/comfy_ports.py stands this in for a psutil error class a stub psutil
+    # lacks (2026-10-27). Nothing raises it.
+    "_NeverRaised",
     # The native-return latch error (2026-10-12) is raised by the driver after
     # its own failed read, never by a rank, so it carries no class tag and the
     # finish-phase failure abandons the lease as before.

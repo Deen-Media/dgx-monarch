@@ -27,10 +27,14 @@ refuses reference images with #130's class P text before stock's method
 runs, so no rank calls ``preprocess_refs`` or the model for a render that
 refuses, even when the driver could not read the header and let it through.
 A group of one, which topology single and every Fleet KSampler job open,
-keeps stock's cache, and a cluster render without references passes.
+keeps stock's cache, and a cluster render without references passes. The
+text attention bias of ComfyUI 9fe7ef764 passes the bind on every topology:
+stock's method only wraps it, and only the sharded forward refuses it (#135).
 """
 from __future__ import annotations
 
+import inspect
+import math
 import os
 import types
 from concurrent.futures import ThreadPoolExecutor
@@ -437,3 +441,68 @@ def test_a_group_of_one_keeps_stocks_cache_to_stocks_latent(monkeypatch, moss, t
     samples = _worker_sample(monkeypatch, bound, positive, negative)
     assert refs == [True, True]
     assert torch.equal(samples, expected)
+
+
+# --- The text attention bias: the bind hands it to stock untouched (#135) ------------
+
+
+def _biased_conds():
+    """The no-VAE edit: a bias on the positive's vision tokens, none on the negative."""
+    positive, negative = _conds(refs=False)
+    bias = torch.zeros(1, POSITIVE_ROWS)
+    bias[:, 2:6] = math.log(2.0)
+    positive[0][1]["context_attention_bias"] = bias
+    return positive, negative
+
+
+def _bias_tree(moss) -> None:
+    if "context_attention_bias" not in inspect.signature(moss.model.MOSSImage._forward).parameters:
+        pytest.skip("this ComfyUI predates the MOSS-Image text attention bias (9fe7ef764)")
+
+
+@pytest.mark.parametrize("name", sorted(_UNSHARDED_CLUSTER))
+def test_a_cluster_worker_hands_an_attention_bias_to_stock_untouched(monkeypatch, moss, tmp_path,
+                                                                    name):
+    """Off one GPU the bind refuses no bias: stock's CONDRegular, the tensor as is."""
+    import comfy.conds
+
+    _bias_tree(moss)
+    positive, _negative = _biased_conds()
+    context, options = positive[0]
+    patcher, _path = _base_model(moss, tmp_path)
+    _inject(monkeypatch, patcher, _UNSHARDED_CLUSTER[name], world=2)
+    assert "_forward" not in vars(patcher.model.diffusion_model)
+    _process_group(monkeypatch, 2)
+    kwargs = {"cross_attn": context, "noise": torch.zeros(1, CHANNELS, 4, 4),
+              "device": torch.device("cpu"), **options}
+    with ThreadPoolExecutor(1) as pool:
+        out = pool.submit(lambda: patcher.model.extra_conds(**kwargs)).result()
+    assert type(out["context_attention_bias"]) is comfy.conds.CONDRegular
+    assert out["context_attention_bias"].cond is options["context_attention_bias"]
+    assert "ref_kv" not in out and "ref_latents" not in out
+
+
+def test_a_dp2_worker_samples_an_attention_bias_to_stocks_latent(monkeypatch, moss, tmp_path):
+    """dp2 binds no sharded forward, so stock's applies the bias on a Worker
+    thread outside inference mode, to the latent stock samples, and the bias
+    moves that latent."""
+    import comfy.sample
+
+    _bias_tree(moss)
+    positive, negative = _biased_conds()
+    stock, _path = _base_model(moss, tmp_path)
+    expected = _stock_sample(stock, positive, negative)
+    assert not torch.equal(_stock_sample(stock, *_conds(refs=False)), expected)
+    bound, _path = _base_model(moss, tmp_path)
+    _inject(monkeypatch, bound, _UNSHARDED_CLUSTER["dp2"], world=2)
+    assert "extra_conds" in vars(bound.model) and "_forward" not in vars(bound.model.diffusion_model)
+    _process_group(monkeypatch, 2)
+
+    def sample():
+        latent = comfy.sample.fix_empty_latent_channels(bound, torch.zeros(1, CHANNELS, 4, 4))
+        noise = comfy.sample.prepare_noise(latent, SEED, None)
+        return comfy.sample.sample(bound, noise, STEPS, CFG, "euler", "simple", positive, negative,
+                                   latent, denoise=1.0, disable_pbar=True, seed=SEED)
+
+    with ThreadPoolExecutor(1) as pool:
+        assert torch.equal(pool.submit(sample).result(), expected)

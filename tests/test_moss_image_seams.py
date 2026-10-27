@@ -5,8 +5,8 @@ the three ``rope`` forms and the fourth that refuses, the identity predicate
 behind Skip Layer Guidance and the vetting of block replacements, the joint
 window with its rotary rows and pad rows, the fused-norm route that launches
 both of a block's norm calls at stock's row count on either block form, the
-stock-tree check, the control-channel refusal, the reference-image refusal
-and the attention ledger. The stand-in blocks below mirror stock's
+stock-tree check, the control-channel refusal, the reference-image and
+text attention-bias refusals and the attention ledger. The stand-in blocks below mirror stock's
 ``Block.forward`` call shapes: ``FakeBlock`` reads ``modulated_rms_norm`` and
 ``attention`` as module globals of this file, the form before ComfyUI
 60aade0bb, and ``FakeRefBlock`` reads ``modulate``, ``residual`` and
@@ -34,12 +34,14 @@ from dgx_monarch.adapters.attention_patches import (
 from dgx_monarch.adapters.base import UnsupportedModelError
 from dgx_monarch.adapters.flux3_packing import refuse_indivisible_heads
 from dgx_monarch.adapters.moss_image_seams import (
+    CONTEXT_ATTENTION_BIAS_REFUSAL,
     REFERENCE_IMAGES_REFUSAL,
     AttentionLedger,
     assert_stock_tree,
     bind_norm_parity,
     block_norm_route,
     is_identity_block_patch,
+    refuse_context_attention_bias,
     refuse_control_channels,
     refuse_reference_images,
     refuse_reshaped_block_rows,
@@ -648,6 +650,34 @@ def test_reference_images_refuse_class_p_and_name_the_single_route(values):
     assert "TextEncodeMOSSImageEdit" in text
     assert "topology 'single' (mode=local with gpus_per_host=1)" in text
     assert text.endswith("See docs/TROUBLESHOOTING.md #130.")
+
+
+@pytest.mark.parametrize("bias", [
+    None, torch.zeros(1, 6), torch.zeros(2, 6, dtype=torch.bfloat16), torch.full((1, 3), -0.0),
+], ids=["none", "zeros", "bf16-batch-2", "negative-zero"])
+def test_no_bias_and_an_all_zero_floating_bias_pass(bias):
+    refuse_context_attention_bias(bias)
+
+
+@pytest.mark.parametrize("bias", [
+    torch.tensor([[0.0, -1.5, 0.0]]),
+    torch.tensor([[0.0, float("nan")]]),
+    torch.ones(1, 3, dtype=torch.bool),
+    torch.zeros(1, 3, dtype=torch.int64),
+    [[0.0, 0.0]],
+], ids=["image-weight", "nan", "bool-all-true", "integer-zeros", "not-a-tensor"])
+def test_an_effective_or_unreadable_bias_refuses_class_p_and_names_the_single_route(bias):
+    """A boolean bias is no no-op: stock pads it with False over the image keys."""
+    with pytest.raises(UnsupportedModelError) as caught:
+        refuse_context_attention_bias(bias)
+    text = str(caught.value)
+    assert text == CONTEXT_ATTENTION_BIAS_REFUSAL
+    assert refusal_class(caught.value) is RefusalClass.PHYSICS
+    assert text.split("] ", 1)[1].startswith("moss_image: this render carries an attention bias")
+    assert "TextEncodeMOSSImageEdit" in text and "image_strength is not 1.0" in text
+    assert "cannot apply an additive key bias" in text
+    assert "topology 'single' (mode=local with gpus_per_host=1)" in text
+    assert text.endswith("See docs/TROUBLESHOOTING.md #135.")
 
 
 # --- the stock tree ---------------------------------------------------------------

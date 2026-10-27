@@ -1208,6 +1208,12 @@ than stacks on a repeat call.
    class P on every rank before any exchange, as the driver refuses them on
    every topology but one GPU before dispatch
    ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)).
+   Since 9fe7ef764 the sharded forward also names `context_attention_bias`,
+   the logit bias on the text keys that the edit node's `image_strength` sets,
+   which the sharded kernel cannot add: an effective bias refuses class P at
+   the same point, and an all-zero one, which adds nothing in stock, runs
+   without it
+   ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
    A block called with no row count, as stock's `preprocess_refs` calls each
    block, runs stock's own code with its reference arguments.
    single, cfg2 and dp2 bind no forward and run stock's. On every load
@@ -1226,9 +1232,9 @@ than stacks on a repeat call.
    driver that cannot read the header still refuses on cfg2 and dp2, with
    or without FSDP, where no sharded forward binds. The adapter declares
    `cfg_cond_padding = "none"`: every image row's rotary position depends on
-   the prompt length and the joint attention has no mask, so no driver pad is
-   exact, and a prompt pair of different lengths dispatches one condition per
-   rank.
+   the prompt length and the joint attention has no padding mask, so no driver
+   pad is exact, and a prompt pair of different lengths dispatches one
+   condition per rank.
    On uly2, ring and cfg2 only BF16 and INT8 ConvRot run
    (`sp_validated_quants`); NVFP4 would reduce its shared activation scale
    over a rank's pad rows. FSDP needs no table row: `layers` is a standard

@@ -1025,7 +1025,7 @@ def test_version_tolerant_contracts_are_exactly_the_reviewed_set():
             "denoise_mask", "audio_denoise_mask",
         ),
         "comfy.ldm.moss_image.model.MOSSImage._forward": (
-            "ref_latents", "ref_latents_method", "ref_kv",
+            "ref_latents", "ref_latents_method", "ref_kv", "context_attention_bias",
         ),
         "comfy.ldm.qwen_image21.model.QwenImage21Transformer2DModel._forward": (
             "prefix_cache",
@@ -1039,23 +1039,26 @@ def test_version_tolerant_contracts_are_exactly_the_reviewed_set():
     ids=lambda contract: contract.path,
 )
 def test_a_tolerated_trailing_suffix_admits_both_pinned_signatures(contract):
-    """Comfy ff6c8a8 appended H3's mask parameters, 60aade0bb MOSS-Image's
-    reference parameters and 503d785f0 Qwen Image 2.1's prefix_cache; both
-    trees stay supported for each."""
+    """Comfy ff6c8a8 appended H3's mask parameters, 60aade0bb and 9fe7ef764
+    MOSS-Image's reference parameters and text attention bias, and 503d785f0
+    Qwen Image 2.1's prefix_cache; both trees stay supported for each. A tree
+    one name short is drift: MOSS-Image's three-name form lived on master
+    between 60aade0bb and 9fe7ef764, in no release."""
     declared = inspect.signature(_rebound_callable(contract))
     assert rebound_signature_incompatibility(declared, contract) is None
     tolerated = _signature_with_trailing(contract, contract.optional_trailing)
     assert rebound_signature_incompatibility(tolerated, contract) is None
 
-    # A one-name suffix has no partial or reordered form, so those two drop
-    # out there; an extra name and a renamed last name refuse for every suffix.
+    # A one-name suffix has no partial or reordered form, so those drop out
+    # there; an extra name and a renamed last name refuse for every suffix.
     candidates = (
         contract.optional_trailing[:1],
+        contract.optional_trailing[:-1],
         (*contract.optional_trailing, "third_mask"),
         tuple(reversed(contract.optional_trailing)),
         (*contract.optional_trailing[:-1], "renamed_cache"),
     )
-    for rejected in (c for c in candidates if c != contract.optional_trailing):
+    for rejected in (c for c in candidates if c and c != contract.optional_trailing):
         assert rebound_signature_incompatibility(
             _signature_with_trailing(contract, rejected), contract
         ) == "exact explicit parameter list changed", rejected
