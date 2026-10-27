@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hmac
 import json
 import logging
@@ -71,15 +72,20 @@ def degrade(jobs: Jobs, code: str) -> None:
     jobs.driver = {**current, "state": "unavailable", "code": code, "since": since or timestamp()}
 
 
-async def supervise(name: str, step: Any, *, repeat: bool, degrades: Jobs | None = None) -> None:
+async def supervise(name: str, step: Any, *, repeat: bool, degrades: Jobs | None = None,
+                    wake: asyncio.Event | None = None) -> None:
     """Run ``step`` until cancelled; an unexpected error is logged and retried after a growing pause.
 
     asyncio.CancelledError is not an Exception, so shutdown still ends the loop.
     Only the observer marks the driver unavailable: reconciliation, not the event
-    feed, is what keeps the snapshot's driver state current.
+    feed, is what keeps the snapshot's driver state current. Setting ``wake``
+    ends the pause between steps early, so one more step runs after it was set;
+    it never cuts short the pause after an error.
     """
     delay = OBSERVE_SECONDS
     while True:
+        if wake is not None:
+            wake.clear()  # The step that starts now serves every wake set before it.
         try:
             await step()
         except Exception:
@@ -92,7 +98,11 @@ async def supervise(name: str, step: Any, *, repeat: bool, degrades: Jobs | None
         if not repeat:
             return
         delay = OBSERVE_SECONDS
-        await asyncio.sleep(OBSERVE_SECONDS)
+        if wake is None:
+            await asyncio.sleep(OBSERVE_SECONDS)
+        else:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(wake.wait(), OBSERVE_SECONDS)
 
 
 def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: set[str],
@@ -425,7 +435,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
     async def lifecycle(application: web.Application) -> Any:
         store.recover()
         await client.start()
-        listeners = [asyncio.create_task(supervise("observer", jobs.reconcile, repeat=True, degrades=jobs)),
+        listeners = [asyncio.create_task(supervise("observer", jobs.reconcile, repeat=True, degrades=jobs, wake=jobs.wake)),
                      asyncio.create_task(supervise("event_watch", jobs.watch_events, repeat=False))] if poll else []
         yield
         try:

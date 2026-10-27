@@ -891,8 +891,10 @@ snapshot. The snapshot is authoritative. The event feed is a notification log:
 it names created jobs, operations and artifacts and the fields an update
 changed. A field too large for an event is listed under `omitted_fields`; read
 it from the snapshot or the record. Terminal job state never regresses; a late
-submission response cannot replace a running state with queued. Restarted
-in-flight operations become unknown and are never automatically re-executed.
+submission response cannot replace a running state with queued. A job reads
+succeeded only once the companion has stored the outputs that the driver's
+history lists for it, so a snapshot never shows a succeeded job without them.
+Restarted in-flight operations become unknown and are never automatically re-executed.
 Queue deletion records a cancellation request. It settles as cancelled only when
 the driver acknowledged it while the job was queued and the prompt has left both
 the queue and its history. Running-job cancellation uses the driver's atomic

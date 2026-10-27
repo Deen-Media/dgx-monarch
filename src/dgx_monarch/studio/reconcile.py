@@ -162,19 +162,24 @@ async def reconcile_cycle(owner: Jobs) -> None:
         if quarantined:
             driver["quarantine"] = {"count": len(quarantined), "rows": quarantined[:QUARANTINE_ROWS],
                                     "reason": "Driver rows that could not be read were skipped; other jobs reconciled."}
+        # The snapshot route reads owner.telemetry at every await too, so one
+        # report pairs this cycle's runtime event status with this cycle's sample.
         await owner.runtime_events.poll()
-        owner.telemetry["runtime_events"] = owner.runtime_events.status
         try:
             sample = await client.request("GET", "/dgxm/telemetry")
-            owner.telemetry = {"sample": sample, "observed_at": timestamp(), "state": "connected",
-                               "runtime_events": owner.runtime_events.status}
-            owner.telemetry_clock = time.monotonic()
+            telemetry: dict[str, Any] | None = {"sample": sample, "observed_at": timestamp(), "state": "connected",
+                                                "runtime_events": owner.runtime_events.status}
         except StudioError:
-            owner.telemetry = {**owner.telemetry, "state": "stale" if owner.telemetry else "unavailable"}
+            telemetry = None
         # Read the event watcher's fault after the last await, so the report is current.
         events_fault = getattr(owner, "events_fault", None)
         if events_fault:
             driver["events"] = dict(events_fault)
+        if telemetry is None:
+            # Keep the last report whole and mark it, as Jobs.degrade does.
+            owner.telemetry = {**owner.telemetry, "state": "stale" if owner.telemetry else "unavailable"}
+        else:
+            owner.telemetry, owner.telemetry_clock = telemetry, time.monotonic()
         owner.driver = driver
     except StudioError as exc:
         owner.degrade(exc.code)
