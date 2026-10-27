@@ -23,7 +23,7 @@ from .contracts import (
     object_value,
     timestamp,
 )
-from .job_observations import model_identities, observation, requested_topology
+from .job_observations import model_identities, observation, prompt_ended, requested_topology
 from .preview_drafts import prepare_preview
 from .reconcile import job_for_prompt, reconcile_cycle
 from .runtime_observations import RuntimeObservations
@@ -84,6 +84,9 @@ class Jobs:
         self.cancel_dispatches: set[str] = set()
         self.scoped_cancel_unavailable = False
         self.events_fault: dict[str, Any] | None = None
+        # The watcher sets this when the driver reports that a prompt ended, so
+        # the observer settles it from history without waiting out its pause.
+        self.wake = asyncio.Event()
         # Seconds: the normal event reconnect pause, then the background back-off range.
         self.event_pause, self.backoff_base, self.backoff_limit = 2.0, 2.0, 30.0
         self.observer_failures, self.observer_retry_at = 0, 0.0
@@ -322,11 +325,16 @@ class Jobs:
         from .cancellation import cancel_job
         return await cancel_job(self, job_id, request)
 
-    def consume_event(self, message: dict[str, Any], *, known: dict[str, Any] | None = None) -> None:
+    def consume_event(self, message: dict[str, Any], *, known: dict[str, Any] | None = None, live: bool = False) -> None:
         parsed = observation(message)
         if parsed is None:
             return
         event, updates = parsed
+        if live and event["type"] == "execution_success":
+            # ComfyUI sends this before it writes the history entry that lists
+            # the outputs. History settlement stores them and then marks the
+            # job succeeded, so a job never reads succeeded without its artifacts.
+            updates = {key: value for key, value in updates.items() if key != "state"}
         prompt_id = event["data"]["prompt_id"]
         job = job_for_prompt(self.store, prompt_id) if known is None else known.get(prompt_id)
         if job is None:
@@ -349,7 +357,9 @@ class Jobs:
                             from .live_preview import accept_preview
                             await blocking(accept_preview, self.store, message)
                         else:
-                            self.consume_event(message)
+                            self.consume_event(message, live=True)
+                            if prompt_ended(message):
+                                self.wake.set()
                     failures, self.events_fault = 0, None
                 delay = self.event_pause
             except StudioError:

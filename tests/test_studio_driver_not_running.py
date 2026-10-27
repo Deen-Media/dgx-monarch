@@ -7,6 +7,7 @@ import logging
 import socket
 import ssl
 import time
+from copy import deepcopy
 from types import SimpleNamespace
 
 import aiohttp
@@ -245,6 +246,55 @@ def test_an_observer_cycle_publishes_the_driver_state_only_when_it_ends(tmp_path
         asyncio.run(jobs.reconcile())
         assert [path for path, _view in seen] == ["/queue", "/history", "/dgxm/telemetry"]
         assert [view for _path, view in seen if view != down] == [], seen
+        assert jobs.driver["state"] == "connected" and "code" not in jobs.driver
+    finally:
+        store.close()
+
+
+def test_an_observer_cycle_publishes_one_telemetry_report_when_it_ends(tmp_path):
+    """The snapshot route reads Jobs.telemetry at every await of an observer cycle.
+
+    One report pairs a cycle's runtime event status with that cycle's sample,
+    so the cycle publishes it once, after both requests. A failed request keeps
+    the last report whole and marks it, as degrade does.
+    """
+    seen: list[tuple[str, dict]] = []
+    cycle = {"number": 0, "answers": False}
+
+    class Observed:
+        async def request(self, method, path, data=None):
+            seen.append((path, deepcopy(jobs.telemetry)))
+            if path == "/queue":
+                return {"queue_running": [], "queue_pending": []}
+            if path != "/dgxm/telemetry":
+                return {}
+            if not cycle["answers"]:
+                raise StudioError("driver_rejected", "Driver returned HTTP 404; inspect its local diagnostics.", 502)
+            return {"cycle": cycle["number"]}
+
+        async def execution_events(self, after, producer=None):
+            seen.append(("/dgxm/execution-events", deepcopy(jobs.telemetry)))
+            return {"schema_version": 1, "producer_id": f"producer-{cycle['number']}", "events": [],
+                    "next_sequence": 0, "omitted_events": 0}
+
+    store = Store(tmp_path / "state")
+    try:
+        jobs = Jobs(store, Observed())
+        reports = []
+        for number, answers in ((1, False), (2, True), (3, True), (4, False)):
+            cycle.update(number=number, answers=answers)
+            before = deepcopy(jobs.telemetry)
+            seen.clear()
+            asyncio.run(jobs.reconcile())
+            assert [path for path, _view in seen] == ["/queue", "/history", "/dgxm/execution-events", "/dgxm/telemetry"]
+            assert [view for _path, view in seen if view != before] == [], seen
+            reports.append(deepcopy(jobs.telemetry))
+        unavailable, first, second, stale = reports
+        assert unavailable == {"state": "unavailable"}
+        for number, report in ((2, first), (3, second)):
+            assert report["state"] == "connected" and report["sample"] == {"cycle": number}
+            assert report["runtime_events"]["cursor"]["producer_id"] == f"producer-{number}"
+        assert stale == {**second, "state": "stale"}
         assert jobs.driver["state"] == "connected" and "code" not in jobs.driver
     finally:
         store.close()

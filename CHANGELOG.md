@@ -12,6 +12,12 @@
   so a snapshot never reports the driver connected before the cycle that
   observed it has finished, and a lasting event-watcher fault no longer
   blinks off and on mid-cycle.
+- Studio marks a job succeeded only after history settlement has stored its
+  outputs, not when ComfyUI's live success event arrives, and the event
+  watcher wakes the observer so settlement runs as soon as the driver writes
+  its history entry. The observer publishes its telemetry report once per
+  cycle, after both of its requests, so a snapshot never pairs one cycle's
+  runtime event status with an older telemetry sample.
 
 ### Installation and updates
 

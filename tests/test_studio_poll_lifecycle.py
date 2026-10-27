@@ -5,6 +5,7 @@ import asyncio
 import sqlite3
 import time
 import uuid
+from contextlib import contextmanager
 
 import pytest
 from aiohttp import WSMsgType, web
@@ -13,9 +14,11 @@ from aiohttp.test_utils import TestClient, TestServer
 from dgx_monarch.studio import SCHEMA_VERSION, reconcile
 from dgx_monarch.studio import server as server_module
 from dgx_monarch.studio.comfy import ComfyClient
+from dgx_monarch.studio.contracts import TERMINAL_STATES
 from dgx_monarch.studio.jobs import Jobs
 from dgx_monarch.studio.server import create_app
 from dgx_monarch.studio.store import Store
+from dgx_monarch.studio.wire_records import snapshot_window
 
 SCHEMA = {"Render": {"input": {"required": {"steps": ["INT", {"min": 1, "max": 20}]}},
                      "input_order": {"required": ["steps"]}, "output": [], "output_node": True}}
@@ -225,5 +228,159 @@ def test_watcher_survives_any_non_cancellation_fault(tmp_path, monkeypatch, faul
             asyncio.run(jobs.watch_events())
         assert Stream.connections == 4
         assert jobs.events_fault["state"] == "unavailable" and jobs.driver["events"]["code"] == jobs.events_fault["code"]
+    finally:
+        store.close()
+
+
+class HistoryAfterSuccess(LiveDriver):
+    """ComfyUI's order: the worker sends execution_success, then writes the history entry.
+
+    ComfyUI's task_done drops the prompt from the running list and writes its
+    history under one mutex; the worker then sends executing with no node.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.write_history = asyncio.Event()
+
+    async def execute(self, prompt_id, row):
+        await self.run.wait()
+        self.queue["queue_pending"].remove(row)
+        self.queue["queue_running"].append(row)
+        started = ["execution_start", {"prompt_id": prompt_id, "timestamp": 1_000}]
+        output = {"images": [{"filename": "done.png", "subfolder": "", "type": "output"}]}
+        finished = ["execution_success", {"prompt_id": prompt_id, "timestamp": 2_000}]
+        await self.broadcast({"type": started[0], "data": started[1]})
+        await self.broadcast({"type": "executed", "data": {"node": "1", "display_node": "1", "output": output,
+                                                           "prompt_id": prompt_id}})
+        await self.broadcast({"type": finished[0], "data": finished[1]})
+        await self.write_history.wait()
+        self.queue["queue_running"].remove(row)
+        self.history[prompt_id] = {"prompt": row, "outputs": {"1": output},
+                                   "status": {"status_str": "success", "completed": True, "messages": [started, finished]}}
+        await self.broadcast({"type": "executing", "data": {"node": None, "prompt_id": prompt_id}})
+
+
+def test_a_live_success_reads_succeeded_only_with_its_outputs(tmp_path, monkeypatch):
+    """The snapshot route reads between store commits, and ComfyUI reports success before its history.
+
+    A job that reads succeeded must list its artifact in the same snapshot, so
+    the live success event leaves the job running until settlement stores the
+    outputs. The observer pauses for an hour here: only the wakes from the
+    success event and from the executing event after the history write can
+    start the cycles this test waits for.
+    """
+    cycles: list[float] = []
+    original = Jobs.reconcile
+
+    async def counted(self):
+        await original(self)
+        cycles.append(time.monotonic())
+    monkeypatch.setattr(Jobs, "reconcile", counted)
+
+    def jobs_factory(store, client):
+        jobs = Jobs(store, client)
+        jobs.event_pause = 0.05
+        return jobs
+    monkeypatch.setattr(server_module, "Jobs", jobs_factory)
+    monkeypatch.setattr(server_module, "OBSERVE_SECONDS", 3600.0)
+    views: list[tuple[dict, set]] = []
+
+    async def scenario():
+        driver = HistoryAfterSuccess()
+        async with TestServer(driver.app()) as upstream:
+            store = Store(tmp_path / "state")
+            begin = store.transaction
+
+            @contextmanager
+            def observed():
+                with begin():
+                    yield
+                rows, _omitted, _cursor = snapshot_window(store)
+                views.append(({row["id"]: row["state"] for row in rows["jobs"]}, {row["job_id"] for row in rows["artifacts"]}))
+            monkeypatch.setattr(store, "transaction", observed)
+            client = ComfyClient(str(upstream.make_url("/")).rstrip("/"))
+            token = "lifecycle-owner-" + "x" * 32
+            hosts: set[str] = set()
+            app = create_app(store, client, token, allowed_hosts=hosts, poll=True)
+            try:
+                async with TestClient(TestServer(app)) as browser:
+                    hosts.add(str(browser.make_url("/")).split("://", 1)[1].rstrip("/"))
+                    headers = {"Authorization": "Bearer " + token, "X-DGXM-Schema": SCHEMA_VERSION}
+                    draft = {"workflow": {"1": {"class_type": "Render", "inputs": {"steps": 2}}}, "values": {},
+                             "seed_policy": "fixed", "operation": "image"}
+                    preview = await (await browser.post("/api/v1/jobs/preview", headers=headers, json=draft)).json()
+                    response = await browser.post("/api/v1/jobs", headers=headers,
+                                                  json={"preview_id": preview["id"], "idempotency_key": "once"})
+                    identity = (await response.json())["id"]
+                    await until(lambda: store.get("jobs", identity)["state"] == "queued")
+                    await until(lambda: bool(driver.sockets) and len(cycles) >= 1)
+                    driver.run.set()
+
+                    def receipts():
+                        return [row["type"] for row in store.get("jobs", identity).get("backend_events", [])]
+
+                    def early():
+                        return [view for view in views if view[0].get(identity) in TERMINAL_STATES and identity not in view[1]]
+                    await until(lambda: "execution_success" in receipts())
+                    assert not early(), views
+                    current = store.get("jobs", identity)
+                    assert current["state"] == "running" and current["phase"] == "execution_success", current["state"]
+                    # The success event woke the observer, and its cycle found no history entry yet.
+                    await until(lambda: len(cycles) >= 2)
+                    assert store.get("jobs", identity)["state"] == "running"
+                    assert not store.all("artifacts")
+                    driver.write_history.set()
+                    await until(lambda: store.get("jobs", identity)["state"] == "succeeded", timeout=10.0)
+                    snapshot = await (await browser.get("/api/v1/snapshot", headers=headers)).json()
+                    row = next(row for row in snapshot["jobs"] if row["id"] == identity)
+                    assert row["state"] == "succeeded"
+                    assert [artifact["job_id"] for artifact in snapshot["artifacts"]] == [identity]
+                    assert not early(), views
+                    assert views[-1] == ({identity: "succeeded"}, {identity})
+            finally:
+                store.close()
+    asyncio.run(scenario())
+
+
+def test_the_watcher_leaves_a_live_success_to_settlement_and_wakes_the_observer(tmp_path):
+    """A live success keeps the job's state and wakes the observer; a live failure still ends the job at once."""
+    store = Store(tmp_path / "state")
+    try:
+        for identity in ("done", "broken"):
+            store.create("jobs", {"id": identity, "state": "running", "prompt_id": identity,
+                                  "submission": {"prompt": {}, "workflow": {}, "digest": "d"}})
+        messages = [{"type": "executing", "data": {"node": "3", "prompt_id": "done"}},
+                    {"type": "execution_success", "data": {"prompt_id": "done", "timestamp": 2_000}},
+                    {"type": "executing", "data": {"node": None, "prompt_id": "done"}},
+                    {"type": "execution_error", "data": {"prompt_id": "broken", "timestamp": 3_000,
+                                                         "exception_type": "RuntimeError", "exception_message": "boom"}}]
+        seen = []
+
+        class Stream:
+            connections = 0
+
+            async def stream_events(self, client_id):
+                # One connection: a fault in this stream ends the test instead of reconnecting.
+                Stream.connections += 1
+                if Stream.connections > 1:
+                    raise asyncio.CancelledError
+                for message in messages:
+                    yield message
+                    states = {row["id"]: row["state"] for row in store.all("jobs")}
+                    seen.append((message["type"], jobs.wake.is_set(), states["done"], states["broken"]))
+                    jobs.wake.clear()
+                raise asyncio.CancelledError
+        jobs = Jobs(store, Stream())
+        jobs.event_pause, jobs.backoff_base, jobs.backoff_limit = 0.0, 0.0, 0.0
+        with pytest.raises(asyncio.CancelledError):
+            asyncio.run(jobs.watch_events())
+        assert seen[:3] == [("executing", False, "running", "running"),
+                            ("execution_success", True, "running", "running"),
+                            ("executing", True, "running", "running")]
+        assert seen[3][0] == "execution_error" and seen[3][3] == "failed"
+        done = store.get("jobs", "done")
+        assert [row["type"] for row in done["backend_events"]] == ["executing", "execution_success", "executing"]
+        assert done["progress"] is None and done["ended_at"] == 2.0
     finally:
         store.close()

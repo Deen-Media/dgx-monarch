@@ -94,6 +94,18 @@ def _observation(message: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any
     return event, updates
 
 
+def prompt_ended(message: dict[str, Any]) -> bool:
+    """Whether a driver event says a prompt has ended, so its history entry is due.
+
+    ComfyUI sends execution_success before it writes that entry, and an
+    executing event with no node after it.
+    """
+    kind, data = message.get("type"), message.get("data")
+    if not isinstance(data, dict) or not isinstance(data.get("prompt_id"), str):
+        return False
+    return kind == "execution_success" or (kind == "executing" and data.get("node") is None)
+
+
 def model_identities(prompt: dict[str, Any]) -> list[dict[str, Any]]:
     names = {"ckpt_name", "unet_name", "model_name", "vae_name", "clip_name", "clip_name1", "clip_name2",
              "clip_name3", "lora_name", "control_net_name", "upscale_model", "model_path"}
