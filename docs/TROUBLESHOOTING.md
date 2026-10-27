@@ -6913,13 +6913,19 @@ waited at the cfg exchange. If the driver cannot read the header, the
 Workers refuse instead. Their check reads only the bias, which on uly2 and
 ring2 every rank holds, so both Workers refuse alike before any exchange,
 and by design the next render runs on the same fleet. On uly2+cfg2 a bias
-on one prompt alone would then still refuse in one cfg group only. No
-hardware test has observed either refusal yet. An all-zero bias adds nothing in
-stock, and the sharded forward runs without it. On cfg2 and dp2
-the adapter binds no forward, so stock's applies the bias on each GPU; no
-hardware test has measured that either. dgx-monarch 1.3.0 does not know the
-bias: on uly2 and ring2 it drops the bias with no error and renders as if
-the strength were 1.0.
+on one prompt alone would then still refuse in one cfg group only. On
+2026-10-27 a hardware run observed the driver refusal on uly2 and ring2,
+and the next render on the same fleet matched stock with no Recycle; no
+hardware test has reached the Workers' refusal
+([VALIDATION](VALIDATION.md#moss-image-bias-on-comfyui-426f5eea)). An
+all-zero bias adds nothing in stock, and the sharded forward runs without it.
+The node never attaches one, since the log of a strength above 0 and other
+than 1.0 is never 0, so only CPU tests cover that path. On cfg2 and dp2 the
+adapter binds no forward, so stock's applies the bias on each GPU. On
+2026-10-27 renders with the bias on single and cfg2, and row 0 of a dp2
+batch of two, were bit-identical to stock on one GPU at one step and over 50
+steps. dgx-monarch 1.3.0 does not know the bias: on uly2 and ring2 it drops
+the bias with no error and renders as if the strength were 1.0.
 
 **Fix:** keep `image_strength` at 1.0, which attaches no bias, or run the
 edit on one GPU: set the Init node to `mode=local` with `gpus_per_host=1`

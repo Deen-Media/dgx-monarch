@@ -1398,6 +1398,69 @@ with its update receipt, comparison summaries, leg records and operator
 notes, the stock records on `a071826fd`, and the reference cache record with
 its comparison log.
 
+<a id="moss-image-bias-on-comfyui-426f5eea"></a>
+
+**The text attention bias on ComfyUI 426f5eea, 2026-10-27.** ComfyUI commit
+9fe7ef764, released in v0.43.0, added `image_strength` to the Text Encode
+MOSS-Image Edit node. When the text encoder sees the images, a strength other
+than 1.0 attaches a bias, the log of the strength, to the images' tokens in
+the prompt
+([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
+Both Workers ran dgx-monarch `3438874fbf6c`, which refuses that bias under
+sequence parallelism, and `dgxm doctor` reported 44 checks with 0 failures
+before and after the legs. Both Sparks ran ComfyUI 0.43.0 at `426f5eea52a7`
+with comfy-kitchen 0.2.40, torch 2.12.0+cu132 and torchmonarch 0.7.0, with
+TORCH_FLASH. The first Spark was capped at 2100 MHz in every leg, with a
+highest sampled SM clock of 2093 MHz, and the second was uncapped. Stock
+references were rendered again on `426f5eea`; no candidate was scored against
+a render from another ComfyUI commit.
+
+The edit legs ran the SFT BF16 checkpoint at 1024 square, 50 Euler steps on
+`simple` at CFG 3 with no skip, so cfg2 can split the passes. The edit node
+encoded both the prompt and the negative with ComfyUI's bundled example
+image, the ai-toolkit format, `image_strength` 0.5 and no VAE. Without a VAE
+the node attaches the bias and no reference images: a CPU probe of the node's
+own code found 144 entries at log 0.5 on the image's tokens of each prompt
+and no reference latents, and at strength 1.0 it found no bias. Identity
+means equal float32 sampler latents and equal uint8 pixels. A step's wall is
+the full render at seed 43 minus the one-step render at seed 42, divided by
+49; on dp2 the full render ran at seed 42, right after the one-step render.
+The 50-step text-to-image row divides the warm full render by 50.
+
+| Leg | Compared with | Result | Seconds a step |
+|---|---|---|---|
+| Text-to-image BF16 uly2, one step, both joint parities, skip and plain | One GPU (dp2 row 0) and stock | Identical, 3 of 3 against each | One step only |
+| Text-to-image BF16 uly2, 50 steps | One GPU | Identical over the full schedule | uly2 1.205, one GPU 1.843 (1.53x) |
+| Edit with the bias on uly2, after a uly2 render with the same Init | None | Refused class P (#135) at the driver before dispatch; the Workers logged nothing | None |
+| Text-to-image uly2 after that refusal, same fleet, no Recycle | Stock, and the render before the refusal | Identical latents and pixels | One step only |
+| Edit with the bias on ring2 | None | Refused class P (#135) at the driver before dispatch, after the Workers set up the ring2 mesh and loaded the model | None |
+| Edit with the bias on `single` (`mode=local`, `gpus_per_host=1`), one step and 50 steps | Stock | Identical latents and pixels; at one step it differs from the edit at strength 1.0, NRMS 0.166 | 1.941, stock 1.934 |
+| Edit at `image_strength` 2.0 on `single`, one step and 50 steps | Stock | Identical latents and pixels; at one step it differs from strength 1.0, NRMS 0.170 | Not measured |
+| Edit with the bias on cfg2, one step and 50 steps | Stock on one GPU | Identical latents and pixels; at one step it differs from strength 1.0 | 0.979, stock 1.934 (1.98x) |
+| Edit with the bias on dp2, batch 2, one step and 50 steps | Stock on one GPU, for row 0 | Row 0 identical latents and pixels; row 1 against row 1 of stock's batch-2 render, NRMS 0.030, recorded | 1.939 for two images, one on each GPU |
+
+The run made 83 comparisons with no CHECK and no FAIL: 24 identity
+comparisons, every one identical; 3 dp2 rows equal to stock; 4 bias renders
+that differ from strength 1.0, as they must; 49 status, finiteness, refusal
+and Gate checks that passed; and 3 recorded without a bar. The recorded rows
+are the two refusals' lease rows, which hold no lease because each refusal
+came before dispatch, and dp2 row 1. Stock shows the same batch effect: its
+own batch-2 row 0 read NRMS 0.029 against its batch-1 render. The Gate wrote
+INCONCLUSIVE `no_material` rows for single, uly2, dp2 and cfg2 and
+quarantined nothing. ring2 had no Gate grant on this ComfyUI, so its first-use
+ceremony began, stopped on the same refusal and wrote no verdict; the cfg2
+and dp2 renders after it ran on the same fleet with no Recycle.
+
+The node cannot attach an all-zero bias: at strength 0 or 1.0 it attaches
+none, and at any other strength the log is not 0. The sharded forward's
+handling of an all-zero bias therefore rests on CPU tests only. No leg
+reached the Workers' own refusal, which needs a checkpoint header the driver
+cannot read.
+
+Records: the private evidence directory, record `3438874fbf6c` of 2026-10-27
+with its comparison summary, leg records, conditioning probe and operator
+notes, and the stock records on `426f5eea`.
+
 <a id="evidence-moss-image-base"></a>
 
 ### MOSS-Image Base
