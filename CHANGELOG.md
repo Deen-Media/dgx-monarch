@@ -8,6 +8,12 @@
   recently stored first, as the snapshot does, so the viewer shows a finished
   job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 
+### Rendering
+
+- Before a render-site capacity check refuses, the driver unloads the models
+  ComfyUI holds on its host, such as the last render's text encoder and VAE,
+  and checks again; set `DGXM_DISABLE_DRIVER_UNLOAD=1` to turn this off ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+
 ## [1.4.0] - 2026-10-28
 
 **Upgrading from 1.3.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-130): the first update runs the 1.3.0

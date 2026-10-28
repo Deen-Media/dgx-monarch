@@ -1621,6 +1621,12 @@ stay on. This estimator's activation-bytes-per-token constant is an
 uncalibrated placeholder awaiting hardware measurement, so a refusal at the
 margin may be conservative, not a hard ceiling.
 
+**ComfyUI's own models go first.** Before this preflight refuses, the driver
+unloads the models ComfyUI holds on the driver host and checks again, as
+[#56](#56-minimax-h3-render-refused-activation-footprint-preflight) describes.
+A refusal that stands quotes the reading after the unload and names what was
+unloaded. `DGXM_DISABLE_DRIVER_UNLOAD=1` turns that step off.
+
 **Warm re-renders:** a checkpoint that already rendered in this driver
 session, or that a pipeline sampler has submitted, is credited: its weight
 bytes already sit inside the lower `MemAvailable` reading, the message says
@@ -1915,6 +1921,16 @@ load eagerly, so their weights are already in `MemAvailable`. The reserve is
   pending loads, not the first render that reads the FAIL.
 * Existing text encoders, VAEs, and encoded references are reported, not added
   again: their memory is already absent from `MemAvailable`.
+
+Before the render-time check refuses, the driver unloads the models ComfyUI
+holds on this host and checks again
+([#56](#56-minimax-h3-render-refused-activation-footprint-preflight) describes
+the step), so the text encoder and VAEs the message lists as spent are freed
+first, and a refusal that stands quotes the reading after the unload. Encoded
+references are outputs this render still needs, so they stay. The loader
+windows never unload: the graph still needs its text encoder and VAEs before
+sampling, so freeing them there would only move the charge.
+`DGXM_DISABLE_DRIVER_UNLOAD=1` turns the step off.
 
 Explicit eager loading can therefore pass before reference work exhausts the
 host. The loader's graph estimate covers that gap; the render check cannot
@@ -2273,6 +2289,26 @@ so take a smaller artifact or free memory.
 4. Use a pruned or quantized DiT artifact. The pruned int8 and fp8
    reference-to-video files are 19.5 GiB each against bf16's 61.7.
 5. Free host memory: drop caches, stop co-resident LLM servers, `dgxm reap`.
+
+**ComfyUI's own models go first.** On the driver host this reading also counts
+the models ComfyUI loaded for the graph: the text encoder, the VAEs and any
+other model it holds. ComfyUI reloads each of them on demand, so before this
+guard refuses, the driver unloads them through ComfyUI's own model management
+(the call behind ComfyUI's `/free`), reads MemAvailable again and runs the
+check again. A render that fits then dispatches, and the driver log carries
+one `driver unload:` line that names the models and the gain; the text encoder
+reloads when the next prompt changes and the VAE at decode. A render that
+still does not fit refuses with the figures read after the unload, and its
+message ends by naming the models and both readings. The step runs at most
+once per render and only when ComfyUI holds a model. It never runs while a
+render is live in this driver: a pipelined submission behind a render in
+flight, a held or abandoned result lease, or a Worker call in flight keeps the
+models, and the refusal says which. It never touches the Workers' residents or
+ComfyUI's cached node outputs, and the cross-rank agreement
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
+still prices a load that replaces a Worker resident with that resident held.
+`DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the step off, and the guard
+then refuses on the first reading.
 
 **Calibration and limits:** the estimate uses 1,032,192 bytes per sharded
 row and 73,728 bytes per replicated row. Constants and derivation are in
@@ -3591,6 +3627,8 @@ such checkpoint). The render-memory preflight refuses that case before
 dispatch, and its refusal points here. It refuses at world 1 as well, because
 the estimate is per box, so the single-box remedy above does not answer it:
 reduce the resolution or use a smaller or lower-precision checkpoint.
+Before it refuses, the driver unloads the models ComfyUI holds on the driver
+host and prices again ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)).
 `DGXM_DISABLE_ACTIVATION_PREFLIGHT=1` on the driver is its only bypass.
 
 **When the short rank holds a slab or an FSDP shard,** read the load lines

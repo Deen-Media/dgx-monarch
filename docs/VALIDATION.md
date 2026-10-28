@@ -1959,9 +1959,10 @@ difference of 255, where every other family with a cfg2 record renders
 bit-identical, so the family refuses cfg-parallel from this release
 ([TROUBLESHOOTING #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
 The ring2 cell with the LoRA rendered its cold and warm legs in both of two
-sessions and refused its probe leg class C both times: the one-step re-load
-was priced while the driver host still held the resident model, the capacity
-wall of [#47](TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight),
+sessions and refused its probe leg class C both times: the cross-rank
+capacity agreement priced the one-step re-load while rank 0 on the driver host
+still held the resident it would replace
+([#93](TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)),
 so that cell carries no fidelity reading. On 2026-10-28 the four-Spark owner
 published their world-4 probe frames and per-frame NRMS in
 [issue #100](https://github.com/Deen-Media/dgx-monarch/issues/100): uly4

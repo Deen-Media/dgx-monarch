@@ -1509,6 +1509,24 @@ partially.
 **Slab capacity refusals offer no consent card.** Slab is the final residency
 option; consent cannot resolve its memory shortfall.
 
+**The driver frees what ComfyUI can reload before it refuses.** The
+render-site checks (`nodes/render_preflight`) read MemAvailable on the driver
+host, where ComfyUI's own text encoder, VAEs and other loaded models count as
+spent although ComfyUI reloads them on demand. Before one of those checks
+refuses, `driver_unload` unloads every model ComfyUI holds in the driver
+process through ComfyUI's own model management, reads MemAvailable again and
+runs the checks again from the one that refused. Only that answer refuses, and
+it says what was unloaded and both readings, which keeps the class C rule of
+offering the fitting strategy first. The step runs at most once per render,
+never while a render, a result lease or a Worker call is live in the driver,
+and never reaches a Worker resident or ComfyUI's node output cache. The loader
+windows do not take it, because the graph still needs its text encoder and
+VAEs before sampling. Nor does the agreement below credit a Worker resident
+that a load would replace: a stock resident's arena is not returned by an
+in-process unload and a slab resident barely moves MemAvailable, so such a
+credit waits for a measured drop per residency, as the FSDP clean reload's
+credit did.
+
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate
 through a read-only endpoint outside the GPU lock. The lowest-headroom rank
@@ -1859,6 +1877,8 @@ dgx-monarch/
 │   ├── consent_observe.py     # worker refusal descriptors as consent-panel cards
 │   ├── driver_footprint.py    # driver-side footprint policy (no torch or
 │   │                          #   monarch import; render-path pending-load refusal)
+│   ├── driver_unload.py       # unload ComfyUI's own driver models before a
+│   │                          #   render-site capacity refusal, then check again
 │   ├── fsdp_proof_scope.py    # FSDP clean-reload scope + the topology test
 │   │                          #   that selects it, below either caller
 │   ├── operator_actions.py    # inert, safety-classed readiness remediation catalog
