@@ -342,6 +342,19 @@ and historical ownership and cleanup receipts were not recorded. Individual
 results below do not remove those limitations or replace the original verdicts.
 See [Campaign results](CAMPAIGN_RESULTS.md) for retained measurements.
 
+**2026-10-27, external reproduction.** A four-Spark owner reran the cells of
+the published one-GPU and two-node campaign tables on their own Sparks, with
+no clock cap, and reported the results on the NVIDIA Developer Forums
+([post 17](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/17)).
+They compared 109 of the 117 published cells
+([Benchmarks](BENCHMARKS.md#campaign-render-times-stills-2026-09-12-to-2026-09-28-head-capped)):
+108 PASS and 1 CHECK, LTX 2.5 two-stage on `auto` at one-step NRMS 0.120
+against the 0.10 limit. Their times ran a median 5.5 percent faster than
+published, with 94 of the 109 cells within 10 percent and 104 within
+15 percent. This project has not reproduced their runs.
+[Benchmarks](BENCHMARKS.md#community-four-node-results-2026-10-27) records
+them with their four-node results.
+
 ## Image models
 
 <a id="evidence-krea2-raw-turbo"></a>
