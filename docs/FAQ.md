@@ -61,8 +61,15 @@ measures that path.
 
 **What about three or four Sparks?**
 The design target is a 2 to 8 node Linux NCCL fabric
-([DESIGN.md](DESIGN.md)); recorded timings cover two Sparks. Three- and
-four-host deployments remain unmeasured.
+([DESIGN.md](DESIGN.md)); the maintainer's recorded timings cover two Sparks,
+and three-host deployments remain unmeasured. A four-Spark owner has
+published a full four-node matrix, reported and not reproduced here
+([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)).
+In short, uly2+cfg2 ran fastest for models that use CFG and uly4 for MiniMax
+H3 and LTX. `auto` refused many rows and beat the explicit layouts only on
+Ideogram4, so they advise against it at world 4. Small or fast models gained
+nothing. On Wan SCAIL2, every four-Spark layout but uly4 failed the one-step
+quality check, with no warning.
 
 **Will this make my 4090 or 5090 faster?**
 Recorded timings cover two DGX Sparks (GB10, ARM, unified memory). Multiple

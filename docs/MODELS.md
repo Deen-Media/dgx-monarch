@@ -1690,6 +1690,19 @@ Choose an explicit topology only within that model's constraints. A true
 one-GPU reference uses `mode=local`, `gpus_per_host=1`; `single` at world size
 two can derive data parallelism and is refused by packed-latent families.
 
+A four-Spark owner has published a full four-node matrix, reported and not
+reproduced here
+([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)).
+In their runs uly2+cfg2 ran fastest for models that use CFG and uly4 for
+MiniMax H3 and LTX, small or fast models gained nothing, and on Wan SCAIL2
+every layout but uly4 failed the one-step check. At world 4, `auto` stays
+conservative by design: a batch-1 render on a cfg row refuses class K rather
+than build a cfg-plus-sequence layout no record has measured, since every cfg
+row was measured at world 2 ([DESIGN.md](DESIGN.md#54-topology--auto-mode)).
+The explicit presets that fill world 4, `uly4`, `ring4` and `uly2+cfg2`, are
+the operator's choice there, within each model's constraints. This project
+has verified none of them at world 4.
+
 ### FSDP, precision and residency
 
 FSDP is a capacity preset, not a speed setting, and `auto` never selects it.

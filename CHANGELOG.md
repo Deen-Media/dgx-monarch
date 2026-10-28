@@ -125,6 +125,9 @@
   text-to-image uly2 stayed bit-identical to one GPU at one step and over
   50 steps, and to stock at one step
   ([VALIDATION](docs/VALIDATION.md#moss-image-bias-on-comfyui-426f5eea)).
+- BENCHMARKS records a four-Spark owner's published 1.3.0 matrix, reported and
+  not reproduced here: uly2+cfg2 ran fastest for CFG models and uly4 for
+  MiniMax H3 and LTX ([BENCHMARKS](docs/BENCHMARKS.md#community-four-node-results-2026-10-27)).
 
 ### Rendering
 

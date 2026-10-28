@@ -744,6 +744,175 @@ Reading the row:
   not fit, the refusal names `auto_gate=off` as the intended path
   ([TROUBLESHOOTING #88](TROUBLESHOOTING.md#88-the-first-render-of-an-fsdp-topology-refuses-with-a-capacity-figure-and-no-proof)).
 
+<a id="community-four-node-results-2026-10-27"></a>
+
+## Community results: four Sparks (reported, not reproduced here)
+
+A four-Spark owner, barichardson on the NVIDIA Developer Forums, ran DGX
+Monarch v1.3.0 on four Sparks and published a full four-node matrix on
+2026-10-27 in
+[post 17 of the DGX Monarch thread](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/17).
+This section records their report with credit. This project's maintainer has
+two Sparks and has not reproduced any of it, so no number here is a verified
+result and no `auto` row rests on it. Their clocks, fabric and software differ
+from the tables above, so compare within this section.
+
+Setup, as reported:
+
+| Item | Value |
+|---|---|
+| Sparks | Four, one of them the driver host |
+| Fabric | Two 100GbE links per Spark to a Mellanox SN2100 switch; RoCE with four RoCE functions per Spark and lossless priority 3 (`NCCL_IB_TC=104`) |
+| DGX Monarch | v1.3.0 (`5433e05`), native venv |
+| ComfyUI | 0.42.0 (`a071826f`), clean checkout |
+| torch | 2.12.0+cu132, torchvision 0.27.0+cu132 |
+| NCCL | 2.29.7 |
+| Python | 3.12.3 (system) |
+| NVIDIA driver | 580.178.04, CUDA 13.0 ptxas |
+| Clocks and swap | No GPU clock cap; swap left on |
+
+The shipped `dgx-spark-pair` profile assumes a direct cable. On the switch,
+they extended it so NCCL uses all four RoCE functions and the switch's
+lossless class:
+
+```toml
+[fabric.dgx-spark-pair]
+NCCL_IB_HCA = "rocep1s0f0,roceP2p1s0f1,roceP2p1s0f0,rocep1s0f1"
+NCCL_IB_TC = 104
+```
+
+With it, they report balanced traffic on all four rails, about 10 to 17 GB
+per rail per render. `dgxm setup --apply` writes a new cluster.toml without
+`[fabric.*]` tables, so they add the table back after each setup run
+([Fabric profiles](CLUSTER.md#fabric-profiles)).
+
+Method, as reported:
+
+- **Cells.** Workflows and settings came from this project's sweep,
+  `benchmark/sweep`, whose cell IDs they report match the
+  [campaign tables](#campaign-render-times-stills-2026-09-12-to-2026-09-28-head-capped)
+  one to one. They report no public files for the Chroma1-HD fp8mixed and
+  Ideogram4 bf16 cells, so their Chroma1-HD row is the bf16 cell and their
+  Ideogram4 row the fp8_scaled cell.
+- **Timing.** Each time is the warm leg's wall in seconds; the cold leg runs
+  at the seed and the warm leg at the seed plus one. Times come in 2 s steps,
+  so a 2 s gap on a short still is within noise.
+- **One GPU and pair.** These columns are their own runs of the published
+  cells, the pair on the driver host and one other Spark.
+- **Four Sparks.** They ran `auto`, uly4, ring4 and uly2+cfg2, the layouts
+  that fill world 4 at batch 1. uly2+ring2 is reachable only through `auto`.
+  Where `auto` resolved to one of the explicit layouts, they reused that
+  layout's result.
+- **Quality check.** Each run also rendered a one-step probe and compared it
+  with the one-GPU probe by NRMS. Above 0.10 counts as a failed render.
+
+In the tables, `refused` means Monarch rejected the layout before rendering,
+and `crash` means it accepted the layout and the render failed. `FAIL` after
+a time marks a render whose probe missed the one-GPU probe (NRMS above 0.10);
+it does not count as fastest. `not run` means no published cell exists to
+reproduce, and the published video table lists only the pair's `auto`. The
+Fastest on four column names the fastest four-Spark layout that rendered
+correctly, and the vs one GPU and vs pair columns give its speedups over one
+Spark and over the best pair result.
+
+Their findings:
+
+- **Models that use CFG: uly2+cfg2.** It was the fastest four-Spark layout
+  for every CFG model it rendered correctly: 1.77x to 1.97x faster than the
+  best pair result on video and 1.25x to 1.62x on stills. On it the large
+  video models ran 2.78x to 3.18x faster than on one Spark.
+- **MiniMax H3 and LTX: uly4.** Monarch refused every other four-Spark layout
+  for the MiniMax H3 rows and for every LTX row but LTX 2.3 T2V, which also
+  rendered on `auto` and ring4. MiniMax H3 gained about 1.6x over the pair
+  and LTX 1.14x to 1.44x, because LTX renders are short.
+- **Avoid `auto` at world 4.** It was refused on nine still-image rows, on
+  every MiniMax H3 row and on every LTX row but LTX 2.3 T2V, and on Wan
+  SCAIL2 it picked the layout with the worst output. It beat every explicit
+  layout only on Ideogram4, where it resolved to uly2+ring2 and uly4 crashed.
+- **Small or fast models gain nothing.** Flux Schnell, PixelDiT, PiD and Wan
+  FlowRVS gained nothing from four Sparks. Flux Schnell took 20 s on four
+  against 18 s on the pair, and PixelDiT's drop from 10 s to 8 s is one
+  timing step.
+- **Quality.** Every four-Spark render that finished matched the one-GPU
+  render within the 0.10 NRMS limit, except Wan SCAIL2 on `auto`, ring4 and
+  uly2+cfg2. Monarch gave no warning for those three.
+
+The matrix covered 40 rows on four layouts, 160 results, in about 14.5 hours.
+
+Still images, warm seconds:
+
+| Model | One GPU | Pair uly2 | Pair cfg2 | Pair ring2 | Four auto | Four uly4 | Four ring4 | Four uly2+cfg2 | Fastest on four | vs one GPU | vs pair |
+|---|--:|--:|--:|--:|--:|--:|--:|--:|---|--:|--:|
+| Anima | 20.0 | 14.0 | 10.0 | 14.0 | refused | 8.0 | 10.0 | 8.0 | uly4 / uly2+cfg2 | 2.50x | 1.25x |
+| Boogu | 46.1 | 32.2 | 24.0 | 30.1 | refused | 20.0 | 22.0 | 18.0 | uly2+cfg2 | 2.56x | 1.33x |
+| Chroma1-HD | 62.1 | 40.0 | 30.0 | 40.0 | refused | 24.0 | 26.0 | 20.0 | uly2+cfg2 | 3.10x | 1.50x |
+| Ernie | 48.1 | 30.0 | 26.0 | 30.0 | 18.0 | 16.0 | 18.0 | 16.0 | uly4 / uly2+cfg2 | 3.01x | 1.62x |
+| Flux Schnell | 26.0 | 18.0 | not run | 18.0 | 20.0 | 20.0 | 20.0 | refused | any (tie) | 1.30x | 0.90x |
+| HunyuanImage 2048 | 76.1 | 52.1 | 42.0 | 50.1 | 32.1 | 36.0 | 34.0 | 32.0 | uly2+cfg2 | 2.38x | 1.31x |
+| Ideogram4 | 34.0 | 24.0 | 20.0 | 22.2 | 14.0 | crash | 16.0 | refused | auto (uly2+ring2) | 2.43x | 1.43x |
+| Kandinsky5 Image | 78.1 | 50.1 | 40.1 | 48.1 | 32.0 | 30.0 | 34.0 | 26.0 | uly2+cfg2 | 3.00x | 1.54x |
+| Krea2 1536 | 64.1 | 40.1 | 34.0 | 38.1 | refused | 24.0 | refused | 22.0 | uly2+cfg2 | 2.91x | 1.55x |
+| Lens Turbo | 34.0 | 24.0 | 18.0 | 20.0 | refused | 16.0 | refused | 14.0 | uly2+cfg2 | 2.43x | 1.29x |
+| LongCat | 30.0 | 20.0 | 16.0 | 20.0 | refused | 12.0 | 12.1 | 10.0 | uly2+cfg2 | 3.00x | 1.60x |
+| OmniGen2 | 24.0 | not run | 14.0 | 16.0 | refused | refused | refused | refused | none | n/a | n/a |
+| PixelDiT | 10.0 | 10.0 | not run | 10.0 | 8.0 | 8.0 | 8.0 | refused | auto / uly4 / ring4 | 1.25x | 1.25x |
+| PiD 4K upscale | 32.0 | 34.1 | not run | 32.0 | 32.0 | 32.0 | 32.0 | refused | any (tie) | 1.00x | 1.00x |
+| Qwen-Image | 252.3 | 196.2 | 130.1 | 178.2 | refused | 196.2 | 186.2 | 100.1 | uly2+cfg2 | 2.52x | 1.30x |
+| Radiance | 88.1 | 62.1 | 44.1 | 60.1 | refused | 42.0 | 42.0 | 32.0 | uly2+cfg2 | 2.75x | 1.38x |
+| Z-Image | 18.0 | 14.0 | not run | 14.0 | 10.0 | refused | 10.0 | refused | auto / ring4 | 1.80x | 1.40x |
+
+Video, warm seconds:
+
+| Model | One GPU | Pair auto | Four auto | Four uly4 | Four ring4 | Four uly2+cfg2 | Fastest on four | vs one GPU | vs pair |
+|---|--:|--:|--:|--:|--:|--:|---|--:|--:|
+| HunyuanVideo 720p | 3229.1 | 1907.5 | 1050.7 | 1060.8 | 1066.9 | 1016.8 | uly2+cfg2 | 3.18x | 1.88x |
+| Wan SCAIL2 | 2754.3 | 1629.1 | 920.8 FAIL | 892.7 | 939.0 FAIL | 838.7 FAIL | uly4 | 3.09x | 1.82x |
+| Wan Bernini-R | 1443.1 | 906.8 | 524.4 | 508.5 | 528.5 | 460.4 | uly2+cfg2 | 3.13x | 1.97x |
+| MiniMax H3 guides | 1074.9 | 660.7 | refused | 402.4 | refused | refused | uly4 | 2.67x | 1.64x |
+| MiniMax H3 guide | 1050.9 | 640.6 | refused | 388.4 | refused | refused | uly4 | 2.71x | 1.65x |
+| CogVideoX 1.5 I2V | 977.1 | 616.6 | 362.4 | 374.4 | 356.4 | 336.3 | uly2+cfg2 | 2.91x | 1.83x |
+| Wan 2.2 T2V fp16 | 928.6 | 604.6 | 392.3 | 346.2 | 402.4 | 334.3 | uly2+cfg2 | 2.78x | 1.81x |
+| Wan 2.1 I2V | 888.5 | 542.5 | 314.3 | 318.3 | 322.3 | 288.3 | uly2+cfg2 | 3.08x | 1.88x |
+| Kandinsky5 Video | 882.7 | 546.5 | 306.3 | 314.2 | 314.3 | 296.3 | uly2+cfg2 | 2.98x | 1.84x |
+| Wan 2.1 T2V 14B | 872.7 | 542.4 | 314.3 | 310.3 | 322.4 | 280.2 | uly2+cfg2 | 3.11x | 1.94x |
+| MiniMax H3 t2va | 838.8 | 538.4 | refused | 332.4 | refused | refused | uly4 | 2.52x | 1.62x |
+| Wan 2.2 I2V | 748.7 | 468.4 | 276.3 | 266.3 | 280.2 | 246.2 | uly2+cfg2 | 3.04x | 1.90x |
+| CogVideoX 1.5 T2V | 246.3 | 156.2 | 100.1 | 96.1 | 106.1 | 88.1 | uly2+cfg2 | 2.80x | 1.77x |
+| LTX 2.5 guide mask | 114.1 | 90.1 | refused | 70.1 | refused | refused | uly4 | 1.63x | 1.29x |
+| LTX 2.5 FLF2V | 112.1 | 88.1 | refused | 66.1 | refused | refused | uly4 | 1.70x | 1.33x |
+| LTX 2.5 I2V guide | 108.2 | 86.1 | refused | 64.1 | refused | refused | uly4 | 1.69x | 1.34x |
+| LTX 2.5 I2V | 104.1 | 82.1 | refused | 64.1 | refused | refused | uly4 | 1.62x | 1.28x |
+| LTX 2.5 multishot | 100.1 | 78.1 | refused | 62.1 | refused | refused | uly4 | 1.61x | 1.26x |
+| LTX 2.5 T2V | 96.2 | 74.2 | refused | 60.1 | refused | refused | uly4 | 1.60x | 1.23x |
+| LTX 2.3 I2V AV | 94.1 | 78.1 | refused | 54.1 | refused | refused | uly4 | 1.74x | 1.44x |
+| LTX 2.5 two-stage | 76.1 | 64.1 | refused | 56.1 | refused | refused | uly4 | 1.36x | 1.14x |
+| LTX 2.3 T2V | 74.1 | 52.0 | 40.0 | 38.1 | 40.0 | refused | uly4 | 1.94x | 1.36x |
+| Wan FlowRVS (1 step) | 4.0 | 4.0 | 4.0 | 4.0 | 4.0 | refused | any (tie) | 1.00x | 1.00x |
+
+Wan SCAIL2's uly2+cfg2 render was the fastest, at 838.7 s, but failed the
+quality check, so its speedups use uly4. LTX 2.5 two-stage on uly4 read NRMS
+0.089 against one GPU, a pass, and 0.112 against the pair render, which was
+itself the one borderline result of their reproduction.
+
+Their one-GPU and pair runs reran the published campaign cells:
+
+| Measure | Result |
+|---|---|
+| Cells run | 69 on the pair and 40 on one GPU, on a third Spark; none wedged, none blocked |
+| Published cells compared | 109 of 117; they report no public files for the four Chroma1-HD fp8mixed cells and the four Ideogram4 bf16 cells |
+| Quality | 108 PASS and 1 CHECK: LTX 2.5 two-stage on the pair's `auto`, NRMS 0.120 against the 0.10 limit |
+| Speed against published | Median 5.5 percent faster; 94 of 109 cells within 10 percent and 104 within 15 percent |
+| Outliers | All faster than published: Wan SCAIL2 `auto` by 31 percent, Ernie cfg2 by 28 percent and LTX 2.5 FLF2V `auto` by 19 percent |
+
+They name their uncapped clocks as the likely reason for the faster times;
+the published campaign capped the first Spark at 2100 MHz. The maintainer's
+reply in the thread
+([post 19](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/19))
+named the uncapped clocks and some slightly outdated published cells as
+possible causes. The published record of the LTX 2.5 two-stage cell also
+read over the floor, at one-step NRMS 0.106
+([campaign video table](#campaign-render-times-video-2026-09-27-to-2026-09-28-head-capped)).
+
 ## Updating results
 
 Record the date, software versions, hardware settings, recipe and comparison
