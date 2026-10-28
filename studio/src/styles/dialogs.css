@@ -120,6 +120,49 @@ dialog::backdrop {
 .preview-dialog pre {
   max-height: 40vh;
 }
+.review-status {
+  margin: 0 0 14px;
+  padding: 9px 12px;
+  border: 1px solid #744e50;
+  border-radius: 7px;
+  color: #ffb4ba;
+  font-size: 12px;
+}
+.review-status.ready {
+  border-color: #395741;
+  color: var(--status-ready);
+}
+.review-summary {
+  display: grid;
+  grid-template-columns: 120px minmax(0, 1fr);
+  gap: 10px 14px;
+  margin: 0 0 16px;
+  font-size: 11px;
+}
+.review-summary dt {
+  color: var(--muted);
+}
+.review-summary dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.review-summary p {
+  margin: 0 0 4px;
+}
+.review-text {
+  white-space: pre-wrap;
+  max-height: 12em;
+  overflow: auto;
+  background: #11151a;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 6px 8px;
+}
+.submit-block {
+  margin: 8px 0 0;
+  text-align: right;
+  font-size: 11px;
+}
 .dialog-actions {
   display: flex;
   justify-content: flex-end;

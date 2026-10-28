@@ -116,12 +116,41 @@ test('copied named inputs use actual random seeds and expanded text, grouped by 
       '__studio_subgraph__2/3': { class_type: 'Render', inputs: { seed: 456 } },
     },
   );
-  assert.deepEqual(JSON.parse(recordedSettings(original, 'seed')), {
+  assert.deepEqual(JSON.parse(recordedSettings(original, 'inputs')), {
     '1': { seed: 123, text: 'styled cat' },
     '__studio_subgraph__2/3': { seed: 456 },
   });
   assert.deepEqual(JSON.parse(recordedSettings(original, 'prompt')), original.submission.prompt);
-  assert.throws(() => recordedSettings(job({ values: { stale: 5 } }), 'seed'), /unavailable/);
+  assert.throws(() => recordedSettings(job({ values: { stale: 5 } }), 'inputs'), /unavailable/);
+});
+
+test('copy seed copies the seeds the job ran with, every digit included', () => {
+  const two = job(
+    { seed_policy: 'random', values: { 'original-ui:1:seed': 5 } },
+    {
+      '1': { class_type: 'Render', inputs: { seed: 123, text: 'styled cat' } },
+      '__studio_subgraph__2/3': { class_type: 'Render', inputs: { seed: 456 } },
+    },
+  );
+  // Seeds come from the summary list, which the companion fills for an imported job too.
+  assert.throws(() => recordedSettings(two, 'seed'), /seeds are unavailable/);
+  two.submission.effective = { seeds: { '1.seed': 123 } };
+  assert.equal(recordedSettings(two, 'seed'), '123');
+  // A seed above 2**53 - 1 arrives as its digits and copies as them.
+  two.submission.effective = { seeds: { '1.seed': '18446744073709551615' } };
+  assert.equal(recordedSettings(two, 'seed'), '18446744073709551615');
+  two.submission.effective = {
+    seeds: { '1.seed': 9007199254740991, '__studio_subgraph__2/3.seed': '9007199254740992' },
+  };
+  assert.equal(
+    recordedSettings(two, 'seed'),
+    '{\n  "1.seed": 9007199254740991,\n  "__studio_subgraph__2/3.seed": 9007199254740992\n}',
+  );
+  // A number the browser already rounded never copies as if it were exact.
+  two.submission.effective = { seeds: { '1.seed': 2 ** 64 } };
+  assert.throws(() => recordedSettings(two, 'seed'), /seeds are unavailable/);
+  two.submission.effective = { seeds: {} };
+  assert.throws(() => recordedSettings(two, 'seed'), /recorded no seed/);
 });
 
 test('the viewer shows the snapshot copy of a chosen artifact and keeps one the snapshot omits', () => {

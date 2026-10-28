@@ -250,8 +250,10 @@
   max-width: 70%;
   overflow-wrap: anywhere;
 }
-.viewer-footer > div {
+.viewer-footer > div,
+.viewer-footer > .output-seeds {
   display: flex;
+  align-items: center;
   gap: 5px;
 }
 .viewer-footer button {

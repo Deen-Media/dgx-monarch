@@ -9,7 +9,8 @@ const PENDING_KEY = 'dgxm.studio.pending';
 /** One reviewed submission identity survives timeouts, reloads, and reconciliation. */
 export class Submission {
   preview = $state<JobPreview | null>(null);
-  kind = $state('job');
+  /** The browser's monotonic time, in ms, when the review arrived; it anchors the expiry clock. */
+  arrivedAt = 0;
   confirmed = $state(false);
   pending = $state<{ key: string; preview_id: string } | null>(null);
   confirmedMissing = $state(false);
@@ -27,11 +28,11 @@ export class Submission {
     this.connection = connection;
   }
 
-  review(preview: JobPreview, kind = 'job') {
+  review(preview: JobPreview) {
     if (this.recoveryError) throw new Error(this.recoveryError);
     if (this.pending) throw new Error('Reconcile the pending submission before reviewing another.');
+    this.arrivedAt = performance.now();
     this.preview = preview;
-    this.kind = kind;
     this.key = crypto.randomUUID();
     this.confirmed = false;
   }

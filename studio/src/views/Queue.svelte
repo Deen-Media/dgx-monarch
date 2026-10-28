@@ -3,6 +3,7 @@
   import type { Job } from '../contracts';
   import { untrack } from 'svelte';
   import { formatTime } from '../model';
+  import { recordedSeeds, seedText } from '../recordedSettings';
   import { emptyQueueText, isActive, keptPage, settledJobs, type SnapshotIds } from '../queueRows';
   import JobProvenance from '../components/JobProvenance.svelte';
   let {
@@ -102,7 +103,8 @@
     {active.length} active or unresolved jobs remain visible above {history.length} loaded history records
     (maximum 2,000 per window).
   </p>
-  {#each shown as job (job.id)}<details
+  {#each shown as job (job.id)}{@const seeds = seedText(recordedSeeds(job))}
+    <details
       class="record"
       open={selectedJob?.id === job.id}
       ontoggle={(e) => {
@@ -115,7 +117,8 @@
           >{job.state ?? 'unknown'}</span
         ><strong>{job.submission?.requested?.operation ?? 'workflow'}</strong><span class="mono"
           >{job.id}</span
-        ><span>{formatTime(job.created_at)}</span></summary
+        >{#if seeds}<span class="mono">{seeds}</span>{/if}<span>{formatTime(job.created_at)}</span
+        ></summary
       >
       <div class="job-details">
         <div class="workflow-actions">

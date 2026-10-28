@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Binding, Draft } from '../model';
-  import { fieldLabel, bindingType, bindingError, NOT_RUNNING } from '../model';
+  import { fieldLabel, bindingType, bindingError, isSeedBinding, NOT_RUNNING } from '../model';
   import type {
     Catalog,
     WorkflowEntry,
@@ -78,6 +78,8 @@
       : bindings.filter((b) => b.prominent || b.display?.prominent)
     ).sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
   );
+  // Under Random the companion replaces every seed input at review and shows the seeds it chose.
+  let randomSeeds = $derived(draft.seed_policy === 'random');
   // Nothing accepts a connection at the driver origin, so a review could not be queued.
   let stopped = $derived(driverState === NOT_RUNNING);
   // The template being inspected shows until the inspection ends; then the draft's own.
@@ -160,12 +162,18 @@
     <div>
       <label for="seed-policy">Seed policy</label><select
         id="seed-policy"
+        aria-describedby="seed-policy-note"
         value={draft.seed_policy}
         onchange={(e) => changeDraft({ seed_policy: e.currentTarget.value })}
         ><option value="fixed">Fixed</option><option value="random">Random</option></select
       >
     </div>
   </div>
+  <small class="seed-policy-note" id="seed-policy-note"
+    >{randomSeeds
+      ? 'Random: review chooses new seeds and shows them before you submit.'
+      : 'Fixed: jobs use the seed fields as they are.'}</small
+  >
   <div class="tabs" aria-label="Generation sections">
     {#each [{ id: 'inputs', label: 'Inputs' }, { id: 'advanced', label: 'All inputs' }, { id: 'assets', label: 'Assets' }, { id: 'loras', label: 'LoRAs' }, { id: 'workflow', label: 'Layout' }] as tab}<button
         class:active={controlTab === tab.id}
@@ -188,6 +196,9 @@
       {#each visibleBindings as binding (binding.id)}<Field
           {binding}
           value={draft.values[binding.id]}
+          note={randomSeeds && isSeedBinding(binding)
+            ? 'Chosen at review: the Random policy replaces this value.'
+            : ''}
           onchange={(value) => fieldChange(binding, value)}
         />{/each}
       {#if bindingErrors.length}<div class="validation-list" role="alert">

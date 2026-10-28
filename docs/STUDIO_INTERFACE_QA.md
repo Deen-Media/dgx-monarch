@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20; browser rows repeated on 2026-10-21 and twice on 2026-10-22, with two rows added on 2026-10-22. Status: **scoped local validation; twelve browser rows ran headless on the 2026-10-22 bundle; the viewer job status changes since then need a re-check; draft acceptance remains incomplete**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21 and twice on 2026-10-22, with two rows added on 2026-10-22. Status: **scoped local validation; twelve browser rows ran headless on the 2026-10-22 bundle; the viewer job status, review dialog and seed changes since then need a re-check; draft acceptance remains incomplete**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -14,18 +14,21 @@ At this audit snapshot, the Svelte sources contain 127 button tags, 32 selects,
 54 inputs, seven textareas, 18 disclosure summaries, two links and two video
 elements. These are authored tags, not runtime control counts: loops repeat
 controls for inputs, artifacts, jobs, records, hosts and grid cells. Native video
-controls and pointer interactions were reviewed separately.
+controls and pointer interactions were reviewed separately. Later changes added
+controls that these counts and this audit do not cover: the job review summary
+with its record disclosure, Use this seed in the viewer footer and a second copy
+action on gallery cards.
 
 | Surface | Controls and state branches inspected |
 |---|---|
 | Shell and connection | All eight routes; home; project selector; presentation; palette; telemetry and console toggles; console clearing; token form; reconnect; notices; cross-tab draft conflict; pending-request reconciliation and quarantine. |
-| Palette and review dialogs | Search, navigation and operation choices, no matches, opening/closing, keyboard entry, focus restoration, consent, busy and unavailable states, expired review and retained request identity. |
-| Generation | Workflow selection/import/export/undo; operation and seed choices; all five control sections; typed choices, numbers, booleans and text; required/unresolved fields; prompt bindings; style removal; lineage; submission review. |
+| Palette and review dialogs | Search, navigation and operation choices, no matches, opening/closing, keyboard entry, focus restoration, consent, busy and unavailable states, expired review and retained request identity. Re-check needed: the job review now opens with a summary, keeps the record closed, says why Submit is off, says when it has expired and closes after every submit. |
+| Generation | Workflow selection/import/export/undo; operation and seed choices; all five control sections; typed choices, numbers, booleans and text; required/unresolved fields; prompt bindings; style removal; lineage; submission review. Re-check needed: new drafts now default to Random, and seed fields say when review chooses their value. |
 | Workflow layout and App Mode | Prominence, labels, grouping and order; explicit rebinding; raw JSON repair; invalid JSON; metadata preservation; required unresolved selections; unchanged-source validation and intentional source edits. |
 | Assets and LoRAs | File selection/replacement/clearing; input binding; mask size, brush, erase, all/clear and upload; stale upload completion; LoRA search, add/remove, strength, enable and reorder; insertion loader and consumer boundaries. |
-| Output viewer | Fit, actual size, zoom, panning, fullscreen, metadata, download, reuse/edit/upscale, side-by-side/wipe comparison, difference disclosure, video playback, frame stepping, mute, loop, synchronization and decode failures. |
-| Gallery | Search, media/sort and expanded filters; project membership; card actions; comparison; provenance/clipboard/download; virtual scrolling, pagination and bounded windows. |
-| Queue and runtime evidence | Search/state filters, refresh, job expansion, cancellation/retry availability, full provenance, evidence type and pages, recorded-fact disclosures and retained request identities. |
+| Output viewer | Fit, actual size, zoom, panning, fullscreen, metadata, download, reuse/edit/upscale, side-by-side/wipe comparison, difference disclosure, video playback, frame stepping, mute, loop, synchronization and decode failures. Re-check needed: the footer now shows the recorded seed and Use this seed. |
+| Gallery | Search, media/sort and expanded filters; project membership; card actions; comparison; provenance/clipboard/download; virtual scrolling, pagination and bounded windows. Re-check needed: Copy seed and Copy named inputs now replace the combined copy action. |
+| Queue and runtime evidence | Search/state filters, refresh, job expansion, cancellation/retry availability, full provenance, evidence type and pages, recorded-fact disclosures and retained request identities. Re-check needed: rows now show the recorded seeds. |
 | Grids and Fleet | Axes and typed values; named styles; seed policy; exclusions; preview/confirmation/dispatch; saved runs and experiments; per-cell details; selective retries; manifests; Fleet task selection and evidence. |
 | Operations | Capability selection, all parameter shapes, host add/remove, review, exact-plan consent, pending recovery, unavailable/refused states and full receipt disclosure/export. |
 | Project library | All six record kinds; filtering, membership, apply/edit/export/save/cancel, revisions, bounded pages, merge/copy imports, conflict choices, source repairs and import uncertainty. |
@@ -95,7 +98,7 @@ before 2026-10-21 recorded no browser, browser version or bundle hash.
 
 | Check | Observed result and scope |
 |---|---|
-| Responsive routes | All eight routes were opened at all four viewports after jobs, uploads, grids, presets and operation reviews existed. Page and main-content horizontal overflow measured zero for every route. Arbitrary user content and other expanded states remain additional combinations. Re-check needed: Create's recent outputs tiles are now taller and hold thumbnails, and the viewer has a status line; no run has measured them. |
+| Responsive routes | All eight routes were opened at all four viewports after jobs, uploads, grids, presets and operation reviews existed. Page and main-content horizontal overflow measured zero for every route. Arbitrary user content and other expanded states remain additional combinations. Re-check needed: Create's recent outputs tiles are now taller and hold thumbnails, the viewer has a status line, the viewer footer and Queue rows show recorded seeds, and the footer has a Use this seed button; no run has measured them. |
 | Phone controls | At 360 and 390 pixels wide, all 34 visible inputs, selects and textareas across the eight routes used 16px text and at least 44px height. The rule applies up to 760 pixels wide, so the 768×1024 and 1024×600 viewports keep desktop sizing. Native phone operating-system behavior was not tested. |
 | Palette and motion | Palette search held focus two frames after a pointer click or Ctrl+K opened the palette, and took focus 3ms to 5ms after a scripted open. Escape closed the palette and returned focus to its button. The dialog and backdrop reveals were declared at 200ms, and the dialog's finished 201ms to 203ms after opening. With reduced motion enabled, neither animated. A disclosure-closing sample captured 35 to 39 frames with a longest interval of 17.1ms to 17.5ms in headless Firefox's software compositor; this is local interaction evidence, not a frame-rate guarantee. |
 | Image previews | Portrait 120×480, landscape 480×120, square 256×256, wide 1024×64 and tall 64×1024 previews filled their frames at every viewport, with at most 0.053 percent aspect-ratio error and 0.017px centering error. |

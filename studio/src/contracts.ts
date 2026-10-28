@@ -19,15 +19,42 @@ export interface GraphConnection {
   type: 'MODEL' | 'DGXM_MODEL' | 'CLIP';
   source: [string, number];
 }
+/**
+ * One recorded seed. A browser reads a JSON number as a double, exact only up to
+ * Number.MAX_SAFE_INTEGER (2**53 - 1), while ComfyUI seeds reach 2**64 - 1. A job summary sends a
+ * seed up to that limit as a JSON number and a larger one as its exact decimal digits, a string;
+ * wire_records.browser_seeds in the companion applies the rule.
+ */
+export type SeedValue = number | string;
+/** Seeds by execution identity, `node id.input name`, as the companion records them. */
+export type Seeds = Record<string, SeedValue>;
 export interface JobPreview {
   id: string;
   digest: string;
   errors: string[];
   warnings: unknown[];
   requested: Draft;
-  effective: Record<string, unknown>;
+  effective: {
+    /**
+     * The seeds the prompt sends: the draft's under Fixed, those chosen at review under Random.
+     * A review's seeds are safe integers: Random picks at most 2**53 - 1, and a Fixed draft
+     * field refuses a larger value before review.
+     */
+    seeds?: Seeds;
+    style_bindings?: Record<string, string>;
+    [key: string]: unknown;
+  };
   prompt: Workflow;
   workflow: Workflow;
+  model_identities?: Array<{ node_id: string; input: string; name: string }>;
+  requested_topology?: Array<{
+    node_id: string;
+    class_type: string;
+    parameters: Record<string, unknown>;
+  }>;
+  /** Seconds since the epoch; a review can be submitted until it expires. */
+  created_at?: number;
+  expires_at?: number;
   [key: string]: unknown;
 }
 export interface Job {
@@ -39,6 +66,12 @@ export interface Job {
   idempotency_key?: string;
   submission: {
     requested?: Partial<Draft>;
+    /**
+     * A summary row carries only the seeds here, by the SeedValue rule, and an imported job's
+     * seeds come from its prompt. A full record carries the frozen numbers, which a browser
+     * rounds above 2**53 - 1.
+     */
+    effective?: { seeds?: Seeds | null; [key: string]: unknown };
     workflow?: Workflow;
     project_id?: string;
     [key: string]: unknown;

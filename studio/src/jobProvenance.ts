@@ -16,6 +16,19 @@ export async function fullJob(client: StudioClient, id: string, candidate?: Job)
 }
 
 /**
+ * One job's summary row, read by its identity. Its recorded seeds keep every digit, which a full
+ * record's JSON numbers lose in the browser above 2**53 - 1, and it is a few hundred bytes.
+ */
+export async function jobSummary(client: StudioClient, id: string): Promise<Job> {
+  const page = await client.request<{ items?: Job[] }>(
+    `/jobs?job_id=${encodeURIComponent(id)}&limit=1`,
+  );
+  const job = page?.items?.[0];
+  if (job?.id !== id) throw new Error('The companion returned no summary for this job.');
+  return job;
+}
+
+/**
  * A retry keeps the original immutable request in `submission` and records the runtime it ran
  * against in this job-level field. Comparison reads the retry's own values from it.
  */

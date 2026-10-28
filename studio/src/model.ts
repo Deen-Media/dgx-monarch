@@ -7,6 +7,8 @@ export interface Binding {
   name?: string;
   input_name?: string;
   node_id?: string;
+  /** The compiled prompt node that receives this input; a subgraph instance gives it its own id. */
+  execution_node_id?: string;
   type?: string;
   data_type?: string;
   value?: unknown;
@@ -31,6 +33,8 @@ export interface Binding {
     default?: unknown;
     /** A dynamic choice: changing it changes which child inputs the node declares. */
     dynamic?: boolean;
+    /** Text the driver draws as a multi-line box, such as a prompt. */
+    multiline?: boolean;
   };
   required?: boolean;
   validation?: {
@@ -82,9 +86,12 @@ export const emptyDraft = (): Draft => ({
   project_id: '',
   styles: [],
   lora_stack: [],
-  seed_policy: 'fixed',
+  // New drafts choose their seeds at review; Fixed sends the seed fields as they are.
+  seed_policy: 'random',
   parent_artifact_ids: [],
 });
+/** The companion's policy for a request that names none, so a saved record keeps its meaning. */
+const RECORDED_SEED_POLICY = 'fixed';
 export function fieldLabel(b: Binding) {
   return b.display?.label ?? b.label ?? b.name ?? b.input_name ?? b.id;
 }
@@ -207,6 +214,57 @@ export function restoreDraft(value: unknown): Draft {
     parent_artifact_ids: Array.isArray(source.parent_artifact_ids)
       ? source.parent_artifact_ids
       : [],
+    seed_policy: source.seed_policy ?? RECORDED_SEED_POLICY,
+  };
+}
+
+/** An integer seed input, which the Random policy replaces at review as the companion does. */
+export function isSeedBinding(b: Binding): boolean {
+  return (
+    b.resolved !== false &&
+    bindingType(b) === 'INT' &&
+    ['seed', 'noise_seed'].includes(b.input_name ?? '')
+  );
+}
+
+/**
+ * The draft change that puts recorded seeds into the draft's seed fields with the Fixed policy.
+ * Seeds are keyed by execution identity, `node id.input name`. A single seed also fits a draft
+ * with a single seed field whose node id differs. Returns the reason instead when none fits, or
+ * when a seed is too large for a draft field to hold exactly.
+ */
+export function seedChange(
+  draft: Draft,
+  bindings: Binding[],
+  seeds: Record<string, number | string>,
+): { change: Partial<Draft>; notice: string } | { error: string } {
+  const recorded = Object.entries(seeds);
+  if (!draft.workflow) return { error: 'Load a workflow before using a recorded seed.' };
+  if (!recorded.length) return { error: 'This output has no recorded seed.' };
+  const fields = bindings.filter(isSeedBinding);
+  const byKey = new Map(
+    fields.map((b) => [`${b.execution_node_id ?? b.node_id}.${b.input_name}`, b]),
+  );
+  let matched = recorded.flatMap(([key, seed]) => {
+    const field = byKey.get(key);
+    return field ? [[field.id, seed] as const] : [];
+  });
+  if (!matched.length && recorded.length === 1 && fields.length === 1)
+    matched = [[fields[0].id, recorded[0][1]]];
+  if (!matched.length)
+    return {
+      error: `The draft has ${fields.length} seed field(s), and none matches the node of the ${recorded.length} recorded seed(s). Reuse settings loads the workflow that made this output.`,
+    };
+  // A draft value is a JavaScript number, exact only up to 2**53 - 1; a larger seed would round.
+  const large = matched.find(([, seed]) => !Number.isSafeInteger(seed));
+  if (large)
+    return {
+      error: `Seed ${large[1]} is too large for a draft field, which holds whole numbers exactly only up to ${Number.MAX_SAFE_INTEGER}. The draft is unchanged.`,
+    };
+  const left = recorded.length - matched.length;
+  return {
+    change: { values: { ...draft.values, ...Object.fromEntries(matched) }, seed_policy: 'fixed' },
+    notice: `${matched.length === 1 ? `Seed ${matched[0][1]} is` : `${matched.length} seeds are`} now in the draft, and the seed policy is Fixed.${left ? ` ${left} recorded seed(s) matched no seed field.` : ''} Undo restores the previous draft.`,
   };
 }
 

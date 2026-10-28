@@ -9,6 +9,17 @@ from .grid_views import projection as grid_projection
 from .store import Store
 
 PAGE_BYTES = 8 * 1024 * 1024
+# A browser reads a JSON number as a double, which holds whole numbers exactly only up to
+# 2**53 - 1, its Number.MAX_SAFE_INTEGER. ComfyUI seeds reach 2**64 - 1.
+SAFE_INTEGER = 2**53 - 1
+# An imported job has no frozen seed list, so the projection hands decode_row the inputs of
+# each prompt node with an integer seed input. An object extracts as its exact text, while a
+# json_each or scalar value turns an integer above 2**63 into a rounded real. Only object nodes
+# are read, since a JSON function refuses a node that is plain text.
+PROMPT_SEED_INPUTS = """(SELECT json_group_object(key,json_extract(node,'$.inputs'))
+    FROM (SELECT key, CASE WHEN type = 'object' THEN value END AS node
+          FROM json_each(document,'$.submission.prompt'))
+    WHERE json_type(node,'$.inputs.seed') = 'integer' OR json_type(node,'$.inputs.noise_seed') = 'integer')"""
 
 
 def _object(fields: tuple[str, ...], prefix: str = "$") -> str:
@@ -30,13 +41,18 @@ def projection(kind: str) -> str:
                         "running_observed_at"))
         submission = _object(("project_id", "versions", "model_identities", "digest"), "$.submission")
         requested = _object(("operation", "project_id"), "$.submission.requested")
+        # The seeds the driver ran with, at the path the full record uses. decode_row fills an
+        # imported job's from its prompt and gives each the form a browser reads exactly.
+        effective = ("json_object('seeds',json_extract(document,'$.submission.effective.seeds'),'prompt_seeds',"
+                     "CASE WHEN json_type(document,'$.submission.effective.seeds') IS NULL "
+                     f"THEN {PROMPT_SEED_INPUTS} END)")
         monarch = _object(("schema_version", "event_count", "render_count", "render_status_counts",
                            "omitted_render_count"), "$.monarch")
         renders = """(SELECT COALESCE(json_group_object(key,json_object(
             'fleet_index',json_extract(value,'$.fleet_index'),'status',json_extract(value,'$.status'))),'{}')
             FROM json_each(document,'$.monarch.renders'))"""
         return (f"json_set({base},'$.summary',json('true'),'$.submission',"
-                f"json_set({submission},'$.requested',{requested}),'$.monarch',"
+                f"json_set({submission},'$.requested',{requested},'$.effective',{effective}),'$.monarch',"
                 f"json_set({monarch},'$.renders',json({renders})))")
     if kind == "operations":
         return "json_set(" + _object(("id", "action", "state", "status", "created_at", "updated_at",
@@ -48,6 +64,32 @@ def projection(kind: str) -> str:
         return ("json_set(" + _object(("id", "revision", "project_id", "project_ids"))
                 + ",'$.summary',json('true'),'$.data'," + _object(("name", "project_id", "project_ids"), "$.data") + ")")
     raise ValueError("Unsupported list projection")
+
+
+def browser_seeds(seeds: Any) -> Any:
+    """Seeds a browser reads exactly: a JSON number up to 2**53 - 1, its decimal digits as a string above."""
+    if not isinstance(seeds, dict):
+        return seeds
+    return {key: str(seed) if type(seed) is int and abs(seed) > SAFE_INTEGER else seed for key, seed in seeds.items()}
+
+
+def prompt_seeds(nodes: Any) -> dict[str, int]:
+    """The integer seed and noise_seed inputs of a prompt, keyed as build_preview keys effective seeds."""
+    if not isinstance(nodes, dict):
+        return {}
+    return {f"{node_id}.{name}": inputs[name] for node_id, inputs in nodes.items() if isinstance(inputs, dict)
+            for name in ("seed", "noise_seed") if type(inputs.get(name)) is int}
+
+
+def decode_row(kind: str, text: str) -> dict[str, Any]:
+    """One projected row; a job summary's recorded seeds keep every digit on the wire."""
+    value: dict[str, Any] = json.loads(text)
+    if kind == "jobs":
+        effective = value["submission"]["effective"]
+        nodes = effective.pop("prompt_seeds")
+        seeds = effective["seeds"] if effective["seeds"] is not None else prompt_seeds(nodes)
+        effective["seeds"] = browser_seeds(seeds)
+    return value
 
 
 def snapshot_rows(store: Store) -> tuple[dict[str, list[dict[str, Any]]], dict[str, int]]:
@@ -76,7 +118,7 @@ def snapshot_window(store: Store) -> tuple[dict[str, list[dict[str, Any]]], dict
                                     f"ORDER BY {priority}updated DESC,id LIMIT 200", (kind,))
             result[kind] = []
             for row in rows:
-                value = json.loads(row[0])
+                value = decode_row(kind, row[0])
                 size = len(canonical(value).encode()) + 1
                 if size > remaining:
                     continue

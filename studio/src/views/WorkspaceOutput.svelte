@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { StudioClient } from '../api';
-  import type { Artifact, Telemetry, ReuseArtifact } from '../contracts';
+  import type { Artifact, Job, Seeds, Telemetry, ReuseArtifact } from '../contracts';
   import type { FollowedJob } from '../jobTracker.svelte';
   import { isJobOutput } from '../jobFollow';
   import { formatTime } from '../model';
@@ -22,6 +22,8 @@
     job = null,
     working = false,
     showTelemetry,
+    jobs,
+    onuseseed,
     onselect,
     oncompare,
     oncollapse,
@@ -42,6 +44,8 @@
     job?: FollowedJob | null;
     working?: boolean;
     showTelemetry: boolean;
+    jobs: Job[];
+    onuseseed: (seeds: Seeds) => void;
     onselect: (artifact: Artifact) => void;
     oncompare: (artifact: Artifact | null) => void;
     oncollapse: () => void;
@@ -59,6 +63,8 @@
     artifact={selected}
     compare={comparison}
     {client}
+    {jobs}
+    {onuseseed}
     onreuse={reuse}
     onselect={(a) => oncompare(a)}
     onqueue={() => navigate('queue')}

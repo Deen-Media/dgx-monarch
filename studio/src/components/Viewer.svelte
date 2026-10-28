@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onDestroy, untrack } from 'svelte';
   import type { StudioClient } from '../api';
-  import type { Artifact, ReuseArtifact } from '../contracts';
+  import type { Artifact, Job, ReuseArtifact, Seeds } from '../contracts';
   import type { FollowedJob } from '../jobTracker.svelte';
   import ComparisonDetails from './ComparisonDetails.svelte';
   import JobStatusLine from './JobStatusLine.svelte';
+  import OutputSeeds from './OutputSeeds.svelte';
   import { displayUnknown, formatTime } from '../model';
   import { frameTarget } from '../mediaPlayback';
   let {
@@ -13,6 +14,8 @@
     job = null,
     working = false,
     client,
+    jobs,
+    onuseseed,
     onreuse,
     onselect,
     onqueue,
@@ -24,6 +27,9 @@
     /** Whether any job is in flight; the frame's activity border follows it. */
     working?: boolean;
     client: StudioClient;
+    /** Snapshot job rows; without them, as in presentation mode, the footer shows no seed. */
+    jobs?: Job[];
+    onuseseed?: (seeds: Seeds) => void;
     onreuse: ReuseArtifact;
     onselect: (a: Artifact | null) => void;
     onqueue?: () => void;
@@ -330,6 +336,12 @@
           artifact.created_at,
         )}</span
       >
+      {#if jobs && artifact.job_id}<OutputSeeds
+          {client}
+          jobId={artifact.job_id}
+          job={jobs.find((row) => row.id === artifact.job_id)}
+          {onuseseed}
+        />{/if}
       <div>
         <button onclick={() => onreuse(artifact)}>Reuse settings</button><button
           onclick={() => onreuse(artifact, 'edit')}>Send to edit</button
