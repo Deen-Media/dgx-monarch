@@ -1537,6 +1537,70 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     7,
+     "text"
+    ],
+    [
+     9,
+     "text"
+    ],
+    [
+     8,
+     "text"
+    ],
+    [
+     21,
+     "seed"
+    ],
+    [
+     15,
+     "width"
+    ],
+    [
+     15,
+     "height"
+    ],
+    [
+     21,
+     "steps"
+    ],
+    [
+     21,
+     "cfg"
+    ],
+    [
+     21,
+     "sampler_name"
+    ],
+    [
+     21,
+     "scheduler"
+    ],
+    [
+     12,
+     "image"
+    ],
+    [
+     13,
+     "file"
+    ],
+    [
+     4,
+     "strength_model"
+    ],
+    [
+     3,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    26
+   ]
+  }
+ },
  "version": 0.4
 }

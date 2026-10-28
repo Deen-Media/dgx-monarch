@@ -703,9 +703,20 @@ their own status option, and uploads have their own media kinds.
 
 Choose one of the 71 packaged workflows or import a ComfyUI UI workflow/API
 prompt. Supported inputs appear as typed controls; connected inputs remain
-graph connections. The advanced view exposes all supported primitive fields.
-App Mode labels and layout can change without changing binding identity.
-Layout edits also update the workflow repair text. Validating unchanged source
+graph connections. The Inputs tab lists the inputs of the workflow's App Mode
+layout, in its order, and a workflow without one opens on All inputs. Each
+packaged workflow carries a layout, and ComfyUI's App Mode shows the same one.
+It lists, where the graph has them: the prompt, the negative prompt, the seed,
+the image size, steps, CFG and any Flux guidance, sampler and scheduler, the
+denoise or strength of an upscale, the input image, video or audio, the LoRA
+strength and the model file. A field keeps its input name, so on most graphs
+the prompt and the negative prompt both read `text`; the prompt comes first. A
+graph that samples in two stages, or holds the size on two nodes, lists each
+copy side by side; change them together. All inputs lists every supported
+primitive field, such as the DGX Monarch Init settings, the frame count and the
+VAE and text encoder files. The Layout tab changes which inputs are
+prominent, their labels and their order without changing binding identity, and
+its edits also update the workflow repair text. Validating unchanged source
 preserves edits made in typed controls; intentional JSON changes use the edited
 workflow's defaults. Changing a dynamic choice, such as the codec or encoding
 mode of SaveVideo, inspects the workflow again with the draft's values: the

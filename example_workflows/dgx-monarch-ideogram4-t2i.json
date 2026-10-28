@@ -736,6 +736,58 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     6,
+     "text"
+    ],
+    [
+     10,
+     "noise_seed"
+    ],
+    [
+     7,
+     "width"
+    ],
+    [
+     7,
+     "height"
+    ],
+    [
+     8,
+     "width"
+    ],
+    [
+     8,
+     "height"
+    ],
+    [
+     8,
+     "steps"
+    ],
+    [
+     11,
+     "cfg"
+    ],
+    [
+     9,
+     "sampler_name"
+    ],
+    [
+     3,
+     "unet_name"
+    ],
+    [
+     4,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    15
+   ]
+  }
+ },
  "version": 0.4
 }

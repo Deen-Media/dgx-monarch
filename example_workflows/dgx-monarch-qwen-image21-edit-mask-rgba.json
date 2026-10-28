@@ -715,6 +715,58 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     9,
+     "prompt"
+    ],
+    [
+     9,
+     "negative_prompt"
+    ],
+    [
+     10,
+     "seed"
+    ],
+    [
+     9,
+     "resolution"
+    ],
+    [
+     10,
+     "steps"
+    ],
+    [
+     10,
+     "cfg"
+    ],
+    [
+     10,
+     "sampler_name"
+    ],
+    [
+     10,
+     "scheduler"
+    ],
+    [
+     6,
+     "image"
+    ],
+    [
+     7,
+     "image"
+    ],
+    [
+     3,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    12
+   ]
+  }
+ },
  "version": 0.4
 }

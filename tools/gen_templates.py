@@ -637,10 +637,13 @@ def build(spec: dict) -> dict:
             # through the positional heal meant for legacy saves.
             node_out["dgxm_widgets"] = dict(zip(_widget_names(ntype), wv, strict=True))
         nodes_out.append(node_out)
+    # A testing-only spec carries no layout, so its graph keeps an empty extra.
+    extra = (_app_mode_extra(spec["app_mode"], spec["nodes"], key_to_id)
+             if "app_mode" in spec else {})
     return {"id": _workflow_id(spec["title"]), "revision": 0,
             "last_node_id": len(nodes_out), "last_link_id": link_id,
             "nodes": nodes_out, "links": links, "groups": [],
-            "config": {}, "extra": {}, "version": 0.4}
+            "config": {}, "extra": extra, "version": 0.4}
 
 
 @_with_comfy_stubs
@@ -5734,6 +5737,283 @@ def _wan_animate2_bf16_warm_spec() -> dict:
 
 
 TEMPLATES["dgx-monarch-wan-animate2-bfloat16-warm"] = _wan_animate2_bf16_warm_spec()
+
+
+# App Mode layouts. ComfyUI keeps a workflow's App Mode in extra.linearData:
+# `inputs` lists [node id, widget name] pairs in display order, and `outputs`
+# lists the ids of the nodes whose results the app view shows. In
+# comfyui_frontend_package 1.57.4, workflowSchema.ts types the block, and the
+# App Mode store (src/stores/appModeStore.ts, upgradeAndValidateInput) turns
+# each pair into the graphId:nodeId:name identity it saves today, through the
+# graph it has just built, so a pair works whatever root ID the browser gives
+# the graph. Most of ComfyUI's own templates that carry a layout ship such
+# pairs (comfyui_workflow_templates_json 0.1.123). Studio reads the same block
+# (src/dgx_monarch/studio/workflows.py): it marks the inputs prominent in this
+# order and opens its Inputs tab on them. extra.linearMode stays unset, so
+# ComfyUI still opens each template as a graph, and its App Mode view shows
+# the layout.
+#
+# Every shipped template lists, where it has them and in this order: the
+# positive prompt, the negative prompt, the seed, the image size, steps, cfg,
+# sampler and scheduler, the denoise or strength of an upscale, the input
+# image, video or audio, the LoRA strength, and the model file. These roles
+# name that order.
+APP_MODE_ROLES = ("prompt", "negative", "seed", "size", "steps", "cfg", "sampler",
+                  "strength", "media", "lora", "model")
+# These nodes stay under All inputs: the Init settings, the skip layer node and
+# the VAE, text encoder and CLIP Vision loaders, whose files each family sets.
+APP_MODE_LEFT_OUT = frozenset({
+    "DGXMonarchInit", "DGXMonarchSkipLayerGuidance", "VAELoader", "CLIPLoader",
+    "DualCLIPLoader", "CLIPVisionLoader",
+})
+
+
+def _app_mode_extra(layout: dict, nodes: list[dict], key_to_id: dict[str, int]) -> dict:
+    """The extra block for one layout, after checking each entry against the graph.
+
+    An input must name a widget of its node that no wire feeds: a wired widget
+    is a socket, so App Mode shows nothing for it and Studio refuses it. An
+    output must name a save node.
+    """
+    by_key = {node["key"]: node for node in nodes}
+    inputs: list[list] = []
+    for entry in layout["inputs"]:
+        key, _, widget = entry.partition(".")
+        node = by_key.get(key)
+        if node is None:
+            raise KeyError(f"App Mode input {entry!r} names no node")
+        if node["type"] in APP_MODE_LEFT_OUT:
+            raise ValueError(f"App Mode input {entry!r}: {node['type']} stays under All inputs")
+        if widget == CONTROL_WIDGET or widget not in _widget_names(node["type"]):
+            raise KeyError(f"App Mode input {entry!r}: {node['type']} has no widget {widget!r}")
+        if widget in (node.get("wire") or {}):
+            raise ValueError(f"App Mode input {entry!r} is wired, so it holds no value")
+        if [key_to_id[key], widget] in inputs:
+            raise ValueError(f"App Mode input {entry!r} is listed twice")
+        inputs.append([key_to_id[key], widget])
+    outputs = []
+    for key in layout["outputs"]:
+        node = by_key.get(key)
+        if node is None or not node["type"].startswith("Save"):
+            raise ValueError(f"App Mode output {key!r} is not a save node")
+        outputs.append(key_to_id[key])
+    if not inputs or not outputs:
+        raise ValueError("an App Mode layout needs at least one input and one output")
+    return {"linearData": {"inputs": inputs, "outputs": outputs}}
+
+
+def _layout(*parts: dict, outputs: tuple[str, ...] = ("save",)) -> dict:
+    """Join layout parts into one layout.
+
+    Each part maps roles to "<node key>.<widget>" entries. The layout lists the
+    roles in APP_MODE_ROLES order, and within a role the entries in part order,
+    so the entries of a second sampler stage follow the first's. An unknown
+    role raises.
+    """
+    roles: dict[str, list[str]] = {role: [] for role in APP_MODE_ROLES}
+    for part in parts:
+        for role, entries in part.items():
+            roles[role].extend(entries)
+    return {"inputs": [entry for role in APP_MODE_ROLES for entry in roles[role]],
+            "outputs": list(outputs)}
+
+
+def _stage(key: str, *, seed: str | None = "seed") -> dict:
+    """One sampler node: its seed, then steps, cfg, sampler and scheduler.
+
+    A stage that adds no noise of its own passes seed=None: its seed never
+    reaches the render, so a field for it would change nothing.
+    """
+    return {"seed": (f"{key}.{seed}",) if seed else (), "steps": (f"{key}.steps",),
+            "cfg": (f"{key}.cfg",), "sampler": (f"{key}.sampler_name", f"{key}.scheduler")}
+
+
+_PROMPT = {"prompt": ("pos.text",)}
+_NEGATIVE = {"negative": ("neg.text",)}
+_LATENT = {"size": ("latent.width", "latent.height")}
+_UNET = {"model": ("unet.unet_name",)}
+_KS = _stage("ks")
+_LORA = {"lora": ("lora.strength_model",)}
+_IMAGE = {"media": ("image.image",)}
+_REFERENCE = {"media": ("reference.image",)}
+# The common graph. A Conditioning Zero Out negative has no text to edit, so
+# the second form lists no negative.
+_T2I = (_PROMPT, _NEGATIVE, _LATENT, _KS, _UNET)
+_T2I_ZERO = (_PROMPT, _LATENT, _KS, _UNET)
+# Flux 1 and Flux 2 are guidance distilled: cfg stays at 1.0 and the Flux
+# Guidance node sets prompt adherence, so the layout lists it after cfg.
+_FLUX_GUIDANCE = {"cfg": ("guid.guidance",)}
+# A custom sampler graph spreads one stage over four nodes. Manual Sigmas has
+# no step count, so the LTX graphs list no steps.
+_CUSTOM = {"seed": ("noise.noise_seed",), "cfg": ("guider.cfg",),
+           "sampler": ("sampler.sampler_name",)}
+# The Wan 2.2 and Bernini-R experts split one schedule over two stages, and
+# only the high-noise stage adds noise. Both stages list their steps, cfg,
+# sampler and scheduler, side by side, because the two must change together.
+_EXPERTS = (_stage("ks_high", seed="noise_seed"), _stage("ks_low", seed=None))
+# A graph with frames and a soundtrack shows both files.
+_AV_OUTPUTS = ("simg", "saud")
+# The size appears twice in this graph, on the conditioning node and on the
+# empty latent, and the two must agree, so both pairs are listed.
+_MINIMAX_H3 = ({"prompt": ("cond.prompt",)}, _NEGATIVE,
+               {"size": ("cond.width", "cond.height", "latent.width", "latent.height")},
+               _KS, _UNET)
+# The Kandinsky 5 encode node takes the prompt once per encoder.
+_KANDINSKY5 = ({"prompt": ("pos.clip_l", "pos.qwen25_7b"),
+                "negative": ("neg.clip_l", "neg.qwen25_7b")}, _LATENT, _KS, _UNET)
+# These encode nodes hold the prompt, the negative and the size.
+_QWEN_IMAGE21 = ({"prompt": ("cond.prompt",), "negative": ("cond.negative_prompt",),
+                  "size": ("cond.resolution",)}, _KS, _UNET)
+_MAGE_FLOW = ({"prompt": ("cond.prompt",), "negative": ("cond.negative_prompt",),
+               "size": ("cond.width", "cond.height")}, _KS, _UNET)
+# The pose prompt is a second positive prompt. The visible scale sets the
+# canvas, and Get Image Size passes it to the Animate2 node.
+_WAN_ANIMATE2 = ({"prompt": ("pos.text", "pose.text")}, _NEGATIVE,
+                 {"size": ("driving_scale.width", "driving_scale.height")}, _KS,
+                 {"media": ("reference.image", "driving.file")}, _UNET)
+
+# One reviewed layout per shipped template. Frame counts stay under All inputs:
+# several video graphs repeat the count on another node that must change with
+# it. The edit graphs list no denoise: they sample from an empty latent and
+# take the reference through the conditioning, so their denoise is no edit
+# strength. The upscale graphs list theirs: the Kroma refine pass's denoise,
+# and PiD's degrade_sigma, which says how degraded the source is.
+APP_MODE = {
+    "dgx-monarch-quickstart": _layout(*_T2I_ZERO),
+    "dgx-monarch-lora-low-rss": _layout(
+        *_T2I_ZERO, {"lora": ("lora0.strength_model", "lora1.strength_model")}),
+    # The fleet sampler takes one prompt per line; pos only feeds the zeroed
+    # negative.
+    "dgx-monarch-fleet": _layout({"prompt": ("fleet.prompts",)}, _LATENT,
+                                 _stage("fleet", seed="noise_seed"), _UNET),
+    "dgx-monarch-identity-gate": _layout(
+        _PROMPT, _LATENT, _stage("gate", seed="noise_seed"),
+        {"lora": ("lora0.strength_model",)}, _UNET),
+    "dgx-monarch-dual-spark-split": _layout(*_T2I_ZERO),
+    "dgx-monarch-krea2-t2i": _layout(*_T2I),
+    "dgx-monarch-minimax-h3-t2va": _layout(*_MINIMAX_H3, outputs=_AV_OUTPUTS),
+    "dgx-monarch-minimax-h3-guide": _layout(*_MINIMAX_H3, _IMAGE, outputs=_AV_OUTPUTS),
+    "dgx-monarch-minimax-h3-mp4": _layout(*_MINIMAX_H3),
+    "dgx-monarch-wan-t2v": _layout(*_T2I),
+    "dgx-monarch-wan21-i2v": _layout(_PROMPT, _NEGATIVE,
+                                     {"size": ("i2v.width", "i2v.height")}, _KS,
+                                     _IMAGE, _UNET),
+    "dgx-monarch-wan-animate2": _layout(*_WAN_ANIMATE2, _LORA),
+    "dgx-monarch-wan-animate2-distilled": _layout(*_WAN_ANIMATE2),
+    "dgx-monarch-wan-animate2-base-quality": _layout(*_WAN_ANIMATE2),
+    "dgx-monarch-wan-animate2-memory-saver": _layout(*_WAN_ANIMATE2, _LORA),
+    "dgx-monarch-wan-animate2-bfloat16-warm": _layout(*_WAN_ANIMATE2, _LORA),
+    "dgx-monarch-wan22-t2v": _layout(_PROMPT, _NEGATIVE, _LATENT, *_EXPERTS,
+                                     {"model": ("high.unet_name", "low.unet_name")}),
+    "dgx-monarch-wan22-i2v": _layout(
+        _PROMPT, _NEGATIVE, {"size": ("cond.width", "cond.height")}, *_EXPERTS,
+        _IMAGE, {"model": ("unet_high.unet_name", "unet_low.unet_name")}),
+    # The scale sets the canvas the source frames are encoded at.
+    "dgx-monarch-wan-flowrvs": _layout(_PROMPT, {"size": ("scale.width", "scale.height")},
+                                       _KS, {"media": ("video.file",)}, _UNET),
+    "dgx-monarch-wan-bernini": _layout(
+        _PROMPT, _NEGATIVE, {"size": ("cond.width", "cond.height")}, *_EXPERTS,
+        {"model": ("high.unet_name", "low.unet_name")}),
+    "dgx-monarch-wan-scail": _layout(_PROMPT, _NEGATIVE,
+                                     {"size": ("scail.width", "scail.height")}, _KS,
+                                     _IMAGE, _UNET),
+    "dgx-monarch-wan-scail2": _layout(
+        _PROMPT, _NEGATIVE, {"size": ("scail.width", "scail.height")}, _KS,
+        {"media": ("video.file", "maskvideo.file", "image.image", "maskimage.image")},
+        _LORA, _UNET),
+    # Two passes, global then local, each with its own prompt, model and
+    # sampler. The music decides the motion.
+    "dgx-monarch-wandancer": _layout(
+        {"prompt": ("posg.text", "posl.text")}, _NEGATIVE,
+        {"size": ("gvid.width", "gvid.height", "lvid.width", "lvid.height")},
+        _stage("gks"), _stage("lks"), {"media": ("image.image", "audio.audio")},
+        {"model": ("gunet.unet_name", "lunet.unet_name")}),
+    "dgx-monarch-ltx-t2v": _layout(_PROMPT, _NEGATIVE, _LATENT, _CUSTOM, _UNET),
+    "dgx-monarch-ltx-i2v-av": _layout(_PROMPT, _NEGATIVE,
+                                      {"size": ("i2v.width", "i2v.height")}, _CUSTOM,
+                                      _IMAGE, _UNET, outputs=_AV_OUTPUTS),
+    "dgx-monarch-ltx25-t2v": _layout(_PROMPT, _NEGATIVE,
+                                     {"size": ("vlatent.width", "vlatent.height")},
+                                     _CUSTOM, _UNET, outputs=_AV_OUTPUTS),
+    "dgx-monarch-ltx25-i2v": _layout(_PROMPT, _NEGATIVE,
+                                     {"size": ("i2v.width", "i2v.height")}, _CUSTOM,
+                                     _IMAGE, _UNET, outputs=_AV_OUTPUTS),
+    "dgx-monarch-ltx25-i2v-guide": _layout(
+        _PROMPT, _NEGATIVE, {"size": ("vlatent.width", "vlatent.height")}, _CUSTOM,
+        _IMAGE, _UNET, outputs=_AV_OUTPUTS),
+    "dgx-monarch-ltx25-flf2v": _layout(
+        _PROMPT, _NEGATIVE, {"size": ("vlatent.width", "vlatent.height")}, _CUSTOM,
+        {"media": ("first.image", "last.image")}, _UNET, outputs=_AV_OUTPUTS),
+    "dgx-monarch-hunyuan-image": _layout(*_T2I_ZERO),
+    "dgx-monarch-hunyuan-video": _layout(*_T2I),
+    "dgx-monarch-kandinsky5-image": _layout(*_KANDINSKY5),
+    "dgx-monarch-kandinsky5-video-lite": _layout(*_KANDINSKY5),
+    "dgx-monarch-kandinsky5-video-pro": _layout(*_KANDINSKY5),
+    "dgx-monarch-cogvideox-t2v": _layout(*_T2I),
+    # The source scale and the empty latent hold the same size and must agree.
+    "dgx-monarch-cogvideox-i2v": _layout(
+        _PROMPT, _NEGATIVE,
+        {"size": ("scale.width", "scale.height", "latent.width", "latent.height")},
+        _KS, _IMAGE, _UNET),
+    "dgx-monarch-flux2-t2i": _layout(*_T2I_ZERO, _FLUX_GUIDANCE),
+    # The negative input stays unconnected, so there is no negative prompt. The
+    # scheduler builds its sigmas for a size that must equal the latent's, and
+    # the second loader holds the unconditional model.
+    "dgx-monarch-ideogram4-t2i": _layout(
+        _PROMPT,
+        {"size": ("latent.width", "latent.height", "sched.width", "sched.height"),
+         "steps": ("sched.steps",)},
+        _CUSTOM, {"model": ("unet.unet_name", "uncond.unet_name")}),
+    "dgx-monarch-flux1-t2i": _layout(*_T2I_ZERO, _FLUX_GUIDANCE),
+    "dgx-monarch-chroma-t2i": _layout(*_T2I),
+    "dgx-monarch-radiance-t2i": _layout(*_T2I_ZERO),
+    "dgx-monarch-longcat-t2i": _layout(*_T2I),
+    "dgx-monarch-qwen-image-t2i": _layout(*_T2I),
+    "dgx-monarch-qwen-image21-t2i": _layout(*_QWEN_IMAGE21),
+    "dgx-monarch-qwen-image21-edit-rgba": _layout(
+        *_QWEN_IMAGE21, {"media": tuple(f"ref{index}.image" for index in range(1, 11))}),
+    "dgx-monarch-qwen-image21-edit-mask-rgba": _layout(
+        *_QWEN_IMAGE21, {"media": ("source.image", "mask.image")}),
+    "dgx-monarch-ernie-t2i": _layout(*_T2I),
+    "dgx-monarch-zimage-t2i": _layout(*_T2I_ZERO),
+    "dgx-monarch-zimage-dct-t2i": _layout(*_T2I),
+    "dgx-monarch-lens-t2i": _layout(*_T2I),
+    "dgx-monarch-omnigen2-t2i": _layout(*_T2I),
+    "dgx-monarch-anima-t2i": _layout(*_T2I),
+    "dgx-monarch-boogu-t2i": _layout(*_T2I),
+    "dgx-monarch-pixeldit-t2i": _layout(*_T2I),
+    # The source scale and the output canvas are the two sizes of the upscale.
+    "dgx-monarch-pid-4k": _layout(
+        _PROMPT, {"size": ("scale.width", "scale.height", "latent.width", "latent.height")},
+        _KS, {"strength": ("pid.degrade_sigma",)}, _IMAGE, _UNET),
+    "dgx-monarch-kroma-t2i": _layout(*_T2I_ZERO),
+    "dgx-monarch-kroma-t2i-int8": _layout(*_T2I_ZERO),
+    "dgx-monarch-kroma-t2i-upscale": _layout(*_T2I_ZERO, _stage("refine"),
+                                             {"strength": ("refine.denoise",)}),
+    "dgx-monarch-mage-flow-t2i": _layout(*_MAGE_FLOW),
+    "dgx-monarch-mage-flow-t2i-turbo": _layout(*_MAGE_FLOW),
+    "dgx-monarch-mage-flow-edit": _layout(*_MAGE_FLOW, _REFERENCE),
+    "dgx-monarch-mage-flow-edit-turbo": _layout(*_MAGE_FLOW, _REFERENCE),
+    "dgx-monarch-flux3-klein-t2i": _layout(*_T2I),
+    "dgx-monarch-flux3-klein-base-t2i": _layout(*_T2I),
+    # An edit takes its size from the reference, so it lists none.
+    "dgx-monarch-flux3-klein-edit": _layout(_PROMPT, _KS, _REFERENCE, _UNET),
+    "dgx-monarch-flux3-klein-base-edit": _layout(_PROMPT, _NEGATIVE, _KS, _REFERENCE,
+                                                 _UNET),
+    "dgx-monarch-moss-image-t2i": _layout(*_T2I),
+    "dgx-monarch-moss-image-base-t2i": _layout(*_T2I),
+    # The layout JSON is the prompt; it reaches CLIP Text Encode through a wire.
+    "dgx-monarch-moss-image-layout-t2i": _layout({"prompt": ("layout.value",)},
+                                                 _NEGATIVE, _LATENT, _KS, _UNET),
+    "dgx-monarch-kromoss-t2i": _layout(*_T2I),
+    "dgx-monarch-kromoss-t2i-turbo": _layout(*_T2I_ZERO, _LORA),
+}
+if set(APP_MODE) != set(TEMPLATES):
+    raise KeyError("every shipped template needs one App Mode layout in APP_MODE: "
+                   f"missing {sorted(set(TEMPLATES) - set(APP_MODE))}, "
+                   f"unknown {sorted(set(APP_MODE) - set(TEMPLATES))}")
+for _name, _layout_spec in APP_MODE.items():
+    TEMPLATES[_name]["app_mode"] = _layout_spec
 
 
 # Sweep fixtures go to tests/fixtures/workflows/generated/, outside the template

@@ -1501,6 +1501,55 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     5,
+     "text"
+    ],
+    [
+     6,
+     "text"
+    ],
+    [
+     19,
+     "noise_seed"
+    ],
+    [
+     12,
+     "width"
+    ],
+    [
+     12,
+     "height"
+    ],
+    [
+     20,
+     "cfg"
+    ],
+    [
+     18,
+     "sampler_name"
+    ],
+    [
+     10,
+     "image"
+    ],
+    [
+     11,
+     "image"
+    ],
+    [
+     3,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    26,
+    27
+   ]
+  }
+ },
  "version": 0.4
 }

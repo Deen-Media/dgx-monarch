@@ -578,6 +578,50 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     6,
+     "prompt"
+    ],
+    [
+     6,
+     "negative_prompt"
+    ],
+    [
+     7,
+     "seed"
+    ],
+    [
+     6,
+     "resolution"
+    ],
+    [
+     7,
+     "steps"
+    ],
+    [
+     7,
+     "cfg"
+    ],
+    [
+     7,
+     "sampler_name"
+    ],
+    [
+     7,
+     "scheduler"
+    ],
+    [
+     3,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    9
+   ]
+  }
+ },
  "version": 0.4
 }
