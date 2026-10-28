@@ -782,9 +782,10 @@ NCCL_IB_TC = 104
 ```
 
 With it, they report balanced traffic on all four rails, about 10 to 17 GB
-per rail per render. `dgxm setup --apply` writes a new cluster.toml without
-`[fabric.*]` tables, so they add the table back after each setup run
-([Fabric profiles](CLUSTER.md#fabric-profiles)).
+per rail per render. On v1.3.0, `dgxm setup --apply` wrote a new cluster.toml
+without `[fabric.*]` tables, so they added the table back after each setup
+run; from 1.4.0 a re-apply keeps it
+([Re-running setup](CLUSTER.md#re-running-setup)).
 
 Method, as reported:
 

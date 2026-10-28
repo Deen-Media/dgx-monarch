@@ -8,7 +8,7 @@ supports a Worker
 on the driver's host; [Validation](VALIDATION.md#operator-checks) records the
 update results and limits. The benchmark
 campaign covers a documented subset, not the full matrix. The package declares
-version 1.3.0 and keeps the Monarch dependency that 1.2.0 moved to. That
+version 1.4.0 and keeps the Monarch dependency that 1.2.0 moved to. That
 migration has local CPU, native-load and [exact-source paired hardware evidence](VALIDATION.md#gpu-checks-for-the-070-migration).
 Clean cancellation remains unproven despite successful explicit recovery;
 native cancellation and fabric-failure recovery remain untested.

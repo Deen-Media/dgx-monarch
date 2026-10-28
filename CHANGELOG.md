@@ -2,6 +2,22 @@
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-28
+
+**Upgrading from 1.3.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-130): the first update runs the 1.3.0
+updater, whose process scan can refuse an idle host while a zombie ComfyUI
+process lingers; wait for it to go and run the update again. If a host's
+Workers run from a release slot, use only `dgxm update --verify`
+([TROUBLESHOOTING #118](docs/TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)). The torchmonarch pin, the required
+dependencies and the Gate protocol do not change. SCAIL and SCAIL-2 now refuse
+`cfg2`, every cfg composite and ring beyond world 2
+([TROUBLESHOOTING #136](docs/TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)), and on ComfyUI 0.43.0 a
+MOSS-Image edit with an image strength other than 1.0 refuses under sequence
+parallelism ([TROUBLESHOOTING #135](docs/TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
+`dgxm setup --apply` keeps the existing file's `[fabric.<name>]`, `[monarch]`
+and `[studio]` tables and your `[worker_args]` keys, so stop adding them back
+([CLUSTER](docs/CLUSTER.md#re-running-setup)).
+
 ### Everyday use
 
 - Studio history settlement stores a finished job's artifacts before it

@@ -1048,6 +1048,43 @@ old Python modules while restarted workers load the new ones. Start ComfyUI
 again afterwards; that restart loads the updated modules, so the node set on
 the canvas matches the tree.
 
+### Upgrading from 1.3.0
+
+Read this before the first update from 1.3.0, in this order. An install on
+1.2.0 or older follows the sections below as well.
+
+1. The first update from 1.3.0 runs the 1.3.0 updater, the `dgxm` installed
+   now. Its release-slot refusal and dependency checks apply in both modes.
+   Its ComfyUI process scan counts a zombie or just-exited process as a
+   running driver and refuses an idle host; when that happens, wait until no
+   ComfyUI process shows in `ps`, then run the update again. From the next
+   update on, the scan skips zombie and exited processes.
+2. If your Workers run from release slots, update only with
+   `dgxm update --verify`, as [Upgrading from 1.2.0](#upgrading-from-120)
+   describes
+   ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
+3. This release keeps the torchmonarch pin, the required dependencies and the
+   Gate protocol of 1.3.0, so neither mode installs a new pin, the dependency
+   check passes wherever it passes on 1.3.0, and no model, residency or LoRA
+   combination runs its first-use Gate again.
+4. Two renders that 1.3.0 ran now refuse before dispatch. SCAIL and SCAIL-2
+   refuse `cfg2` and every cfg composite class P, and ring attention at a
+   sequence-parallel world of four or more; `uly2` and `ring2` at world 2
+   still run
+   ([TROUBLESHOOTING #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
+   On ComfyUI 0.43.0 a MOSS-Image edit whose `image_strength` is not 1.0
+   refuses under sequence parallelism, where 1.3.0 rendered it as if the
+   strength were 1.0; `single`, `cfg2` and `dp2` still run it
+   ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
+5. `dgxm setup --apply` over an existing cluster.toml now keeps the
+   `[fabric.<name>]`, `[monarch]` and `[studio]` tables and your own
+   `[worker_args]` keys, so stop adding them back after setup. A kept table
+   that fails the checks blocks the apply until you correct it
+   ([Re-running setup](CLUSTER.md#re-running-setup)).
+6. Studio's new screens ship in the package; the `studio` extra is unchanged
+   and neither update mode installs it
+   ([Optional Studio companion](#optional-studio-companion)).
+
 ### Upgrading from 1.2.0
 
 Read this before the first update from 1.2.0, in this order. An install on
