@@ -22,6 +22,8 @@ export async function resolve(specifier, context, next) {
   return next(specifier, context);
 }
 export async function load(url, context, next) {
+  // Vite inlines image imports such as the shell's brand mark; a server render needs no bytes.
+  if (/\\.svg(\\?|$)/.test(url)) return { format: 'module', source: 'export default "";', shortCircuit: true };
   if (!url.startsWith(source)) return next(url, context);
   const filename = fileURLToPath(url);
   if (url.endsWith('.svelte')) {

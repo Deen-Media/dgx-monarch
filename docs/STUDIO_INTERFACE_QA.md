@@ -17,7 +17,11 @@ controls for inputs, artifacts, jobs, records, hosts and grid cells. Native vide
 controls and pointer interactions were reviewed separately. Later changes added
 controls that these counts and this audit do not cover: the job review summary
 with its record disclosure, Use this seed in the viewer footer and a second copy
-action on gallery cards.
+action on gallery cards. The counts also predate these changes: the telemetry
+panel and the event console lost their close buttons, Create gained Move up and
+Move down for each applied style, Library lost its style mode select, and Grids
+gained a how-to and a line that says why Validate every cell is disabled. No
+browser row has run on those controls yet.
 
 | Surface | Controls and state branches inspected |
 |---|---|

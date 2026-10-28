@@ -42,8 +42,8 @@ export function defaultGridFields(): GridFields {
   return {
     axisA: '',
     axisB: '',
-    valuesA: '[1,2]',
-    valuesB: '[1]',
+    valuesA: '',
+    valuesB: '',
     seedPolicy: 'fixed',
     seedBinding: '',
     baseSeed: 0,
@@ -152,4 +152,37 @@ export function gridSessionText(session: GridSession): string {
     definition: session.preview ? session.definition : null,
     reviewed: session.preview ? session.reviewed : null,
   });
+}
+
+/** A sample value list for an axis. A style-stack value is a list of saved style IDs. */
+export function axisExample(axis: string): string {
+  return axis === 'styles' ? '[["ink"], ["ink", "night"]]' : '[20, 30, 40]';
+}
+
+/** Why Validate every cell cannot run yet, or '' when it can. */
+export function validateBlocker(
+  hasWorkflow: boolean,
+  fields: Pick<GridFields, 'axisA' | 'axisB' | 'valuesA' | 'valuesB'>,
+): string {
+  if (!hasWorkflow) return 'Load a workflow in Create first. A grid varies the Create draft.';
+  if (!fields.axisA) return 'Choose an input for Axis A.';
+  const axes = [
+    ['A', fields.axisA, fields.valuesA],
+    ['B', fields.axisB, fields.valuesB],
+  ];
+  for (const [label, axis, text] of axes) {
+    if (!axis) continue;
+    const example = axisExample(axis);
+    if (!text.trim()) return `List the values for Axis ${label}, for example ${example}.`;
+    let values: unknown;
+    try {
+      values = JSON.parse(text);
+    } catch {
+      return `Axis ${label} values are not valid JSON. Write a list such as ${example}.`;
+    }
+    if (!Array.isArray(values))
+      return `Axis ${label} values must be a list in square brackets, such as ${example}.`;
+    if (!values.length) return `List at least one value for Axis ${label}.`;
+  }
+  return '';
 }

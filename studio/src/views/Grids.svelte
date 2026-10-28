@@ -7,6 +7,7 @@
   import GridCellDetails from '../components/GridCellDetails.svelte';
   import Viewer from '../components/Viewer.svelte';
   import GridDefinition from '../components/GridDefinition.svelte';
+  import GridGuide from '../components/GridGuide.svelte';
   import { GridReviewGuard, staleReview } from '../gridReview';
   import ExperimentLibrary from '../components/ExperimentLibrary.svelte';
   import { experimentDefinition } from '../experimentRecords';
@@ -335,10 +336,7 @@
     </div>
     <span class="tag">{draft.workflowName || 'No workflow'}</span>
   </div>
-  <p class="muted">
-    Each cell passes normal backend admission. Comfy's queue controls execution; Studio does not run
-    a second scheduler. More cells increase total compute and memory residency time.
-  </p>
+  <GridGuide />
   {#if recoveryBlocked}<RecoveryNotice
       storageKey={storage}
       check="Load durable grid IDs and inspect Queue for accepted cells"
@@ -366,19 +364,14 @@
     bind:seedBinding={fields.seedBinding}
     bind:baseSeed={fields.baseSeed}
     bind:excluded={fields.excluded}
+    hasWorkflow={!!draft.workflow}
+    {busy}
+    blocked={mutationBlocked}
+    onvalidate={prepare}
   />
   {#if savedCursor}<button disabled={savedLoading} onclick={loadSavedGrids}
       >{savedGrids.length >= 2000 ? 'Next saved-grid window' : 'Load more saved grids'}</button
     >{/if}
-  <p>
-    Execution target and topology are inherited from the active workflow and shown in each cell's
-    backend preview. Maximum 1,024 cells.
-  </p>
-  <button
-    class="primary"
-    disabled={mutationBlocked || !draft.workflow || !fields.axisA}
-    onclick={prepare}>{busy ? 'Working…' : 'Validate every cell'}</button
-  >
   {#if error}<p class="error" role="alert">{error}</p>
     {#if dispatchPending || retryPending}<p class="muted">
         An uncertain dispatch retains its request ID. Retry the same action to reconcile; do not

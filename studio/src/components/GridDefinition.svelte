@@ -2,6 +2,7 @@
   import type { Binding } from '../model';
   import { fieldLabel } from '../model';
   import type { StudioClient } from '../api';
+  import { axisExample, validateBlocker } from '../gridState';
   import StyleAxisCatalog from './StyleAxisCatalog.svelte';
   let {
     client,
@@ -14,6 +15,10 @@
     seedBinding = $bindable(''),
     baseSeed = $bindable(0),
     excluded = $bindable(''),
+    hasWorkflow,
+    busy,
+    blocked,
+    onvalidate,
   }: {
     client: StudioClient;
     editable: Binding[];
@@ -25,7 +30,14 @@
     seedBinding: string;
     baseSeed: number;
     excluded: string;
+    /** Whether the Create draft has a workflow for the grid to vary. */
+    hasWorkflow: boolean;
+    busy: boolean;
+    /** Work in progress, or a pending dispatch, retry or recovery, holds the button. */
+    blocked: boolean;
+    onvalidate: () => void;
   } = $props();
+  const reason = $derived(validateBlocker(hasWorkflow, { axisA, axisB, valuesA, valuesB }));
 </script>
 
 <div class="operation-grid">
@@ -36,7 +48,12 @@
         >Named style stack</option
       >{#each editable as binding}<option value={binding.id}>{fieldLabel(binding)}</option
         >{/each}</select
-    ><label>Values as JSON array<textarea bind:value={valuesA} rows="3"></textarea></label>
+    ><label
+      >Values as JSON array<textarea
+        bind:value={valuesA}
+        rows="3"
+        placeholder={`Example: ${axisExample(axisA)}`}></textarea></label
+    >
   </div>
   <div class="surface">
     <h3>Axis B (optional)</h3>
@@ -44,7 +61,12 @@
       ><option value="">No second axis</option><option value="styles">Named style stack</option
       >{#each editable as binding}<option value={binding.id}>{fieldLabel(binding)}</option
         >{/each}</select
-    ><label>Values as JSON array<textarea bind:value={valuesB} rows="3"></textarea></label>
+    ><label
+      >Values as JSON array<textarea
+        bind:value={valuesB}
+        rows="3"
+        placeholder={`Example: ${axisExample(axisB)}`}></textarea></label
+    >
   </div>
 </div>
 <StyleAxisCatalog
@@ -82,3 +104,13 @@
     /></label
   >
 </div>
+<p>
+  Execution target and topology are inherited from the active workflow and shown in each cell's
+  backend preview. Maximum 1,024 cells.
+</p>
+<button
+  class="primary"
+  disabled={blocked || !!reason}
+  aria-describedby={reason ? 'grid-validate-reason' : undefined}
+  onclick={() => onvalidate()}>{busy ? 'Working…' : 'Validate every cell'}</button
+>{#if reason}<small id="grid-validate-reason" class="warning validate-reason">{reason}</small>{/if}

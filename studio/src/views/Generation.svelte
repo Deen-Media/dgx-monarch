@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { Binding, Draft } from '../model';
-  import { fieldLabel, bindingType, bindingError, isSeedBinding, NOT_RUNNING } from '../model';
+  import { bindingError, isSeedBinding, NOT_RUNNING } from '../model';
   import type {
     Catalog,
     WorkflowEntry,
@@ -15,6 +15,7 @@
   import AssetEditor from '../components/AssetEditor.svelte';
   import Field from '../components/Field.svelte';
   import LoraStack from '../components/LoraStack.svelte';
+  import PromptStyles from '../components/PromptStyles.svelte';
   import WorkflowLayout from '../components/WorkflowLayout.svelte';
   let {
     client,
@@ -246,48 +247,7 @@
           <h3>Workflow needs attention</h3>
           {#each bindingErrors as issue}<p>{issue}</p>{/each}
         </div>{/if}
-      {#if bindings.some((binding) => binding.resolved !== false && bindingType(binding) === 'STRING')}<div
-          class="surface"
-        >
-          <h3>Ordered prompt styles</h3>
-          <label for="style-positive">Prompt input</label><select
-            id="style-positive"
-            value={draft.style_bindings?.prompt ?? ''}
-            onchange={(e) =>
-              changeDraft({
-                style_bindings: {
-                  ...draft.style_bindings,
-                  prompt: e.currentTarget.value,
-                },
-              })}
-            ><option value="">Choose the prompt binding</option
-            >{#each bindings.filter((b) => b.resolved !== false && bindingType(b) === 'STRING') as field}<option
-                value={field.id}>{fieldLabel(field)} · {field.node_id}</option
-              >{/each}</select
-          ><label for="style-negative">Negative prompt input · optional</label><select
-            id="style-negative"
-            value={draft.style_bindings?.negative_prompt ?? ''}
-            onchange={(e) =>
-              changeDraft({
-                style_bindings: Object.fromEntries(
-                  Object.entries({
-                    ...draft.style_bindings,
-                    negative_prompt: e.currentTarget.value,
-                  }).filter(([, value]) => !!value),
-                ),
-              })}
-            ><option value="">No negative input</option
-            >{#each bindings.filter((b) => b.resolved !== false && bindingType(b) === 'STRING') as field}<option
-                value={field.id}>{fieldLabel(field)} · {field.node_id}</option
-              >{/each}</select
-          >{#each draft.styles as style, i}<div class="stack-row">
-              <span>{(style as any).name ?? `Style ${i + 1}`}</span><button
-                onclick={() =>
-                  changeDraft({ styles: draft.styles.filter((_, index) => index !== i) })}
-                aria-label="Remove style">×</button
-              >
-            </div>{/each}<small>Effective text is shown in submission review.</small>
-        </div>{/if}
+      <PromptStyles {draft} {bindings} {changeDraft} />
       {#if draft.parent_artifact_ids.length}<div class="surface">
           <h3>Input lineage</h3>
           <p class="mono">{draft.parent_artifact_ids.join(', ')}</p>
