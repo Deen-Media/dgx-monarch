@@ -24,8 +24,10 @@ from dgx_monarch.studio.inventory import (
     build_inventory,
     discover_nodes,
     discover_workflows,
+    humanized_stem,
     load_inventory,
     validate_inventory,
+    workflow_title,
 )
 from dgx_monarch.studio.inventory_registry import STATUSES
 from dgx_monarch.studio.presentation import (
@@ -259,6 +261,33 @@ def test_workflow_payloads_and_digests_match_all_shipped_examples():
     for workflow in workflows:
         assert workflow["workflow"] == json.loads((ROOT / workflow["source"]).read_text())
         assert len(workflow["digest"]) == 64
+        assert set(workflow) == {"id", "name", "title", "source", "digest", "workflow"}
+
+
+def _note(title=None, kind="Note"):
+    node = {"id": 1, "type": kind, "widgets_values": ["text"]}
+    return node if title is None else {**node, "title": title}
+
+
+@pytest.mark.parametrize(("nodes", "expected"), [
+    ([_note("DGX Monarch | Kroma local INT8 text to image")], "Kroma local INT8 text to image"),
+    ([_note("DGX Monarch |  spaced  ", "MarkdownNote")], "spaced"),
+    # The first Note with the mark names the template; an unmarked one is a plain label.
+    ([_note("Read me first"), _note("DGX Monarch | Second"), _note("DGX Monarch | Third")], "Second"),
+    ([{"id": 2, "type": "KSampler", "title": "DGX Monarch | Not a note"}], "kroma t2i int8"),
+    ([_note("Kroma text to image")], "kroma t2i int8"),
+    ([_note("DGX Monarch |   ")], "kroma t2i int8"),
+    ([_note()], "kroma t2i int8"),
+    ([], "kroma t2i int8"),
+    ("not a list", "kroma t2i int8"),
+])
+def test_workflow_title_reads_the_marked_note_or_falls_back_to_the_stem(nodes, expected):
+    assert workflow_title({"nodes": nodes}, "dgx-monarch-kroma-t2i-int8") == expected
+
+
+def test_humanized_stem_drops_only_the_leading_prefix():
+    assert humanized_stem("dgx-monarch-wan-animate2-base-quality") == "wan animate2 base quality"
+    assert humanized_stem("custom-dgx-monarch-graph") == "custom dgx monarch graph"
 
 
 def test_panel_handlers_are_not_silently_omitted():

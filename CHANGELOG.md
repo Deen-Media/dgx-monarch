@@ -41,6 +41,12 @@
   shows its banner. Summaries carry seeds above 2**53 - 1 as exact digits,
   imported jobs show their prompt's seeds, and an expired review says so and
   keeps Submit off.
+- Studio's Create view lists packaged workflows by their Note titles in title
+  order, with a filter box that matches words in the title or file name, a
+  Clear button, Enter and Escape keys, and the chosen file name shown under
+  the list. The command palette can also load a packaged workflow by title,
+  and `GET /api/v1/workflows` gains a `title` field beside the unchanged
+  file-stem `name`.
 
 ### Installation and updates
 

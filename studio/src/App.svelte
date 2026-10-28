@@ -68,6 +68,7 @@
     activeJobs = $derived(jobs.filter(isActiveJob));
   const refresh = () => connection.refresh();
   function navigate(id: string) {
+    presentation = false; // a view that opens must show, not stay behind the presentation
     view = id;
     palettePanel?.close();
     requestAnimationFrame(() => document.getElementById('main-heading')?.focus());
@@ -107,7 +108,6 @@
     if (draft.workflow) await inspect(draft.workflow, draft.workflowName, true);
     undoDraft = previous;
   }
-
   function setNotice(message: string) {
     notice = message;
     error = '';
@@ -366,7 +366,7 @@
         client={connection.client}
         onreuse={reuse}
         onselect={(a) => (tracker.comparison = a)}
-        onqueue={() => ((presentation = false), navigate('queue'))}
+        onqueue={() => navigate('queue')}
       />
     {:else if view === 'workspace'}<div class="workspace">
         <Generation
@@ -488,7 +488,9 @@
 <CommandPalette
   bind:this={palettePanel}
   operations={connection.capabilities.operations ?? []}
+  workflows={connection.workflows}
   {navigate}
+  {inspect}
   onoperation={(id) => {
     selectedOperation = id;
     navigate('operations');

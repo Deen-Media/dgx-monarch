@@ -635,7 +635,9 @@ page disables Review generation.
 ## Workspace controls and media
 
 Use the navigation rail or Ctrl/Cmd+K to open a view. The command palette takes
-keyboard focus immediately; Tab chooses a result and Enter opens it. Escape
+keyboard focus immediately; Tab chooses a result and Enter opens it. It also
+lists operations to review and, once you type, packaged workflows to load, as
+[Working with workflows](#working-with-workflows) describes. Escape
 closes dialogs or leaves presentation mode. Project selectors include the full
 bounded project catalog, including projects outside the recent snapshot.
 
@@ -708,6 +710,19 @@ controls for the new choice's inputs appear, those of the old choice leave the
 draft, and review accepts edits to the new inputs. Inside a subgraph, Studio
 lists only the inputs of the saved choice. Multiline fields retain line breaks, and import controls
 allow selecting the same file again after a success or error.
+
+The Workflow list names each packaged workflow by the title of its Note node,
+in title order, and shows the chosen workflow's file name in small type under
+the list. A template without a titled Note appears under its file name, with the
+`dgx-monarch-` prefix dropped and dashes shown as spaces. Type in the box above
+the list to filter it: a workflow stays listed when each word you type appears
+in its title or file name, in upper or lower case and in any order. The loaded
+workflow stays listed and selected while the filter hides it, and a line says
+when no workflow matches. Enter loads the first match while no packaged
+workflow is loaded, and Escape or Clear empties the box. In the command
+palette, type part of a title or file name and choose a Load workflow row; it
+opens Create and loads that workflow as the list does. Drafts, exports and
+records still use the file name.
 
 Compilation preserves the original workflow and extension metadata. Unknown
 widgets, ambiguous bindings and unsupported graph constructs refuse execution

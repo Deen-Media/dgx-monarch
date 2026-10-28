@@ -11,6 +11,7 @@
   } from '../contracts';
   import { exportJSON } from '../files';
   import { checkImportFile, checkRequestBody, type StudioClient } from '../api';
+  import { filterKeyAction, loadWorkflow, workflowChoices, workflowTitle } from '../workflowChoice';
   import AssetEditor from '../components/AssetEditor.svelte';
   import Field from '../components/Field.svelte';
   import LoraStack from '../components/LoraStack.svelte';
@@ -39,6 +40,7 @@
     rebind,
     catalogError = '',
     refreshCatalog,
+    workflowQuery = $bindable(''),
   }: {
     client: StudioClient;
     draft: Draft;
@@ -65,6 +67,8 @@
     rebind: (values: Draft['values']) => Promise<void>;
     catalogError?: string;
     refreshCatalog: () => Promise<void>;
+    /** The workflow filter's text; it starts empty on each mount unless a parent binds it. */
+    workflowQuery?: string;
   } = $props();
   let fieldErrors = $derived(
     bindings
@@ -87,6 +91,27 @@
   $effect(() => {
     if (!busy) choosing = '';
   });
+  let filterInput: HTMLInputElement;
+  let current = $derived(choosing || workflowId);
+  let choices = $derived(workflowChoices(workflows, workflowQuery, current));
+  let chosen = $derived(workflows.find((w) => w.id === current));
+  function chooseWorkflow(entry: WorkflowEntry) {
+    choosing = entry.id;
+    void loadWorkflow(entry, inspect);
+  }
+  function filterKeydown(event: KeyboardEvent) {
+    // Enter that confirms an input-method candidate finishes the text, nothing more.
+    if (event.isComposing) return;
+    const action = filterKeyAction(event.key, current, choices.matches);
+    if (!action) return;
+    event.preventDefault();
+    if (action === 'clear') workflowQuery = '';
+    else chooseWorkflow(action);
+  }
+  function clearFilter() {
+    workflowQuery = '';
+    filterInput.focus();
+  }
   function fieldChange(binding: Binding, value: unknown) {
     const values = { ...draft.values, [binding.id]: value };
     // A dynamic choice changes which child inputs exist, so the bindings are rebuilt.
@@ -114,18 +139,34 @@
     </div>
     <span class="tag" class:lime={dirty}>{dirty ? 'Draft edited' : 'Draft'}</span>
   </div>
-  <label for="workflow">Workflow</label><select
+  <label for="workflow">Workflow</label>
+  <div class="workflow-filter">
+    <input
+      bind:this={filterInput}
+      bind:value={workflowQuery}
+      onkeydown={filterKeydown}
+      type="search"
+      placeholder="Filter by title or file name"
+      aria-label="Filter workflows"
+    /><button disabled={!workflowQuery} onclick={clearFilter} aria-label="Clear workflow filter"
+      >Clear</button
+    >
+  </div>
+  {#if workflowQuery && !choices.matches.length}<p class="muted">
+      No packaged workflow matches this filter.
+    </p>{/if}
+  <select
     id="workflow"
-    value={choosing || workflowId}
+    value={current}
     onchange={(e) => {
       const w = workflows.find((w) => w.id === e.currentTarget.value);
-      if (!w) return;
-      choosing = w.id;
-      void inspect(w.workflow, w.name, false, w.id);
+      if (w) chooseWorkflow(w);
     }}
     ><option value="">{draft.workflowName || 'Choose a workflow'}</option
-    >{#each workflows as w}<option value={w.id}>{w.name}</option>{/each}</select
-  >
+    >{#each choices.options as w (w.id)}<option value={w.id} title={w.name}
+        >{workflowTitle(w)}</option
+      >{/each}</select
+  >{#if chosen}<small class="workflow-file mono">{chosen.name}</small>{/if}
   <div class="workflow-actions">
     <label class="button import-label"
       >Import JSON<input

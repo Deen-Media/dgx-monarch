@@ -48,6 +48,21 @@
   font-size: 11px;
   padding: 6px 8px;
 }
+.workflow-filter {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+.workflow-filter button {
+  flex-shrink: 0;
+  font-size: 11px;
+  padding: 6px 8px;
+}
+.workflow-file {
+  display: block;
+  margin-top: 4px;
+  overflow-wrap: anywhere;
+}
 .import-label {
   font-weight: 500;
   margin: 0;

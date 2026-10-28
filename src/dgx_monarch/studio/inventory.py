@@ -376,6 +376,37 @@ def discover_panel(root: Path) -> list[dict[str, Any]]:
     return rows
 
 
+# tools/gen_templates.py titles each template's Note "DGX Monarch | <title>".
+TEMPLATE_TITLE_MARK = "DGX Monarch |"
+_NOTE_TYPES = frozenset({"Note", "MarkdownNote"})
+
+
+def humanized_stem(stem: str) -> str:
+    """The fallback title: the file stem without its dgx-monarch- prefix, dashes read as spaces."""
+    return stem.removeprefix("dgx-monarch-").replace("-", " ")
+
+
+def note_title(graph: dict[str, Any]) -> str | None:
+    """The text after the template mark in the first root Note title that has some, else None."""
+    nodes = graph.get("nodes")
+    for node in nodes if isinstance(nodes, list) else []:
+        if not isinstance(node, dict) or node.get("type") not in _NOTE_TYPES:
+            continue
+        title = node.get("title")
+        if isinstance(title, str) and title.startswith(TEMPLATE_TITLE_MARK):
+            if text := title.removeprefix(TEMPLATE_TITLE_MARK).strip():
+                return text
+    return None
+
+
+def workflow_title(graph: dict[str, Any], stem: str) -> str:
+    """The readable title Studio lists a bundled template by: its Note title, else its humanized stem.
+
+    The file stem stays the workflow's name for drafts, exports and records.
+    """
+    return note_title(graph) or humanized_stem(stem)
+
+
 def discover_workflows(root: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     rows, workflows = [], []
     for path in sorted((root / "example_workflows").glob("*.json")):
@@ -387,7 +418,8 @@ def discover_workflows(root: Path) -> tuple[list[dict[str, Any]], list[dict[str,
         row["interfaces"]["nodes"] = {"status": "available", "representation": "ComfyUI graph import"}
         row["validation"] = "Resolve every node type, installed asset and required binding against the live driver before execution."
         rows.append(row)
-        workflows.append({"id": identity, "name": path.stem, "source": row["source"], "digest": digest, "workflow": graph})
+        workflows.append({"id": identity, "name": path.stem, "title": workflow_title(graph, path.stem),
+                          "source": row["source"], "digest": digest, "workflow": graph})
     return rows, workflows
 
 

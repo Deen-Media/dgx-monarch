@@ -10,10 +10,12 @@ from __future__ import annotations
 import copy
 import json
 import re
+from collections import Counter
 from pathlib import Path
 
 import pytest
 
+from dgx_monarch.studio.inventory import humanized_stem, note_title
 from dgx_monarch.studio.workflows import WorkflowError, compile_workflow, inspect_workflow
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -55,6 +57,29 @@ def test_a_class_the_recording_lacks_is_named_for_the_skip_reason():
     workflow = {"nodes": [{"type": "BrandNewNode"}, {"type": "Note"}, {"type": recorded}, {"type": "sub-1"}],
                 "definitions": {"subgraphs": [{"id": "sub-1", "nodes": [{"type": "AnotherNewNode"}]}]}}
     assert missing_classes(workflow) == ["AnotherNewNode", "BrandNewNode"]
+
+
+def test_every_bundled_workflow_has_a_unique_title_and_keeps_its_file_stem_as_name():
+    titles = [row["title"] for row in WORKFLOWS]
+    assert all(isinstance(title, str) and title and title == title.strip() for title in titles)
+    duplicates = sorted(title for title, count in Counter(titles).items() if count > 1)
+    assert duplicates == [], f"Bundled workflows share these titles: {duplicates}"
+    # Drafts, exports and records use the name, so it stays the file stem.
+    assert {row["name"] for row in WORKFLOWS} == {path.stem for path in (ROOT / "example_workflows").glob("*.json")}
+    assert all(row["id"] == "workflow." + row["name"] for row in WORKFLOWS)
+    rows = {row["name"]: row for row in WORKFLOWS}
+    assert rows["dgx-monarch-kroma-t2i-int8"]["title"] == "Kroma local INT8 text to image"
+    assert rows["dgx-monarch-quickstart"]["title"] == "quickstart"
+
+
+def test_no_bundled_workflow_falls_back_to_its_humanized_stem():
+    # A template without a Note titled "DGX Monarch | <title>" falls back to its
+    # stem without the dgx-monarch- prefix, dashes read as spaces. Today none does.
+    # The quickstart's Note title, "quickstart", only matches its humanized stem.
+    fallback = sorted(row["name"] for row in WORKFLOWS if note_title(row["workflow"]) is None)
+    assert fallback == [], f"These templates have no titled Note and fall back to their stem: {fallback}"
+    assert all(row["title"] == note_title(row["workflow"]) for row in WORKFLOWS)
+    assert humanized_stem("dgx-monarch-kroma-t2i-int8") == "kroma t2i int8"
 
 
 @pytest.mark.parametrize("row", WORKFLOWS, ids=[row["id"] for row in WORKFLOWS])
