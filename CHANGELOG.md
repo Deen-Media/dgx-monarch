@@ -66,6 +66,24 @@
   allows management and a plain pointer when it does not. Queue rows show a
   thumbnail of each job's newest final output, fetched as the row scrolls into
   view.
+- Studio's viewer status line and Queue rows show a step count only while the
+  node that reported it runs. The companion clears the count when ComfyUI
+  starts the next node, so a VAE decode after a sampler no longer reads as
+  the sampler's last step; the bar sweeps until the running node reports
+  steps of its own.
+- The status line's Open Queue and Reconcile in Queue links open Queue on
+  that job's row, expanded and scrolled into view, turning to the history
+  page that holds it. When Queue's first history load leaves the job out,
+  Queue reads that one job by its identity and shows it above the history. A
+  link applies once, so a later visit to Queue opens on no row.
+- The gallery's Copy named inputs, Copy API prompt and Export provenance keep
+  every digit of a seed above 2**53 - 1, in the prompt, the frozen seed list
+  and the workflow's widget values: Studio reads the job's full record with
+  an exact parser instead of the browser's JSON reader, which rounds such
+  numbers. Reuse settings, Send to edit, Upscale and Load workflow refuse a
+  job whose recorded prompt or workflow holds such a number, name each input
+  with its digits and leave the draft unchanged, since a draft field holds
+  whole numbers exactly only up to 2**53 - 1.
 
 ### Installation and updates
 
@@ -118,6 +136,9 @@
   ComfyUI tags a release, so a red master beside a green release points at an
   upstream change, and a red release on an unchanged tag points at this
   repository.
+- The torchmonarch canary uploads its reports with actions/upload-artifact
+  v7.0.2, the update Renovate proposed against main, and Renovate now opens
+  its pull requests against dev, since main only ever fast-forwards to dev.
 
 ## [1.3.0] - 2026-10-23
 

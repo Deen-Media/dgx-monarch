@@ -2,7 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { StudioClient } from './api.ts';
 import type { Job } from './contracts.ts';
-import { comparableSubmission, fullJob, RETRY_RUNTIME_FIELD } from './jobProvenance.ts';
+import { comparableSubmission, exactJob, fullJob, RETRY_RUNTIME_FIELD } from './jobProvenance.ts';
+import { readExactJSON } from './exactJson.ts';
 import { parameterDifferences } from './gallery.ts';
 
 const provenance = {
@@ -77,6 +78,24 @@ test('provenance actions refuse mismatched IDs or another summary from detail en
     const client = { request: async () => result } as unknown as StudioClient;
     await assert.rejects(fullJob(client, provenance.id), /requested full job provenance/);
   }
+});
+
+test('the exact read parses the full record with every digit and refuses a summary', async () => {
+  const asked: unknown[] = [];
+  const text = (id: string, extra = '') =>
+    `{"id":"${id}"${extra},"submission":{"prompt":{"8":{"inputs":{"seed":18446744073709551615}}}}}`;
+  const client = (body: string) =>
+    ({
+      request: async (path: string, payload: unknown, method: string, parse: typeof JSON.parse) => {
+        asked.push([path, payload, method, parse === readExactJSON]);
+        return parse(body);
+      },
+    }) as unknown as StudioClient;
+  const job = await exactJob(client(text('job/a')), 'job/a');
+  assert.equal(job.submission.prompt['8'].inputs.seed, 18446744073709551615n);
+  assert.deepEqual(asked, [['/jobs/job%2Fa', undefined, 'GET', true]]);
+  for (const body of [text('other'), text('job/a', ',"summary":true')])
+    await assert.rejects(exactJob(client(body), 'job/a'), /requested full job provenance/);
 });
 
 test('comparison reads the runtime and versions a retry recorded for itself', () => {

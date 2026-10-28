@@ -655,19 +655,26 @@ newest active job when this tab has submitted none. A status line under the
 viewer title names its state: Submitting, Queued, Running, Cancel requested,
 Finished, Failed, Cancelled or Outcome unknown. A running job shows the step
 count and node from the driver's latest progress report, with a bar that fills
-to that count. When the driver reports no step count, the bar sweeps and never
-fills; with reduced motion it stays still and dim. Studio never merges the steps
-of different nodes into one share. Running time counts on the companion's clock
-from when the companion first saw the job run, not from the driver's start time,
-since the driver may run on another host with its own clock; a job that ended
-shows the driver's own time from start to end. Running time needs the
-companion's start time and its clock, and a total needs both driver times; when
-one is missing no time shows, and Studio never estimates the time left. A failed
-job shows the first sentence of its reason and a link to Queue, and
+to that count. When ComfyUI starts the next node, the companion clears that
+count, so neither the status line nor the Queue row shows one node's steps while
+another runs; many nodes, such as a VAE decode, report none. When no step count
+applies, the bar sweeps and never fills; with reduced motion it stays still and
+dim. Studio never merges the steps of different nodes into one share. Running
+time counts on the companion's clock from when the companion first saw the job
+run, not from the driver's start time, since the driver may run on another host
+with its own clock; a job that ended shows the driver's own time from start to
+end. Running time needs the companion's start time and its clock, and a total
+needs both driver times; when one is missing no time shows, and Studio never
+estimates the time left. A failed job shows the first sentence of its reason and
+a link to Queue, and
 [Read a failure and grant a consent](#read-a-failure-and-grant-a-consent) says
-what else it shows. An unknown outcome links to Queue, where you can reconcile it. Create counts
-unknown outcomes with active jobs, as Queue does, until you reconcile them; only
-jobs in flight animate the viewer border and the logo.
+what else it shows. An unknown outcome links to Queue, where you can reconcile
+it. Either link opens Queue on that job's row, expanded and scrolled into view.
+Queue loads its newest history first; when that leaves the job out, Queue reads
+the one job by its identity and shows its row above the history pages. A link
+applies once, so a later visit to Queue opens on no row. Create counts unknown
+outcomes with active jobs, as Queue does, until you reconcile them; only jobs in
+flight animate the viewer border and the logo.
 
 When the followed job succeeds, the viewer shows its last final image or video,
 unless you chose another result or a comparison after the job began, or a
@@ -827,7 +834,10 @@ sets the policy to Fixed. Undo reverts both. It matches a seed field by node and
 input, and a single seed also fits a draft with a single seed field. When no
 field matches, it changes nothing and says why; Reuse settings loads the
 recorded workflow instead. It also refuses a seed above 9007199254740991, which
-a draft field cannot hold exactly, rather than round it.
+a draft field cannot hold exactly, rather than round it. Copy named inputs, Copy
+API prompt and Export provenance read the job's full record with every digit of
+each whole number, so a seed above 9007199254740991 comes out exact in the
+prompt, the frozen seed list and the workflow's widget values.
 
 Submitted jobs keep requested and effective settings, the workflow and its
 digest, adapter version and lineage. Missing fingerprints and execution facts
@@ -835,7 +845,11 @@ are labelled unavailable. Reproduction reconstructs configuration; it does not
 promise deterministic pixels across hardware and software versions.
 Reuse loads the recorded executable prompt with its resolved seeds as a fixed
 draft. Already expanded styles and inserted LoRAs remain in that prompt and are
-not applied twice; original workflow metadata is retained separately.
+not applied twice; original workflow metadata is retained separately. A
+recorded prompt or workflow that holds a whole number above 9007199254740991
+does not load, since a draft field cannot hold it exactly: Reuse settings, Send
+to edit, Upscale and Load workflow name each such input with its digits and
+leave the draft unchanged.
 
 A review binds to the definitions of the node classes its prompt uses, without
 their file lists, so adding a model, LoRA or input file does not void it.

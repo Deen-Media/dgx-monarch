@@ -302,7 +302,7 @@ const galleryCopy = new Function(
   const client = {};
   const navigator = { clipboard: { writeText: async (text) => copied.push(text) } };
   const setNotice = (text) => notices.push(text);
-  const fullJob = async (_client, id) => (fetched.push('full ' + id), fullRecord);
+  const exactJob = async (_client, id) => (fetched.push('full ' + id), fullRecord);
   const jobSummary = async (_client, id) => (fetched.push('summary ' + id), summaryRecord);
   ${copyCode}
   return async (entry, kind) => (await copy(entry, kind), { copied, notices, fetched });`,

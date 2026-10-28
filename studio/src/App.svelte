@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { fullJob } from './jobProvenance';
+  import { exactJob } from './jobProvenance';
   import { initialWorkspace, saveLayout } from './initialWorkspace';
   import { Submission } from './submission.svelte';
   import { JobTracker } from './jobTracker.svelte';
@@ -181,11 +181,8 @@
   async function loadArtifact(artifact: Artifact, operation?: string) {
     const api = connection.client,
       ticket = guard.begin(api);
-    const job = await fullJob(
-      api,
-      artifact.job_id,
-      jobs.find((j) => j.id === artifact.job_id),
-    );
+    // The exact record, so a seed above 2**53 - 1 is refused by name rather than loaded rounded.
+    const job = await exactJob(api, artifact.job_id);
     if (guard.inspected(ticket, connection.client) !== 'current') return;
     if (!job?.submission?.workflow && !job?.submission?.prompt) {
       error = 'Source workflow is unavailable. Restore the job provenance before reuse.';

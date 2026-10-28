@@ -98,6 +98,7 @@ test('a pending request identity is followed once its job appears', () => {
     lookups: 0,
   });
   assert.equal(tracker.status?.headline, 'Queued');
+  assert.equal(tracker.status?.id, 'mine', "the status line's Queue link opens this row");
 });
 
 test('a reload finds an ended job by its restored identity and shows no old result', () => {

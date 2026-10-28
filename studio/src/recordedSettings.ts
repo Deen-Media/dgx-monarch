@@ -1,4 +1,5 @@
 import type { Job, Seeds, Workflow } from './contracts';
+import { writeExactJSON } from './exactJson.ts';
 
 /** Accept only a complete recorded API graph, never a requested-draft substitute. */
 export function effectivePrompt(job: Job): Workflow | null {
@@ -52,6 +53,11 @@ export function seedText(seeds: Seeds | null): string {
     : '';
 }
 
+/**
+ * The text a gallery copy action writes. The prompt and named-input copies need the full record
+ * as exactJob reads it, so a seed above 2**53 - 1 copies with every digit; a number the browser
+ * rounded stops the copy instead (writeExactJSON).
+ */
 export function recordedSettings(job: Job, kind: 'prompt' | 'inputs' | 'seed'): string {
   if (kind === 'seed') {
     // A lone seed copies as the digits a seed field takes. Several keep their node identities as
@@ -71,5 +77,5 @@ export function recordedSettings(job: Job, kind: 'prompt' | 'inputs' | 'seed'): 
     kind === 'prompt'
       ? prompt
       : Object.fromEntries(Object.entries(prompt).map(([id, node]) => [id, node.inputs]));
-  return JSON.stringify(value, null, 2);
+  return writeExactJSON(value);
 }

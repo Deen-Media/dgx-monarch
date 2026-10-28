@@ -466,7 +466,7 @@ def test_torchmonarch_canary_is_read_only_artifacted_and_never_auto_bumps():
     assert "latest-vs-pin-report.md" in workflow
     assert workflow.count("if: always()") >= 7
     assert "Ensure failure diagnostics are artifactable" in workflow
-    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in workflow
+    assert "actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9" in workflow
     assert workflow.index("Upload pin/latest snapshots and reports") < workflow.index(
         "Final compatibility and semantic gate"
     )

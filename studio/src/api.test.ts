@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { parseExactJSON } from './exactJson.ts';
 import {
   StudioClient,
   ApiError,
@@ -28,6 +29,38 @@ test('requests bind auth and schema version to same-origin API', async () => {
         idempotency_key: 'retained',
       }),
       { id: 'job' },
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+});
+test('a request reads its response with the parser it names, plain JSON by default', async () => {
+  const body = '{"seed":18446744073709551615}';
+  const sent: RequestInit[] = [];
+  globalThis.fetch = async (_input, options) => (sent.push(options ?? {}), new Response(body));
+  try {
+    const client = new StudioClient('test-token');
+    assert.deepEqual(await client.request('/jobs/j'), { seed: 18446744073709552000 });
+    assert.deepEqual(await client.request('/jobs/j', undefined, 'GET', parseExactJSON), {
+      seed: 18446744073709551615n,
+    });
+    // The same request either way: the token, the schema header, the timeout signal, no cache.
+    const [plain, exact] = sent.map(({ signal, ...rest }) => [signal instanceof AbortSignal, rest]);
+    assert.deepEqual(exact, plain);
+    assert.deepEqual(plain, [
+      true,
+      {
+        method: 'GET',
+        headers: { Authorization: 'Bearer test-token', 'X-DGXM-Schema': '1.0' },
+        body: undefined,
+        credentials: 'same-origin',
+        cache: 'no-store',
+      },
+    ]);
+    globalThis.fetch = async () => new Response('Bad gateway', { status: 502 });
+    await assert.rejects(
+      client.request('/jobs/j', undefined, 'GET', parseExactJSON),
+      (e: unknown) => e instanceof ApiError && e.status === 502 && /did not answer/.test(e.message),
     );
   } finally {
     globalThis.fetch = realFetch;
