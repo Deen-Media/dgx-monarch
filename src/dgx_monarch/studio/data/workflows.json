@@ -6,6 +6,7 @@
       "id": "workflow.dgx-monarch-anima-t2i",
       "name": "dgx-monarch-anima-t2i",
       "source": "example_workflows/dgx-monarch-anima-t2i.json",
+      "title": "Anima text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -564,6 +565,7 @@
       "id": "workflow.dgx-monarch-boogu-t2i",
       "name": "dgx-monarch-boogu-t2i",
       "source": "example_workflows/dgx-monarch-boogu-t2i.json",
+      "title": "Boogu text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -1122,6 +1124,7 @@
       "id": "workflow.dgx-monarch-chroma-t2i",
       "name": "dgx-monarch-chroma-t2i",
       "source": "example_workflows/dgx-monarch-chroma-t2i.json",
+      "title": "Chroma 1 HD text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -1680,6 +1683,7 @@
       "id": "workflow.dgx-monarch-cogvideox-i2v",
       "name": "dgx-monarch-cogvideox-i2v",
       "source": "example_workflows/dgx-monarch-cogvideox-i2v.json",
+      "title": "CogVideoX image to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -2430,6 +2434,7 @@
       "id": "workflow.dgx-monarch-cogvideox-t2v",
       "name": "dgx-monarch-cogvideox-t2v",
       "source": "example_workflows/dgx-monarch-cogvideox-t2v.json",
+      "title": "CogVideoX text to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -2989,6 +2994,7 @@
       "id": "workflow.dgx-monarch-dual-spark-split",
       "name": "dgx-monarch-dual-spark-split",
       "source": "example_workflows/dgx-monarch-dual-spark-split.json",
+      "title": "Dual Spark: one render split across the pair",
       "workflow": {
         "config": {},
         "extra": {},
@@ -3546,6 +3552,7 @@
       "id": "workflow.dgx-monarch-ernie-t2i",
       "name": "dgx-monarch-ernie-t2i",
       "source": "example_workflows/dgx-monarch-ernie-t2i.json",
+      "title": "Ernie Image text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -4104,6 +4111,7 @@
       "id": "workflow.dgx-monarch-fleet",
       "name": "dgx-monarch-fleet",
       "source": "example_workflows/dgx-monarch-fleet.json",
+      "title": "Fleet: many prompts, one per GPU",
       "workflow": {
         "config": {},
         "extra": {},
@@ -4666,6 +4674,7 @@
       "id": "workflow.dgx-monarch-flux1-t2i",
       "name": "dgx-monarch-flux1-t2i",
       "source": "example_workflows/dgx-monarch-flux1-t2i.json",
+      "title": "Flux 1 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -5269,6 +5278,7 @@
       "id": "workflow.dgx-monarch-flux2-t2i",
       "name": "dgx-monarch-flux2-t2i",
       "source": "example_workflows/dgx-monarch-flux2-t2i.json",
+      "title": "Flux 2 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -5871,6 +5881,7 @@
       "id": "workflow.dgx-monarch-flux3-klein-base-edit",
       "name": "dgx-monarch-flux3-klein-base-edit",
       "source": "example_workflows/dgx-monarch-flux3-klein-base-edit.json",
+      "title": "FLUX.3 Klein Base image editing",
       "workflow": {
         "config": {},
         "extra": {},
@@ -6702,6 +6713,7 @@
       "id": "workflow.dgx-monarch-flux3-klein-base-t2i",
       "name": "dgx-monarch-flux3-klein-base-t2i",
       "source": "example_workflows/dgx-monarch-flux3-klein-base-t2i.json",
+      "title": "FLUX.3 Klein Base text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -7260,6 +7272,7 @@
       "id": "workflow.dgx-monarch-flux3-klein-edit",
       "name": "dgx-monarch-flux3-klein-edit",
       "source": "example_workflows/dgx-monarch-flux3-klein-edit.json",
+      "title": "FLUX.3 Klein image editing",
       "workflow": {
         "config": {},
         "extra": {},
@@ -8089,6 +8102,7 @@
       "id": "workflow.dgx-monarch-flux3-klein-t2i",
       "name": "dgx-monarch-flux3-klein-t2i",
       "source": "example_workflows/dgx-monarch-flux3-klein-t2i.json",
+      "title": "FLUX.3 Klein text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -8647,6 +8661,7 @@
       "id": "workflow.dgx-monarch-hunyuan-image",
       "name": "dgx-monarch-hunyuan-image",
       "source": "example_workflows/dgx-monarch-hunyuan-image.json",
+      "title": "HunyuanImage 2.1 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -9204,6 +9219,7 @@
       "id": "workflow.dgx-monarch-hunyuan-video",
       "name": "dgx-monarch-hunyuan-video",
       "source": "example_workflows/dgx-monarch-hunyuan-video.json",
+      "title": "HunyuanVideo 1.5 text to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -9764,6 +9780,7 @@
       "id": "workflow.dgx-monarch-identity-gate",
       "name": "dgx-monarch-identity-gate",
       "source": "example_workflows/dgx-monarch-identity-gate.json",
+      "title": "Identity Gate: prove your stack swaps exactly",
       "workflow": {
         "config": {},
         "extra": {},
@@ -10380,6 +10397,7 @@
       "id": "workflow.dgx-monarch-ideogram4-t2i",
       "name": "dgx-monarch-ideogram4-t2i",
       "source": "example_workflows/dgx-monarch-ideogram4-t2i.json",
+      "title": "Ideogram 4 text to image (dual model CFG)",
       "workflow": {
         "config": {},
         "extra": {},
@@ -11127,6 +11145,7 @@
       "id": "workflow.dgx-monarch-kandinsky5-image",
       "name": "dgx-monarch-kandinsky5-image",
       "source": "example_workflows/dgx-monarch-kandinsky5-image.json",
+      "title": "Kandinsky 5 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -11737,6 +11756,7 @@
       "id": "workflow.dgx-monarch-kandinsky5-video-lite",
       "name": "dgx-monarch-kandinsky5-video-lite",
       "source": "example_workflows/dgx-monarch-kandinsky5-video-lite.json",
+      "title": "Kandinsky 5 Video Lite text to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -12348,6 +12368,7 @@
       "id": "workflow.dgx-monarch-kandinsky5-video-pro",
       "name": "dgx-monarch-kandinsky5-video-pro",
       "source": "example_workflows/dgx-monarch-kandinsky5-video-pro.json",
+      "title": "Kandinsky 5 Video Pro text to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -12959,6 +12980,7 @@
       "id": "workflow.dgx-monarch-krea2-t2i",
       "name": "dgx-monarch-krea2-t2i",
       "source": "example_workflows/dgx-monarch-krea2-t2i.json",
+      "title": "Krea 2 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -13517,6 +13539,7 @@
       "id": "workflow.dgx-monarch-kroma-t2i-int8",
       "name": "dgx-monarch-kroma-t2i-int8",
       "source": "example_workflows/dgx-monarch-kroma-t2i-int8.json",
+      "title": "Kroma local INT8 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -14073,6 +14096,7 @@
       "id": "workflow.dgx-monarch-kroma-t2i-upscale",
       "name": "dgx-monarch-kroma-t2i-upscale",
       "source": "example_workflows/dgx-monarch-kroma-t2i-upscale.json",
+      "title": "Kroma v0.3.1 BF16 text to image with 2x refinement",
       "workflow": {
         "config": {},
         "extra": {},
@@ -14895,6 +14919,7 @@
       "id": "workflow.dgx-monarch-kroma-t2i",
       "name": "dgx-monarch-kroma-t2i",
       "source": "example_workflows/dgx-monarch-kroma-t2i.json",
+      "title": "Kroma v0.3.1 BF16 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -15451,6 +15476,7 @@
       "id": "workflow.dgx-monarch-kromoss-t2i-turbo",
       "name": "dgx-monarch-kromoss-t2i-turbo",
       "source": "example_workflows/dgx-monarch-kromoss-t2i-turbo.json",
+      "title": "Kromoss Turbo text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -16058,6 +16084,7 @@
       "id": "workflow.dgx-monarch-kromoss-t2i",
       "name": "dgx-monarch-kromoss-t2i",
       "source": "example_workflows/dgx-monarch-kromoss-t2i.json",
+      "title": "Kromoss text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -16671,6 +16698,7 @@
       "id": "workflow.dgx-monarch-lens-t2i",
       "name": "dgx-monarch-lens-t2i",
       "source": "example_workflows/dgx-monarch-lens-t2i.json",
+      "title": "Lens text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -17229,6 +17257,7 @@
       "id": "workflow.dgx-monarch-longcat-t2i",
       "name": "dgx-monarch-longcat-t2i",
       "source": "example_workflows/dgx-monarch-longcat-t2i.json",
+      "title": "LongCat-Image text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -17787,6 +17816,7 @@
       "id": "workflow.dgx-monarch-lora-low-rss",
       "name": "dgx-monarch-lora-low-rss",
       "source": "example_workflows/dgx-monarch-lora-low-rss.json",
+      "title": "LoRA stack with low-RSS mode",
       "workflow": {
         "config": {},
         "extra": {},
@@ -18446,6 +18476,7 @@
       "id": "workflow.dgx-monarch-ltx-i2v-av",
       "name": "dgx-monarch-ltx-i2v-av",
       "source": "example_workflows/dgx-monarch-ltx-i2v-av.json",
+      "title": "LTX 2.3 image to video with sound",
       "workflow": {
         "config": {},
         "extra": {},
@@ -19604,6 +19635,7 @@
       "id": "workflow.dgx-monarch-ltx-t2v",
       "name": "dgx-monarch-ltx-t2v",
       "source": "example_workflows/dgx-monarch-ltx-t2v.json",
+      "title": "LTX 2.3 text to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -20406,6 +20438,7 @@
       "id": "workflow.dgx-monarch-ltx25-flf2v",
       "name": "dgx-monarch-ltx25-flf2v",
       "source": "example_workflows/dgx-monarch-ltx25-flf2v.json",
+      "title": "LTX 2.5 first and last frame to video with sound",
       "workflow": {
         "config": {},
         "extra": {},
@@ -21918,6 +21951,7 @@
       "id": "workflow.dgx-monarch-ltx25-i2v-guide",
       "name": "dgx-monarch-ltx25-i2v-guide",
       "source": "example_workflows/dgx-monarch-ltx25-i2v-guide.json",
+      "title": "LTX 2.5 image to video with sound (guide route)",
       "workflow": {
         "config": {},
         "extra": {},
@@ -23265,6 +23299,7 @@
       "id": "workflow.dgx-monarch-ltx25-i2v",
       "name": "dgx-monarch-ltx25-i2v",
       "source": "example_workflows/dgx-monarch-ltx25-i2v.json",
+      "title": "LTX 2.5 image to video with sound",
       "workflow": {
         "config": {},
         "extra": {},
@@ -24422,6 +24457,7 @@
       "id": "workflow.dgx-monarch-ltx25-t2v",
       "name": "dgx-monarch-ltx25-t2v",
       "source": "example_workflows/dgx-monarch-ltx25-t2v.json",
+      "title": "LTX 2.5 text to video with sound",
       "workflow": {
         "config": {},
         "extra": {},
@@ -25469,6 +25505,7 @@
       "id": "workflow.dgx-monarch-mage-flow-edit-turbo",
       "name": "dgx-monarch-mage-flow-edit-turbo",
       "source": "example_workflows/dgx-monarch-mage-flow-edit-turbo.json",
+      "title": "Mage-Flow image editing Turbo",
       "workflow": {
         "config": {},
         "extra": {},
@@ -26047,6 +26084,7 @@
       "id": "workflow.dgx-monarch-mage-flow-edit",
       "name": "dgx-monarch-mage-flow-edit",
       "source": "example_workflows/dgx-monarch-mage-flow-edit.json",
+      "title": "Mage-Flow image editing quality",
       "workflow": {
         "config": {},
         "extra": {},
@@ -26625,6 +26663,7 @@
       "id": "workflow.dgx-monarch-mage-flow-t2i-turbo",
       "name": "dgx-monarch-mage-flow-t2i-turbo",
       "source": "example_workflows/dgx-monarch-mage-flow-t2i-turbo.json",
+      "title": "Mage-Flow text to image Turbo",
       "workflow": {
         "config": {},
         "extra": {},
@@ -27156,6 +27195,7 @@
       "id": "workflow.dgx-monarch-mage-flow-t2i",
       "name": "dgx-monarch-mage-flow-t2i",
       "source": "example_workflows/dgx-monarch-mage-flow-t2i.json",
+      "title": "Mage-Flow text to image quality",
       "workflow": {
         "config": {},
         "extra": {},
@@ -27687,6 +27727,7 @@
       "id": "workflow.dgx-monarch-minimax-h3-guide",
       "name": "dgx-monarch-minimax-h3-guide",
       "source": "example_workflows/dgx-monarch-minimax-h3-guide.json",
+      "title": "MiniMax H3 with a guide anchored mid video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -28549,6 +28590,7 @@
       "id": "workflow.dgx-monarch-minimax-h3-mp4",
       "name": "dgx-monarch-minimax-h3-mp4",
       "source": "example_workflows/dgx-monarch-minimax-h3-mp4.json",
+      "title": "MiniMax H3 MP4 with sound",
       "workflow": {
         "config": {},
         "extra": {},
@@ -29299,6 +29341,7 @@
       "id": "workflow.dgx-monarch-minimax-h3-t2va",
       "name": "dgx-monarch-minimax-h3-t2va",
       "source": "example_workflows/dgx-monarch-minimax-h3-t2va.json",
+      "title": "MiniMax H3 text to video with sound",
       "workflow": {
         "config": {},
         "extra": {},
@@ -30025,6 +30068,7 @@
       "id": "workflow.dgx-monarch-moss-image-base-t2i",
       "name": "dgx-monarch-moss-image-base-t2i",
       "source": "example_workflows/dgx-monarch-moss-image-base-t2i.json",
+      "title": "MOSS-Image Base text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -30638,6 +30682,7 @@
       "id": "workflow.dgx-monarch-moss-image-layout-t2i",
       "name": "dgx-monarch-moss-image-layout-t2i",
       "source": "example_workflows/dgx-monarch-moss-image-layout-t2i.json",
+      "title": "MOSS-Image layout text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -31299,6 +31344,7 @@
       "id": "workflow.dgx-monarch-moss-image-t2i",
       "name": "dgx-monarch-moss-image-t2i",
       "source": "example_workflows/dgx-monarch-moss-image-t2i.json",
+      "title": "MOSS-Image text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -31912,6 +31958,7 @@
       "id": "workflow.dgx-monarch-omnigen2-t2i",
       "name": "dgx-monarch-omnigen2-t2i",
       "source": "example_workflows/dgx-monarch-omnigen2-t2i.json",
+      "title": "OmniGen2 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -32470,6 +32517,7 @@
       "id": "workflow.dgx-monarch-pid-4k",
       "name": "dgx-monarch-pid-4k",
       "source": "example_workflows/dgx-monarch-pid-4k.json",
+      "title": "PiD pixel upscale 1024 to 4096",
       "workflow": {
         "config": {},
         "extra": {},
@@ -33263,6 +33311,7 @@
       "id": "workflow.dgx-monarch-pixeldit-t2i",
       "name": "dgx-monarch-pixeldit-t2i",
       "source": "example_workflows/dgx-monarch-pixeldit-t2i.json",
+      "title": "PixelDiT text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -33821,6 +33870,7 @@
       "id": "workflow.dgx-monarch-quickstart",
       "name": "dgx-monarch-quickstart",
       "source": "example_workflows/dgx-monarch-quickstart.json",
+      "title": "quickstart",
       "workflow": {
         "config": {},
         "extra": {},
@@ -34378,6 +34428,7 @@
       "id": "workflow.dgx-monarch-qwen-image-t2i",
       "name": "dgx-monarch-qwen-image-t2i",
       "source": "example_workflows/dgx-monarch-qwen-image-t2i.json",
+      "title": "Qwen-Image 2512 text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -34936,6 +34987,7 @@
       "id": "workflow.dgx-monarch-qwen-image21-edit-mask-rgba",
       "name": "dgx-monarch-qwen-image21-edit-mask-rgba",
       "source": "example_workflows/dgx-monarch-qwen-image21-edit-mask-rgba.json",
+      "title": "Qwen Image 2.1 masked RGBA reference edit",
       "workflow": {
         "config": {},
         "extra": {},
@@ -35662,6 +35714,7 @@
       "id": "workflow.dgx-monarch-qwen-image21-edit-rgba",
       "name": "dgx-monarch-qwen-image21-edit-rgba",
       "source": "example_workflows/dgx-monarch-qwen-image21-edit-rgba.json",
+      "title": "Qwen Image 2.1 ten-reference RGBA edit",
       "workflow": {
         "config": {},
         "extra": {},
@@ -37311,6 +37364,7 @@
       "id": "workflow.dgx-monarch-qwen-image21-t2i",
       "name": "dgx-monarch-qwen-image21-t2i",
       "source": "example_workflows/dgx-monarch-qwen-image21-t2i.json",
+      "title": "Qwen Image 2.1 RGBA text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -37900,6 +37954,7 @@
       "id": "workflow.dgx-monarch-radiance-t2i",
       "name": "dgx-monarch-radiance-t2i",
       "source": "example_workflows/dgx-monarch-radiance-t2i.json",
+      "title": "Chroma 1 Radiance text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -38456,6 +38511,7 @@
       "id": "workflow.dgx-monarch-wan-animate2-base-quality",
       "name": "dgx-monarch-wan-animate2-base-quality",
       "source": "example_workflows/dgx-monarch-wan-animate2-base-quality.json",
+      "title": "Wan-Animate 2 Base quality motion transfer",
       "workflow": {
         "config": {},
         "extra": {},
@@ -39882,6 +39938,7 @@
       "id": "workflow.dgx-monarch-wan-animate2-bfloat16-warm",
       "name": "dgx-monarch-wan-animate2-bfloat16-warm",
       "source": "example_workflows/dgx-monarch-wan-animate2-bfloat16-warm.json",
+      "title": "Wan-Animate 2 BF16 warm motion transfer",
       "workflow": {
         "config": {},
         "extra": {},
@@ -41430,6 +41487,7 @@
       "id": "workflow.dgx-monarch-wan-animate2-distilled",
       "name": "dgx-monarch-wan-animate2-distilled",
       "source": "example_workflows/dgx-monarch-wan-animate2-distilled.json",
+      "title": "Wan-Animate 2 Distilled motion transfer",
       "workflow": {
         "config": {},
         "extra": {},
@@ -42856,6 +42914,7 @@
       "id": "workflow.dgx-monarch-wan-animate2-memory-saver",
       "name": "dgx-monarch-wan-animate2-memory-saver",
       "source": "example_workflows/dgx-monarch-wan-animate2-memory-saver.json",
+      "title": "Wan-Animate 2 memory-saving motion transfer",
       "workflow": {
         "config": {},
         "extra": {},
@@ -44404,6 +44463,7 @@
       "id": "workflow.dgx-monarch-wan-animate2",
       "name": "dgx-monarch-wan-animate2",
       "source": "example_workflows/dgx-monarch-wan-animate2.json",
+      "title": "Wan-Animate 2 motion transfer",
       "workflow": {
         "config": {},
         "extra": {},
@@ -45881,6 +45941,7 @@
       "id": "workflow.dgx-monarch-wan-bernini",
       "name": "dgx-monarch-wan-bernini",
       "source": "example_workflows/dgx-monarch-wan-bernini.json",
+      "title": "Wan Bernini-R text to video (high and low experts)",
       "workflow": {
         "config": {},
         "extra": {},
@@ -46772,6 +46833,7 @@
       "id": "workflow.dgx-monarch-wan-flowrvs",
       "name": "dgx-monarch-wan-flowrvs",
       "source": "example_workflows/dgx-monarch-wan-flowrvs.json",
+      "title": "Wan FlowRVS referring video segmentation",
       "workflow": {
         "config": {},
         "extra": {},
@@ -47639,6 +47701,7 @@
       "id": "workflow.dgx-monarch-wan-scail",
       "name": "dgx-monarch-wan-scail",
       "source": "example_workflows/dgx-monarch-wan-scail.json",
+      "title": "Wan SCAIL Preview character animation",
       "workflow": {
         "config": {},
         "extra": {},
@@ -48493,6 +48556,7 @@
       "id": "workflow.dgx-monarch-wan-scail2",
       "name": "dgx-monarch-wan-scail2",
       "source": "example_workflows/dgx-monarch-wan-scail2.json",
+      "title": "Wan SCAIL-2 character replacement",
       "workflow": {
         "config": {},
         "extra": {},
@@ -49663,6 +49727,7 @@
       "id": "workflow.dgx-monarch-wan-t2v",
       "name": "dgx-monarch-wan-t2v",
       "source": "example_workflows/dgx-monarch-wan-t2v.json",
+      "title": "Wan text to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -50271,6 +50336,7 @@
       "id": "workflow.dgx-monarch-wan21-i2v",
       "name": "dgx-monarch-wan21-i2v",
       "source": "example_workflows/dgx-monarch-wan21-i2v.json",
+      "title": "Wan 2.1 image to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -51093,6 +51159,7 @@
       "id": "workflow.dgx-monarch-wan22-i2v",
       "name": "dgx-monarch-wan22-i2v",
       "source": "example_workflows/dgx-monarch-wan22-i2v.json",
+      "title": "Wan 2.2 image to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -52030,6 +52097,7 @@
       "id": "workflow.dgx-monarch-wan22-t2v",
       "name": "dgx-monarch-wan22-t2v",
       "source": "example_workflows/dgx-monarch-wan22-t2v.json",
+      "title": "Wan 2.2 text to video",
       "workflow": {
         "config": {},
         "extra": {},
@@ -52853,6 +52921,7 @@
       "id": "workflow.dgx-monarch-wandancer",
       "name": "dgx-monarch-wandancer",
       "source": "example_workflows/dgx-monarch-wandancer.json",
+      "title": "WanDancer music to dance, global to local",
       "workflow": {
         "config": {},
         "extra": {},
@@ -54493,6 +54562,7 @@
       "id": "workflow.dgx-monarch-zimage-dct-t2i",
       "name": "dgx-monarch-zimage-dct-t2i",
       "source": "example_workflows/dgx-monarch-zimage-dct-t2i.json",
+      "title": "Z-Image DCT PixelSpace text to image",
       "workflow": {
         "config": {},
         "extra": {},
@@ -55051,6 +55121,7 @@
       "id": "workflow.dgx-monarch-zimage-t2i",
       "name": "dgx-monarch-zimage-t2i",
       "source": "example_workflows/dgx-monarch-zimage-t2i.json",
+      "title": "Z-Image text to image",
       "workflow": {
         "config": {},
         "extra": {},

@@ -76,8 +76,8 @@ function generationProps(overrides: Record<string, unknown> = {}) {
     catalog: {},
     connections: [],
     workflows: [
-      { id: 'portrait', name: 'Portrait', workflow },
-      { id: 'landscape', name: 'Landscape', workflow },
+      { id: 'portrait', name: 'dgx-monarch-portrait', title: 'Portrait', workflow },
+      { id: 'landscape', name: 'dgx-monarch-landscape', title: 'Landscape', workflow },
     ],
     workflowId: '',
     requestLimit: 4 * 1024 * 1024,
@@ -136,7 +136,7 @@ test('an empty required operation parameter keeps its notice, as the companion r
 
 test('the workflow select shows the tracked workflow, not the first template it loaded', () => {
   const chosen = html(Generation, generationProps({ workflowId: 'landscape' }));
-  assert.match(chosen, /<option value="landscape" selected="">Landscape<\/option>/);
+  assert.match(chosen, /<option value="landscape" title="dgx-monarch-landscape" selected="">Landscape</);
   assert.doesNotMatch(chosen, /<option value="" selected="">/);
   // After Import JSON, Undo or Reuse the draft no longer matches a template.
   const imported = html(

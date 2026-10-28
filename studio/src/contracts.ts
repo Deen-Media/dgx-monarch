@@ -4,7 +4,10 @@ import type { Binding, Draft } from './model';
 export type Workflow = Record<string, any>;
 export interface WorkflowEntry {
   id: string;
+  /** The file stem; drafts, exports and records keep it. */
   name: string;
+  /** The template's Note title, or its humanized stem when it has none. */
+  title: string;
   workflow: Workflow;
 }
 export interface Inspection {
