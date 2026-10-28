@@ -42,6 +42,8 @@ FAMILY_KEYS = {
     "ernie": ("adaLN_sa_ln.a.weight", "mlp.linear_fc2.weight"),
     "orphan": ("nothing.weight",),
     "zimage": ("cap_embedder.0.weight", "x_pad_token"),
+    "wan_scail": ("patch_embedding_pose.weight", "text_embedding.0.weight",
+                  "blocks.0.self_attn.q.weight"),
 }
 PRESETS = ["auto", "uly2", "cfg2", "ring2", "uly2+fsdp", "cfg2+fsdp", "ring2+fsdp"]
 
@@ -2818,3 +2820,32 @@ def test_moss_image_int8_with_a_lora_under_fsdp_refuses_class_p(tmp_path):
     assert (int8_with_lora["label"], int8_with_lora["basis"]) == ("refuse:P", "guard")
     assert by_arm[(False, "int8_convrot")]["label"] == "render"
     assert by_arm[(True, "bf16")]["label"] == "render"
+
+
+def test_wan_scail_refuses_cfg_parallel_and_ring_past_world_two(tmp_path):
+    """The matrix mirrors the Worker's guards for SCAIL and SCAIL-2: cfg2, measured
+    over the fidelity floor on 2026-10-28, refuses class P at every world, and ring
+    past world 2 refuses class P until a record covers it; uly2, ring2 and uly4 render."""
+    config = _rig(tmp_path / "pair")
+    models, graphs = config["model_dir"], config["out_dir"] / "graphs"
+    _checkpoint(models, "wan_scail2_bf16.safetensors", "wan_scail")
+    (graphs / "scail2.json").write_text(
+        json.dumps(_graph("wan_scail2_bf16.safetensors", video=True)))
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    assert _pick(cells, "scail2", "cfg2")["label"] == "refuse:P"
+    assert _pick(cells, "scail2", "uly2")["label"] == "render"
+    assert _pick(cells, "scail2", "ring2")["label"] == "render"
+
+    wide = _rig(tmp_path / "four")
+    models, graphs = wide["model_dir"], wide["out_dir"] / "graphs"
+    for stale in graphs.glob("*.json"):
+        stale.unlink()
+    _checkpoint(models, "wan_scail2_bf16.safetensors", "wan_scail")
+    (graphs / "scail2.json").write_text(
+        json.dumps(_graph("wan_scail2_bf16.safetensors", video=True)))
+    wide.update(world=4, image_presets=["uly4", "ring4", "uly2+cfg2"],
+                video_presets=["uly4", "ring4", "uly2+cfg2"])
+    cells, _pruned, _unmatched = matrix.build_cells(wide)
+    assert _pick(cells, "scail2", "uly4")["label"] == "render"
+    assert _pick(cells, "scail2", "ring4")["label"] == "refuse:P"
+    assert _pick(cells, "scail2", "uly2+cfg2")["label"] == "refuse:P"

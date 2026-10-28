@@ -1891,6 +1891,40 @@ Euler/simple, 40 steps, shift 5 and CFG 5, with warm/fresh DPO-LoRA equality.
 The broader acceptance remains HELD. Arbitrary media, Turbo, FSDP and unlisted
 LoRA settings have no passing reference comparison.
 
+<a id="wan-scail2-degree-2-probe-2026-10-28"></a>
+
+**Degree-2 probe, 2026-10-28.** A four-Spark owner reported SCAIL2 renders on
+ring4, uly2+cfg2 and `auto` (uly2+ring2) outside the 0.10 one-step NRMS limit
+at world 4 with no refusal, while uly4 passed
+([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)),
+and the published video table lists only `auto` for this family. The pair ran
+the sweep harness on a one-step copy of the testing-only SCAIL2 graph
+(fp8_scaled, 896x512, 81 frames, TORCH_FLASH, one Euler step at CFG 5) at
+world 2, with and without the DPO LoRA, scored against single-GPU references
+rendered in the same run. Both Workers ran dgx-monarch `e11889da5986`; both
+Sparks ran ComfyUI 0.43.0 at `426f5eea52a7` with comfy-kitchen 0.2.40, torch
+2.12.0+cu132, NCCL 2.32.3 and torchmonarch 0.7.0. The first Spark was capped
+at 2100 MHz and the second uncapped. The cold and warm legs ran at one step
+too, so their times are not render times and no row above changes.
+
+| Layout | Without a LoRA | With the DPO LoRA |
+|---|---|---|
+| uly2 | identical, NRMS 0.0 | identical, NRMS 0.0 |
+| ring2 | identical, NRMS 0.0 | not scored, see below |
+| cfg2 | NRMS 0.116, over the floor | NRMS 0.085, under the floor, not identical |
+
+cfg2 renders differently from one GPU in both readings, with a largest pixel
+difference of 255, where every other family with a cfg2 record renders
+bit-identical, so the family refuses cfg-parallel from this release
+([TROUBLESHOOTING #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
+The ring2 cell with the LoRA rendered its cold and warm legs in both of two
+sessions and refused its probe leg class C both times: the one-step re-load
+was priced while the driver host still held the resident model, the capacity
+wall of [#47](TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight),
+so that cell carries no fidelity reading. NOT RUN: SCAIL Preview on cfg2
+(refused alike, since it shares the forward), every layout at world 4 (no
+four-node rig here), and the 40-step recipe under cfg2.
+
 <a id="evidence-wandancer"></a>
 
 ### WanDancer

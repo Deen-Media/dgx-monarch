@@ -47,6 +47,7 @@ from dgx_monarch.adapters import (  # noqa: E402
     omnigen2,
     quant_activation_scale,
     sol_attention,
+    wan_variants,
 )
 from dgx_monarch.adapters.cfg_parallel import (  # noqa: E402
     assert_cfg_parallel_supported,
@@ -946,6 +947,12 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
             return "refuse:P", "header", False, guards
     if family == "omnigen2":
         if found := _guard(omnigen2._assert_ring_only_topology, topo.ulysses):
+            return found, "guard", False, guards
+    if family == "wan_scail":
+        # The Worker reads the degrees it initialized at injection; the cell's
+        # topology carries the same ring degree and sequence-parallel world.
+        if found := _guard(wan_variants.assert_scail_ring_degree,
+                           topo.ring, topo.ulysses * topo.ring):
             return found, "guard", False, guards
     if adapter is not None:
         if found := (_guard(assert_cfg_parallel_supported, adapter, topo.cfg, dual)

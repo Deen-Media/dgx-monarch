@@ -1266,7 +1266,7 @@ Detail status (`Wan SCAIL Preview`): **HW**.
 
 **Tested configurations.** On two Sparks, explicit `uly2` with Torch Flash matched native ComfyUI on one-step and four-step synthetic reference-image tests at 256x256, five frames. The BF16 checkpoint ran in FP16 on both paths. In both tests, raw latents, all five decoded RGB frames and cross-rank latents were equal. The one-step test passed its NRMS limit of 0.10; four-step equality is a measured control, with no general video-quality threshold. The recipe used UniPC/simple, CFG 5 and shift 3, without pose input or LoRA.
 
-**Known limitations.** The original 81-frame local reference refused for capacity and saved no frames, so that comparison remains CHECK. The passing tests do not cover BF16 execution, other precisions, pose-driven animation, LoRA, ring, FSDP, warm reuse or the default 40-step recipe. The activation-footprint preflight can refuse a job ([docs/TROUBLESHOOTING.md #47](TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight)).
+**Known limitations.** The original 81-frame local reference refused for capacity and saved no frames, so that comparison remains CHECK. The passing tests do not cover BF16 execution, other precisions, pose-driven animation, LoRA, ring, FSDP, warm reuse or the default 40-step recipe. The activation-footprint preflight can refuse a job ([docs/TROUBLESHOOTING.md #47](TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight)). cfg2 and every cfg composite refuse class P for the family, since SCAIL-2 measured over the fidelity floor on cfg2 and SCAIL Preview shares the forward with no cfg2 record of its own; ring refuses beyond world 2 ([docs/TROUBLESHOOTING.md #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-wan-scail-preview).
 
@@ -1280,7 +1280,7 @@ Detail status (`Wan SCAIL2`): **HW**.
 
 **Tested configurations.** Official ComfyUI settings with the DPO LoRA, comparing sampler latents; and FP8-scaled Ulysses with synthetic conditioning, comparing 81 decoded one-step frames.
 
-**Known limitations.** Arbitrary driving media, Turbo, FSDP and other LoRA settings have no passing reference comparison. The shipped graph renders one 81-frame chunk.
+**Known limitations.** Arbitrary driving media, Turbo, FSDP and other LoRA settings have no passing reference comparison. The shipped graph renders one 81-frame chunk. cfg2 and every cfg composite refuse class P: on 2026-10-28 one-step cfg2 probes of the fp8_scaled testing graph read NRMS 0.116 without a LoRA and 0.085 with the DPO LoRA against one GPU, never identical, while uly2 and ring2 were byte-identical ([VALIDATION](VALIDATION.md#wan-scail2-degree-2-probe-2026-10-28)). Ring refuses beyond world 2: a four-Spark owner reported ring4 and `auto`'s uly2+ring2 fold outside the 0.10 limit and uly4 correct, not reproduced here ([docs/TROUBLESHOOTING.md #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-wan-scail2).
 

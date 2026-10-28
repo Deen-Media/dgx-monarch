@@ -1029,6 +1029,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/wan_variants.py::assert_scail_ring_degree::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/zimage.py::_reject_ming_image::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

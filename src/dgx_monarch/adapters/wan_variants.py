@@ -26,6 +26,53 @@ from .wan_animate2 import WanAnimate2Adapter  # noqa: F401
 
 log = get_logger(__name__)
 
+# The cfg-parallel exclusion is a hardware measurement, as PixelDiT's is: the
+# one-step probe of 2026-10-28 (docs/VALIDATION.md, SCAIL-2 degree-2 probe)
+# read cfg2 over the fidelity floor while uly2 and ring2 were byte-identical.
+# The reason reaches the Worker's guard through assert_cfg_parallel_supported.
+SCAIL_CFG_PARALLEL_REFUSAL_REASON = (
+    "wan_scail cfg-parallel renders differently from one GPU: on 2026-10-28 one-step "
+    "probes of SCAIL-2 fp8_scaled on cfg2 at world 2 read NRMS 0.116 without a LoRA, "
+    "over the 0.10 floor, and 0.085 with the DPO LoRA, never identical, while uly2 and "
+    "ring2 were byte-identical, so cfg2 and every cfg composite refuse for SCAIL and "
+    "SCAIL-2. Use uly2 or ring2 at world 2, or the Ulysses preset at a larger world."
+)
+SCAIL_TROUBLESHOOTING = 136
+
+
+def _requested_ring_degree() -> int:
+    """Read the initialized ring degree, defaulting to one if unavailable."""
+    try:
+        from xfuser.core.distributed import get_ring_parallel_world_size
+
+        return int(get_ring_parallel_world_size())
+    except Exception:
+        return 1
+
+
+def assert_scail_ring_degree(ring: int, sp_world: int) -> None:
+    """Refuse ring attention for SCAIL and SCAIL-2 beyond world 2 (#136).
+
+    No record here covers ring past world 2: ring2 at world 2 was byte-identical
+    to one GPU at one step on 2026-10-28, and a four-Spark owner reported SCAIL-2
+    renders on ring4 and on auto's uly2+ring2 fold outside the 0.10 one-step NRMS
+    limit (2026-10-27). The Worker reads the ring degree it initialized and the
+    injection context's sequence-parallel world; the sweep matrix reads the
+    cell's topology. Both refuse alike.
+    """
+    if int(ring) <= 1 or int(sp_world) < 4:
+        return
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS,
+        f"wan_scail ring attention at a sequence-parallel world of {int(sp_world)} is "
+        "refused: a four-Spark owner reported SCAIL-2 renders on ring4 and on auto's "
+        "uly2+ring2 fold outside the 0.10 one-step NRMS limit against one GPU, and no "
+        "record here covers ring beyond world 2, where ring2 was byte-identical. Use "
+        "the Ulysses preset at this world, uly2 or ring2 at world 2, or mode=local "
+        "with gpus_per_host=1 for a stock one-GPU path.",
+        troubleshooting=SCAIL_TROUBLESHOOTING,
+    ))
+
 # The site gets one debug line from note_preferred_attention.
 _MUSIC_ATTENTION_SITE = "wan_dancer music encoder attention"
 
@@ -90,6 +137,10 @@ class SCAILAdapter(Adapter):
     _EXACT = ("WAN21_SCAIL",)
     # UMT5 text needs no pad, as in plain Wan; reference and pose conditions are shared or batch-split.
     cfg_cond_padding = "none"
+    # cfg2 measured over the fidelity floor on 2026-10-28 (SCAIL_CFG_PARALLEL_REFUSAL_REASON).
+    cfg_parallel_supported = False
+    cfg_parallel_refusal_reason = SCAIL_CFG_PARALLEL_REFUSAL_REASON
+    cfg_parallel_troubleshooting = SCAIL_TROUBLESHOOTING
 
     def matches(self, base_model) -> bool:
         import comfy.model_base as model_base
@@ -108,6 +159,7 @@ class SCAILAdapter(Adapter):
         )
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
+        assert_scail_ring_degree(_requested_ring_degree(), ctx.topology_sp)
         attn = ctx.usp_attention
 
         def usp_forward_orig(self, x, t, context, clip_fea=None, freqs=None,

@@ -6936,3 +6936,37 @@ plain ComfyUI. Fleet KSampler runs each job on one GPU with stock's forward,
 so it is not refused. A text-to-image render without the edit node is not
 affected. The refusal stays until the sharded kernel can apply the bias and
 a hardware test compares such a render with stock.
+
+## 136. A SCAIL or SCAIL-2 render refuses cfg2, and ring beyond world 2
+
+**Symptom:** a `wan_scail` render (Wan SCAIL Preview or Wan SCAIL2) on
+`cfg2`, or on any topology with a cfg degree above one such as uly2+cfg2,
+refuses class P on the Worker before the model is mutated, with a message
+that opens "wan_scail cfg-parallel renders wrong". A ring topology at a
+sequence-parallel world of four or more, so ring4 or `auto`'s uly2+ring2
+fold at world 4, refuses class P at injection with a message that opens
+"wan_scail ring attention". uly2 and ring2 at world 2, and the Ulysses
+preset at a larger world, are not refused. The sweep matrix labels the same
+cells `refuse:P`, so a sweep expects the refusal.
+
+**Cause:** on 2026-10-28 one-step probes of the SCAIL-2 fp8_scaled testing
+graph on the pair read step-NRMS 0.116 on cfg2 against one GPU without a
+LoRA, over the 0.10 floor, and 0.085 with the DPO LoRA, under the floor but
+with a largest pixel difference of 255 in both, while uly2 and ring2 were
+byte-identical with and without the LoRA
+([VALIDATION](VALIDATION.md#wan-scail2-degree-2-probe-2026-10-28)).
+Splitting the conditional and unconditional passes across the ranks renders
+SCAIL-2 differently from stock's batched call, where every other family with
+a cfg2 record renders bit-identical. The cause is not isolated, so
+the family refuses cfg-parallel the way PixelDiT does, through the adapter's
+`cfg_parallel_supported`, on SCAIL Preview too, which shares the forward and
+has no cfg2 record. A four-Spark owner reported on 2026-10-27 that SCAIL-2
+renders on ring4, on uly2+cfg2 and on `auto`, which folded to uly2+ring2,
+read above the 0.10 limit while uly4 passed
+([community results](BENCHMARKS.md#community-four-node-results-2026-10-27)).
+No record here covers ring beyond world 2, so it refuses until one does.
+
+**Fix:** use `uly2` or `ring2` at world 2, `uly4` at world 4 (reported
+correct by that owner, not reproduced here), or `mode=local` with
+`gpus_per_host=1` for one GPU. dgx-monarch 1.3.0 and earlier render these
+layouts with no error.

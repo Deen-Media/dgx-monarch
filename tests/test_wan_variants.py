@@ -767,3 +767,50 @@ def test_wan_animate2_native_attention_drops_the_block_preference(monkeypatch):
     assert len(lines) == 1
     assert lines[0][1] == "wan_animate2 attention"
     assert lines[0][2] == _PinnedPreference.config and lines[0][3] is True
+
+
+def test_scail_refuses_cfg_parallel_with_the_measured_reason():
+    """cfg2 read over the fidelity floor on 2026-10-28; WanDancer keeps the default."""
+    from dgx_monarch.adapters.cfg_parallel import assert_cfg_parallel_supported
+    from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
+
+    for adapter in (SCAILAdapter(), SCAIL2Adapter()):
+        assert adapter.cfg_parallel_supported is False
+        with pytest.raises(UnsupportedModelError) as caught:
+            assert_cfg_parallel_supported(adapter, 2)
+        text = str(caught.value)
+        assert parse_leading_refusal_tag(text).refusal_class is RefusalClass.PHYSICS
+        assert wan_variants.SCAIL_CFG_PARALLEL_REFUSAL_REASON in text
+        assert text.endswith("See docs/TROUBLESHOOTING.md #136.")
+        assert_cfg_parallel_supported(adapter, 1)
+    assert_cfg_parallel_supported(WanDancerAdapter(), 2)
+
+
+@pytest.mark.parametrize("ring, world, refused", [
+    (1, 1, False), (1, 2, False), (2, 2, False), (1, 4, False),
+    (2, 4, True), (4, 4, True), (2, 8, True), (8, 8, True)])
+def test_scail_ring_degree_guard(ring, world, refused):
+    from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
+
+    if not refused:
+        wan_variants.assert_scail_ring_degree(ring, world)
+        return
+    with pytest.raises(UnsupportedModelError) as caught:
+        wan_variants.assert_scail_ring_degree(ring, world)
+    text = str(caught.value)
+    assert parse_leading_refusal_tag(text).refusal_class is RefusalClass.PHYSICS
+    assert f"world of {world}" in text
+    assert text.endswith("See docs/TROUBLESHOOTING.md #136.")
+
+
+def test_scail_injection_reads_the_initialized_degrees(monkeypatch):
+    """ring at a four-rank sequence-parallel world refuses before any forward binds."""
+    monkeypatch.setattr(wan_variants, "_requested_ring_degree", lambda: 2)
+    model = types.SimpleNamespace(blocks=[])
+    ctx = InjectionContext(topology_sp=4, usp_attention=lambda *a, **k: None)
+    with pytest.raises(UnsupportedModelError, match="ring attention"):
+        SCAIL2Adapter().inject_usp(model, ctx)
+    assert not hasattr(model, "forward_orig")
+    monkeypatch.setattr(wan_variants, "_requested_ring_degree", lambda: 1)
+    SCAIL2Adapter().inject_usp(model, InjectionContext(topology_sp=4, usp_attention=lambda *a, **k: None))
+    assert hasattr(model, "forward_orig")
