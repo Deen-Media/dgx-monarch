@@ -292,6 +292,47 @@ persistent Worker identities stayed unchanged and final idle checks passed.
 Native latent-return RDMA was **NOT RUN / HOLD** in this October 11 record;
 see the later [selected-rail checks](#native-rdma).
 
+<a id="release-1-4-0-checks"></a>
+
+## Release 1.4.0 checks
+
+**2026-10-28, two DGX Sparks with GB10 GPUs.** The hardware evidence for this
+release sits in the family and feature records below, each naming the commit
+it ran on. The release commit adds documentation, the version and the SCAIL
+refusal code over those commits; it is not an exact-release-commit hardware
+retest.
+
+- MOSS-Image text attention bias on ComfyUI `426f5eea`: the 2026-10-27 legs
+  ran dgx-monarch `3438874fbf6c`
+  ([record](#moss-image-bias-on-comfyui-426f5eea)). On 2026-10-28 the same
+  legs ran again on `0511b0ff2142` and reproduced every row: all 40 latent
+  and pixel arrays byte-identical to the 2026-10-27 record and the refusal
+  text byte-identical, now raised at the driver's model patch preflight; 83
+  comparisons, 77 PASS, 3 recorded, 3 harness-equivalent; the first Spark
+  capped at 2100 MHz, highest sampled SM clock 2093 MHz.
+- Wan SCAIL2 at world 2 on `e11889da5986`
+  ([record](#wan-scail2-degree-2-probe-2026-10-28)): uly2 and ring2
+  byte-identical to one GPU at one step, cfg2 not. The cfg and ring refusals
+  that followed are CPU-tested; no hardware leg has observed them: **NOT RUN**.
+- Studio: the 2026-10-28 browser round of 26 rows on the `0511b0ff2142`
+  bundle, with the three faults it found fixed in the next commit
+  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#browser-evidence-2026-10-28)).
+- Verified updates of both Workers on 2026-10-28 through `9500c57`,
+  `c852244`, `0511b0f` and `e11889d`, with `dgxm doctor` at 44 checks and 0
+  failures after each.
+- **NOT RUN:** the Worker-side bias scan, an all-zero bias, a one-prompt bias
+  under uly2+cfg2, SCAIL Preview on cfg2, every layout at world 4, and the
+  full sweep runbook; only the cells the records name ran.
+- Build and install, on the release commit, in a disposable Python 3.12 venv
+  that holds only `build` and `pip`: `python -m build` wrote the sdist and
+  the wheel (521 files, the `dgxm` and `dgxm-studio` console scripts and the
+  Studio bundle inside). The wheel installed with `--no-deps` and reported
+  1.4.0, as did an editable install of a fresh clone of the commit after it;
+  `dgxm --help` answered with the runtime dependencies of the rig's Monarch
+  venv on the path. The full INSTALL recipe, which rebuilds the xFuser
+  compatibility wheel against a ComfyUI interpreter, was **NOT RUN** for this
+  release; the rig's own venv already carries that wheel.
+
 ## Comparison method
 
 - **Native reference:** an independent stock ComfyUI workflow.
