@@ -1064,17 +1064,20 @@ Read this before the first update from 1.3.0, in this order. An install on
    describes
    ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
 3. This release keeps the torchmonarch pin, the required dependencies and the
-   Gate protocol of 1.3.0, so neither mode installs a new pin, the dependency
-   check passes wherever it passes on 1.3.0, and no model, residency or LoRA
-   combination runs its first-use Gate again.
+   Gate protocol of 1.3.0, so neither mode installs a new pin and the
+   dependency check passes wherever it passes on 1.3.0. A saved Gate grant also
+   names the package version, so the 1.3.0 grants go stale and each model,
+   residency and LoRA combination runs its first-use Gate again, once
+   ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
 4. Two renders that 1.3.0 ran now refuse before dispatch. SCAIL and SCAIL-2
    refuse `cfg2` and every cfg composite class P, and ring attention at a
    sequence-parallel world of four or more; `uly2` and `ring2` at world 2
    still run
    ([TROUBLESHOOTING #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
-   On ComfyUI 0.43.0 a MOSS-Image edit whose `image_strength` is not 1.0
-   refuses under sequence parallelism, where 1.3.0 rendered it as if the
-   strength were 1.0; `single`, `cfg2` and `dp2` still run it
+   On ComfyUI 0.43.0 a MOSS-Image edit whose `image_strength` is above 0 and
+   other than 1.0 refuses under sequence parallelism, where 1.3.0 rendered it
+   as if the strength were 1.0; a strength of 0 attaches no bias and runs, and
+   `single`, `cfg2` and `dp2` still run every strength
    ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
 5. `dgxm setup --apply` over an existing cluster.toml now keeps the
    `[fabric.<name>]`, `[monarch]` and `[studio]` tables and your own
