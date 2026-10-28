@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import difflib
+import functools
 import hashlib
 from dataclasses import replace
 from pathlib import Path
@@ -10,7 +11,9 @@ from typing import Any, cast
 
 from ..operator_profiles import ProfileResolution, compile_profile
 from . import operator_receipt
+from .setup_config_carry import KEPT_WARNING, CarriedCandidate, carry_existing_tables, kept_counts
 from .setup_config_io import (
+    ConfigSnapshot,
     decode_snapshot,
     publish_receipt,
     recommend_fabric,
@@ -43,9 +46,10 @@ def build_setup_plan(request: SetupRequest, *, ops: SetupOps | None = None) -> S
     fabric_profile = request.fabric_profile or recommended_fabric
     if fabric_profile is None:
         raise ValueError("fabric profile could not be inferred from the candidate hosts; pass --fabric-profile")
-    text = _render_candidate(request, fabric_profile, resolution)
-    config = ops.roundtrip(text)
     snapshot = ops.snapshot(request.config_path)
+    candidate = _carried_candidate(request, fabric_profile, resolution, snapshot)
+    text = candidate.text
+    config = ops.roundtrip(text)
     digest = hashlib.sha256(text.encode("utf-8")).hexdigest()
     diff = _config_diff(snapshot, text)
     changed = snapshot.digest != digest
@@ -61,10 +65,8 @@ def build_setup_plan(request: SetupRequest, *, ops: SetupOps | None = None) -> S
         verify=request.verify,
         transport_security=request.transport_security,
     )
-    if snapshot.existed and changed:
-        warnings.append("existing_config_replacement_planned")
-    elif snapshot.existed and snapshot.mode != 0o600:
-        warnings.append("config_mode_hardening_planned")
+    blockers = sorted({*blockers, *candidate.blockers})
+    warnings.extend(_existing_config_warnings(snapshot, changed, candidate))
     return SetupPlan(
         config_path=Path(request.config_path).expanduser().absolute(),
         config_text=text,
@@ -87,6 +89,8 @@ def build_setup_plan(request: SetupRequest, *, ops: SetupOps | None = None) -> S
         privileged_process_inspection=request.privileged_process_inspection,
         blockers=tuple(blockers),
         warnings=tuple(sorted(set(warnings))),
+        kept_tables=candidate.kept,
+        refused_tables=candidate.refused,
     )
 
 
@@ -117,6 +121,8 @@ def run_setup(request: SetupRequest, *, ops: SetupOps | None = None, plan: Setup
             ),
         ],
     )
+    if plan.kept_tables:
+        builder.add_step(KEPT_WARNING, "succeeded", counts=kept_counts(plan.kept_tables))
     if not request.apply:
         receipt = builder.finish("planned", notes=["No config or service change was requested."])
         written = publish_receipt(ops.write_receipt, receipt, request.receipt_path, required=False)
@@ -179,6 +185,27 @@ def _lock_failure(
     return SetupOutcome(status, plan, False, False, False, False, failure, receipt, written)
 
 
+def _carried_candidate(
+    request: SetupRequest, fabric_profile: str, resolution: ProfileResolution, snapshot: ConfigSnapshot
+) -> CarriedCandidate:
+    """Render the candidate and keep the existing file's operator tables in it."""
+    return carry_existing_tables(
+        functools.partial(_render_candidate, request, fabric_profile),
+        decode_snapshot(snapshot) if snapshot.existed else None,
+        resolution,
+        [host.name for host in request.hosts],
+    )
+
+
+def _existing_config_warnings(snapshot: ConfigSnapshot, changed: bool, candidate: CarriedCandidate) -> list[str]:
+    warnings = [KEPT_WARNING] if candidate.kept else []
+    if snapshot.existed and changed:
+        warnings.append("existing_config_replacement_planned")
+    elif snapshot.existed and snapshot.mode != 0o600:
+        warnings.append("config_mode_hardening_planned")
+    return warnings
+
+
 def _render_candidate(request: SetupRequest, fabric_profile: str, resolution: ProfileResolution) -> str:
     return render_setup_config(
         [(host.name, host.fabric_ip, host.gpus, host.ssh_user, host.comfy_dir) for host in request.hosts],
@@ -199,7 +226,8 @@ def _validated_plan(request: SetupRequest, plan: SetupPlan, ops: SetupOps) -> Se
     observations = tuple(probe.hardware_observation() for probe in plan.probes)
     resolution = compile_profile(request.profile, observations=observations)
     fabric = request.fabric_profile or recommend_fabric(plan.probes)
-    rendered = _render_candidate(request, plan.fabric_profile, resolution)
+    candidate = _carried_candidate(request, plan.fabric_profile, resolution, plan.snapshot)
+    rendered = candidate.text
     config = ops.roundtrip(rendered)
     comparisons = compare_artifacts(plan.probes, len(request.artifacts))
     blockers, warnings = setup_readiness(
@@ -212,10 +240,8 @@ def _validated_plan(request: SetupRequest, plan: SetupPlan, ops: SetupOps) -> Se
         verify=request.verify,
         transport_security=request.transport_security,
     )
-    if plan.snapshot.existed and plan.gate_context_changes:
-        warnings.append("existing_config_replacement_planned")
-    elif plan.snapshot.existed and plan.snapshot.mode != 0o600:
-        warnings.append("config_mode_hardening_planned")
+    blockers = sorted({*blockers, *candidate.blockers})
+    warnings.extend(_existing_config_warnings(plan.snapshot, plan.gate_context_changes, candidate))
     mismatch = (
         plan.request_binding != request.binding()
         or plan.config_path != path
@@ -233,6 +259,8 @@ def _validated_plan(request: SetupRequest, plan: SetupPlan, ops: SetupOps) -> Se
         or comparisons != plan.artifacts
         or tuple(blockers) != plan.blockers
         or tuple(sorted(set(warnings))) != plan.warnings
+        or plan.kept_tables != candidate.kept
+        or plan.refused_tables != candidate.refused
         or plan.topology != "auto"
         or plan.recommended_profile != "balanced"
     )

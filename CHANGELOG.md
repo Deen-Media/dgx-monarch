@@ -99,6 +99,9 @@
 
 ### Installation and updates
 
+- `dgxm setup --apply` keeps the existing file's `[fabric.<name>]`, `[monarch]`
+  and `[studio]` tables and your `[worker_args]` keys, so stop re-adding them;
+  fix any it refuses ([CLUSTER](docs/CLUSTER.md#re-running-setup)).
 - `dgxm update`, guided service setup and the Comfy updater's verify step no
   longer refuse an idle host because a subprocess somewhere on the box exited
   during the ComfyUI process scan. The scan skips zombie and exited processes;

@@ -591,7 +591,9 @@ targets, locally or over SSH. A dry run is the default: it validates the
 strict rendered config, reports reachability, accelerator and UMA
 observations, the fabric recommendation, service state and cross-host artifact
 agreement, then prints the exact config diff. `--apply` makes the changes,
-after a confirmation prompt unless `--yes` is given.
+after a confirmation prompt unless `--yes` is given. Over an existing file it
+keeps the tables setup never writes, such as `[fabric.<name>]`
+([Re-running setup](CLUSTER.md#re-running-setup)).
 
 Each `--host` value is `NAME,FABRIC_IP[,GPUS[,SSH_USER[,COMFY_DIR]]]`. `NAME`
 cannot contain `@` and may contain `:` only as a literal IPv6 address;

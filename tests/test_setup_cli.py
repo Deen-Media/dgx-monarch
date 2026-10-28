@@ -438,3 +438,69 @@ def test_requested_receipt_failure_is_failed_in_json(monkeypatch, tmp_path, caps
     payload = json.loads(capsys.readouterr().out)
     assert payload["status"] == "failed"
     assert payload["failure"] == "receipt_write_failed"
+
+
+class TablePlan(FakePlan):
+    """A plan that keeps or refuses tables of the existing config."""
+
+    def __init__(self, kept=(), refused=(), blockers=()) -> None:
+        super().__init__(blockers=blockers)
+        self.kept = list(kept)
+        self.refused = list(refused)
+
+    def as_dict(self):
+        return {**super().as_dict(), "kept_tables": self.kept, "refused_tables": self.refused}
+
+
+def test_terminal_summary_names_the_existing_tables_kept_and_refused(monkeypatch, capsys):
+    plan = TablePlan(
+        kept=["fabric.dgx-spark-pair", "worker_args"],
+        refused=["monarch.rdma.host_targets"],
+        blockers=["existing_config_monarch_invalid"],
+    )
+    outcome = FakeOutcome(plan, status="failed", failure="readiness_blocked", receipt_written=True)
+    _wire(monkeypatch, plan=plan, outcome=outcome)
+
+    assert setup_cli.run(_args(apply=True, yes=True)) == 2
+
+    output = capsys.readouterr().out
+    summary = output[output.index("setup: failed"):]
+    assert "  existing config tables kept: [fabric.dgx-spark-pair], [worker_args]\n" in summary
+    assert (
+        "  existing config tables refused: [monarch.rdma.host_targets]; correct or remove them in that "
+        "file, then run setup again\n"
+    ) in summary
+    assert "each host_targets entry must name a host this setup lists" in output
+
+
+def test_summary_stays_quiet_without_existing_tables_and_json_keeps_them_in_the_plan(monkeypatch, capsys):
+    plan = TablePlan()
+    _wire(monkeypatch, plan=plan, outcome=FakeOutcome(plan, status="succeeded", receipt_written=True))
+    assert setup_cli.run(_args(apply=True, yes=True)) == 0
+    assert "existing config tables" not in capsys.readouterr().out
+
+    plan = TablePlan(kept=["studio"])
+    _wire(monkeypatch, plan=plan, outcome=FakeOutcome(plan, status="succeeded", receipt_written=True))
+    assert setup_cli.run(_args(apply=True, yes=True, json=True)) == 0
+    output = capsys.readouterr().out
+    assert json.loads(output)["plan"]["kept_tables"] == ["studio"]
+    assert "existing config tables" not in output
+
+
+def test_existing_config_blockers_name_their_table_in_the_remediation(monkeypatch, capsys):
+    expected = {
+        "existing_config_fabric_invalid": "[fabric.<name>]",
+        "existing_config_invalid_toml": "TOML syntax",
+        "existing_config_monarch_invalid": "[monarch]",
+        "existing_config_studio_invalid": "[studio]",
+        "existing_config_worker_args_invalid": "[worker_args]",
+    }
+    plan = FakePlan(blockers=sorted(expected))
+    _wire(monkeypatch, plan=plan, outcome=FakeOutcome(plan))
+
+    assert setup_cli.run(_args(json=True)) == 0
+
+    actions = {item["blocker"]: item["action"] for item in json.loads(capsys.readouterr().out)["plan"]["remediations"]}
+    assert set(actions) == set(expected)
+    for blocker, table in expected.items():
+        assert table in actions[blocker]

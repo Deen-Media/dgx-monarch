@@ -258,11 +258,13 @@ Adding the table has three consequences:
    the file's bytes on every Queue, and any byte change, a comment included,
    retires the old fleet before attaching a replacement. Edit `[studio]` when
    no render runs.
-3. Re-setup drops the table. `dgxm setup --apply`, `dgxm init` and Studio's
-   init action write a new file without `[studio]`, as they drop `[monarch]`
-   and `[fabric.*]`; the reviewed diff shows the removal. Add the table again
-   afterwards. An installed Studio service keeps the values it was written
-   with, and `dgxm studio open` names the fields that differ.
+3. Only guided setup keeps the table. `dgxm setup --apply` keeps `[studio]`
+   when it rewrites the file ([CLUSTER](CLUSTER.md#re-running-setup)).
+   `dgxm init` and Studio's init action write a new file without `[studio]`,
+   as they drop `[monarch]` and `[fabric.*]`; the reviewed diff shows the
+   removal. After either, add the table again. An installed Studio service
+   keeps the values it was written with, and `dgxm studio open` names the
+   fields that differ.
 
 ## Keep Studio running
 

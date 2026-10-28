@@ -9,6 +9,7 @@ import json
 import os
 import stat
 import subprocess
+import tomllib
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -20,6 +21,7 @@ from dgx_monarch.cli import (
     cluster_smoke,
     operator_receipt,
     setup_command,
+    setup_config_carry,
     setup_config_io,
     setup_config_lock,
     setup_config_parent,
@@ -2060,3 +2062,251 @@ def test_required_receipt_publication_failure_is_a_partial_outcome(tmp_path: Pat
     assert outcome.failure == "receipt_write_failed"
     assert outcome.receipt_written is False
     assert (tmp_path / "cluster.toml").exists()
+
+
+# A re-apply over an existing file keeps the operator's override tables
+# (setup_config_carry.py, docs/CLUSTER.md#re-running-setup). The fabric block is
+# the switched-fabric override a four-Spark owner reported in the forum.
+_PAIR = (
+    setup_command.CandidateHost("secret-spark", "10.20.30.40"),
+    setup_command.CandidateHost("secret-spark-b", "10.20.30.41"),
+)
+_OPERATOR_FILE = """\
+# hand-edited after the first setup
+[cluster]
+client_bind = "tcp://10.20.30.99:0"
+fabric_profile = "generic-roce"
+transport_security = "trusted_fabric"
+python = "/old/venv/bin/python"
+ssh_key = "/old/keys/id_ed25519"
+
+[[hosts]]
+name = "secret-spark"
+address = "tcp://10.20.30.40:26600"
+
+[[hosts]]
+name = "secret-spark-b"
+address = "tcp://10.20.30.41:26600"
+
+[fabric.dgx-spark-pair]
+# all four RoCE functions on the switch
+NCCL_IB_HCA = "rocep1s0f0,roceP2p1s0f1,roceP2p1s0f0,rocep1s0f1"
+NCCL_IB_TC = 104
+
+[fabric."lab.switch"]
+NCCL_DEBUG = "INFO"
+
+[worker_args]
+slab_weights = true
+reserve_vram_gb = 8
+disable_pinned_memory = true
+
+[monarch.rdma]
+target = "nic:mlx5_0"
+host_targets = { "secret-spark-b" = "nic:mlx5_1" }
+"""
+
+
+def _existing(tmp_path: Path, text: str) -> Path:
+    target = tmp_path / "cluster.toml"
+    target.write_text(text, encoding="utf-8")
+    target.chmod(0o600)
+    return target
+
+
+def test_reapply_keeps_operator_tables_while_setup_values_win(tmp_path: Path):
+    target = _existing(tmp_path, _OPERATOR_FILE)
+    before = tomllib.loads(_OPERATOR_FILE)
+    runner, _calls = _runner()
+    written: list[dict[str, object]] = []
+    request = _request(tmp_path, hosts=_PAIR)
+
+    plan = setup_command.build_setup_plan(request, ops=_ops(runner))
+    candidate = tomllib.loads(plan.config_text)
+
+    # Every [fabric.<name>] table, the dormant one included, keeps its values
+    # and types: NCCL_IB_TC stays the integer 104.
+    assert candidate["fabric"] == before["fabric"]
+    assert candidate["monarch"] == before["monarch"]
+    assert candidate["worker_args"] == {
+        "slab_weights": False,  # the safe profile's key wins
+        "reserve_vram_gb": 8,
+        "disable_pinned_memory": True,
+        "lora_low_rss": False,
+    }
+    assert type(candidate["worker_args"]["reserve_vram_gb"]) is int
+    # Setup's own values win wherever it renders them.
+    assert plan.config.client_bind == "tcp://10.20.30.40:0"
+    assert plan.config.python_bin == "python3"
+    assert plan.config.ssh_key == ""
+    assert plan.config.fabric_profile == "dgx-spark-pair"
+    assert plan.config.fabric_env == {
+        "NCCL_IB_HCA": "rocep1s0f0,roceP2p1s0f1,roceP2p1s0f0,rocep1s0f1",
+        "NCCL_IB_TC": "104",
+    }
+    assert plan.config.monarch.rdma.target == "nic:mlx5_0"
+    assert plan.config.monarch.rdma.host_targets == (("secret-spark-b", "nic:mlx5_1"),)
+    assert plan.kept_tables == (
+        "worker_args",
+        "fabric.dgx-spark-pair",
+        'fabric."lab.switch"',
+        "monarch.rdma",
+        "monarch.rdma.host_targets",
+    )
+    assert plan.refused_tables == ()
+    assert plan.blockers == ()
+    assert {setup_config_carry.KEPT_WARNING, "existing_config_replacement_planned"} <= set(plan.warnings)
+    public = plan.as_dict()
+    assert public["kept_tables"] == list(plan.kept_tables)
+    assert public["refused_tables"] == []
+    for secret in ("secret-spark", "10.20.30.4", "/old/", str(tmp_path)):
+        assert secret not in json.dumps(public, sort_keys=True)
+
+    outcome = setup_command.run_setup(
+        replace(request, apply=True, assume_yes=True), ops=_ops(runner, written=written), plan=plan
+    )
+
+    assert outcome.status == "succeeded"
+    assert target.read_text(encoding="utf-8") == plan.config_text
+    loaded = load_cluster_config(target)
+    assert loaded.fabric_env == plan.config.fabric_env
+    assert loaded.monarch.rdma.host_targets == (("secret-spark-b", "nic:mlx5_1"),)
+    kept_steps = [step for step in written[0]["steps"] if step["name"] == "existing_config_overrides_kept"]
+    assert kept_steps == [{
+        "name": "existing_config_overrides_kept",
+        "status": "succeeded",
+        "counts": {"fabric": 2, "monarch": 2, "studio": 0, "worker_args": 1},
+        "notes": [],
+    }]
+
+    # A second re-apply with the same options writes the same bytes, so the
+    # config digest and the Gate context stay as they are.
+    again = setup_command.build_setup_plan(request, ops=_ops(runner))
+    assert again.config_text == plan.config_text
+    assert again.gate_context_changes is False
+    assert again.warnings == (setup_config_carry.KEPT_WARNING,)
+
+
+def test_reapply_keeps_studio_and_lets_the_profile_decide_residency_keys(tmp_path: Path):
+    _existing(
+        tmp_path,
+        "[worker_args]\nslab_weights = true\nlora_low_rss = true\nreserve_vram_gb = 6.5\n\n"
+        '[studio]\ndriver = "http://127.0.0.1:8191"\nport = 8221\n',
+    )
+    runner, _calls = _runner()
+
+    # The GB10 payload is a homogeneous UMA fleet, so balanced removes both
+    # residency keys and the worker's model-aware defaults decide them.
+    plan = setup_command.build_setup_plan(_request(tmp_path, hosts=_PAIR, profile="balanced"), ops=_ops(runner))
+
+    assert plan.resolution.worker_args_unset == ("lora_low_rss", "slab_weights")
+    assert tomllib.loads(plan.config_text)["worker_args"] == {"reserve_vram_gb": 6.5}
+    assert plan.config.worker_args == {"reserve_vram_gb": 6.5}
+    assert tomllib.loads(plan.config_text)["studio"] == {"driver": "http://127.0.0.1:8191", "port": 8221}
+    assert plan.kept_tables == ("worker_args", "studio")
+
+
+_REFUSALS = {
+    "host_targets_names_a_dropped_host": (
+        "[fabric.dgx-spark-pair]\nNCCL_IB_TC = 104\n\n"
+        '[monarch.rdma.host_targets]\nretired-spark = "nic:mlx5_1"\n',
+        "safe",
+        ("monarch.rdma.host_targets",),
+        "existing_config_monarch_invalid",
+        ("fabric.dgx-spark-pair",),
+    ),
+    "fabric_sets_nccl_proto": (
+        '[fabric.dgx-spark-pair]\nNCCL_PROTO = "LL"\n\n[studio]\nport = 8221\n',
+        "safe",
+        ("fabric.dgx-spark-pair",),
+        "existing_config_fabric_invalid",
+        ("studio",),
+    ),
+    "studio_port_below_1024": ("[studio]\nport = 80\n", "safe", ("studio",), "existing_config_studio_invalid", ()),
+    "worker_args_clash_with_the_profile": (
+        "[worker_args]\ncomfy_managed = true\n",
+        "advanced",
+        ("worker_args",),
+        "existing_config_worker_args_invalid",
+        (),
+    ),
+    "worker_args_not_a_table": ("worker_args = 5\n", "safe", ("worker_args",), "existing_config_worker_args_invalid", ()),
+    "file_is_not_toml": ("[fabric.dgx-spark-pair\nNCCL_IB_TC = 104\n", "safe", (), "existing_config_invalid_toml", ()),
+}
+
+
+@pytest.mark.parametrize("case", sorted(_REFUSALS))
+def test_reapply_refuses_an_existing_table_that_fails_the_checks(tmp_path: Path, case: str):
+    text, profile, refused, blocker, kept = _REFUSALS[case]
+    target = _existing(tmp_path, text)
+    runner, _calls = _runner()
+    written: list[dict[str, object]] = []
+    request = _request(tmp_path, hosts=_PAIR, profile=profile)
+
+    plan = setup_command.build_setup_plan(request, ops=_ops(runner))
+
+    assert plan.refused_tables == refused
+    assert plan.kept_tables == kept
+    assert blocker in plan.blockers
+    assert plan.as_dict()["ready"] is False
+    outcome = setup_command.run_setup(
+        replace(request, apply=True, assume_yes=True), ops=_ops(runner, written=written), plan=plan
+    )
+    assert outcome.failure == "readiness_blocked"
+    assert outcome.applied is False
+    assert target.read_text(encoding="utf-8") == text
+    assert any(step["name"] == "readiness_blocked" for step in written[0]["steps"])
+
+
+def test_first_apply_without_a_file_renders_exactly_as_before(tmp_path: Path):
+    runner, _calls = _runner()
+    written: list[dict[str, object]] = []
+    request = _request(tmp_path, hosts=_PAIR)
+
+    plan = setup_command.build_setup_plan(request, ops=_ops(runner))
+
+    direct = setup_config_io.render_setup_config(
+        [(host.name, host.fabric_ip, host.gpus, host.ssh_user, host.comfy_dir) for host in _PAIR],
+        client_ip=request.client_ip,
+        fabric_profile=plan.fabric_profile,
+        resolution=plan.resolution,
+        python_bin=request.python_bin,
+        ssh_key=request.ssh_key,
+        comfy_dir=request.comfy_dir,
+        transport_security=request.transport_security,
+    )
+    assert plan.config_text == direct
+    assert (plan.kept_tables, plan.refused_tables, plan.warnings) == ((), (), ())
+    outcome = setup_command.run_setup(
+        replace(request, apply=True, assume_yes=True), ops=_ops(runner, written=written), plan=plan
+    )
+    assert outcome.status == "succeeded"
+    assert (tmp_path / "cluster.toml").read_text(encoding="utf-8") == direct
+    assert all(step["name"] != "existing_config_overrides_kept" for step in written[0]["steps"])
+
+
+def _stub_render(_resolution) -> str:
+    return "# rendered\n"
+
+
+def test_carried_names_are_quoted_and_a_table_that_cannot_round_trip_is_refused():
+    resolution = setup_command.compile_profile("safe", observations=())
+    existing = (
+        '[fabric."lab switch.v2"]\nNCCL_IB_TC = 104\nNCCL_IB_TIMEOUT = 22.5\n\n'
+        '[fabric."bad\\u007fname"]\nNCCL_DEBUG = "INFO"\n\n'
+        '[monarch.rdma.host_targets]\n"10.20.30.41" = "nic:mlx5_1"\n'
+    )
+
+    carried = setup_config_carry.carry_existing_tables(
+        _stub_render, existing, resolution, ["10.20.30.40", "10.20.30.41"]
+    )
+
+    parsed = tomllib.loads(carried.text)
+    assert parsed["fabric"] == {"lab switch.v2": {"NCCL_IB_TC": 104, "NCCL_IB_TIMEOUT": 22.5}}
+    assert parsed["monarch"] == {"rdma": {"host_targets": {"10.20.30.41": "nic:mlx5_1"}}}
+    assert carried.kept == ('fabric."lab switch.v2"', "monarch.rdma.host_targets")
+    # A raw DEL is not valid inside a TOML string, so that name cannot be
+    # written back; the table blocks the apply instead of being dropped.
+    assert carried.refused == ('fabric."bad\u007fname"',)
+    assert carried.blockers == ("existing_config_fabric_invalid",)
+    assert setup_config_carry.kept_counts(carried.kept) == {"fabric": 1, "monarch": 1, "studio": 0, "worker_args": 0}
