@@ -84,6 +84,18 @@
   job whose recorded prompt or workflow holds such a number, name each input
   with its digits and leave the draft unchanged, since a draft field holds
   whole numbers exactly only up to 2**53 - 1.
+- Studio's gallery Actions menu opens above its card's buttons on a solid
+  background and stays inside the card. Before, it lay over its own Actions
+  toggle, so a click meant to close it ran the menu item underneath, such as
+  Copy named inputs or Save output membership. On Grids, the Saved
+  prompt-style axes list wraps a style's record id, so Use as axis A and Use
+  as axis B stay on screen at phone widths instead of pushing the page
+  sideways.
+- Studio's viewer keeps following this tab's job after later jobs push it out
+  of the companion's 200-job snapshot. The tracker then reads the job by its
+  identity, once per snapshot while it may still change and once after it has
+  ended, so its status line, failure text and Open Queue link stay, and the
+  link makes Queue read the job by its identity and pin its row.
 
 ### Installation and updates
 
@@ -139,6 +151,17 @@
 - The torchmonarch canary uploads its reports with actions/upload-artifact
   v7.0.2, the update Renovate proposed against main, and Renovate now opens
   its pull requests against dev, since main only ever fast-forwards to dev.
+- A headless Firefox round on the Studio release candidate re-ran the twelve
+  browser rows of the test procedure and added rows for the controls that had
+  none: the viewer status line and step bar, the newest result and its strip,
+  the review summary and its expiry, seeds, the workflow filter and palette
+  group, prompt styles, the Grids how-to, App Mode inputs, failure details
+  and the Queue link, Queue thumbnails, exact large seeds and the panel
+  toggles. [STUDIO_INTERFACE_QA](docs/STUDIO_INTERFACE_QA.md#browser-evidence-2026-10-28)
+  holds the record. `studio/tests/README.md` lists all 26 rows, one to one
+  with that record's table, and `studio/tests/event_driver.py`, a CPU fixture
+  that sends ComfyUI's driver events, refuses marked prompts and answers with
+  the recorded template schema, runs the rows the plain fixture cannot.
 
 ## [1.3.0] - 2026-10-23
 

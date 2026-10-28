@@ -51,8 +51,9 @@ against an in-process companion on every CPU test run.
 
 ## Browser checks
 
-The [interface QA record](../../docs/STUDIO_INTERFACE_QA.md#browser-evidence)
-lists checks that a person runs in a browser against this fixture. Run them on
+The [interface QA record](../../docs/STUDIO_INTERFACE_QA.md#browser-evidence-2026-10-28)
+lists checks that a person runs in a browser against this fixture and the event
+fixture below. Run them on
 the bundle you intend to ship, not an earlier build, and repeat them after any
 change to `studio/src`.
 
@@ -66,6 +67,20 @@ change to `studio/src`.
    ```sh
    python3 studio/tests/mock_driver.py --port 18189 --job-seconds 30 \
      --video "$SCRATCH/clip.mp4" --export-workflow "$SCRATCH/studio-cpu-workflow.json"
+   ```
+
+   That fixture reports no step count and never fails a prompt. For the Step
+   bar, App Mode inputs and Failure details and Queue link rows, also start the
+   event fixture, which serves the same routes, sends the events ComfyUI sends,
+   refuses a prompt whose text holds `QA-FAIL-p` or `QA-FAIL-c` and answers
+   `/object_info` with the recorded schema of the packaged templates. Start a
+   second companion on it, with a state directory of its own. Run both in the
+   Python environment where dgx_monarch is installed:
+
+   ```sh
+   python studio/tests/event_driver.py --port 18195 --job-seconds 30 \
+     --schema tests/fixtures/studio/object_info_bundled.json
+   python -m dgx_monarch.studio --port 18225 --driver http://127.0.0.1:18195 --state-dir "$SCRATCH/events"
    ```
 
 3. Start the companion as above, open `http://127.0.0.1:18221`, enter the token
@@ -171,8 +186,93 @@ The checks:
   fixture on port 18190 again: within 5 seconds the panel is gone, a request
   to `/api/v1/catalog` succeeds, the button is enabled, and the restored draft
   shows its inputs without a reload.
+- **Viewer status line.** Submit the workflow and watch the line above the
+  viewer through the 30-second job. Expect Queued, then Running with the
+  elapsed time as m:ss beside a sweeping bar labelled "Job progress, no step
+  count reported", then "Finished in 0:30" with no bar. The telemetry panel's
+  "This tab's job" row repeats the line, and its raw sample stays closed. With
+  reduced motion on, the bar stands still as a dim full-width bar.
+- **Step bar.** On the event fixture, submit the workflow. Expect "step N of
+  20 on node 1" beside the elapsed time and a bar whose fill is N twentieths of
+  its track. Once node 2 starts, the step text goes and the bar sweeps until
+  the job finishes.
+- **Newest result.** When a job finishes, the viewer must show its last stored
+  output without a click, and Details must name the job. The recent outputs
+  strip holds at most eight job outputs and no upload or mask, marks the one in
+  view, and shows thumbnails for images and the video mark for videos.
+- **Review summary and expiry.** Open Review generation. Expect "Ready to
+  submit. Confirm below.", the workflow, model files, seeds, prompt text,
+  topology, checks still to run and the time the review expires, 10 minutes
+  after it was made, with the immutable record closed until opened and Submit
+  off with its reason until the box is ticked. Leave one review open for more
+  than 10 minutes: it must then say it expired and keep Submit off, also with
+  the box ticked.
+- **Seeds.** In a new browser profile, new drafts use the Random policy and say
+  that review chooses the seeds. After a run, the review, the viewer footer,
+  the Queue row and the clipboard after Copy seed in the gallery must hold the
+  same seed. Use this seed puts it in the seed field with the Fixed policy as
+  one change that one Undo reverses.
+- **Workflow filter and palette.** Type in Create's workflow filter: the select
+  keeps the packaged workflows whose title or file name holds every word, in
+  title order, and says so when none matches. Escape clears the filter, Enter
+  loads the first match while no packaged workflow is chosen and does nothing
+  once one is, and Clear empties the box and keeps focus there. In the command
+  palette, an empty search shows the LOAD A WORKFLOW group with its hint, and a
+  typed title lists its matches; choosing one loads it in Create.
+- **Prompt styles and Grids how-to.** Save two styles in Library, one plain and
+  one with `{prompt}`, append both in Create and bind the prompt input. Expect
+  the explanation and its worked example, Move up off on the first style and
+  Move down off on the last with "Already first" and "Already last", the
+  review's prompt text in each order, and Undo restoring the order. On Grids,
+  expect the five-step how-to, empty value fields in a new profile, and a line
+  under Validate every cell for no workflow, no axis, empty, invalid, non-list
+  and empty-list values.
+- **App Mode inputs.** On the event fixture, load each packaged template: Create
+  must open on the Inputs tab with the inputs of the template's App Mode layout,
+  `extra.linearData`, in that order, as typed controls with no alert. On this
+  fixture, whose schema lacks the templates' nodes, the same order shows with
+  each input marked as missing from `object_info`.
+- **Failure details and Queue link.** On the event fixture, submit prompts whose
+  text holds `QA-FAIL-p` and then `QA-FAIL-c`. Expect "Failed after 0:10" with
+  the refusal class and first sentence, Open Queue and a Troubleshooting link,
+  and for the second the consent request, the panel button's name and Review
+  consent, which opens Operations on `consent.apply` with the job's request.
+  Open Queue opens the job's row expanded and in view, and a second visit to
+  Queue opens no row. Then post 45, 60 and 100 more prompts straight to the
+  event fixture's `/prompt`, so that 45, 105 and 205 newer jobs exist: Queue
+  turns to the job's history page, then pins its row above the history, and at
+  205, with the job outside the companion's 200-job snapshot, the status line
+  still shows the failed job and its link makes Queue read the job by its
+  identity, a `GET /api/v1/jobs?job_id=` request.
+- **Queue thumbnails.** With 30 or more finished jobs, open Queue and record
+  the thumbnail requests, for example through the WebDriver BiDi
+  `network.beforeRequestSent` event: a row more than 200 pixels below the
+  visible area asks for no thumbnail until scrolling brings it near. Thumbnails
+  are 64 pixels square; on this fixture each job's newest output is its video,
+  so the event fixture's image outputs show the pictures.
+- **Large seeds.** Post a prompt whose seed is 18446744073709551615 straight to
+  the fixture, as text so that no tool rounds it:
 
-Stop both fixture processes and delete the token file when you finish. These
+  ```sh
+  curl -sS -H 'Content-Type: application/json' http://127.0.0.1:18189/prompt --data-binary \
+    '{"prompt": {"1": {"class_type": "StudioCPUFixture", "inputs": {"prompt": "QA large seed", "seed": 18446744073709551615, "strength": 1.0}}}}'
+  ```
+
+  Once the companion records the job, Copy named inputs, Copy API prompt and
+  Export provenance must keep every digit, and Copy seed must write the digits
+  alone. Reuse settings, from the card and the viewer, and Use this seed must
+  refuse, name `1.seed` with its digits and leave the draft unchanged.
+- **Gallery actions.** Open a card's Actions with a real click: the menu opens
+  above the card's buttons on an opaque background, inside its card, and a
+  second click on Actions closes it without running any item.
+- **Grids style axes.** With saved styles, open Saved prompt-style axes on Grids
+  at 360x800 and 390x844: neither the page nor the main area may scroll
+  sideways, and every Use as axis button stays in view.
+- **Panels.** The telemetry panel has no close button and the event console
+  only Clear view. The footer's Telemetry and Console toggles show and hide
+  them with matching `aria-expanded`, and so do the Settings checkboxes.
+
+Stop the fixture processes and delete the token file when you finish. These
 checks are synthetic integration evidence only; they are not GPU generation,
 accessibility, fidelity or performance proof. See `docs/STUDIO_ACCEPTANCE.md`
 for the acceptance that remains.

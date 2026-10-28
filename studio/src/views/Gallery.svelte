@@ -348,17 +348,22 @@
   .artifact-card.selected {
     border-color: var(--brand);
   }
+  /* The Actions menu opens above its row, so it never covers its own summary; its height keeps it
+     inside the card, so the gallery's scroll box never clips its top. */
+  .artifact-card .workflow-actions {
+    position: relative;
+  }
   .actions-menu {
     display: flex;
     flex-wrap: wrap;
     gap: 4px;
-    background: var(--panel);
+    background: var(--surface);
     position: absolute;
     z-index: 3;
     max-width: 230px;
-    bottom: 8px;
-    right: 8px;
-    max-height: 240px;
+    bottom: calc(100% + 4px);
+    right: 0;
+    max-height: 220px;
     overflow: auto;
     padding: 10px;
     border: 1px solid var(--border);

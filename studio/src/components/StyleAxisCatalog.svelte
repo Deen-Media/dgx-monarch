@@ -30,3 +30,11 @@
     </div>{/each}
   {#if error}<p role="alert">{error}</p>{/if}
 </details>
+
+<style>
+  /* A record id never breaks on its own, so the line wraps anywhere and the buttons stay in view. */
+  .stack-row span {
+    min-width: 0;
+    overflow-wrap: anywhere;
+  }
+</style>

@@ -98,7 +98,11 @@ repeated workflow import, editable controls, submission review and the review
 of a two-cell grid. Neither repeated the named-style grid axis, grid dispatch
 and its durable outcomes, the thumbnail gallery contents, project and
 experiment records or the quarantine screens, so those still rest on the
-earlier builds. Headless Firefox could not show Chromium or
+earlier builds. On 2026-10-28 the twelve rows ran again on the release
+candidate in headless Firefox 159.0, with fourteen new rows for the controls
+added since; that round fixed the three faults it found, which its
+[record](STUDIO_INTERFACE_QA.md#browser-evidence-2026-10-28) lists, and did not
+repeat those items either. Headless Firefox could not show Chromium or
 Safari behavior, native phone operating-system behavior, native select pop-ups,
 video control internals, the disclosure transition that Firefox does not apply,
 or frame timing under hardware composition. The

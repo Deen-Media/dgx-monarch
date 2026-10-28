@@ -226,6 +226,103 @@ def test_fixture_driver_keeps_uploads_for_the_companion_to_read_back(fixture_dri
     assert missing.value.code == 404
 
 
+@pytest.fixture
+def event_driver(scripts):
+    """The event fixture over a fresh copy of mock_driver.py, with a 1.5-second job."""
+    module = _load("event_driver")
+    fixture = module.load_fixture()
+    handler = module.build(fixture, module.refusals())
+    handler.job_seconds = 1.5
+    recorded = json.loads((REPO / "tests" / "fixtures" / "studio" / "object_info_bundled.json").read_text())
+    handler.schema = {**recorded, **fixture.SCHEMA}
+    server = fixture.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+    server.daemon_threads = True
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield SimpleNamespace(origin=f"http://127.0.0.1:{server.server_address[1]}", module=module,
+                              fixture=fixture, recorded=recorded)
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(5)
+
+
+def test_event_driver_sends_comfy_events_and_refuses_marked_prompts(event_driver):
+    import aiohttp
+
+    from dgx_monarch import consent_descriptor
+    from dgx_monarch.refusal import parse_refusal_tag
+    from dgx_monarch.studio import job_observations
+
+    plain, refused = str(uuid.uuid4()), str(uuid.uuid4())
+
+    async def collect() -> list[dict]:
+        async with aiohttp.ClientSession() as session:
+            async with session.ws_connect(event_driver.origin + "/ws", params={"clientId": "tooling"}) as socket:
+                for identity, text in ((plain, "plain"), (refused, "fox QA-FAIL-c")):
+                    prompt = {"1": {"class_type": "StudioCPUFixture",
+                                    "inputs": {"prompt": text, "seed": 1, "strength": 1.0}}}
+                    async with session.post(event_driver.origin + "/prompt", json={
+                            "prompt": prompt, "prompt_id": identity, "client_id": "tooling"}) as response:
+                        assert response.status == 200
+                events: list[dict] = []
+                deadline = asyncio.get_running_loop().time() + 15
+                while asyncio.get_running_loop().time() < deadline and {"node": None, "prompt_id": plain} not in [
+                        event["data"] for event in events if event["type"] == "executing"]:
+                    try:
+                        events.append(await socket.receive_json(timeout=1))
+                    except TimeoutError:
+                        continue
+                return events
+
+    events = asyncio.run(collect())
+
+    def trace(identity: str) -> list[tuple]:
+        return [(event["type"], event["data"].get("node"), event["data"].get("value"))
+                for event in events if event["data"].get("prompt_id") == identity]
+
+    start = [("execution_start", None, None), ("execution_cached", None, None), ("executing", "1", None)]
+    steps = [("progress", "1", value) for value in range(1, 21)]
+    assert trace(plain) == [*start, *steps, ("executing", "2", None), ("execution_success", None, None),
+                            ("executing", None, None)]
+    stopped = trace(refused)
+    assert stopped[:3] == start and stopped[-2:] == [("execution_error", None, None), ("executing", None, None)]
+    reported = stopped[3:-2]
+    assert 10 <= len(reported) < 20 and reported == steps[:len(reported)], "a refusal stops at one third of the job"
+    # The companion reads each event as it reads ComfyUI's.
+    observed = {event["type"]: job_observations.observation(event)[1] for event in events
+                if event["data"].get("prompt_id") == refused}
+    assert observed["execution_error"]["state"] == "failed"
+    message = observed["execution_error"]["error"]["message"]
+    assert parse_refusal_tag(message).refusal_class.value == "C"
+    assert consent_descriptor.parse(message).consent_id
+    second = next(event for event in events if event["data"] == {"node": "2", "display_node": "2", "prompt_id": plain})
+    assert job_observations.observation(second)[1]["progress"] is None
+    entry = _get(event_driver.origin, f"/history/{refused}")[refused]
+    assert entry["outputs"] == {} and entry["status"]["status_str"] == "error"
+    assert [kind for kind, _data in entry["status"]["messages"]] == ["execution_start", "execution_error"]
+
+
+def test_event_driver_refusals_are_the_builders_own(event_driver):
+    from dgx_monarch import consent_descriptor
+    from dgx_monarch.refusal import parse_refusal_tag
+
+    texts = event_driver.module.refusals()
+    physics, capacity = texts["p"]["exception_message"], texts["c"]["exception_message"]
+    assert parse_refusal_tag(physics).refusal_class.value == "P"
+    assert physics.endswith(" See docs/TROUBLESHOOTING.md #135.")
+    tag = parse_refusal_tag(capacity)
+    assert (tag.refusal_class.value, tag.guard, tag.waivable) == ("C", "stock_load_preflight", True)
+    assert consent_descriptor.parse(capacity).panel_action == "Load with slab residency"
+
+
+def test_event_driver_serves_a_recorded_schema_with_the_fixture_node(event_driver):
+    served = _get(event_driver.origin, "/object_info")
+    assert set(served) == set(event_driver.recorded) | {"StudioCPUFixture"}
+    assert served["StudioCPUFixture"] == event_driver.fixture.SCHEMA["StudioCPUFixture"]
+
+
 def _observer(output: Path) -> subprocess.CompletedProcess:
     return subprocess.run(
         [sys.executable, str(STUDIO_TESTS / "measure_observer.py"), "--output", str(output),
@@ -350,6 +447,7 @@ def test_contributing_regenerates_the_studio_inventory_before_checking_it():
 @pytest.mark.parametrize("relative", [
     "studio/tests/README.md", "docs/STUDIO_PERFORMANCE.md", "docs/STUDIO_INTERFACE_QA.md",
     "studio/tests/http_smoke.py", "studio/tests/mock_driver.py", "studio/tests/measure_observer.py",
+    "studio/tests/event_driver.py",
 ])
 def test_studio_evidence_instructions_keep_results_out_of_temporary_directories(relative):
     """Hosts clear temporary directories, so evidence written there does not last."""
@@ -374,14 +472,15 @@ def test_performance_record_cites_the_committed_harness_and_bundle():
 
 
 def test_browser_procedure_covers_every_interface_qa_browser_row():
+    """The README lists exactly the rows of the newest browser round, in its order, so a round
+    run from the README alone repeats every row the record holds. Rounds are appended."""
     qa = (REPO / "docs" / "STUDIO_INTERFACE_QA.md").read_text()
-    section = qa.split("## Browser evidence\n", 1)[1].split("\n## ", 1)[0]
-    rows = [line.split("|")[1].strip() for line in section.splitlines()
+    newest = re.split(r"^## Browser evidence\b.*$", qa, flags=re.MULTILINE)[-1].split("\n## ", 1)[0]
+    rows = [line.split("|")[1].strip() for line in newest.splitlines()
             if line.startswith("| ") and not line.startswith("| Check |")]
-    assert len(rows) == 12
+    assert len(rows) == 26
     procedure = (STUDIO_TESTS / "README.md").read_text()
-    for row in rows:
-        assert f"**{row}.**" in procedure, row
+    assert re.findall(r"^- \*\*(.+?)\.\*\*", procedure, flags=re.MULTILINE) == rows
     flat = " ".join(procedure.split())
     for record in ("browser name and version", "RESOURCE_SHA256", "SHA-256"):
         assert record in flat, record

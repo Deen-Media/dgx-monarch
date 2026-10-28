@@ -23,7 +23,12 @@ function setup(
 ) {
   const requests: string[] = [];
   const connection = {
-    snapshot: { jobs: [] as Job[], artifacts: [] as Artifact[], server_time: 1000 as number },
+    snapshot: {
+      jobs: [] as Job[],
+      artifacts: [] as Artifact[],
+      server_time: 1000 as number,
+      jobs_truncated: false,
+    },
     capabilities: { presentation, operations },
     client: {
       request: (path: string) => {
@@ -39,8 +44,13 @@ function setup(
   const tracker = new JobTracker(connection as never, submission as never);
   let polls = 0;
   /** Each poll is a new snapshot unless it names the server time it repeats. */
-  const poll = (jobs: Job[], artifacts: Artifact[] = [], server_time = 1000 + ++polls) => {
-    connection.snapshot = { jobs, artifacts, server_time };
+  const poll = (
+    jobs: Job[],
+    artifacts: Artifact[] = [],
+    server_time = 1000 + ++polls,
+    jobs_truncated = false,
+  ) => {
+    connection.snapshot = { jobs, artifacts, server_time, jobs_truncated };
     tracker.observe();
   };
   return { tracker, submission, poll, requests };
@@ -223,4 +233,87 @@ test("the followed job's consent control follows the consent operation's availab
   poll([refused]);
   assert.equal(tracker.status?.detail, 'Refused, class C (capacity-protective): no fit.');
   assert.equal(tracker.status?.failure?.consent?.panelAction, 'Load with slab residency');
+});
+
+// Jobs a 200-job snapshot keeps in place of the followed one.
+const others = ['a', 'b', 'c'].map((id) => job(`other-${id}`, 'succeeded'));
+const reads = (requests: string[]) => requests.filter((path) => path.startsWith('/jobs?'));
+
+test('a running job a truncated snapshot drops is read by its identity once per snapshot', async () => {
+  let row = job('mine', 'running', { running_observed_at: 990 });
+  const { tracker, poll, requests } = setup(async (path) =>
+    path.startsWith('/jobs?') ? { items: [row] } : { items: [] },
+  );
+  tracker.own('mine');
+  poll([job('mine', 'running', { running_observed_at: 990 })], [], 1000);
+  poll(others, [], 1010, true);
+  await tracker.reading;
+  assert.deepEqual(reads(requests), ['/jobs?job_id=mine&limit=1']);
+  assert.equal(tracker.status?.id, 'mine');
+  assert.equal(tracker.status?.headline, 'Running 0:20');
+  poll(others, [], 1010, true);
+  await tracker.reading;
+  assert.equal(reads(requests).length, 1, 'the same snapshot asks nothing more');
+  row = job('mine', 'succeeded', { started_at: 990, ended_at: 1015 });
+  poll(others, [], 1020, true);
+  await tracker.reading;
+  assert.equal(reads(requests).length, 2);
+  assert.equal(tracker.status?.headline, 'Finished in 0:25');
+  for (const server of [1030, 1040]) {
+    poll(others, [], server, true);
+    await tracker.reading;
+  }
+  assert.equal(reads(requests).length, 2, 'a record that has ended is not read again');
+});
+
+test('a failed job a truncated snapshot drops keeps its line, its failure and its Queue link', async () => {
+  const failed = job('mine', 'failed', {
+    started_at: 100,
+    ended_at: 110,
+    error: {
+      code: 'RuntimeError',
+      message: '[dgxm:P] The kernel cannot add the bias. See docs/TROUBLESHOOTING.md #135.',
+    },
+  });
+  const { tracker, poll, requests } = setup(async () => ({ items: [failed] }));
+  tracker.own('mine');
+  poll([failed], [], 1000);
+  const before = tracker.status;
+  poll(others, [], 1010, true);
+  await tracker.reading;
+  assert.equal(tracker.status?.id, 'mine');
+  assert.equal(tracker.status?.headline, 'Failed after 0:10');
+  assert.equal(tracker.status?.detail, before?.detail);
+  assert.equal(tracker.status?.link, 'Open Queue');
+  assert.equal(tracker.status?.failure?.troubleshooting, 135);
+  assert.equal(tracker.job?.id, 'mine', 'consent and Queue actions get the record');
+  assert.deepEqual(reads(requests), ['/jobs?job_id=mine&limit=1']);
+});
+
+test('no identity read while the snapshot carries the followed job or is not truncated', async () => {
+  const { tracker, poll, requests } = setup(async () => ({ items: [job('mine', 'running')] }));
+  tracker.own('mine');
+  for (const server of [1000, 1010, 1020]) {
+    poll([job('mine', 'running'), ...others], [], server, true);
+    await tracker.reading;
+  }
+  poll(others, [], 1030);
+  await tracker.reading;
+  assert.deepEqual(reads(requests), []);
+});
+
+test('a job that has ended is read by its identity a single time', async () => {
+  const done = job('mine', 'succeeded', { started_at: 100, ended_at: 130 });
+  const { tracker, poll, requests } = setup(async (path) =>
+    path.startsWith('/jobs?') ? { items: [done] } : { items: [] },
+  );
+  tracker.own('mine');
+  poll([done], [output('result', 'mine')], 1000);
+  for (const server of [1010, 1020, 1030, 1040]) {
+    poll(others, [], server, true);
+    await tracker.reading;
+  }
+  assert.deepEqual(reads(requests), ['/jobs?job_id=mine&limit=1']);
+  assert.equal(tracker.status?.headline, 'Finished in 0:30');
+  assert.equal(tracker.selected?.id, 'result', 'the result shown before the drop stays');
 });
