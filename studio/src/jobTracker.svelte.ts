@@ -1,10 +1,11 @@
 import { untrack } from 'svelte';
 import type { Connection } from './connection.svelte';
 import type { Submission } from './submission.svelte';
-import type { Artifact } from './contracts';
+import type { Artifact, Job } from './contracts';
 import { liveArtifact } from './artifactDraft';
 import { isInFlightJob } from './jobActions';
 import {
+  ENDED_STATES,
   NO_FOLLOW,
   adoptRequest,
   applyLookup,
@@ -13,6 +14,7 @@ import {
   sameFollow,
   type Follow,
 } from './jobFollow';
+import { jobSummary } from './jobProvenance';
 import { companionTime, jobColor, jobLine, steadyClock, type JobLine } from './jobStatus';
 import { consentAction, type ConsentAction } from './jobFailure';
 
@@ -43,6 +45,12 @@ export class JobTracker {
   #lookedFor: number | undefined;
   /** The artifacts request in flight for a succeeded job's output, if any. */
   lookup: Promise<void> | null = null;
+  /** The followed job read by its identity after a truncated snapshot left it out. */
+  #record = $state.raw<Job | null>(null);
+  /** The snapshot the last identity read answered; one read per snapshot at most. */
+  #readFor: number | undefined;
+  /** The identity read in flight for the followed job, if any. */
+  reading: Promise<void> | null = null;
   private connection: Connection;
   private submission: Submission;
   constructor(connection: Connection, submission: Submission) {
@@ -70,10 +78,12 @@ export class JobTracker {
   shownComparison = $derived.by(() =>
     liveArtifact(this.connection.snapshot.artifacts, this.#comparison),
   );
-  /** The followed job as the snapshot lists it. */
+  /** The followed job as the snapshot lists it, or as read by its identity once the window drops it. */
   job = $derived.by(() => {
     const id = this.follow.id;
-    return id ? this.connection.snapshot.jobs.find((job) => job.id === id) : undefined;
+    if (!id) return undefined;
+    const listed = this.connection.snapshot.jobs.find((job) => job.id === id);
+    return listed ?? (this.#record?.id === id ? this.#record : undefined);
   });
   status = $derived.by((): FollowedJob | null => {
     const job = this.job;
@@ -100,7 +110,7 @@ export class JobTracker {
 
   /** Run in an effect: apply each snapshot to the followed job and the viewer. */
   observe() {
-    const { jobs, artifacts, server_time: server } = this.connection.snapshot;
+    const { jobs, artifacts, server_time: server, jobs_truncated } = this.connection.snapshot;
     const pending = this.submission.pending?.key;
     const follow = this.follow;
     untrack(() => {
@@ -112,14 +122,56 @@ export class JobTracker {
       const fresh = !!this.#request && this.#request === this.submission.createdKey;
       const adopted = adoptRequest(follow, this.#request, jobs, fresh);
       if (adopted) this.#request = '';
-      const step = followSnapshot(adopted ?? follow, jobs, artifacts, this.#comparison !== null);
+      const current = adopted ?? follow;
+      const step = followSnapshot(
+        current,
+        this.known(jobs, current.id),
+        artifacts,
+        this.#comparison !== null,
+      );
       this.apply(follow, step);
+      this.readDropped(jobs, jobs_truncated === true, server);
       // One request per snapshot at most, so the bounded attempts span several polls.
       if (step.lookup && !this.lookup && server !== this.#lookedFor) {
         this.#lookedFor = server;
         this.lookup = this.lookUp(step.lookup).finally(() => (this.lookup = null));
       }
     });
+  }
+
+  /** The snapshot's jobs, with the followed job's record when the snapshot window left it out. */
+  private known(jobs: readonly Job[], id: string | null): readonly Job[] {
+    const record = this.#record;
+    if (!id || record?.id !== id || jobs.some((job) => job.id === id)) return jobs;
+    return [...jobs, record];
+  }
+
+  /**
+   * Read the followed job by its identity when a truncated snapshot leaves it out: once per
+   * snapshot while it may still change, and no more once the record shows it ended. A job the
+   * snapshot carries is never read, and its old record is dropped.
+   */
+  private readDropped(jobs: readonly Job[], truncated: boolean, server: number | undefined) {
+    const id = this.follow.id;
+    if (!id) return;
+    if (jobs.some((job) => job.id === id)) {
+      if (this.#record) this.#record = null;
+      return;
+    }
+    const record = this.#record?.id === id ? this.#record : null;
+    if (!truncated || this.reading || server === this.#readFor) return;
+    if (record && ENDED_STATES.includes(record.state)) return;
+    this.#readFor = server;
+    this.reading = this.readJob(id).finally(() => (this.reading = null));
+  }
+
+  private async readJob(id: string) {
+    try {
+      const job = await jobSummary(this.connection.client, id);
+      if (this.follow.id === id) this.#record = job;
+    } catch {
+      // No record this time; the next snapshot asks again while the job may still change.
+    }
   }
 
   /** Ask the artifacts route for a succeeded job's final output that the snapshot left out. */
