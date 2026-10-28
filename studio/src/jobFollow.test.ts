@@ -60,6 +60,19 @@ test('the result of a finished job is its last stored final image or video', () 
   assert.equal(finalOutput('missing', artifacts), null);
 });
 
+test('a looked-up result is the one the snapshot would show', () => {
+  // The snapshot and the artifacts route both list a job's outputs most recently stored first.
+  const stored = [
+    output('second', 'j', { created_at: 7 }),
+    output('first', 'j', { created_at: 7 }),
+  ];
+  const done = [job('j', 'succeeded')];
+  assert.equal(followSnapshot(ownFollow('j'), done, stored, false).show?.id, 'second');
+  assert.equal(applyLookup(ownFollow('j'), 'j', stored, false).show?.id, 'second');
+  // Equal times never reorder here: whichever order the companion sends decides.
+  assert.equal(finalOutput('j', [...stored].reverse())?.id, 'first');
+});
+
 test('the tab follows the job it submitted and shows its result once it succeeds', () => {
   const start = ownFollow('mine');
   const { follow, shown } = replay(start, [

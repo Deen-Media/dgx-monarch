@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Everyday use
+
+- Studio's artifacts route lists outputs with equal creation times most
+  recently stored first, as the snapshot does, so the viewer shows a finished
+  job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+
 ## [1.4.0] - 2026-10-28
 
 **Upgrading from 1.3.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-130): the first update runs the 1.3.0
