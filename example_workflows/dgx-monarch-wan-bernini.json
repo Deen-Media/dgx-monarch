@@ -880,6 +880,74 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     8,
+     "text"
+    ],
+    [
+     9,
+     "text"
+    ],
+    [
+     12,
+     "noise_seed"
+    ],
+    [
+     11,
+     "width"
+    ],
+    [
+     11,
+     "height"
+    ],
+    [
+     12,
+     "steps"
+    ],
+    [
+     13,
+     "steps"
+    ],
+    [
+     12,
+     "cfg"
+    ],
+    [
+     13,
+     "cfg"
+    ],
+    [
+     12,
+     "sampler_name"
+    ],
+    [
+     12,
+     "scheduler"
+    ],
+    [
+     13,
+     "sampler_name"
+    ],
+    [
+     13,
+     "scheduler"
+    ],
+    [
+     3,
+     "unet_name"
+    ],
+    [
+     4,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    15
+   ]
+  }
+ },
  "version": 0.4
 }

@@ -605,6 +605,54 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     4,
+     "text"
+    ],
+    [
+     10,
+     "noise_seed"
+    ],
+    [
+     6,
+     "width"
+    ],
+    [
+     6,
+     "height"
+    ],
+    [
+     10,
+     "steps"
+    ],
+    [
+     10,
+     "cfg"
+    ],
+    [
+     10,
+     "sampler_name"
+    ],
+    [
+     10,
+     "scheduler"
+    ],
+    [
+     9,
+     "strength_model"
+    ],
+    [
+     2,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    12
+   ]
+  }
+ },
  "version": 0.4
 }

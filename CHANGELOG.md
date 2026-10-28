@@ -53,6 +53,12 @@
   with a how-to, starts with empty value fields and says why Validate every
   cell is disabled, and the telemetry panel and event console lose their
   close buttons in favor of the footer toggles and Settings.
+- Every bundled template carries a reviewed App Mode layout, so ComfyUI's App
+  Mode and the Studio Inputs tab open on the prompt, negative prompt, seed,
+  size, sampling settings, input media, LoRA strength and model file instead
+  of every input. `tools/gen_templates.py` writes the layouts from one checked
+  table, and a new test inspects each template in Studio to confirm its
+  inputs exist and follow the approved order.
 
 ### Installation and updates
 

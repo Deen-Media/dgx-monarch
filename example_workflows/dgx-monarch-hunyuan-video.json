@@ -549,6 +549,54 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     5,
+     "text"
+    ],
+    [
+     6,
+     "text"
+    ],
+    [
+     8,
+     "seed"
+    ],
+    [
+     7,
+     "width"
+    ],
+    [
+     7,
+     "height"
+    ],
+    [
+     8,
+     "steps"
+    ],
+    [
+     8,
+     "cfg"
+    ],
+    [
+     8,
+     "sampler_name"
+    ],
+    [
+     8,
+     "scheduler"
+    ],
+    [
+     3,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    11
+   ]
+  }
+ },
  "version": 0.4
 }

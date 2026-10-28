@@ -600,6 +600,62 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     6,
+     "clip_l"
+    ],
+    [
+     6,
+     "qwen25_7b"
+    ],
+    [
+     7,
+     "clip_l"
+    ],
+    [
+     7,
+     "qwen25_7b"
+    ],
+    [
+     9,
+     "seed"
+    ],
+    [
+     8,
+     "width"
+    ],
+    [
+     8,
+     "height"
+    ],
+    [
+     9,
+     "steps"
+    ],
+    [
+     9,
+     "cfg"
+    ],
+    [
+     9,
+     "sampler_name"
+    ],
+    [
+     9,
+     "scheduler"
+    ],
+    [
+     3,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    12
+   ]
+  }
+ },
  "version": 0.4
 }

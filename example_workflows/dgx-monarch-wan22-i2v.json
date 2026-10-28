@@ -926,6 +926,78 @@
  ],
  "groups": [],
  "config": {},
- "extra": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     8,
+     "text"
+    ],
+    [
+     9,
+     "text"
+    ],
+    [
+     13,
+     "noise_seed"
+    ],
+    [
+     12,
+     "width"
+    ],
+    [
+     12,
+     "height"
+    ],
+    [
+     13,
+     "steps"
+    ],
+    [
+     14,
+     "steps"
+    ],
+    [
+     13,
+     "cfg"
+    ],
+    [
+     14,
+     "cfg"
+    ],
+    [
+     13,
+     "sampler_name"
+    ],
+    [
+     13,
+     "scheduler"
+    ],
+    [
+     14,
+     "sampler_name"
+    ],
+    [
+     14,
+     "scheduler"
+    ],
+    [
+     4,
+     "image"
+    ],
+    [
+     6,
+     "unet_name"
+    ],
+    [
+     7,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    16
+   ]
+  }
+ },
  "version": 0.4
 }
