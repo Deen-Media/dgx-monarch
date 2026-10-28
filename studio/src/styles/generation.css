@@ -75,6 +75,11 @@
 .input-row input {
   margin-top: 6px;
 }
+.seed-policy-note {
+  display: block;
+  margin: -10px 0 16px;
+  color: var(--muted);
+}
 .tabs {
   display: flex;
   gap: 3px;

@@ -1,8 +1,8 @@
 <script lang="ts">
   import type { Artifact, Job, ReuseArtifact } from '../contracts';
   import type { StudioClient } from '../api';
-  import { fullJob } from '../jobProvenance';
-  import { recordedSettings } from '../recordedSettings';
+  import { fullJob, jobSummary } from '../jobProvenance';
+  import { recordedSeeds, recordedSettings } from '../recordedSettings';
   import { formatTime } from '../model';
   import { exportJSON } from '../files';
   import {
@@ -133,14 +133,24 @@
       setNotice(String(cause));
     }
   }
-  async function copy(entry: GalleryEntry, kind: 'prompt' | 'seed') {
+  async function copy(entry: GalleryEntry, kind: 'prompt' | 'seed' | 'inputs') {
     try {
-      const job = await fullJob(client, entry.artifact.job_id, entry.job);
-      await navigator.clipboard.writeText(recordedSettings(job, kind));
+      // Seeds come from a summary row, which keeps a large seed's digits; the snapshot's row
+      // serves when present. The other copies need the full record.
+      const job =
+        kind !== 'seed'
+          ? await fullJob(client, entry.artifact.job_id, entry.job)
+          : recordedSeeds(entry.job)
+            ? entry.job!
+            : await jobSummary(client, entry.artifact.job_id);
+      const text = recordedSettings(job, kind);
+      await navigator.clipboard.writeText(text);
       setNotice(
         kind === 'prompt'
           ? 'Copied recorded API prompt.'
-          : 'Copied named input values including recorded seeds.',
+          : kind === 'inputs'
+            ? 'Copied named input values, recorded seeds included.'
+            : `Copied the recorded seed${text.startsWith('{') ? 's' : ` ${text}`}.`,
       );
     } catch (cause) {
       setNotice(cause instanceof Error ? cause.message : String(cause));
@@ -278,8 +288,8 @@
                 >
                 <button onclick={() => void reuse(artifact, 'workflow')}>Load workflow</button>
                 <button onclick={() => void copy(entry, 'prompt')}>Copy API prompt</button><button
-                  onclick={() => void copy(entry, 'seed')}>Copy named inputs / seeds</button
-                >
+                  onclick={() => void copy(entry, 'seed')}>Copy seed</button
+                ><button onclick={() => void copy(entry, 'inputs')}>Copy named inputs</button>
                 <button onclick={() => void exportProvenance(entry)}>Export provenance</button>
               </div>
             </details>

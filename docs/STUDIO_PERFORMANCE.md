@@ -7,13 +7,14 @@ Asset sizes updated: 2026-10-28 (UTC). Observer timings updated: 2026-10-21
 ## Packaged asset sizes
 
 These are measured file sizes of the current compiled Svelte/Vite bundle.
-Gzip uses Python gzip with timestamp zero. They measure transfer size only,
-not JavaScript execution, browser responsiveness or Spark overhead.
+Gzip bytes are the output of `gzip -9 -c`, file name included. They measure
+transfer size only, not JavaScript execution, browser responsiveness or Spark
+overhead.
 
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
-| `index-CkPxWXgB.js` | 246,074 | 85,596 |
-| `index-BaTH7nyQ.css` | 32,491 | 7,969 |
+| `index-CWYyfgNr.js` | 255,794 | 89,123 |
+| `index-CTpknU9N.css` | 33,386 | 8,158 |
 
 ## CPU observer microbenchmark
 

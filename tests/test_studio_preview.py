@@ -1,11 +1,14 @@
 """Submission preview transformations preserve explicit graph ownership."""
 
 import asyncio
+import json
 from copy import deepcopy
 
 import pytest
 
+from dgx_monarch.studio import jobs as jobs_module
 from dgx_monarch.studio.contracts import StudioError
+from dgx_monarch.studio.history import page_jobs
 from dgx_monarch.studio.jobs import Jobs
 from dgx_monarch.studio.preview_drafts import prepare_preview
 from dgx_monarch.studio.store import Store
@@ -260,3 +263,99 @@ def test_monarch_lora_uses_its_actual_model_type_for_existing_and_inserted_chain
     prompt, _, effective = prepare_preview(request_body, schema)
     assert len(effective["lora_insertion"]["inserted_nodes"]) == 3
     assert prompt["6"]["inputs"]["model"] == [effective["lora_insertion"]["inserted_nodes"][-1], 0]
+
+
+SEED_SCHEMA = {
+    "Sampler": {"input": {"required": {
+        "seed": ["INT", {"default": 0, "min": 0, "max": 2**64 - 1, "control_after_generate": True}],
+        "steps": ["INT", {"default": 20, "min": 1, "max": 100}]}}, "output": ["LATENT"]},
+    "Noise": {"input": {"required": {"noise_seed": ["INT", {"default": 0, "min": 0, "max": 2**64 - 1}]}},
+              "output": ["NOISE"]},
+    "Sink": {"input": {"required": {"latent": ["LATENT"], "noise": ["NOISE"]}}, "output": [], "output_node": True},
+}
+
+
+def seed_request(policy):
+    """A draft whose seed fields hold 5 and 9, as a template that ships every seed at 0 would after an edit."""
+    return {"workflow": {
+        "1": {"class_type": "Sampler", "inputs": {"seed": 0, "steps": 20}},
+        "2": {"class_type": "Noise", "inputs": {"noise_seed": 0}},
+        "3": {"class_type": "Sink", "inputs": {"latent": ["1", 0], "noise": ["2", 0]}},
+    }, "values": {"root:1:seed": 5, "root:2:noise_seed": 9, "root:1:steps": 20},
+        "seed_policy": policy, "operation": "image"}
+
+
+def test_fixed_seed_policy_sends_the_seed_fields_unchanged(tmp_path):
+    store = Store(tmp_path / "state")
+    try:
+        preview = Jobs(store, None).build_preview(seed_request("fixed"), schema=SEED_SCHEMA)
+        assert preview["prompt"]["1"]["inputs"] == {"seed": 5, "steps": 20}
+        assert preview["prompt"]["2"]["inputs"] == {"noise_seed": 9}
+        assert preview["effective"]["seeds"] == {"1.seed": 5, "2.noise_seed": 9}
+        # A request that names no policy keeps the fixed default.
+        request = seed_request("fixed")
+        del request["seed_policy"]
+        assert Jobs(store, None).build_preview(request, schema=SEED_SCHEMA)["effective"]["seeds"] == {
+            "1.seed": 5, "2.noise_seed": 9}
+    finally:
+        store.close()
+
+
+def test_random_seed_policy_freezes_the_chosen_seeds_and_leaves_the_draft(tmp_path, monkeypatch):
+    chosen = iter([111, 222])
+    monkeypatch.setattr(jobs_module.secrets, "randbelow", lambda count: next(chosen))
+    request = seed_request("random")
+    original = deepcopy(request)
+    store = Store(tmp_path / "state")
+    try:
+        jobs = Jobs(store, None)
+        jobs.schema = SEED_SCHEMA
+        preview = jobs.build_preview(request, schema=SEED_SCHEMA)
+        seeds = {"1.seed": 111, "2.noise_seed": 222}
+        assert preview["effective"]["seeds"] == seeds
+        assert preview["prompt"]["1"]["inputs"] == {"seed": 111, "steps": 20}
+        assert preview["prompt"]["2"]["inputs"] == {"noise_seed": 222}
+        # The chosen seeds live in the record only: the draft and its workflow keep their values.
+        assert request == original
+        assert preview["requested"]["values"] == original["values"]
+        assert preview["requested"]["workflow"] == original["workflow"]
+        assert store.get("previews", preview["id"])["effective"]["seeds"] == seeds
+        # Submission freezes the same seeds, and the job summary carries them.
+        snapshot = jobs.reviewed_snapshot(preview["id"])
+        assert snapshot["prompt"] == preview["prompt"] and snapshot["effective"]["seeds"] == seeds
+        store.create("jobs", {"id": "seeded", "state": "queued", "created_at": 1, "submission": snapshot})
+        assert page_jobs(store, {})["items"][0]["submission"]["effective"] == {"seeds": seeds}
+    finally:
+        store.close()
+
+
+def test_a_seed_above_the_browser_range_stays_exact_from_review_to_driver(tmp_path):
+    """Python integers are exact: only the browser's view of a large seed needs its digits as text."""
+    request = seed_request("fixed")
+    request["values"].update({"root:1:seed": 2**64 - 1, "root:2:noise_seed": 2**53})
+    sent = []
+
+    class Driver:
+        async def request(self, method, path, data=None):
+            sent.append(json.dumps(data))
+            return {"prompt_id": "accepted"}
+
+    store = Store(tmp_path / "state")
+    try:
+        jobs = Jobs(store, Driver())
+        jobs.schema = SEED_SCHEMA
+        preview = jobs.build_preview(request, schema=SEED_SCHEMA)
+        exact = {"1.seed": 2**64 - 1, "2.noise_seed": 2**53}
+        assert preview["effective"]["seeds"] == exact
+        assert preview["prompt"]["1"]["inputs"]["seed"] == 2**64 - 1
+        snapshot = jobs.reviewed_snapshot(preview["id"])
+        value = store.create("jobs", {"id": "large", "state": "submitting", "created_at": 1, "prompt_id": None,
+                                      "client_prompt_id": "client", "submission": snapshot})
+        asyncio.run(jobs.dispatch(value))
+        # The driver receives every digit, and the stored record keeps exact integers.
+        assert '"seed": 18446744073709551615' in sent[0] and '"noise_seed": 9007199254740992' in sent[0]
+        assert store.get("jobs", "large")["submission"]["effective"]["seeds"] == exact
+        assert page_jobs(store, {})["items"][0]["submission"]["effective"]["seeds"] == {
+            "1.seed": "18446744073709551615", "2.noise_seed": "9007199254740992"}
+    finally:
+        store.close()

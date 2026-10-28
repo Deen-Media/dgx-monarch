@@ -43,6 +43,9 @@ LOG = logging.getLogger(__name__)
 TELEMETRY_FRESH_SECONDS = 30
 # Review-only preview fields that a submitted job's frozen snapshot leaves out.
 SNAPSHOT_OMITTED = frozenset({"id", "created_at", "expires_at", "errors", "warnings"})
+# A review checks values against the driver's inputs only; the review dialog shows this text.
+BACKEND_CHECKS_WARNING = ("Studio checked these values against the inputs the driver reports. The backend checks "
+                          "memory, topology, identity and consent when the job runs and can still refuse it then.")
 
 
 def _random_seed(schema: dict[str, Any]) -> int:
@@ -191,7 +194,7 @@ class Jobs:
                     "model_fingerprints": "unavailable", "effective_topology": "pending_backend_admission"}
         value = {"id": identifier(), "digest": digest(snapshot), **snapshot, "created_at": timestamp(),
                  "expires_at": timestamp() + 600, "errors": [],
-                 "warnings": ["Schema validation is complete. Memory, topology, identity and consent guards run in the backend at execution."]}
+                 "warnings": [BACKEND_CHECKS_WARNING]}
         if len(canonical(value).encode()) > MAX_BODY_BYTES:
             raise StudioError("preview_limit", "Expanded submission preview exceeds the 4 MiB JSON budget.", 413)
         return self.store.create("previews", value) if persist else value

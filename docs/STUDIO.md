@@ -738,6 +738,50 @@ File names never establish model compatibility.
 Execution-time guards still check the actual model and topology. A schema-only
 preview is not a memory-admission, topology or identity-gate PASS.
 
+Review generation opens a dialog that starts with a status line: ready to
+submit, or what blocks the job. A summary follows with the workflow and
+operation, the model files, the seeds, the prompt text the job sends, the
+requested topology, the checks the backend still runs and the time the review
+expires, 10 minutes after Studio made it. The prompt text lists each multi-line
+text input and any input a style rewrote. When a style changed the text, the
+summary also shows your draft text. A workflow with no multi-line text input
+lists every text input. The full record that a submitted job keeps sits closed
+under Immutable submission record. Submit stays off until you check the
+confirmation box, and a line under the button says why it is off. Once the
+review expires, the status line and that line say when, and Submit stays off;
+return to the draft and review again. The dialog keeps the companion's clock,
+starting from the time the companion made the review, and reads it every minute
+and at the expiry moment. The companion's own check at submit decides, so a
+submit in the last second or two can still be refused as expired. The dialog
+closes after every submit attempt, so a refusal or an unknown outcome shows its
+banner and the Reconcile request button.
+
+New drafts use the Random seed policy. At review the companion picks a new
+value for each integer `seed` and `noise_seed` input and freezes it in the
+record. Your seed fields keep their values, and each one says it is chosen at
+review. Fixed sends the seed fields as they are. A saved draft or record keeps
+its own policy, and one that names no policy restores as Fixed, the companion's
+default. The review summary shows the seeds the job will use. After the job
+runs, the viewer footer shows the seed of the selected output, Queue rows show
+the seeds of each job, and Copy seed in the gallery copies the seeds alone: one
+seed as a plain number, several as JSON keyed by node and input. Copy named
+inputs still copies every input of the recorded prompt. Job summaries in the
+snapshot and in history carry the recorded seeds, so these views read them
+without the full record. A job imported from another interface has no frozen
+seed list, so its summary lists the integer `seed` and `noise_seed` inputs of
+the prompt the driver ran. An output whose job the snapshot leaves out reads
+that job's summary once, with the `job_id` filter of the job history. ComfyUI
+seeds reach 18446744073709551615, but a browser holds whole numbers exactly only
+up to 9007199254740991, so a summary sends a larger seed as a string of its
+digits. Queue, the viewer, the review and Copy seed show every digit, and the
+companion keeps the frozen number exact. Use this seed, in the viewer footer,
+puts the output's seed into the matching seed field of the current draft and
+sets the policy to Fixed. Undo reverts both. It matches a seed field by node and
+input, and a single seed also fits a draft with a single seed field. When no
+field matches, it changes nothing and says why; Reuse settings loads the
+recorded workflow instead. It also refuses a seed above 9007199254740991, which
+a draft field cannot hold exactly, rather than round it.
+
 Submitted jobs keep requested and effective settings, the workflow and its
 digest, adapter version and lineage. Missing fingerprints and execution facts
 are labelled unavailable. Reproduction reconstructs configuration; it does not

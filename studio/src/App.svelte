@@ -5,7 +5,7 @@
   import { Submission } from './submission.svelte';
   import { JobTracker } from './jobTracker.svelte';
   import { CATALOG_NOTICE, Connection, errorText } from './connection.svelte';
-  import { emptyDraft, restoreDraft, driverStatus } from './model';
+  import { emptyDraft, restoreDraft, driverStatus, seedChange } from './model';
   import { DraftAutosave } from './draftAutosave.svelte';
   import { InspectionGuard, droppedInspection, DROPPED_REVIEW } from './inspectionGuard';
   import { requestLimit } from './api';
@@ -129,6 +129,13 @@
       await importDraft(undoDraft);
       if (!error) setNotice('Draft change undone.');
     }
+  }
+  /** Put an output's recorded seeds into the draft with the Fixed policy; Undo reverts both. */
+  function useSeed(seeds: Record<string, number | string>) {
+    const result = seedChange(draft, bindings, seeds);
+    if ('error' in result) return void (error = result.error);
+    changeDraft(result.change);
+    setNotice(result.notice);
   }
   async function inspect(
     workflow: Workflow,
@@ -288,7 +295,6 @@
     await withBusy(async () => {
       const job = await submission.submit();
       tracker.own(job.id);
-      previewPanel.close();
       dirty = false;
       setNotice(`Submitted ${job.id}.`);
     });
@@ -401,6 +407,8 @@
           job={tracker.status}
           working={tracker.working}
           {showTelemetry}
+          {jobs}
+          onuseseed={useSeed}
           onselect={(a) => (tracker.selected = a)}
           oncompare={(a) => (tracker.comparison = a)}
           oncollapse={() => (showTelemetry = false)}
@@ -486,12 +494,4 @@
     navigate('operations');
   }}
 />
-<SubmissionReview
-  bind:this={previewPanel}
-  preview={submission.preview}
-  previewKind={submission.kind}
-  {busy}
-  pending={!!submission.pending}
-  bind:confirmed={submission.confirmed}
-  {submitPreview}
-/>
+<SubmissionReview bind:this={previewPanel} {submission} {bindings} {busy} {submitPreview} />

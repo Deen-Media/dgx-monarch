@@ -29,6 +29,18 @@
   driver's start and end times and the companion's first running observation,
   the shared presentation contract gains job-state tokens and an m:ss duration
   rule, and Create counts unknown outcomes until Queue reconciles them.
+- Studio's review dialog opens with a plain summary: whether the job is ready
+  or what blocks it, the model files, seeds, prompt text, requested topology,
+  the checks the backend still runs and the expiry, with the immutable record
+  closed below and a reason under a disabled Submit. New drafts default to the
+  Random seed policy; the seeds a job ran with show in the review, the viewer
+  footer and Queue rows, ride on job summaries as `submission.effective.seeds`,
+  and copy alone through the gallery's Copy seed. Use this seed puts an
+  output's seed into the draft with the Fixed policy as one undoable change,
+  and the dialog closes after every submit so a refusal or an unknown outcome
+  shows its banner. Summaries carry seeds above 2**53 - 1 as exact digits,
+  imported jobs show their prompt's seeds, and an expired review says so and
+  keeps Submit off.
 
 ### Installation and updates
 

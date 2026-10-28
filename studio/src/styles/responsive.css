@@ -241,6 +241,16 @@
   .viewer-footer > span {
     max-width: 100%;
   }
+  .viewer-footer > .output-seeds {
+    flex-wrap: wrap;
+  }
+  .review-summary {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+  .review-summary dd {
+    margin-bottom: 8px;
+  }
   .telemetry-panel {
     padding: 20px 18px;
     display: block;

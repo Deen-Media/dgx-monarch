@@ -5,8 +5,15 @@
   let {
     binding,
     value,
+    note = '',
     onchange,
-  }: { binding: Binding; value: unknown; onchange: (value: unknown) => void } = $props();
+  }: {
+    binding: Binding;
+    value: unknown;
+    /** A line about how the draft uses this value, such as a seed chosen at review. */
+    note?: string;
+    onchange: (value: unknown) => void;
+  } = $props();
   let type = $derived(bindingType(binding));
   let options = $derived(bindingOptions(binding));
   let error = $derived(bindingError(binding, value));
@@ -64,6 +71,7 @@
     />
     <small>This input requires a supported typed adapter or connected workflow node.</small>
   {/if}
+  {#if note}<small class="field-note">{note}</small>{/if}
   {#if binding.description}<small>{binding.description}</small>{/if}
   {#if error}<small class="error" role="status">{error}</small>{/if}
 </div>

@@ -8,7 +8,7 @@ from typing import Any
 
 from .contracts import StudioError, canonical, digest
 from .store import Store
-from .wire_records import PAGE_BYTES, projection
+from .wire_records import PAGE_BYTES, decode_row, projection
 
 
 def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
@@ -32,7 +32,9 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
     fields = {"project_id": "$.project_id", "operation": "$.operation", "status": "$.status",
               "kind": "$.kind", "job_id": "$.job_id", "width": "$.metadata.width", "height": "$.metadata.height"}
     if kind == "jobs":
-        fields.update(project_id="$.submission.project_id", operation="$.submission.requested.operation", status="$.state")
+        # job_id names the job itself, so a client can read one job's summary by its identity.
+        fields.update(project_id="$.submission.project_id", operation="$.submission.requested.operation",
+                      status="$.state", job_id="$.id")
     for key, path in fields.items():
         if query.get(key) not in (None, ""):
             value = str(query[key])
@@ -96,14 +98,14 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
         # an ulp apart, so a key read back from a row would repeat or skip one.
         boundary: tuple[Any, str] = (0, "")
         for row in rows:
-            value = json.loads(row[0])
-            size = len(canonical(value).encode()) + 1
+            item = decode_row(kind, row[0])
+            size = len(canonical(item).encode()) + 1
             if len(items) == limit or byte_count + size > PAGE_BYTES:
                 if not items:
                     raise StudioError("history_size", "One history record exceeds the 8 MiB page budget.", 413)
                 more = True
                 break
-            items.append(value)
+            items.append(item)
             boundary = (row[1], row[2])
             byte_count += size
     next_cursor = None

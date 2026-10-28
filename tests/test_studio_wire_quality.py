@@ -25,6 +25,8 @@ def job(identity="original", **changes):
             "submission": {"digest": "reviewed", "workflow": {"extra": "x" * 100_000},
                            "prompt": {"1": {"class_type": "Test", "inputs": {}}},
                            "requested": {"operation": "fleet", "project_id": "p", "values": {"blob": "x" * 100_000}},
+                           "effective": {"seeds": {"1.seed": 2**53 - 1, "2.noise_seed": 0},
+                                         "values": {"blob": "x" * 100_000}},
                            "project_id": "p", "versions": {"dgx_monarch": "test"}, "model_identities": []},
             "monarch": {"schema_version": 1, "event_count": 12, "render_count": 1,
                         "render_status_counts": {"succeeded": 1},
@@ -101,6 +103,52 @@ def test_the_companion_notes_on_its_own_clock_when_it_first_saw_a_job_run(store,
     summary = {item["id"]: item["running_observed_at"] for item in rows["jobs"]}
     assert summary == {"polled": 100.0, "evented": 200.0, "upgraded": None, "ended": None, "replayed": None,
                        "watched": 300.0}
+
+
+def test_job_summary_carries_the_recorded_seeds_alone(store):
+    """Queue rows and the viewer read the seeds the driver ran with without the full record."""
+    store.create("jobs", job())
+    store.create("jobs", job("external", prompt_id="other", external=True,
+                             submission={"prompt": {"1": {"class_type": "Test", "inputs": {"seed": 4}}}}))
+    summaries = {item["id"]: item["submission"] for item in page_jobs(store, {})["items"]}
+    # Safe integers come back as JSON numbers, and no other effective field rides along.
+    assert summaries["original"]["effective"] == {"seeds": {"1.seed": 2**53 - 1, "2.noise_seed": 0}}
+    # An imported job has no frozen seed list; its prompt's integer seed inputs stand in.
+    assert summaries["external"]["effective"] == {"seeds": {"1.seed": 4}}
+    rows, _ = snapshot_rows(store)
+    assert {row["id"]: row["submission"]["effective"] for row in rows["jobs"]} == {
+        identity: submission["effective"] for identity, submission in summaries.items()}
+
+
+def test_a_seed_a_browser_cannot_hold_exactly_travels_as_its_digits(store):
+    """ComfyUI seeds reach 2**64 - 1, but a browser reads JSON numbers as doubles, exact to 2**53 - 1."""
+    seeds = {"1.seed": 2**64 - 1, "2.seed": 2**53, "3.seed": -(2**53), "4.seed": 2**53 - 1, "5.noise_seed": 0}
+    recorded = job("recorded")
+    recorded["submission"]["effective"]["seeds"] = seeds
+    store.create("jobs", recorded)
+    store.create("jobs", job("imported", prompt_id="other", external=True, submission={"prompt": {
+        "3": {"class_type": "KSampler", "inputs": {"seed": 2**64 - 1, "steps": 20}},
+        "4": {"class_type": "RandomNoise", "inputs": {"noise_seed": 2**53}},
+        "5": {"class_type": "KSampler", "inputs": {"seed": ["4", 0]}},
+        "6": "a node that is plain text"}}))
+    wire = {"1.seed": "18446744073709551615", "2.seed": "9007199254740992", "3.seed": "-9007199254740992",
+            "4.seed": 9007199254740991, "5.noise_seed": 0}
+    imported = {"3.seed": "18446744073709551615", "4.noise_seed": "9007199254740992"}
+    page = page_jobs(store, {})
+    rows, _ = snapshot_rows(store)
+    for items in (page["items"], rows["jobs"]):
+        listed = {item["id"]: item["submission"]["effective"]["seeds"] for item in items}
+        assert listed == {"recorded": wire, "imported": imported}
+    # The text the browser parses holds the digits, quoted above 2**53 - 1 and bare below.
+    text = canonical(page)
+    assert '"1.seed":"18446744073709551615"' in text and '"4.seed":9007199254740991' in text
+    # The stored records keep exact integers: the frozen submission and its digest do not change.
+    assert store.get("jobs", "recorded")["submission"]["effective"]["seeds"] == seeds
+    assert store.get("jobs", "imported")["submission"]["prompt"]["3"]["inputs"]["seed"] == 2**64 - 1
+    # One job's summary reads by its identity, for a job the snapshot leaves out.
+    single = page_jobs(store, {"job_id": "imported", "limit": 1})
+    assert [item["id"] for item in single["items"]] == ["imported"] and single["next_cursor"] is None
+    assert single["items"][0]["submission"]["effective"]["seeds"] == imported
 
 
 def test_snapshot_uses_record_and_operation_summaries_and_prioritizes_active_jobs(store):

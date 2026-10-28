@@ -1,4 +1,4 @@
-import { emptyDraft, restoreDraft } from './model.ts';
+import { restoreDraft } from './model.ts';
 import type { Artifact, Job, Workflow } from './contracts';
 import type { Draft } from './model';
 import { effectivePrompt } from './recordedSettings.ts';
@@ -13,8 +13,9 @@ export function artifactDraft(artifact: Artifact, job: Job, operation?: string):
   const effective = prompt !== null;
   if (!effective && !job.submission.workflow)
     throw new Error('Source workflow and recorded effective inputs are unavailable for this job.');
+  // restoreDraft fills the fields a record leaves out; a missing seed policy restores as the
+  // companion's default, because that is the policy the recorded request ran with.
   const draft = {
-    ...emptyDraft(),
     ...requested,
     ...(effective
       ? {
