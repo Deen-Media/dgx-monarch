@@ -14,12 +14,15 @@ import {
   type Follow,
 } from './jobFollow';
 import { companionTime, jobColor, jobLine, steadyClock, type JobLine } from './jobStatus';
+import { consentAction, type ConsentAction } from './jobFailure';
 
 export interface FollowedJob extends JobLine {
   /** This tab submitted the job; otherwise it is the newest active job. */
   own: boolean;
   /** The job state's status token color from the shared presentation contract. */
   color?: string;
+  /** The consent control when the failure asks for consent, or null. */
+  consent?: ConsentAction | null;
 }
 
 /**
@@ -73,8 +76,10 @@ export class JobTracker {
   status = $derived.by((): FollowedJob | null => {
     const job = this.job;
     if (!job) return null;
-    const color = jobColor(this.connection.capabilities.presentation, job.state);
-    return { ...jobLine(job, this.#clock), own: this.follow.own, color };
+    const { presentation, operations } = this.connection.capabilities;
+    const line = jobLine(job, this.#clock);
+    const consent = consentAction(line.failure, operations);
+    return { ...line, own: this.follow.own, color: jobColor(presentation, job.state), consent };
   });
   /** Whether any job is still in flight; activity animations follow this, not unresolved jobs. */
   working = $derived.by(() => this.connection.snapshot.jobs.some(isInFlightJob));

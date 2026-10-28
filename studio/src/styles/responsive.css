@@ -302,8 +302,12 @@
     flex-wrap: wrap;
     gap: 9px;
   }
-  .record > summary > span:last-child {
+  .record > summary > span:last-child,
+  .job-row > summary > .job-time {
     margin-left: 0;
+  }
+  .job-reason {
+    padding-left: 16px;
   }
   .record > summary > .mono {
     max-width: 180px;

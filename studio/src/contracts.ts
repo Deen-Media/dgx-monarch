@@ -186,6 +186,17 @@ export interface OperationRecord {
   requires_confirmation: boolean;
   [key: string]: unknown;
 }
+/** An operation to open in Operations: from the palette, or a consent a failed job asked for. */
+export interface OperationRequest {
+  /**
+   * A new identity for each request, unique across page loads: asking again applies again, and a
+   * review saved in this tab comes back only for the request that made it.
+   */
+  id: string;
+  action: string;
+  parameters?: Record<string, unknown>;
+  consent?: { jobId: string } & import('./jobFailure').ConsentRequest;
+}
 export interface Capabilities {
   presentation?: import('./telemetryHistory').Presentation;
   schema_version?: string;

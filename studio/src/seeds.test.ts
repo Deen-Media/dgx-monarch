@@ -231,12 +231,17 @@ test('the viewer footer shows the recorded seed and offers Use this seed', async
 test('Queue rows show the seeds of their job', async () => {
   const body = visibleText(
     await renderComponent('./views/Queue.svelte', {
-      client: {},
-      jobs: [
-        summary({ '8.seed': 4242 }, 'queued'),
-        { ...summary(null, 'running'), id: 'job-2' },
-        { ...summary({ '3.seed': '18446744073709551615' }, 'queued'), id: 'job-3' },
-      ],
+      connection: {
+        client: {},
+        snapshot: {
+          jobs: [
+            summary({ '8.seed': 4242 }, 'queued'),
+            { ...summary(null, 'running'), id: 'job-2' },
+            { ...summary({ '3.seed': '18446744073709551615' }, 'queued'), id: 'job-3' },
+          ],
+        },
+        capabilities: {},
+      },
       busy: false,
       refresh: async () => {},
       fail: () => {},

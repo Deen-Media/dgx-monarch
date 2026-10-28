@@ -19,6 +19,7 @@
     onreuse,
     onselect,
     onqueue,
+    onconsent,
   }: {
     artifact?: Artifact | null;
     compare?: Artifact | null;
@@ -33,6 +34,8 @@
     onreuse: ReuseArtifact;
     onselect: (a: Artifact | null) => void;
     onqueue?: () => void;
+    /** Open Operations for the consent the followed job's failure asks for. */
+    onconsent?: () => void;
   } = $props();
   let url = $state(''),
     compareUrl = $state(''),
@@ -153,7 +156,7 @@
     </div>
     <span class="tag">{artifact ? (artifact.kind ?? 'artifact') : 'No output selected'}</span>
   </div>
-  <JobStatusLine {job} {onqueue} />
+  <JobStatusLine {job} {onqueue} {onconsent} />
   <div class="viewer-toolbar" aria-label="Viewer controls">
     <button
       disabled={!url}

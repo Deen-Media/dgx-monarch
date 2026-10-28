@@ -70,6 +70,27 @@
   color: var(--text);
   background: #1a1e25;
 }
+.job-failure {
+  color: #c7cdd6;
+}
+.consent-reason,
+.consent-panel,
+.consent-unavailable {
+  overflow-wrap: anywhere;
+}
+.consent-panel {
+  color: var(--muted);
+}
+.consent-unavailable {
+  color: #f7ce74;
+}
+.job-doc,
+.consent-unavailable a,
+.consent-context a,
+.failure-details a {
+  color: var(--focus);
+  text-underline-offset: 2px;
+}
 .job-progress {
   position: relative;
   height: 4px;

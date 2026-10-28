@@ -84,6 +84,81 @@
 .job-details {
   padding: 5px 0 15px;
 }
+.job-row > summary {
+  flex-wrap: wrap;
+}
+.job-row > summary > .job-time {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+}
+.job-reason {
+  flex-basis: 100%;
+  padding-left: 25px;
+  color: #c7cdd6;
+  overflow-wrap: anywhere;
+}
+.job-thumb {
+  width: 64px;
+  height: 64px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #11141a;
+  color: #8e9bab;
+}
+.failure-details {
+  margin: 12px 0;
+  padding: 12px 14px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: #15181e;
+}
+.failure-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  gap: 4px 12px;
+  margin: 0 0 8px;
+  font-size: 11px;
+}
+.failure-facts dt {
+  color: var(--muted);
+}
+.failure-facts dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.failure-text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 240px;
+  overflow: auto;
+  font-size: 12px;
+  color: #c7cdd6;
+}
+.failure-consent > p {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+.consent-context {
+  margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid #3a4c2b;
+  border-radius: 6px;
+  background: #171c15;
+}
+.consent-context p {
+  margin: 6px 0 0;
+  overflow-wrap: anywhere;
+}
 .status-label {
   font-size: 10px;
   background: #282d35;

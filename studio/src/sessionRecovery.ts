@@ -1,5 +1,5 @@
 import type { Grid } from './gridState';
-import type { OperationRecord } from './contracts';
+import type { OperationCapability, OperationRecord, OperationRequest } from './contracts';
 
 const object = (value: unknown): value is Record<string, any> =>
   value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -12,6 +12,8 @@ export interface OperationRecovery {
   preview: OperationRecord | null;
   requestKey: string;
   pending: boolean;
+  /** The identity of the Operations request this review answered, if one opened it. */
+  request?: string;
 }
 export function validOperation(value: unknown): value is OperationRecovery {
   return (
@@ -26,6 +28,22 @@ export function validOperation(value: unknown): value is OperationRecovery {
     typeof value.preview.available === 'boolean' &&
     typeof value.preview.requires_confirmation === 'boolean'
   );
+}
+/**
+ * Whether a saved operation review comes back when Operations opens on `request`. A pending
+ * outcome always does, and otherwise only a review of an operation the companion still lists:
+ * when nothing new was asked, when `request` is the one that made the review, or when the palette
+ * asks again for the reviewed operation. A new consent request brings its own fields instead.
+ */
+export function keepsReview(
+  saved: OperationRecovery,
+  request: OperationRequest | null,
+  options: OperationCapability[],
+): boolean {
+  if (saved.pending) return true;
+  if (!options.some((option) => option.id === saved.action)) return false;
+  if (!request || (saved.request === request.id && saved.action === request.action)) return true;
+  return request.action === saved.action && !request.consent;
 }
 export interface GridRecovery {
   preview: Grid | null;

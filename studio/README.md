@@ -47,7 +47,9 @@ explicit error and direct users to paginated library browsing. Snapshot and job
 history rows are summaries; full job and operation provenance loads on demand.
 The gallery mounts
 only visible rows, requests bounded 320-pixel thumbnails, and caps each thumbnail
-response at 512 KiB. Full media loads only for selection or explicit download and
+response at 512 KiB. A thumbnail downloads only once it comes within 200 pixels
+of the visible area, so a long Queue page or outputs strip does not start every
+preview at once. Full media loads only for selection or explicit download and
 has a 64 MiB byte limit. Object URLs are revoked after use. Polling pauses in hidden
 tabs and backs off to 30 seconds after failures. Metric history retains 240 points
 per series and at most 256 series, preserving source timestamps and missing-value
@@ -86,8 +88,10 @@ The presentation layer is divided into `views/` for view-owned state,
 `submission.svelte.ts` owns reviewed submission identities and uncertain outcomes.
 `App.svelte` coordinates navigation and these modules: `draftAutosave.svelte.ts`
 owns draft autosave and tab conflicts, `inspectionGuard.ts` orders workflow
-inspections and job reviews, and `assetEditorState.svelte.ts` keeps the asset
-editor across tab and view switches. All TypeScript/Svelte source modules are
+inspections and job reviews, `assetEditorState.svelte.ts` keeps the asset
+editor across tab and view switches, and `operationOpener.svelte.ts` holds the
+operation Operations opens next. `jobFailure.ts` reads a failed job's recorded
+error for the status line and Queue. All TypeScript/Svelte source modules are
 below 500 lines. CSS is split by surface under `styles/`.
 
 The [CPU HTTP fixture](tests/README.md) exercises the companion's actual HTTP

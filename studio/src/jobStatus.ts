@@ -1,5 +1,8 @@
 import type { Job } from './contracts';
 import type { Presentation } from './telemetryHistory';
+import { firstSentence, jobFailure, type JobFailure } from './jobFailure.ts';
+
+export { firstSentence };
 
 /**
  * The browser twin of `format_duration_clock` in studio/presentation.py, the contract's
@@ -47,21 +50,15 @@ export function steadyClock(previous: number | null, next: number | null): numbe
   return next < previous && previous - next < 2 ? previous : next;
 }
 
-/** The first sentence of a driver message, or its first line when no sentence ends there. */
-export function firstSentence(text: unknown, limit = 200): string {
-  if (typeof text !== 'string') return '';
-  const line = text.trim().split('\n', 1)[0].trim();
-  const sentence = /^.*?[.!?](?=\s|$)/.exec(line)?.[0] ?? line;
-  return sentence.length > limit ? `${sentence.slice(0, limit - 1).trimEnd()}…` : sentence;
-}
-
 export type JobProgress = { value: number; max: number } | 'indeterminate' | null;
 export interface JobLine {
   state: string;
   /** The state, with the elapsed or total time when both times are known. */
   headline: string;
-  /** Steps from the driver's latest progress report, or the failure. */
+  /** Steps from the driver's latest progress report, or the failure's one line. */
   detail: string;
+  /** A failed job's error, read for display, or null. */
+  failure: JobFailure | null;
   /** One node's reported steps, a bar with no known end, or no bar. */
   progress: JobProgress;
   /** The text of a link to Queue, or ''. */
@@ -107,6 +104,7 @@ export function jobLine(job: Job, now: number | null): JobLine {
   const end = typeof job.ended_at === 'number' ? job.ended_at : null;
   let headline = label,
     detail = '',
+    failure: JobFailure | null = null,
     progress: JobProgress = null,
     link = '';
   if (state === 'running' || state === 'cancel_requested') {
@@ -128,16 +126,15 @@ export function jobLine(job: Job, now: number | null): JobLine {
       headline = `${label} ${state === 'succeeded' ? 'in' : 'after'} ${formatDurationClock(total)}`;
   }
   if (state === 'failed') {
-    const code = typeof job.error?.code === 'string' ? job.error.code : '';
-    const sentence = firstSentence(job.error?.message);
-    detail = [code, sentence].filter(Boolean).join(': ');
+    failure = jobFailure(job.error);
+    detail = failure?.summary ?? '';
     link = 'Open Queue';
   }
   if (state === 'unknown') link = 'Reconcile in Queue';
   const announcement = [label, state === 'failed' ? detail : '', state === 'unknown' ? link : '']
     .filter(Boolean)
     .join('. ');
-  return { state, headline, detail, progress, link, announcement };
+  return { state, headline, detail, failure, progress, link, announcement };
 }
 
 /** The status token color the shared presentation contract gives a job state, if any. */

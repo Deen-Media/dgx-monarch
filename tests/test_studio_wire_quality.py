@@ -151,6 +151,23 @@ def test_a_seed_a_browser_cannot_hold_exactly_travels_as_its_digits(store):
     assert single["items"][0]["submission"]["effective"]["seeds"] == imported
 
 
+def test_a_failed_job_summary_carries_its_whole_recorded_error(store):
+    """The viewer status line and Queue rows read a failure from the summary row, never the full record."""
+    from dgx_monarch.studio.job_observations import bounded_refusal
+
+    message = bounded_refusal("A remote actor call has failed.\n" + "  File worker.py, line 1\n" * 400
+                              + "RuntimeError: the stock load does not fit. See docs/TROUBLESHOOTING.md #12.")
+    error = {"code": "ActorError", "message": message}
+    store.create("jobs", job("failed", state="failed", error=error))
+    store.create("jobs", job("unresolved", state="unknown", prompt_id="other",
+                             error={"code": "driver_unavailable", "message": "Dispatch stopped."}))
+    listed = {item["id"]: item["error"] for item in page_jobs(store, {})["items"]}
+    rows, _ = snapshot_rows(store)
+    assert listed == {row["id"]: row["error"] for row in rows["jobs"]}
+    assert listed["failed"] == error and listed["unresolved"]["code"] == "driver_unavailable"
+    assert listed["failed"]["message"].endswith(" See docs/TROUBLESHOOTING.md #12.")
+
+
 def test_snapshot_uses_record_and_operation_summaries_and_prioritizes_active_jobs(store):
     store.create("jobs", job("active", state="running"))
     for number in range(205):

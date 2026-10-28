@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onMount } from 'svelte';
-  import { restoreSession, validOperation } from '../sessionRecovery';
+  import { keepsReview, restoreSession, validOperation } from '../sessionRecovery';
   import RecoveryNotice from './RecoveryNotice.svelte';
   import { ApiError, requireRecordIdentity, type StudioClient } from '../api';
-  import type { Capabilities, OperationRecord } from '../contracts';
+  import type { Capabilities, OperationRecord, OperationRequest } from '../contracts';
+  import { CONSENT_HELP, CONSENT_OPERATION, consentMatch, type PendingCard } from '../jobFailure';
   import OperationReceipt from './OperationReceipt.svelte';
   import OperationField from './OperationField.svelte';
   import { formatTime } from '../model';
@@ -11,13 +12,14 @@
     client,
     capabilities,
     operations = [],
-    initialAction = '',
+    request = null,
     onrefresh,
   }: {
     client: StudioClient;
     capabilities: Capabilities;
     operations?: OperationRecord[];
-    initialAction?: string;
+    /** The operation to open: a palette choice, or the consent a failed job asked for. */
+    request?: OperationRequest | null;
     onrefresh: () => void;
   } = $props();
   let action = $state(''),
@@ -31,14 +33,35 @@
   let requestKey = '';
   let pending = $state(false),
     recoveryBlocked = $state(false);
-  let appliedInitial = '';
+  let appliedId = '';
   let openReceipt = $state('');
+  /** The consent the failed job asked for, while the consent operation it opened stays chosen. */
+  let consent = $state<OperationRequest['consent'] | null>(null);
+  const match = $derived(
+    consent && preview?.action === CONSENT_OPERATION
+      ? consentMatch(preview, consent.consentId)
+      : null,
+  );
+  function defaults(id: string) {
+    return Object.fromEntries(
+      (options.find((o) => o.id === id)?.parameters ?? []).map((field) => [
+        field.name,
+        field.default ?? '',
+      ]),
+    );
+  }
+  /** Fill the key and id of the listed request that carries the job's consent id; review again. */
+  function useCard(card: PendingCard) {
+    parameters = { ...parameters, key: card.key, id: card.id };
+    preview = null;
+    confirmed = false;
+  }
   const reviewStorageKey = 'dgxm.studio.operation-review.v1';
   function rememberReview() {
     try {
       sessionStorage.setItem(
         reviewStorageKey,
-        JSON.stringify({ action, parameters, preview, requestKey, pending }),
+        JSON.stringify({ action, parameters, preview, requestKey, pending, request: appliedId }),
       );
     } catch {
       throw new Error(
@@ -50,27 +73,26 @@
     const restored = restoreSession(reviewStorageKey, validOperation);
     recoveryBlocked = restored.blocked;
     const saved = restored.value;
-    if (
-      saved &&
-      (saved.pending || !initialAction || initialAction === saved.action) &&
-      (saved.pending || options.some((o) => o.id === saved.action))
-    ) {
+    if (saved && keepsReview(saved, request, options)) {
       ({ action, parameters, preview, requestKey, pending } = saved);
-      appliedInitial = initialAction;
+      appliedId = request?.id ?? '';
+      // The request that made this review brings its consent context back with it.
+      if (request && saved.request === request.id) consent = request.consent ?? null;
     }
   });
+  /** Choose the requested operation and fill its fields, once per request. */
+  function open(next: OperationRequest) {
+    appliedId = next.id;
+    // Choosing the open operation again from the palette keeps its fields and review.
+    if (next.action === action && !next.consent) return;
+    action = next.action;
+    parameters = { ...defaults(next.action), ...next.parameters };
+    preview = null;
+    confirmed = false;
+    consent = next.consent ?? null;
+  }
   $effect(() => {
-    if (initialAction && initialAction !== appliedInitial && !pending) {
-      appliedInitial = initialAction;
-      action = initialAction;
-      parameters = Object.fromEntries(
-        (options.find((o) => o.id === initialAction)?.parameters ?? []).map((field) => [
-          field.name,
-          field.default ?? '',
-        ]),
-      );
-      preview = null;
-    }
+    if (request && request.id !== appliedId && !pending) open(request);
   });
   async function review() {
     if (recoveryBlocked || pending || busy) return;
@@ -168,12 +190,8 @@
           onchange={() => {
             preview = null;
             confirmed = false;
-            parameters = Object.fromEntries(
-              (options.find((o) => o.id === action)?.parameters ?? []).map((field) => [
-                field.name,
-                field.default ?? '',
-              ]),
-            );
+            parameters = defaults(action);
+            if (action !== CONSENT_OPERATION) consent = null;
           }}
           ><option value="">Choose an operation</option>{#each options as option}<option
               value={option.id}
@@ -182,6 +200,26 @@
                 : ''}</option
             >{/each}</select
         >
+        {#if consent && action === CONSENT_OPERATION}<div class="consent-context" role="note">
+            <strong>Job <span class="mono">{consent.jobId}</span> asked for consent</strong>
+            <p>{consent.humanReason}</p>
+            <p>
+              The ComfyUI panel's button for it is “{consent.panelAction}”. Model
+              <span class="mono">{consent.unetName}</span>, kind
+              <span class="mono">{consent.kind}</span>, consent id
+              <span class="mono">{consent.consentId}</span>.
+            </p>
+            {#if current?.available === false}<p>
+                Studio cannot grant it here. Grant it in the ComfyUI panel, or read
+                <a href={CONSENT_HELP} target="_blank" rel="noopener noreferrer"
+                  >how to grant a consent from Studio</a
+                >.
+              </p>{:else}<p class="muted">
+                Leave key and id empty: with one pending request the review selects it, and with
+                several it lists each one with its consent id. After the grant succeeds, retry the
+                job from Queue.
+              </p>{/if}
+          </div>{/if}
         {#if current}
           <p class:warning={current.available === false}>
             {current.reason ??
@@ -220,6 +258,21 @@
         <h3>{preview.description ?? action}</h3>
         <span class="tag">{preview.available === false ? 'Unavailable' : 'Plan ready'}</span>
         {#if preview.reason}<p class="warning">{preview.reason}</p>{/if}
+        {#if consent && match}{#if 'chosen' in match}<p class:warning={!match.same}>
+              {match.same
+                ? `This is the request job ${consent.jobId} asked for.`
+                : `This pending request does not carry the consent id of job ${consent.jobId}. Check its card before you apply it.`}
+            </p>{:else if match.listed.length === 1}{@const card = match.listed[0]}
+            <p>
+              The driver lists the request job {consent.jobId} asked for.
+              <button onclick={() => useCard(card)}>Use its key and id</button>
+            </p>{:else if match.listed.length}<p class="warning">
+              Several pending requests carry the consent id of job {consent.jobId}. Enter the key
+              and id of the one to accept.
+            </p>{:else}<p class="warning">
+              No pending request carries the consent id of job {consent.jobId}. Retry the job to ask
+              again.
+            </p>{/if}{/if}
         <pre>{JSON.stringify(preview, null, 2)}</pre>
         {#if preview.requires_confirmation}<label class="check-line"
             ><input type="checkbox" bind:checked={confirmed} /> I reviewed this exact plan and authorize
