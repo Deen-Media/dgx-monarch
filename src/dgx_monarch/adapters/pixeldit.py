@@ -28,6 +28,7 @@ from .base import (
     sp_gather,
     usp_options,
 )
+from .flux3_packing import refuse_indivisible_heads, ulysses_degree
 
 log = get_logger(__name__)
 
@@ -51,6 +52,21 @@ def _drop_padded_text_segment_mask(indicator, attention_mask, l_text: int) -> No
         )
 
 
+# comfy's Ideogram4Transformer2DModel builds 18 attention heads; Ulysses hands
+# each rank whole heads, so only degrees that divide 18 can run (#137). The
+# sweep matrix reads the same constants (benchmark/sweep/matrix.py).
+IDEOGRAM4_HEADS = 18
+IDEOGRAM4_DIVISORS = "2, 3, 6 or 9 for the 18-head Ideogram4 files"
+
+
+def ideogram4_heads(diffusion_model) -> int | None:
+    """The head count of comfy's Ideogram4 model, from its first layer, or None."""
+    try:
+        return int(diffusion_model.layers[0].attention.num_heads)
+    except (AttributeError, IndexError, TypeError, ValueError):
+        return None
+
+
 class Ideogram4Adapter(Adapter):
     family = "ideogram4"
     model_base_classes = ("Ideogram4",)
@@ -62,6 +78,12 @@ class Ideogram4Adapter(Adapter):
     attention_head_dim = 256
 
     def inject_usp(self, diffusion_model, ctx: InjectionContext) -> None:
+        # Before any forward binds: a degree that does not divide the heads would
+        # otherwise reach yunchang's all-to-all and crash there (#137).
+        heads = ideogram4_heads(diffusion_model)
+        if heads is not None:
+            refuse_indivisible_heads(heads, ulysses_degree(), family=self.family,
+                                     divisors=IDEOGRAM4_DIVISORS)
         attn = ctx.usp_attention
 
         def usp_forward(self, x, timesteps, context=None, attention_mask=None,

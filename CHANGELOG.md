@@ -155,11 +155,16 @@ and `[studio]` tables and your `[worker_args]` keys, so stop adding them back
   does: one-step cfg2 probes of SCAIL-2 on 2026-10-28 read NRMS 0.116 and
   0.085 against one GPU while uly2 and ring2 were byte-identical. Use uly2 or ring2
   ([#136](docs/TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
-- SCAIL and SCAIL-2 refuse ring attention beyond world 2 at injection, and
-  the sweep matrix labels both refusals, after a four-Spark owner reported
-  ring4 and auto's uly2+ring2 fold outside the fidelity limit at world 4;
-  uly4 is the explicit choice there
+- SCAIL and SCAIL-2 refuse ring attention at any sequence-parallel world
+  above two at injection, and the sweep matrix labels both refusals, after a
+  four-Spark owner reported ring4 and auto's uly2+ring2 fold outside the
+  fidelity limit at world 4; uly4 is the explicit choice there
   ([#136](docs/TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
+- Ideogram4 refuses a Ulysses degree that does not divide its 18 attention
+  heads after the load and before any forward binds, as FLUX.3 and MOSS-Image
+  do, where 1.3.0 went on into the all-to-all and crashed there; the sweep
+  matrix labels it
+  ([#137](docs/TROUBLESHOOTING.md#137-an-ideogram4-render-on-a-ulysses-degree-that-does-not-divide-18-heads-refuses-after-the-load-and-before-any-forward-binds)).
 - The driver refuses a MOSS-Image render whose prompt carries an effective
   text attention bias before dispatch when Ulysses or ring is above one, on
   the same predicate the Worker's sharded forward uses, so no Worker loads

@@ -2849,3 +2849,25 @@ def test_wan_scail_refuses_cfg_parallel_and_ring_past_world_two(tmp_path):
     assert _pick(cells, "scail2", "uly4")["label"] == "render"
     assert _pick(cells, "scail2", "ring4")["label"] == "refuse:P"
     assert _pick(cells, "scail2", "uly2+cfg2")["label"] == "refuse:P"
+
+
+def test_ideogram4_refuses_a_ulysses_degree_that_does_not_divide_its_heads(tmp_path):
+    """The matrix mirrors the adapter's head check (#137): uly4 refuses class P at
+    world 4 for the 18-head family, while uly2 and the ring layouts render."""
+    config = _rig(tmp_path / "four")
+    models, graphs = config["model_dir"], config["out_dir"] / "graphs"
+    for stale in graphs.glob("*.json"):
+        stale.unlink()
+    _checkpoint(models, "ideogram4_bf16.safetensors", "ideogram4")
+    (graphs / "ig4.json").write_text(json.dumps(_graph("ideogram4_bf16.safetensors")))
+    config.update(world=4, image_presets=["uly4", "ring4", "uly2+cfg2"],
+                  video_presets=["uly4", "ring4", "uly2+cfg2"])
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    assert _pick(cells, "ig4", "uly4")["label"] == "refuse:P"
+    assert _pick(cells, "ig4", "ring4")["label"] == "render"
+    pair = _rig(tmp_path / "pair")
+    models, graphs = pair["model_dir"], pair["out_dir"] / "graphs"
+    _checkpoint(models, "ideogram4_bf16.safetensors", "ideogram4")
+    (graphs / "ig4.json").write_text(json.dumps(_graph("ideogram4_bf16.safetensors")))
+    cells, _pruned, _unmatched = matrix.build_cells(pair)
+    assert _pick(cells, "ig4", "uly2")["label"] == "render"

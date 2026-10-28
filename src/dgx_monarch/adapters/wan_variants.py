@@ -51,7 +51,7 @@ def _requested_ring_degree() -> int:
 
 
 def assert_scail_ring_degree(ring: int, sp_world: int) -> None:
-    """Refuse ring attention for SCAIL and SCAIL-2 beyond world 2 (#136).
+    """Refuse ring attention for SCAIL and SCAIL-2 at any sequence-parallel world above 2 (#136).
 
     No record here covers ring past world 2: ring2 at world 2 was byte-identical
     to one GPU at one step on 2026-10-28, and a four-Spark owner reported SCAIL-2
@@ -60,16 +60,17 @@ def assert_scail_ring_degree(ring: int, sp_world: int) -> None:
     injection context's sequence-parallel world; the sweep matrix reads the
     cell's topology. Both refuse alike.
     """
-    if int(ring) <= 1 or int(sp_world) < 4:
+    if int(ring) <= 1 or int(sp_world) <= 2:
         return
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
         f"wan_scail ring attention at a sequence-parallel world of {int(sp_world)} is "
         "refused: a four-Spark owner reported SCAIL-2 renders on ring4 and on auto's "
-        "uly2+ring2 fold outside the 0.10 one-step NRMS limit against one GPU, and no "
-        "record here covers ring beyond world 2, where ring2 was byte-identical. Use "
-        "the Ulysses preset at this world, uly2 or ring2 at world 2, or mode=local "
-        "with gpus_per_host=1 for a stock one-GPU path.",
+        "uly2+ring2 fold outside the 0.10 one-step NRMS limit against one GPU, with a "
+        "vertical seam in the difference images, and no record here covers ring beyond "
+        "world 2, where ring2 was byte-identical. Use the Ulysses preset at this world, "
+        "uly2 or ring2 at world 2, or mode=local with gpus_per_host=1 for a stock "
+        "one-GPU path.",
         troubleshooting=SCAIL_TROUBLESHOOTING,
     ))
 

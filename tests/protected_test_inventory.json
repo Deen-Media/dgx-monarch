@@ -1133,6 +1133,13 @@
       "test_garbage_lines_cannot_mint_a_pass_verdict": "ef205763e976cf17",
       "test_intact_fail_stays_sticky_through_damage_and_duplicate_rows": "0a12118794c9707d"
     },
+    "tests/test_ideogram4_heads_refusal.py": {
+      "test_a_model_without_a_readable_head_count_skips_the_guard": "4d0f7d994b23e025",
+      "test_injection_passes_the_guard_at_a_dividing_degree": "2c164357fcb8dc65",
+      "test_injection_refuses_uly4_before_any_forward_binds": "a5412efa9534745e",
+      "test_only_degrees_that_divide_18_pass": "57bebfdf5c38c770",
+      "test_the_head_count_is_read_from_the_first_layer": "59abac56fe705548"
+    },
     "tests/test_ledger_v9.py": {
       "test_a_ceremony_certificate_never_invents_a_consent": "f773d3b495b83987",
       "test_a_certified_load_that_later_fails_still_quarantines": "489d0abb0ed6d598",
@@ -2093,6 +2100,7 @@
       "test_every_shipped_template_carries_a_step_count_the_rewrite_can_set": "597b42cd020d2c29",
       "test_every_untagged_refusal_the_runtime_raises_is_recognised": "b224c5b11df27d2d",
       "test_frame_sets_compare_by_pixels_and_count": "22ea3144660ea552",
+      "test_ideogram4_refuses_a_ulysses_degree_that_does_not_divide_its_heads": "8d438c51e1b21dfe",
       "test_journal_lines_preserve_attention_and_unavailable_evidence": "37a899170773187f",
       "test_kernels_that_resolve_to_one_collapse_to_one_cell": "3cc06d4d1ac6574c",
       "test_labels_follow_the_runtime_guards": "adff67ae678c5829",
@@ -2298,7 +2306,7 @@
       "test_scail2_must_precede_scail_in_registry": "f750665777382f6c",
       "test_scail_injection_reads_the_initialized_degrees": "d85179381e1d941d",
       "test_scail_refuses_cfg_parallel_with_the_measured_reason": "3f83de440b3d484f",
-      "test_scail_ring_degree_guard": "2d6b6d06f949a74f",
+      "test_scail_ring_degree_guard": "0cfe9ba3577355c7",
       "test_scail_scalar_timestep_shapes_run_through_bound_forward": "e8a5bff45b305a74",
       "test_scail_two_trim_slice_bookkeeping": "cf5f790457e14950",
       "test_scail_variants_reject_multirow_timestep_before_sharding": "3989cf6c1257729c",
