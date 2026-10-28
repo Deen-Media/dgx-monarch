@@ -493,7 +493,12 @@ reading their values. The filter does not inspect values under allowed names;
 runtime, scratch, managed import-path, and bytecode-policy variables are then
 replaced with project-controlled values
 ([worker_process_env.py](../src/dgx_monarch/cli/worker_process_env.py),
-[tests](../tests/test_worker_process_env.py)).
+[tests](../tests/test_worker_process_env.py)). The torch inductor cache is the
+one allowed name the boundary fills in rather than replaces: when the Worker
+environment does not set `TORCHINDUCTOR_CACHE_DIR`, it points it at an owned
+0700 directory under `~/.cache/dgx-monarch/inductor`. Inductor loads the code
+it generates from that directory, so an operator who sets the variable must
+name a directory only the account can write.
 
 This boundary limits accidental credential propagation and diagnostic exposure;
 it does not scrub the driver process or an already-running service until restart,

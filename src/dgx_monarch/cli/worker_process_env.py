@@ -8,6 +8,7 @@ subject to the same filter.
 from __future__ import annotations
 
 import os
+import re
 import stat
 from collections.abc import MutableMapping
 from pathlib import Path
@@ -31,6 +32,10 @@ _SAFE_EXACT = frozenset({
     "XDG_DATA_HOME",
     "XDG_STATE_HOME",
     "XDG_RUNTIME_DIR",
+    # An operator's own torch inductor cache directory wins over the default
+    # below. TRITON_CACHE_DIR stays filtered: with it unset, inductor keeps its
+    # Triton kernels under this directory too.
+    "TORCHINDUCTOR_CACHE_DIR",
     # CUDA, PyTorch, thread-count and xfuser controls the project or its
     # dependencies read. Device assignment and executable or library selectors
     # are actor-owned and must stay absent.
@@ -109,6 +114,7 @@ _DANGEROUS_EXACT = frozenset({
 # runtime or home directory. The child path is UID-specific, atomically created,
 # ownership-checked, symlink-rejected, and forced to 0700 before use.
 _FALLBACK_RUNTIME_ROOT = Path("/tmp")  # noqa: S108
+INDUCTOR_CACHE_ENV = "TORCHINDUCTOR_CACHE_DIR"
 # Monarch appends a temporary directory and a proc id for each Unix socket.
 # Leave at least 39 bytes below macOS's 104-byte sockaddr_un limit (108 on
 # Linux), including separators and the terminating NUL. Count encoded bytes,
@@ -210,6 +216,53 @@ def secure_worker_runtime(environ: MutableMapping[str, str]) -> Path:
     return runtime
 
 
+def _torch_build() -> str:
+    """The installed torch version as a path segment, read without importing torch."""
+    try:
+        from importlib.metadata import version
+
+        raw = version("torch")
+    except Exception:
+        raw = ""
+    return re.sub(r"[^A-Za-z0-9._+-]", "_", raw)[:64] or "unknown"
+
+
+def inductor_cache_directory(environ: MutableMapping[str, str]) -> Path | None:
+    """The default torch inductor cache: ``~/.cache/dgx-monarch/inductor/torch-<version>``.
+
+    It sits beside the pack's other caches and, like them, does not follow
+    XDG_CACHE_HOME. Inductor keys every entry on the torch and Triton versions,
+    so the version segment only names the directory a torch upgrade leaves
+    unused, which is then safe to delete.
+    """
+    home = environ.get("HOME")
+    if not home or not Path(home).is_absolute():
+        return None
+    return Path(home) / ".cache" / "dgx-monarch" / "inductor" / f"torch-{_torch_build()}"
+
+
+def route_inductor_cache(environ: MutableMapping[str, str]) -> Path | None:
+    """Keep torch inductor's compile cache on disk unless the operator placed it.
+
+    Inductor defaults to ``$TMPDIR/torchinductor_<user>``, and the runtime
+    above usually puts TMPDIR on tmpfs, so a reboot recompiled each compile_dit
+    block. Return the private 0700 directory installed here, or None when the
+    environment already names one or none could be made; torch then keeps its
+    default. A cache never stops a Worker from starting.
+    """
+    if environ.get(INDUCTOR_CACHE_ENV):
+        return None
+    target = inductor_cache_directory(environ)
+    if target is None:
+        return None
+    try:
+        _private_directory(target, create_parents=True)
+    except (OSError, RuntimeError):
+        return None
+    environ[INDUCTOR_CACHE_ENV] = str(target)
+    return target
+
+
 def prepare_worker_process_environment(
     managed_pythonpath: str | os.PathLike[str],
     environ: MutableMapping[str, str] | None = None,
@@ -234,4 +287,6 @@ def prepare_worker_process_environment(
 
     target["PYTHONDONTWRITEBYTECODE"] = "1"
     target["PYTHONPYCACHEPREFIX"] = SOURCE_ONLY_PYCACHE_PREFIX
-    return removed, secure_worker_runtime(target)
+    runtime = secure_worker_runtime(target)
+    route_inductor_cache(target)
+    return removed, runtime

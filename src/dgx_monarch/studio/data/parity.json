@@ -11720,7 +11720,7 @@
       }
     },
     {
-      "applicability": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); the first render adds a one-time autotune warmup. Chroma, Flux, Flux2 and LongCat have no `blocks` list, so they stay eager. Opt in and validate per model.",
+      "applicability": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); the first render adds a one-time autotune warmup (cached on disk by Worker services). It compiles only a DiT with a `blocks` list: Krea2, MiniMax H3, the Wan family, CogVideoX and Anima. Every other family runs eager, says so in the worker log and keeps slab residency available. Opt in and validate per model.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": null,
@@ -11764,7 +11764,7 @@
       "units": null,
       "validation": {
         "advanced": true,
-        "tooltip": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); the first render adds a one-time autotune warmup. Chroma, Flux, Flux2 and LongCat have no `blocks` list, so they stay eager. Opt in and validate per model."
+        "tooltip": "torch.compile the DiT blocks (max-autotune fp8, no cudagraphs). Measured 21% faster on fp8-scaled Krea2 at cfg2 on GB10 (2026-07-04); the first render adds a one-time autotune warmup (cached on disk by Worker services). It compiles only a DiT with a `blocks` list: Krea2, MiniMax H3, the Wan family, CogVideoX and Anima. Every other family runs eager, says so in the worker log and keeps slab residency available. Opt in and validate per model."
       }
     },
     {
@@ -12243,7 +12243,7 @@
       }
     },
     {
-      "applicability": "Zero-copy weight residency (experimental). on: the DiT's weights live in a shared-memory slab the GPU reads directly (GB10-class unified memory), with no cudaMalloc copy, no CPU staging at load and no retained per-process arena. On Krea2 bf16 (24.5 GiB, 2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; unloading returns the memory to the OS at once. Output is bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and under compile_dit except on Chroma, Flux, Flux2 and LongCat. auto (default): on unified-memory GPUs, slab for gate-vouched families (currently krea2 and flux2). A checkpoint's first load stays stock while its family is learned, every later load uses the slab; other families and discrete GPUs stay stock. off: stock cudaMalloc weights.",
+      "applicability": "Zero-copy weight residency (experimental). on: the DiT's weights live in a shared-memory slab the GPU reads directly (GB10-class unified memory), with no cudaMalloc copy, no CPU staging at load and no retained per-process arena. On Krea2 bf16 (24.5 GiB, 2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; unloading returns the memory to the OS at once. Output is bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and under compile_dit on the families it compiles (see compile_dit). auto (default): on unified-memory GPUs, slab for gate-vouched families (currently krea2 and flux2). A checkpoint's first load stays stock while its family is learned, every later load uses the slab; other families and discrete GPUs stay stock. off: stock cudaMalloc weights.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": [
@@ -12291,7 +12291,7 @@
       "units": null,
       "validation": {
         "advanced": true,
-        "tooltip": "Zero-copy weight residency (experimental). on: the DiT's weights live in a shared-memory slab the GPU reads directly (GB10-class unified memory), with no cudaMalloc copy, no CPU staging at load and no retained per-process arena. On Krea2 bf16 (24.5 GiB, 2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; unloading returns the memory to the OS at once. Output is bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and under compile_dit except on Chroma, Flux, Flux2 and LongCat. auto (default): on unified-memory GPUs, slab for gate-vouched families (currently krea2 and flux2). A checkpoint's first load stays stock while its family is learned, every later load uses the slab; other families and discrete GPUs stay stock. off: stock cudaMalloc weights."
+        "tooltip": "Zero-copy weight residency (experimental). on: the DiT's weights live in a shared-memory slab the GPU reads directly (GB10-class unified memory), with no cudaMalloc copy, no CPU staging at load and no retained per-process arena. On Krea2 bf16 (24.5 GiB, 2026-07-08) the raw pread took 8.5 s and full load readiness 20.1 s; unloading returns the memory to the OS at once. Output is bit-identical; gate it. Needs lora_low_rss; ignored under FSDP, and under compile_dit on the families it compiles (see compile_dit). auto (default): on unified-memory GPUs, slab for gate-vouched families (currently krea2 and flux2). A checkpoint's first load stays stock while its family is learned, every later load uses the slab; other families and discrete GPUs stay stock. off: stock cudaMalloc weights."
       }
     },
     {
@@ -12345,7 +12345,7 @@
       }
     },
     {
-      "applicability": "optional input of DGXMonarchInit; backend model/topology validation applies.",
+      "applicability": "No effect on the pinned xfuser 0.7.0: its Ulysses all-to-all never receives this setting, so output and speed are the same either way (docs/ADAPTERS.md). Changing it still runs setup again, and a gate verdict covers one setting, so the first render after a change runs its own identity gate. It stays because removing an input needs a major release.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
       "choices": null,
@@ -12388,7 +12388,8 @@
       "source": "src/dgx_monarch/nodes/init.py:DGXMonarchInit.INPUT_TYPES",
       "units": null,
       "validation": {
-        "advanced": true
+        "advanced": true,
+        "tooltip": "No effect on the pinned xfuser 0.7.0: its Ulysses all-to-all never receives this setting, so output and speed are the same either way (docs/ADAPTERS.md). Changing it still runs setup again, and a gate verdict covers one setting, so the first render after a change runs its own identity gate. It stays because removing an input needs a major release."
       }
     },
     {
@@ -17854,7 +17855,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "13aba14442d021eeb26de7a6249a0c7672aba339eb7e973d31868dfa4a6b0034",
+      "digest": "6ec34260eb00ba4b62aadea867b7cfbb8f094610d444195869c9488881246d52",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ideogram4-t2i",
       "interfaces": {

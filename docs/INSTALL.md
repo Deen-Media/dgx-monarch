@@ -70,7 +70,9 @@ Torch or probing CUDA, and record which existing caches remain in use.
 `~/.cache/dgx-monarch` holds consent and model-family memos by default. On
 each Worker host it also holds `profiles/`, where the Init node's
 `load_profile` option, off by default, writes its reports and keeps the
-newest 20. These paths do not follow `XDG_CACHE_HOME`. Preserve them under the
+newest 20, and `inductor/`, the torch compile cache that the `compile_dit`
+option fills, unless the Worker environment sets `TORCHINDUCTOR_CACHE_DIR`.
+These paths do not follow `XDG_CACHE_HOME`. Preserve them under the
 approved test and restoration plan rather than assuming a new environment
 isolates them.
 

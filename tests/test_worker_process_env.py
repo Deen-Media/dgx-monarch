@@ -72,6 +72,7 @@ def test_worker_environment_preserves_reviewed_runtime_and_compute_names():
     "UCX_CLUSTERPSK",
     "TORCH_AUTH_TOKEN",
     "TRITON_SESSION",
+    "TRITON_CACHE_DIR",
     "TORCH_LOGS",
     "IBV_FORK_SAFE",
     "MLX5_SHUT_UP_BF",
@@ -303,3 +304,141 @@ def test_worker_loop_prepares_environment_before_monarch_import(monkeypatch, iso
 
     assert events == ["prepare", "policy", "diagnostics", "monarch-import", "admission", "readback", "enable", "run"]
     assert managed_paths == [Path(worker_loop.__file__).resolve().parents[2]]
+
+
+# The torch inductor cache: on disk beside the pack's caches, unless placed.
+
+_BUILD = "2.12.0+cu132"
+
+
+def _inductor_default(home: Path) -> Path:
+    return home / ".cache" / "dgx-monarch" / "inductor" / f"torch-{_BUILD}"
+
+
+def test_an_operator_inductor_cache_name_passes_the_filter():
+    assert worker_process_env.worker_environment_key_allowed("TORCHINDUCTOR_CACHE_DIR")
+    environment = {"PATH": "/usr/bin", "TORCHINDUCTOR_CACHE_DIR": "/srv/inductor",
+                   "TRITON_CACHE_DIR": "/shell/triton"}
+    assert worker_process_env.filter_worker_environment(environment) == 1
+    assert environment == {"PATH": "/usr/bin", "TORCHINDUCTOR_CACHE_DIR": "/srv/inductor"}
+
+
+def test_the_inductor_cache_defaults_to_a_private_directory_under_the_account_cache(
+    monkeypatch, tmp_path: Path,
+):
+    monkeypatch.setattr(worker_process_env, "_torch_build", lambda: _BUILD)
+    environment = {"HOME": str(tmp_path)}
+
+    installed = worker_process_env.route_inductor_cache(environment)
+
+    assert installed == _inductor_default(tmp_path)
+    assert environment["TORCHINDUCTOR_CACHE_DIR"] == str(installed)
+    info = installed.lstat()
+    assert stat.S_ISDIR(info.st_mode) and info.st_uid == os.geteuid()
+    assert stat.S_IMODE(info.st_mode) == 0o700
+    # A second start reuses the same directory.
+    again = {"HOME": str(tmp_path)}
+    assert worker_process_env.route_inductor_cache(again) == installed
+
+
+def test_an_operator_inductor_cache_stands_and_nothing_is_created(tmp_path: Path):
+    environment = {"HOME": str(tmp_path), "TORCHINDUCTOR_CACHE_DIR": "/srv/inductor"}
+
+    assert worker_process_env.route_inductor_cache(environment) is None
+
+    assert environment["TORCHINDUCTOR_CACHE_DIR"] == "/srv/inductor"
+    assert not (tmp_path / ".cache").exists()
+
+
+@pytest.mark.parametrize("case", ["no-home", "relative-home", "file-in-the-way", "symlink"])
+def test_an_unusable_cache_location_leaves_the_default_to_torch(
+    monkeypatch, tmp_path: Path, case: str,
+):
+    monkeypatch.setattr(worker_process_env, "_torch_build", lambda: _BUILD)
+    environment: dict[str, str] = {}
+    if case == "relative-home":
+        environment["HOME"] = "relative/home"
+    elif case == "file-in-the-way":
+        environment["HOME"] = str(tmp_path)
+        (tmp_path / ".cache").write_text("not a directory")
+    elif case == "symlink":
+        environment["HOME"] = str(tmp_path)
+        target = _inductor_default(tmp_path)
+        target.parent.mkdir(parents=True)
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        target.symlink_to(outside, target_is_directory=True)
+
+    assert worker_process_env.route_inductor_cache(environment) is None
+
+    assert "TORCHINDUCTOR_CACHE_DIR" not in environment
+
+
+def test_the_torch_build_segment_reads_metadata_and_stays_one_segment(monkeypatch):
+    import importlib.metadata
+
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: _BUILD)
+    assert worker_process_env._torch_build() == _BUILD
+    monkeypatch.setattr(importlib.metadata, "version", lambda _name: "../x y")
+    assert worker_process_env._torch_build() == ".._x_y"
+
+    def missing(name):
+        raise importlib.metadata.PackageNotFoundError(name)
+
+    monkeypatch.setattr(importlib.metadata, "version", missing)
+    assert worker_process_env._torch_build() == "unknown"
+
+
+@pytest.mark.parametrize("operator", [None, "/srv/inductor"], ids=["default", "operator"])
+def test_prepare_routes_the_inductor_cache_after_the_filter(
+    monkeypatch, tmp_path: Path, operator: str | None,
+):
+    monkeypatch.setattr(worker_process_env.os, "umask", lambda _mask: None)
+    monkeypatch.setattr(worker_process_env, "_torch_build", lambda: _BUILD)
+    environment = {"HOME": str(tmp_path), "PATH": "/usr/bin", "TRITON_CACHE_DIR": "/shell/triton"}
+    if operator is not None:
+        environment["TORCHINDUCTOR_CACHE_DIR"] = operator
+    managed = tmp_path / "managed-src"
+    managed.mkdir()
+
+    removed, _runtime = worker_process_env.prepare_worker_process_environment(managed, environment)
+
+    assert removed == 1 and "TRITON_CACHE_DIR" not in environment
+    assert environment["TORCHINDUCTOR_CACHE_DIR"] == (
+        operator or str(_inductor_default(tmp_path)))
+
+
+@pytest.mark.parametrize("placed", [True, False], ids=["placed", "fallback"])
+def test_worker_loop_says_when_the_inductor_cache_stays_under_tmpdir(
+    monkeypatch, isolated_environ, capsys, tmp_path: Path, placed: bool,
+):
+    import monarch.actor as monarch_actor
+
+    from dgx_monarch import monarch_capabilities, monarch_diagnostics, monarch_policy, runtime_provenance
+    from dgx_monarch.cli import actor_ledger
+
+    def prepare(_path):
+        if placed:
+            os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(tmp_path / "inductor")
+        else:
+            os.environ.pop("TORCHINDUCTOR_CACHE_DIR", None)
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setattr(sys, "argv", ["worker_loop", "--address", "tcp://127.0.0.1:27871"])
+    monkeypatch.setattr(worker_process_env, "prepare_worker_process_environment", prepare)
+    for module, name in ((runtime_provenance, "enforce_source_only_imports"),
+                         (monarch_policy, "apply_policy"),
+                         (monarch_policy, "activate_native_policy"),
+                         (monarch_diagnostics, "configure_policy_logged"),
+                         (monarch_capabilities, "assert_supported_runtime"),
+                         (monarch_actor, "enable_transport"),
+                         (monarch_actor, "run_worker_loop_forever"),
+                         (actor_ledger, "publish_loop"),
+                         (actor_ledger, "start_tracker")):
+        monkeypatch.setattr(module, name, lambda *_a, **_k: True)
+
+    worker_loop.main()
+
+    said = "torch inductor cache: no private directory" in capsys.readouterr().err
+    assert said is not placed
+
