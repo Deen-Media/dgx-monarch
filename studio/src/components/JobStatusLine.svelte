@@ -1,11 +1,18 @@
 <script lang="ts">
   import type { FollowedJob } from '../jobTracker.svelte';
-  let { job = null, onqueue }: { job?: FollowedJob | null; onqueue?: () => void } = $props();
+  import { TROUBLESHOOTING } from '../jobFailure';
+  import ConsentOffer from './ConsentOffer.svelte';
+  let {
+    job = null,
+    onqueue,
+    onconsent,
+  }: { job?: FollowedJob | null; onqueue?: () => void; onconsent?: () => void } = $props();
   const share = $derived(
     job?.progress && job.progress !== 'indeterminate'
       ? (100 * job.progress.value) / job.progress.max
       : 0,
   );
+  const failure = $derived(job?.failure ?? null);
 </script>
 
 <div class="job-status" class:empty={!job} style:--job-color={job?.color}>
@@ -19,6 +26,23 @@
         >{/if}{#if job.link && onqueue}<button class="job-link" onclick={onqueue}>{job.link}</button
         >{/if}
     </p>
+    {#if failure && (failure.consent || failure.remedy || failure.troubleshooting !== null)}<p
+        class="job-failure"
+      >
+        {#if failure.consent}<ConsentOffer
+            consent={failure.consent}
+            action={job.consent}
+            {onconsent}
+          />{:else if failure.remedy}<span class="job-detail">{failure.remedy}</span
+          >{/if}{#if failure.troubleshooting !== null}<a
+            class="job-doc"
+            href={TROUBLESHOOTING}
+            target="_blank"
+            rel="noopener noreferrer"
+            title="Opens docs/TROUBLESHOOTING.md; find entry {failure.troubleshooting} there"
+            >Troubleshooting #{failure.troubleshooting}</a
+          >{/if}
+      </p>{/if}
     {#if job.progress === 'indeterminate'}<div
         class="job-progress indeterminate"
         role="progressbar"

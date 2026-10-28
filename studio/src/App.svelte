@@ -20,6 +20,7 @@
     GraphConnection,
   } from './contracts';
   import { isActiveJob, requestJobAction } from './jobActions';
+  import { OperationOpener } from './operationOpener.svelte';
   import { persistRecord } from './recordPersistence';
   import { artifactDraft } from './artifactDraft';
   import { inspectDraft, rebuildBindings } from './workflowInspector';
@@ -42,7 +43,8 @@
   const submission = new Submission(connection);
   const tracker = new JobTracker(connection, submission);
   const autosave = new DraftAutosave(),
-    guard = new InspectionGuard();
+    guard = new InspectionGuard(),
+    opener = new OperationOpener(navigate);
   let draft = $state<Draft>(emptyDraft()),
     undoDraft: Draft | null = null;
   let bindings = $state<Binding[]>([]),
@@ -50,8 +52,7 @@
     rawWorkflow = $state(''),
     controlTab = $state('inputs');
   let connections = $state<GraphConnection[]>([]);
-  let view = $state('workspace'),
-    selectedOperation = $state('');
+  let view = $state('workspace');
   let busy = $state(false),
     notice = $state(''),
     error = $state(''),
@@ -367,6 +368,7 @@
         onreuse={reuse}
         onselect={(a) => (tracker.comparison = a)}
         onqueue={() => navigate('queue')}
+        onconsent={() => opener.consent(tracker.job)}
       />
     {:else if view === 'workspace'}<div class="workspace">
         <Generation
@@ -413,6 +415,7 @@
           oncompare={(a) => (tracker.comparison = a)}
           {navigate}
           {reuse}
+          onconsent={() => opener.consent(tracker.job)}
         />
       </div>
     {:else if view === 'gallery'}<Gallery
@@ -428,13 +431,12 @@
         {setNotice}
       />
     {:else if view === 'queue'}<Queue
-        truncated={connection.snapshot.jobs_truncated}
-        client={connection.client}
-        {jobs}
+        {connection}
         {busy}
         {refresh}
         {fail}
         {jobAction}
+        onconsent={opener.consent}
       />
     {:else if view === 'grid'}<Grids
         {reuse}
@@ -455,7 +457,7 @@
     {:else if view === 'operations'}<Operations
         client={connection.client}
         capabilities={connection.capabilities}
-        initialAction={selectedOperation}
+        request={opener.request}
         operations={connection.snapshot.operations}
         onrefresh={() => void refresh().catch(fail)}
       />
@@ -490,9 +492,6 @@
   workflows={connection.workflows}
   {navigate}
   {inspect}
-  onoperation={(id) => {
-    selectedOperation = id;
-    navigate('operations');
-  }}
+  onoperation={opener.operation}
 />
 <SubmissionReview bind:this={previewPanel} {submission} {bindings} {busy} {submitPreview} />

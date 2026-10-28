@@ -1996,7 +1996,18 @@
       "test_unsupported_slab_dtype_logs_and_falls_back_to_stock": "820791a73fe15c07"
     },
     "tests/test_studio_execution_refusal_cap.py": {
-      "test_long_refusal_keeps_its_class_tag_remedy_and_consent_descriptor": "42e4732f3405c567"
+      "test_a_class_tag_across_the_head_boundary_stays_whole": "d47d680c9977fec4",
+      "test_a_class_tag_past_the_head_is_kept_with_the_text_after_it": "41bc553b39d5ce0a",
+      "test_long_refusal_keeps_its_class_tag_remedy_and_consent_descriptor": "42e4732f3405c567",
+      "test_the_kept_tag_grammar_is_the_refusal_modules_own": "1562dde524fff7f3",
+      "test_two_class_tags_keep_the_plain_head": "64f9df8de420cfc4"
+    },
+    "tests/test_studio_failure_parse.py": {
+      "test_a_class_k_waiver_card_reads_with_its_kind_and_panel_button": "540f0ed2971b8d6c",
+      "test_a_worker_refusal_under_its_remote_traceback_reads_as_its_class_reason_and_consent": "99e6b80d722817bb",
+      "test_malformed_tags_and_descriptors_read_as_the_python_parsers_read_them": "7a5b5ec8674aba12",
+      "test_the_browser_names_the_classes_as_the_refusal_module_does": "fe11a810bb3c1733",
+      "test_unwaivable_and_plain_failures_read_without_invented_structure": "ca827b81b7ebdcd7"
     },
     "tests/test_sweep_matrix.py": {
       "test_a_box_that_gives_no_reading_is_recorded_not_waited_on": "7480ed4464841a53",

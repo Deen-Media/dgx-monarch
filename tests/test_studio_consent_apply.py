@@ -130,6 +130,19 @@ def test_pending_cards_keep_exact_identities_and_bound_display_text():
     assert len(listing["pending"]) == PENDING_LIMIT
 
 
+def test_the_review_shows_each_pending_request_with_its_consent_id(store):
+    """A failed job's refusal carries the same consent id, so Studio can match the request it asked for."""
+    _, ready = review(store, Driver([CARD]))
+    assert ready["adapter_plan"]["card"]["consent_id"] == CARD["consent_id"]
+    _, listing = review(store, Driver([CARD, {**OTHER, "consent_id": "c-2"}]))
+    assert [row["consent_id"] for row in listing["adapter_plan"]["pending"]] == ["c-1", "c-2"]
+    _, bounded = review(store, Driver([{**CARD, "consent_id": "c\n" + "9" * 400}]))
+    shown = bounded["adapter_plan"]["card"]["consent_id"]
+    assert "\n" not in shown and len(shown) == 240
+    # The accept still names only the exact pending key and id.
+    assert bounded["parameters"] == {"key": CARD["key"], "id": CARD["id"]}
+
+
 def test_review_without_the_driver_list_is_refused(store):
     ops = Operations(store, Driver([CARD]), allow_management=True)
     with pytest.raises(StudioError) as caught:

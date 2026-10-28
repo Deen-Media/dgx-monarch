@@ -28,6 +28,7 @@
     oncompare,
     navigate,
     reuse,
+    onconsent,
   }: {
     client: StudioClient;
     selected: Artifact | null;
@@ -49,6 +50,7 @@
     oncompare: (artifact: Artifact | null) => void;
     navigate: (view: string) => void;
     reuse: ReuseArtifact;
+    onconsent?: () => void;
   } = $props();
   // Uploads and masks have no job, and a live preview is a running job's approximate frame.
   const outputs = $derived((artifacts ?? []).filter(isJobOutput).slice(0, 8));
@@ -66,6 +68,7 @@
     onreuse={reuse}
     onselect={(a) => oncompare(a)}
     onqueue={() => navigate('queue')}
+    {onconsent}
   />
   <div class="recent-strip">
     <div>

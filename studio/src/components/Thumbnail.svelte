@@ -1,14 +1,26 @@
 <script lang="ts">
   import type { Artifact } from '../contracts';
   import type { StudioClient } from '../api';
+  import { whenNearViewport } from '../nearViewport';
   let { artifact, client }: { artifact: Artifact; client: StudioClient } = $props();
   let url = $state(''),
-    status = $state('Loading preview');
+    status = $state('Loading preview'),
+    // The placeholder that stands until the preview replaces it.
+    placeholder = $state<HTMLElement | null>(null),
+    // The preview downloads once the thumbnail nears the visible area, so a long Queue page or
+    // outputs strip does not start every fetch at once.
+    near = $state(false);
   // Each snapshot poll replaces every artifact object. Fetch again only when the identity, or
   // the digest of an intermediate preview, changes.
   const id = $derived(artifact.id);
   const digest = $derived(artifact.intermediate ? artifact.metadata?.sha256 : undefined);
   $effect(() => {
+    const element = placeholder;
+    if (near || !element) return;
+    return whenNearViewport(element, () => (near = true));
+  });
+  $effect(() => {
+    if (!near) return;
     const api = client;
     void digest;
     url = '';
@@ -43,7 +55,9 @@
       url = '';
       status = 'Preview unavailable';
     }}
-  />{:else}<span>{artifact.kind === 'video' ? '▷' : '▧'}</span><small>{status}</small>{/if}
+  />{:else}<span bind:this={placeholder}>{artifact.kind === 'video' ? '▷' : '▧'}</span><small
+    >{status}</small
+  >{/if}
 
 <style>
   img {

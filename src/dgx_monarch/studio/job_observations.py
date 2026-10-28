@@ -19,14 +19,20 @@ DESCRIPTOR_CHARS = 4096 + len(DESCRIPTOR_BEGIN) + len(DESCRIPTOR_END)
 _REMEDY = re.compile(r' Open the DGX Monarch panel and click "[^"\n]{1,200}" on the card for this model, then queue the '
                      r'render again\. Headless: set [A-Za-z0-9_]{1,64}=\S{1,64} on the driver and run again\.'
                      r'(?: See docs/TROUBLESHOOTING\.md #\d{1,4}\.)?| See docs/TROUBLESHOOTING\.md #\d{1,4}\.')
+# The class tag grammar of dgx_monarch.refusal._TAG_RE.
+_TAG = re.compile(r"\[dgxm:[PCUK](?: guard=[A-Za-z0-9_:.-]{1,64})?(?: waivable=[01])?\]")
+# How much of a refusal to keep from its class tag on when the tag lies past the head.
+TAGGED_CHARS = 600
 
 
 def bounded_refusal(text: str) -> str:
-    """Bound a driver refusal while keeping its remedy sentence and consent descriptor.
+    """Bound a driver refusal while keeping its class tag, remedy sentence and consent descriptor.
 
-    A long refusal keeps its head (with the class tag), then the panel or
-    troubleshooting sentence and the machine-readable consent block, and says
-    how much of the middle it left out.
+    A long refusal keeps its head, then the panel or troubleshooting sentence
+    and the machine-readable consent block, and says how much it left out. A
+    worker refusal reaches the driver under Monarch's remote traceback, which
+    can push its one class tag past the head; the tag and the text after it
+    are then kept as well, so Studio can still read the class and the reason.
     """
     if len(text) <= REFUSAL_HEAD_CHARS:
         return text
@@ -41,9 +47,17 @@ def bounded_refusal(text: str) -> str:
     for remedy in remedies:
         index = rest.rfind(remedy)
         rest = rest[:index] + rest[index + len(remedy):]
-    head = rest[:REFUSAL_HEAD_CHARS]
-    omitted = len(rest) - len(head)
-    parts = [head, f" [{omitted} characters omitted]" if omitted else "", *remedies,
+    tags = list(_TAG.finditer(rest))
+    if len(tags) == 1 and tags[0].end() > REFUSAL_HEAD_CHARS:
+        tag = tags[0].start()
+        head = rest[:min(tag, REFUSAL_HEAD_CHARS)]
+        skipped = tag - len(head)
+        kept = [head, f" [{skipped} characters omitted] " if skipped else "", rest[tag:tag + TAGGED_CHARS]]
+        omitted = max(0, len(rest) - tag - TAGGED_CHARS)
+    else:
+        kept = [rest[:REFUSAL_HEAD_CHARS]]
+        omitted = len(rest) - len(kept[0])
+    parts = [*kept, f" [{omitted} characters omitted]" if omitted else "", *remedies,
              f" {descriptor}" if descriptor else ""]
     return "".join(parts)
 

@@ -1,28 +1,30 @@
 <script lang="ts">
-  import type { StudioClient } from '../api';
+  import type { Connection } from '../connection.svelte';
   import type { Job } from '../contracts';
   import { untrack } from 'svelte';
-  import { formatTime } from '../model';
-  import { recordedSeeds, seedText } from '../recordedSettings';
+  import { finalOutput } from '../jobFollow';
   import { emptyQueueText, isActive, keptPage, settledJobs, type SnapshotIds } from '../queueRows';
-  import JobProvenance from '../components/JobProvenance.svelte';
+  import QueueRow from '../components/QueueRow.svelte';
   let {
-    client,
-    jobs,
-    truncated = false,
+    connection,
     busy,
     refresh,
     fail,
     jobAction,
+    onconsent,
   }: {
-    client: StudioClient;
-    jobs: Job[];
-    truncated?: boolean;
+    /** The snapshot gives the jobs, the outputs a row shows and the consent operation's row. */
+    connection: Pick<Connection, 'client' | 'snapshot' | 'capabilities'>;
     busy: boolean;
     refresh: () => Promise<void>;
     fail: (error: unknown) => void;
     jobAction: (job: Job, action: 'cancel' | 'retry') => Promise<void>;
+    onconsent?: (job: Job) => void;
   } = $props();
+  const client = $derived(connection.client);
+  const jobs = $derived(connection.snapshot.jobs);
+  const artifacts = $derived(connection.snapshot.artifacts ?? []);
+  const operations = $derived(connection.capabilities.operations ?? []);
   let selectedJob = $state<Job | null>(null);
   let history = $state<Job[]>([]),
     cursor = $state<string | null>(null),
@@ -95,7 +97,7 @@
         >{/each}</select
     ><button disabled={loading} onclick={() => void load(true)}>Refresh history</button>
   </div>
-  {#if truncated}<p class="warning" role="status">
+  {#if connection.snapshot.jobs_truncated}<p class="warning" role="status">
       The live snapshot is limited; additional jobs may exist. Search or load more durable history
       to find jobs outside this snapshot.
     </p>{/if}
@@ -103,45 +105,20 @@
     {active.length} active or unresolved jobs remain visible above {history.length} loaded history records
     (maximum 2,000 per window).
   </p>
-  {#each shown as job (job.id)}{@const seeds = seedText(recordedSeeds(job))}
-    <details
-      class="record"
+  {#each shown as job (job.id)}<QueueRow
+      {client}
+      {job}
+      output={finalOutput(job.id, artifacts)}
       open={selectedJob?.id === job.id}
-      ontoggle={(e) => {
-        if (e.currentTarget.open) selectedJob = job;
+      {busy}
+      {operations}
+      ontoggle={(open) => {
+        if (open) selectedJob = job;
         else if (selectedJob?.id === job.id) selectedJob = null;
       }}
-    >
-      <summary
-        ><span class="status-label" class:running={job.state === 'running'}
-          >{job.state ?? 'unknown'}</span
-        ><strong>{job.submission?.requested?.operation ?? 'workflow'}</strong><span class="mono"
-          >{job.id}</span
-        >{#if seeds}<span class="mono">{seeds}</span>{/if}<span>{formatTime(job.created_at)}</span
-        ></summary
-      >
-      <div class="job-details">
-        <div class="workflow-actions">
-          <button
-            disabled={busy || !['queued', 'running'].includes(job.state)}
-            onclick={() => void jobAction(job, 'cancel')}>Request cancel</button
-          ><button
-            disabled={busy || !['failed', 'cancelled'].includes(job.state)}
-            onclick={() => void jobAction(job, 'retry')}>Retry as new job</button
-          >
-        </div>
-        <p class="muted">
-          Cancellation is requested first; the backend confirms the final outcome. Retry creates a
-          linked job.
-        </p>
-        {#if job.progress?.max}<progress max={job.progress.max} value={job.progress.value ?? 0}
-          ></progress><span
-            >{job.progress.value ?? 0} / {job.progress.max} · node {job.progress.node ??
-              'unknown'}</span
-          >{:else if job.state === 'running'}<p>Running · completion percentage unavailable</p>{/if}
-        {#if selectedJob?.id === job.id}<JobProvenance {client} summary={job} />{/if}
-      </div>
-    </details>{/each}{#if !shown.length}<div class="empty-state">
+      {jobAction}
+      {onconsent}
+    />{/each}{#if !shown.length}<div class="empty-state">
       <h2>{empty.title}</h2>
       <p>{empty.detail}</p>
     </div>{/if}

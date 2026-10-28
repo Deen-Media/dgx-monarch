@@ -663,8 +663,9 @@ since the driver may run on another host with its own clock; a job that ended
 shows the driver's own time from start to end. Running time needs the
 companion's start time and its clock, and a total needs both driver times; when
 one is missing no time shows, and Studio never estimates the time left. A failed
-job shows its error code, the first sentence of its message and a link to Queue.
-An unknown outcome links to Queue, where you can reconcile it. Create counts
+job shows the first sentence of its reason and a link to Queue, and
+[Read a failure and grant a consent](#read-a-failure-and-grant-a-consent) says
+what else it shows. An unknown outcome links to Queue, where you can reconcile it. Create counts
 unknown outcomes with active jobs, as Queue does, until you reconcile them; only
 jobs in flight animate the viewer border and the logo.
 
@@ -874,6 +875,46 @@ page reloads, it restores a saved preview only if the draft and fields still
 match; otherwise it drops the preview and asks for validation again. A dispatch
 whose outcome is unknown keeps its preview and request ID so it can be
 reconciled, and Grids says when that review came from an earlier draft.
+
+## Read a failure and grant a consent
+
+Studio reads a failed job's recorded error the way dgx-monarch writes it and
+shows only what the record holds. When the message carries a refusal class tag,
+the viewer status line and the Queue row start with the class, such as
+"Refused, class C (capacity-protective)", then the first sentence after the tag.
+The classes are those of
+[DESIGN.md section 5.9](DESIGN.md#59-refusal-taxonomy-what-a-typed-refusal-is-allowed-to-do):
+P physics, C capacity-protective, U unproven correctness and K known-wrong math.
+Any other message shows its error code and its first sentence. When the message
+names the driver's panel and headless remedy, the status line shows it. Expand
+the Queue row for the full text, the guard, the error code and a link to the
+docs/TROUBLESHOOTING.md entry the message cites. The link opens that page, so
+find the entry by its number. When the companion shortens a long message it
+keeps the class tag and the text after it, the remedy and the consent block,
+even for a worker refusal that arrives after Monarch's remote traceback. Full
+provenance in the expanded row still holds the raw record. A Queue row also
+shows a 64 pixel thumbnail of the job's newest final output when the snapshot
+holds one, and nothing when it does not. The preview downloads once the row
+scrolls within 200 pixels of the visible area.
+
+A refusal that a consent can clear carries a consent request. The status line
+and the Queue row then show its reason and the label of the ComfyUI panel button
+that grants it, with a Grant and retry button. That button opens Operations with
+consent apply chosen and its key and id empty, beside the request's model, kind
+and consent id. Review it: with one pending request the review selects it, and
+with several it lists each one with its consent id. Studio says whether the
+chosen request carries the job's consent id, and offers to fill the key and id of
+the listed request that does. Studio never grants a consent by itself. You
+review the exact plan and confirm it, as for any operation. After the grant
+succeeds, retry the job from Queue. The driver keeps a pending request for 30
+minutes after the refusal that raised it, and forgets every one when it
+restarts, so an older failure can find none pending. Retry the job to ask
+again. A companion started without `--allow-management` lists consent apply as
+unavailable, and the button reads Review consent. Grant the consent in the
+ComfyUI panel instead, or start Studio again with `--allow-management`, which
+for the managed service is `dgxm studio up --allow-management`. The management
+paragraphs of [Install and start](#install-and-start) say what that flag
+authorizes.
 
 ## Runtime evidence
 

@@ -59,6 +59,13 @@
   of every input. `tools/gen_templates.py` writes the layouts from one checked
   table, and a new test inspects each template in Studio to confirm its
   inputs exist and follow the approved order.
+- Studio reads a failed job for people: the viewer status line and Queue rows
+  show the refusal class, the first sentence, the remedy, the TROUBLESHOOTING
+  entry and, for a consent request, the driver's reason and action, with
+  Grant and retry opening Operations on consent.apply when the companion
+  allows management and a plain pointer when it does not. Queue rows show a
+  thumbnail of each job's newest final output, fetched as the row scrolls into
+  view.
 
 ### Installation and updates
 

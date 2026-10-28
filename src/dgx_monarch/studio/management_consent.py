@@ -15,7 +15,8 @@ from .contracts import StudioError
 
 PENDING_LIMIT = 64
 IDENTITY_BYTES = 512
-_SHOWN = ("kind", "class", "title", "artifact", "risk", "occurrences", "seen_at")
+# The consent id lets a reviewer match a listed request to the job whose refusal asked for it.
+_SHOWN = ("kind", "class", "title", "artifact", "risk", "occurrences", "seen_at", "consent_id")
 _CONTROL = re.compile(r"[\x00-\x1f\x7f]")
 
 

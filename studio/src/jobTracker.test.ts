@@ -17,11 +17,14 @@ const job = (id: string, state: string, changes: Partial<Job> = {}) =>
 const output = (id: string, job_id: string) =>
   ({ id, job_id, kind: 'image', filename: `${id}.png`, created_at: 5 }) as Artifact;
 
-function setup(route: (path: string) => Promise<unknown> = async () => ({ items: [] })) {
+function setup(
+  route: (path: string) => Promise<unknown> = async () => ({ items: [] }),
+  operations: unknown[] = [],
+) {
   const requests: string[] = [];
   const connection = {
     snapshot: { jobs: [] as Job[], artifacts: [] as Artifact[], server_time: 1000 as number },
-    capabilities: { presentation },
+    capabilities: { presentation, operations },
     client: {
       request: (path: string) => {
         requests.push(path);
@@ -178,4 +181,45 @@ test('the lookup stops after a bounded number of answers without the output', as
   assert.equal(tracker.follow.settled, true);
   assert.equal(tracker.follow.lookups, 3);
   assert.equal(tracker.selected, null);
+});
+
+test("the followed job's consent control follows the consent operation's availability", () => {
+  const descriptor = `<<<DGXM-CONSENT-V1 ${JSON.stringify({
+    consent_id: '0123456789abcdef0123456789abcdef',
+    context_fingerprint: 'c0ffee00c0ffee00',
+    env_fallback: 'DGXM_ALLOW_SLAB_RESCUE',
+    evidence: 'weights will be byte-verified against the checkpoint during load',
+    file_identity: 'size:1:mtime:2',
+    human_reason: 'The stock load does not fit; slab residency does.',
+    kind: 'rescue-slab',
+    measured: {},
+    panel_action: 'Load with slab residency',
+    unet_name: 'flux/dev.safetensors',
+    version: 1,
+  })} DGXM-CONSENT-END>>>`;
+  const refused = job('mine', 'failed', {
+    error: { code: 'SlabResidencyRescueOffer', message: `[dgxm:C] no fit.\n${descriptor}` },
+  });
+  const row = (available: boolean) => ({
+    id: 'consent.apply',
+    label: 'consent · apply',
+    available,
+    reason: available ? undefined : 'Restart the companion with --allow-management.',
+    parameters: [],
+  });
+  const control = (operations: unknown[], failed: Job = refused) => {
+    const { tracker, poll } = setup(undefined, operations);
+    tracker.own('mine');
+    poll([failed]);
+    return tracker.status?.consent;
+  };
+  assert.deepEqual(control([row(true)]), { label: 'Grant and retry', available: true, reason: '' });
+  assert.equal(control([row(false)])?.label, 'Review consent');
+  assert.equal(control([]), null, 'no consent operation, no control');
+  assert.equal(control([row(true)], job('mine', 'failed', { error: { message: 'plain.' } })), null);
+  const { tracker, poll } = setup(undefined, [row(true)]);
+  tracker.own('mine');
+  poll([refused]);
+  assert.equal(tracker.status?.detail, 'Refused, class C (capacity-protective): no fit.');
+  assert.equal(tracker.status?.failure?.consent?.panelAction, 'Load with slab residency');
 });

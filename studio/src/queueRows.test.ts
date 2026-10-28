@@ -39,20 +39,20 @@ test('the empty state says when filters, not an empty history, hide every job', 
 });
 
 test('Queue renders snapshot jobs and an empty state that does not claim no jobs exist', async () => {
-  const props = {
-    client: { request: noop },
+  const props = (jobs: Job[]) => ({
+    connection: { client: { request: noop }, snapshot: { jobs }, capabilities: {} },
     busy: false,
     refresh: noop,
     fail: () => {},
     jobAction: noop,
-  };
+  });
   const running = visibleText(
-    await renderComponent('./views/Queue.svelte', { ...props, jobs: [job('j-run', 'running')] }),
+    await renderComponent('./views/Queue.svelte', props([job('j-run', 'running')])),
   );
   assert.match(running, /running workflow j-run/);
   assert.match(running, /1 active or unresolved jobs/);
   assert.doesNotMatch(running, /No recorded jobs yet/);
-  const empty = visibleText(await renderComponent('./views/Queue.svelte', { ...props, jobs: [] }));
+  const empty = visibleText(await renderComponent('./views/Queue.svelte', props([])));
   assert.match(empty, /Loading job history… Active jobs appear as they arrive\./);
   assert.doesNotMatch(empty, /No recorded jobs yet/, 'opening Queue never claims an empty history');
 });
