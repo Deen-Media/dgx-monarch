@@ -41,6 +41,12 @@ def main() -> int:
           + "  const spec = PRESENTATION.units[unit];\n"
           + "  const number = value / (sourceUnits ? spec.divisor : 1);\n"
           + "  return number.toFixed(spec.precision) + (unit === 'count' ? '' : ' ' + unit);\n}\n"
+          # The browser twin of presentation.format_duration_clock; a test keeps them equal.
+          + "export function formatDurationClock(value) {\n"
+          + "  const rule = PRESENTATION.duration_clock;\n"
+          + "  if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > rule.maximum_s) return rule.missing;\n"
+          + "  const whole = Math.floor(value);\n"
+          + "  return Math.floor(whole / 60) + ':' + String(whole % 60).padStart(2, '0');\n}\n"
           + "export function availableMemoryStatus(value) {\n"
           + "  if (typeof value !== 'number' || !Number.isFinite(value)) return 'unknown';\n"
           + "  const threshold = PRESENTATION.thresholds.available_memory_gib;\n"

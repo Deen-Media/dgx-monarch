@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { ApiError } from './api.ts';
-import { isActiveJob, requestJobAction } from './jobActions.ts';
+import { isActiveJob, isInFlightJob, requestJobAction } from './jobActions.ts';
 
 const job = { id: 'job-1', state: 'failed', created_at: 1, submission: {} };
 
@@ -42,16 +42,25 @@ function setup(answer = true) {
   };
 }
 
-test('in-flight states count as active work', () => {
+test('in-flight and unresolved states count as active work, as Queue counts them', () => {
   for (const state of ['queued', 'running', 'submitting', 'cancel_requested', 'accepted'])
     assert.equal(isActiveJob({ ...job, state }), true, state);
-  for (const state of ['failed', 'cancelled', 'succeeded', 'unknown'])
+  // A job that ends unknown stays counted until Queue reconciles it, so it does not vanish.
+  assert.equal(isActiveJob({ ...job, state: 'unknown' }), true);
+  for (const state of ['failed', 'cancelled', 'succeeded'])
     assert.equal(isActiveJob({ ...job, state }), false, state);
+});
+
+test('only in-flight states drive the activity animations', () => {
+  for (const state of ['queued', 'running', 'submitting', 'cancel_requested', 'accepted'])
+    assert.equal(isInFlightJob({ ...job, state }), true, state);
+  for (const state of ['failed', 'cancelled', 'succeeded', 'unknown'])
+    assert.equal(isInFlightJob({ ...job, state }), false, state);
 });
 
 test('a declined confirmation sends nothing and keeps no identity', async () => {
   const context = setup(false);
-  await requestJobAction(context.client, job, 'retry');
+  assert.equal(await requestJobAction(context.client, job, 'retry'), undefined);
   assert.deepEqual(context.sent, []);
   assert.equal(context.store.size, 0);
 });
@@ -59,7 +68,11 @@ test('a declined confirmation sends nothing and keeps no identity', async () => 
 test('a confirmed action sends a fresh identity and clears it once the record arrives', async () => {
   const context = setup();
   const notices: string[] = [];
-  await requestJobAction(context.client, job, 'retry', (message) => notices.push(message));
+  const record = await requestJobAction(context.client, job, 'retry', (message) =>
+    notices.push(message),
+  );
+  // App follows the retry this tab created in the output viewer.
+  assert.deepEqual(record, { id: 'retry-1' });
   assert.equal(context.sent.length, 1);
   assert.equal(context.sent[0].path, '/jobs/job-1/retry');
   assert.equal(context.sent[0].body.confirmed, true);

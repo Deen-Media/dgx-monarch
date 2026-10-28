@@ -44,6 +44,65 @@ def test_job_wire_summary_retains_controls_but_fetch_does_not_lose_provenance(st
     assert store.jobs_by_prompt()["accepted"]["id"] == "original"
 
 
+def test_job_summary_carries_the_driver_start_and_end_times(store):
+    """Studio shows elapsed and total time from these driver-clock fields; a missing one is null."""
+    store.create("jobs", job("timed", state="succeeded", started_at=1000.25, ended_at=1073.5))
+    store.create("jobs", job("unstarted", state="queued", prompt_id="other"))
+    listed = {item["id"]: item for item in page_jobs(store, {})["items"]}
+    rows, _ = snapshot_rows(store)
+    snapshot = {item["id"]: item for item in rows["jobs"]}
+    for view in (listed, snapshot):
+        assert (view["timed"]["started_at"], view["timed"]["ended_at"]) == (1000.25, 1073.5)
+        assert view["timed"]["ended_at"] - view["timed"]["started_at"] == 73.25
+        assert (view["unstarted"]["started_at"], view["unstarted"]["ended_at"]) == (None, None)
+        assert "backend_events" not in view["timed"] and "workflow" not in view["timed"]["submission"]
+
+
+def test_the_companion_notes_on_its_own_clock_when_it_first_saw_a_job_run(store, monkeypatch):
+    """Live elapsed time compares this with server_time, so a remote driver's clock never enters."""
+    from dgx_monarch.studio import store as store_module
+    from dgx_monarch.studio.job_observations import observation
+
+    now = {"time": 100.0}
+    monkeypatch.setattr(store_module, "timestamp", lambda: now["time"])
+
+    def event(kind, prompt_id, **data):
+        parsed = observation({"type": kind, "data": {"prompt_id": prompt_id, **data}})
+        assert parsed is not None
+        return parsed
+    # The queue poll sees the prompt running first.
+    store.create("jobs", job("polled", state="queued", prompt_id="p1"))
+    store.update("jobs", "polled", {"state": "running", "prompt_id": "p1"})
+    now["time"] = 105.0
+    store.update("jobs", "polled", {"state": "running", "prompt_id": "p1"})
+    store.observe("polled", *event("progress", "p1", value=1, max=4, node="3", timestamp=900_000))
+    assert store.get("jobs", "polled")["running_observed_at"] == 100.0
+    # A driver event sees it first: the field matches that event's receipt, not the driver's time.
+    store.create("jobs", job("evented", state="queued", prompt_id="p2"))
+    now["time"] = 200.0
+    store.observe("evented", *event("execution_start", "p2", timestamp=900_000))
+    evented = store.get("jobs", "evented")
+    assert evented["running_observed_at"] == evented["backend_events"][-1]["observed_at"] == 200.0
+    assert evented["started_at"] == 900.0
+    # A job that was already running, or has ended, gets no companion start.
+    store.create("jobs", job("upgraded", state="running", prompt_id="p3"))
+    store.observe("upgraded", *event("progress", "p3", value=2, max=4, timestamp=901_000))
+    store.create("jobs", job("ended", state="succeeded", prompt_id="p4"))
+    store.observe("ended", *event("execution_start", "p4", timestamp=902_000))
+    # Settlement replays a finished prompt's history messages; the companion never saw that one run.
+    store.create("jobs", job("replayed", state="queued", prompt_id="p5"))
+    Jobs(store, None).consume_event({"type": "execution_start", "data": {"prompt_id": "p5", "timestamp": 903_000}})
+    assert store.get("jobs", "replayed")["state"] == "running"
+    store.create("jobs", job("watched", state="queued", prompt_id="p6"))
+    now["time"] = 300.0
+    Jobs(store, None).consume_event({"type": "execution_start", "data": {"prompt_id": "p6", "timestamp": 904_000}},
+                                    live=True)
+    rows, _ = snapshot_rows(store)
+    summary = {item["id"]: item["running_observed_at"] for item in rows["jobs"]}
+    assert summary == {"polled": 100.0, "evented": 200.0, "upgraded": None, "ended": None, "replayed": None,
+                       "watched": 300.0}
+
+
 def test_snapshot_uses_record_and_operation_summaries_and_prioritizes_active_jobs(store):
     store.create("jobs", job("active", state="running"))
     for number in range(205):

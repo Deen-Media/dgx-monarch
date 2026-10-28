@@ -19,6 +19,16 @@ STATUS_COLORS = {
     **dict.fromkeys(("degraded", "legacy-active"), "#facc15"),
     **dict.fromkeys(("blocked", "unknown"), "#f87171"),
 }
+# The status token each Studio job state displays with. A job on its way to the
+# driver or running there reads as rendering; a cancel, asked for or done,
+# reads as degraded; a failure, or an outcome the companion cannot confirm,
+# reads as blocked.
+JOB_STATUS = {
+    **dict.fromkeys(("submitting", "accepted", "queued", "running"), "rendering"),
+    **dict.fromkeys(("cancel_requested", "cancelled"), "degraded"),
+    "succeeded": "ready",
+    **dict.fromkeys(("failed", "unknown"), "blocked"),
+}
 UNITS: dict[str, dict[str, Any]] = {
     "GiB": {"precision": 1, "divisor": 1073741824, "source_unit": "bytes"},
     "GB/s": {"precision": 2, "divisor": 1000000000, "source_unit": "bytes/s"},
@@ -30,6 +40,13 @@ UNITS: dict[str, dict[str, Any]] = {
     "GHz": {"precision": 2, "divisor": 1000, "source_unit": "MHz"},
     "count": {"precision": 0, "divisor": 1, "source_unit": "count"},
 }
+# Elapsed and total job time as minutes and seconds, a separate rule from the
+# "s" unit above: whole seconds, rounded down, and minutes with no cap, so 61
+# minutes and 1 second reads 61:01. The largest value is the largest integer
+# both Python and JavaScript hold exactly; beyond it, as for a missing,
+# negative or non-finite value, the time is unknown.
+DURATION_CLOCK: dict[str, Any] = {"format": "m:ss", "source_unit": "s", "rounding": "floor",
+                                  "minutes": "uncapped", "maximum_s": 2**53 - 1, "missing": "unknown"}
 AVAILABLE_MEMORY_THRESHOLD_GIB = 20.0
 # A Worker reports slab_gib only while a slab holds its model, so a missing
 # value is a known zero unless the report could be hiding one.
@@ -59,6 +76,14 @@ def format_metric(value: object, unit: str, *, source_units: bool = False) -> st
     number = float(value) / (float(spec["divisor"]) if source_units else 1)
     suffix = "" if unit == "count" else f" {unit}"
     return f"{number:.{spec['precision']}f}{suffix}"
+
+
+def format_duration_clock(value: object) -> str:
+    """Format a duration in seconds under DURATION_CLOCK, such as 1:13 or 61:01."""
+    if not _finite(value) or value < 0 or value > DURATION_CLOCK["maximum_s"]:
+        return str(DURATION_CLOCK["missing"])
+    whole = int(value)
+    return f"{whole // 60}:{whole % 60:02d}"
 
 
 def available_memory_status(value_gib: object) -> str:
@@ -141,9 +166,11 @@ def presentation_contract() -> dict[str, Any]:
                   "icon": {"#4ade80": "✓", "#facc15": "!", "#f87171": "?"}[color], "label": key}
             for key, color in STATUS_COLORS.items()
         },
+        "job_states": dict(JOB_STATUS),
         "theme": {"background": "#111318", "text": "#f3f5f7", "brand": "#87f900", "focus": "#22d3ee",
                   "selection": "#334155", "warning": "#facc15"},
         "units": UNITS,
+        "duration_clock": dict(DURATION_CLOCK),
         "missing": "unknown",
         "thresholds": {"available_memory_gib": {"operator": ">", "value": AVAILABLE_MEMORY_THRESHOLD_GIB,
                         "above": "ready", "otherwise": "degraded", "authority": "presentation_only"}},

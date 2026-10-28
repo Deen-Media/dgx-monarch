@@ -342,7 +342,7 @@ class Jobs:
         if job.get("prompt_id") is None:
             # The driver used the identity this companion sent; bind it now.
             updates = {**updates, "prompt_id": prompt_id}
-        self.store.observe(job["id"], event, updates)
+        self.store.observe(job["id"], event, updates, live=live)
 
     async def watch_events(self) -> None:
         stream = getattr(self.client, "stream_events", None)

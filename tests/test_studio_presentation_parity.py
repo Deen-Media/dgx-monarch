@@ -2,30 +2,56 @@
 from __future__ import annotations
 
 import json
+import math
 import shutil
 import subprocess
 from pathlib import Path
 
 import pytest
 
-from dgx_monarch.studio.presentation import available_memory_status, format_metric, presentation_contract
+from dgx_monarch.studio.presentation import (
+    available_memory_status,
+    format_duration_clock,
+    format_metric,
+    presentation_contract,
+)
 from dgx_monarch.tui.app import DgxmTopApp, gpu_summary, last_render_facts, terminal_palette
 
 ROOT = Path(__file__).resolve().parents[1]
+# Values JSON carries to both runtimes; "nan" and "inf" stand for the non-finite numbers.
+DURATIONS = [0, 0.4, 42.9, 59.999, 60, 73.4, 3599, 3661, 360000.5, -0.5, -60, None, "12", True, "nan", "inf",
+             2**53 - 1, 2**53, 1e300]
 
 
-def browser_values():
+def _node():
     node = shutil.which("node")
     if node is None:
         pytest.skip("Node is required for the generated browser contract check")
+    return node
+
+
+def _python_durations():
+    special = {"nan": math.nan, "inf": math.inf}
+    return [format_duration_clock(special.get(value, value) if isinstance(value, str) else value)
+            for value in DURATIONS]
+
+
+NODE_DURATIONS = ("const special = {nan: NaN, inf: Infinity};\n"
+                  f"const durations = {json.dumps(DURATIONS)}"
+                  ".map((value) => (value === 'nan' || value === 'inf' ? special[value] : value));\n")
+
+
+def browser_values():
     source = ROOT / "web/js/dgx_monarch_presentation.js"
     program = (
-        f"import {{ PRESENTATION, formatMetric, availableMemoryStatus }} from {json.dumps(source.as_uri())};\n"
+        f"import {{ PRESENTATION, formatMetric, availableMemoryStatus, formatDurationClock }} "
+        f"from {json.dumps(source.as_uri())};\n" + NODE_DURATIONS +
         "console.log(JSON.stringify({contract:PRESENTATION, "
         "values:[[1073741824,'GiB',true],[1000000000,'GB/s',true],[1750,'GHz',true],[null,'W',false]]"
-        ".map(([v,u,s])=>formatMetric(v,u,s)), states:[null,20,20.01].map(availableMemoryStatus)}));"
+        ".map(([v,u,s])=>formatMetric(v,u,s)), states:[null,20,20.01].map(availableMemoryStatus), "
+        "durations: durations.map(formatDurationClock)}));"
     )
-    result = subprocess.run([node, "--input-type=module", "-e", program], capture_output=True,
+    result = subprocess.run([_node(), "--input-type=module", "-e", program], capture_output=True,
                             text=True, timeout=30, check=True)
     return json.loads(result.stdout)
 
@@ -37,6 +63,18 @@ def test_generated_browser_and_python_contracts_and_formatters_match():
         (2**30, "GiB", True), (10**9, "GB/s", True), (1750, "GHz", True), (None, "W", False),
     )]
     assert browser["states"] == [available_memory_status(v) for v in (None, 20, 20.01)]
+    assert browser["durations"] == _python_durations()
+
+
+def test_studio_duration_clock_matches_the_python_rule():
+    """Studio's job status line formats elapsed and total time with the contract's m:ss rule."""
+    module = ROOT / "studio/src/jobStatus.ts"
+    program = (f"import {{ formatDurationClock }} from {json.dumps(module.as_uri())};\n" + NODE_DURATIONS +
+               "process.stdout.write(JSON.stringify(durations.map(formatDurationClock)));")
+    result = subprocess.run([_node(), "--input-type=module", "-e", program], capture_output=True,
+                            text=True, timeout=30, check=True)
+    assert json.loads(result.stdout) == _python_durations()
+    assert _python_durations()[:8] == ["0:00", "0:00", "0:42", "0:59", "1:00", "1:13", "59:59", "61:01"]
 
 
 def test_terminal_color_adapters_preserve_approved_memory_order_and_status():

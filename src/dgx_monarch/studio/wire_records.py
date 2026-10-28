@@ -20,9 +20,14 @@ def projection(kind: str) -> str:
     if kind == "grid_runs":
         return grid_projection()
     if kind == "jobs":
+        # started_at and ended_at are both driver-clock times from ComfyUI's events, so
+        # their difference is the driver's own measure of a job's run time.
+        # running_observed_at is the companion's clock, like server_time, so a
+        # running job's elapsed time never mixes the two hosts' clocks.
         base = _object(("id", "state", "created_at", "updated_at", "accepted_at", "prompt_id", "idempotency_key",
                         "progress", "error", "cancellation", "cancellation_scope", "external", "retry_of",
-                        "experiment_id", "cell_index", "preview_artifact_id"))
+                        "experiment_id", "cell_index", "preview_artifact_id", "started_at", "ended_at",
+                        "running_observed_at"))
         submission = _object(("project_id", "versions", "model_identities", "digest"), "$.submission")
         requested = _object(("operation", "project_id"), "$.submission.requested")
         monarch = _object(("schema_version", "event_count", "render_count", "render_status_counts",

@@ -315,6 +315,7 @@ def test_a_live_success_reads_succeeded_only_with_its_outputs(tmp_path, monkeypa
                     identity = (await response.json())["id"]
                     await until(lambda: store.get("jobs", identity)["state"] == "queued")
                     await until(lambda: bool(driver.sockets) and len(cycles) >= 1)
+                    began = time.time()
                     driver.run.set()
 
                     def receipts():
@@ -326,6 +327,13 @@ def test_a_live_success_reads_succeeded_only_with_its_outputs(tmp_path, monkeypa
                     assert not early(), views
                     current = store.get("jobs", identity)
                     assert current["state"] == "running" and current["phase"] == "execution_success", current["state"]
+                    # The driver's end time reaches the summary before settlement makes the job succeeded.
+                    early_view = await (await browser.get("/api/v1/snapshot", headers=headers)).json()
+                    running = next(row for row in early_view["jobs"] if row["id"] == identity)
+                    assert (running["state"], running["started_at"], running["ended_at"]) == ("running", 1.0, 2.0)
+                    # The companion's own start time sits on its clock, apart from the driver's 1.0 s.
+                    assert began <= running["running_observed_at"] <= time.time()
+                    assert running["running_observed_at"] <= early_view["server_time"]
                     # The success event woke the observer, and its cycle found no history entry yet.
                     await until(lambda: len(cycles) >= 2)
                     assert store.get("jobs", identity)["state"] == "running"
@@ -335,6 +343,7 @@ def test_a_live_success_reads_succeeded_only_with_its_outputs(tmp_path, monkeypa
                     snapshot = await (await browser.get("/api/v1/snapshot", headers=headers)).json()
                     row = next(row for row in snapshot["jobs"] if row["id"] == identity)
                     assert row["state"] == "succeeded"
+                    assert (row["started_at"], row["ended_at"]) == (1.0, 2.0)
                     assert [artifact["job_id"] for artifact in snapshot["artifacts"]] == [identity]
                     assert not early(), views
                     assert views[-1] == ({identity: "succeeded"}, {identity})

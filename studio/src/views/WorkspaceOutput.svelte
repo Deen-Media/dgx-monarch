@@ -1,8 +1,11 @@
 <script lang="ts">
   import type { StudioClient } from '../api';
   import type { Artifact, Telemetry, ReuseArtifact } from '../contracts';
+  import type { FollowedJob } from '../jobTracker.svelte';
+  import { isJobOutput } from '../jobFollow';
   import { formatTime } from '../model';
   import TelemetryCharts from '../components/TelemetryCharts.svelte';
+  import Thumbnail from '../components/Thumbnail.svelte';
   import type { MetricSeries, Presentation } from '../telemetryHistory';
   import Viewer from '../components/Viewer.svelte';
   let {
@@ -16,6 +19,8 @@
     driverState,
     connectionState,
     activeCount,
+    job = null,
+    working = false,
     showTelemetry,
     onselect,
     oncompare,
@@ -32,7 +37,10 @@
     presentation?: Presentation;
     driverState?: string;
     connectionState: string;
+    /** Active or unresolved jobs, as Queue counts them. */
     activeCount: number;
+    job?: FollowedJob | null;
+    working?: boolean;
     showTelemetry: boolean;
     onselect: (artifact: Artifact) => void;
     oncompare: (artifact: Artifact | null) => void;
@@ -40,16 +48,20 @@
     navigate: (view: string) => void;
     reuse: ReuseArtifact;
   } = $props();
+  // Uploads and masks have no job, and a live preview is a running job's approximate frame.
+  const outputs = $derived((artifacts ?? []).filter(isJobOutput).slice(0, 8));
 </script>
 
 <div class="workspace-center">
   <Viewer
-    {activeCount}
+    {job}
+    {working}
     artifact={selected}
     compare={comparison}
     {client}
     onreuse={reuse}
     onselect={(a) => oncompare(a)}
+    onqueue={() => navigate('queue')}
   />
   <div class="recent-strip">
     <div>
@@ -58,14 +70,14 @@
       >
     </div>
     <div class="recent-list">
-      {#each (artifacts ?? []).slice(0, 8) as artifact}<button
+      {#each outputs as artifact (artifact.id)}<button
           class:selected={selected?.id === artifact.id}
+          title={artifact.filename ?? artifact.id}
           onclick={() => onselect(artifact)}
-          ><span aria-hidden="true">{artifact.kind === 'video' ? '▷' : '▧'}</span><span
-            >{artifact.filename ?? artifact.id}</span
+          ><span class="recent-thumb" aria-hidden="true"><Thumbnail {artifact} {client} /></span
+          ><span>{artifact.intermediate ? 'Preview · ' : ''}{artifact.filename ?? artifact.id}</span
           ></button
-        >{/each}{#if !(artifacts ?? []).length}<span class="muted"
-          >Completed outputs will appear here.</span
+        >{/each}{#if !outputs.length}<span class="muted">Completed outputs will appear here.</span
         >{/if}
     </div>
   </div>
@@ -87,12 +99,16 @@
       >
     </div>
     <div class="telemetry-summary">
-      <span>Active jobs</span><strong>{activeCount}</strong><span>Driver</span><strong
+      <span>Active or unresolved jobs</span><strong>{activeCount}</strong><span>Driver</span><strong
         class="text-small">{driverState ?? 'unknown'}</strong
+      >
+      <!-- This tab's job, never the driver's global render block. -->
+      <span>{job && !job.own ? 'Newest active job' : "This tab's job"}</span><strong
+        class="text-small">{job?.headline ?? 'None'}</strong
       >
     </div>
     <TelemetryCharts {history} {presentation} />
-    <details open>
+    <details>
       <summary>Authoritative host sample</summary>
       <pre>{JSON.stringify(telemetry ?? {}, null, 2)}</pre>
     </details>

@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20; browser rows repeated on 2026-10-21 and twice on 2026-10-22, with two rows added on 2026-10-22. Status: **scoped local validation; twelve browser rows ran headless on the shipped bundle; draft acceptance remains incomplete**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21 and twice on 2026-10-22, with two rows added on 2026-10-22. Status: **scoped local validation; twelve browser rows ran headless on the 2026-10-22 bundle; the viewer job status changes since then need a re-check; draft acceptance remains incomplete**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -31,6 +31,12 @@ controls and pointer interactions were reviewed separately.
 | Project library | All six record kinds; filtering, membership, apply/edit/export/save/cancel, revisions, bounded pages, merge/copy imports, conflict choices, source repairs and import uncertainty. |
 | Settings and telemetry | Layout width, panel visibility, draft import/export, disconnect, capability disclosure, metric selection, sample inspection, table disclosure and history export. |
 
+Re-check needed: after this audit the viewer gained a job status line with a
+Queue link and a step bar, and it now shows a finished job's result unless the
+user chose another. The recent outputs strip shows thumbnails of job outputs
+only, and the telemetry panel gained a row for this tab's job and keeps the raw
+sample closed. No source or browser pass has covered these yet.
+
 The control audit found and corrected stale workflow repair text, loss of typed
 edits when validating unchanged source, incomplete project selectors, repeated
 file-selection handling, multiline editing and record updates that could replace
@@ -45,7 +51,7 @@ review fixes: Review generation takes empty text in a required input, and a
 library import that the companion refuses with `record_window_limit` no longer
 stays pending. The rows followed the
 [browser procedure](../studio/tests/README.md#browser-checks).
-The bundle was the set that `RESOURCE_SHA256` names:
+The bundle was the set that `RESOURCE_SHA256` named on that date:
 `index-BAFK232V.js`
 (`2a35c594d11aff6563cfe2ec9b89982556580db46e08a889219a0e8e9b50f505`),
 `index-DNoOs9Sm.css`
@@ -89,14 +95,14 @@ before 2026-10-21 recorded no browser, browser version or bundle hash.
 
 | Check | Observed result and scope |
 |---|---|
-| Responsive routes | All eight routes were opened at all four viewports after jobs, uploads, grids, presets and operation reviews existed. Page and main-content horizontal overflow measured zero for every route. Arbitrary user content and other expanded states remain additional combinations. |
+| Responsive routes | All eight routes were opened at all four viewports after jobs, uploads, grids, presets and operation reviews existed. Page and main-content horizontal overflow measured zero for every route. Arbitrary user content and other expanded states remain additional combinations. Re-check needed: Create's recent outputs tiles are now taller and hold thumbnails, and the viewer has a status line; no run has measured them. |
 | Phone controls | At 360 and 390 pixels wide, all 34 visible inputs, selects and textareas across the eight routes used 16px text and at least 44px height. The rule applies up to 760 pixels wide, so the 768×1024 and 1024×600 viewports keep desktop sizing. Native phone operating-system behavior was not tested. |
 | Palette and motion | Palette search held focus two frames after a pointer click or Ctrl+K opened the palette, and took focus 3ms to 5ms after a scripted open. Escape closed the palette and returned focus to its button. The dialog and backdrop reveals were declared at 200ms, and the dialog's finished 201ms to 203ms after opening. With reduced motion enabled, neither animated. A disclosure-closing sample captured 35 to 39 frames with a longest interval of 17.1ms to 17.5ms in headless Firefox's software compositor; this is local interaction evidence, not a frame-rate guarantee. |
 | Image previews | Portrait 120×480, landscape 480×120, square 256×256, wide 1024×64 and tall 64×1024 previews filled their frames at every viewport, with at most 0.053 percent aspect-ratio error and 0.017px centering error. |
 | Image upload | At every viewport the uploaded portrait came back from the fixture as 120×480 RGBA, 230,400 decoded bytes, with pixels and file bytes identical to the source. |
 | Mask alignment | Canvas bounds matched the source preview at every viewport. A pointer press at the canvas center gave a transparent box 32 or 33 pixels a side, `(44, 224, 76, 256)` at three viewports and `(43, 224, 76, 256)` at 390×844, centered within 0.03 pixels of the press. Center alpha was 0 and corner alpha 255, matching the inverse-alpha mask convention. |
 | Video controls | A 2-second 24fps H.264 clip decoded, played, paused, muted and looped in the viewer. Frame stepping stayed disabled, because ComfyUI reports no frame rate for the videos it saves. Details opened the metadata panel at its full 260px at every viewport. The panel no longer shrinks, and in a short window the viewer column scrolls to it; before that fix the panel collapsed to zero height at 1024×600. This does not establish synchronization across codecs or real devices. |
-| Generation activity | While a 30-second fixture job ran, the viewer border ran a 2.4-second opacity animation and passed clicks through to the viewer at every viewport. The logo animated at 768 and 1024 pixels wide; the phone layout hides it. Reduced motion stopped both. |
+| Generation activity | While a 30-second fixture job ran, the viewer border ran a 2.4-second opacity animation and passed clicks through to the viewer at every viewport. The logo animated at 768 and 1024 pixels wide; the phone layout hides it. Reduced motion stopped both. Re-check needed: the viewer's job status line and the bar that sweeps when the driver reports no step count came later, and no run has covered them or the still bar under reduced motion. |
 | Editing and saved state | Editing a reviewed two-cell grid removed its confirmation and submit control. Renaming a preset while a different draft was active kept the preset's original values. Enter kept two lines in the prompt field, also after a tab switch. |
 | Operation review | The read-only version review and its durable record were opened at every viewport. No host operation was applied. The receipt list shows the oldest receipt first. |
 | Sign-in link | Opening `sign-in.html` by its `file://` path connected the workspace without typing in 0.30 to 0.31 seconds. `location.hash` was empty, and the token the tab kept matched the companion's token file by SHA-256. None of the 30 requests recorded at each viewport carried the token in its request line or a `Referer` header; Firefox reported the document address with its fragment in that event, and a browser never sends the fragment. A reload stayed connected. After a restart, the old link showed the stale-link sentence in the page's error notice, above the token form. The closed profile's history database held one row for `token=`: the old link, visited twice, so the link stays in browser history. A companion started with `--allow-management` wrote no `sign-in.html` and showed the token form. |

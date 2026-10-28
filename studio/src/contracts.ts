@@ -43,7 +43,13 @@ export interface Job {
     project_id?: string;
     [key: string]: unknown;
   };
-  progress?: { max?: number; value?: number; node?: string | number };
+  progress?: { max?: number; value?: number; node?: string | number } | null;
+  /** Driver-clock times from ComfyUI's start and end events, in seconds; null when not reported. */
+  started_at?: number | null;
+  ended_at?: number | null;
+  /** The companion's own clock, like `server_time`, when it first saw the job running. */
+  running_observed_at?: number | null;
+  error?: { code?: string; message?: string; [key: string]: unknown } | null;
   monarch?: {
     schema_version: number;
     event_count: number;
@@ -71,6 +77,8 @@ export interface Artifact {
   created_at: number;
   project_id?: string;
   intermediate?: boolean;
+  /** `live_preview` marks the approximate frame a running job streams. */
+  source?: string;
   state?: string;
   status?: string;
   metadata?: {
