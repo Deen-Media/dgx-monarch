@@ -6978,11 +6978,13 @@ correct by that owner, not reproduced here), or `mode=local` with
 `gpus_per_host=1` for one GPU. dgx-monarch 1.3.0 and earlier render these
 layouts with no error.
 
-## 137. An Ideogram4 render on a Ulysses degree that does not divide 18 heads refuses before any load
+## 137. An Ideogram4 render on a Ulysses degree that does not divide 18 heads refuses after the load and before any forward binds
 
 **Symptom:** an `ideogram4` render on explicit `uly4`, or on any topology
 whose Ulysses degree is not 2, 3, 6 or 9, refuses class P with a message that
-opens "ideogram4: this checkpoint has 18 attention heads". `uly2`, `ring2`,
+opens "ideogram4: this checkpoint has 18 attention heads". The refusal comes
+after each rank has loaded the model and before any forward binds, so it
+costs the load but not a crash. `uly2`, `ring2`,
 `cfg2` and, at world 4, `ring4` and `auto`'s uly2+ring2 fold are not refused.
 The sweep matrix labels the same cells `refuse:P`.
 

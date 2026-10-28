@@ -161,9 +161,10 @@ and `[studio]` tables and your `[worker_args]` keys, so stop adding them back
   fidelity limit at world 4; uly4 is the explicit choice there
   ([#136](docs/TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
 - Ideogram4 refuses a Ulysses degree that does not divide its 18 attention
-  heads before any load, as FLUX.3 and MOSS-Image do, where 1.3.0 loaded
-  every rank and crashed in the all-to-all; the sweep matrix labels it
-  ([#137](docs/TROUBLESHOOTING.md#137-an-ideogram4-render-on-a-ulysses-degree-that-does-not-divide-18-heads-refuses-before-any-load)).
+  heads after the load and before any forward binds, as FLUX.3 and MOSS-Image
+  do, where 1.3.0 went on into the all-to-all and crashed there; the sweep
+  matrix labels it
+  ([#137](docs/TROUBLESHOOTING.md#137-an-ideogram4-render-on-a-ulysses-degree-that-does-not-divide-18-heads-refuses-after-the-load-and-before-any-forward-binds)).
 - The driver refuses a MOSS-Image render whose prompt carries an effective
   text attention bias before dispatch when Ulysses or ring is above one, on
   the same predicate the Worker's sharded forward uses, so no Worker loads
