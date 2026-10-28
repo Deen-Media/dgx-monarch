@@ -1962,7 +1962,13 @@ The ring2 cell with the LoRA rendered its cold and warm legs in both of two
 sessions and refused its probe leg class C both times: the one-step re-load
 was priced while the driver host still held the resident model, the capacity
 wall of [#47](TROUBLESHOOTING.md#47-wan-scailscail-2-render-refused-activation-footprint-preflight),
-so that cell carries no fidelity reading. NOT RUN: SCAIL Preview on cfg2
+so that cell carries no fidelity reading. On 2026-10-28 the four-Spark owner
+published their world-4 probe frames and per-frame NRMS in
+[issue #100](https://github.com/Deen-Media/dgx-monarch/issues/100): uly4
+bit-identical to one GPU, ring4 at 0.117, uly2+ring2 at 0.153 and uly2+cfg2
+at 0.116246, which equals the world-2 cfg2 reading without a LoRA above to six
+digits; the ring difference images show a vertical seam and the cfg2 error
+spreads over the frame. NOT RUN: SCAIL Preview on cfg2
 (refused alike, since it shares the forward), every layout at world 4 (no
 four-node rig here), and the 40-step recipe under cfg2.
 

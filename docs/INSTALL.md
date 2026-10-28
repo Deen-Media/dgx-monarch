@@ -1070,9 +1070,8 @@ Read this before the first update from 1.3.0, in this order. An install on
    residency and LoRA combination runs its first-use Gate again, once
    ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
 4. Two renders that 1.3.0 ran now refuse before dispatch. SCAIL and SCAIL-2
-   refuse `cfg2` and every cfg composite class P, and ring attention at a
-   sequence-parallel world of four or more; `uly2` and `ring2` at world 2
-   still run
+   refuse `cfg2` and every cfg composite class P, and ring attention at any
+   sequence-parallel world above two; `uly2` and `ring2` at world 2 still run
    ([TROUBLESHOOTING #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
    On ComfyUI 0.43.0 a MOSS-Image edit whose `image_strength` is above 0 and
    other than 1.0 refuses under sequence parallelism, where 1.3.0 rendered it

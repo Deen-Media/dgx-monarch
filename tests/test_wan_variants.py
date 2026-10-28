@@ -787,8 +787,8 @@ def test_scail_refuses_cfg_parallel_with_the_measured_reason():
 
 
 @pytest.mark.parametrize("ring, world, refused", [
-    (1, 1, False), (1, 2, False), (2, 2, False), (1, 4, False),
-    (2, 4, True), (4, 4, True), (2, 8, True), (8, 8, True)])
+    (1, 1, False), (1, 2, False), (2, 2, False), (1, 3, False), (1, 4, False),
+    (3, 3, True), (2, 4, True), (4, 4, True), (2, 8, True), (8, 8, True)])
 def test_scail_ring_degree_guard(ring, world, refused):
     from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
 

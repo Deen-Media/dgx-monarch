@@ -45,6 +45,7 @@ from dgx_monarch.adapters import (  # noqa: E402
     attention_capability,
     minimax_h3,
     omnigen2,
+    pixeldit,
     quant_activation_scale,
     sol_attention,
     wan_variants,
@@ -59,6 +60,7 @@ from dgx_monarch.adapters.detect import (  # noqa: E402
     sniff_checkpoint_for_topology,
     sniff_fsdp_launch_quant,
 )
+from dgx_monarch.adapters.flux3_packing import refuse_indivisible_heads  # noqa: E402
 from dgx_monarch.adapters.fsdp import validate_fsdp_launch_loras, validate_fsdp_launch_quant  # noqa: E402
 from dgx_monarch.adapters.fsdp_lora_admission import refuse_fsdp_lora_checkpoint_property  # noqa: E402
 from dgx_monarch.capacity_lora_bake import patched_base_keys  # noqa: E402
@@ -953,6 +955,12 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
         # topology carries the same ring degree and sequence-parallel world.
         if found := _guard(wan_variants.assert_scail_ring_degree,
                            topo.ring, topo.ulysses * topo.ring):
+            return found, "guard", False, guards
+    if family == "ideogram4":
+        # The adapter refuses a Ulysses degree that does not divide comfy's 18
+        # Ideogram4 heads at injection (adapters/pixeldit.py, #137).
+        if found := _guard(refuse_indivisible_heads, pixeldit.IDEOGRAM4_HEADS, topo.ulysses,
+                           family="ideogram4", divisors=pixeldit.IDEOGRAM4_DIVISORS):
             return found, "guard", False, guards
     if adapter is not None:
         if found := (_guard(assert_cfg_parallel_supported, adapter, topo.cfg, dual)
