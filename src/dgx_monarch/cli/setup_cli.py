@@ -48,6 +48,28 @@ _BLOCKER_ACTIONS = {
         "Point --comfy-dir at a ComfyUI checkout containing comfy/sd.py, then rerun setup; "
         "see docs/INSTALL.md."
     ),
+    # A re-apply keeps the existing file's operator tables; one that fails the
+    # checks blocks it (setup_config_carry.py, docs/CLUSTER.md#re-running-setup).
+    "existing_config_invalid_toml": (
+        "Correct the existing cluster config's TOML syntax, or move the file aside, then rerun setup; "
+        "setup must read the file to keep its override tables."
+    ),
+    "existing_config_fabric_invalid": (
+        "Correct or remove each [fabric.<name>] table that refused_tables names in the existing "
+        "cluster config, then rerun setup; see docs/CLUSTER.md#fabric-profiles."
+    ),
+    "existing_config_worker_args_invalid": (
+        "Correct or remove your keys in the existing config's [worker_args] table, then rerun setup; "
+        "with the profile's residency keys they must pass the [worker_args] checks."
+    ),
+    "existing_config_monarch_invalid": (
+        "Correct or remove the existing config's [monarch] table, then rerun setup; each host_targets "
+        "entry must name a host this setup lists."
+    ),
+    "existing_config_studio_invalid": (
+        "Correct or remove the existing config's [studio] table, then rerun setup; "
+        "see docs/CLUSTER.md#studio-optional."
+    ),
 }
 
 
@@ -267,6 +289,28 @@ def print_plan(plan: SetupPlan, *, stream: TextIO | None = None) -> None:
         print("(no config changes)", file=stream)
 
 
+def _table_names(payload: dict[str, object], key: str) -> str:
+    tables = payload.get(key)
+    if not isinstance(tables, list):
+        return ""
+    return ", ".join(f"[{table}]" for table in tables if isinstance(table, str))
+
+
+def _print_existing_tables(plan: SetupPlan, *, stream: TextIO | None = None) -> None:
+    """Name the existing file's tables the plan keeps, and those that block it."""
+    payload = plan.as_dict()
+    kept = _table_names(payload, "kept_tables")
+    refused = _table_names(payload, "refused_tables")
+    if kept:
+        print(f"  existing config tables kept: {kept}", file=stream or sys.stdout)
+    if refused:
+        print(
+            f"  existing config tables refused: {refused}; correct or remove them in that file, "
+            "then run setup again",
+            file=stream or sys.stdout,
+        )
+
+
 def _result_payload(request: SetupRequest, outcome: SetupOutcome) -> dict[str, object]:
     """Build JSON only from backend disclosure-safe views, never the plan diff."""
     payload = {"operation": "setup", **outcome.as_dict()}
@@ -356,6 +400,7 @@ def run(args: Namespace) -> int:
         print(f"setup: {display_status}")
         if outcome.failure:
             print(f"  result: {outcome.failure}")
+        _print_existing_tables(outcome.plan)
         if request.receipt_path is not None and not outcome.receipt_written:
             print("  receipt: FAILED (requested receipt was not written)")
         elif outcome.receipt_written:

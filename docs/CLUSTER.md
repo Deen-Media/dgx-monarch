@@ -57,6 +57,36 @@ contextual PASS and INCONCLUSIVE rows ineligible until the gate checks the new
 configuration. A sticky FAIL stays in force: no profile change or config rewrite
 clears it.
 
+### Re-running setup
+
+A `dgxm setup --apply` over an existing file keeps what setup does not write
+itself:
+
+* every `[fabric.<name>]` table, unselected ones included;
+* `[monarch]`, with its `[monarch.rdma]`, `host_targets` and
+  `[monarch.diagnostics]` tables;
+* `[studio]`;
+* your own `[worker_args]` keys. The profile still sets or removes
+  `lora_low_rss` and `slab_weights`, as the table above shows.
+
+Setup writes `[cluster]` and `[[hosts]]` from its options on every run, so
+pass the same `--comfy-dir` and host fields again. Keys it does not write
+there, such as `rdma_min_bytes`, do not survive. It also picks
+`fabric_profile` again, and a kept `[fabric.<name>]` table takes effect only
+when `fabric_profile` names it, so pass `--fabric-profile` when setup would
+pick another profile. Setup rewrites each kept table from its values, so
+comments inside it are lost; the diff shows every change.
+
+The plan lists the kept tables in `kept_tables` with the warning
+`existing_config_overrides_kept`, the receipt counts them in a step of that
+name, and the closing summary names them. A kept table must pass the same
+checks as the rest of the file, for the hosts you list. One that fails, such
+as a `host_targets` entry for a host you dropped, appears in `refused_tables`
+and blocks the apply until you correct or remove it in the existing file.
+Setup also refuses an existing file that is not valid TOML, since it cannot
+tell which tables the file holds. `dgxm init` and Studio's init action write
+a new file without these tables.
+
 ## `[cluster]`
 
 | key | default | meaning |
@@ -492,11 +522,13 @@ Before you add the table:
 2. A byte edit retires the fleet. In cluster mode the Init node fingerprints
    the file's bytes on every Queue, so adding or editing `[studio]` retires
    the attached fleet like any other edit. Edit it when no render runs.
-3. Re-setup drops the table. `dgxm setup --apply`, `dgxm init` and Studio's
-   init adapter write a new file without `[studio]`, as they drop `[monarch]`
-   and `[fabric.*]`; the reviewed diff shows the removal. Add the table again
-   afterwards. An installed Studio service keeps the values it was written
-   with, and `dgxm studio open` names the fields that differ.
+3. Only guided setup keeps the table. `dgxm setup --apply` keeps `[studio]`
+   when it rewrites the file ([Re-running setup](#re-running-setup)).
+   `dgxm init` and Studio's init action write a new file without `[studio]`,
+   as they drop `[monarch]` and `[fabric.*]`; the reviewed diff shows the
+   removal. After either, add the table again. An installed Studio service
+   keeps the values it was written with, and `dgxm studio open` names the
+   fields that differ.
 
 ## Worker transport security
 
@@ -549,6 +581,27 @@ FSDP (VALIDATION.md), so
 or worker-shell value includes `LL`.
 
 Fabric environment settings apply only inside worker actor processes.
+
+### Switched fabrics
+
+The shipped `dgx-spark-pair` profile assumes two Sparks joined by a direct
+cable. One owner of four Sparks on a switched 100GbE RoCE fabric reported
+needing this override
+([forum post by barichardson](https://forums.developer.nvidia.com/t/dgx-monarch-dual-spark-rendering-w-comfyui/385450/17)).
+It is quoted as reported; the maintainer has not reproduced it:
+
+```toml
+[fabric.dgx-spark-pair]
+NCCL_IB_HCA = "rocep1s0f0,roceP2p1s0f1,roceP2p1s0f0,rocep1s0f1"
+NCCL_IB_TC = 104
+```
+
+`NCCL_IB_HCA` names all four RoCE functions of each Spark, and
+`NCCL_IB_TC = 104` puts the traffic on the switch's lossless class. They saw
+all four rails carry balanced traffic with it. A `dgxm setup --apply` re-run
+keeps the block ([Re-running setup](#re-running-setup)). Setup picks
+`dgx-spark-pair` only for two GB10 hosts and `generic-roce` for more, so on
+four Sparks pass `--fabric-profile dgx-spark-pair` for the block to apply.
 
 ---
 See [VALIDATION.md](VALIDATION.md) for fabric measurements and setup test

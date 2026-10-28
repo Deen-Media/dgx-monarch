@@ -166,6 +166,10 @@ class SetupPlan:
     privileged_process_inspection: bool
     blockers: tuple[str, ...]
     warnings: tuple[str, ...]
+    # Headers of the existing file's tables the candidate keeps, and of those
+    # that fail the checks and block the apply (setup_config_carry.py).
+    kept_tables: tuple[str, ...] = ()
+    refused_tables: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, object]:
         return {
@@ -185,6 +189,8 @@ class SetupPlan:
             "ready": not self.blockers,
             "blockers": list(self.blockers),
             "warnings": list(self.warnings),
+            "kept_tables": list(self.kept_tables),
+            "refused_tables": list(self.refused_tables),
         }
 
 

@@ -1962,6 +1962,7 @@ dgx-monarch/
 │       ├── setup_apply.py      # confirmed lock-held setup mutation/settlement
 │       ├── setup_cli.py        # strict public setup parsing/presentation boundary
 │       ├── setup_command.py    # plan/confirmation/config-lock coordinator
+│       ├── setup_config_carry.py # operator tables a re-apply keeps from the existing file
 │       ├── setup_config_fd.py  # cancellation-safe bounded fd primitives
 │       ├── setup_config_io.py  # strict rendering/snapshot/atomic config I/O
 │       ├── setup_config_lock.py # shared per-destination config-mutation lock
