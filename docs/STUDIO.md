@@ -681,15 +681,16 @@ flight animate the viewer border and the logo.
 When the followed job succeeds, the viewer shows its last final image or video,
 unless you chose another result or a comparison after the job began, or a
 comparison is open. When the snapshot leaves that output out, Studio asks for
-the job's outputs, at most three times. This changes only the viewer, never the
-draft. A job this page submitted counts as new even when its submit reply was
-lost. After a reload Studio shows no result of a job that had already ended, so
-an earlier result never shows as new. The recent outputs strip shows previews of
-job outputs only: uploads, masks and live previews stay out of it, and an
-intermediate output carries a Preview label. The telemetry panel names this
-tab's job, or the newest active job, with its state and time; it never ties the
-driver's last render to a job. The raw host sample stays closed until you open
-it.
+the job's outputs, at most three times. The answer lists them most recently
+stored first, as the snapshot does, so the viewer shows the same output either
+way. This changes only the viewer, never the draft. A job this page submitted
+counts as new even when its submit reply was lost. After a reload Studio shows
+no result of a job that had already ended, so an earlier result never shows as
+new. The recent outputs strip shows previews of job outputs only: uploads, masks
+and live previews stay out of it, and an intermediate output carries a Preview
+label. The telemetry panel names this tab's job, or the newest active job, with
+its state and time; it never ties the driver's last render to a job. The raw
+host sample stays closed until you open it.
 
 Image previews retain their source proportions across portrait, landscape and
 extreme aspect ratios. The mask canvas follows the displayed source bounds, so
@@ -1117,11 +1118,13 @@ budget, prioritizing unresolved jobs and reporting omitted counts. Job history
 returns summaries; full job provenance and operation receipts load by identity
 when opened or exported. Artifact lists omit only the derived search index.
 Record and history pages are limited to 8 MiB; cursors advance by actual
-returned rows. Record storage permits 2,000 editable records per kind. The
-browser bounds loaded record windows and catalogs to 8 MiB and 2,000 rows, and
-the companion refuses a save or a library import that would take a kind's
-catalog past that 8 MiB window before it commits. A new record keeps one identity per form until its
-save is confirmed, so a retried save that already committed reads as saved.
+returned rows. Artifact pages list outputs with equal creation times most
+recently stored first, as snapshots do. Record storage permits 2,000 editable
+records per kind. The browser bounds loaded record windows and catalogs to
+8 MiB and 2,000 rows, and the companion refuses a save or a library import
+that would take a kind's catalog past that 8 MiB window before it commits. A
+new record keeps one identity per form until its save is confirmed, so a
+retried save that already committed reads as saved.
 
 Studio decodes at most 16 megapixels (4096 x 4096 pixels) per image, for input
 uploads and thumbnails alike, and checks that from the file header before it

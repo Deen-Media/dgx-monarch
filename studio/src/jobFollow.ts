@@ -64,8 +64,8 @@ export function isJobOutput(artifact: Artifact): boolean {
 /**
  * The result to show for a finished job: its newest final image or video. Outputs that one
  * history entry lists share a creation time, so among equal times the first listed wins. The
- * snapshot lists the most recently stored first, which makes it the last output the job stored;
- * the artifacts route lists equal times by identity instead.
+ * snapshot and the artifacts route both list equal times most recently stored first, so on
+ * either path the first listed is the last output the job stored.
  */
 export function finalOutput(jobId: string, artifacts: readonly Artifact[]): Artifact | null {
   let found: Artifact | null = null;

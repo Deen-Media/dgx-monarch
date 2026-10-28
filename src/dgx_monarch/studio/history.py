@@ -72,6 +72,17 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
                 path = "$.submission" if key == "q" else "$.submission.model_identities"
             clauses.append(f"instr(lower(COALESCE(json_extract(document,'{path}'),'')),lower(?))>0")
             params.append(value)
+    direction, op = ("DESC", "<") if order == "newest" else ("ASC", ">")
+    # The outputs one driver history entry lists share a created_at. Under newest, artifacts
+    # list equal times as the snapshot does, last stored first and then by identity ascending,
+    # so both name the same final output of a job; oldest reverses that. Jobs keep identity
+    # alone: progress rewrites a running job, and a key that moves would skip or repeat it.
+    stored = kind == "artifacts"
+    if stored:
+        reverse, back = ("ASC", ">") if order == "newest" else ("DESC", "<")
+        ties, after = f"updated {direction},id {reverse}", f"(updated{op}? OR (updated=? AND id{back}?))"
+    else:
+        ties, after = f"id {direction}", f"id{op}?"
     if query.get("cursor"):
         try:
             encoded = query["cursor"]
@@ -80,23 +91,26 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
             cursor = json.loads(base64.urlsafe_b64decode(encoded))
             if cursor["filter"] != fingerprint or not isinstance(cursor["id"], str) or not math.isfinite(cursor["time"]):
                 raise ValueError
+            if stored and not math.isfinite(cursor["updated"]):
+                raise ValueError
         except (ValueError, TypeError, KeyError, OverflowError) as exc:
             raise StudioError("history_cursor", "Invalid cursor or changed filters; restart pagination.") from exc
-        op = "<" if order == "newest" else ">"
-        clauses.append(f"({created}{op}? OR ({created}=? AND id{op}?))")
-        params.extend([cursor["time"], cursor["time"], cursor["id"]])
-    direction = "DESC" if order == "newest" else "ASC"
+        clauses.append(f"({created}{op}? OR ({created}=? AND {after}))")
+        params.extend([cursor["time"], cursor["time"], *((cursor["updated"], cursor["updated"]) if stored else ()),
+                       cursor["id"]])
     with store.lock:
         # All SQL fragments are constants selected above; user values are bound parameters.
-        rows = store.db.execute(f"SELECT {projection(kind)},{created},id FROM objects WHERE {' AND '.join(clauses)} "  # noqa: S608
-                                f"ORDER BY {created} {direction},id {direction} LIMIT ?", [*params, limit + 1])
+        rows = store.db.execute(f"SELECT {projection(kind)},{created},id,updated FROM objects "  # noqa: S608
+                                f"WHERE {' AND '.join(clauses)} ORDER BY {created} {direction},{ties} LIMIT ?",
+                                [*params, limit + 1])
         items: list[dict[str, Any]] = []
         byte_count = 4096  # Response envelope and cursor.
         more = False
         # The cursor names the key SQLite sorted by: list projections re-render
         # created_at at 15 significant digits, and even a stored value can parse
         # an ulp apart, so a key read back from a row would repeat or skip one.
-        boundary: tuple[Any, str] = (0, "")
+        # updated is a REAL column, so its value reads back exactly.
+        boundary: tuple[Any, str, float] = (0, "", 0.0)
         for row in rows:
             item = decode_row(kind, row[0])
             size = len(canonical(item).encode()) + 1
@@ -106,12 +120,14 @@ def _page(store: Store, kind: str, query: dict[str, Any]) -> dict[str, Any]:
                 more = True
                 break
             items.append(item)
-            boundary = (row[1], row[2])
+            boundary = (row[1], row[2], row[3])
             byte_count += size
     next_cursor = None
     if more:
-        next_cursor = base64.urlsafe_b64encode(canonical({"filter": fingerprint, "time": boundary[0],
-                                                        "id": boundary[1]}).encode()).decode()
+        resume = {"filter": fingerprint, "time": boundary[0], "id": boundary[1]}
+        if stored:
+            resume["updated"] = boundary[2]
+        next_cursor = base64.urlsafe_b64encode(canonical(resume).encode()).decode()
     return {"items": items, "next_cursor": next_cursor}
 
 
