@@ -12,8 +12,8 @@ Workers run from a release slot, use only `dgxm update --verify`
 dependencies and the Gate protocol do not change. SCAIL and SCAIL-2 now refuse
 `cfg2`, every cfg composite and ring beyond world 2
 ([TROUBLESHOOTING #136](docs/TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)), and on ComfyUI 0.43.0 a
-MOSS-Image edit with an image strength other than 1.0 refuses under sequence
-parallelism ([TROUBLESHOOTING #135](docs/TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
+MOSS-Image edit with an image strength above 0 and other than 1.0 refuses under
+sequence parallelism ([TROUBLESHOOTING #135](docs/TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
 `dgxm setup --apply` keeps the existing file's `[fabric.<name>]`, `[monarch]`
 and `[studio]` tables and your `[worker_args]` keys, so stop adding them back
 ([CLUSTER](docs/CLUSTER.md#re-running-setup)).
@@ -127,10 +127,11 @@ and `[studio]` tables and your `[worker_args]` keys, so stop adding them back
 
 - The `moss_image` adapter follows ComfyUI v0.43.0's MOSS-Image forward
   (commit 9fe7ef764), which takes a text attention bias that the Text Encode
-  MOSS-Image Edit node attaches when its `image_strength` is not 1.0. Under
-  sequence parallelism such a render now refuses class P on every Worker
-  before the first block, because the sharded attention kernel cannot add the
-  bias; 1.3.0 dropped it and rendered as if the strength were 1.0
+  MOSS-Image Edit node attaches when its `image_strength` is above 0 and
+  other than 1.0. Under sequence parallelism such a render now refuses class
+  P on every Worker before the first block, because the sharded attention
+  kernel cannot add the bias; 1.3.0 dropped it and rendered as if the
+  strength were 1.0
   ([#135](docs/TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)).
   An all-zero bias still renders, single, cfg2 and dp2 apply the bias in
   ComfyUI's own forward, and text-to-image renders are unaffected. The comfy
