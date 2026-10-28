@@ -27,7 +27,7 @@ export function experimentDefinition(data: RecordData) {
     axisA: axes[0].name,
     valuesA: JSON.stringify(axes[0].values),
     axisB: axes[1]?.name ?? '',
-    valuesB: JSON.stringify(axes[1]?.values ?? [1]),
+    valuesB: axes[1] ? JSON.stringify(axes[1].values) : '',
     seedPolicy: String(request.seed_policy ?? 'fixed'),
     seedBinding: String(request.seed_binding ?? ''),
     baseSeed: typeof request.base_seed === 'number' ? request.base_seed : 0,

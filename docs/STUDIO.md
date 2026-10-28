@@ -640,6 +640,9 @@ lists operations to review and, once you type, packaged workflows to load, as
 [Working with workflows](#working-with-workflows) describes. Escape
 closes dialogs or leaves presentation mode. Project selectors include the full
 bounded project catalog, including projects outside the recent snapshot.
+The Telemetry and Console buttons in the footer show and hide the Spark
+telemetry panel and the event console, and Settings has a checkbox for each.
+The browser keeps that choice, and a saved session records it.
 
 Phone layouts use a scrolling bottom navigation rail, larger touch controls and
 stacked panels. Expanded viewer details remain reachable without clipping the
@@ -753,6 +756,23 @@ File names never establish model compatibility.
 Execution-time guards still check the actual model and topology. A schema-only
 preview is not a memory-admission, topology or identity-gate PASS.
 
+Prompt styles change the text of the prompt input, and of the optional negative
+prompt input, that you choose under Ordered prompt styles on Create. Studio
+applies the styles from top to bottom, to the prompt and the negative prompt
+separately. Each `{prompt}` in a style's text stands for the text so far. A
+style whose text has no `{prompt}` adds that text after the text so far, with a
+comma and a space between them, and an empty style text leaves the text as it
+was. For example, the prompt "a red fox" with the style "oil painting" and then
+the style "(({prompt}))" gives "((a red fox, oil painting))"; in the other order
+it gives "((a red fox)), oil painting". Make styles in Library under styles, and
+add one to the draft with Append style, which puts it at the bottom. Move up and
+Move down on Create change the order. Each move is one draft change, so Undo
+puts the style back. Submission review shows the effective text, and the
+submission also keeps the text as it was before the styles. Studio skips a draft
+entry whose `enabled` field is false; Create has no control that sets it. Style
+records saved before Library dropped its Style mode select may carry a `mode`
+field, `append` or `template`. Studio ignores it, and only `{prompt}` decides.
+
 Review generation opens a dialog that starts with a status line: ready to
 submit, or what blocks the job. A summary follows with the workflow and
 operation, the model files, the seeds, the prompt text the job sends, the
@@ -814,6 +834,18 @@ submission against it the same way and keeps the frozen request unchanged. It
 records the driver version and runtime the retry ran against in `retry_runtime`,
 which a grid's full record also shows per cell, and comparisons of a retry read
 those recorded versions.
+
+To run a grid, load a workflow in Create and set its inputs there: each cell is
+that Create draft with the axis values filled in. On Grids, pick an input for
+Axis A and list its values as a JSON array, for example `[20, 30, 40]` for steps
+20, 30 and 40. An optional Axis B multiplies the cells, so three values on Axis
+A and two on Axis B make six cells. Press Validate every cell, tick the review
+box and press Submit reviewed grid. When a cell finishes, Inspect full
+submission lists its outputs; View shows one, and Compare sets it as the
+comparison for the output in view. The value fields start empty. Validate every
+cell stays disabled until the draft has a workflow, Axis A names an input and
+each chosen axis holds a JSON array with at least one value; the line beside the
+button names what is missing.
 
 Parameter grids use typed workflow inputs or named style stacks as axes. A
 style-axis value is an ordered list of saved style IDs; an empty list selects

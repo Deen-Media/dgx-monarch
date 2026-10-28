@@ -411,7 +411,6 @@
           onuseseed={useSeed}
           onselect={(a) => (tracker.selected = a)}
           oncompare={(a) => (tracker.comparison = a)}
-          oncollapse={() => (showTelemetry = false)}
           {navigate}
           {reuse}
         />

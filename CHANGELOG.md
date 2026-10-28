@@ -47,6 +47,12 @@
   the list. The command palette can also load a packaged workflow by title,
   and `GET /api/v1/workflows` gains a `title` field beside the unchanged
   file-stem `name`.
+- Studio's Create panel explains how ordered prompt styles combine, with a
+  worked example, and lets you move each applied style up or down; Library
+  drops its Style mode select, which never changed the result. Grids opens
+  with a how-to, starts with empty value fields and says why Validate every
+  cell is disabled, and the telemetry panel and event console lose their
+  close buttons in favor of the footer toggles and Settings.
 
 ### Installation and updates
 

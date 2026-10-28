@@ -46,7 +46,6 @@
     recordName = $state(''),
     recordText = $state(''),
     negativeText = $state(''),
-    styleMode = $state('append'),
     gridId = $state(''),
     selectedRecord = $state<StoredRecord | null>(null);
   let projectOptions = $state<StoredRecord[]>([]);
@@ -146,7 +145,7 @@
       data.project_ids = recordKind === 'projects' ? [] : membership;
       if (!data.name) throw new Error('Enter a record name.');
       if (recordKind === 'styles')
-        data = { ...data, prompt: recordText, negative_prompt: negativeText, mode: styleMode };
+        data = { ...data, prompt: recordText, negative_prompt: negativeText };
       else if (recordKind === 'experiments') data = { ...data, notes: recordText, grid_id: gridId };
       else if (recordKind === 'projects') data.notes = recordText;
       const editing = selectedRecord;
@@ -161,7 +160,6 @@
       recordName = '';
       recordText = '';
       negativeText = '';
-      styleMode = 'append';
       gridId = '';
       await load();
     } catch (e) {
@@ -207,7 +205,6 @@
           recordName = '';
           recordText = '';
           negativeText = '';
-          styleMode = 'append';
           gridId = '';
           membership = draft.project_id ? [draft.project_id] : [];
         }}>{kind}</button
@@ -244,7 +241,6 @@
                 recordName = record.data?.name ?? '';
                 recordText = record.data?.notes ?? record.data?.prompt ?? '';
                 negativeText = record.data.negative_prompt ?? '';
-                styleMode = String(record.data.mode ?? 'append');
                 gridId = typeof record.data.grid_id === 'string' ? record.data.grid_id : '';
                 membership = recordProjects(record.data);
               }}>Edit</button
@@ -268,7 +264,7 @@
         disabled={busy}
         bind:value={recordName}
       />{#if ['projects', 'styles', 'experiments'].includes(recordKind)}<label for="record-text"
-          >{recordKind === 'styles' ? 'Prompt text to append' : 'Notes'}</label
+          >{recordKind === 'styles' ? 'Prompt text' : 'Notes'}</label
         ><textarea id="record-text" rows="6" disabled={busy} bind:value={recordText}
         ></textarea>{/if}
       {#if recordKind === 'styles'}
@@ -276,14 +272,9 @@
           >Negative prompt<textarea rows="3" disabled={busy} bind:value={negativeText}
           ></textarea></label
         >
-        <label
-          >Style mode<select disabled={busy} bind:value={styleMode}
-            ><option value="append">Append</option><option value="template">Template</option
-            ></select
-          ></label
-        >
         <p class="muted">
-          Use {'{prompt}'} to insert the existing text. Without it, text is appended in stack order.
+          {'{prompt}'} stands for the text so far. Studio adds text without {'{prompt}'} at the end, after
+          a comma. The negative prompt follows the same rule, and Create applies styles from top to bottom.
         </p>
       {/if}
       {#if recordKind === 'experiments'}<label
@@ -327,7 +318,6 @@
             recordName = '';
             recordText = '';
             negativeText = '';
-            styleMode = 'append';
             gridId = '';
           }}>Cancel edit</button
         >{/if}

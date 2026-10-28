@@ -26,7 +26,6 @@
     onuseseed,
     onselect,
     oncompare,
-    oncollapse,
     navigate,
     reuse,
   }: {
@@ -48,7 +47,6 @@
     onuseseed: (seeds: Seeds) => void;
     onselect: (artifact: Artifact) => void;
     oncompare: (artifact: Artifact | null) => void;
-    oncollapse: () => void;
     navigate: (view: string) => void;
     reuse: ReuseArtifact;
   } = $props();
@@ -91,7 +89,6 @@
 {#if showTelemetry}<aside class="telemetry-panel" id="studio-telemetry">
     <div class="panel-title">
       <h2>Spark telemetry</h2>
-      <button onclick={() => oncollapse()} aria-label="Collapse telemetry">×</button>
     </div>
     <div class="sample-state">
       <span class="status-dot" class:healthy={connectionState === 'connected'}

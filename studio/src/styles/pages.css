@@ -164,6 +164,16 @@
   gap: 16px;
   margin-top: 22px;
 }
+.grid-guide ol {
+  margin: 0 0 14px;
+  padding-left: 20px;
+}
+.grid-guide li {
+  margin-bottom: 6px;
+}
+.validate-reason {
+  margin-left: 10px;
+}
 .library-record {
   margin-bottom: 15px;
 }
@@ -174,7 +184,8 @@
   margin: 18px 0;
   font-size: 12px;
 }
-.lora-card {
+.lora-card,
+.style-card {
   border: 1px solid var(--border);
   background: #20252d;
   padding: 12px;
@@ -187,8 +198,12 @@
 .lora-card .input-row label {
   font-size: 10px;
 }
-.lora-card .workflow-actions {
+.lora-card .workflow-actions,
+.style-card .workflow-actions {
   margin-bottom: 0;
+}
+.style-card .workflow-actions small {
+  align-self: center;
 }
 .stack-row {
   display: flex;

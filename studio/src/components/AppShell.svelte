@@ -142,10 +142,7 @@
       >
         <div class="panel-title">
           <h2>Event console</h2>
-          <button onclick={() => (connection.logs = [])}>Clear view</button><button
-            onclick={() => (showConsole = false)}
-            aria-label="Close console">×</button
-          >
+          <button onclick={() => (connection.logs = [])}>Clear view</button>
         </div>
         <pre>{connection.logs.join('\n') || 'No events received in this session.'}</pre>
       </section>{/if}
