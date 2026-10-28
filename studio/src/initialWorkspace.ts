@@ -1,6 +1,21 @@
 import { restoreDraft } from './model.ts';
 import type { Draft } from './model.ts';
 
+const LAYOUT_KEY = 'dgxm.studio.layout.v1';
+
+/** Keep the layout for the next visit; the settings still work in this tab when storage fails. */
+export function saveLayout(layout: {
+  width: number;
+  showTelemetry: boolean;
+  showConsole: boolean;
+}) {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+  } catch {
+    /* Settings remain usable in this tab. */
+  }
+}
+
 /** Restore request identity independently of optional draft and layout preferences. */
 export function initialWorkspace() {
   let pending: { key: string; preview_id: string } | null = null;
@@ -39,7 +54,7 @@ export function initialWorkspace() {
     draft = null;
   }
   try {
-    const value = JSON.parse(localStorage.getItem('dgxm.studio.layout.v1') ?? 'null');
+    const value = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? 'null');
     if (value)
       layout = {
         width: Number.isFinite(value.width) ? Math.min(520, Math.max(280, value.width)) : 340,

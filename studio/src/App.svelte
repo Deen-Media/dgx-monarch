@@ -1,8 +1,9 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { fullJob } from './jobProvenance';
-  import { initialWorkspace } from './initialWorkspace';
+  import { initialWorkspace, saveLayout } from './initialWorkspace';
   import { Submission } from './submission.svelte';
+  import { JobTracker } from './jobTracker.svelte';
   import { CATALOG_NOTICE, Connection, errorText } from './connection.svelte';
   import { emptyDraft, restoreDraft, driverStatus } from './model';
   import { DraftAutosave } from './draftAutosave.svelte';
@@ -20,7 +21,7 @@
   } from './contracts';
   import { isActiveJob, requestJobAction } from './jobActions';
   import { persistRecord } from './recordPersistence';
-  import { artifactDraft, liveArtifact } from './artifactDraft';
+  import { artifactDraft } from './artifactDraft';
   import { inspectDraft, rebuildBindings } from './workflowInspector';
   import StatusMessages from './components/StatusMessages.svelte';
   import AppShell from './components/AppShell.svelte';
@@ -39,9 +40,9 @@
   import Connect from './views/Connect.svelte';
   const connection = new Connection();
   const submission = new Submission(connection);
+  const tracker = new JobTracker(connection, submission);
   const autosave = new DraftAutosave(),
     guard = new InspectionGuard();
-  const LAYOUT_KEY = 'dgxm.studio.layout.v1';
   let draft = $state<Draft>(emptyDraft()),
     undoDraft: Draft | null = null;
   let bindings = $state<Binding[]>([]),
@@ -50,8 +51,6 @@
     controlTab = $state('inputs');
   let connections = $state<GraphConnection[]>([]);
   let view = $state('workspace'),
-    selected = $state<Artifact | null>(null),
-    comparison = $state<Artifact | null>(null),
     selectedOperation = $state('');
   let busy = $state(false),
     notice = $state(''),
@@ -67,8 +66,6 @@
   let palettePanel: CommandPalette, previewPanel: SubmissionReview;
   let jobs = $derived(connection.snapshot.jobs),
     activeJobs = $derived(jobs.filter(isActiveJob));
-  const displayedArtifact = $derived(liveArtifact(connection.snapshot.artifacts, selected)),
-    displayedComparison = $derived(liveArtifact(connection.snapshot.artifacts, comparison));
   const refresh = () => connection.refresh();
   function navigate(id: string) {
     view = id;
@@ -165,7 +162,8 @@
 
   async function jobAction(job: Job, action: 'cancel' | 'retry') {
     await withBusy(async () => {
-      await requestJobAction(connection.client, job, action, setNotice);
+      const record = await requestJobAction(connection.client, job, action, setNotice);
+      if (action === 'retry' && record) tracker.own(record.id);
       await refresh();
     });
   }
@@ -219,7 +217,7 @@
         if (error) return;
         if (kind === 'sessions') {
           await refresh();
-          selected =
+          tracker.selected =
             (connection.snapshot.artifacts ?? []).find(
               (a) => a.id === record.data.selected_artifact_id,
             ) ?? null;
@@ -255,17 +253,13 @@
     };
   });
   $effect(() => autosave.save($state.snapshot(draft), dirty));
-  $effect(() => {
-    try {
-      localStorage.setItem(LAYOUT_KEY, JSON.stringify({ width, showTelemetry, showConsole }));
-    } catch {
-      /* Settings remain usable in this tab. */
-    }
-  });
+  $effect(() => saveLayout({ width, showTelemetry, showConsole }));
 
   $effect(() => {
     if (submission.observe(jobs)) setNotice('Submission reconciled.');
   });
+  $effect(() => tracker.observe());
+  $effect(() => tracker.run(connection.hidden));
   $effect(() => {
     // The catalog was read again after the connect notice reported it unread.
     if (!connection.catalogError && notice.startsWith(CATALOG_NOTICE)) notice = '';
@@ -293,6 +287,7 @@
   async function submitPreview() {
     await withBusy(async () => {
       const job = await submission.submit();
+      tracker.own(job.id);
       previewPanel.close();
       dirty = false;
       setNotice(`Submitted ${job.id}.`);
@@ -318,6 +313,7 @@
   {connection}
   {draft}
   activeCount={activeJobs.length}
+  working={tracker.working}
   {view}
   bind:presentation
   {width}
@@ -357,12 +353,14 @@
         {connect}
       />
     {:else if presentation}<Viewer
-        activeCount={activeJobs.length}
-        artifact={displayedArtifact}
-        compare={displayedComparison}
+        job={tracker.status}
+        working={tracker.working}
+        artifact={tracker.shown}
+        compare={tracker.shownComparison}
         client={connection.client}
         onreuse={reuse}
-        onselect={(a) => (comparison = a)}
+        onselect={(a) => (tracker.comparison = a)}
+        onqueue={() => ((presentation = false), navigate('queue'))}
       />
     {:else if view === 'workspace'}<div class="workspace">
         <Generation
@@ -391,8 +389,8 @@
           refreshCatalog={() => connection.refreshCatalog()}
         /><WorkspaceOutput
           client={connection.client}
-          selected={displayedArtifact}
-          comparison={displayedComparison}
+          selected={tracker.shown}
+          comparison={tracker.shownComparison}
           artifacts={connection.snapshot.artifacts}
           telemetry={connection.snapshot.telemetry}
           history={connection.metricHistory}
@@ -400,9 +398,11 @@
           driverState={connection.snapshot.driver.state}
           connectionState={connection.state}
           activeCount={activeJobs.length}
+          job={tracker.status}
+          working={tracker.working}
           {showTelemetry}
-          onselect={(a) => (selected = a)}
-          oncompare={(a) => (comparison = a)}
+          onselect={(a) => (tracker.selected = a)}
+          oncompare={(a) => (tracker.comparison = a)}
           oncollapse={() => (showTelemetry = false)}
           {navigate}
           {reuse}
@@ -413,10 +413,10 @@
         projectSummaries={connection.snapshot.records.projects ?? []}
         {jobs}
         projectId={draft.project_id}
-        {selected}
+        selected={tracker.selected}
         {navigate}
-        onselect={(a) => (selected = a)}
-        oncompare={(a) => (comparison = a)}
+        onselect={(a) => (tracker.selected = a)}
+        oncompare={(a) => (tracker.comparison = a)}
         {reuse}
         {setNotice}
       />
@@ -457,7 +457,7 @@
         onrefresh={refresh}
         allRecords={connection.snapshot.records}
         {draft}
-        {selected}
+        selected={tracker.selected}
         {activeJobs}
         layout={{ width, showTelemetry, showConsole, view }}
         {saveRecord}

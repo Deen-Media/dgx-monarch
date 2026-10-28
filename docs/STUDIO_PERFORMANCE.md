@@ -1,6 +1,6 @@
 # Studio measurement record
 
-Asset sizes updated: 2026-10-23 (UTC). Observer timings updated: 2026-10-21
+Asset sizes updated: 2026-10-28 (UTC). Observer timings updated: 2026-10-21
 (UTC). Status: partial engineering measurements; performance acceptance remains
 **NOT RUN**.
 
@@ -12,8 +12,8 @@ not JavaScript execution, browser responsiveness or Spark overhead.
 
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
-| `index-BAFK232V.js` | 237,518 | 82,517 |
-| `index-DNoOs9Sm.css` | 31,320 | 7,717 |
+| `index-CkPxWXgB.js` | 246,074 | 85,596 |
+| `index-BaTH7nyQ.css` | 32,491 | 7,969 |
 
 ## CPU observer microbenchmark
 

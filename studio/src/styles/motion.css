@@ -37,6 +37,15 @@ dialog[open]::backdrop {
     opacity: 0.8;
   }
 }
+/* A job bar with no step count sweeps; it never fills, since no share of the work is known. */
+@keyframes job-progress-sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(333%);
+  }
+}
 
 /* Native disclosure behavior remains the fallback in other browsers.
    https://developer.chrome.com/blog/styling-details */
@@ -64,5 +73,11 @@ dialog[open]::backdrop {
   dialog::backdrop {
     animation: none !important;
     transition: none !important;
+  }
+  /* Without the sweep, a dim full bar says work goes on and claims no share of it. */
+  .job-progress.indeterminate > span {
+    width: 100%;
+    opacity: 0.35;
+    transform: none;
   }
 }

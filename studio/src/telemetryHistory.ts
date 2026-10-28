@@ -14,6 +14,10 @@ export interface Presentation {
   units: Record<string, { precision: number }>;
   memory: Record<string, { hex: string }>;
   freshness: { minimum_stale_s: number; stale_after_intervals: number; default_interval_s: number };
+  /** Status tokens: ready, idle, rendering and busy green, degraded yellow, blocked red. */
+  status?: Record<string, { hex: string; icon?: string; label?: string }>;
+  /** The status token each job state displays with. */
+  job_states?: Record<string, string>;
 }
 export interface MetricPoint {
   time: number;

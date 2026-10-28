@@ -18,6 +18,17 @@
   its history entry. The observer publishes its telemetry report once per
   cycle, after both of its requests, so a snapshot never pairs one cycle's
   runtime event status with an older telemetry sample.
+- Studio's output viewer follows the job this tab submitted, or the newest
+  active job, with a status line that shows its state, one node's step count,
+  the elapsed time on the companion's clock or the driver's own total, and a
+  failure's code and first sentence with a link to Queue. When that job
+  succeeds the viewer shows its last final output unless you chose another
+  result or opened a comparison, fetching the output when the snapshot window
+  omits it, and a reload never shows an earlier result as new. The recent
+  outputs strip shows thumbnails of job outputs, job summaries carry the
+  driver's start and end times and the companion's first running observation,
+  the shared presentation contract gains job-state tokens and an m:ss duration
+  rule, and Create counts unknown outcomes until Queue reconciles them.
 
 ### Installation and updates
 

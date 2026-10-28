@@ -1,8 +1,18 @@
 import { requireRecordIdentity, type StudioClient } from './api.ts';
 import type { Job } from './contracts';
+import { isActive } from './queueRows.ts';
 import { submissionRefused } from './submissionRefusal.ts';
 
+/**
+ * Active or unresolved work, as Queue counts it. A job whose outcome is unknown stays counted
+ * until Queue reconciles it, so it does not vanish from Create.
+ */
 export function isActiveJob(job: Job): boolean {
+  return isActive(job);
+}
+
+/** Work still in flight to or on the driver; activity animations follow only these jobs. */
+export function isInFlightJob(job: Job): boolean {
   return ['queued', 'running', 'submitting', 'cancel_requested', 'accepted'].includes(job.state);
 }
 
@@ -27,14 +37,15 @@ export function recoveredJobAction(job: Job, action: 'cancel' | 'retry', record:
 /**
  * Keep the request identity if a transport failure leaves the result unknown.
  * A definite refusal means the companion accepted nothing under the key, so
- * the next click starts a fresh request instead of a recovery.
+ * the next click starts a fresh request instead of a recovery. Returns the
+ * record the companion answered with, or nothing when the user declined.
  */
 export async function requestJobAction(
   client: StudioClient,
   job: Job,
   action: 'cancel' | 'retry',
   notify: (message: string) => void = () => {},
-) {
+): Promise<{ id: string } | undefined> {
   const storageKey = `dgxm.studio.${action}.${job.id}`;
   const kept = sessionStorage.getItem(storageKey);
   if (!window.confirm(jobActionQuestion(job, action, !!kept))) return;
@@ -53,4 +64,5 @@ export async function requestJobAction(
   const record = requireRecordIdentity(answer as { id: string });
   sessionStorage.removeItem(storageKey);
   if (kept) notify(recoveredJobAction(job, action, record));
+  return record;
 }

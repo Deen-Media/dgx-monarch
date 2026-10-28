@@ -103,6 +103,24 @@ test('transport uncertainty retains the exact identity until an expired retry is
   assert.equal(submission.pending, null);
   assert.equal(store.has('dgxm.studio.pending'), false);
 });
+test('the identity this page sends is marked as created here, and a restored one is not', async () => {
+  const { submission, connection, store } = setup();
+  connection.client.request = async () => {
+    throw new Error('timeout');
+  };
+  await assert.rejects(submission.submit(), /timeout/);
+  const key = submission.pending!.key;
+  assert.equal(submission.createdKey, key, 'a lost reply keeps the identity marked');
+  // The marker is never stored, so a reload restores the identity without it.
+  const stored = JSON.parse(store.get('dgxm.studio.pending')!);
+  assert.deepEqual(Object.keys(stored).sort(), ['key', 'preview_id']);
+  const restored = new Submission(connection);
+  restored.pending = stored;
+  assert.equal(restored.createdKey, '');
+  restored.confirmedMissing = true;
+  await assert.rejects(restored.retryRetained(), /timeout/);
+  assert.equal(restored.createdKey, key, 'a retry of the retained request is sent from this page');
+});
 for (const error of [
   new ApiError(409, 'Conflict', 'idempotency_conflict'),
   new ApiError(403, 'Forbidden'),

@@ -645,6 +645,37 @@ output area. Dialogs and disclosures use short transitions; generation adds a
 subtle activity border around the viewer. Reduced-motion preferences disable
 these animations and the activity logo.
 
+The output viewer follows one job: the latest one this tab submitted, or the
+newest active job when this tab has submitted none. A status line under the
+viewer title names its state: Submitting, Queued, Running, Cancel requested,
+Finished, Failed, Cancelled or Outcome unknown. A running job shows the step
+count and node from the driver's latest progress report, with a bar that fills
+to that count. When the driver reports no step count, the bar sweeps and never
+fills; with reduced motion it stays still and dim. Studio never merges the steps
+of different nodes into one share. Running time counts on the companion's clock
+from when the companion first saw the job run, not from the driver's start time,
+since the driver may run on another host with its own clock; a job that ended
+shows the driver's own time from start to end. Running time needs the
+companion's start time and its clock, and a total needs both driver times; when
+one is missing no time shows, and Studio never estimates the time left. A failed
+job shows its error code, the first sentence of its message and a link to Queue.
+An unknown outcome links to Queue, where you can reconcile it. Create counts
+unknown outcomes with active jobs, as Queue does, until you reconcile them; only
+jobs in flight animate the viewer border and the logo.
+
+When the followed job succeeds, the viewer shows its last final image or video,
+unless you chose another result or a comparison after the job began, or a
+comparison is open. When the snapshot leaves that output out, Studio asks for
+the job's outputs, at most three times. This changes only the viewer, never the
+draft. A job this page submitted counts as new even when its submit reply was
+lost. After a reload Studio shows no result of a job that had already ended, so
+an earlier result never shows as new. The recent outputs strip shows previews of
+job outputs only: uploads, masks and live previews stay out of it, and an
+intermediate output carries a Preview label. The telemetry panel names this
+tab's job, or the newest active job, with its state and time; it never ties the
+driver's last render to a job. The raw host sample stays closed until you open
+it.
+
 Image previews retain their source proportions across portrait, landscape and
 extreme aspect ratios. The mask canvas follows the displayed source bounds, so
 painted positions map to the uploaded mask. An uploaded input or mask can be bound to

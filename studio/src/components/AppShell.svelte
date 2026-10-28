@@ -10,6 +10,7 @@
     connection,
     draft,
     activeCount,
+    working = false,
     view,
     presentation = $bindable(),
     width,
@@ -22,7 +23,10 @@
   }: {
     connection: Connection;
     draft: Draft;
+    /** Active or unresolved jobs, as Queue counts them. */
     activeCount: number;
+    /** Whether any job is in flight; the logo animates only then. */
+    working?: boolean;
     view: string;
     presentation: boolean;
     width: number;
@@ -51,7 +55,7 @@
           width="36"
           height="36"
           draggable="false"
-          class:working={activeCount > 0 && !connection.hidden}
+          class:working={working && !connection.hidden}
         /></a
       >
       <span class="rail-divider"></span>
@@ -96,7 +100,8 @@
           />
         </div>{/if}
       <div class="header-actions">
-        <span class="activity-pill">{activeCount ? `${activeCount} active` : 'No active jobs'}</span
+        <span class="activity-pill"
+          >{activeCount ? `${activeCount} active or unresolved` : 'No active jobs'}</span
         ><button
           class="icon-button"
           aria-pressed={presentation}

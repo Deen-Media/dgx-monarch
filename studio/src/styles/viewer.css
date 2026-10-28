@@ -30,6 +30,63 @@
 .viewer .eyebrow {
   font-size: 8px;
 }
+.job-status {
+  --job-color: var(--muted);
+  display: grid;
+  gap: 7px;
+  margin: -7px 0 14px;
+  font-size: 11px;
+  color: #aab4c2;
+}
+.job-status.empty {
+  margin: 0;
+}
+.job-status p {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+.job-status strong {
+  color: var(--text);
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.job-dot {
+  width: 8px;
+  height: 8px;
+  flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--job-color);
+}
+.job-detail {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.job-link {
+  font-size: 11px;
+  padding: 3px 9px;
+  color: var(--text);
+  background: #1a1e25;
+}
+.job-progress {
+  position: relative;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: var(--surface-raised);
+}
+.job-progress > span {
+  position: absolute;
+  inset: 0 auto 0 0;
+  border-radius: inherit;
+  background: var(--job-color);
+}
+.job-progress.indeterminate > span {
+  width: 30%;
+  animation: job-progress-sweep 1.6s ease-in-out infinite;
+}
 .viewer-toolbar {
   display: flex;
   align-items: center;
@@ -246,21 +303,33 @@
   display: flex;
   gap: 10px;
   overflow: auto;
-  min-height: 58px;
+  min-height: 120px;
   align-items: center;
 }
 .recent-list > button {
   min-width: 110px;
   max-width: 140px;
-  height: 64px;
-  padding: 9px !important;
+  height: 120px;
+  padding: 6px !important;
   border: 1px solid var(--border) !important;
   background: #181d24 !important;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 6px;
+  gap: 5px;
   color: #8e9bab !important;
+}
+.recent-thumb {
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #11141a;
 }
 .recent-list > button > span:first-child {
   font-size: 20px;

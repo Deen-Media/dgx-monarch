@@ -16,6 +16,7 @@ from pathlib import Path
 import pytest
 
 from dgx_monarch.cli.arguments import build_parser
+from dgx_monarch.studio.contracts import TERMINAL_STATES
 from dgx_monarch.studio.inventory import (
     DISCOVERY_HOME,
     INTERFACES,
@@ -31,6 +32,7 @@ from dgx_monarch.studio.presentation import (
     MEMORY_ANSI256,
     MEMORY_COLORS,
     available_memory_status,
+    format_duration_clock,
     format_metric,
     freshness,
     presentation_contract,
@@ -276,6 +278,35 @@ def test_missing_mappings_and_duplicate_identity_are_refused():
     del doc["rows"][0]["interfaces"]["tui"]
     with pytest.raises(ValueError, match="Incomplete interface"):
         validate_inventory(doc)
+
+
+def test_job_states_use_the_approved_status_tokens():
+    contract = presentation_contract()
+    assert contract["job_states"] == {
+        "submitting": "rendering", "accepted": "rendering", "queued": "rendering", "running": "rendering",
+        "cancel_requested": "degraded", "cancelled": "degraded", "succeeded": "ready",
+        "failed": "blocked", "unknown": "blocked"}
+    colors = {state: contract["status"][token]["hex"] for state, token in contract["job_states"].items()}
+    assert {colors[state] for state in ("queued", "running", "succeeded")} == {"#4ade80"}
+    assert colors["cancelled"] == colors["cancel_requested"] == "#facc15"
+    assert colors["failed"] == colors["unknown"] == "#f87171"
+    # Every state the companion stores has a token: terminal ones and those the snapshot keeps first.
+    assert set(contract["job_states"]) >= set(TERMINAL_STATES) | {
+        "submitting", "accepted", "queued", "running", "cancel_requested", "unknown"}
+
+
+@pytest.mark.parametrize(("value", "text"), [
+    (0, "0:00"), (0.999, "0:00"), (42.9, "0:42"), (60, "1:00"), (73.4, "1:13"), (3599.99, "59:59"),
+    (3661, "61:01"), (2**53 - 1, "150119987579016:31"), (-0.0, "0:00"),
+    (-1, "unknown"), (None, "unknown"), ("12", "unknown"), (True, "unknown"), (math.nan, "unknown"),
+    (math.inf, "unknown"), (2**53, "unknown")])
+def test_duration_clock_floors_whole_seconds_with_uncapped_minutes(value, text):
+    assert format_duration_clock(value) == text
+    rule = presentation_contract()["duration_clock"]
+    assert rule == {"format": "m:ss", "source_unit": "s", "rounding": "floor", "minutes": "uncapped",
+                    "maximum_s": 2**53 - 1, "missing": "unknown"}
+    # The seconds rule for metric durations stays as it was.
+    assert format_metric(73.4, "s") == "73.40 s"
 
 
 def test_generated_presentation_contract_has_exact_approved_colors():

@@ -4,9 +4,11 @@
   let { artifact, client }: { artifact: Artifact; client: StudioClient } = $props();
   let url = $state(''),
     status = $state('Loading preview');
+  // Each snapshot poll replaces every artifact object. Fetch again only when the identity, or
+  // the digest of an intermediate preview, changes.
+  const id = $derived(artifact.id);
+  const digest = $derived(artifact.intermediate ? artifact.metadata?.sha256 : undefined);
   $effect(() => {
-    const id = artifact.id;
-    const digest = artifact.intermediate ? artifact.metadata?.sha256 : undefined;
     const api = client;
     void digest;
     url = '';

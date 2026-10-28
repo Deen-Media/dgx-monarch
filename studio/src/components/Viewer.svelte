@@ -2,23 +2,31 @@
   import { onDestroy, untrack } from 'svelte';
   import type { StudioClient } from '../api';
   import type { Artifact, ReuseArtifact } from '../contracts';
+  import type { FollowedJob } from '../jobTracker.svelte';
   import ComparisonDetails from './ComparisonDetails.svelte';
+  import JobStatusLine from './JobStatusLine.svelte';
   import { displayUnknown, formatTime } from '../model';
   import { frameTarget } from '../mediaPlayback';
   let {
     artifact = null,
     compare = null,
-    activeCount = 0,
+    job = null,
+    working = false,
     client,
     onreuse,
     onselect,
+    onqueue,
   }: {
     artifact?: Artifact | null;
     compare?: Artifact | null;
-    activeCount?: number;
+    /** The job the viewer follows, or null. */
+    job?: FollowedJob | null;
+    /** Whether any job is in flight; the frame's activity border follows it. */
+    working?: boolean;
     client: StudioClient;
     onreuse: ReuseArtifact;
     onselect: (a: Artifact | null) => void;
+    onqueue?: () => void;
   } = $props();
   let url = $state(''),
     compareUrl = $state(''),
@@ -137,14 +145,9 @@
         {compare ? 'Compare results' : artifact ? artifact.filename : 'A space for your next idea'}
       </h2>
     </div>
-    <span class="tag" class:lime={activeCount > 0} role="status"
-      >{activeCount
-        ? `${activeCount} active ${activeCount === 1 ? 'job' : 'jobs'}`
-        : artifact
-          ? (artifact.kind ?? 'artifact')
-          : 'No output selected'}</span
-    >
+    <span class="tag">{artifact ? (artifact.kind ?? 'artifact') : 'No output selected'}</span>
   </div>
+  <JobStatusLine {job} {onqueue} />
   <div class="viewer-toolbar" aria-label="Viewer controls">
     <button
       disabled={!url}
@@ -193,7 +196,7 @@
         >Download</a
       >{/if}
   </div>
-  <div class="viewer-frame" class:working={activeCount > 0}>
+  <div class="viewer-frame" class:working>
     <!-- svelte-ignore a11y_no_noninteractive_tabindex (the scrollable viewport supports keyboard panning) -->
     <div
       class="viewport"

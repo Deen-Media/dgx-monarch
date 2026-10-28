@@ -52,6 +52,19 @@ def private_directory(path: Path) -> Path:
     return path
 
 
+def _first_running(old: dict[str, Any], updates: dict[str, Any], now: float) -> dict[str, Any]:
+    """Record, once, the companion's own time when it first sees a job run.
+
+    ComfyUI's started_at is the driver's clock, and the driver can run on
+    another host, so live elapsed time compares this field with the
+    companion's server_time instead. A job already running when the companion
+    upgraded never gets one, so it shows no live time rather than a wrong one.
+    """
+    if updates.get("state") == "running" and old.get("state") != "running" and old.get("running_observed_at") is None:
+        return {**updates, "running_observed_at": now}
+    return updates
+
+
 def _fit(value: dict[str, Any], keys: Iterable[str], budget: int = EVENT_FIELD_BYTES) -> dict[str, Any]:
     """The named fields that fit the budget, so an event never aborts the write it reports."""
     data: dict[str, Any] = {}
@@ -281,6 +294,8 @@ class Store:
                     or (old.get("state") == "cancel_requested" and updates.get("state") == "running"
                         and old.get("cancellation_scope") == "atomic_prompt")):
                 updates = {key: value for key, value in updates.items() if key != "state"}
+            if kind == "jobs":
+                updates = _first_running(old, updates, timestamp())
             if all(old.get(key) == value for key, value in updates.items()):
                 return old
             value = {**old, **updates, "id": old["id"], "updated_at": timestamp()}
@@ -292,8 +307,13 @@ class Store:
                         {**_fit(value, ("state", "prompt_id", "progress", *changed)), "changed": changed})
             return value
 
-    def observe(self, job_id: str, event: dict[str, Any], updates: dict[str, Any]) -> dict[str, Any]:
-        """Durably deduplicate driver messages and their materialized job state."""
+    def observe(self, job_id: str, event: dict[str, Any], updates: dict[str, Any], *,
+                live: bool = True) -> dict[str, Any]:
+        """Durably deduplicate driver messages and their materialized job state.
+
+        ``live`` is false for a message replayed from the driver's history, so a
+        job the companion never saw run gets no companion start time.
+        """
         event_key = digest(event)
         with self.lock, self.transaction():
             old = self.get("jobs", job_id)
@@ -313,11 +333,14 @@ class Store:
             elif (old.get("state") == "cancel_requested" and updates.get("state") == "running"
                   and old.get("cancellation_scope") == "atomic_prompt"):
                 updates.pop("state", None)
+            now = timestamp()
+            if live:
+                updates = _first_running(old, updates, now)
             omitted = RECEIPT_OMITTED_DATA.get(event.get("type"), ())
             data = event.get("data", {})
             if omitted and isinstance(data, dict):
                 event = {**event, "data": {key: item for key, item in data.items() if key not in omitted}}
-            receipt = {"key": event_key, "observed_at": timestamp(), **event}
+            receipt = {"key": event_key, "observed_at": now, **event}
             value = {**old, **updates, "backend_events": [*receipts[-127:], receipt], "updated_at": timestamp()}
             self._put("jobs", value, 1)
             self._event("jobs.observed", job_id, {"state": value.get("state"), "prompt_id": value.get("prompt_id"),

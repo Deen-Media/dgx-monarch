@@ -16,6 +16,11 @@ export class Submission {
   recoveryError = $state('');
   /** Why the pending submission is unresolved; the pending banner shows it. */
   outcome = $state('');
+  /**
+   * The request identity this page sent, by a submit or a retry of the retained request. An
+   * identity restored after a reload is not it, so a job that had already ended then is old.
+   */
+  createdKey = '';
   private key = '';
   private connection: Connection;
   constructor(connection: Connection) {
@@ -56,6 +61,7 @@ export class Submission {
     if (this.recoveryError) throw new Error(this.recoveryError);
     if (this.pending) throw new Error('Reconcile or retry the retained submission first.');
     if (!this.preview || !this.confirmed) throw new Error('Review and confirm a submission first.');
+    this.createdKey = this.key;
     this.pending = { key: this.key, preview_id: this.preview.id };
     try {
       sessionStorage.setItem(PENDING_KEY, JSON.stringify(this.pending));
@@ -110,6 +116,7 @@ export class Submission {
     if (!this.pending || !this.confirmedMissing)
       throw new Error('Reconcile the request before retrying.');
     this.confirmedMissing = false;
+    this.createdKey = this.pending.key;
     try {
       requireRecordIdentity(
         await this.connection.client.request('/jobs', {
