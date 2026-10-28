@@ -131,6 +131,15 @@
 
 ### Rendering
 
+- SCAIL and SCAIL-2 refuse cfg-parallel class P on the Worker, as PixelDiT
+  does: one-step cfg2 probes of SCAIL-2 on 2026-10-28 read NRMS 0.116 and
+  0.085 against one GPU while uly2 and ring2 were byte-identical. Use uly2 or ring2
+  ([#136](docs/TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
+- SCAIL and SCAIL-2 refuse ring attention beyond world 2 at injection, and
+  the sweep matrix labels both refusals, after a four-Spark owner reported
+  ring4 and auto's uly2+ring2 fold outside the fidelity limit at world 4;
+  uly4 is the explicit choice there
+  ([#136](docs/TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
 - The driver refuses a MOSS-Image render whose prompt carries an effective
   text attention bias before dispatch when Ulysses or ring is above one, on
   the same predicate the Worker's sharded forward uses, so no Worker loads

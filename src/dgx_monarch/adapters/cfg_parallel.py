@@ -188,6 +188,7 @@ def assert_cfg_parallel_supported(
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
         f"{reason} Use mode=local with gpus_per_host=1 for a stock one-GPU path.",
+        troubleshooting=getattr(adapter, "cfg_parallel_troubleshooting", None),
     ))
 
 
