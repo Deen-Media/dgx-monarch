@@ -1,6 +1,7 @@
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "dependencyDashboard": true,
+  "baseBranchPatterns": ["dev"],
   "packageRules": [
     {
       "description": "Canary Python versions must have torchmonarch wheels; update them through the reviewed runtime-pin procedure.",

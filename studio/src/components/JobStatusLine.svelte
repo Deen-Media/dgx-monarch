@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { FollowedJob } from '../jobTracker.svelte';
   import { TROUBLESHOOTING } from '../jobFailure';
+  import { queueFocus } from '../queueFocus';
   import ConsentOffer from './ConsentOffer.svelte';
   let {
     job = null,
@@ -13,6 +14,11 @@
       : 0,
   );
   const failure = $derived(job?.failure ?? null);
+  /** Open Queue on this job's row; Queue takes the request once, as it opens. */
+  function openQueue() {
+    if (job) queueFocus.request(job.id);
+    onqueue?.();
+  }
 </script>
 
 <div class="job-status" class:empty={!job} style:--job-color={job?.color}>
@@ -23,7 +29,8 @@
     >
       <span class="job-dot" aria-hidden="true"></span><strong>{job.headline}</strong
       >{#if job.detail}<span aria-hidden="true">·</span><span class="job-detail">{job.detail}</span
-        >{/if}{#if job.link && onqueue}<button class="job-link" onclick={onqueue}>{job.link}</button
+        >{/if}{#if job.link && onqueue}<button class="job-link" onclick={openQueue}
+          >{job.link}</button
         >{/if}
     </p>
     {#if failure && (failure.consent || failure.remedy || failure.troubleshooting !== null)}<p

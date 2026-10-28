@@ -1,10 +1,11 @@
 <script lang="ts">
   import type { Artifact, Job, ReuseArtifact } from '../contracts';
   import type { StudioClient } from '../api';
-  import { fullJob, jobSummary } from '../jobProvenance';
+  import { exactJob, jobSummary } from '../jobProvenance';
   import { recordedSeeds, recordedSettings } from '../recordedSettings';
   import { formatTime } from '../model';
-  import { exportJSON } from '../files';
+  import { exportText } from '../files';
+  import { writeExactJSON } from '../exactJson';
   import {
     GALLERY_KINDS,
     GALLERY_STATES,
@@ -124,22 +125,21 @@
   }
   async function exportProvenance(entry: GalleryEntry) {
     try {
-      const job = await fullJob(client, entry.artifact.job_id, entry.job);
-      exportJSON(
-        { artifact: entry.artifact, submission: job.submission },
-        `${entry.artifact.id}.json`,
-      );
+      // The exact record, so a seed above 2**53 - 1 keeps every digit wherever it appears.
+      const job = await exactJob(client, entry.artifact.job_id);
+      const text = writeExactJSON({ artifact: entry.artifact, submission: job.submission });
+      exportText(text, `${entry.artifact.id}.json`);
     } catch (cause) {
-      setNotice(String(cause));
+      setNotice(cause instanceof Error ? cause.message : String(cause));
     }
   }
   async function copy(entry: GalleryEntry, kind: 'prompt' | 'seed' | 'inputs') {
     try {
       // Seeds come from a summary row, which keeps a large seed's digits; the snapshot's row
-      // serves when present. The other copies need the full record.
+      // serves when present. The other copies read the exact full record.
       const job =
         kind !== 'seed'
-          ? await fullJob(client, entry.artifact.job_id, entry.job)
+          ? await exactJob(client, entry.artifact.job_id)
           : recordedSeeds(entry.job)
             ? entry.job!
             : await jobSummary(client, entry.artifact.job_id);

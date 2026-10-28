@@ -4,6 +4,7 @@
   import { formatTime } from '../model';
   import { recordedSeeds, seedText } from '../recordedSettings';
   import { consentAction, jobFailure } from '../jobFailure';
+  import { queueRowId } from '../queueFocus';
   import FailureDetails from './FailureDetails.svelte';
   import JobProvenance from './JobProvenance.svelte';
   import Thumbnail from './Thumbnail.svelte';
@@ -38,7 +39,12 @@
   const consent = $derived(consentAction(failure, operations));
 </script>
 
-<details class="record job-row" {open} ontoggle={(e) => ontoggle(e.currentTarget.open)}>
+<details
+  class="record job-row"
+  id={queueRowId(job.id)}
+  {open}
+  ontoggle={(e) => ontoggle(e.currentTarget.open)}
+>
   <summary
     >{#if output}<span class="job-thumb"><Thumbnail artifact={output} {client} /></span>{/if}<span
       class="status-label"

@@ -1,5 +1,6 @@
 import type { StudioClient } from './api';
 import type { Job } from './contracts';
+import { readExactJSON } from './exactJson.ts';
 
 /** List and snapshot rows are summaries; provenance actions require the full source record. */
 export async function fullJob(client: StudioClient, id: string, candidate?: Job): Promise<Job> {
@@ -9,7 +10,21 @@ export async function fullJob(client: StudioClient, id: string, candidate?: Job)
     (candidate.submission?.workflow || candidate.submission?.prompt)
   )
     return candidate;
-  const job = await client.request<Job>(`/jobs/${encodeURIComponent(id)}`);
+  return checkedJob(await client.request<Job>(`/jobs/${encodeURIComponent(id)}`), id);
+}
+
+/**
+ * The full record with every whole number above 2**53 - 1 exact, as a BigInt, for the actions
+ * that write or load its values: the gallery's copies and export, and reuse. It is the same
+ * request as fullJob's, token, timeout and refusals included, read by readExactJSON. Other
+ * readers keep fullJob, whose plain numbers JSON.stringify can write.
+ */
+export async function exactJob(client: StudioClient, id: string): Promise<Job> {
+  const path = `/jobs/${encodeURIComponent(id)}`;
+  return checkedJob(await client.request<Job>(path, undefined, 'GET', readExactJSON), id);
+}
+
+function checkedJob(job: Job, id: string): Job {
   if (job.id !== id || job.summary)
     throw new Error('The companion did not return the requested full job provenance.');
   return job;

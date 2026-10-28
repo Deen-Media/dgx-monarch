@@ -29,7 +29,13 @@ export class StudioClient {
   constructor(token: string) {
     this.token = token;
   }
-  async request<T = any>(path: string, body?: unknown, method?: string): Promise<T> {
+  /** `parse` reads the response text; readExactJSON keeps whole numbers above 2**53 - 1 exact. */
+  async request<T = any>(
+    path: string,
+    body?: unknown,
+    method?: string,
+    parse: (text: string) => unknown = JSON.parse,
+  ): Promise<T> {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 20000);
     try {
@@ -45,9 +51,9 @@ export class StudioClient {
         credentials: 'same-origin',
         cache: 'no-store',
       });
-      const data = response.ok ? await response.json() : await response.json().catch(() => null);
-      if (!response.ok) throw refusal(response.status, data);
-      return data as T;
+      const text = await response.text();
+      if (!response.ok) throw refusal(response.status, readable(text));
+      return parse(text) as T;
     } finally {
       clearTimeout(timeout);
     }
@@ -109,6 +115,15 @@ export function statusMessage(status: number): string {
     return `The companion or a proxy in front of it did not answer (HTTP ${status}).`;
   if (status >= 500) return `The companion failed while handling the request (HTTP ${status}).`;
   return `The companion refused the request (HTTP ${status}).`;
+}
+
+/** A refusal's JSON envelope, or null when its body is not JSON. */
+function readable(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
+  }
 }
 
 /** Build the error for a refused request, from the JSON envelope when one is readable. */

@@ -1,8 +1,10 @@
 <script lang="ts">
   import type { Connection } from '../connection.svelte';
   import type { Job } from '../contracts';
-  import { untrack } from 'svelte';
+  import { tick, untrack } from 'svelte';
   import { finalOutput } from '../jobFollow';
+  import { jobSummary } from '../jobProvenance';
+  import { focusPlace, queueFocus, queueRowId } from '../queueFocus';
   import { emptyQueueText, isActive, keptPage, settledJobs, type SnapshotIds } from '../queueRows';
   import QueueRow from '../components/QueueRow.svelte';
   let {
@@ -26,6 +28,11 @@
   const artifacts = $derived(connection.snapshot.artifacts ?? []);
   const operations = $derived(connection.capabilities.operations ?? []);
   let selectedJob = $state<Job | null>(null);
+  // The status line's Queue link names one job; this visit takes the request once and opens its
+  // row when the first history load settles. A row that load lacks, whether a filter or the load
+  // window leaves it out, is read by its identity and pinned above the history pages.
+  let focus = queueFocus.take(),
+    pinned = $state<Job | null>(null);
   let history = $state<Job[]>([]),
     cursor = $state<string | null>(null),
     loading = $state(true),
@@ -37,9 +44,14 @@
   const terminal = $derived(
     history
       .map((job) => jobs.find((current) => current.id === job.id) ?? job)
-      .filter((job) => !active.some((current) => current.id === job.id)),
+      .filter((job) => job.id !== pinned?.id && !active.some((current) => current.id === job.id)),
   );
-  const shown = $derived([...active, ...terminal.slice(page * 40, (page + 1) * 40)]);
+  const top = $derived.by(() => {
+    const id = pinned?.id;
+    if (!pinned || active.some((job) => job.id === id)) return [];
+    return [jobs.find((job) => job.id === id) ?? pinned];
+  });
+  const shown = $derived([...active, ...top, ...terminal.slice(page * 40, (page + 1) * 40)]);
   async function load(reset = false, keepPosition = false) {
     const ticket = reset ? ++revision : revision;
     loading = true;
@@ -57,8 +69,27 @@
     } catch (cause) {
       fail(cause);
     } finally {
-      if (ticket === revision) loading = false;
+      if (ticket === revision) {
+        loading = false;
+        if (focus) void reveal(focus);
+        focus = null;
+      }
     }
+  }
+  /** Select, expand and scroll to the requested row: in place, or pinned when the load lacks it. */
+  async function reveal(id: string) {
+    const place = focusPlace(id, active, terminal);
+    if (place) page = place.page ?? page;
+    let job = place?.job ?? jobs.find((row) => row.id === id);
+    try {
+      job ??= await jobSummary(client, id);
+    } catch (cause) {
+      return fail(cause);
+    }
+    if (!place) pinned = job;
+    selectedJob = job;
+    await tick();
+    document.getElementById(queueRowId(id))?.scrollIntoView({ block: 'nearest' });
   }
   let observed: SnapshotIds | null = null;
   $effect(() => {

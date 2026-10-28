@@ -176,6 +176,35 @@ def test_events_require_identity_are_durable_ordered_and_terminal_monotonic(stor
         restored.close()
 
 
+@pytest.mark.parametrize("live", [False, True])
+def test_a_node_that_starts_clears_the_step_count_of_the_node_before_it(store, live):
+    """The viewer and Queue show the stored steps, so they must belong to the node that runs.
+
+    ComfyUI reports steps for samplers only. Without the clear, a VAE decode that
+    follows a sampler would show the sampler's last count as if it were its own.
+    """
+    saved_job(store)
+    jobs = Jobs(store, Driver())
+
+    def observe(kind, **data):
+        jobs.consume_event({"type": kind, "data": {"prompt_id": "prompt", **data}}, live=live)
+        row = page_jobs(store, {"job_id": "job"})["items"][0]
+        assert row["progress"] == store.get("jobs", "job").get("progress"), "the summary carries the stored steps"
+        return row
+
+    observe("execution_start", timestamp=10)
+    assert observe("executing", node="3")["progress"] is None
+    assert observe("progress", node="3", value=20, max=20)["progress"] == {"value": 20, "max": 20, "node": "3"}
+    started = observe("executing", node="5")
+    assert started["progress"] is None and started["state"] == "running"
+    assert store.get("jobs", "job")["current_node"] == "5"
+    assert observe("progress", node="5", value=2, max=8)["progress"] == {"value": 2, "max": 8, "node": "5"}
+    assert observe("execution_success", timestamp=30)["progress"] is None
+    assert observe("executing", node=None)["progress"] is None
+    # A live success waits for history settlement before the job reads succeeded.
+    assert store.get("jobs", "job")["state"] == ("running" if live else "succeeded")
+
+
 def test_history_beyond_recent_page_reconciles_outputs_and_cancellation_receipts(store):
     saved_job(store)
 

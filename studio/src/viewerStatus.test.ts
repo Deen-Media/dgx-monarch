@@ -15,6 +15,7 @@ const followed = (
   consent: ConsentAction | null = null,
 ) => ({
   ...jobLine({ id: 'j', state, created_at: 1, submission: {}, ...changes } as Job, now),
+  id: 'j',
   own,
   color: '#4ade80',
   consent,
@@ -78,6 +79,48 @@ test('a running job without a step count draws a bar with no value', async () =>
   });
   assert.match(body, /class="job-progress indeterminate"/);
   assert.doesNotMatch(body, /aria-valuenow/);
+});
+
+test('a node that starts after a sampler shows no steps until it reports its own', async () => {
+  // The rows the companion stores as ComfyUI runs sampler node 3, starts node 5, which reports
+  // nothing yet, then reports steps for node 5, and finishes.
+  const line = async (changes: Partial<Job>) =>
+    renderComponent('./components/JobStatusLine.svelte', {
+      job: followed(changes.state ?? 'running', { running_observed_at: 1000, ...changes }),
+    });
+  const row = async (changes: Partial<Job>) =>
+    visibleText(
+      await renderComponent('./components/QueueRow.svelte', {
+        client,
+        job: { id: 'j', state: 'running', created_at: 1, submission: {}, ...changes },
+        busy: false,
+        ontoggle: noop,
+        jobAction: async () => {},
+      }),
+    );
+  const sampled = { progress: { value: 20, max: 20, node: '3' } };
+  assert.match(visibleText(await line(sampled)), /Running 0:42 · step 20 of 20 on node 3/);
+  assert.match(await row(sampled), /20 \/ 20 · node 3/);
+  const started = await line({ progress: null });
+  assert.match(
+    started,
+    /class="job-progress indeterminate" role="progressbar" aria-label="Job progress, no step count reported"/,
+  );
+  assert.doesNotMatch(visibleText(started), /step/);
+  assert.match(await row({ progress: null }), /Running · completion percentage unavailable/);
+  assert.doesNotMatch(await row({ progress: null }), /20 \/ 20/);
+  const stepping = { progress: { value: 2, max: 8, node: '5' } };
+  const reporting = await line(stepping);
+  assert.match(visibleText(reporting), /Running 0:42 · step 2 of 8 on node 5/);
+  assert.match(reporting, /aria-valuemax="8"[^>]*aria-valuenow="2"/);
+  assert.match(await row(stepping), /2 \/ 8 · node 5/);
+  const finished = await line({ state: 'succeeded', progress: null, started_at: 1, ended_at: 43 });
+  assert.equal(
+    visibleText(finished),
+    'Finished in 0:42 Finished',
+    'the time, then the announcement',
+  );
+  assert.doesNotMatch(finished, /progressbar/);
 });
 
 test('a failed job names its code and first sentence and links to Queue', async () => {

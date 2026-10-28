@@ -96,7 +96,9 @@ def _observation(message: dict[str, Any]) -> tuple[dict[str, Any], dict[str, Any
                     and 0 <= value <= maximum):
                 updates["progress"] = {"value": value, "max": maximum, "node": data.get("node")}
         elif kind == "executing":
-            updates["current_node"] = data.get("node")
+            # ComfyUI sends executing as a node starts, before that node's first progress report,
+            # so the stored steps belong to an earlier node; the new node's own reports set them.
+            updates.update(current_node=data.get("node"), progress=None)
         elif kind == "progress_state" and isinstance(data.get("nodes"), dict):
             updates["node_progress"] = deepcopy(data["nodes"])
     else:
