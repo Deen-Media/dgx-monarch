@@ -8,6 +8,7 @@ from typing import Any
 from .. import (
     accuracy_waiver,
     driver_footprint,
+    driver_unload,
     family_select,
     h3_activation,
     latent_scale,
@@ -293,7 +294,8 @@ def activation_footprint_preflight_for_request(
     driver-load, H3 render-fit and reference/pose activation checks
     (docs/TROUBLESHOOTING.md #52, #56 and #47). A missing shape, an unsupported
     file type, or an unreadable header with no forced family fails open, so
-    unrelated render paths keep their behavior.
+    unrelated render paths keep their behavior. Before a check refuses,
+    ``driver_unload`` unloads ComfyUI's own models here and runs it again.
     """
     unet_name = getattr(model, "unet_name", None)
     if not isinstance(unet_name, str):
@@ -323,9 +325,8 @@ def activation_footprint_preflight_for_request(
     if forced_family is not None:
         family_select.assert_override_admits_checkpoint(forced_family, path)
     family_select.warn_auto_admits_checkpoint(family, path)
-    # Run family-disjoint driver/H3 checks before the activation registry
-    # return. Sample memo credit first so this render cannot credit its own
-    # newly cleared pending load.
+    # Sample memo credit before any check, so this render cannot credit its
+    # own newly cleared pending load.
     memo_credit = unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET,
                                 _LAST_DRIVER_CHARGED_UNET)
     from ..render_memory_price import preflight_render_memory
@@ -334,20 +335,27 @@ def activation_footprint_preflight_for_request(
     # every estimate below (the latent's own shape when comfy names no config).
     video_shape = latent_scale.rendered_latent_shape(
         path, samples, *latent_size_tags(latent))
-    preflight_render_memory(path, unet_name, video_shape)
-    _driver_footprint_preflight_for_request(model, request, family, path)
-    h3_activation.preflight_h3_activation_for_request(
-        model, request, latent, family=family, path=path,
-        unet_name=unet_name, memo_credit=memo_credit, latent_shape=video_shape)
-    if family not in mesh_safety.REF_POSE_TOKEN_FAMILIES:
-        return
-    # Scan every positive cond entry's extras dict, not only the first:
-    # conditioning_set_values_with_timestep_range (the pose path in comfy's
-    # SCAIL node) can land its values on a later entry, and reference_latents
-    # append. Malformed (None/tensor) extras slots degrade to shape-only
-    # estimation, never abort the render. The negative mirrors the positive per
-    # the node, and cond/uncond run as separate model calls, so scanning the
-    # positive bounds the peak.
+    # In order: after an unload the run restarts at the check that refused.
+    steps = [
+        lambda: preflight_render_memory(path, unet_name, video_shape),
+        lambda: _driver_footprint_preflight_for_request(model, request, family, path),
+        lambda: h3_activation.preflight_h3_activation_for_request(
+            model, request, latent, family=family, path=path,
+            unet_name=unet_name, memo_credit=memo_credit, latent_shape=video_shape),
+    ]
+    if family in mesh_safety.REF_POSE_TOKEN_FAMILIES:
+        steps.append(lambda: _ref_pose_activation_preflight(
+            family, path, unet_name, request, video_shape))
+    driver_unload.check_with_unload(steps, subject=unet_name, handle=getattr(
+        getattr(model, "mesh", None), "handle", None))
+
+
+def _ref_pose_activation_preflight(family: str, path: str, unet_name: str,
+                                   request: dict, video_shape: Any) -> None:
+    """The reference/pose check (#47) over every positive entry's extras: the
+    SCAIL pose path can land on a later entry, and reference_latents append.
+    Malformed extras degrade to shape-only estimation. The negative mirrors the
+    positive and runs as its own model call, so the positive bounds the peak."""
     positive = request.get("positive") if isinstance(request, dict) else None
     ref_latents: list = []
     pose_latent = None
@@ -367,9 +375,8 @@ def activation_footprint_preflight_for_request(
         video_shape=video_shape,
         ref_shapes=ref_shapes,
         pose_shape=getattr(pose_latent, "shape", None) if pose_latent is not None else None,
-        sp_degree=1,  # ignores sequence-parallel sharding, which only shrinks
-                      # the true footprint: never a false pass, at worst an
-                      # over-eager refusal.
+        sp_degree=1,  # sharding only shrinks the true footprint: never a
+                      # false pass, at worst an over-eager refusal.
         weights_resident=(unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET)),
     )
 

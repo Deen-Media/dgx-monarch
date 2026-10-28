@@ -775,6 +775,7 @@ def test_manifest_paths_are_unique_and_non_vacuous():
     assert len(paths) >= 75
     assert set(OPTIONAL_TOUCHPOINTS) == {
         "comfy.model_management.current_loaded_models",
+        "comfy.model_management.LoadedModel.model",
         "comfy.memory_management.aimdo_enabled",
         "comfy.utils.DISABLE_MMAP",
         "comfy.model_patcher.ModelPatcher.model.model_loaded_weight_memory",

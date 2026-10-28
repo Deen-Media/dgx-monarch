@@ -199,10 +199,11 @@ MODEL_DETECTION_ANCHORS: dict[str, tuple[str, str, str, str]] = {
 # Real reads whose callers fall back safely when the name is absent. Listing
 # them keeps them visible without making their absence an outage.
 OPTIONAL_TOUCHPOINTS: tuple[str, ...] = (
-    # The loader-site footprint preflight (nodes/loader_graph.py) reads this to
-    # tell a driver stack comfy already holds from one it is about to build.
-    # Absence means "nothing loaded", which over-charges rather than crashing.
+    # The loader-site footprint preflight (nodes/loader_graph.py) and the
+    # render-site unload (driver_unload.py) read what comfy holds. Absence means
+    # "nothing loaded": the first over-charges, the second refuses unchanged.
     "comfy.model_management.current_loaded_models",
+    "comfy.model_management.LoadedModel.model",
     "comfy.memory_management.aimdo_enabled",
     "comfy.utils.DISABLE_MMAP",
     "comfy.model_patcher.ModelPatcher.model.model_loaded_weight_memory",
