@@ -29,13 +29,12 @@
   import CommandPalette from './components/CommandPalette.svelte';
   import SubmissionReview from './components/SubmissionReview.svelte';
   import Viewer from './components/Viewer.svelte';
-  import Operations from './components/Operations.svelte';
   import Generation from './views/Generation.svelte';
   import WorkspaceOutput from './views/WorkspaceOutput.svelte';
   import Gallery from './views/Gallery.svelte';
   import Queue from './views/Queue.svelte';
-  import Grids from './views/Grids.svelte';
-  import Fleet from './views/Fleet.svelte';
+  import Utilities from './views/Utilities.svelte';
+  import { isUtility, railView, resolveView } from './navigation';
   import WorkspaceRecords from './views/WorkspaceRecords.svelte';
   import Settings from './views/Settings.svelte';
   import Connect from './views/Connect.svelte';
@@ -70,7 +69,7 @@
   const refresh = () => connection.refresh();
   function navigate(id: string) {
     presentation = false; // a view that opens must show, not stay behind the presentation
-    view = id;
+    view = resolveView(id);
     palettePanel?.close();
     requestAnimationFrame(() => document.getElementById('main-heading')?.focus());
   }
@@ -320,7 +319,7 @@
   {draft}
   activeCount={activeJobs.length}
   working={tracker.working}
-  {view}
+  view={railView(view)}
   bind:presentation
   {width}
   bind:showTelemetry
@@ -438,27 +437,18 @@
         {jobAction}
         onconsent={opener.consent}
       />
-    {:else if view === 'grid'}<Grids
-        {reuse}
-        client={connection.client}
+    {:else if isUtility(view)}<Utilities
+        {view}
+        {connection}
         {draft}
         {bindings}
+        {reuse}
         restoreDraft={importDraft}
-      />
-    {:else if view === 'fleet'}<Fleet
-        client={connection.client}
-        {jobs}
-        history={connection.metricHistory}
-        presentation={connection.capabilities.presentation}
-        telemetry={connection.snapshot.telemetry}
         {changeDraft}
+        {inspect}
         {navigate}
-      />
-    {:else if view === 'operations'}<Operations
-        client={connection.client}
-        capabilities={connection.capabilities}
+        {setNotice}
         request={opener.request}
-        operations={connection.snapshot.operations}
         onrefresh={() => void refresh().catch(fail)}
       />
     {:else if view === 'projects'}<WorkspaceRecords

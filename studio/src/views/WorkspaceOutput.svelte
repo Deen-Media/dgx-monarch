@@ -6,6 +6,7 @@
   import { formatTime } from '../model';
   import { recentStep } from '../recentOutputs';
   import TelemetryCharts from '../components/TelemetryCharts.svelte';
+  import HostHealth from '../components/HostHealth.svelte';
   import Thumbnail from '../components/Thumbnail.svelte';
   import type { MetricSeries, Presentation } from '../telemetryHistory';
   import Viewer from '../components/Viewer.svelte';
@@ -123,8 +124,9 @@
       <!-- This tab's job, never the driver's global render block. -->
       <span>{job && !job.own ? 'Newest active job' : "This tab's job"}</span><strong
         class="text-small">{job?.headline ?? 'None'}</strong
-      >
+      >{#if job?.detail}<small class="job-stage">{job.detail}</small>{/if}
     </div>
+    <HostHealth {telemetry} {presentation} heading="Hosts" />
     <TelemetryCharts {history} {presentation} />
     <details>
       <summary>Authoritative host sample</summary>
@@ -143,3 +145,18 @@
       >Unknown counters stay unknown. Overlapping memory categories are not added together.</small
     >
   </aside>{/if}
+
+<style>
+  .job-stage {
+    grid-column: 1 / -1;
+    text-align: right;
+    font-size: 10px;
+    color: var(--muted);
+  }
+  /* The two-column panel of narrower screens sets the summary beside the taller host list. */
+  @media (max-width: 1050px) {
+    .telemetry-summary {
+      align-self: start;
+    }
+  }
+</style>

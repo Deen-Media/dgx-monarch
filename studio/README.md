@@ -94,8 +94,12 @@ operation Operations opens next. `jobFailure.ts` reads a failed job's recorded
 error for the status line and Queue. `workflowTraits.ts` reads what a graph
 loads, makes and saves for Create's Operation select and Output line, and
 `frameCounts.ts` finds the clip frame counts that the Duration control sets
-together. All TypeScript/Svelte source modules are below 500 lines. CSS is
-split by surface under `styles/`.
+together. `navigation.ts` defines the rail and the Utilities tabs: Grids, Fleet
+and Operations keep their route ids, and the `utilities` alias opens the tab
+used last. `hostHealth.ts` reads the telemetry panel's per-host overview and
+`chartChoice.ts` its Host and Metric choices; `fleetSetup.ts` decides what Set
+up Fleet loads. All TypeScript/Svelte source modules are below 500 lines. CSS
+is split by surface under `styles/`.
 
 The [CPU HTTP fixture](tests/README.md) exercises the companion's actual HTTP
 contract without a ComfyUI installation, GPU, or management permissions.

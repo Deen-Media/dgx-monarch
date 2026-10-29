@@ -14,6 +14,11 @@ export interface Presentation {
   units: Record<string, { precision: number }>;
   memory: Record<string, { hex: string }>;
   freshness: { minimum_stale_s: number; stale_after_intervals: number; default_interval_s: number };
+  /** Display-only thresholds, such as available memory above 20 GiB; never an admission guard. */
+  thresholds?: Record<
+    string,
+    { operator: string; value: number; above: string; otherwise: string; authority?: string }
+  >;
   /** Status tokens: ready, idle, rendering and busy green, degraded yellow, blocked red. */
   status?: Record<string, { hex: string; icon?: string; label?: string }>;
   /** The status token each job state displays with. */
@@ -33,11 +38,13 @@ const record = (value: unknown): Record<string, unknown> =>
   value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
 const number = (value: unknown): number | null =>
   typeof value === 'number' && Number.isFinite(value) ? value : null;
-function read(value: unknown, path: string): number | null {
+/** The finite number at a dotted path such as `gpu.power_w`, or null. */
+export function readPath(value: unknown, path: string): number | null {
   let node = value;
   for (const key of path.split('.')) node = record(node)[key];
   return number(node);
 }
+const read = readPath;
 /**
  * Slab GiB a host's chart records under the presentation contract's slab rule, the rule
  * `slab_reading` in studio/presentation.py applies for `dgxm top` and the sidebar. A Worker

@@ -636,8 +636,13 @@ page disables Generate and Review settings.
 
 ## Workspace controls and media
 
-Use the navigation rail or Ctrl/Cmd+K to open a view. The command palette takes
-keyboard focus immediately; Tab chooses a result and Enter opens it. It also
+Use the navigation rail or Ctrl/Cmd+K to open a view. The rail lists Create,
+Gallery, Queue, Utilities, Library and Settings. Utilities holds Grids, Fleet
+and Operations as tabs, each with one line on what it is for, and opens on the
+tab you used last, Grids at first. The palette lists each tab by name under
+Utilities, and a button that opens one, such as Grant and retry, opens that tab.
+The command palette takes keyboard focus immediately; Tab chooses a result and
+Enter opens it. It also
 lists operations to review and, once you type, packaged workflows to load, as
 [Working with workflows](#working-with-workflows) describes. Escape
 closes dialogs or leaves presentation mode. In Recent Outputs, Left and Right
@@ -648,6 +653,26 @@ bounded project catalog, including projects outside the recent snapshot.
 The Telemetry and Console buttons in the footer show and hide the Spark
 telemetry panel and the event console, and Settings has a checkbox for each.
 The browser keeps that choice, and a saved session records it.
+
+The telemetry panel lists every host in the driver's latest sample side by
+side: the driver's own box and each Worker's, with what runs there, such as
+Driver · Worker rank 0 of 2. Each host shows available memory against its
+total, GPU memory, GPU utilization, GPU power and GPU temperature, with the
+names, units and precision of the shared presentation contract. An unknown
+value reads unknown, and memory categories are never added into one total.
+Available memory above 20 GiB carries a green mark and 20 GiB or less a yellow
+one, the display rule `dgxm top` and the ComfyUI panel use; the mark decides
+nothing. A host reading more than 3 seconds older than the sample says Stale
+reading. Below the hosts, Worker service, Attached mesh and Render session show
+the driver's readiness report as the ComfyUI panel's card does, with an active
+layer in yellow. Workers report their hosts only while a Monarch render's mesh
+is attached, so with no mesh attached, for example before the first Monarch
+render after the driver starts, the panel lists the driver's host alone and
+says why. Metric history charts one series at a time. Host picks a host or
+Render progress, the driver's step count, step time and last render duration;
+Metric picks one of that host's metrics, with a rail rate for each rail. A
+choice with a single option shows as text, and the chart opens on GPU
+utilization.
 
 Phone layouts use a scrolling bottom navigation rail, larger touch controls and
 stacked panels. Expanded viewer details remain reachable without clipping the
@@ -701,8 +726,9 @@ no result of a job that had already ended, so an earlier result never shows as
 new. The recent outputs strip shows previews of job outputs only: uploads, masks
 and live previews stay out of it, and an intermediate output carries a Preview
 label. The telemetry panel names this tab's job, or the newest active job, with
-its state and time; it never ties the driver's last render to a job. The raw
-host sample stays closed until you open it.
+its state and time, and while it runs the step count and node the status line
+shows; it never ties the driver's last render to a job. The raw host sample
+stays closed until you open it.
 
 Image previews retain their source proportions across portrait, landscape and
 extreme aspect ratios. The mask canvas follows the displayed source bounds, so
@@ -994,6 +1020,15 @@ cell stays disabled until the draft has a workflow, Axis A names an input and
 each chosen axis holds a JSON array with at least one value; the line beside the
 button names what is missing.
 
+Grids opens on what a grid does, a worked example and a first comparison to
+try. In the example, steps [20, 30, 40] on Axis A and cfg [3.5, 5] on Axis B
+make six cells with the same prompt and seed. Axis B changes first: cell 1 is
+20 steps at CFG 3.5, cell 2 is 20 steps at CFG 5 and cell 6 is 40 steps at CFG
+5. The first comparison puts steps [20, 40] on Axis A alone with the Fixed
+draft seeds policy, so its two cells differ only in steps. View cell 1's output
+and Compare cell 2's, and the viewer shows them side by side above their
+recorded parameter differences.
+
 Parameter grids use typed workflow inputs or named style stacks as axes. A
 style-axis value is an ordered list of saved style IDs; an empty list selects
 no styles. Each cell freezes the selected definitions and revisions before
@@ -1050,6 +1085,38 @@ file, and otherwise keeps your edit, which the Workflow list still does not
 show. To keep a workflow with its Layout, save it in Library under workflows.
 To keep its input values too, save a preset. Load into draft brings either
 back.
+
+## Run many prompts with Fleet
+
+Fleet, a tab under Utilities, runs a workflow whose `DGXMonarchFleetKSampler`
+node turns each line of its prompts input into its own job. The jobs go to the
+GPUs in turn, one per GPU at a time, and share the model, size, steps, CFG,
+sampler and scheduler. Line 1 uses seed `noise_seed`, line 2 `noise_seed + 1`
+and so on, and the outputs come back in prompt order. Use it for more pictures
+per hour, such as many prompts on one model. It does not make one picture
+faster, and on one GPU it gains nothing; a normal Monarch workflow can split
+one render across the GPUs instead.
+
+The page says this and gives the first step. Set up Fleet in Create loads the
+packaged workflow "Fleet: many prompts, one per GPU" into Create, unless the
+draft already holds a Fleet sampler, sets the draft's Operation to Fleet and
+opens Create. A notice there names the next step: put your prompts in the
+prompts input, one per line, then generate as usual. When the load replaces a
+workflow, Undo in Create brings that workflow back, and when the load fails
+the page stays on Fleet with the error and leaves the draft as it was.
+Operation only labels the job, for the
+Gallery filter and the Fleet page's list of graph tasks: a workflow without a
+Fleet sampler runs as one ordinary job whatever its Operation says. When the
+packaged workflow is missing from the catalog, the button sets the label, opens
+Create and says to load a workflow with a Fleet sampler; a loaded workflow
+without one shows Fleet as not supported.
+
+A run takes up to 1,024 jobs, and the negative prompt is one value for every
+job or exactly one per job. The run is one ComfyUI task: no job in it can be
+paused, reordered or retried alone, so Queue retries the whole run. The page
+also shows the reporting hosts as the telemetry panel does, the metric history,
+the runtime evidence of each recorded Fleet graph task, and the driver's last
+Fleet queue snapshot and Worker sample, closed until you open them.
 
 ## Read a failure and grant a consent
 

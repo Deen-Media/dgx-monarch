@@ -30,7 +30,8 @@ DGX Monarch provides model loaders, samplers, memory controls, and 71 example wo
 
 Studio is an optional browser workspace for the pair. Pick a bundled
 workflow, write the prompt, queue renders on the driver and follow them on
-one page, with Gallery, Queue, Grids, Fleet and Library views beside it.
+one page, with Gallery, Queue, Library and the Grids, Fleet and Operations
+utilities beside it.
 Studio listens only on this computer. It signs your browser in with a link
 that holds its access token; treat that link like a password. Install the
 `studio` extra ([INSTALL](docs/INSTALL.md#optional-studio-companion)), tell
