@@ -9,72 +9,117 @@ from __future__ import annotations
 H3_HIDDEN_DIM = 5376
 _H3_BF16_BYTES = 2
 
-# Calibration posture. Config B is 1344x768x124, or 37,730 packed rows:
+# Per rank the guard charges F + S*rows_per_rank + R*rows_total: a fixed floor
+# F, S sharded bytes per per-rank row and R replicated bytes per total row
+# (below). docs/VALIDATION.md, "H3 capacity", holds the hardware records.
 #
-# * One-rank BF16 must refuse after two kernel kills on 2026-08-05.
-# * World-2 uly2 BF16 must pass; measured completion was 727.6 s.
-# * One-rank int8-convrot must pass; the pruned checkpoint completed at
-#   50.74 s/step (2026-08-03).
+# HISTORY. The 2026-08-05 fit had no floor. Config B is 1344x768x124, or
+# 37,730 packed rows. Its one-rank BF16 render was killed twice on 2026-08-05,
+# its world-2 uly2 BF16 render completed in 727.6 s, and the pruned INT8
+# checkpoint completed it on one rank at 50.74 s/step (2026-08-03). At a 4 GiB
+# reserve those bounded S to (734,495, 1,359,225], and S shipped at
+# 96*5376*2 = 1,032,192 B, near that window's geometric centre. The kill left
+# 24.9 GiB unattributed at 37,730 rows; the slope sat 1.63x above that reading
+# and carried every fixed cost. The killed run still had the legacy load
+# path's retained arena, since removed.
 #
-# See docs/VALIDATION.md for the hardware records. Let S be sharded bytes per
-# per-rank row, R replicated bytes per total row, U usable bytes (MemAvailable
-# minus the driver reserve, 4 GiB at this calibration on 2026-08-05), and W the
-# weight charge. The 114.7 GiB idle and the 28.4 GiB post-render floor below
-# come from one stock single-process reference run of the 61.7 GiB bf16
-# artifact; docs/VALIDATION.md records both (2026-08-05).
+# The 2026-10-29 render broke that fit: 1344x768x362 on uly2 with the pruned
+# INT8 ConvRot DiT resident, 109,463 rows (107,856 video, 1,206 audio, 401
+# text), 54,732 per rank. Each actor's GPU use beyond its 19.53 GiB of weights
+# peaked at 17.6 GiB, and the actor-only host's whole use at the peak was
+# 46.4 GiB with the weights, about 6 GiB of page cache growth and 8.8 GiB of
+# RSS. The old slope charged 60.1 GiB per rank there, about 3.4x the measured
+# reservation, and refused a second render (51.5 GiB usable) and the gate's
+# slab path (56.3 GiB usable). Both refusals were false.
 #
-# RESIDENT: DiT 61.7 + text encoder 16.7 + VAEs 5.8 = 84.2 GiB.
-# MemAvailable is about 32.4 GiB at dispatch: that run's 28.4 GiB post-render
-# floor at Config A plus about 4 GiB of activations and runtime. U=28.4.
-#       refuse at N=1:  37,730*(S + R) > U            ->  S >   734,495
-#       pass   at N=2:  18,865*S + 37,730*R <= U      ->  S <= 1,468,990
+# REQUIREMENTS, per rank. U is MemAvailable minus the reserve and W the weight
+# charge. The reserve has been 5 GiB since 2026-09-04
+# (driver_footprint.reserve_bytes); the 2026-08-05 fit used 4 GiB, and its
+# readings are in brackets. The 114.7 GiB idle and the 28.4 GiB post-render
+# floor come from one stock single-process reference run of the 61.7 GiB bf16
+# artifact (docs/VALIDATION.md, 2026-08-05).
 #
-# PENDING (`auto`): resident text encoder 16.7 + VAEs 5.8 GiB gives about
-# 92.2 GiB available from that run's 114.7 GiB idle, U=88.2 GiB, and
-# W=66,280,487,368 B. That run's own reconciliation puts the encoder at
-# 14.6 GiB; the tighter 16.7 GiB figure, from another run, is used instead.
-# Recomputing with 94.3 GiB gives (739,376, 1,468,991], centre 1,042,178; the
-# shipped value is 0.99x it.
-#       refuse at N=1:  W + 37,730*(S + R) > U        ->  S >   679,612
-#       pass   at N=2:  W + 18,865*S + 37,730*R <= U  ->  S <= 1,359,225
+#   1. Config B, one rank, BF16: killed, must refuse.
+#      RESIDENT: DiT 61.7 + text encoder 16.7 + VAEs 5.8 = 84.2 GiB, leaving
+#      about 32.4 GiB at dispatch (the 28.4 GiB floor plus about 4 GiB of
+#      activations and runtime at Config A): U = 27.4 [28.4].
+#      PENDING (`auto`): only the encoder and the VAEs are in, 92.2 GiB of the
+#      114.7 GiB idle: U = 87.2 [88.2], W = 66,280,487,368 B. That run's own
+#      reconciliation puts the encoder at 14.6 GiB; the tighter 16.7 GiB
+#      figure, from another run, is used instead.
+#   2. Config B, world 2 uly2, BF16, 18,865 rows per rank: completed, must
+#      pass in both postures.
+#   3. Config B, one rank, INT8 under an explicit preset: completed, must pass.
+#      U = 55.5 [56.5], W = 0. U charges the 31.70 GiB non-pruned file, but the
+#      completion ran the 19.53 GiB pruned one (docs/VALIDATION.md, H3
+#      promotion Leg 1); the larger charge only lowers this ceiling.
+#   4. The 2026-10-29 render, weights resident: completed, must pass at
+#      U = 51.5 (the second render: 56.5 GiB MemAvailable minus 5) and at
+#      U = 56.3 (the gate's slab path), and must charge more than the measured
+#      17.6 GiB.
 #
-# SINGLE-RANK INT8: resident, U=56.5 GiB, W=0. U charges the 31.70 GiB
-# non-pruned int8-convrot file, but the completion ran the 19.53 GiB pruned one
-# (docs/VALIDATION.md, H3 promotion Leg 1). The larger charge only lowers this
-# ceiling, and the PENDING ceiling sits below it.
-#       pass   at N=1:  37,730*(S + R) <= U           ->  S <= 1,534,181
+# FIT. Three requirements bind: point 1 resident, point 2 pending and point 4
+# at 51.5 GiB. Their budgets carry whole-GiB doubt (92.2 GiB is derived, the
+# encoder reads 14.6 or 16.7 GiB, the VAEs 5.41 or 5.8), so the fit maximises
+# the smallest margin in GiB. It takes each requirement at the reserve that
+# makes it harder, point 1 at the bracketed 4 GiB budgets and every pass at
+# 5 GiB, so the verdicts hold at either reserve. The optimum is F = 7.70 GiB
+# and S = 631,756 B, every binding margin 4.09 GiB. Rounded to F = 7.5 GiB and
+# S = 59*5376*2 = 634,368 B (0.60 MiB/row), the margins in GiB are:
 #
-# Intersection: (734,495, 1,359,225], geometric centre 999,172. The selected
-# S=96*5376*2=1,032,192 B (0.98 MiB/row), 1.41x above the floor and 1.32x below
-# the ceiling. The reserve is 5 GiB since 2026-09-04; at the same readings
-# that moves the intersection to (706,036, 1,302,308], which still holds S.
+#   point                            estimate  budget        margin
+#   1 killed, resident                  32.38  27.4 [28.4]   refuses by 4.98 [3.98]
+#   1 killed, pending, W 61.73          94.11  87.2 [88.2]   refuses by 6.91 [5.91]
+#   2 uly2 BF16, resident               21.24  27.4 [28.4]   passes by 6.16 [7.16]
+#   2 uly2 BF16, pending, W 61.73       82.96  87.2 [88.2]   passes by 4.24 [5.24]
+#   3 one-rank INT8, preset             32.38  55.5 [56.5]   passes by 23.12 [24.12]
+#   4 362 frames, second render         47.35  51.5          passes by 4.15
+#   4 362 frames, gate slab path        47.35  56.3          passes by 8.95
+#
+# tests/test_h3_activation_preflight.py replays every row and recomputes the
+# optimum. Against the two measured lower bounds, the estimate is 1.30x the
+# 24.9 GiB the kill left unattributed and 2.69x the 17.6 GiB reservation at
+# point 4 (1.75x the host-level 27 GiB that counts RSS and page cache). The
+# refusal margin at point 1 fell from 10.5 to 4.0 GiB at the 28.4 GiB budget.
+# The kill's reading carried the removed arena, so it overstates what that
+# shape needs today, yet an estimate equal to it would pass that shape at
+# either reserve, so the estimate must stay above it.
+#
+# F is fitted, not measured. Config A ran in about 4 GiB of activations and
+# runtime, and the sibling's actor held 0.9 GiB beyond its weights between the
+# 2026-10-29 load and the first step, so a small render is charged a few GiB
+# more than it uses. That is the safe direction.
+#
+# ONE SPARK. The 362-frame cell at the loader is 109,062 rows (107,856 video,
+# 1,206 audio) on one rank, with the pruned DiT pending (19.53 GiB), 92.8 GiB
+# MemAvailable and the 5 GiB reserve. This fit charges 79.4 GiB of activations
+# (7.5 floor, 64.4 sharded, 7.5 replicated) and 99.0 GiB in all against
+# 87.8 GiB usable: REFUSED, 11.2 GiB short. The old slope charged 112.3 GiB of
+# activations there, 44.1 GiB short. The 243-frame rung, 73,386 rows, fits at
+# the same reading with 12.4 GiB to spare. A measured one-Spark run decides
+# the 362-frame cell, not these constants.
+#
+# KNIFE EDGE. Constants that admit that cell exist, but none keep this fit's
+# margins: every F and S that admit it leave point 1's refusal, point 2's
+# pending pass or the cell itself with 2.5 GiB or less. Balancing the three
+# gives F = 12.45 GiB and S = 451,181 B (about 42*5376*2), 2.5 GiB each, with a
+# floor that charges small renders 5 GiB more. From S = 48*5376*2 up, any pair
+# that admits the cell refuses point 1 by under 1 GiB, and from 49 up no pair
+# that meets the four points admits it.
 #
 # VAEs 5.8 is the two files' size in decimal GB. They hold 5,813,063,304 B,
-# 5.41 GiB (docs/VALIDATION.md, staged artifact sizes), so each U that subtracts
-# them is 0.39 GiB low. With the exact bytes the PENDING ceiling is 1,381,204
-# (1,324,287 at the 5 GiB reserve). The intersection's floor comes from
-# RESIDENT, whose U is the measured 28.4 GiB with no VAE term, so S holds
-# either way.
+# 5.41 GiB (docs/VALIDATION.md, staged artifact sizes), so each pending U is
+# 0.39 GiB low: with exact bytes point 2's pending pass gains 0.39 GiB and
+# point 1's pending refusal loses as much. Point 1's resident budget, which
+# binds, has no VAE term.
 #
 # Sanity bounds: an autograd-free block can concurrently hold x, h, two MLP
-# projections, and the gate: 11*hidden*2=118,272 B/row. The selected value is
-# 8.7x that floor. The gap covers fp32 patch staging, attention workspaces,
-# retained allocator memory, and block prefetch (645.5 M parameters,
-# 1.20 GiB BF16 per block).
-#
-# The kill left 24.9 GiB unattributed at 37,730 rows: 708,618 B/row combined,
-# or 634,890 B/row sharded. The selected value is 1.63x that lower bound. Using
-# the measured slope directly would estimate 24.9 GiB against the resident
-# 28.4 GiB budget and incorrectly pass the failing case. The generic
-# mesh_safety factor of 8 is also below H3's anatomy floor.
-#
-# This slope has no fixed intercept. Prefetch, allocator, and workspace costs
-# are amortized into it. That run's working set left about 4 GiB for
-# activations and runtime at Config A's 356 rows, where this formula estimates
-# 0.37 GiB. It is therefore a lower bound below roughly 3,900 rows; above that,
-# the 1.63x slope margin covers the missing floor. All calibration requirements
-# above use 37,730 rows.
-_H3_BLOCK_FACTOR = 96
+# projections, and the gate: 11*hidden*2 = 118,272 B/row. S is 5.4x that. The
+# gap covers fp32 patch staging, attention workspaces, retained allocator
+# memory and block prefetch (645.5 M parameters, 1.20 GiB BF16 per block). The
+# generic mesh_safety factor of 8 is below H3's anatomy floor.
+H3_ACTIVATION_FLOOR_BYTES = 15 * 2 ** 29          # 7.5 GiB
+_H3_BLOCK_FACTOR = 59
 H3_SHARDED_ROW_BYTES = _H3_BLOCK_FACTOR * H3_HIDDEN_DIM * _H3_BF16_BYTES
 
 # Replicated buffers are charged per total packed row because SP does not divide
@@ -87,6 +132,8 @@ H3_SHARDED_ROW_BYTES = _H3_BLOCK_FACTOR * H3_HIDDEN_DIM * _H3_BF16_BYTES
 # rows and charging a gather buffer even at world 1; those exceed the 1,536 B
 # reduction. Charging every total row biases toward refusal; the OOM it guards
 # cannot be caught. Config B charges 2.59 GiB versus about 2.64 GiB measured.
+# The refit keeps R: one measured shape cannot split it from S, and the
+# 2026-10-29 reservation has room for its 7.5 GiB at 109,463 rows.
 H3_REPLICATED_ROW_BYTES = 73_728
 
 # Guide encode, measured 2026-08-14 on one DGX Spark (121.6 GiB, 113 GiB idle).

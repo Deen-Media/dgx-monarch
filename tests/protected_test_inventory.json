@@ -658,7 +658,7 @@
     },
     "tests/test_driver_footprint_preflight.py": {
       "test_a_gate_leg_reports_it_as_capacity_with_the_numbers_intact": "bb21b20c0ab659d2",
-      "test_a_retry_after_a_failed_render_is_not_charged_twice": "e3abf7f6a915e30f",
+      "test_a_retry_after_a_failed_render_is_not_charged_twice": "2fc35d3e42531dbc",
       "test_a_shard_already_built_is_not_charged_a_second_time": "c4a16522f9a92a98",
       "test_a_shard_build_charges_the_share_and_no_arena": "22a1f611ef6d2802",
       "test_a_weight_dtype_cast_stands_the_check_down": "6a7d63411e90d3cb",
@@ -715,7 +715,7 @@
       "test_a_render_still_short_refuses_with_the_reading_after_the_unload": "bd94bad3f542fca8",
       "test_a_running_render_is_never_unloaded": "cc5ae60808eeeb41",
       "test_an_h3_render_behind_a_running_one_is_refused_without_an_unload": "66ea359e12289c53",
-      "test_an_h3_render_still_short_refuses_with_the_reading_after_the_unload": "b3868b52259780c3",
+      "test_an_h3_render_still_short_refuses_with_the_reading_after_the_unload": "2cb0246caf376c45",
       "test_an_off_spelling_leaves_the_unload_on": "0a7b380b1b445339",
       "test_an_unload_that_fails_still_refuses": "1170b2183eb45c25",
       "test_an_unload_that_frees_no_model_refuses_on_the_first_reading": "970c2b59a51c4485",

@@ -381,7 +381,7 @@ copied from historical evidence.
    [`driver_footprint.py:103-103`](../src/dgx_monarch/driver_footprint.py#L103-L103 "anchor:DriverFootprintCapacityError"), and
    [`gate_verdict.py:73-101`](../src/dgx_monarch/nodes/gate_verdict.py#L73-L101 "anchor:publish_ceremony_verdict"). A driver-side
    refusal raised inside a first-use leg is covered by
-   [`test_driver_footprint_preflight.py:530-579`](../tests/test_driver_footprint_preflight.py#L530-L579 "anchor:test_a_gate_leg_reports_it_as_capacity_with_the_numbers_intact").
+   [`test_driver_footprint_preflight.py:536-585`](../tests/test_driver_footprint_preflight.py#L536-L585 "anchor:test_a_gate_leg_reports_it_as_capacity_with_the_numbers_intact").
    Typed, wrapped, and generic-OOM cases are covered by
    [`test_gate_orchestration.py:2731-2750`](../tests/test_gate_orchestration.py#L2731-L2750 "anchor:test_capacity_refusal_stays_inconclusive_with_no_pass_grant"),
    [`test_gate_orchestration.py:2753-2765`](../tests/test_gate_orchestration.py#L2753-L2765 "anchor:test_wrapped_capacity_refusal_is_classified_but_grants_nothing"),

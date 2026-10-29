@@ -2720,18 +2720,66 @@ geometry metadata preserved through loading.
 
 ## H3 capacity
 
-Activation pricing was calibrated at 1344x768x124, 37,730
-packed rows: one-rank BF16 failed twice, world-2 BF16 completed in 727.6 s,
-and pruned INT8 completed on one rank at 50.74 seconds per step. The model
-charges 1,032,192 sharded bytes per row per rank plus 73,728 replicated
-bytes per total row. With the original 4-GiB reserve, the observed pass/fail
-intersection for the sharded term was (734,495, 1,359,225] bytes; the later
-5-GiB reserve gives (706,036, 1,302,308], still containing the chosen value.
-This fit amortizes fixed workspace/allocator costs into a slope and is a
-lower bound below roughly 3,900 rows. It is not a fitted intercept model.
-A stock small-shape BF16 reference went from 114.7 GiB idle to a 28.4-GiB
-floor. The two VAE files total 5,813,063,304 bytes (5.41 GiB), not 5.8 GiB;
-using exact bytes leaves the selected activation coefficient inside the bounds.
+Activation pricing charges each rank a fixed floor of 7.5 GiB, 634,368 bytes
+per packed row on that rank (59 x 5376 x 2) and 73,728 bytes per row of the
+whole packed total, which no topology divides. Four hardware points set the
+floor and the per-rank slope; the constants and their derivation are in
+`src/dgx_monarch/h3_calibration.py`.
+
+| point | shape and stack | outcome | the estimate must |
+|---|---|---|---|
+| 1 | 1344x768x124, 37,730 rows, one rank, BF16 (2026-08-05) | killed twice | refuse, resident and pending |
+| 2 | the same on world-2 uly2, BF16 (2026-08-05) | completed in 727.6 s | pass, resident and pending |
+| 3 | the same on one rank, pruned INT8 (2026-08-03) | completed at 50.74 s per step | pass under an explicit preset |
+| 4 | 1344x768x362, 109,463 rows, uly2, pruned INT8 ConvRot (2026-10-29) | completed | pass at 51.5 and 56.3 GiB usable, and charge more than the 17.6 GiB measured |
+
+The budgets carry whole-GiB doubt, so the fit maximises the smallest margin
+in GiB. It holds point 1 to the larger budget the old 4 GiB reserve left and
+every pass to the shipped 5 GiB reserve, so the verdicts hold at either. The
+optimum, a 7.70 GiB floor and 631,756 bytes per row, ties point 1 resident,
+point 2 pending and point 4's second render at 4.09 GiB. The rounded constants
+clear each point as follows, in GiB per rank, with the 4 GiB reserve's figures
+in brackets:
+
+| point and posture | estimate | usable | margin |
+|---|---:|---:|---|
+| 1, resident | 32.38 | 27.4 [28.4] | refuses by 4.98 [3.98] |
+| 1, pending, 61.73 GiB of weights | 94.11 | 87.2 [88.2] | refuses by 6.91 [5.91] |
+| 2, resident | 21.24 | 27.4 [28.4] | passes by 6.16 [7.16] |
+| 2, pending, 61.73 GiB of weights | 82.96 | 87.2 [88.2] | passes by 4.24 [5.24] |
+| 3, explicit preset | 32.38 | 55.5 [56.5] | passes by 23.12 [24.12] |
+| 4, second render | 47.35 | 51.5 | passes by 4.15 |
+| 4, gate slab path | 47.35 | 56.3 | passes by 8.95 |
+
+Both measured points are lower bounds on what their shapes need. The estimate
+is 1.30 times the 24.9 GiB the point 1 kill left unattributed and 2.69 times
+the 17.6 GiB each actor reserved at point 4. The killed run still carried the
+legacy load path's retained arena, since removed, so its reading overstates
+what that shape needs now. A stock small-shape BF16 reference went from
+114.7 GiB idle to a 28.4 GiB floor, and points 1 and 2 take their budgets from
+it. The two VAE files total 5,813,063,304 bytes (5.41 GiB), not the 5.8 GiB
+the pending budgets subtract; with exact bytes point 2's pending pass gains
+0.39 GiB and point 1's pending refusal loses as much.
+
+The first fit, of 2026-08-05, had no floor. Its 1,032,192 sharded bytes per
+row sat near the centre of the window points 1 to 3 left, which was
+(734,495, 1,359,225] bytes at the 4 GiB reserve and (706,036, 1,302,308] at
+5 GiB, and 1.63 times above the kill's reading, with every fixed cost folded
+into the slope. At point 4 it charged 60.1 GiB per rank, refusing the
+session's second render 8.7 GiB short and the gate's slab path 3.8 GiB short,
+and on one Spark it charged 112.3 GiB for 109,062 rows. The capacity notes in
+[BENCHMARKS](BENCHMARKS.md#a-15-second-clip-on-the-pair-2026-10-29) quote that
+model.
+
+On one Spark the loader node reads the 362-frame cell as 109,062 rows of video
+and audio. With the pruned DiT pending (19.53 GiB), 92.8 GiB MemAvailable and
+the 5 GiB reserve, the model charges 79.4 GiB of activations (7.5 floor,
+64.4 sharded, 7.5 replicated) and refuses, 11.2 GiB short. The 243-frame
+cell, 73,386 rows, fits at the same reading with 12.4 GiB to spare. Constants
+that admit the 362-frame cell exist, but every pair that does leaves point 1's
+refusal, point 2's pending pass or the cell itself with 2.5 GiB or less,
+against the 4 GiB this fit keeps. A measured one-Spark run decides that cell,
+not the constants.
 
 
 A 61.73-GiB BF16 reference-to-video load left 60.9 GiB available before
@@ -2767,6 +2815,29 @@ beyond 39 frames remain unmeasured. The loader conservatively treats an undeclar
 guide as a clip and refuses that high-resolution case. Declaring a still
 through `DGXM_H3_GUIDE_FRAMES` was exercised through the driver API.
 The estimator cannot promise capacity for unmeasured longer clips or canvases.
+
+### The 15 second render, measured (2026-10-29)
+
+The pair rendered 1344x768x362 on uly2 at 20 steps with the pruned INT8
+ConvRot DiT and the Triton kernel, the head capped at 2100 MHz, while 1 Hz
+samplers on both hosts logged MemAvailable, page cache, committed memory and
+each GPU process's memory and RSS. The prompt completed in 54:05.
+
+| host | idle MemAvailable | minimum during the render | actor GPU memory peak | actor RSS | driver |
+|---|---:|---:|---:|---|---|
+| the sibling, actor only | 114.6 GiB | 68.2 GiB, mid sampling | 37.1 GiB | 20.9 GiB during the load, 8.8 GiB after | none |
+| the head, actor and driver | 110.6 GiB | 47.5 GiB, during the load | 37.1 GiB | 20.9 GiB during the load, 8.8 GiB after | 14.6 GiB text encoder on the GPU, 10.5 GiB RSS |
+
+Each actor's 37.1 GiB is 19.53 GiB of weights and 17.6 GiB beyond them. The
+sibling's actor held 20.4 GiB right after the load, 0.9 GiB beyond its
+weights, and climbed to its peak once sampling began. The sibling's whole use
+at its minimum, 46.4 GiB, counts the weights, about 6 GiB of page cache growth
+and the actor's 8.8 GiB of RSS. Neither host swapped, logged memory pressure
+or logged a kernel OOM or reclaim line. A 1 Hz sampler can miss a short spike,
+so each peak is a lower bound. In the same session the second request read
+56.5 GiB MemAvailable on the head after the driver unloaded its VAEs, and the
+gate's slab path read 61.3 GiB after its proof render; the model before the
+refit refused both.
 
 ### Driver unload before a render-site refusal (2026-10-29)
 

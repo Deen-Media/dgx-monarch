@@ -80,6 +80,14 @@
   [BENCHMARKS](docs/BENCHMARKS.md#a-15-second-clip-on-the-pair-2026-10-29).
   The kernel option's install points ran on hardware, one short render per
   process kind ([VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
+- The MiniMax H3 activation preflight charges each rank a fixed 7.5 GiB floor
+  plus 634,368 bytes per row on the rank, fitted to four hardware points, in
+  place of 1,032,192 bytes per row with no floor. On the pair it now admits
+  the 15 second clip's second request in a session and the gate's slab path,
+  which the old charge of 60.1 GiB per rank refused against the 17.6 GiB the
+  render measured; one Spark still refuses the clip, 11.2 GiB short
+  ([VALIDATION](docs/VALIDATION.md#h3-capacity),
+  [TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 - `compile_dit` no longer forces stock residency on the families it leaves
   eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
   tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
