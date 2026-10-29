@@ -2445,15 +2445,18 @@ shapes. The block-scaled files (MXFP8, NVFP4) are not INT8 and were not part
 of the comparison.
 
 **Speed.** The warm legs in docs/BENCHMARKS.md ("INT8 GEMM: CUTLASS against the
-Triton kernel"): 17 to 25 percent faster on the video families, 4 to 14 percent
-on Ideogram4 and Chroma, no change on Krea2, Qwen Image 2.1 and the small
-turbo stills. The harness times at 2 s granularity. A first stock pass had read
+Triton kernel"): 16 to 25 percent faster on MiniMax H3 and Wan Animate 2, 5 to
+9 percent on LTX 2.5, 4 to 14 percent on Ideogram4 and Chroma, no change on
+Krea2, Qwen Image 2.1 and the small turbo stills. The harness times at 2 s granularity. A first stock pass had read
 Krea2 on one GPU at 86 s against 94 s under the kernel; the stock re-render
 read 94 s, so that was run-to-run variance, not the kernel. At the GEMM level
-the kernel is at or above CUTLASS at every M on every shape swept, and from
-6144 rows up CUTLASS falls to 37 to 55 percent of its peak while the Triton
-kernel holds about 175 TOPS, so no M threshold or family gate is needed for
-speed. The head ran its 2100 MHz clock cap throughout; kan11 reports the same
+the two routes are within 8 percent of each other either way below 4096 rows
+(the worst reading 0.92 on the Ideogram4 qkv linear at 1024 rows), the kernel
+is at or above CUTLASS from 4096 rows up on every shape but one reading
+(Ideogram4 adaln at 8192 rows, 0.96), and from 6144 rows up CUTLASS falls to 37
+to 55 percent of its peak while the Triton kernel holds about 175 TOPS. The
+small-M losses sit on calls that are a small share of a render, and no measured
+render came out slower, so no M threshold or family gate is needed for speed. The head ran its 2100 MHz clock cap throughout; kan11 reports the same
 18 percent H3 gain uncapped.
 
 **What this does not cover.** The kernel ran as a process-wide patch, not yet
