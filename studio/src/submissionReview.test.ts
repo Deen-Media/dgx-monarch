@@ -2,11 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { emptyDraft } from './model.ts';
-import { reviewSummary, startReviewClock, submitBlock } from './reviewSummary.ts';
+import { CHECKS, reviewSummary, startReviewClock, submitBlock } from './reviewSummary.ts';
 import { componentFunctions, renderComponent, visibleText } from './renderHarness.js';
 
-const WARNING =
-  'Studio checked these values against the inputs the driver reports. The backend checks memory, topology, identity and consent when the job runs and can still refuse it then.';
+const WARNING = 'This job needs about 96 GiB and 80 GiB is free.';
 const bindings = [
   {
     id: 'root:6:text',
@@ -48,7 +47,7 @@ function preview(changes: Record<string, unknown> = {}) {
     id: 'review-1',
     digest: 'digest',
     errors: [],
-    warnings: [WARNING],
+    warnings: [],
     requested: {
       ...emptyDraft(),
       workflowName: 'Kroma INT8',
@@ -81,49 +80,54 @@ function preview(changes: Record<string, unknown> = {}) {
 }
 async function review(
   changes: Record<string, unknown> = {},
-  state: { pending?: unknown; confirmed?: boolean; busy?: boolean } = {},
+  state: { pending?: unknown; acknowledged?: boolean[]; busy?: boolean } = {},
 ) {
   const body = await renderComponent('./components/SubmissionReview.svelte', {
     submission: {
       preview: preview(changes),
+      refusal: null,
+      reviewed: bindings,
       pending: state.pending ?? null,
-      confirmed: state.confirmed ?? false,
+      acknowledged: state.acknowledged ?? [],
+      acknowledge() {},
     },
-    bindings,
     busy: state.busy ?? false,
     submitPreview: async () => {},
   });
   return { body, text: visibleText(body) };
 }
-/** The opening tag of the Submit button. */
+/** The opening tag of the dialog's Generate button. */
 const submitTag = (body: string) => {
-  const end = body.indexOf('Submit reviewed job') + 1 || body.indexOf('Submitting…') + 1;
-  assert.ok(end > 0, 'missing Submit');
+  const end = body.indexOf('>Generate</button>') + 1 || body.indexOf('Submitting…') + 1;
+  assert.ok(end > 0, 'missing Generate');
   const start = body.lastIndexOf('<button', end);
   return body.slice(start, body.indexOf('>', start) + 1);
 };
 
-test('the review opens with a plain summary and keeps the frozen record closed', async () => {
+test('Review settings opens with a plain summary and keeps the frozen record closed', async () => {
   const { body, text } = await review();
   for (const line of [
     'IMMUTABLE SUBMISSION',
-    'Review generation',
-    'Ready to submit. Confirm below.',
+    'Review settings',
+    'Ready to generate.',
     'Workflow Kroma INT8 · image',
     'kroma-int8.safetensors (unet_name, node 2)',
     'Seed 4242',
-    'Chosen at review by the Random policy. Your seed fields keep their values.',
+    'Chosen for this job by the Random policy. Your seed fields keep their values.',
     'Prompt · node 6 framed painting of cat Your draft text before review: cat',
     'text · node 7 blur',
     'Styles applied in this order: Painting.',
     'DGXMonarchInit (node 1): world_size 2',
     'The backend sets the topology that runs.',
-    `Checks still to run ${WARNING}`,
-    '10 minutes after it was made. After that, review again.',
+    `Checks ${CHECKS}`,
+    "10 minutes after Studio made it, because it records the driver's runtime as it was then.",
     'Immutable submission record (JSON)',
   ])
     assert.ok(text.includes(line), line);
   assert.doesNotMatch(text, /Review job|DGXMonarchLoraLoader|filename_prefix/);
+  // Ready never sits beside a list of checks still to run, and nothing asks for a tick.
+  assert.doesNotMatch(text, /Ready to submit|Checks still to run|Confirm below|I reviewed/);
+  assert.doesNotMatch(body, /type="checkbox"|Needs your decision/);
   // The unchanged negative text shows once, without a draft copy.
   assert.equal(text.split('blur').length, 2);
   // The record stays closed, and its JSON is not even rendered until it opens.
@@ -131,45 +135,54 @@ test('the review opens with a plain summary and keeps the frozen record closed',
   assert.doesNotMatch(body, /<pre>|"digest"/);
 });
 
-test('Submit says why it is off, and turns on only for a confirmed, unblocked review', async () => {
-  const unchecked = await review();
-  assert.match(submitTag(unchecked.body), /disabled/);
-  assert.match(submitTag(unchecked.body), /aria-describedby="submit-block"/);
-  assert.ok(unchecked.text.includes('Submit is off until you check the box above.'));
-  const ready = await review({}, { confirmed: true });
+test('Generate is on without a warning, and a warning holds it until its own box is ticked', async () => {
+  const ready = await review();
   assert.doesNotMatch(submitTag(ready.body), /disabled/);
-  assert.doesNotMatch(ready.text, /Submit is off/);
-  const busy = await review({}, { confirmed: true, busy: true });
+  assert.doesNotMatch(ready.text, /Generate is off/);
+  const busy = await review({}, { busy: true });
   assert.match(submitTag(busy.body), /disabled/);
   assert.ok(busy.text.includes('Submitting…'));
-  assert.ok(busy.text.includes('Submit is off while Studio finishes the current request.'));
+  assert.ok(busy.text.includes('Generate is off while Studio finishes the current request.'));
+  const warned = await review({ warnings: [WARNING] }, { acknowledged: [false] });
+  for (const line of [
+    'Check before generating',
+    'One warning needs your decision before this job runs.',
+    'Needs your decision',
+    `Generate anyway: ${WARNING}`,
+    'Generate is off until you tick each warning above, or adjust the draft.',
+    'Adjust the draft',
+  ])
+    assert.ok(warned.text.includes(line), line);
+  assert.match(warned.body, /class="review-status decide"/);
+  assert.equal(warned.body.split('type="checkbox"').length, 2, 'one box for the one warning');
+  assert.match(submitTag(warned.body), /disabled/);
+  assert.match(submitTag(warned.body), /aria-describedby="submit-block"/);
+  const accepted = await review({ warnings: [WARNING] }, { acknowledged: [true] });
+  assert.doesNotMatch(submitTag(accepted.body), /disabled/);
+  assert.ok(accepted.text.includes('Ready to generate.'));
+  assert.match(accepted.body, /<input type="checkbox" checked=""/);
 });
 
 test('a pending submission or a companion error blocks the review and says so', async () => {
-  const pending = await review({}, { confirmed: true, pending: { key: 'k', preview_id: 'p' } });
+  const pending = await review({}, { pending: { key: 'k', preview_id: 'p' } });
   assert.ok(pending.text.includes('Blocked: an earlier submission is unresolved.'));
   assert.ok(
     pending.text.includes(
-      'Submit is off until the earlier submission is reconciled. Use Reconcile request in the banner.',
+      'Generate is off until the earlier submission is reconciled. Use Reconcile request in the banner.',
     ),
   );
   assert.match(submitTag(pending.body), /disabled/);
   assert.doesNotMatch(pending.body, /review-status ready/);
   // While its own request is in flight, the request identity is already pending.
-  const sending = await review(
-    {},
-    { confirmed: true, busy: true, pending: { key: 'k', preview_id: 'p' } },
-  );
+  const sending = await review({}, { busy: true, pending: { key: 'k', preview_id: 'p' } });
   assert.ok(sending.text.includes('Submitting. Wait for the outcome.'));
-  assert.ok(sending.text.includes('Submit is off while this submission is sent.'));
-  const refused = await review(
-    { errors: ['Choose a model file for node 2.'] },
-    { confirmed: true },
-  );
+  assert.ok(sending.text.includes('Generate is off while this submission is sent.'));
+  const refused = await review({ errors: ['Choose a model file for node 2.'] });
+  assert.ok(refused.text.includes('Fix the draft'));
   assert.ok(refused.text.includes('Blocked: Choose a model file for node 2.'));
   assert.ok(
     refused.text.includes(
-      'Submit is off until the problems above are fixed. Return to the draft, correct them and review again.',
+      'Generate is off until the problems above are fixed. Return to the draft and correct them.',
     ),
   );
   assert.match(submitTag(refused.body), /disabled/);
@@ -196,7 +209,19 @@ test('a fixed review names its seed source, and text without styles shows once',
     { label: 'text · node 7', text: 'blur' },
   ]);
   assert.equal(summary.styles, '');
-  assert.deepEqual(summary.warnings, ['{"code":"custom"}']);
+  assert.deepEqual(summary.warnings, [
+    { text: '{"code":"custom"}', accept: 'Generate anyway: {"code":"custom"}' },
+  ]);
+  // A warning with its own words and acknowledgement keeps both in its box.
+  const worded = reviewSummary(
+    preview({ warnings: [{ message: 'Low memory.', acknowledgement: 'Run it anyway.' }] }) as never,
+    bindings,
+    false,
+    false,
+  );
+  assert.deepEqual(worded.warnings, [
+    { text: 'Low memory.', accept: 'Low memory. Run it anyway.' },
+  ]);
   assert.equal(summary.expiry, '');
   // A workflow without multi-line text, and no style, shows every text input instead.
   const single = bindings.map((binding) => ({ ...binding, schema: { type: binding.schema.type } }));
@@ -213,18 +238,14 @@ test('a fixed review names its seed source, and text without styles shows once',
 
 test('submitBlock puts the most basic block first', () => {
   const ok = preview() as never;
-  const blocked = preview({ errors: ['x'] }) as never;
-  assert.equal(submitBlock(ok, { confirmed: true, busy: false, pending: false }), '');
-  assert.match(
-    submitBlock(blocked, { confirmed: false, busy: true, pending: true }),
-    /problems above/,
-  );
-  assert.match(submitBlock(ok, { confirmed: false, busy: false, pending: true }), /reconciled/);
-  assert.match(
-    submitBlock(ok, { confirmed: false, busy: true, pending: false }),
-    /current request/,
-  );
-  assert.match(submitBlock(ok, { confirmed: false, busy: false, pending: false }), /check the box/);
+  const warned = preview({ warnings: [WARNING] }) as never;
+  const blocked = preview({ errors: ['x'], warnings: [WARNING] }) as never;
+  assert.equal(submitBlock(ok, { busy: false, pending: false }), '');
+  assert.match(submitBlock(blocked, { busy: true, pending: true }), /problems above/);
+  assert.match(submitBlock(warned, { busy: false, pending: true }), /reconciled/);
+  assert.match(submitBlock(warned, { busy: true, pending: false }), /current request/);
+  assert.match(submitBlock(warned, { busy: false, pending: false }), /tick each warning/);
+  assert.equal(submitBlock(warned, { acknowledged: [true], busy: false, pending: false }), '');
 });
 
 // Run the shipped dialog submit handler: every outcome closes the dialog.
@@ -256,12 +277,7 @@ test('the review dialog closes after a submit, whatever its outcome', async () =
 });
 
 // Run the shipped App submit with its error handling: a failure reaches the banner.
-const appCode = await componentFunctions('./App.svelte', [
-  'submitPreview',
-  'withBusy',
-  'fail',
-  'setNotice',
-]);
+const appCode = await componentFunctions('./App.svelte', ['submitPreview', 'withBusy', 'fail']);
 const appSubmit = new Function(
   'submission',
   `'use strict';
@@ -287,12 +303,12 @@ test('a refused or unknown submission leaves its error for the banner and the dr
     dirty: true,
     owned: [],
   });
-  // Only an accepted job becomes the one the viewer follows.
+  // Only an accepted job becomes the one the viewer follows, and no banner names its identifier.
   const accepted = await appSubmit({ submit: async () => ({ id: 'job-1' }) });
   assert.deepEqual(accepted, {
     busy: false,
     error: '',
-    notice: 'Submitted job-1.',
+    notice: '',
     dirty: false,
     owned: ['job-1'],
   });
@@ -300,29 +316,34 @@ test('a refused or unknown submission leaves its error for the banner and the dr
 
 const expiredAt = new Date(1600 * 1000).toLocaleTimeString();
 
-test('a review says when it has expired and turns Submit off with the reason', () => {
-  const ready = { confirmed: true, busy: false, pending: false };
-  // One second before expires_at the review is still ready to submit.
+test('a review says what expires and why, and turns Generate off once it has', () => {
+  const ready = { busy: false, pending: false };
+  const why =
+    "10 minutes after Studio made it, because it records the driver's runtime as it was then.";
+  // One second before expires_at the review is still ready to generate.
   const before = reviewSummary(preview() as never, bindings, false, false, 1599);
-  assert.equal(before.status, 'Ready to submit. Confirm below.');
-  assert.match(before.expiry, /^This review expires at .*After that, review again\.$/);
+  assert.equal(before.status, 'Ready to generate.');
+  assert.equal(before.expiry, `This review expires at ${expiredAt}, ${why}`);
   assert.equal(submitBlock(preview() as never, { ...ready, now: 1599 }), '');
   // At expires_at the companion refuses it, so the dialog says so before a submit tries.
   const after = reviewSummary(preview() as never, bindings, false, false, 1600);
-  assert.equal(after.ready, false);
-  assert.equal(after.status, `Blocked: this review expired at ${expiredAt}.`);
-  assert.equal(after.expiry, `This review expired at ${expiredAt}, 10 minutes after it was made.`);
+  assert.equal(after.tone, 'blocked');
+  assert.equal(
+    after.status,
+    `This review expired at ${expiredAt}. Close it and generate again for a fresh one.`,
+  );
+  assert.equal(after.expiry, `This review expired at ${expiredAt}, ${why}`);
   assert.equal(
     submitBlock(preview() as never, { ...ready, now: 1600 }),
-    `This review expired at ${expiredAt}. Return to the draft and review again.`,
+    'Generate is off for an expired review. Close it and generate again.',
   );
   // A request already on its way says so instead, and a clock not yet read expires nothing.
   assert.equal(
     submitBlock(preview() as never, { ...ready, busy: true, pending: true, now: 1700 }),
-    'Submit is off while this submission is sent.',
+    'Generate is off while this submission is sent.',
   );
   assert.equal(submitBlock(preview() as never, { ...ready, now: null }), '');
-  assert.equal(reviewSummary(preview() as never, bindings, false, false).ready, true);
+  assert.equal(reviewSummary(preview() as never, bindings, false, false).tone, 'ready');
 });
 
 test('the review clock reads at once, every minute and exactly at the expiry moment', () => {
@@ -353,8 +374,8 @@ test('the review clock reads at once, every minute and exactly at the expiry mom
   scheduled.after.run();
   assert.equal(readings.at(-1), 1600);
   assert.equal(
-    reviewSummary(preview() as never, bindings, false, false, readings.at(-1)).ready,
-    false,
+    reviewSummary(preview() as never, bindings, false, false, readings.at(-1)).tone,
+    'blocked',
   );
   stop();
   assert.deepEqual(cancelled, ['minute', 'expiry']);

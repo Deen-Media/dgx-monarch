@@ -6325,10 +6325,11 @@ refuses Workers that run from release slots. A driver service must serve the
 
 **Fix:**
 
-- After `choice_unavailable` or `schema_changed`, inspect and review the draft
-  again; adding a model, LoRA or input file alone never voids a review. After
-  `preview_expired` or `grid_preview`, review again; expired previews are
-  deleted, and a submit of one is refused rather than left uncertain.
+- After `choice_unavailable` or `schema_changed`, inspect the draft and press
+  Generate again; adding a model, LoRA or input file alone never voids a
+  review. After `preview_expired` or `grid_preview`, press Generate or review
+  the grid again; expired previews are deleted, and a submit of one is refused
+  rather than left uncertain.
 - For `prompt_rejected`, fix the inputs the job lists, then retry or review
   again. An `absent_from_driver` job may or may not have run; check the
   driver's output folder before you resubmit.
@@ -6633,8 +6634,8 @@ stays until a hardware test compares a sharded edit with stock; as of
 ## 131. Studio shows Driver not running
 
 **Symptom:** the connected Studio page shows a **Driver not running** panel,
-the footer reads "Driver not running", Review generation is disabled, and the
-catalog or a workflow inspection answers:
+the footer reads "Driver not running", Generate and Review settings are
+disabled, and the catalog or a workflow inspection answers:
 
 - `No driver accepted a connection at the driver origin; start the driver.` (HTTP 503, code `driver_not_running`)
 

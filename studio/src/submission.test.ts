@@ -1,4 +1,4 @@
-import test from 'node:test';
+import test, { mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import ts from 'typescript';
@@ -6,7 +6,7 @@ import { compileModule } from 'svelte/compiler';
 import { ApiError } from './api.ts';
 import { submissionRefused } from './submissionRefusal.ts';
 
-async function submissionClass() {
+async function submissionModule() {
   const source = await readFile(new URL('./submission.svelte.ts', import.meta.url), 'utf8');
   const plain = ts.transpile(source, {
     target: ts.ScriptTarget.ESNext,
@@ -20,10 +20,9 @@ async function submissionClass() {
       : import.meta.resolve(specifier);
     return `from ${JSON.stringify(url)}`;
   });
-  return (await import(`data:text/javascript;base64,${Buffer.from(resolved).toString('base64')}`))
-    .Submission;
+  return await import(`data:text/javascript;base64,${Buffer.from(resolved).toString('base64')}`);
 }
-const Submission = await submissionClass();
+const { Submission, SUBMITTED, CONFIRMATION_MS } = await submissionModule();
 function setup() {
   const store = new Map<string, string>();
   globalThis.sessionStorage = {
@@ -44,7 +43,6 @@ function setup() {
   };
   const submission = new Submission(connection);
   submission.review({ id: 'preview' });
-  submission.confirmed = true;
   return { submission, connection, store };
 }
 test('clearing unreadable request remains visibly blocked when storage removal fails', () => {
@@ -247,10 +245,10 @@ test('a draft edit during preview preparation drops the older review', async () 
   const preparing = submission.prepare({ values: { seed: 1 } }, () => !edited);
   edited = true;
   response.resolve({ id: 'older-preview' });
-  assert.equal(await preparing, false);
+  assert.equal(await preparing, 'dropped');
   assert.equal(submission.preview, null);
   connection.client.request = async () => ({ id: 'current-preview' });
-  assert.equal(await submission.prepare({ values: { seed: 2 } }, () => true), true);
+  assert.equal(await submission.prepare({ values: { seed: 2 } }, () => true), 'ready');
   assert.equal(submission.preview.id, 'current-preview');
 });
 test('a reconnect during preview preparation drops the old companion review', async () => {
@@ -261,7 +259,7 @@ test('a reconnect during preview preparation drops the old companion review', as
   const preparing = submission.prepare({ values: {} });
   connection.client = { request: async () => ({ id: 'new-companion' }) };
   response.resolve({ id: 'old-companion-preview' });
-  assert.equal(await preparing, false);
+  assert.equal(await preparing, 'dropped');
   assert.equal(submission.preview, null);
 });
 test('the unknown-outcome message stays in submission state after a refresh', async () => {
@@ -290,4 +288,103 @@ test('a definitive refusal leaves no unknown-outcome message', async () => {
   };
   await assert.rejects(submission.submit());
   assert.equal(submission.outcome, '');
+});
+
+test('a check with nothing to decide is ready, and a request or a warning opens the review', async () => {
+  const { submission, connection } = setup();
+  submission.preview = null;
+  let warnings: unknown[] = [];
+  connection.client.request = async () => ({ id: 'checked', errors: [], warnings });
+  const bindings = [{ id: 'root:6:text' }];
+  assert.equal(await submission.prepare({}, () => true, false, bindings), 'ready');
+  assert.deepEqual(submission.reviewed, bindings);
+  assert.equal(await submission.prepare({}, () => true, true), 'review');
+  // A warning needs its own box ticked before the job can start, however it was asked for.
+  warnings = ['Needs 96 GiB; 80 GiB is free.', { code: 'memory', message: 'Low memory.' }];
+  assert.equal(await submission.prepare({}), 'review');
+  assert.deepEqual(submission.acknowledged, [false, false]);
+  assert.equal(submission.decided, false);
+  await assert.rejects(submission.submit(), /Tick each warning/);
+  assert.equal(submission.pending, null, 'nothing is sent before each warning is ticked');
+  submission.acknowledge(0, true);
+  assert.equal(submission.decided, false);
+  submission.acknowledge(1, true);
+  assert.equal(submission.decided, true);
+  connection.client.request = async () => ({ id: 'job' });
+  assert.deepEqual(await submission.submit(), { id: 'job' });
+  // A new review starts with every box clear.
+  connection.client.request = async () => ({ id: 'again', errors: [], warnings });
+  assert.equal(await submission.prepare({}), 'review');
+  assert.deepEqual(submission.acknowledged, [false, false]);
+  // An error in the review blocks it whatever the boxes say.
+  connection.client.request = async () => ({ id: 'broken', errors: ['Fix node 2.'], warnings: [] });
+  assert.equal(await submission.prepare({}), 'review');
+  assert.equal(submission.decided, false);
+});
+
+test('a refused draft opens the review with the refusal, and other failures keep the banner', async () => {
+  const { submission, connection } = setup();
+  for (const [status, code] of [
+    [400, 'lora_binding'],
+    [400, 'workflow'],
+    [413, 'preview_limit'],
+  ] as const) {
+    connection.client.request = async () => {
+      throw new ApiError(status, `refused ${code}`, code);
+    };
+    assert.equal(await submission.prepare({}), 'review');
+    assert.deepEqual(submission.refusal, { code, message: `refused ${code}` });
+    assert.equal(submission.preview, null);
+  }
+  // The next check that the companion accepts clears the refusal.
+  connection.client.request = async () => ({ id: 'fixed', errors: [], warnings: [] });
+  assert.equal(await submission.prepare({}), 'ready');
+  assert.equal(submission.refusal, null);
+  for (const error of [
+    new ApiError(503, 'Driver not running', 'driver_not_running'),
+    new ApiError(500, 'Server fault', 'internal'),
+    new ApiError(400, 'No code'),
+    new Error('timeout'),
+  ]) {
+    connection.client.request = async () => {
+      throw error;
+    };
+    await assert.rejects(submission.prepare({}), (thrown) => thrown === error);
+    assert.equal(submission.refusal, null);
+  }
+  // A refusal for a draft that changed meanwhile is dropped like a stale review.
+  connection.client.request = async () => {
+    throw new ApiError(400, 'stale', 'styles');
+  };
+  assert.equal(await submission.prepare({}, () => false), 'dropped');
+  assert.equal(submission.refusal, null);
+});
+
+test('an accepted submit says so briefly, and a later line is never cleared early', async (t) => {
+  mock.timers.enable({ apis: ['setTimeout'] });
+  t.after(() => mock.timers.reset());
+  const { submission, connection } = setup();
+  await submission.submit();
+  assert.equal(submission.confirmation, SUBMITTED);
+  assert.doesNotMatch(SUBMITTED, /job-|[0-9a-f]{8}-/, 'the line names no identifier');
+  mock.timers.tick(CONFIRMATION_MS - 1);
+  assert.equal(submission.confirmation, SUBMITTED);
+  // A second job just before the first line ends keeps its own full time.
+  connection.client.request = async () => ({ id: 'second', errors: [], warnings: [] });
+  assert.equal(await submission.prepare({}), 'ready');
+  assert.equal(submission.confirmation, '', 'a new check clears the earlier line');
+  connection.client.request = async () => ({ id: 'job-2' });
+  await submission.submit();
+  mock.timers.tick(1);
+  assert.equal(submission.confirmation, SUBMITTED, "the first line's timer leaves the second");
+  mock.timers.tick(CONFIRMATION_MS - 1);
+  assert.equal(submission.confirmation, '');
+  // A refused submit shows no confirmation.
+  connection.client.request = async () => ({ id: 'third', errors: [], warnings: [] });
+  await submission.prepare({});
+  connection.client.request = async () => {
+    throw new ApiError(409, 'Expired', 'preview_expired');
+  };
+  await assert.rejects(submission.submit());
+  assert.equal(submission.confirmation, '');
 });

@@ -194,7 +194,7 @@
     dirty = true;
     setNotice(
       operation
-        ? `Output lineage attached. Set the corresponding workflow asset input before reviewing ${operation}.`
+        ? `Output lineage attached. Set the corresponding workflow asset input before generating ${operation}.`
         : 'Recorded settings loaded into a new editable draft.',
     );
   }
@@ -215,7 +215,7 @@
       }
       if (kind === 'styles') {
         changeDraft({ styles: [...draft.styles, { ...record.data, id: record.id }] });
-        setNotice('Style appended. Review expanded prompts before submission.');
+        setNotice('Style appended. Review settings shows the expanded prompts.');
       }
       if (kind === 'presets' || kind === 'sessions') {
         await importDraft(restoreDraft(record.data.draft));
@@ -281,20 +281,21 @@
       busy = --pendingActions > 0;
     }
   }
-  async function prepareJob() {
+  /** Generate starts a valid job at once; Review settings, a warning or a refusal open the review. */
+  async function prepareJob(review = false) {
     const ticket = guard.snapshot(connection.client);
     await withBusy(async () => {
       const current = () => guard.previewed(ticket, connection.client);
-      if (await submission.prepare($state.snapshot(draft), current)) previewPanel.open();
+      const next = await submission.prepare($state.snapshot(draft), current, review, bindings);
+      if (next === 'ready') await submitPreview();
+      else if (next === 'review') previewPanel.open();
       else fail(DROPPED_REVIEW);
     });
   }
   async function submitPreview() {
     await withBusy(async () => {
-      const job = await submission.submit();
-      tracker.own(job.id);
+      tracker.own((await submission.submit()).id);
       dirty = false;
-      setNotice(`Submitted ${job.id}.`);
     });
   }
   async function reconcilePending() {
@@ -384,6 +385,7 @@
           {busy}
           pending={!!submission.pending || !!submission.recoveryError}
           driverState={driverStatus(connection.snapshot.driver)}
+          confirmation={submission.confirmation}
           {changeDraft}
           {inspect}
           {fail}
@@ -491,4 +493,4 @@
   {inspect}
   onoperation={opener.operation}
 />
-<SubmissionReview bind:this={previewPanel} {submission} {bindings} {busy} {submitPreview} />
+<SubmissionReview bind:this={previewPanel} {submission} {busy} {submitPreview} bind:controlTab />
