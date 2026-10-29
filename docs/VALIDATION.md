@@ -2398,6 +2398,70 @@ under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength
 of the two regimes measured. A Sampler Custom graph names no sampler, so at
 CFG 1 it keeps Ulysses.
 
+## INT8 GEMM kernel comparison (2026-10-28 and 29)
+
+The INT8 ConvRot checkpoints run their linears through comfy-kitchen's
+`cutlass_int8_dequant` kernel. kan11's
+[gb10-comfyui-tuning](https://github.com/kanthai/gb10-comfyui-tuning/tree/d68916bf06c7ab01e0c557c67c64a1a06eb0ceef)
+replaces that one call with a Triton GEMM tuned for GB10, with the row and
+column scales and the bias in its epilogue (comfy-kitchen#280 carries the same
+proposal upstream). This leg measured that kernel on the pair as the basis for
+the v1.5 option in #93: exactness first, then speed.
+
+**Kernel equality.** 156 synthetic cases over 13 shapes (MiniMax H3 at 29184
+rows per rank, Krea2 and Qwen stills, odd rows such as 127, 129, 1095 and 2049),
+three output dtypes, with and without a bias, per-channel and per-tensor weight
+scales: every case `torch.equal` against the CUTLASS result. The kernel declines
+exactly the calls CUTLASS declines (K not a multiple of 16, strided inputs,
+fused-residual calls, rows under 128).
+
+**Renders.** The sweep harness ran the INT8 ConvRot checkpoints of fifteen
+templates twice on the same build (v1.4.0, ComfyUI 0.43.0, comfy-kitchen
+0.2.40, torch 2.12.0, NCCL 2.32.3): once stock, once with the kernel installed
+in every process (driver and actors) through the venv and switched on by its
+mode file; the actors took it, as their journals and the sibling's fresh Triton
+cache showed. Layouts: one GPU, uly2 and, where the template has a CFG, cfg2.
+Legs: cold, warm and the one-step probe. Every output of the two passes was
+compared file by file, in counter order per file type (an audio file saved
+first shifts ComfyUI's frame counter by one), decoded pixels for PNG frames and
+decoded samples for audio:
+
+- 1530 of 1530 frames pixel-identical across the 28 cells: every still and
+  every video frame of MiniMax H3 (guide and image-to-video), Wan Animate 2 and
+  LTX 2.5, on one GPU and on uly2. The two mp4 templates, whose save node the
+  harness cannot rename, were paired by counter as well: 12 of 12 pairs frame
+  for frame identical.
+- Audio: 9 of 12 tracks sample-identical. The three that differ are MiniMax H3
+  tracks, in legs whose frames are identical, by at most 1e-3 of full scale and
+  in different legs each time. That is the audio decode, not the GEMM: a kernel
+  difference would move the latents and the frames with them.
+- Harness verdicts matched between the passes (PASS, or CHECK where a family's
+  single-GPU INT8 reference is refused under the checkpoint pin and the uly2 cell
+  has nothing to compare against: FLUX.3 Klein, MOSS-Image, Kromoss).
+
+**Coverage.** 15 of the 17 INT8 ConvRot files on the rig. Not run: the unpruned
+H3 fl2va file and the H3 ref2va file, which share the pruned H3 file's GEMM
+shapes. The block-scaled files (MXFP8, NVFP4) are not INT8 and were not part
+of the comparison.
+
+**Speed.** The warm legs in docs/BENCHMARKS.md ("INT8 GEMM: CUTLASS against the
+Triton kernel"): 17 to 25 percent faster on the video families, 4 to 14 percent
+on Ideogram4 and Chroma, no change on Krea2, Qwen Image 2.1 and the small
+turbo stills. The harness times at 2 s granularity. A first stock pass had read
+Krea2 on one GPU at 86 s against 94 s under the kernel; the stock re-render
+read 94 s, so that was run-to-run variance, not the kernel. At the GEMM level
+the kernel is at or above CUTLASS at every M on every shape swept, and from
+6144 rows up CUTLASS falls to 37 to 55 percent of its peak while the Triton
+kernel holds about 175 TOPS, so no M threshold or family gate is needed for
+speed. The head ran its 2100 MHz clock cap throughout; kan11 reports the same
+18 percent H3 gain uncapped.
+
+**What this does not cover.** The kernel ran as a process-wide patch, not yet
+as a Monarch option; the option's wiring, its gate and its documentation are
+#93 item 1. torch.compile paths were not exercised (compile_dit off). The
+MXFP8 and NVFP4 single-GPU references rendered in the same stock pass as a load
+test of their recast files and are not part of the kernel comparison.
+
 ## Memory calibration
 
 GB10 host and GPU allocations share one physical pool. A CUDA-allocated
@@ -2654,6 +2718,23 @@ beyond 39 frames remain unmeasured. The loader conservatively treats an undeclar
 guide as a clip and refuses that high-resolution case. Declaring a still
 through `DGXM_H3_GUIDE_FRAMES` was exercised through the driver API.
 The estimator cannot promise capacity for unmeasured longer clips or canvases.
+
+### Driver unload before a render-site refusal (2026-10-29)
+
+Hardware check for the unload step (#105) on dev d34d9b0, both Workers on
+that slot, doctor 44 of 44, head at its 2100 MHz cap. MiniMax H3 guide
+template with the pruned INT8 ConvRot DiT, the 32B NVFP4 text encoder and both
+VAEs left loaded in the driver after a first render, topology auto (uly2), 4
+steps. A balloon of populated anonymous memory on the head set MemAvailable
+where the check needed it.
+
+| render | frames | MemAvailable at submit | outcome |
+|---|---|---|---|
+| A, baseline | 29 | 93.9 GiB | rendered in 105 s; the driver then held the text encoder and both VAEs (MemAvailable 56.0 GiB) |
+| B, 45 GiB balloon | 29 | 11.3 GiB | the check refused on the first reading; the driver unloaded MiniMaxH3VideoVAE, MiniMaxH3AudioVAE and MiniMaxH3TEModel_, MemAvailable 11.3 to 30.3 GiB, a gain of 19.0 GiB, and the render went through in 54 s with no recycle; both VAEs reloaded at decode and the frames and audio saved |
+| C, 67 GiB balloon | 124 | 3.3 GiB | refused after the unload: 21.4 GiB needed per rank against 3.7 GiB usable (8.7 GiB MemAvailable minus the 5.0 GiB reserve), closing with the sentence that names the two models unloaded and MemAvailable 8.3 GiB before and 8.7 GiB after |
+
+Not run: a pipelined submission behind a render in flight.
 
 ## Dependency and setup checks
 

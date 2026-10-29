@@ -693,6 +693,69 @@ do not provide a universal clock adjustment for other tables.
 
 <a id="the-fsdp-round-capacity-path-not-speed"></a>
 
+## INT8 GEMM: CUTLASS against the Triton kernel
+
+Warm legs of the 2026-10-28 and 29 kernel comparison (docs/VALIDATION.md, "INT8
+GEMM kernel comparison"): the same INT8 ConvRot cells on the same build, stock
+comfy-kitchen CUTLASS against kan11's Triton fused-dequant GEMM, every frame
+pixel-identical. Head capped at 2100 MHz; harness timing at 2 s granularity;
+cold legs left out because they include model loads whose disk state differed
+between the passes.
+
+| model (INT8 ConvRot file) | layout | CUTLASS warm s | Triton warm s | change |
+|---|---|---|---|---|
+| MiniMax H3 guide (124 frames) | single | 1125.0 | 884.7 | +21% |
+| MiniMax H3 guide (124 frames) | uly2 | 656.7 | 546.5 | +17% |
+| MiniMax H3 image to video (mp4) | single | 1053.0 | 838.7 | +20% |
+| MiniMax H3 image to video (mp4) | uly2 | 628.6 | 518.5 | +18% |
+| Wan Animate 2 | single | 314.3 | 264.3 | +16% |
+| Wan Animate 2 | uly2 | 266.3 | 200.2 | +25% |
+| LTX 2.5 distilled text to video | single | 108.1 | 98.1 | +9% |
+| LTX 2.5 distilled text to video | uly2 | 82.1 | 78.1 | +5% |
+| Ideogram4 | single | 44.1 | 38.0 | +14% |
+| Ideogram4 | uly2 | 26.0 | 26.0 | 0% |
+| Ideogram4 | cfg2 | 24.0 | 22.0 | +8% |
+| Chroma1-HD | single | 50.0 | 48.1 | +4% |
+| Chroma1-HD | uly2 | 32.1 | 32.0 | 0% |
+| Chroma1-HD | cfg2 | 26.0 | 24.0 | +8% |
+| Krea2 RAW | single | 94.1 | 94.1 | 0% |
+| Krea2 RAW | uly2 | 46.1 | 46.2 | 0% |
+| Krea2 RAW | cfg2 | 48.1 | 48.1 | 0% |
+| Qwen Image 2.1 | single | 18.0 | 18.0 | 0% |
+| Qwen Image 2.1 | uly2 | 12.2 | 12.0 | +2% |
+| FLUX.3 Klein | uly2 | 6.0 | 6.0 | 0% |
+| FLUX.3 Klein Base | uly2 | 16.0 | 16.0 | 0% |
+| MOSS-Image SFT | uly2 | 40.0 | 40.1 | 0% |
+| MOSS-Image Base | uly2 | 40.0 | 40.0 | 0% |
+| Kromoss | uly2 | 40.0 | 42.0 | -5% |
+| Mage Flow turbo | single | 2.0 | 2.0 | 0% |
+| Mage Flow turbo | uly2 | 2.0 | 2.0 | 0% |
+| Mage Flow edit turbo | single | 6.0 | 6.0 | 0% |
+| Mage Flow edit turbo | uly2 | 4.0 | 4.0 | 0% |
+
+GEMM throughput across M on the families' own linears, same box and cap
+(ratio is Triton over CUTLASS; TOPS at 29184 rows, the H3 per-rank count):
+
+| linear (N x K) | ratio at M 1024 | at 4096 | at 8192 | at 29184 | CUTLASS TOPS at 29184 | Triton TOPS at 29184 |
+|---|---|---|---|---|---|---|
+| krea2 mlp-in (12288 x 3072) | 1.02 | 1.08 | 1.73 | 1.90 | 91.3 | 173.4 |
+| krea2 attn-out (3072 x 3072) | 0.97 | 1.04 | 1.04 | 1.04 | 168.6 | 175.3 |
+| krea2 mlp-out (3072 x 12288) | 1.06 | 1.42 | 1.36 | 1.36 | 130.9 | 178.4 |
+| ideogram4 adaln (18432 x 512) | 1.18 | 1.01 | 0.96 | 1.50 | 52.4 | 78.4 |
+| ideogram4 qkv (9216 x 3072) | 0.92 | 1.03 | 1.68 | 2.13 | 80.6 | 172.2 |
+| ideogram4 attn-out (3072 x 3072) | 0.97 | 1.05 | 1.03 | 1.02 | 171.0 | 174.3 |
+| chroma linear1 (15360 x 3072) | 0.95 | 1.06 | 1.78 | 2.05 | 86.1 | 176.1 |
+| chroma attn-out (3072 x 3072) | 0.97 | 1.14 | 1.04 | 1.03 | 170.2 | 175.9 |
+| qwen2.1 mlp-in (12288 x 3072) | 1.13 | 1.03 | 1.74 | 1.92 | 90.7 | 173.8 |
+| qwen2.1 attn-out (3072 x 3072) | 0.97 | 1.13 | 1.04 | 1.05 | 169.7 | 177.8 |
+| h3 mlp-in (21504 x 5376) | 0.96 | 1.39 | 2.16 | 2.51 | 74.1 | 185.6 |
+| h3 attn-out (5376 x 5376) | 0.96 | 1.45 | 1.84 | 1.78 | 100.2 | 178.6 |
+| h3 mlp-out (5376 x 14336) | 1.20 | 1.71 | 1.69 | 1.68 | 103.5 | 173.8 |
+
+Below 4096 rows the two routes are within a few percent of each other either
+way; from 6144 rows up CUTLASS loses more than half its throughput on the wide
+linears while the Triton kernel holds about 175 TOPS.
+
 ## FSDP memory capacity and render time
 
 The 60-GiB BF16 Flux2 file rendered with `uly2+fsdp` beside the ComfyUI
