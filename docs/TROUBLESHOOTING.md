@@ -7097,9 +7097,13 @@ process:
 **Fix:** install the headers for the interpreter's version, for example
 `sudo apt install python3.12-dev` on Ubuntu 24.04
 ([INSTALL](INSTALL.md#install-the-node-pack)), then restart ComfyUI and run
-`dgxm restart` for the Worker services. For another comfy-kitchen release,
-install the one ComfyUI's requirements name, or keep it: renders run on CUTLASS
-until a dgx-monarch release validates it. Correct a mistyped value.
+`dgxm restart` for the Worker services. Pointing CPATH or C_INCLUDE_PATH at a
+copy of the headers reaches only the ComfyUI process: no actor inherits either
+variable, so the actors, local or on a Worker host, need the headers
+installed, and `dgxm doctor` judges each process that way. For another
+comfy-kitchen release, install the one ComfyUI's requirements name, or keep
+it: renders run on CUTLASS until a dgx-monarch release validates it. Correct a
+mistyped value.
 
 To confirm which kernel runs, read the one INFO line each process writes. The
 ComfyUI process writes it when it loads the node pack, and each actor writes

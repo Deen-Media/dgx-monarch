@@ -68,8 +68,8 @@ class _State:
         # INFO line, and the process runs stock CUTLASS.
         self.invalid = False
         # Why the kernel cannot run in this process, once known. Never cleared:
-        # the comfy-kitchen release, the interpreter and a failed build do not
-        # change under a live process.
+        # the comfy-kitchen release, the interpreter, a failed build and an
+        # unexpected error here each hold for the life of the process.
         self.blocked: str | None = None
         self.finder: vendored.Finder | None = None
         # The mode the last INFO line named, and every WARNING already logged.
@@ -110,23 +110,33 @@ def parse(value: object) -> str | None:
     return None
 
 
-def python_headers() -> tuple[bool, str]:
+def compiler_include_dirs(environ: Mapping[str, str] | None = None) -> list[str]:
+    """The CPATH and C_INCLUDE_PATH directories, which the C compiler searches too.
+
+    Actor processes never inherit either variable: the Worker loop and the
+    local launch both filter them out, so only a process started straight from
+    a shell, such as ComfyUI, can find Python.h through them.
+    """
+    env = os.environ if environ is None else environ
+    return [entry for name in ("CPATH", "C_INCLUDE_PATH")
+            for entry in env.get(name, "").split(os.pathsep) if entry]
+
+
+def python_headers(environ: Mapping[str, str] | None = None) -> tuple[bool, str]:
     """Whether Triton's launcher build can include Python.h, and the directory it names.
 
     Triton compiles a small C launcher for each kernel signature against this
     interpreter's headers. It passes the include directory of the default
     sysconfig scheme (posix_prefix in place of Debian's posix_local), and the
-    C compiler also searches CPATH and C_INCLUDE_PATH. Worker services filter
-    both variables out of the actor environment, so on a Worker only the
-    interpreter's own include directory counts.
+    C compiler also searches ``compiler_include_dirs``. ``environ`` defaults to
+    this process's environment.
     """
     scheme = sysconfig.get_default_scheme()
     if scheme == "posix_local":
         scheme = "posix_prefix"
     include = sysconfig.get_paths(scheme=scheme)["include"]
-    extra = [entry for name in ("CPATH", "C_INCLUDE_PATH")
-             for entry in os.environ.get(name, "").split(os.pathsep) if entry]
-    return any(os.path.isfile(os.path.join(path, "Python.h")) for path in (include, *extra)), include
+    dirs = (include, *compiler_include_dirs(environ))
+    return any(os.path.isfile(os.path.join(path, "Python.h")) for path in dirs), include
 
 
 def _blocked() -> str | None:
@@ -165,15 +175,29 @@ def active_mode() -> str:
         return CUTLASS
 
 
+def _unwrap_top(top: ModuleType | None) -> None:
+    """Put back comfy_kitchen.int8_linear when the compile-safe wrapper replaced it."""
+    current = getattr(top, "int8_linear", None)
+    original = getattr(current, "__wrapped__", None)
+    if getattr(current, "_ck_compile_safe", False) and original is not None:
+        cast(Any, top).int8_linear = original
+
+
+def _restore_stock() -> None:
+    """Put back comfy-kitchen's own _C and int8_linear, whichever the option replaced."""
+    backend = sys.modules.get(vendored.TARGET)
+    proxy = _backend_proxy()
+    if backend is not None and proxy is not None:
+        cast(Any, backend)._C = proxy._real
+    _unwrap_top(sys.modules.get(vendored.TOP))
+
+
 def _on_kernel_failure(exc: BaseException) -> None:
-    """The proxy's callback when the kernel fails at a call: CUTLASS from then on."""
+    """The proxy's callback when the kernel fails at a call: stock from then on."""
     with _LOCK:
         reason = f"the Triton kernel failed to compile or run ({exc!r:.200})"
         _STATE.blocked = reason
-        backend = sys.modules.get(vendored.TARGET)
-        proxy = _backend_proxy()
-        if backend is not None and proxy is not None:
-            cast(Any, backend)._C = proxy._real
+        _restore_stock()
         _warn(reason, "stock CUTLASS for the rest of this process")
 
 
@@ -221,18 +245,21 @@ def _apply_top(top: ModuleType) -> None:
             except Exception as exc:
                 _warn(f"the compile-safe int8_linear wrapper was not applied ({exc!r:.200})",
                       "the Triton kernel stays on")
-    elif wrapped and getattr(current, "__wrapped__", None) is not None:
-        cast(Any, top).int8_linear = current.__wrapped__
+    else:
+        _unwrap_top(top)
 
 
 def _fail_safe(exc: BaseException) -> None:
-    """Best effort back to stock after an unexpected error here, with one WARNING."""
+    """Best effort back to stock, for the rest of the process, after an unexpected error here.
+
+    One WARNING says so, and a later configure keeps the process stock as the
+    line promises.
+    """
     try:
-        backend = sys.modules.get(vendored.TARGET)
-        proxy = _backend_proxy()
-        if backend is not None and proxy is not None:
-            cast(Any, backend)._C = proxy._real
-        _warn(f"the option could not be applied ({exc!r:.200})")
+        reason = f"the option could not be applied ({exc!r:.200})"
+        _STATE.blocked = reason
+        _restore_stock()
+        _warn(reason)
     except Exception:
         pass
 

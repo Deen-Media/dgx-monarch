@@ -346,32 +346,55 @@ def test_triton_failing_to_load_keeps_stock_cutlass_with_one_warning(option, lin
 
 def test_a_kernel_failure_at_a_call_logs_one_warning_and_unwraps(option, lines):
     option.error = RuntimeError("Python.h: No such file or directory")
-    _, cuda, real, calls, _ = _stub_kitchen()
+    top, cuda, real, calls, _ = _stub_kitchen()
+    eager = top.int8_linear
     assert int8_gemm.install_driver({}) == "triton"
+    assert top.int8_linear.__wrapped__ is eager
     proxy = cuda._C
     assert _call(proxy, _operands()) == "cutlass"
     assert cuda._C is real, "a failed kernel must leave stock CUTLASS in place"
+    assert top.int8_linear is eager, "and comfy-kitchen's own int8_linear, for compiled calls too"
     assert int8_gemm.active_mode() == "cutlass"
     assert int8_gemm.install_driver({}) == "cutlass", "the failure holds for the process"
+    assert cuda._C is real and top.int8_linear is eager
     assert len(calls) == 1
     assert [level for level, _ in lines] == ["INFO", "WARNING"]
     assert lines[1][1].startswith("INT8 GEMM: the Triton kernel failed to compile or run (RuntimeError(")
     assert lines[1][1].endswith("; stock CUTLASS for the rest of this process")
 
 
+def _surprise(*_args, **_kwargs):
+    raise RuntimeError("surprise")
+
+
 def test_nothing_the_option_does_raises(option, lines, monkeypatch):
     """An unexpected error anywhere in the option ends in stock CUTLASS, never a raise."""
-    _, cuda, real, _calls, _ = _stub_kitchen()
-
-    def broken(*_args, **_kwargs):
-        raise RuntimeError("surprise")
-
-    monkeypatch.setattr(int8_gemm, "_apply_backend", broken)
+    top, cuda, real, _calls, _ = _stub_kitchen()
+    eager = top.int8_linear
+    monkeypatch.setattr(int8_gemm, "_apply_backend", _surprise)
     assert int8_gemm.install_driver({}) == "cutlass"
     assert int8_gemm.configure_from_worker_args({"int8_gemm": "triton"}) == "cutlass"
-    assert cuda._C is real
+    assert cuda._C is real and top.int8_linear is eager
     assert [level for level, _ in lines] == ["WARNING"]
     assert "the option could not be applied (RuntimeError('surprise'))" in lines[0][1]
+
+
+def test_an_error_after_the_wrap_restores_both_replacements_for_good(option, lines, monkeypatch):
+    """The fallback puts back _C and int8_linear, and a later configure keeps both stock."""
+    top, cuda, real, _calls, _ = _stub_kitchen()
+    eager = top.int8_linear
+    assert int8_gemm.install_driver({}) == "triton"
+    assert isinstance(cuda._C, vendored.CProxy) and top.int8_linear.__wrapped__ is eager
+    apply_top = int8_gemm._apply_top
+    monkeypatch.setattr(int8_gemm, "_apply_top", _surprise)
+    assert int8_gemm.install_driver({}) == "cutlass"
+    assert cuda._C is real and top.int8_linear is eager
+    monkeypatch.setattr(int8_gemm, "_apply_top", apply_top)
+    assert int8_gemm.install_driver({}) == "cutlass", "the WARNING said stock for this process"
+    assert cuda._C is real and top.int8_linear is eager
+    assert [level for level, _ in lines] == ["INFO", "WARNING"]
+    assert lines[1][1] == ("INT8 GEMM: the option could not be applied (RuntimeError('surprise')); "
+                           "stock CUTLASS for this process")
 
 
 def test_a_backend_without_its_cuda_extension_has_nothing_to_replace(option, lines):

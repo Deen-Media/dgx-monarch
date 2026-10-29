@@ -19,7 +19,16 @@ import os
 from collections.abc import Mapping
 
 from ..config import ClusterConfig
-from ..kernels.int8_gemm import CUTLASS, DEFAULT, ENV, TRITON, VALIDATED_KITCHEN, WORKER_ARG, parse
+from ..kernels.int8_gemm import (
+    CUTLASS,
+    DEFAULT,
+    ENV,
+    TRITON,
+    VALIDATED_KITCHEN,
+    WORKER_ARG,
+    compiler_include_dirs,
+    parse,
+)
 from .probe_certainty import OK, WARN
 
 ENTRY = "docs/TROUBLESHOOTING.md #138"
@@ -138,6 +147,11 @@ def host_row(host: str, fields: Mapping[str, str],
                       f"can run it. {UNSEEN}")
 
 
+def _headers_on_compiler_path(environ: Mapping[str, str]) -> bool:
+    """Python.h in a CPATH or C_INCLUDE_PATH directory, as the runtime's search reads them."""
+    return any(os.path.isfile(os.path.join(path, "Python.h")) for path in compiler_include_dirs(environ))
+
+
 def local_row(worker_args: Mapping[str, object] | None, *, local_mode: bool,
               environ: Mapping[str, str] | None = None,
               fields: Mapping[str, str] | None = None) -> tuple[str, str, str]:
@@ -145,15 +159,25 @@ def local_row(worker_args: Mapping[str, object] | None, *, local_mode: bool,
 
     The driver reads DGXM_INT8_GEMM from its own environment; doctor reads the
     variable from its own, which is the one a ComfyUI started from this shell
-    inherits. In local mode the actors run on this box and read
-    ``[worker_args] int8_gemm`` as Worker actors do.
+    inherits. That ComfyUI inherits CPATH and C_INCLUDE_PATH too, so its
+    Python.h search is the runtime's (``int8_gemm.python_headers``): the
+    interpreter's include directory, then those directories. In local mode the
+    actors run on this box and read ``[worker_args] int8_gemm`` as Worker
+    actors do, and like them they never inherit either variable, so for them
+    only the interpreter's include directory counts, as in the per-host probe.
     """
-    raw = (os.environ if environ is None else environ).get(ENV, "").strip()
+    env = os.environ if environ is None else environ
+    raw = env.get(ENV, "").strip()
     driver_mode = parse(raw or None)
     shown = f"{ENV}={raw!r}" if raw else f"{ENV} unset"
+    base = dict(local_fields() if fields is None else fields)
+    # Only a readable include directory without Python.h can be rescued: Triton
+    # reads that directory before it compiles, so an unreadable one stops it.
+    on_path = base.get("pyheaders") == "missing" and _headers_on_compiler_path(env)
+    driver = {**base, "pyheaders": "present"} if on_path else base
     status = OK
     sentences = []
-    users = []
+    parties: list[tuple[str, tuple[str, ...]]] = []
     if driver_mode is None:
         status = WARN
         sentences.append(f"{shown} in this shell names neither \"triton\" nor \"cutlass\", so a "
@@ -162,21 +186,29 @@ def local_row(worker_args: Mapping[str, object] | None, *, local_mode: bool,
         sentences.append(f"A ComfyUI started from this shell selects {_kernel(driver_mode)} "
                          f"({shown})")
         if driver_mode == TRITON:
-            users.append("that ComfyUI")
+            parties.append(("that ComfyUI", tuple(_problems(driver))))
     if local_mode:
         mode, source = _configured(worker_args)
         sentences.append(f"The local actors select {_kernel(mode)} ({source})")
         if mode == TRITON:
-            users.append("the local actors")
-    if users:
-        problems = _problems(local_fields() if fields is None else fields)
-        if problems:
-            status = WARN
-            verbs = "run stock CUTLASS and log" if len(users) > 1 else "runs stock CUTLASS and logs"
-            sentences.append(f"In this interpreter {'; '.join(problems)}, so {' and '.join(users)} "
-                             f"{verbs} one WARNING. Fix: {ENTRY}")
-        else:
-            sentences.append("This interpreter has a validated comfy-kitchen, Triton and Python.h")
+            parties.append(("the local actors", tuple(_problems(base))))
+    groups: dict[tuple[str, ...], list[str]] = {}
+    for who, problems in parties:
+        groups.setdefault(problems, []).append(who)
+    for problems, whos in groups.items():
+        if not problems:
+            sentences.append("That ComfyUI finds Python.h through CPATH or C_INCLUDE_PATH, and "
+                             "this interpreter has a validated comfy-kitchen and Triton" if on_path
+                             else "This interpreter has a validated comfy-kitchen, Triton and Python.h")
+            continue
+        status = WARN
+        verbs = ("runs stock CUTLASS and logs" if whos == ["that ComfyUI"]
+                 else "run stock CUTLASS and log")
+        sentence = (f"In this interpreter {'; '.join(problems)}, so {' and '.join(whos)} {verbs} "
+                    "one WARNING")
+        if on_path and "the local actors" in whos:
+            sentence += ". CPATH and C_INCLUDE_PATH hold Python.h here, but no actor inherits them"
+        sentences.append(f"{sentence}. Fix: {ENTRY}")
     return (status, LOCAL_NAME, ". ".join(sentences) + f". {UNSEEN}")
 
 

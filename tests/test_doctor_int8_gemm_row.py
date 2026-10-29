@@ -7,6 +7,7 @@ costs speed, never a render, and must not change doctor's exit code.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 
@@ -100,6 +101,60 @@ def test_the_local_row_reads_this_shell_and_the_local_actors():
                                                 fields=ready)
     assert status == WARN
     assert "DGXM_INT8_GEMM='fast' in this shell names neither" in detail
+
+
+@pytest.mark.parametrize("variable", ["CPATH", "C_INCLUDE_PATH"])
+def test_the_local_row_finds_python_h_where_the_runtime_does(tmp_path, monkeypatch, variable):
+    """Python.h only on CPATH or C_INCLUDE_PATH: ComfyUI finds it there, actors never do."""
+    import sysconfig
+
+    from dgx_monarch.kernels import int8_gemm
+
+    include = tmp_path / "include"
+    include.mkdir()
+    headers = tmp_path / "headers"
+    headers.mkdir()
+    (headers / "Python.h").write_text("", encoding="utf-8")
+    monkeypatch.setattr(sysconfig, "get_paths", lambda *_args, **_kwargs: {"include": str(include)})
+    env = {variable: os.pathsep.join((str(tmp_path / "absent"), str(headers)))}
+    fields = {**int8_gemm_row.local_fields(), "kitchen": "0.2.40", "triton": "installed"}
+    assert fields["pyheaders"] == "missing", "the interpreter's own include directory lacks it"
+    # The runtime's own search, which the driver half of the row must match.
+    assert int8_gemm.python_headers(env) == (True, str(include))
+    assert int8_gemm.python_headers({})[0] is False
+
+    status, _, detail = int8_gemm_row.local_row(None, local_mode=False, environ=env, fields=fields)
+    assert status == OK, detail
+    assert "That ComfyUI finds Python.h through CPATH or C_INCLUDE_PATH" in detail
+    assert "stock CUTLASS" not in detail
+
+    status, _, detail = int8_gemm_row.local_row(None, local_mode=True, environ=env, fields=fields)
+    assert status == WARN, detail
+    assert "That ComfyUI finds Python.h through CPATH or C_INCLUDE_PATH" in detail
+    assert ("In this interpreter Python.h is missing, so the local actors run stock CUTLASS and log "
+            "one WARNING. CPATH and C_INCLUDE_PATH hold Python.h here, but no actor inherits them") in detail
+
+    # A Worker's actors never inherit the variable, so the per-host probe never reads it.
+    assert "CPATH" not in int8_gemm_row.PROBE_SOURCE and "C_INCLUDE_PATH" not in int8_gemm_row.PROBE_SOURCE
+    monkeypatch.setenv(variable, str(headers))
+    assert int8_gemm_row.int8_header_state() == "missing"
+    assert _host(int8_gemm_row.local_fields())["status"] == WARN
+
+
+def test_an_unreadable_include_directory_is_not_rescued_by_cpath(tmp_path):
+    """Triton reads the include directory before it compiles, so an unreadable one stops it."""
+    (tmp_path / "Python.h").write_text("", encoding="utf-8")
+    status, _, detail = int8_gemm_row.local_row(None, local_mode=False, environ={"CPATH": str(tmp_path)},
+                                                fields=_fields(pyheaders="unknown"))
+    assert status == WARN
+    assert "whether Python.h is present could not be read" in detail
+
+
+def test_the_local_actors_alone_read_in_the_plural():
+    status, _, detail = int8_gemm_row.local_row(None, local_mode=True, environ={"DGXM_INT8_GEMM": "cutlass"},
+                                                fields=_fields(triton="MISSING"))
+    assert status == WARN
+    assert "so the local actors run stock CUTLASS and log one WARNING" in detail
 
 
 def test_the_probe_prints_one_parseable_line_without_importing_triton():
