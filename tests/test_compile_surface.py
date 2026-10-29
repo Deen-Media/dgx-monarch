@@ -11,7 +11,10 @@ not take their slab residency away. Three things hold that list true:
   named in the eager warning, while a ``blocks`` list beside it compiles;
 * where a ComfyUI checkout is present (COMFYUI_DIR, default ~/ComfyUI), each
   family's DiT class assigns ``self.blocks`` exactly when the family is on the
-  compiled side. The source is parsed, never imported, so this runs on any CPU.
+  compiled side, and comfy.model_base still builds that very class (its
+  ``unet_model=`` target), so a class ComfyUI stops using cannot stand in for
+  the one it moved to. The source is parsed, never imported, so this runs on
+  any CPU.
 """
 from __future__ import annotations
 
@@ -288,13 +291,63 @@ def _chain_assigned(ldm: Path, classes, trees, path: Path, cls: ast.ClassDef) ->
     return names
 
 
+def _dotted(node: ast.expr) -> list[str]:
+    """``a.b.C`` as ``["a", "b", "C"]``; empty for anything but a name chain."""
+    parts: list[str] = []
+    while isinstance(node, ast.Attribute):
+        parts.append(node.attr)
+        node = node.value
+    if not isinstance(node, ast.Name):
+        return []
+    parts.append(node.id)
+    return parts[::-1]
+
+
+@pytest.fixture(scope="module")
+def model_base_targets(comfy_classes) -> set[tuple[str, str]]:
+    """(comfy/ldm-relative file, class) of every ``unet_model=`` comfy.model_base passes.
+
+    model_base builds a family's DiT by handing the class to BaseModel as
+    ``unet_model=comfy.ldm.<module>.<Class>``. This is the set of classes
+    ComfyUI builds today, so the table above cannot keep checking a class
+    ComfyUI has moved away from.
+    """
+    ldm, _classes, _trees = comfy_classes
+    tree = _parse(ldm.parents[1] / "comfy" / "model_base.py")
+    assert tree is not None, "comfy/model_base.py is missing or does not parse"
+    # The class arrives either as a keyword of the super().__init__ call or as
+    # the default of the model's own ``unet_model`` parameter (Flux, Chroma and
+    # Qwen Image pass it that way), so both forms count.
+    values: list[ast.expr] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            values += [keyword.value for keyword in node.keywords if keyword.arg == "unet_model"]
+        elif isinstance(node, ast.FunctionDef):
+            positional = node.args.posonlyargs + node.args.args
+            for arg, default in zip(positional[len(positional) - len(node.args.defaults):], node.args.defaults, strict=True):
+                if arg.arg == "unet_model":
+                    values.append(default)
+            values += [default for arg, default in zip(node.args.kwonlyargs, node.args.kw_defaults, strict=True)
+                       if arg.arg == "unet_model" and default is not None]
+    targets: set[tuple[str, str]] = set()
+    for value in values:
+        parts = _dotted(value)
+        if len(parts) > 3 and parts[:2] == ["comfy", "ldm"]:
+            targets.add(("/".join(parts[2:-1]) + ".py", parts[-1]))
+    assert targets, "comfy/model_base.py names no comfy.ldm class as unet_model"
+    return targets
+
+
 @pytest.mark.parametrize("family", sorted(DIT_CLASSES))
-def test_each_familys_comfy_dit_has_blocks_exactly_on_the_compiled_side(comfy_classes, family):
+def test_each_familys_comfy_dit_has_blocks_exactly_on_the_compiled_side(comfy_classes, model_base_targets, family):
     ldm, classes, trees = comfy_classes
     for relative, name, lists in DIT_CLASSES[family]:
         path = ldm / relative
         cls = classes.get((path, name))
         assert cls is not None, f"{family}: ComfyUI has no class {name} in comfy/ldm/{relative}"
+        assert (relative, name) in model_base_targets, (
+            f"{family}: comfy.model_base no longer builds {name} from comfy/ldm/{relative}; "
+            "the family moved to another class, so this table checks a class ComfyUI does not use")
         assigned = _chain_assigned(ldm, classes, trees, path, cls)
         assert ("blocks" in assigned) is (family in COMPILED_FAMILIES), (
             f"{family}: {name} {'assigns' if 'blocks' in assigned else 'does not assign'} "
