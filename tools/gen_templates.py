@@ -640,7 +640,9 @@ def build(spec: dict) -> dict:
     # A testing-only spec carries no layout, so its graph keeps an empty extra.
     extra = (_app_mode_extra(spec["app_mode"], spec["nodes"], key_to_id)
              if "app_mode" in spec else {})
-    return {"id": _workflow_id(spec["title"]), "revision": 0,
+    # A retitled template keeps its graph id: Studio binding identities, and
+    # every saved draft and record that names them, start with it.
+    return {"id": spec.get("graph_id") or _workflow_id(spec["title"]), "revision": 0,
             "last_node_id": len(nodes_out), "last_link_id": link_id,
             "nodes": nodes_out, "links": links, "groups": [],
             "config": {}, "extra": extra, "version": 0.4}
@@ -755,6 +757,13 @@ _KANDINSKY5_PRO_PROMPT = (
     "reveal a rocky headland crowned with pine trees, gulls crossing the frame, "
     "small waves catching the light. Fine spray lifts off the bow, the sail flexes "
     "in a light breeze, and the horizon stays level as the shot widens."
+)
+# What the separate-output MiniMax H3 template saves. Its note ends with this
+# sentence, and the MP4 template, which starts from that note, drops it.
+H3_SEPARATE_OUTPUTS = (
+    " Saves the video as PNG frames through Save Image and the soundtrack as a "
+    "separate FLAC file through Save Audio. For one MP4 with sound, use the "
+    "MiniMax H3 MP4 template."
 )
 
 
@@ -929,7 +938,8 @@ TEMPLATES = {
         ],
     },
     "dgx-monarch-minimax-h3-t2va": {
-        "title": "MiniMax H3 text to video with sound",
+        "title": "MiniMax H3 text to video, PNG frames plus separate FLAC audio",
+        "graph_id": "minimax-h3-text-to-video-with-sound",
         "nodes": [
             {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
              "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
@@ -948,7 +958,7 @@ TEMPLATES = {
              "minimax_h3_fl2va_pruned_int8_convrot.safetensors in "
              "models/diffusion_models, qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in "
              "models/text_encoders, and minimax_h3_video_vae_fp16.safetensors plus "
-             "minimax_h3_audio_vae_fp32.safetensors in models/vae."},
+             "minimax_h3_audio_vae_fp32.safetensors in models/vae." + H3_SEPARATE_OUTPUTS},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors"},
              "wire": {"mesh": ("init", 0)}},
@@ -1028,7 +1038,8 @@ TEMPLATES = {
         ],
     },
     "dgx-monarch-minimax-h3-guide": {
-        "title": "MiniMax H3 with a guide anchored mid video",
+        "title": "MiniMax H3 with a guide anchored mid video, PNG frames plus separate FLAC audio",
+        "graph_id": "minimax-h3-with-a-guide-anchored-mid-video",
         "nodes": [
             {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
              "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
@@ -5556,7 +5567,7 @@ def _minimax_mp4_spec() -> dict:
             continue
         out = dict(node)
         if node["key"] == "note":
-            out["note"] += (
+            out["note"] = node["note"].removesuffix(H3_SEPARATE_OUTPUTS) + (
                 " Saves one MP4 with H.264 video and AAC audio through native "
                 "CreateVideo and SaveVideo. Export stays at the model's 24 fps; "
                 "changing it changes video timing without retiming the soundtrack. "
@@ -5572,7 +5583,8 @@ def _minimax_mp4_spec() -> dict:
                      "format": "mp4", "codec": "h264"},
          "wire": {"video": ("video", 0)}},
     ])
-    return {"title": "MiniMax H3 MP4 with sound", "nodes": nodes}
+    return {"title": "MiniMax H3 text to video, one MP4 with sound",
+            "graph_id": "minimax-h3-mp4-with-sound", "nodes": nodes}
 
 
 TEMPLATES["dgx-monarch-minimax-h3-mp4"] = _minimax_mp4_spec()

@@ -12,7 +12,10 @@
   import { exportJSON } from '../files';
   import { checkImportFile, checkRequestBody, type StudioClient } from '../api';
   import { filterKeyAction, loadWorkflow, workflowChoices, workflowTitle } from '../workflowChoice';
+  import { operationChoices, outputSummary, workflowTraits } from '../workflowTraits';
+  import { durationGroups, inputMetadata, synchronized } from '../frameCounts';
   import AssetEditor from '../components/AssetEditor.svelte';
+  import DurationControl from '../components/DurationControl.svelte';
   import Field from '../components/Field.svelte';
   import LoraStack from '../components/LoraStack.svelte';
   import PromptStyles from '../components/PromptStyles.svelte';
@@ -86,6 +89,24 @@
       ? [...bindings]
       : bindings.filter((b) => b.prominent || b.display?.prominent)
     ).sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
+  );
+  // What the graph loads, makes and saves decides the operations it offers and the output it
+  // names. Until an inspection lists its inputs, nothing is known and every operation stays.
+  let traits = $derived(
+    draft.workflow && bindings.length
+      ? workflowTraits(draft.workflow, bindings, draft.values, catalog.object_info)
+      : null,
+  );
+  let operations = $derived(operationChoices(traits, draft.operation));
+  let operationNeed = $derived(operations.find((o) => o.id === draft.operation)?.need ?? null);
+  let metadata = $derived(inputMetadata(draft.workflow, bindings, catalog.object_info));
+  let durations = $derived(
+    durationGroups(draft.workflow, bindings, catalog.object_info).filter(synchronized),
+  );
+  // Duration follows the last size field it shows, or ends the list when none shows.
+  let durationAnchor = $derived(
+    [...visibleBindings].reverse().find((b) => ['width', 'height'].includes(b.input_name ?? ''))
+      ?.id ?? '',
   );
   // Under Random the companion replaces every seed input for each job and records the seeds.
   let randomSeeds = $derived(draft.seed_policy === 'random');
@@ -172,7 +193,9 @@
     >{#each choices.options as w (w.id)}<option value={w.id} title={w.name}
         >{workflowTitle(w)}</option
       >{/each}</select
-  >{#if chosen}<small class="workflow-file mono">{chosen.name}</small>{/if}
+  >{#if chosen}<small class="workflow-file mono">{chosen.name}</small>{/if}{#if traits}<small
+      class="workflow-output">Output: {outputSummary(traits)}</small
+    >{/if}
   <div class="workflow-actions">
     <label class="button import-label"
       >Import JSON<input
@@ -198,12 +221,11 @@
       <label for="generation-operation">Operation</label><select
         id="generation-operation"
         value={draft.operation}
+        aria-describedby={operationNeed ? 'operation-need' : undefined}
         onchange={(e) => changeDraft({ operation: e.currentTarget.value })}
-        ><option value="image">Image</option><option value="video">Video</option><option
-          value="edit">Edit</option
-        ><option value="upscale">Upscale</option><option value="workflow">Workflow</option><option
-          value="fleet">Fleet</option
-        ></select
+        >{#each operations as operation (operation.id)}<option value={operation.id}
+            >{operation.label}{operation.need ? ' (not supported)' : ''}</option
+          >{/each}</select
       >
     </div>
     <div>
@@ -220,7 +242,9 @@
     >{randomSeeds
       ? 'Random: each job gets new seeds. Review settings shows them before it starts.'
       : 'Fixed: jobs use the seed fields as they are.'}</small
-  >
+  >{#if operationNeed}<small class="warning operation-need" id="operation-need"
+      >{operationNeed}</small
+    >{/if}
   <div class="tabs" aria-label="Generation sections">
     {#each [{ id: 'inputs', label: 'Inputs' }, { id: 'advanced', label: 'All inputs' }, { id: 'assets', label: 'Assets' }, { id: 'loras', label: 'LoRAs' }, { id: 'workflow', label: 'Layout' }] as tab}<button
         class:active={controlTab === tab.id}
@@ -240,14 +264,21 @@
       {#if controlTab === 'inputs' && draft.workflow && !visibleBindings.length}<p class="muted">
           No prominent inputs configured. Use All inputs or customize Layout.
         </p>{/if}
+      {#snippet durationControls()}{#each durations as group (group.key)}<DurationControl
+            {group}
+            values={draft.values}
+            onchange={(values) => changeDraft({ values })}
+          />{/each}{/snippet}
       {#each visibleBindings as binding (binding.id)}<Field
           {binding}
           value={draft.values[binding.id]}
+          meta={metadata[binding.id]}
           note={randomSeeds && isSeedBinding(binding)
             ? 'Chosen for each job: the Random policy replaces this value.'
             : ''}
           onchange={(value) => fieldChange(binding, value)}
-        />{/each}
+        />{#if binding.id === durationAnchor}{@render durationControls()}{/if}{/each}
+      {#if draft.workflow && !durationAnchor}{@render durationControls()}{/if}
       {#if bindingErrors.length}<div class="validation-list" role="alert">
           <h3>Workflow needs attention</h3>
           {#each bindingErrors as issue}<p>{issue}</p>{/each}

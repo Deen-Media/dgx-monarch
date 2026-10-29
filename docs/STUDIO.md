@@ -763,6 +763,63 @@ palette, type part of a title or file name and choose a Load workflow row; it
 opens Create and loads that workflow as the list does. Drafts, exports and
 records still use the file name.
 
+Under the list, an Output line says what a run saves. Studio reads it from the
+graph's save nodes and the draft's format choices, for example "PNG image",
+"PNG frames plus separate FLAC audio" or "one MP4 video with sound". Save Image
+writes frames when the graph makes video. A saved video has sound when the
+Create Video node that feeds it takes an audio input; when another node makes
+the video, the line does not say. A preview node saves no file.
+
+The Operation select labels the job, and Queue, the gallery filter and the job
+record keep that label. It lists only the operations the loaded graph supports,
+read from the nodes that run. Muted and bypassed nodes do not count, and neither
+does a subgraph that no running instance reaches:
+
+- **Image** needs a node that saves or previews an image, in a graph that makes
+  no video.
+- **Video** needs a clip frame count, a video input, a Create Video node or a
+  video output, and a node that saves or previews frames or a video. A clip
+  frame count is a `length` input on a node that also sets a width and a height,
+  such as a video latent.
+- **Edit** needs an image, video or mask input node, such as Load Image or Load
+  Image (as Mask).
+- **Upscale** needs an image or video input node and a node that enlarges by a
+  factor or a model, such as Upscale Image By or PiD Conditioning. A resize to a
+  fixed size does not count, because it also shrinks.
+- **Fleet** needs the Fleet KSampler (DGX Monarch) node.
+- **Workflow** fits every graph.
+
+Loading a workflow keeps the draft's operation when the graph supports it, and
+otherwise picks the first one it supports of Fleet, Upscale, Video, Edit and
+Image. A draft can still hold an operation its graph lacks, for example after
+Send to edit on a text to image workflow. The select then marks it not
+supported, and a line under it names the input the operation needs. That line
+does not stop Generate. An operation you choose while a workflow loads stays as
+you chose it. Until Studio has inspected the graph, it lists every operation.
+
+MiniMax H3 and LTX graphs get a Duration control after their last size field,
+or at the end of the list, on Inputs and on All inputs. These families hold one
+clip's frame count on more than one node. Duration shows the count in frames
+and in seconds, takes a new value in either, and writes one count to every node
+that holds it. It rounds the value to the nearest count the model renders
+exactly. MiniMax H3 holds the count on its conditioning node and its latent
+node, renders 5 plus a multiple of 17 frames and runs at 24 fps, so 124 frames
+is 5.17 s. LTX holds it on the video latent and the audio latent, renders 1 plus
+a multiple of 8 frames, and takes its frame rate from its `frame_rate` inputs.
+When those disagree, or a wire from anything but a primitive node sets one,
+Duration shows frames only.
+
+A clip is the set of these nodes that feed the same sampler. A graph with two
+clips, or a subgraph used twice, gets one numbered Duration control for each
+clip, and each writes only its own nodes. When Studio cannot find the sampler a
+count feeds, it shows no control for that count. When the counts of a clip
+differ, Duration shows each one, and a new value sets them all. When a wire
+feeds one of them, no value can set it, so Studio shows no Duration control.
+Under All inputs, each of these fields names its node, its clip when there are
+several, and its unit, frames, and says how it relates to the other. Any other
+clip frame count also reads frames, with its node when another frame count
+shares its name.
+
 Compilation preserves the original workflow and extension metadata. Unknown
 widgets, ambiguous bindings and unsupported graph constructs refuse execution
 with a repair reason. Repeated nested subgraphs have separate execution and
@@ -953,6 +1010,46 @@ page reloads, it restores a saved preview only if the draft and fields still
 match; otherwise it drops the preview and asks for validation again. A dispatch
 whose outcome is unknown keeps its preview and request ID so it can be
 reconciled, and Grids says when that review came from an earlier draft.
+
+## Workflow sources and updates
+
+The Workflow list is the bundled set, read from one file: the workflow catalog
+in the installed dgx-monarch package. `tools/gen_studio_inventory.py` builds it
+from the checkout's `example_workflows` folder, which ComfyUI lists under
+Browse Templates. Studio scans no folder at run time, neither that one nor
+ComfyUI's saved workflows.
+
+Any other workflow comes in through Import JSON on Create: a UI workflow that
+ComfyUI saves or exports, or an API prompt from its Export (API). The driver's
+`/object_info` must list every node class the graph uses, and the graph needs a
+save or preview node. Studio edits INT, FLOAT, STRING, BOOLEAN and COMBO
+widgets, dynamic choices included. A wired input stays a connection, and an
+unknown custom widget refuses with a repair reason. A graph needs no DGX
+Monarch node to run, but only DGX Monarch nodes render across the Sparks
+([QUICKSTART](QUICKSTART.md#2-only-some-nodes-move-to-the-cluster)). App Mode
+is optional. `extra.linearData.inputs` lists the prominent inputs in order,
+each as a `[node id, widget name]` pair or a `graphId:nodeId:name` identity,
+with an optional configuration object. `extra.linearData.outputs` lists save
+node ids. Each input must name an editable widget that no wire feeds;
+otherwise Generate's check refuses the draft until you repair it on Layout. A
+graph without App Mode opens on All inputs.
+
+An update replaces the bundled templates and the catalog with the new
+release's copies. Studio never writes to either, and your edits live in copies
+that an update leaves alone. The draft stays in this browser. Presets, sessions
+and workflows saved in Library, and each job's submitted workflow, stay in the
+companion's [state directory](#state-reconciliation-and-limits). Files you
+export stay where you saved them. A copy keeps the version it was made from;
+load the template again to get the new one. ComfyUI saves a template you
+changed as a new file in its own user workflows folder.
+
+Do not edit or add files in the checkout's `example_workflows`.
+`dgxm update --verify` refuses a checkout with local changes (`repo_dirty`).
+A plain `dgxm update` stops at its merge when the new release changes the same
+file, and otherwise keeps your edit, which the Workflow list still does not
+show. To keep a workflow with its Layout, save it in Library under workflows.
+To keep its input values too, save a preset. Load into draft brings either
+back.
 
 ## Read a failure and grant a consent
 

@@ -28,6 +28,22 @@
 - The Init node's tooltip and description say `sync_ulysses` has no effect on
   the pinned xfuser 0.7.0; changing it still reruns setup and the identity gate
   ([Adapters](docs/ADAPTERS.md#what-an-adapter-provides)).
+- Studio's Operation select lists only the operations the loaded workflow
+  supports, read from its input, upscale and save nodes, so a text to image
+  workflow no longer offers Edit. A draft that holds an unsupported operation
+  says which input it needs, and loading a workflow picks one it supports ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Create says what a run saves, such as PNG frames plus separate FLAC audio or
+  one MP4 video with sound, read from the graph's save nodes ([Studio](docs/STUDIO.md#working-with-workflows)).
+- MiniMax H3 and LTX workflows get one Duration control per clip, in frames
+  and seconds, that writes the clip's frame count to every node that holds it.
+  Their frame count fields name their node, unit and relation ([Studio](docs/STUDIO.md#working-with-workflows)).
+- The MiniMax H3 templates say what they save: "MiniMax H3 text to video, PNG
+  frames plus separate FLAC audio", "MiniMax H3 text to video, one MP4 with
+  sound" and "MiniMax H3 with a guide anchored mid video, PNG frames plus
+  separate FLAC audio". File names and graph ids stay, so saved drafts and
+  records keep their inputs.
+- Studio's guide says which workflows Studio lists, what an imported workflow
+  needs, and what an update does to bundled and saved copies ([Studio](docs/STUDIO.md#workflow-sources-and-updates)).
 
 ### Rendering
 

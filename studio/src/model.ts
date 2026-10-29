@@ -7,6 +7,10 @@ export interface Binding {
   name?: string;
   input_name?: string;
   node_id?: string;
+  /** The graph that holds the node: the root graph's id, or a subgraph definition's. */
+  graph_id?: string;
+  /** The subgraph instance node ids from the root graph down to the node; empty at the root. */
+  instance_path?: string[];
   /** The compiled prompt node that receives this input; a subgraph instance gives it its own id. */
   execution_node_id?: string;
   type?: string;
