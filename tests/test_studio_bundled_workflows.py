@@ -72,6 +72,32 @@ def test_every_bundled_workflow_has_a_unique_title_and_keeps_its_file_stem_as_na
     assert rows["dgx-monarch-quickstart"]["title"] == "quickstart"
 
 
+# Each MiniMax H3 title says what the template saves. The graph id came from an
+# earlier title and stays: every binding identity starts with it, so drafts,
+# presets and records saved before the rename keep their inputs.
+H3_TITLES = {
+    "dgx-monarch-minimax-h3-t2va": ("MiniMax H3 text to video, PNG frames plus separate FLAC audio",
+                                    "minimax-h3-text-to-video-with-sound"),
+    "dgx-monarch-minimax-h3-mp4": ("MiniMax H3 text to video, one MP4 with sound",
+                                   "minimax-h3-mp4-with-sound"),
+    "dgx-monarch-minimax-h3-guide": (
+        "MiniMax H3 with a guide anchored mid video, PNG frames plus separate FLAC audio",
+        "minimax-h3-with-a-guide-anchored-mid-video"),
+}
+
+
+@pytest.mark.parametrize("name", sorted(H3_TITLES))
+def test_minimax_h3_titles_name_the_output_and_keep_the_graph_id(name, info):
+    row = next(row for row in WORKFLOWS if row["name"] == name)
+    title, graph_id = H3_TITLES[name]
+    assert row["title"] == title
+    assert row["workflow"]["id"] == graph_id
+    lengths = sorted(binding["id"] for binding in inspect_workflow(row["workflow"], info)["bindings"]
+                     if binding["input_name"] == "length")
+    conditioning, latent = (7, 9) if name != "dgx-monarch-minimax-h3-guide" else (8, 9)
+    assert lengths == [f"{graph_id}:{conditioning}:length", f"{graph_id}:{latent}:length"]
+
+
 def test_no_bundled_workflow_falls_back_to_its_humanized_stem():
     # A template without a Note titled "DGX Monarch | <title>" falls back to its
     # stem without the dgx-monarch- prefix, dashes read as spaces. Today none does.

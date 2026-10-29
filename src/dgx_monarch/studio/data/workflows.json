@@ -29660,11 +29660,11 @@
       }
     },
     {
-      "digest": "fffeb5118bd6784a1d102400d8b303572fa15b7b827f7525735d0abcab3a0ab3",
+      "digest": "94f187f1cec509624f89bf55d0570c1115bbb78367a09659a3cbd919ce99fe1e",
       "id": "workflow.dgx-monarch-minimax-h3-guide",
       "name": "dgx-monarch-minimax-h3-guide",
       "source": "example_workflows/dgx-monarch-minimax-h3-guide.json",
-      "title": "MiniMax H3 with a guide anchored mid video",
+      "title": "MiniMax H3 with a guide anchored mid video, PNG frames plus separate FLAC audio",
       "workflow": {
         "config": {},
         "extra": {
@@ -29967,7 +29967,7 @@
               315,
               80
             ],
-            "title": "DGX Monarch | MiniMax H3 with a guide anchored mid video",
+            "title": "DGX Monarch | MiniMax H3 with a guide anchored mid video, PNG frames plus separate FLAC audio",
             "type": "Note",
             "widgets_values": [
               "MiniMax H3 with an image anchored partway through the video. Add Guide pins a still or a clip at any frame of the target, not only the first and last frames the image-to-video node reaches. Chain Add Guide nodes to anchor several frames; each takes the conditioning from the one before it. frame_idx counts pixel frames from the start, and a negative value counts back from the end. A multi-frame image batch is anchored as a clip and cropped to the model's legal clip lengths (5, 22, 39 and so on); a batch under 5 frames uses its first image only. To anchor a soundtrack starting at the same frame, connect audio_vae and an audio input instead. The guide adds condition rows to the sequence the workers split, so it costs memory: a clip charges a whole frame grid per latent frame, which the capacity preflight prices before the model loads. The guide also encodes through the video VAE first, and that encode is what runs out on a 121.6 GiB box: on 2026-08-14 it took 13.6 GiB for one frame at this canvas and over 94 GiB for five, which never completed. Load Image names its file, so the preflight opens it and counts frames: one frame renders, an animated file or a video is refused, and a real clip needs a smaller canvas (docs/TROUBLESHOOTING.md #82 and #83). Point Load Image at your own still; the shipped filename is ComfyUI's stock sample. Any node between the loader and the guide hides the file, so nothing is proved and the clip charge stands. 1344x768, 124 frames at 24 fps, 20 steps at cfg 1.0, because the released checkpoints are CFG distilled. Comfy caps this DiT at batch 1, so cfg-parallel and data-parallel refuse. Expects minimax_h3_fl2va_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in models/text_encoders, and minimax_h3_video_vae_fp16.safetensors plus minimax_h3_audio_vae_fp32.safetensors in models/vae."
@@ -30584,11 +30584,11 @@
       }
     },
     {
-      "digest": "0da3e51d5e34dabc1e03ed9eaf0c86bfa7270b79134c964f8339ebd58c657d86",
+      "digest": "9926317bffc55fe9633220e735d5daa91c2bd5b15d07bc64a5fe4985ad18c889",
       "id": "workflow.dgx-monarch-minimax-h3-mp4",
       "name": "dgx-monarch-minimax-h3-mp4",
       "source": "example_workflows/dgx-monarch-minimax-h3-mp4.json",
-      "title": "MiniMax H3 MP4 with sound",
+      "title": "MiniMax H3 text to video, one MP4 with sound",
       "workflow": {
         "config": {},
         "extra": {
@@ -30862,7 +30862,7 @@
               315,
               80
             ],
-            "title": "DGX Monarch | MiniMax H3 MP4 with sound",
+            "title": "DGX Monarch | MiniMax H3 text to video, one MP4 with sound",
             "type": "Note",
             "widgets_values": [
               "MiniMax H3 text to video with sound: one packed video and audio sequence is denoised once, then decoded twice, the frames through the video VAE and the soundtrack through the audio VAE. 1344x768, 124 frames (about 5 s at 24 fps), 20 steps at cfg 1.0, because the released checkpoints are CFG distilled. Comfy caps this DiT at batch 1, so cfg-parallel and data-parallel refuse; topology=auto asks for sequence-parallel on a configured pair and single on one box. Connect an image to first_frame (and last_frame) to make this a keyframe render. The first render of a new model runs the identity gate: before any pixels, a few minutes of proof renders check that the mesh matches a stock single-GPU load. Expects minimax_h3_fl2va_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in models/text_encoders, and minimax_h3_video_vae_fp16.safetensors plus minimax_h3_audio_vae_fp32.safetensors in models/vae. Saves one MP4 with H.264 video and AAC audio through native CreateVideo and SaveVideo. Export stays at the model's 24 fps; changing it changes video timing without retiming the soundtrack. Use the separate-output MiniMax H3 template for PNG frames and FLAC audio."
@@ -31391,11 +31391,11 @@
       }
     },
     {
-      "digest": "88c70917a1bfb9e8fbc514813fbaef5cb41e7f91578c14345096481c44111ee7",
+      "digest": "1531315bf57c807156fad16cd3d711f3f63b8212a0977657cd7e9f6c3816697d",
       "id": "workflow.dgx-monarch-minimax-h3-t2va",
       "name": "dgx-monarch-minimax-h3-t2va",
       "source": "example_workflows/dgx-monarch-minimax-h3-t2va.json",
-      "title": "MiniMax H3 text to video with sound",
+      "title": "MiniMax H3 text to video, PNG frames plus separate FLAC audio",
       "workflow": {
         "config": {},
         "extra": {
@@ -31662,10 +31662,10 @@
               315,
               80
             ],
-            "title": "DGX Monarch | MiniMax H3 text to video with sound",
+            "title": "DGX Monarch | MiniMax H3 text to video, PNG frames plus separate FLAC audio",
             "type": "Note",
             "widgets_values": [
-              "MiniMax H3 text to video with sound: one packed video and audio sequence is denoised once, then decoded twice, the frames through the video VAE and the soundtrack through the audio VAE. 1344x768, 124 frames (about 5 s at 24 fps), 20 steps at cfg 1.0, because the released checkpoints are CFG distilled. Comfy caps this DiT at batch 1, so cfg-parallel and data-parallel refuse; topology=auto asks for sequence-parallel on a configured pair and single on one box. Connect an image to first_frame (and last_frame) to make this a keyframe render. The first render of a new model runs the identity gate: before any pixels, a few minutes of proof renders check that the mesh matches a stock single-GPU load. Expects minimax_h3_fl2va_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in models/text_encoders, and minimax_h3_video_vae_fp16.safetensors plus minimax_h3_audio_vae_fp32.safetensors in models/vae."
+              "MiniMax H3 text to video with sound: one packed video and audio sequence is denoised once, then decoded twice, the frames through the video VAE and the soundtrack through the audio VAE. 1344x768, 124 frames (about 5 s at 24 fps), 20 steps at cfg 1.0, because the released checkpoints are CFG distilled. Comfy caps this DiT at batch 1, so cfg-parallel and data-parallel refuse; topology=auto asks for sequence-parallel on a configured pair and single on one box. Connect an image to first_frame (and last_frame) to make this a keyframe render. The first render of a new model runs the identity gate: before any pixels, a few minutes of proof renders check that the mesh matches a stock single-GPU load. Expects minimax_h3_fl2va_pruned_int8_convrot.safetensors in models/diffusion_models, qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in models/text_encoders, and minimax_h3_video_vae_fp16.safetensors plus minimax_h3_audio_vae_fp32.safetensors in models/vae. Saves the video as PNG frames through Save Image and the soundtrack as a separate FLAC file through Save Audio. For one MP4 with sound, use the MiniMax H3 MP4 template."
             ]
           },
           {

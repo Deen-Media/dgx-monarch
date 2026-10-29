@@ -63,6 +63,14 @@
   margin-top: 4px;
   overflow-wrap: anywhere;
 }
+.workflow-output {
+  display: block;
+  margin-top: 4px;
+}
+.operation-need {
+  display: block;
+  margin: -10px 0 16px;
+}
 .import-label {
   font-weight: 500;
   margin: 0;
@@ -134,6 +142,11 @@
   display: flex;
   justify-content: space-between;
   gap: 5px;
+}
+.field-context {
+  margin-right: auto;
+  font-weight: 400;
+  color: var(--muted);
 }
 .field-type {
   font-size: 9px;

@@ -91,8 +91,11 @@ owns draft autosave and tab conflicts, `inspectionGuard.ts` orders workflow
 inspections and job reviews, `assetEditorState.svelte.ts` keeps the asset
 editor across tab and view switches, and `operationOpener.svelte.ts` holds the
 operation Operations opens next. `jobFailure.ts` reads a failed job's recorded
-error for the status line and Queue. All TypeScript/Svelte source modules are
-below 500 lines. CSS is split by surface under `styles/`.
+error for the status line and Queue. `workflowTraits.ts` reads what a graph
+loads, makes and saves for Create's Operation select and Output line, and
+`frameCounts.ts` finds the clip frame counts that the Duration control sets
+together. All TypeScript/Svelte source modules are below 500 lines. CSS is
+split by surface under `styles/`.
 
 The [CPU HTTP fixture](tests/README.md) exercises the companion's actual HTTP
 contract without a ComfyUI installation, GPU, or management permissions.

@@ -147,7 +147,8 @@
     const ticket = guard.begin(connection.client);
     const values = preserveValues ? structuredClone($state.snapshot(draft.values)) : undefined;
     await withBusy(async () => {
-      const result = await inspectDraft(connection.client, workflow, name, values);
+      const fit = { operation: draft.operation, info: connection.catalog.object_info };
+      const result = await inspectDraft(connection.client, workflow, name, values, fit);
       const state = guard.inspected(ticket, connection.client);
       if (state !== 'current')
         return void (state !== 'newer' && fail(droppedInspection(name, state)));

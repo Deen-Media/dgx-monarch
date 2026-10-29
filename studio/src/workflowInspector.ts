@@ -2,6 +2,8 @@ import type { StudioClient } from './api';
 import type { Inspection, Workflow } from './contracts';
 import { droppedInspection, type InspectionGuard } from './inspectionGuard.ts';
 import type { Binding, Draft } from './model';
+import type { ObjectInfo } from './workflowGraph.ts';
+import { fittedOperation, workflowTraits } from './workflowTraits.ts';
 
 /**
  * Each resolved binding's value: the draft's edit first (by ID, then by a legacy alias), then the
@@ -26,13 +28,16 @@ export function bindingValues(bindings: Binding[], priorValues?: Draft['values']
 
 /**
  * Resolve editable bindings once; connected sockets stay owned by the graph. Prior draft values
- * travel with the workflow, so an edited dynamic choice lists its own child inputs.
+ * travel with the workflow, so an edited dynamic choice lists its own child inputs. A newly loaded
+ * workflow, which has no prior values, takes `fit`: the draft keeps its operation when the graph
+ * supports it, and otherwise takes the graph's first supported one (fittedOperation).
  */
 export async function inspectDraft(
   client: StudioClient,
   workflow: Workflow,
   name: string,
   priorValues?: Draft['values'],
+  fit?: { operation: string; info?: ObjectInfo },
 ) {
   const result = await client.request<Inspection>(
     '/workflows/inspect',
@@ -40,11 +45,17 @@ export async function inspectDraft(
   );
   const bindings = result.bindings ?? [];
   const original = result.workflow ?? workflow;
+  const values = bindingValues(bindings, priorValues);
+  // A graph the inspection could not read lists no inputs, so its operations stay unknown.
+  const operation =
+    fit && !priorValues && bindings.length
+      ? fittedOperation(fit.operation, workflowTraits(original, bindings, values, fit.info))
+      : undefined;
   return {
     bindings,
     connections: result.connections ?? [],
     errors: result.errors ?? [],
-    patch: { workflow: original, workflowName: name, values: bindingValues(bindings, priorValues) },
+    patch: { workflow: original, workflowName: name, values, ...(operation ? { operation } : {}) },
     rawWorkflow: JSON.stringify(original, null, 2),
     controlTab: bindings.some((binding) => binding.prominent) ? 'inputs' : 'advanced',
   };
