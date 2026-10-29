@@ -7,6 +7,15 @@
 - Studio's artifacts route lists outputs with equal creation times most
   recently stored first, as the snapshot does, so the viewer shows a finished
   job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- Studio's viewer shows an image chosen after a video at once. Before, it could
+  report "Selected media cannot be decoded by this browser" until another
+  output was chosen ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- When a new generation starts, Studio's viewer stops showing the previous
+  output and names the job's workflow and progress until the new output lands.
+  Recent Outputs keeps the earlier outputs, and the snapshot's job rows now
+  carry the draft's workflow name ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- Left and Right on a Studio Recent Outputs tile select the previous or next
+  output and show it in the viewer ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 - The Init node's tooltip and description say `sync_ulysses` has no effect on
   the pinned xfuser 0.7.0; changing it still reruns setup and the identity gate
   ([Adapters](docs/ADAPTERS.md#what-an-adapter-provides)).

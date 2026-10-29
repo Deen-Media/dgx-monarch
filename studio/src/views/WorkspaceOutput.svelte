@@ -4,6 +4,7 @@
   import type { FollowedJob } from '../jobTracker.svelte';
   import { isJobOutput } from '../jobFollow';
   import { formatTime } from '../model';
+  import { recentStep } from '../recentOutputs';
   import TelemetryCharts from '../components/TelemetryCharts.svelte';
   import Thumbnail from '../components/Thumbnail.svelte';
   import type { MetricSeries, Presentation } from '../telemetryHistory';
@@ -54,6 +55,15 @@
   } = $props();
   // Uploads and masks have no job, and a live preview is a running job's approximate frame.
   const outputs = $derived((artifacts ?? []).filter(isJobOutput).slice(0, 8));
+  /** Left and Right on a tile select the previous or next output, as a click does, and take focus. */
+  function stepRecent(event: KeyboardEvent, index: number) {
+    const target = recentStep(event, index, outputs.length);
+    if (target === null) return;
+    event.preventDefault();
+    onselect(outputs[target]);
+    const tiles = (event.currentTarget as HTMLElement).parentElement?.children;
+    (tiles?.[target] as HTMLElement | undefined)?.focus();
+  }
 </script>
 
 <div class="workspace-center">
@@ -77,10 +87,12 @@
       >
     </div>
     <div class="recent-list">
-      {#each outputs as artifact (artifact.id)}<button
+      {#each outputs as artifact, index (artifact.id)}<button
           class:selected={selected?.id === artifact.id}
+          aria-pressed={selected?.id === artifact.id}
           title={artifact.filename ?? artifact.id}
           onclick={() => onselect(artifact)}
+          onkeydown={(event) => stepRecent(event, index)}
           ><span class="recent-thumb" aria-hidden="true"><Thumbnail {artifact} {client} /></span
           ><span>{artifact.intermediate ? 'Preview · ' : ''}{artifact.filename ?? artifact.id}</span
           ></button

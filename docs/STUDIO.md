@@ -640,7 +640,10 @@ Use the navigation rail or Ctrl/Cmd+K to open a view. The command palette takes
 keyboard focus immediately; Tab chooses a result and Enter opens it. It also
 lists operations to review and, once you type, packaged workflows to load, as
 [Working with workflows](#working-with-workflows) describes. Escape
-closes dialogs or leaves presentation mode. Project selectors include the full
+closes dialogs or leaves presentation mode. In Recent Outputs, Left and Right
+on a focused output select the previous or next one and show it in the viewer,
+as a click does. Arrow keys keep their usual use in text fields, selects, the
+viewer frame and video controls. Project selectors include the full
 bounded project catalog, including projects outside the recent snapshot.
 The Telemetry and Console buttons in the footer show and hide the Spark
 telemetry panel and the event console, and Settings has a checkbox for each.
@@ -678,6 +681,15 @@ applies once, so a later visit to Queue opens on no row. Create counts unknown
 outcomes with active jobs, as Queue does, until you reconcile them; only jobs in
 flight animate the viewer border and the logo.
 
+When the viewer begins to follow a job in flight, such as one you just
+submitted, it stops showing the earlier output, its file name and its media
+label. The heading names the job's workflow, by its title when it is a packaged
+workflow, the status line shows its progress, and the frame says that the new
+output appears there when the job finishes. A tab that submitted nothing does
+the same for the newest job in flight. An open comparison stays, and so does a
+result you choose while the job runs. A job that fails or is cancelled leaves
+the frame without an output, and Recent Outputs keeps the earlier outputs.
+
 When the followed job succeeds, the viewer shows its last final image or video,
 unless you chose another result or a comparison after the job began, or a
 comparison is open. When the snapshot leaves that output out, Studio asks for
@@ -698,7 +710,9 @@ painted positions map to the uploaded mask. An uploaded input or mask can be bou
 image upload widgets that read the input store. It joins that widget's choices
 for the request that names it, at inspection and review; any other value outside
 the driver's list is still refused. Studio refuses an empty mask before upload. Video frame controls wait for valid
-metadata; native playback, mute and loop controls remain available. The
+metadata; native playback, mute and loop controls remain available. The viewer
+reports a decode failure only for the output on screen, so an image chosen
+after a video shows at once. The
 [interface QA record](STUDIO_INTERFACE_QA.md) describes the tested fixtures and
 browser viewports without extending those results to every device or codec.
 

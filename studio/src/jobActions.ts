@@ -12,7 +12,7 @@ export function isActiveJob(job: Job): boolean {
 }
 
 /** Work still in flight to or on the driver; activity animations follow only these jobs. */
-export function isInFlightJob(job: Job): boolean {
+export function isInFlightJob(job: Pick<Job, 'state'>): boolean {
   return ['queued', 'running', 'submitting', 'cancel_requested', 'accepted'].includes(job.state);
 }
 

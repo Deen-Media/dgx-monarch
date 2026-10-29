@@ -1,4 +1,5 @@
-import type { Artifact, Job } from './contracts';
+import type { Artifact, Job, WorkflowEntry } from './contracts';
+import { isInFlightJob } from './jobActions.ts';
 import { isActive } from './queueRows.ts';
 
 /** The job the output viewer follows. */
@@ -145,6 +146,48 @@ export function applyLookup(
   const show = items ? finalOutput(jobId, items) : null;
   const lookups = follow.lookups + 1;
   return { follow: { ...follow, lookups, settled: !!show || lookups >= OUTPUT_LOOKUPS }, show };
+}
+
+/**
+ * Whether `next` begins to follow a job in flight that `previous` did not follow. The viewer
+ * then stops showing the earlier result and shows that job until its output lands. A job that
+ * ended, or whose outcome is unknown, is no new generation and leaves the viewer as it is.
+ */
+export function beginsRun(previous: Follow, next: Follow, jobs: readonly Job[]): boolean {
+  if (!next.id || next.id === previous.id) return false;
+  const job = jobs.find((item) => item.id === next.id);
+  return !!job && isInFlightJob(job);
+}
+
+/** A job's workflow: the packaged workflow's title when its name matches one, else that name. */
+export function jobWorkflow(job: Job, workflows: readonly WorkflowEntry[]): string {
+  const name = job.submission?.requested?.workflowName;
+  if (typeof name !== 'string' || !name) return '';
+  const entry = workflows.find((item) => item.name === name);
+  return entry ? entry.title || entry.name : name;
+}
+
+/** What the viewer shows in place of an output while it follows a job with no result shown. */
+export function pendingView(job: { state: string; workflow?: string }): {
+  title: string;
+  tag: string;
+  heading: string;
+  note: string;
+} {
+  const title = job.workflow || 'Unnamed workflow';
+  return isInFlightJob(job)
+    ? {
+        title,
+        tag: 'No output yet',
+        heading: 'Waiting for the new output',
+        note: 'It appears here when the job finishes. Recent Outputs keeps the earlier results.',
+      }
+    : {
+        title,
+        tag: 'No output',
+        heading: 'No new output',
+        note: 'This job has no output to show. Choose an earlier result in Recent Outputs.',
+      };
 }
 
 export function sameFollow(left: Follow, right: Follow): boolean {
