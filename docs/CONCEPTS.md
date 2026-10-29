@@ -180,7 +180,8 @@ included the family's recorded identity ceremony and a slab-vs-stock
 comparison in its documented scope. A checkpoint's very first load stays on
 the classic path while its family is learned; every later load of the same
 file uses the slab. Other families stay classic until validated. Slab requires
-low_rss and is disabled under FSDP or `compile_dit`; the identity ceremony
+low_rss and is disabled under FSDP, and under `compile_dit` for a family it
+compiles ([TROUBLESHOOTING #14](TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)); the identity ceremony
 also renders one stock-residency reference whenever slab is active, so a
 divergence quarantines slab.
 

@@ -1327,11 +1327,19 @@ The worker applies two capacity and performance transforms in
   `max-autotune-no-cudagraphs`, which unlocks inductor's fp8 Triton GEMM;
   plain cudagraphs crash the dynamic-guidance layer on GB10. In-place
   `block.compile()` preserves state_dict keys for the LoRA hot-swap; it is
-  idempotent and fails open to eager. It applies to any topology, including
-  world-1/local, whenever the model exposes a `.blocks` list and the base is
-  not slab-resident, and adds a one-time autotune warmup on the first render
+  idempotent, and a block it cannot wrap stays eager. Dynamo traces each
+  block on its first forward, inside the render, so a trace failure fails
+  that render. It applies to any topology, including world-1/local, whenever
+  the model exposes a top-level `.blocks` list and the base is not
+  slab-resident, and adds a one-time autotune warmup on the first render
   (docs/VALIDATION.md,
   [docs/TROUBLESHOOTING.md #14](TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+  On ComfyUI 0.43.0 that is Krea2, MiniMax H3, the Wan family, CogVideoX and
+  Anima. Every other family keeps its blocks under another name and stays
+  eager; `compile_policy.KNOWN_COMPILE_NOOP_FAMILIES` lists them, so
+  compile_dit does not take their slab residency away, and
+  `tests/test_compile_surface.py` checks both sides against a ComfyUI
+  checkout's source when one is present.
 * **FSDP capacity mode** (`adapters/fsdp.py:apply_fsdp_capacity_mode`), when
   the topology carries `fsdp`. It shards the standard block-list attributes
   (`blocks`, `transformer_blocks`, `double_blocks`, `single_blocks`, `layers`,

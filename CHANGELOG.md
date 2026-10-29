@@ -7,6 +7,21 @@
 - Studio's artifacts route lists outputs with equal creation times most
   recently stored first, as the snapshot does, so the viewer shows a finished
   job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- The Init node's tooltip and description say `sync_ulysses` has no effect on
+  the pinned xfuser 0.7.0; changing it still reruns setup and the identity gate
+  ([Adapters](docs/ADAPTERS.md#what-an-adapter-provides)).
+
+### Rendering
+
+- `compile_dit` no longer forces stock residency on the families it leaves
+  eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
+  tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+
+### Operations
+
+- Worker services keep torch inductor's compile cache in
+  `~/.cache/dgx-monarch/inductor`, so `compile_dit` no longer repeats its
+  autotune after a reboot; set `TORCHINDUCTOR_CACHE_DIR` to place it elsewhere ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
 
 ### Rendering
 

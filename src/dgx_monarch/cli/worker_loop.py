@@ -41,12 +41,17 @@ def main() -> None:
     # Keep this before the first Monarch import. Native launcher diagnostics
     # may render LaunchOptions, including every inherited env value, so the
     # worker loop keeps only the names worker_process_env allows.
-    from .worker_process_env import prepare_worker_process_environment
+    from .worker_process_env import INDUCTOR_CACHE_ENV, prepare_worker_process_environment
 
     prepare_worker_process_environment(Path(__file__).resolve().parents[2])
 
     import os
     import sys
+
+    if not os.environ.get(INDUCTOR_CACHE_ENV):
+        print("[dgx-monarch] torch inductor cache: no private directory under "
+              "~/.cache/dgx-monarch/inductor, so torch keeps it under TMPDIR, which a "
+              "reboot may clear (docs/TROUBLESHOOTING.md #14)", file=sys.stderr, flush=True)
 
     from ..monarch_diagnostics import configure_policy_logged
     from ..monarch_launch import NATIVE_ENV

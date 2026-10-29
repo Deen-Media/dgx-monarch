@@ -349,7 +349,10 @@ For dm-cfg2, use the unconditional loader, dual-model guider and custom
 sampler; leave the negative input unconnected for the text-free unconditional
 pass. Each rank holds one checkpoint; single/DP instead keeps both on each
 rank. Leave the resident-adoption input unconnected under dm-cfg2. The shipped
-workflow uses `sync_ulysses=off`. On a Ulysses or ring topology the worker
+workflow uses `sync_ulysses=off`, which changes nothing on the pinned xfuser
+0.7.0: its Ulysses all-to-all never receives the setting
+([Adapters](ADAPTERS.md#what-an-adapter-provides)). The gate still proves
+each setting apart. On a Ulysses or ring topology the worker
 runs TORCH_FLASH in place of a cuDNN or sage kernel named on the Init node,
 because neither carries head dimension 256.
 

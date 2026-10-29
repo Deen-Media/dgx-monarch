@@ -610,23 +610,46 @@ the fp8 Triton GEMM search; [VALIDATION.md](VALIDATION.md)). Expected, not a
 hang.
 
 **Fix:** let it finish once; the compiled blocks persist for the actor's life
-(later renders and LoRA hot-swaps reuse them). It is opt-in and per-model:
-the worker fails open to eager if a block cannot compile (log
-`DiT block compile skipped (...); running eager`), and a successful pass logs
-`DiT: N blocks compiled`. Turn the widget off to skip warmup entirely (the
-compile flag is cleared on the next setup).
+(later renders and LoRA hot-swaps reuse them). It is opt-in and per-model. A
+successful pass logs `DiT: N blocks compiled`, and a block that cannot be
+wrapped stays eager (log `DiT block compile skipped (...); running eager`).
+Wrapping is all that log covers: dynamo traces each block on its first
+forward, inside the render, and a failure there fails that render instead of
+falling back to eager. One such failure is reported upstream for MiniMax H3
+INT8, whose MLP takes ComfyUI's `linear_input_act` path into comfy-kitchen
+(kanthai/gb10-comfyui-tuning, doc 03); it has not been reproduced here. Turn
+the widget off to skip warmup entirely (the compile flag is cleared on the
+next setup).
 
-**Which models it compiles:** only a diffusion model with a `blocks` list.
-krea2 is the one measured; other `blocks` families (wan, minimax) compile
-without a fidelity record. Flux, Flux2, FLUX.3, Chroma, LongCat and MOSS-Image
-name their lists otherwise, so they compile nothing and the worker logs
-`compile_dit: ... has no blocks list, so nothing was compiled; running eager`.
-For a checkpoint whose live-model family has already been detected, those
-known no-op families leave requested slab residency available. Other families
-with differently named lists stay stock until their compile surface is
-covered. The first load of unfamiliar bytes also stays stock: the
-worker never uses a header guess to combine slab residency with a potentially
-compilable model.
+**Where the warmup is cached:** Worker services keep torch inductor's cache
+on disk, in `~/.cache/dgx-monarch/inductor/torch-<version>` (mode 0700), so a
+reboot or a Worker restart does not pay the autotune again; a new shape or a
+new torch build does. Torch's own default sits under `TMPDIR`, which the
+Worker usually puts on tmpfs. To place the cache elsewhere, set
+`TORCHINDUCTOR_CACHE_DIR` in the environment the Worker service starts with;
+the directory must be private to the account, because inductor loads the code
+it generates from there. If the Worker cannot make the default directory, it
+says so at start and torch keeps its default. After a torch upgrade the old
+version's directory is unused and safe to delete. Local mode, with no
+`cluster.toml`, does not move `TMPDIR`, so its actors keep torch's default
+under ComfyUI's own `TMPDIR`, or ComfyUI's `TORCHINDUCTOR_CACHE_DIR` when it
+has one.
+
+**Which models it compiles:** only a diffusion model with a top-level
+`blocks` list: Krea2, MiniMax H3, the Wan family (Wan 2.1 and 2.2, SCAIL,
+Wan-Animate 2, WanDancer), CogVideoX and Anima. Krea2 is the one measured;
+the others compile without a fidelity record. Every other family names its
+lists otherwise, such as Qwen-Image's `transformer_blocks` or Flux's
+`double_blocks` and `single_blocks`, so it compiles nothing and the worker
+logs `compile_dit: ... has no blocks list (its blocks are in ...), so nothing
+was compiled; running eager`. Those lists stay eager on purpose: compiling
+them would put unmeasured code under the compiler, such as the per-call text
+projection swap the dual-stream adapters run inside each block under pure
+Ulysses. Once a load has detected one of these families, compile_dit leaves
+its requested slab residency available. A family this release does not know
+stays stock under compile_dit, and so does the first load of unfamiliar
+bytes: the worker never uses a header guess to combine slab residency with a
+potentially compilable model.
 
 ## 15. Attaches still time out after `dgxm restart` (driver-side wedge)
 
@@ -4111,7 +4134,10 @@ Triton cache candidate for an ownership/access blocker. This is bounded,
 read-only evidence: it does not inspect existing cache children or prove that
 compilation can write. It does not attest the running Worker/actor environment.
 In particular, `TRITON_CACHE_DIR` exported in an SSH/login shell is filtered by
-Monarch's Worker environment boundary and does not reach actors. Service `HOME`
+Monarch's Worker environment boundary and does not reach actors. Once
+`compile_dit` compiles a DiT in an actor, torch inductor points that actor's
+later Triton kernels at its own cache directory
+([#14](#14-first-render-pauses-9-s-with-compile_dit-on)). Service `HOME`
 and allowed cache settings may also differ from the diagnostic shell. Inspect
 the actual service configuration when resolving cache problems; preserve old
 caches and avoid recursive ownership changes or deletion during active work.

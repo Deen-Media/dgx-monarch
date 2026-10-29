@@ -58,6 +58,7 @@ on:
       - "tests/test_render_memory_price.py"
       - "tests/test_wan_variants.py"
       - "tests/test_worker_latent_size_tags.py"
+      - "tests/test_compile_surface.py"
       # No step runs these files, but the files the steps run import them. The
       # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4, Lens and
       # MOSS-Image two-rank harness. tests/test_canary_path_filter.py checks
@@ -319,6 +320,13 @@ jobs:
           tests/test_skip_layer_guidance_comfy.py
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
+      # compile_dit compiles a top-level blocks list only, and the no-op family
+      # list lets the others keep slab residency. Read each family's DiT class
+      # from comfy's source, without importing it, to catch a renamed list.
+      - name: compile_dit block lists vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_compile_surface.py
       # Keep the formula check last so its failure cannot prevent earlier
       # canaries from running; no step uses continue-on-error.
       - name: Render-memory formula vs comfy master (CPU)
