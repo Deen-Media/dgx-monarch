@@ -16,6 +16,7 @@ comparison fields. Times below are seconds unless marked otherwise.
 | Krea2 RAW | 74.1 s | 48.1 s | BF16, 1536x1536, 8 steps, CFG 1, CFG++ sampler, Ulysses |
 | Ideogram4 | 36.0 s | 26.0 s | FP8-scaled dual-model, 1024x1024, 20 steps, CFG 7, Ulysses |
 | MiniMax H3 video/audio | 42:03 | 23:07 | INT8 ConvRot, 1280x720, 241 frames, 20 steps, CFG 1, exact-attention Ulysses; times are minutes:seconds |
+| MiniMax H3 image to video, 15 s | refused | 53:45 | INT8 ConvRot with the Triton GEMM, 1344x768, 362 frames, 20 steps, CFG 1, exact-attention Ulysses, stock residency; a first render of its session, gate proof and model load inside; one Spark cannot hold the activations; times are minutes:seconds; head capped at 2100 MHz; [details](#a-15-second-clip-on-the-pair-2026-10-29) |
 | Qwen Image 2.1 | Not timed | Not timed | Matching native output recorded for 25-step T2I and editing; no comparable timing published here |
 | FLUX.3 Klein | 10.2 s | 6.7 s | Step-distilled BF16, 1024x1024, 16 steps, CFG 1, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
 | FLUX.3 Klein Base | 29.8 s | 20.0 s | BF16, 1024x1024, 25 steps, CFG 3.5, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
@@ -730,6 +731,45 @@ between the passes.
 | Mage Flow turbo | uly2 | 2.0 | 2.0 | 0% |
 | Mage Flow edit turbo | single | 6.0 | 6.0 | 0% |
 | Mage Flow edit turbo | uly2 | 4.0 | 4.0 | 0% |
+
+### A 15 second clip on the pair (2026-10-29)
+
+The pair rendered a 15 second H3 image-to-video clip, the mp4 template of the
+rows above at its 362-frame ceiling: 1344x768 at 24 fps, 20 steps, CFG 1,
+exact attention on uly2, the pruned INT8 ConvRot DiT with the Triton kernel,
+dev `50ad5e9` on both Workers, head capped at 2100 MHz. Two sessions rendered
+it once each, 53:45 and 53:58 for the prompt: the identity gate's proof render
+took 4:43 and 4:42 with the model load inside, sampling 45:10 and 45:11, and
+text encoding, the two VAE decodes and the save the remaining 3:52 and 4:06.
+The
+two-point fit from the 5 and 10 second rows had predicted about 45 minutes of
+sampling on the pair.
+
+What the cell showed about capacity:
+
+- One Spark refuses it before loading. The loader footprint preflight charges
+  112.3 GiB of activations for the 109062 packed rows on one rank and finds no
+  budget for any DiT file: 44.1 GiB more free memory than the box has.
+- The pair renders it once per session. After the first render the loaded
+  stack leaves 56.5 GiB on the head once the driver has unloaded its VAEs, and
+  the activation preflight needs 65.1 GiB (60.1 GiB per rank plus the 5 GiB
+  reserve), so it refuses the second request 8.7 GiB short. A new session
+  renders it cold again, as the second session did.
+- The gate cannot conclude at this length. Its slab-path preflight came up
+  3.8 GiB short after the proof render, so the gate forced stock residency,
+  which the 124-frame rows above ran on as well, and the session paid the
+  proof render for nothing. #93 carries the follow-ups.
+
+Reported, not reproduced: a single RTX 5090 renders the same 362-frame clip at
+1344x768 in 518.0 s, 8.6 minutes
+([ai-muninn.com, 2026-09-03](https://ai-muninn.com/en/blog/minimax-h3-rtx5090-config-stack)),
+with a different recipe: the pruned NVFP4 DiT and an NVFP4 text encoder, 14
+steps, the KJNodes head-group attention and chunked feed-forward patches
+(exact), torch 2.13.0+cu130 on Windows and SageAttention. The same post gives
+99.6 s for 124 frames, 2208 s at coarse chunking and an out-of-memory failure
+without the chunking patches. Per step that is about 37 s against the pair's
+136 s at 362 frames, and 7 s against the pair's 26 s and one Spark's 42 s at
+124 frames: the 5090 holds about 3.6 times the pair's pace at both lengths.
 
 GEMM throughput across M on the families' own linears, same box and cap
 (ratio is Triton over CUTLASS; TOPS at 29184 rows, the H3 per-rank count):
