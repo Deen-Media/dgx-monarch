@@ -297,3 +297,90 @@ test('the overview renders every host, its readings and the readiness rows', asy
   ])
     assert.ok(text.includes(part), part);
 });
+
+test('readings the companion retained after its telemetry stopped are stale, with their age', () => {
+  // After a failed poll the companion keeps the last sample and its observed_at, and marks it stale.
+  const retained = { ...pair(1000), state: 'stale' };
+  const summary = hostSummary(retained, presentation, { now: 1042.4, live: true });
+  assert.equal(
+    summary.stale,
+    'The companion has had no new telemetry for 42 s, so these are the last readings it received.',
+  );
+  assert.deepEqual(
+    summary.hosts.map((card) => card.age),
+    ['Stale reading, 42 s old.', 'Stale reading, 43 s old.'],
+  );
+  // The report said what held when it was read; what holds now is unknown.
+  assert.deepEqual(
+    summary.readiness.map((row) => [row.state, row.stale, row.mark.icon, row.mark.hex]),
+    Array.from(['ready', 'active', 'active'], (state) => [
+      state,
+      'stale, 42 s old',
+      '?',
+      '#f87171',
+    ]),
+  );
+  const later = hostSummary(retained, presentation, { now: 1300.4, live: true });
+  assert.match(later.stale, /no new telemetry for 5 min,/);
+  assert.equal(later.hosts[0].age, 'Stale reading, 5 min old.');
+  // Without the companion's time the readings are still stale, with no age.
+  const timeless = hostSummary(retained, presentation, { live: true });
+  assert.equal(
+    timeless.stale,
+    "The companion's telemetry has stopped, so these are the last readings it received.",
+  );
+  assert.deepEqual(
+    timeless.hosts.map((card) => card.age),
+    ['Stale reading.', 'Stale reading.'],
+  );
+  assert.ok(timeless.readiness.every((row) => row.stale === 'stale'));
+});
+
+test('readings Studio holds after losing the companion are stale too', () => {
+  const lost = hostSummary(pair(1000), presentation, { now: 1000.9, live: false });
+  assert.equal(
+    lost.stale,
+    'Studio cannot reach the companion, so these are the last readings it sent.',
+  );
+  assert.deepEqual(
+    lost.hosts.map((card) => card.age),
+    ['Stale reading.', 'Stale reading.'],
+  );
+  assert.ok(lost.readiness.every((row) => row.stale === 'stale' && row.mark.icon === '?'));
+  // Current readings carry no stale label, and no sample means nothing to call stale.
+  const current = hostSummary(pair(1000), presentation, { now: 1001.5, live: true });
+  assert.equal(current.stale, '');
+  assert.deepEqual(
+    current.hosts.map((card) => card.age),
+    ['', ''],
+  );
+  assert.ok(current.readiness.every((row) => row.stale === ''));
+  const empty = hostSummary({ state: 'unavailable' }, presentation, { now: 1001.5, live: true });
+  assert.equal(empty.stale, '');
+  assert.equal(empty.note, 'No telemetry sample yet.');
+});
+
+test('the overview shows the stale line, card labels and row labels', async () => {
+  const text = visibleText(
+    await renderComponent('./components/HostHealth.svelte', {
+      telemetry: { ...pair(1000), state: 'stale' },
+      presentation,
+      now: 1042.4,
+      live: true,
+    }),
+  );
+  for (const part of [
+    'The companion has had no new telemetry for 42 s, so these are the last readings it received.',
+    'Stale reading, 42 s old.',
+    'Worker service ? ready stale, 42 s old',
+    'Attached mesh ? active stale, 42 s old',
+  ])
+    assert.ok(text.includes(part), part);
+  const live = await renderComponent('./components/HostHealth.svelte', {
+    telemetry: pair(1000),
+    presentation,
+    now: 1001.5,
+    live: true,
+  });
+  assert.doesNotMatch(live, /stale-note|stale-tag|Stale reading/);
+});

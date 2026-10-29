@@ -663,7 +663,11 @@ value reads unknown, and memory categories are never added into one total.
 Available memory above 20 GiB carries a green mark and 20 GiB or less a yellow
 one, the display rule `dgxm top` and the ComfyUI panel use; the mark decides
 nothing. A host reading more than 3 seconds older than the sample says Stale
-reading. Below the hosts, Worker service, Attached mesh and Render session show
+reading. When the companion's telemetry polls fail it keeps the last sample,
+and when Studio loses the companion it keeps the last snapshot. The panel and
+the Fleet page then say so above the hosts and label each host and readiness
+row stale, with its age on the companion's clock when the companion still
+answers. Below the hosts, Worker service, Attached mesh and Render session show
 the driver's readiness report as the ComfyUI panel's card does, with an active
 layer in yellow. Workers report their hosts only while a Monarch render's mesh
 is attached, so with no mesh attached, for example before the first Monarch
@@ -1103,7 +1107,9 @@ draft already holds a Fleet sampler, sets the draft's Operation to Fleet and
 opens Create. A notice there names the next step: put your prompts in the
 prompts input, one per line, then generate as usual. When the load replaces a
 workflow, Undo in Create brings that workflow back, and when the load fails
-the page stays on Fleet with the error and leaves the draft as it was.
+the page stays on Fleet with the error and leaves the draft as it was. If you
+leave Fleet while the workflow loads, the draft still takes it, the notice
+still appears, and Studio stays on the page you chose.
 Operation only labels the job, for the
 Gallery filter and the Fleet page's list of graph tasks: a workflow without a
 Fleet sampler runs as one ordinary job whatever its Operation says. When the

@@ -21,7 +21,8 @@
   reporting host side by side with available memory, GPU memory, GPU
   utilization, power and temperature, then the driver's readiness rows for the
   Worker service, attached mesh and render session. When only the driver's host
-  reports, as before the first Monarch render attaches a mesh, it says so. Its
+  reports, as before the first Monarch render attaches a mesh, it says so, and
+  readings kept after telemetry stops are labelled stale with their age. Its
   chart picks a host and a metric separately and shows a choice with one option
   as text instead of a one-item list ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 - Studio's Grids page explains what a grid compares with a worked example and

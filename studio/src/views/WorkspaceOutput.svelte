@@ -20,6 +20,7 @@
     presentation,
     driverState,
     connectionState,
+    serverTime = null,
     activeCount,
     job = null,
     working = false,
@@ -41,6 +42,8 @@
     presentation?: Presentation;
     driverState?: string;
     connectionState: string;
+    /** The companion's time at the newest snapshot, which ages retained telemetry. */
+    serverTime?: number | null;
     /** Active or unresolved jobs, as Queue counts them. */
     activeCount: number;
     job?: FollowedJob | null;
@@ -126,7 +129,13 @@
         class="text-small">{job?.headline ?? 'None'}</strong
       >{#if job?.detail}<small class="job-stage">{job.detail}</small>{/if}
     </div>
-    <HostHealth {telemetry} {presentation} heading="Hosts" />
+    <HostHealth
+      {telemetry}
+      {presentation}
+      now={serverTime}
+      live={connectionState === 'connected'}
+      heading="Hosts"
+    />
     <TelemetryCharts {history} {presentation} />
     <details>
       <summary>Authoritative host sample</summary>

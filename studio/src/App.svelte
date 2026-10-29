@@ -404,6 +404,7 @@
           presentation={connection.capabilities.presentation}
           driverState={connection.snapshot.driver.state}
           connectionState={connection.state}
+          serverTime={connection.snapshot.server_time}
           activeCount={activeJobs.length}
           job={tracker.status}
           working={tracker.working}

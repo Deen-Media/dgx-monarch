@@ -63,9 +63,18 @@ test('the rail groups Grids, Fleet and Operations under Utilities; the palette l
   assert.match(palette, /destinations\.filter/);
 });
 
-const connection = (workflows: WorkflowEntry[] = [fleetEntry]) => ({
+const connection = (workflows: WorkflowEntry[] = [fleetEntry], telemetry = {}) => ({
   client: { request: async () => ({ items: [], next_cursor: null, records: [] }) },
-  snapshot: { jobs: [], operations: [], telemetry: {}, artifacts: [], records: {}, driver: {} },
+  state: 'connected',
+  snapshot: {
+    jobs: [],
+    operations: [],
+    telemetry,
+    artifacts: [],
+    records: {},
+    driver: {},
+    server_time: 1060.4,
+  },
   metricHistory: [],
   capabilities: { presentation, operations: [] },
   workflows,
@@ -181,22 +190,25 @@ test('the Fleet plan keeps a Fleet draft, loads the packaged workflow, or says i
   assert.match(fleetNextStep({ kind: 'missing' }), /would render as one ordinary job/);
 });
 
-// Run the shipped Set up Fleet handler against fakes of App's callbacks.
+// Run the shipped Set up Fleet handler against fakes of App's callbacks. `leaves` closes the
+// Fleet page while the workflow loads, as choosing another page in the rail does.
 const setUpCode = await componentFunctions('./views/Fleet.svelte', ['setUp']);
-function fleetPage(start: Draft, loads: boolean) {
+function fleetPage(start: Draft, loads: boolean, leaves = false) {
   return new Function(
     'start',
     'loads',
+    'leaves',
     'helpers',
     `'use strict';
     const { fleetPlan, fleetNextStep, hasFleetSampler, entry } = helpers;
     const calls = [];
-    let draft = start, loading = false;
+    let draft = start, loading = false, open = true;
     const plan = fleetPlan(start, [entry]);
     const changeDraft = (change) => { calls.push(['changeDraft', change]); draft = { ...draft, ...change }; };
     // App's inspect reports a refusal itself and leaves the draft as it was.
     const inspect = async (workflow, name, preserve, id) => {
       calls.push(['inspect', name, preserve, id]);
+      if (leaves) open = false;
       if (loads) draft = { ...draft, workflow, workflowName: name };
     };
     const loadWorkflow = (item, run) => run(item.workflow, item.name, false, item.id);
@@ -204,7 +216,7 @@ function fleetPage(start: Draft, loads: boolean) {
     const setNotice = (text) => calls.push(['notice', text]);
     ${setUpCode}
     return { setUp, calls, state: () => ({ draft, loading }) };`,
-  )(start, loads, { fleetPlan, fleetNextStep, hasFleetSampler, entry: fleetEntry });
+  )(start, loads, leaves, { fleetPlan, fleetNextStep, hasFleetSampler, entry: fleetEntry });
 }
 
 test('Set up Fleet loads the Fleet workflow, labels the draft, then opens Create with the next step', async () => {
@@ -242,4 +254,60 @@ test('Set up Fleet loads the Fleet workflow, labels the draft, then opens Create
     ['navigate', 'workspace'],
     ['notice', fleetNextStep({ kind: 'keep' })],
   ]);
+});
+
+test('leaving Fleet while the workflow loads keeps the page the user chose', async () => {
+  const page = fleetPage({ ...emptyDraft(), workflow: other }, true, true);
+  await page.setUp();
+  // The draft still takes the Fleet workflow and label, and the notice names the next step, but
+  // nothing moves the user to Create.
+  assert.deepEqual(page.calls, [
+    ['changeDraft', { operation: 'fleet' }],
+    ['inspect', 'dgx-monarch-fleet', false, FLEET_WORKFLOW],
+    ['notice', fleetNextStep({ kind: 'load', entry: fleetEntry, replaces: true })],
+  ]);
+  assert.equal(page.state().draft.workflow, fleetEntry.workflow);
+  assert.equal(page.state().draft.operation, 'fleet');
+  assert.equal(page.state().loading, false);
+  const fleet = readFileSync(new URL('./views/Fleet.svelte', import.meta.url), 'utf8');
+  assert.match(fleet, /onDestroy\(\(\) => \(open = false\)\);/);
+});
+
+test('the Fleet page labels retained host readings stale with their age', async () => {
+  const sample = {
+    t: 1000,
+    driver_host: {
+      host: 'spark-a',
+      t: 1000,
+      mem_gib: { MemTotal: 121.6, MemAvailable: 62.2 },
+      gpu: { util_pct: 90, power_w: 60, temp_c: 55 },
+    },
+    workers: [],
+    readiness: {
+      schema_version: 1,
+      overall: 'ready',
+      lifecycle: {
+        worker_service: { state: 'ready', detail: '1 worker service ready.' },
+        attached_mesh: {
+          state: 'idle',
+          detail: 'No mesh is attached; the next render can attach one.',
+        },
+        render_session: { state: 'idle', detail: 'No render session is active.' },
+      },
+    },
+  };
+  const stale = { state: 'stale', observed_at: 1000.4, sample };
+  const text = visibleText(await utility('fleet', { connection: connection([fleetEntry], stale) }));
+  for (const part of [
+    'The companion has had no new telemetry for 60 s, so these are the last readings it received.',
+    'Stale reading, 60 s old.',
+    'Worker service ? ready stale, 60 s old',
+  ])
+    assert.ok(text.includes(part), part);
+  const live = visibleText(
+    await utility('fleet', {
+      connection: connection([fleetEntry], { ...stale, state: 'connected' }),
+    }),
+  );
+  assert.doesNotMatch(live, /Stale reading|stale, |no new telemetry/);
 });

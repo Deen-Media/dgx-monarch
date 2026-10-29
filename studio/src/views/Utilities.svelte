@@ -61,6 +61,8 @@
     history={connection.metricHistory}
     presentation={connection.capabilities.presentation}
     telemetry={connection.snapshot.telemetry}
+    now={connection.snapshot.server_time}
+    live={connection.state === 'connected'}
     workflows={connection.workflows}
     {draft}
     {changeDraft}

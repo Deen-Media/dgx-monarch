@@ -6,19 +6,26 @@
     telemetry,
     presentation,
     heading = '',
+    now = null,
+    live = true,
   }: {
     telemetry: Telemetry;
     presentation?: Presentation;
     /** A small heading inside the block, for a panel that has none of its own. */
     heading?: string;
+    /** The companion's time at the newest snapshot, which ages retained readings. */
+    now?: number | null;
+    /** Whether Studio still reaches the companion; without it every reading is retained. */
+    live?: boolean;
   } = $props();
-  const summary = $derived(hostSummary(telemetry, presentation));
+  const summary = $derived(hostSummary(telemetry, presentation, { now, live }));
 </script>
 
 <section class="host-health" aria-label="Host readings">
   {#if heading}<h3>{heading}</h3>{/if}
+  {#if summary.stale}<p class="stale-note" role="status">{summary.stale}</p>{/if}
   {#if summary.hosts.length}<div class="host-cards">
-      {#each summary.hosts as host (host.host)}<div class="host-card">
+      {#each summary.hosts as host (host.host)}<div class="host-card" class:stale={!!summary.stale}>
           <div class="host-name">
             <strong title={host.host}>{host.host}</strong><small>{host.roles}</small>
           </div>
@@ -37,7 +44,8 @@
                 </dd>
               </div>{/each}
           </dl>
-          {#if host.age}<small class="host-age">{host.age}</small>{/if}
+          {#if host.age}<small class="host-age" class:stale={!!summary.stale}>{host.age}</small
+            >{/if}
         </div>{/each}
     </div>{/if}
   {#if summary.note}<p class="host-note">{summary.note}</p>{/if}
@@ -46,7 +54,7 @@
         <dd>
           {#if row.mark.icon}<span class="status-icon" style:color={row.mark.hex} aria-hidden="true"
               >{row.mark.icon}</span
-            >{/if}{row.state}
+            >{/if}{row.state}{#if row.stale}<span class="stale-tag">{row.stale}</span>{/if}
         </dd>
         <dd class="detail">{row.detail}</dd>{/each}
     </dl>{/if}
@@ -128,6 +136,23 @@
     margin: 0;
     font-size: 11px;
     color: var(--muted);
+  }
+  /* Retained readings stay readable but dim, under a line that says why and how old they are. */
+  .stale-note,
+  .host-age.stale,
+  .stale-tag {
+    color: var(--status-degraded);
+  }
+  .stale-note {
+    margin: 0;
+    font-size: 11px;
+  }
+  .host-card.stale .readings {
+    opacity: 0.6;
+  }
+  .stale-tag {
+    display: block;
+    font-size: 10px;
   }
   /* A layer's name and state share a line; the driver's sentence about it runs below. */
   .readiness-rows {

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { onDestroy } from 'svelte';
   import TelemetryCharts from '../components/TelemetryCharts.svelte';
   import HostHealth from '../components/HostHealth.svelte';
   import type { MetricSeries, Presentation } from '../telemetryHistory';
@@ -20,10 +21,16 @@
     setNotice,
     client,
     jobs,
+    now = null,
+    live = true,
   }: {
     telemetry: Telemetry;
     history: MetricSeries[];
     presentation?: Presentation;
+    /** The companion's time at the newest snapshot, which ages retained telemetry. */
+    now?: number | null;
+    /** Whether Studio still reaches the companion. */
+    live?: boolean;
     draft: Draft;
     workflows?: WorkflowEntry[];
     changeDraft: ChangeDraft;
@@ -44,6 +51,9 @@
   );
   const selectedJob = $derived(fleetJobs.find((job) => job.id === selected) ?? fleetJobs[0]);
   const plan = $derived(fleetPlan(draft, workflows));
+  /** Whether this page is still open: a page the user moves to while the workflow loads stays. */
+  let open = true;
+  onDestroy(() => (open = false));
   /** Load the Fleet workflow unless the draft holds one, label the draft Fleet, then open Create. */
   async function setUp() {
     if (loading) return;
@@ -61,7 +71,8 @@
           return;
         }
       }
-      navigate('workspace');
+      // The draft holds the workflow either way; only a Fleet page still open moves to Create.
+      if (open) navigate('workspace');
       setNotice(fleetNextStep(chosen));
     } finally {
       loading = false;
@@ -109,7 +120,7 @@
     retried, so Queue retries the whole run.
   </p>
   <h2>Hosts</h2>
-  <HostHealth {telemetry} {presentation} />
+  <HostHealth {telemetry} {presentation} {now} {live} />
   <TelemetryCharts {history} {presentation} />
   <h2>Durable Fleet execution</h2>
   {#if fleetJobs.length > 1}<label
