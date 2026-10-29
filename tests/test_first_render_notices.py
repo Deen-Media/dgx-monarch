@@ -400,6 +400,25 @@ def test_a_real_non_pass_ceremony_announces_the_denial_not_a_render(
     assert summary["severity"] == "warn"
 
 
+def test_a_capacity_stop_says_the_render_runs_stock_and_checks_again(ring, sent):
+    """A ceremony that stopped on capacity before its proof render left every
+    lever in place: the toast must not say the optimized paths stay off."""
+    first_render.gate_started("unknown")
+    sent.clear()
+
+    first_render.gate_finished(None, True)
+    assert len(sent) == 1
+    payload = sent[0][1]
+    assert payload["phase"] == "gate_done"
+    assert "ran no proof render" in payload["message"]
+    assert "runs on stock residency" in payload["message"]
+    assert "checks again" in payload["message"]
+    assert "stay off" not in payload["message"]
+    assert payload["note"] == "gate skipped for capacity, stock residency"
+    assert payload["severity"] == "warn"
+    assert first_render.note_proof_render() is None
+
+
 def test_a_raising_ceremony_still_closes_the_window(
     monkeypatch, gate_session, ring
 ):

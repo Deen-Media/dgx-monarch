@@ -25,6 +25,7 @@ from ..gate_ledger import (
 from ..log import get_logger
 from ..mesh import ensure_live as ensure_live
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call  # noqa: F401
+from . import gate_capacity_stop  # noqa: F401  # ceremony runtime seam
 from . import gate_identity as _gate_identity
 from . import gate_inconclusive as _gate_inconclusive  # noqa: F401
 from .common import ModelSpec, run_render  # noqa: F401

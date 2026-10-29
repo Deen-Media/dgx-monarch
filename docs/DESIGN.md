@@ -331,7 +331,10 @@ Before an explicit or automatic ceremony can retest old authority, one fsynced
 multi-context `RETESTING` ledger row revokes the normal, Fleet, and eligible
 explicit-slab siblings. Final verdict rows supersede it only after the proof
 finishes, so a crash or failed final write leaves authority denied instead of restoring
-an old PASS. See [TRUST.md](TRUST.md) for the complete current protocol.
+an old PASS. An ordinary residency ceremony first runs the render site's
+capacity checks for the whole request; a request that cannot fit the path it
+would prove writes no `RETESTING` row (see "Where the ceremony cannot help"
+below). See [TRUST.md](TRUST.md) for the complete current protocol.
 
 The ledger also holds `WAIVER` rows for granted,
 used, or revoked consent and `CAPACITY_CERTIFIED` rows for a slab load whose
@@ -1115,7 +1118,12 @@ hidden `UNIQUE_ID`; no node reads its value, but it is part of that contract.
   RETESTING transaction with one terminal INCONCLUSIVE row, keeps the guard's
   own class and remedy on the wire, and retracts the process-local
   prejudgement, so the next queue meets the same guard instead of a sticky
-  verdict. An untyped abort keeps its denial and says what stopped the proof.
+  verdict. An ordinary residency ceremony meets its request's capacity before
+  that transaction opens: a refusal there writes one terminal INCONCLUSIVE row
+  in the same capacity vocabulary and no RETESTING row, publishes no
+  process-local verdict, and lets the render dispatch stock, so the next queue
+  meets the same check. An untyped abort keeps its denial and says what
+  stopped the proof.
   Diagnostic status publishes its event watermark and tail from one locked
   snapshot, so the two values always describe one coherent event history.
 - For state the node surface does not show, use `dgxm top`, the sidebar panel,
@@ -1293,10 +1301,11 @@ optimizations before dispatching the requested render.
   would take it are gone, and the stale mesh refuses every price until it is
   replaced.
 
-An abort leaves the earlier `RETESTING` row in place. These limits do not
-clear a measured FAIL: invariant 2 preserves that quarantine across sessions
-until the Gate protocol or package version changes. A legacy unscoped FAIL
-remains.
+A capacity stop before the proof render is no abort and takes nothing
+("Where the ceremony cannot help" below). An abort leaves the earlier
+`RETESTING` row in place. These limits do not clear a measured FAIL:
+invariant 2 preserves that quarantine across sessions until the Gate protocol
+or package version changes. A legacy unscoped FAIL remains.
 
 **What a FAIL takes, and from whom.** A FAIL disables `lora_low_rss` and
 `slab_weights` for that checkpoint combination in that capability context. It
@@ -1431,6 +1440,25 @@ separate unproven path, so both settings are disabled, except that FSDP keeps
 `lora_low_rss` as described above. `CAPACITY_CERTIFIED` records the load's
 byte verification and availability; it is never an accuracy verdict.
 
+Nor can the ceremony help a request that cannot fit the path it would prove.
+Before its `RETESTING` row, an ordinary residency ceremony runs the render
+site's capacity checks for the whole request under its own worker policy
+(`gate_capacity_stop.ceremony_activation_preflight`). It credits the DiT only
+when a finished render or a pipelined submission loaded it, or an explicit
+preset loaded it at the loader node; a pending load that the render site's own
+check cleared a moment earlier is charged, because the ceremony's load has not
+happened. The checks free what they can first, as at the render site. If one
+still refuses, no proof render could finish, so none runs
+(`nodes/gate_capacity_stop.py`). The ceremony writes one terminal INCONCLUSIVE
+row with the FSDP stop's fields (`cross_mode` `CAPACITY`, a bounded class of
+what refused, no measurement) and no `RETESTING` row, publishes no
+process-local verdict, and takes no lever. On the automatic path the render
+then dispatches on stock residency, because no PASS authorizes more, and the
+next request of the combination meets the same check. A resolved FSDP topology
+has no stock to fall back to, so there the refusal answers the render, and an
+explicit Gate node raises it. The no-LoRA FSDP proof keeps its own clean-reload
+price.
+
 **Two windows, not one sum.** The loader checks two peaks separately. The
 transient window covers loading against MemAvailable minus the reserve: a
 stock load uses about 2.1x the artifact size while host and device copies
@@ -1525,23 +1553,28 @@ partially.
 **Slab capacity refusals offer no consent card.** Slab is the final residency
 option; consent cannot resolve its memory shortfall.
 
-**The driver frees what ComfyUI can reload before it refuses.** The
-render-site checks (`nodes/render_preflight`) read MemAvailable on the driver
-host, where ComfyUI's own text encoder, VAEs and other loaded models count as
-spent although ComfyUI reloads them on demand. Before one of those checks
-refuses, `driver_unload` unloads every model ComfyUI holds in the driver
-process through ComfyUI's own model management, reads MemAvailable again and
-runs the checks again from the one that refused. Only that answer refuses, and
-it says what was unloaded and both readings, which keeps the class C rule of
-offering the fitting strategy first. The step runs at most once per render,
-never while a render, a result lease or a Worker call is live in the driver,
-and never reaches a Worker resident or ComfyUI's node output cache. The loader
-windows do not take it, because the graph still needs its text encoder and
-VAEs before sampling. Nor does the agreement below credit a Worker resident
-that a load would replace: a stock resident's arena is not returned by an
-in-process unload and a slab resident barely moves MemAvailable, so such a
-credit waits for a measured drop per residency, as the FSDP clean reload's
-credit did.
+**The driver frees what ComfyUI can reload before it refuses.** The render-site
+checks (`nodes/render_preflight`) read MemAvailable on the driver host, where
+ComfyUI's own text encoder, VAEs and other loaded models count as spent
+although ComfyUI reloads them on demand. Before one of those checks refuses,
+`driver_unload` unloads every model ComfyUI holds in the driver process through
+ComfyUI's own model management, reads MemAvailable again and runs the checks
+again from the one that refused. An actor keeps the last render's activations
+in its allocator cache for the next render, and on the driver host those count
+as spent too. So if a check still refuses and the render's mesh is live and set
+up, the driver asks every actor to release its allocator cache (the Worker
+`clear_vram` endpoint at `soft`, which unloads no model) and runs the checks
+once more from the one that refused. Only the last answer refuses, and it says
+what was unloaded and released and the readings around each step, which keeps
+the class C rule of offering the fitting strategy first. Each step runs at most
+once per render, only after a check refused, never while a render, a result
+lease or a Worker call is live in the driver, and never reaches a Worker
+resident or ComfyUI's node output cache. The loader windows take neither,
+because the graph still needs its text encoder and VAEs before sampling. Nor
+does the agreement below credit a Worker resident that a load would replace: a
+stock resident's arena is not returned by an in-process unload and a slab
+resident barely moves MemAvailable, so such a credit waits for a measured drop
+per residency, as the FSDP clean reload's credit did.
 
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate
@@ -1767,6 +1800,7 @@ dgx-monarch/
 │   │   │                      #   renews the observer lease
 │   │   ├── fleet_cleanup.py   # cancellation-safe Fleet resource retirement
 │   │   ├── fleet_jobs.py      # Fleet job-list assembly and its per-prompt limit
+│   │   ├── gate_capacity_stop.py # a ceremony's stop when its request cannot fit
 │   │   ├── gate_ceremony.py   # one ceremony's render legs, frozen as evidence
 │   │   ├── gate_process_state.py # process-lifetime first-use Gate state
 │   │   ├── gate_process_verdicts.py # one process-verdict publication and its reads
@@ -1898,8 +1932,9 @@ dgx-monarch/
 │   ├── consent_observe.py     # worker refusal descriptors as consent-panel cards
 │   ├── driver_footprint.py    # driver-side footprint policy (no torch or
 │   │                          #   monarch import; render-path pending-load refusal)
-│   ├── driver_unload.py       # unload ComfyUI's own driver models before a
-│   │                          #   render-site capacity refusal, then check again
+│   ├── driver_unload.py       # free ComfyUI's driver models, then the actors'
+│   │                          #   allocator caches, before a render-site
+│   │                          #   capacity refusal, checking again after each
 │   ├── fsdp_proof_scope.py    # FSDP clean-reload scope + the topology test
 │   │                          #   that selects it, below either caller
 │   ├── operator_actions.py    # inert, safety-classed readiness remediation catalog

@@ -13,6 +13,7 @@ from typing import Any, NoReturn
 
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
 from . import gate_process_state as _state
+from .gate_capacity_stop import CeremonyCapacityStop
 from .gate_fsdp import (
     FsdpGateProofError,
     arm_fsdp_return_guard,
@@ -426,7 +427,9 @@ def maybe_auto_gate(
             return gate_inconclusive.dispatch_verdict(result)
         finally:
             active_primary = sys.exception()
-            safe_call(gate_finished, ceremony_result)
+            safe_call(gate_finished, ceremony_result,
+                      isinstance(active_primary, CeremonyCapacityStop)
+                      and not (fsdp_proof_required or fsdp_resolved))
             if (
                 fsdp_return_guard.get("cleanup_required", False)
                 and not fsdp_return_guard.get("accepted", False)
@@ -450,6 +453,18 @@ def maybe_auto_gate(
         raise
     except PACKED_TOPOLOGY_REFUSALS:
         raise
+    except CeremonyCapacityStop as stop:
+        if fsdp_proof_required or fsdp_resolved:
+            raise  # FSDP has no stock fallback: the typed refusal answers this render
+        from .gate_quarantine_scope import combination_label
+
+        # The one line the stop logs. The ceremony took no lever and cached no
+        # verdict, so this render dispatches stock (no PASS authorizes more).
+        safe_call(log.warning,
+                  "identity gate skipped for %s, and this render runs on stock "
+                  "residency; the next request of this combination meets the "
+                  "same check: %s", combination_label(model), stop)
+        return gate_inconclusive.CAPACITY_STOP_DISPATCH_VERDICT
     except Exception as exc:
         from .consent_waiver import ceremony_abort_reason, settle_aborted_ceremony
 

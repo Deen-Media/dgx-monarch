@@ -379,14 +379,303 @@ def test_a_finished_render_frees_the_tracker_for_the_next_unload(monkeypatch, bo
     assert calls.unload == 1
 
 
-def test_the_unload_path_never_reaches_a_worker():
+
+
+# 3. The actors' caches go last.
+#
+# The 2026-10-29 second request of a 15 second H3 session: the driver unloaded
+# its two VAEs (MemAvailable 51.5 to 56.5 GiB) and refused 8.7 GiB short while
+# the actor on the head still held the first render's 17.6 GiB of activations.
+
+class _Mesh:
+    """A live mesh whose setup completed. ``clear_vram`` at ``soft`` hands the
+    box back what the actor on this host kept in its allocator cache."""
+
+    def __init__(self, box, *, cache: int = 0, world: int = 2,
+                 error: Exception | None = None, events: list | None = None,
+                 **fields) -> None:
+        self.box, self.cache, self.world, self.error = box, cache, world, error
+        self.events = [] if events is None else events
+        self.calls: list = []
+        self.setup_key = ("setup",)
+        self.defunct = False
+        self.teardown_complete = False
+        self.setup_cleanup_state = None
+        self.sample_leases: dict = {}
+        self.abandoned_sample_leases: dict = {}
+        for name, value in fields.items():
+            setattr(self, name, value)
+
+    def call_all(self, endpoint, *args, timeout_s):
+        self.calls.append((endpoint, args, timeout_s))
+        self.events.append("trim")
+        if self.error is not None:
+            raise self.error
+        self.box.mem += self.cache
+        self.cache = 0
+        return [{"rank": rank, "models": {}} for rank in range(self.world)]
+
+
+def _in_order(calls: SimpleNamespace, events: list) -> None:
+    """Record the stub's unload in ``events``, beside the mesh's trim."""
+    inner = calls.mm.unload_all_models
+
+    def unload_all_models():
+        events.append("unload")
+        inner()
+
+    calls.mm.unload_all_models = unload_all_models
+
+
+TRIM = ("clear_vram", ("soft",), driver_unload._TRIM_TIMEOUT_S)
+
+
+def test_a_check_that_passes_frees_nothing(monkeypatch, box):
+    box.mem = 90 * _GIB
+    calls = _comfy(monkeypatch, box)
+    mesh = _Mesh(box, cache=int(17.6 * _GIB))
+    driver_unload.check_with_unload([_priced(box, 60 * _GIB)], handle=mesh)
+    assert calls.unload == 0 and mesh.calls == []
+
+
+def test_the_trim_never_runs_when_the_unload_makes_room(monkeypatch, box):
+    box.mem = 30 * _GIB
+    calls = _comfy(monkeypatch, box)
+    mesh = _Mesh(box, cache=int(17.6 * _GIB))
+    driver_unload.check_with_unload([_priced(box, 50 * _GIB)], handle=mesh)
+    assert calls.unload == 1 and mesh.calls == []
+
+
+def test_the_actors_release_their_caches_when_the_unload_falls_short(
+        monkeypatch, box, journal):
+    """Driver unload first, the actor trim second, and the check once after each."""
+    box.mem = 30 * _GIB
+    events: list = []
+    calls = _comfy(monkeypatch, box)
+    _in_order(calls, events)
+    mesh = _Mesh(box, cache=int(17.6 * _GIB), events=events)
+    seen: list = []
+    driver_unload.check_with_unload(
+        [_priced(box, 60 * _GIB, seen=seen)], handle=mesh, subject="h3.safetensors")
+    assert events == ["unload", "trim"]
+    assert seen == ["probe", "probe", "probe"]
+    assert mesh.calls == [TRIM]
+    lines = [record.getMessage() for record in journal]
+    assert len(lines) == 1, lines
+    assert journal[0].levelno == logging.INFO
+    for token in ("actor trim: h3.safetensors fits after the driver unloaded the 2 "
+                  "models (H3TextEncoder, H3VideoVAE) ComfyUI held on this host "
+                  "(MemAvailable 30.0 GiB to 52.1 GiB)",
+                  "and 2 actors released their allocator caches",
+                  "from 52.1 GiB to 69.7 GiB across the trim, a gain of 17.6 GiB"):
+        assert token in lines[0], lines[0]
+
+
+@pytest.mark.parametrize("error", [
+    mesh_safety.StockLoadCapacityError, RenderMemoryPriceError,
+    driver_footprint.DriverFootprintCapacityError,
+])
+def test_a_refusal_after_the_trim_names_the_unload_and_the_trim(
+        monkeypatch, box, journal, error):
+    box.mem = 10 * _GIB
+    _comfy(monkeypatch, box)
+    mesh = _Mesh(box, cache=4 * _GIB)
+    with pytest.raises(error) as excinfo:
+        driver_unload.check_with_unload([_priced(box, 60 * _GIB, error=error)],
+                                        handle=mesh, subject="h3.safetensors")
+    assert type(excinfo.value) is error
+    message = str(excinfo.value)
+    assert mesh.calls == [TRIM]
+    assert "60.0 GiB needed, 36.1 GiB MemAvailable." in message[:200]
+    tag = parse_leading_refusal_tag(message)
+    assert tag is not None and tag.refusal_class is RefusalClass.CAPACITY
+    assert tag.guard == GUARD and tag.waivable is False
+    assert message.endswith(
+        "Before refusing, the driver unloaded the 2 models (H3TextEncoder, "
+        "H3VideoVAE) ComfyUI held on this host: MemAvailable read 10.0 GiB "
+        "before the unload and 32.1 GiB after it. It then asked the 2 actors on "
+        "the mesh to release their allocator caches: MemAvailable read 32.1 GiB "
+        "before the trim and 36.1 GiB after it, and the figures above are the "
+        "reading after it."), message
+    lines = [record.getMessage() for record in journal]
+    assert len(lines) == 1 and journal[0].levelno == logging.INFO
+    assert "actor trim: h3.safetensors still does not fit after" in lines[0]
+
+
+def test_the_trim_runs_alone_when_comfy_holds_nothing(monkeypatch, box, journal):
+    box.mem = 50 * _GIB
+    calls = _comfy(monkeypatch, box, models=())
+    mesh = _Mesh(box, cache=int(17.6 * _GIB))
+    driver_unload.check_with_unload(
+        [_priced(box, 60 * _GIB)], handle=mesh, subject="h3.safetensors")
+    assert calls.unload == 0 and mesh.calls == [TRIM]
+    assert [record.getMessage() for record in journal] == [
+        "actor trim: h3.safetensors fits after 2 actors released their allocator "
+        "caches; MemAvailable went from 50.0 GiB to 67.6 GiB across the trim, a "
+        "gain of 17.6 GiB"]
+
+
+def test_a_trim_alone_that_falls_short_names_only_the_trim(monkeypatch, box):
+    box.mem = 10 * _GIB
+    _comfy(monkeypatch, box, models=())
+    mesh = _Mesh(box, cache=4 * _GIB, world=1)
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
+        driver_unload.check_with_unload([_priced(box, 60 * _GIB)], handle=mesh)
+    message = str(excinfo.value)
+    assert "60.0 GiB needed, 14.0 GiB MemAvailable." in message[:200]
+    assert message.endswith(
+        "Before refusing, the driver asked the 1 actor on the mesh to release "
+        "their allocator caches: MemAvailable read 10.0 GiB before the trim and "
+        "14.0 GiB after it, and the figures above are the reading after it."), message
+
+
+def test_a_trim_after_comfy_kept_every_model_names_only_the_trim(monkeypatch, box):
+    box.mem = 10 * _GIB
+    calls = _comfy(monkeypatch, box, kept=(H3TextEncoder, H3VideoVAE))
+    mesh = _Mesh(box, cache=4 * _GIB)
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
+        driver_unload.check_with_unload([_priced(box, 60 * _GIB)], handle=mesh)
+    assert calls.unload == 1 and mesh.calls == [TRIM]
+    assert "the driver unloaded" not in str(excinfo.value)
+    assert str(excinfo.value).endswith(
+        "MemAvailable read 10.0 GiB before the trim and 14.0 GiB after it, and "
+        "the figures above are the reading after it.")
+
+
+def test_the_trim_runs_once_from_the_step_that_still_refuses(monkeypatch, box):
+    box.mem = 30 * _GIB
+    _comfy(monkeypatch, box)
+    mesh = _Mesh(box, cache=int(17.6 * _GIB))
+    seen: list = []
+    steps = [_priced(box, 20 * _GIB, seen=seen, label="first"),
+             _priced(box, 50 * _GIB, seen=seen, label="second"),
+             _priced(box, 65 * _GIB, seen=seen, label="third")]
+    driver_unload.check_with_unload(steps, handle=mesh)
+    assert seen == ["first", "second", "second", "third", "third"]
+    assert mesh.calls == [TRIM]
+    seen.clear()
+    box.mem = 30 * _GIB
+    _comfy(monkeypatch, box)
+    mesh = _Mesh(box, cache=int(17.6 * _GIB))
+    steps[2] = _priced(box, 90 * _GIB, seen=seen, label="third")
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
+        driver_unload.check_with_unload(steps, handle=mesh)
+    assert seen == ["first", "second", "second", "third", "third"]
+    assert mesh.calls == [TRIM]
+    assert str(excinfo.value).startswith(
+        "[dgxm:C guard=activation_footprint_preflight waivable=0] third preflight")
+
+
+@pytest.mark.parametrize("state", ["none", "not_set_up", "defunct", "dirty", "torn_down"])
+def test_no_live_mesh_means_no_trim_and_no_error(monkeypatch, box, state):
+    """A trim needs a mesh whose actors ran setup; anything else is a no-op,
+    and the refusal carries the unload's sentence alone."""
+    box.mem = 10 * _GIB
+    _comfy(monkeypatch, box)
+    mesh = _Mesh(box, cache=int(17.6 * _GIB))
+    if state == "not_set_up":
+        mesh.setup_key = None
+    elif state == "defunct":
+        mesh.defunct = True
+    elif state == "dirty":
+        mesh.setup_cleanup_state = SimpleNamespace(outcome="dirty")
+    elif state == "torn_down":
+        mesh.teardown_complete = True
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
+        driver_unload.check_with_unload(
+            [_priced(box, 60 * _GIB)], handle=None if state == "none" else mesh)
+    assert mesh.calls == []
+    assert str(excinfo.value).endswith(
+        "MemAvailable read 10.0 GiB before the unload and 32.1 GiB after it, and "
+        "the figures above are the reading after it.")
+
+
+@pytest.mark.parametrize("held", [True, False])
+def test_a_failed_trim_is_logged_and_never_masks_the_refusal(
+        monkeypatch, box, journal, held):
+    box.mem = 10 * _GIB
+    _comfy(monkeypatch, box, **({} if held else {"models": ()}))
+    mesh = _Mesh(box, cache=int(17.6 * _GIB), error=RuntimeError("rank 1 went away"))
+    seen: list = []
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
+        driver_unload.check_with_unload(
+            [_priced(box, 60 * _GIB, seen=seen)], handle=mesh, subject="h3.safetensors")
+    assert type(excinfo.value) is mesh_safety.StockLoadCapacityError
+    assert mesh.calls == [TRIM]
+    assert seen == (["probe", "probe"] if held else ["probe"])
+    assert [record.levelno for record in journal] == [logging.WARNING]
+    warning = journal[0].getMessage()
+    assert "actor trim failed before refusing h3.safetensors" in warning
+    assert "rank 1 went away" in warning
+    message = str(excinfo.value)
+    tag = parse_leading_refusal_tag(message)
+    assert tag is not None and tag.refusal_class is RefusalClass.CAPACITY
+    if held:
+        assert "60.0 GiB needed, 32.1 GiB MemAvailable." in message[:200]
+        assert message.endswith(
+            "and the figures above are the reading after it. It also asked the "
+            "actors on the mesh to release their allocator caches, and that "
+            "request failed (RuntimeError)."), message
+    else:
+        assert "60.0 GiB needed, 10.0 GiB MemAvailable." in message[:200]
+        assert message.endswith(
+            "Before refusing, the driver asked the actors on the mesh to release "
+            "their allocator caches, and that request failed (RuntimeError), so "
+            "the figures above are the reading before it."), message
+
+
+@pytest.mark.parametrize("held", [True, False])
+@pytest.mark.parametrize("busy", ["progress", "lease"])
+def test_a_running_render_is_never_trimmed(monkeypatch, box, held, busy):
+    box.mem = 20 * _GIB
+    calls = _comfy(monkeypatch, box, **({} if held else {"models": ()}))
+    mesh = _Mesh(box, cache=40 * _GIB)
+    if busy == "progress":
+        telemetry.render_progress.start(10, token=object())
+    else:
+        mesh.sample_leases = {3: 1}
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
+        driver_unload.check_with_unload([_priced(box, 30 * _GIB)], handle=mesh)
+    assert mesh.calls == [] and calls.unload == 0
+    message = str(excinfo.value)
+    assert "trim" not in message and "actors" not in message
+    assert ("because" in message) is held
+
+
+def test_the_kill_switch_turns_the_trim_off_too(monkeypatch, box):
+    box.mem = 20 * _GIB
+    calls = _comfy(monkeypatch, box)
+    mesh = _Mesh(box, cache=40 * _GIB)
+    monkeypatch.setenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, "1")
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
+        driver_unload.check_with_unload([_priced(box, 30 * _GIB)], handle=mesh)
+    assert calls.unload == 0 and mesh.calls == []
+    assert "unload" not in str(excinfo.value) and "trim" not in str(excinfo.value)
+
+
+def test_the_rescue_reaches_a_worker_only_to_release_its_cache():
     """The Workers' residents live in other processes and only a Worker RPC
-    could reach them; this module names no such call and imports no mesh."""
+    could reach them. The rescue's one Worker call is clear_vram at soft,
+    which frees the allocator cache and unloads no model; nothing here names
+    another endpoint, a per-actor call or a recycle, and nothing imports the
+    mesh, an actor, monarch or torch."""
     tree = ast.parse((SRC / "driver_unload.py").read_text())
+    calls = [node for node in ast.walk(tree)
+             if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+             and node.func.attr == "call_all"]
+    assert len(calls) == 1
+    endpoint, level = calls[0].args[:2]
+    assert isinstance(endpoint, ast.Name) and endpoint.id == "TRIM_ENDPOINT"
+    assert isinstance(level, ast.Name) and level.id == "TRIM_LEVEL"
+    assert (driver_unload.TRIM_ENDPOINT, driver_unload.TRIM_LEVEL) == ("clear_vram", "soft")
     attributes = {node.attr for node in ast.walk(tree) if isinstance(node, ast.Attribute)}
-    for name in ("call_all", "call_one", "clear_vram", "workers", "recycle_detailed",
-                 "capacity_quote", "slice"):
+    for name in ("call_one", "workers", "recycle_detailed", "capacity_quote", "slice",
+                 "unload_all", "apply_worker_args"):
         assert name not in attributes, name
+    strings = {node.value for node in ast.walk(tree)
+               if isinstance(node, ast.Constant) and isinstance(node.value, str)}
+    for name in ("hard", "unload", "recycle", "load_model", "teardown_group"):
+        assert name not in strings, name
     imported = {alias.name for node in ast.walk(tree)
                 if isinstance(node, (ast.Import, ast.ImportFrom)) for alias in node.names}
     imported |= {node.module or "" for node in ast.walk(tree) if isinstance(node, ast.ImportFrom)}
@@ -394,7 +683,7 @@ def test_the_unload_path_never_reaches_a_worker():
         assert not any(item.split(".")[0] == name for item in imported), imported
 
 
-# 3. The shipped render path: the MiniMax H3 activation preflight.
+# 4. The shipped render path: the MiniMax H3 activation preflight.
 
 class _Fake:
     """A tensor stand-in: ``shape`` is all h3_rows reads from it."""
@@ -547,6 +836,28 @@ def test_an_h3_render_behind_a_running_one_is_refused_without_an_unload(
     message = str(excinfo.value)
     assert "(2.0 GiB MemAvailable minus" in message[:200]
     assert "because a render is still running in this driver" in message
+
+
+def test_a_second_h3_render_proceeds_after_the_actors_release_their_caches(
+        monkeypatch, tmp_path, box, journal):
+    """The second request of a session at the render site: the VAE unload
+    falls short and the actor's retained activations make up the rest. Sized
+    from the live constants, so the case holds whatever the H3 fit says."""
+    rig = _h3_rig(monkeypatch, tmp_path, preset="uly2")
+    events: list = []
+    mesh = _Mesh(box, cache=5 * _GIB, events=events, owns_hosts=False,
+                 effective_worker_args=lambda requested=None: dict(requested or {}))
+    rig.model.mesh.handle = mesh
+    box.mem = _h3_need(weights=0) - 6 * _GIB
+    calls = _comfy(monkeypatch, box, models=((H3VideoVAE, 2 * _GIB),))
+    _in_order(calls, events)
+    render_preflight.activation_footprint_preflight_for_request(
+        rig.model, _h3_request(), _h3_latent())
+    assert events == ["unload", "trim"]
+    assert mesh.calls == [TRIM]
+    assert rig.rpc == []
+    lines = [record.getMessage() for record in journal]
+    assert len(lines) == 1 and lines[0].startswith(f"actor trim: {UNET} fits after")
 
 
 def test_the_refusal_entries_the_unload_names_exist():

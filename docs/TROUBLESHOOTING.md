@@ -1645,10 +1645,11 @@ uncalibrated placeholder awaiting hardware measurement, so a refusal at the
 margin may be conservative, not a hard ceiling.
 
 **ComfyUI's own models go first.** Before this preflight refuses, the driver
-unloads the models ComfyUI holds on the driver host and checks again, as
+unloads the models ComfyUI holds on the driver host and checks again, then asks
+the actors to release their allocator caches and checks once more, as
 [#56](#56-minimax-h3-render-refused-activation-footprint-preflight) describes.
-A refusal that stands quotes the reading after the unload and names what was
-unloaded. `DGXM_DISABLE_DRIVER_UNLOAD=1` turns that step off.
+A refusal that stands quotes the last reading and names what was unloaded and
+released. `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off.
 
 **Warm re-renders:** a checkpoint that already rendered in this driver
 session, or that a pipeline sampler has submitted, is credited: its weight
@@ -1946,14 +1947,15 @@ load eagerly, so their weights are already in `MemAvailable`. The reserve is
   again: their memory is already absent from `MemAvailable`.
 
 Before the render-time check refuses, the driver unloads the models ComfyUI
-holds on this host and checks again
+holds on this host and checks again, then asks the actors to release their
+allocator caches
 ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight) describes
-the step), so the text encoder and VAEs the message lists as spent are freed
-first, and a refusal that stands quotes the reading after the unload. Encoded
+both steps), so the text encoder and VAEs the message lists as spent are freed
+first, and a refusal that stands quotes the last reading. Encoded
 references are outputs this render still needs, so they stay. The loader
 windows never unload: the graph still needs its text encoder and VAEs before
 sampling, so freeing them there would only move the charge.
-`DGXM_DISABLE_DRIVER_UNLOAD=1` turns the step off.
+`DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off.
 
 Explicit eager loading can therefore pass before reference work exhausts the
 host. The loader's graph estimate covers that gap; the render check cannot
@@ -2334,6 +2336,33 @@ ComfyUI's cached node outputs, and the cross-rank agreement
 still prices a load that replaces a Worker resident with that resident held.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the step off, and the guard
 then refuses on the first reading.
+
+**Then the actors' caches.** The second render of a session meets this guard
+while each actor still holds the first render's activations in its allocator
+cache, which it keeps for reuse; on the driver host they count as spent. On
+2026-10-29 a 15 second clip's second request on the pair was refused 8.7 GiB
+short after the VAE unload, while the actor on the head held 17.6 GiB of them.
+So when the check still refuses after the unload, or ComfyUI holds no model,
+and the render's mesh is live and set up, the driver asks every actor to
+release its allocator cache (the Worker `clear_vram` endpoint at `soft`, which
+unloads no model), reads MemAvailable again and runs the check once more. The
+driver log carries one `actor trim:` line with the actor count and both
+readings. A refusal that stands ends by naming each step and its readings; if
+the actors could not be asked, the log has a WARNING and the refusal says so.
+Like the unload, the release runs only after a refusal, never while a render is
+live, and `DGXM_DISABLE_DRIVER_UNLOAD=1` turns it off too.
+
+**The identity gate checks before its proof render.** A first-use ceremony
+runs this guard, with the render site's other capacity checks, for the whole
+request before it writes its `RETESTING` row, priced for the slab path it would
+prove: the DiT counts as resident only if a finished render or a pipelined
+submission loaded it, or an explicit preset loaded it at the loader node. A
+request that cannot fit gets no proof render. The ceremony records one
+INCONCLUSIVE capacity row and takes no lever, the driver log carries one
+`identity gate skipped` line with this refusal, the render runs on stock
+residency, and the next request of the combination checks again. Each proof
+render then meets the guard once more, after the one before it filled the
+actors' caches, and the release above answers that case.
 
 **Calibration and limits:** the estimate charges each rank a fixed 7.5 GiB
 floor, 634,368 bytes per sharded row and 73,728 bytes per replicated row.

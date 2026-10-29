@@ -91,6 +91,13 @@
 - `compile_dit` no longer forces stock residency on the families it leaves
   eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
   tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+- Before a render-site capacity check refuses, the driver now also asks the
+  actors to release their allocator caches once ComfyUI's own models are
+  unloaded, so a session's second render no longer counts the first render's
+  retained activations as spent. The identity gate runs the same checks for
+  the whole request before its proof render: a request that cannot fit the
+  slab path gets one INCONCLUSIVE capacity row and no proof render, renders on
+  stock residency, and the next request checks again ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 
 ### Operations
 
