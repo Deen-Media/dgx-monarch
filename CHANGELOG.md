@@ -34,9 +34,9 @@
   says which input it needs, and loading a workflow picks one it supports ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Create says what a run saves, such as PNG frames plus separate FLAC audio or
   one MP4 video with sound, read from the graph's save nodes ([Studio](docs/STUDIO.md#working-with-workflows)).
-- MiniMax H3 and LTX workflows get one Duration control in frames and seconds
-  that writes the clip's frame count to every node that holds it. Their frame
-  count fields name their node, unit and relation ([Studio](docs/STUDIO.md#working-with-workflows)).
+- MiniMax H3 and LTX workflows get one Duration control per clip, in frames
+  and seconds, that writes the clip's frame count to every node that holds it.
+  Their frame count fields name their node, unit and relation ([Studio](docs/STUDIO.md#working-with-workflows)).
 - The MiniMax H3 templates say what they save: "MiniMax H3 text to video, PNG
   frames plus separate FLAC audio", "MiniMax H3 text to video, one MP4 with
   sound" and "MiniMax H3 with a guide anchored mid video, PNG frames plus

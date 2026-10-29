@@ -100,7 +100,9 @@
   let operations = $derived(operationChoices(traits, draft.operation));
   let operationNeed = $derived(operations.find((o) => o.id === draft.operation)?.need ?? null);
   let metadata = $derived(inputMetadata(draft.workflow, bindings, catalog.object_info));
-  let durations = $derived(durationGroups(draft.workflow, bindings).filter(synchronized));
+  let durations = $derived(
+    durationGroups(draft.workflow, bindings, catalog.object_info).filter(synchronized),
+  );
   // Duration follows the last size field it shows, or ends the list when none shows.
   let durationAnchor = $derived(
     [...visibleBindings].reverse().find((b) => ['width', 'height'].includes(b.input_name ?? ''))
@@ -262,7 +264,7 @@
       {#if controlTab === 'inputs' && draft.workflow && !visibleBindings.length}<p class="muted">
           No prominent inputs configured. Use All inputs or customize Layout.
         </p>{/if}
-      {#snippet durationControls()}{#each durations as group (group.family)}<DurationControl
+      {#snippet durationControls()}{#each durations as group (group.key)}<DurationControl
             {group}
             values={draft.values}
             onchange={(values) => changeDraft({ values })}

@@ -7,6 +7,7 @@
     snapFrames,
     type DurationGroup,
   } from '../frameCounts';
+  import { nodeName } from '../workflowGraph';
   import { numberField } from '../numberField';
   let {
     group,
@@ -27,9 +28,11 @@
   );
   const rate = $derived(clipRate(group, values));
   const seconds = $derived(shared !== null && rate.fps ? clipSeconds(shared, rate.fps) : null);
-  const key = $derived(group.family.toLowerCase().replace(/[^a-z0-9]+/g, '-'));
+  const key = $derived(group.key);
   const names = $derived(
-    group.members.map((member) => `the ${member.role} (node ${member.node.id})`).join(' and '),
+    group.members
+      .map((member) => `the ${member.role} (node ${nodeName(member.node)})`)
+      .join(' and '),
   );
   function write(count: number) {
     onchange(setDuration(group, snapFrames(group, count), values));
@@ -37,7 +40,10 @@
 </script>
 
 <fieldset class="duration-field" aria-describedby={`duration-${key}-note`}>
-  <legend>Duration <span class="field-type">{group.family} clip</span></legend>
+  <legend
+    >Duration <span class="field-type">{group.family} clip{group.clip ? ` ${group.clip}` : ''}</span
+    ></legend
+  >
   <div class="input-row">
     <label
       >Frames<input

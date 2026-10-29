@@ -30,15 +30,18 @@ export function bindingValues(bindings: Binding[], priorValues?: Draft['values']
  * Resolve editable bindings once; connected sockets stay owned by the graph. Prior draft values
  * travel with the workflow, so an edited dynamic choice lists its own child inputs. A newly loaded
  * workflow, which has no prior values, takes `fit`: the draft keeps its operation when the graph
- * supports it, and otherwise takes the graph's first supported one (fittedOperation).
+ * supports it, and otherwise takes the graph's first supported one (fittedOperation). `fit` reads
+ * the draft's operation when the request starts and again when the answer arrives, so a choice
+ * made while the request runs stays as it is.
  */
 export async function inspectDraft(
   client: StudioClient,
   workflow: Workflow,
   name: string,
   priorValues?: Draft['values'],
-  fit?: { operation: string; info?: ObjectInfo },
+  fit?: { operation: () => string; info?: ObjectInfo },
 ) {
+  const started = fit?.operation();
   const result = await client.request<Inspection>(
     '/workflows/inspect',
     priorValues ? { workflow, values: priorValues } : { workflow },
@@ -47,9 +50,10 @@ export async function inspectDraft(
   const original = result.workflow ?? workflow;
   const values = bindingValues(bindings, priorValues);
   // A graph the inspection could not read lists no inputs, so its operations stay unknown.
+  const current = fit?.operation();
   const operation =
-    fit && !priorValues && bindings.length
-      ? fittedOperation(fit.operation, workflowTraits(original, bindings, values, fit.info))
+    fit && current === started && !priorValues && bindings.length
+      ? fittedOperation(current!, workflowTraits(original, bindings, values, fit.info))
       : undefined;
   return {
     bindings,

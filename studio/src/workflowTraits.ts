@@ -3,9 +3,10 @@ import {
   bindingIndex,
   currentValue,
   declaredInputs,
-  graphNodes,
+  workflowGraph,
   type GraphNode,
   type ObjectInfo,
+  type WorkflowGraph,
 } from './workflowGraph.ts';
 
 export type OperationId = 'image' | 'video' | 'edit' | 'upscale' | 'workflow' | 'fleet';
@@ -148,6 +149,23 @@ function saverOf(node: GraphNode, info: ObjectInfo | undefined): Saver | undefin
   return kind && { kind, ...(node.type.startsWith('Preview') ? { saved: false as const } : {}) };
 }
 
+/** Whether a running node feeds this input. */
+const fed = (node: GraphNode, input: string) => {
+  const source = node.sources.get(input);
+  return !!source && !source.primitive;
+};
+
+/**
+ * Whether one saved video has sound: Video Combine takes its own soundtrack, and Save Video has
+ * one when the Create Video node that feeds it takes audio. Any other source leaves it unknown.
+ */
+function soundOf(node: GraphNode, graph: WorkflowGraph): boolean | null {
+  if (node.type === 'VHS_VideoCombine') return fed(node, 'audio');
+  const source = node.sources.get('video');
+  const maker = source && !source.primitive ? graph.byKey.get(source.key) : undefined;
+  return maker?.type === 'CreateVideo' ? fed(maker, 'audio') : null;
+}
+
 /** The container or audio format an output node writes, from the draft's choice where it has one. */
 function formatOf(
   node: GraphNode,
@@ -172,13 +190,11 @@ export function workflowTraits(
   values: Record<string, unknown>,
   info?: ObjectInfo,
 ): WorkflowTraits {
-  const nodes = graphNodes(workflow);
+  const graph = workflowGraph(workflow, info);
+  const { nodes } = graph;
   const inputs = new Set<Media>();
   const outputs: WorkflowOutput[] = [];
   let motion = false;
-  // Create Video joins frames and a soundtrack when a wire feeds its audio input.
-  const joins = nodes.filter((node) => node.type === 'CreateVideo');
-  const joinedSound = joins.length ? joins.some((node) => node.wired.has('audio')) : null;
   const bindingsOf = bindingIndex(bindings);
   for (const node of nodes) {
     const own = bindingsOf(node);
@@ -190,7 +206,7 @@ export function workflowTraits(
     const saver = saverOf(node, info);
     if (!saver) continue;
     if (saver.kind === 'video') motion = true;
-    // Video Combine takes its own soundtrack, and save_output off keeps its file temporary.
+    // Video Combine's save_output off keeps its file temporary.
     const combine = node.type === 'VHS_VideoCombine';
     outputs.push({
       node,
@@ -199,9 +215,7 @@ export function workflowTraits(
         saver.saved !== false &&
         !(combine && currentValue(own.get('save_output'), values) === false),
       format: formatOf(node, saver, own, values),
-      ...(saver.kind === 'video'
-        ? { sound: saver.sound ?? (combine ? node.wired.has('audio') : joinedSound) }
-        : {}),
+      ...(saver.kind === 'video' ? { sound: saver.sound ?? soundOf(node, graph) } : {}),
     });
   }
   return {
@@ -279,14 +293,14 @@ export function outputSummary(traits: WorkflowTraits): string {
       : 'no save node; this workflow saves no file';
   const of = (kind: string) => saved.filter((output) => output.kind === kind);
   const parts: string[] = [];
-  const videos = of('video');
-  if (videos.length) {
-    const sound = videos.every((video) => video.sound === true)
-      ? ' with sound'
-      : videos.every((video) => video.sound === false)
-        ? ' without sound'
-        : '';
-    parts.push(`${phrase(videos, 'video', true)}${sound}`);
+  // Each saved video says whether it has sound, and says nothing where the graph does not tell.
+  for (const [sound, suffix] of [
+    [true, ' with sound'],
+    [false, ' without sound'],
+    [null, ''],
+  ] as const) {
+    const videos = of('video').filter((video) => (video.sound ?? null) === sound);
+    if (videos.length) parts.push(`${phrase(videos, 'video', true)}${suffix}`);
   }
   const images = of('image');
   if (images.length) parts.push(phrase(images, traits.motion ? 'frame' : 'image', false));

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
+  bundled,
   graph,
   recorded as recordedSchema,
   widgetBindings as fixtureBindings,
@@ -146,4 +147,220 @@ test('a frame count no family pairs gets its unit, and its node when another sha
   const single = widgetBindings(wan, ['EmptyHunyuanLatentVideo']);
   assert.deepEqual(inputMetadata(wan, single, recorded)[`${wan.id}:8:length`], { unit: 'frames' });
   assert.deepEqual(durationGroups(graph('kroma-t2i'), []), []);
+});
+
+const socket = (name: string, type: string, link: number | null = null) => ({ name, type, link });
+const out = (type: string, links: number[]) => ({ type, links });
+/** One H3 clip: a conditioning node and a latent node that both feed one sampler. */
+function h3Clip(base: number, link: number) {
+  const [cond, latent, sampler] = [base, base + 1, base + 2];
+  return {
+    nodes: [
+      { id: cond, type: 'MiniMaxH3ImageToVideo', outputs: [out('CONDITIONING', [link])] },
+      { id: latent, type: 'EmptyMiniMaxH3LatentAV', outputs: [out('LATENT', [link + 1])] },
+      {
+        id: sampler,
+        type: 'DGXMonarchKSampler',
+        inputs: [
+          socket('model', 'DGXM_MODEL'),
+          socket('positive', 'CONDITIONING', link),
+          socket('latent_image', 'LATENT', link + 1),
+        ],
+        outputs: [out('LATENT', [])],
+      },
+    ],
+    links: [
+      [link, cond, 0, sampler, 1, 'CONDITIONING'],
+      [link + 1, latent, 0, sampler, 2, 'LATENT'],
+    ],
+  };
+}
+/** A length binding as the inspection lists it, for a node of a graph or a subgraph instance. */
+function length(graphId: string, node: number, value: number, path: string[] = []): Binding {
+  const scope = path.length ? `@instance/root/${path.join('/')}` : graphId;
+  return {
+    id: `${scope}:${node}:length`,
+    graph_id: graphId,
+    instance_path: path,
+    node_id: String(node),
+    input_name: 'length',
+    value,
+    resolved: true,
+    schema: { type: 'INT', min: 5, max: 3600, step: 17 },
+  };
+}
+
+test('two H3 clips in one graph get one Duration group each, and each writes only its own counts', () => {
+  const [first, second] = [h3Clip(1, 1), h3Clip(4, 3)];
+  const workflow = {
+    id: 'two',
+    nodes: [...first.nodes, ...second.nodes],
+    links: [...first.links, ...second.links],
+  };
+  const bindings = [
+    length('two', 1, 124),
+    length('two', 2, 124),
+    length('two', 4, 192),
+    length('two', 5, 192),
+  ];
+  const groups = durationGroups(workflow, bindings);
+  assert.deepEqual(
+    groups.map((group) => [group.clip, group.members.map((m) => m.binding.id), group.samplers]),
+    [
+      [1, ['two:1:length', 'two:2:length'], [JSON.stringify(['3'])]],
+      [2, ['two:4:length', 'two:5:length'], [JSON.stringify(['6'])]],
+    ],
+  );
+  assert.ok(groups.every(synchronized));
+  const draft = Object.fromEntries(bindings.map((b) => [b.id, b.value]));
+  const next = setDuration(groups[0], 141, draft);
+  assert.deepEqual(
+    bindings.map((b) => next[b.id]),
+    [141, 141, 192, 192],
+  );
+  assert.deepEqual(clipFrames(groups[1], draft), [192, 192]);
+  const meta = inputMetadata(workflow, bindings);
+  assert.equal(meta['two:4:length'].context, 'MiniMax H3 clip 2 conditioning node, node 4');
+  // A count whose sampler cannot be found keeps its own group, which no control sets.
+  const stray = {
+    ...workflow,
+    nodes: [...workflow.nodes, { id: 9, type: 'EmptyMiniMaxH3LatentAV' }],
+  };
+  const lone = durationGroups(stray, [...bindings, length('two', 9, 300)]).at(-1)!;
+  assert.deepEqual([lone.members.map((m) => m.binding.id), lone.samplers], [['two:9:length'], []]);
+  assert.ok(!synchronized(lone));
+  assert.equal(
+    inputMetadata(stray, [...bindings, length('two', 9, 300)])['two:9:length'].note,
+    undefined,
+  );
+});
+
+test('each instance of a repeated H3 subgraph gets its own Duration group and keeps its counts', () => {
+  const clip = h3Clip(1, 1);
+  const definition = {
+    id: 'clip-def',
+    nodes: clip.nodes,
+    links: clip.links.map(([id, origin_id, origin_slot, target_id, target_slot, type]) => ({
+      id,
+      origin_id,
+      origin_slot,
+      target_id,
+      target_slot,
+      type,
+    })),
+    inputNode: { id: -10 },
+    outputNode: { id: -20 },
+  };
+  const workflow = {
+    id: 'root',
+    nodes: [
+      { id: 10, type: 'clip-def', mode: 0 },
+      { id: 11, type: 'clip-def', mode: 0 },
+    ],
+    links: [],
+    definitions: { subgraphs: [definition] },
+  };
+  const bindings = [
+    length('clip-def', 1, 124, ['10']),
+    length('clip-def', 2, 124, ['10']),
+    length('clip-def', 1, 192, ['11']),
+    length('clip-def', 2, 192, ['11']),
+  ];
+  const groups = durationGroups(workflow, bindings);
+  assert.deepEqual(
+    groups.map((group) => group.members.map((m) => m.binding.id)),
+    [
+      ['@instance/root/10:1:length', '@instance/root/10:2:length'],
+      ['@instance/root/11:1:length', '@instance/root/11:2:length'],
+    ],
+  );
+  const draft = Object.fromEntries(bindings.map((b) => [b.id, b.value]));
+  assert.deepEqual(
+    groups.map((group) => clipFrames(group, draft)),
+    [
+      [124, 124],
+      [192, 192],
+    ],
+  );
+  const next = setDuration(groups[1], 141, draft);
+  assert.deepEqual(
+    bindings.map((b) => next[b.id]),
+    [124, 124, 141, 141],
+  );
+  assert.equal(
+    inputMetadata(workflow, bindings)['@instance/root/11:1:length'].context,
+    'MiniMax H3 clip 2 conditioning node, node 11/1',
+  );
+});
+
+test('a wired frame rate leaves seconds unknown unless a primitive node holds it', () => {
+  const LTX = ['EmptyLTXVLatentVideo', 'LTXVEmptyLatentAudio', 'LTXVConditioning'];
+  const wire = (source: Record<string, unknown>) => {
+    const workflow = structuredClone(graph('ltx25-t2v'));
+    workflow.nodes
+      .find((node: any) => node.id === 7)
+      .inputs.push({ name: 'frame_rate', type: 'FLOAT', widget: { name: 'frame_rate' }, link: 99 });
+    workflow.nodes.push({ id: 30, ...source });
+    workflow.links.push([99, 30, 0, 7, 2, 'FLOAT']);
+    return workflow;
+  };
+  const video = wire({ type: 'GetVideoComponents', outputs: [out('FLOAT', [99])] });
+  const fed = widgetBindings(video, LTX);
+  assert.equal(fed.find((b) => b.id === `${video.id}:7:frame_rate`)!.resolved, false);
+  const [group] = durationGroups(video, fed);
+  assert.deepEqual(clipRate(group, values(fed)), {
+    fps: null,
+    reason: "A wire sets frame_rate on node 7, so the clip's frame rate is unknown.",
+  });
+  const held = wire({
+    type: 'PrimitiveNode',
+    outputs: [out('FLOAT', [99])],
+    widgets_values: [24, 'fixed'],
+  });
+  const primitive = (rate: number): Binding => ({
+    id: `${held.id}:30:value`,
+    graph_id: String(held.id),
+    node_id: '30',
+    input_name: 'value',
+    value: rate,
+  });
+  const bindings = [...widgetBindings(held, LTX), primitive(24)];
+  const [known] = durationGroups(held, bindings);
+  assert.deepEqual(clipRate(known, values(bindings)), { fps: 24 });
+  assert.deepEqual(clipRate(known, { ...values(bindings), [`${held.id}:30:value`]: 30 }), {
+    fps: null,
+    reason: 'The frame rate inputs differ: 30 and 24 fps.',
+  });
+});
+
+test('every bundled H3 and LTX workflow finds its sampler and gets one synchronized Duration control', () => {
+  const RULED = [
+    'MiniMaxH3ImageToVideo',
+    'MiniMaxH3ReferenceToVideo',
+    'EmptyMiniMaxH3LatentAV',
+    'EmptyLTXVLatentVideo',
+    'LTXVImgToVideo',
+    'LTXVEmptyLatentAudio',
+    'LTXVConditioning',
+  ];
+  const seen: string[] = [];
+  for (const row of bundled) {
+    const groups = durationGroups(row.workflow, widgetBindings(row.workflow, RULED));
+    if (!groups.length) continue;
+    seen.push(row.name.replace(/^dgx-monarch-/, ''));
+    assert.equal(groups.length, 1, row.name);
+    assert.ok(synchronized(groups[0]), row.name);
+    assert.equal(groups[0].samplers.length, 1, row.name);
+  }
+  assert.deepEqual(seen, [
+    'ltx-i2v-av',
+    'ltx-t2v',
+    'ltx25-flf2v',
+    'ltx25-i2v-guide',
+    'ltx25-i2v',
+    'ltx25-t2v',
+    'minimax-h3-guide',
+    'minimax-h3-mp4',
+    'minimax-h3-t2va',
+  ]);
 });

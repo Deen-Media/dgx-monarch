@@ -2,9 +2,11 @@ import type { Binding } from './model.ts';
 import {
   bindingIndex,
   currentValue,
-  graphNodes,
+  nodeName,
+  workflowGraph,
   type GraphNode,
   type ObjectInfo,
+  type WorkflowGraph,
 } from './workflowGraph.ts';
 import { setsFrames } from './workflowTraits.ts';
 
@@ -55,10 +57,16 @@ export interface DurationMember {
   binding: Binding;
   node: GraphNode;
   role: string;
+  /** For a wired input, the value binding of the primitive node that feeds it, when one does. */
+  feed?: Binding;
 }
 /** One clip's frame-count inputs in a workflow, which a Duration control sets together. */
 export interface DurationGroup {
+  /** Unique in the workflow, for element ids. */
+  key: string;
   family: string;
+  /** The clip's number when the workflow holds more than one clip of this family. */
+  clip?: number;
   /** The inputs Duration writes. */
   members: DurationMember[];
   /** Members a wire feeds, which no draft value can set. */
@@ -66,6 +74,8 @@ export interface DurationGroup {
   /** A fixed frame rate, or null when `rates` hold it. */
   fps: number | null;
   rates: DurationMember[];
+  /** The sampler nodes the clip's inputs feed; empty when Studio cannot tell which. */
+  samplers: string[];
   grid: { base: number; step: number };
   min: number;
   max: number;
@@ -75,47 +85,108 @@ export interface DurationGroup {
 const bound = (binding: Binding, key: 'min' | 'max') =>
   binding.schema?.[key] ?? binding[key] ?? binding.validation?.[key];
 
-/** The clip frame-count groups a workflow holds, one per family whose nodes it carries. */
+/**
+ * A node that samples a clip: it takes a model or a guider, stock or DGX Monarch's own socket
+ * type, and returns a latent.
+ */
+const samples = (node: GraphNode) =>
+  node.outputTypes.includes('LATENT') &&
+  [...node.inputTypes.values()].some((type) => /^(DGXM_)?(MODEL|GUIDER)$/.test(type));
+
+/** The samplers a node's outputs reach, following the wires up to the first sampler on each path. */
+function samplersOf(start: GraphNode, graph: WorkflowGraph): Set<string> {
+  const found = new Set<string>();
+  const seen = new Set([start.key]);
+  const queue = [start];
+  while (queue.length)
+    for (const reader of graph.readers.get(queue.shift()!.key) ?? []) {
+      if (seen.has(reader.key)) continue;
+      seen.add(reader.key);
+      if (samples(reader)) found.add(reader.key);
+      else queue.push(reader);
+    }
+  return found;
+}
+
+/**
+ * The clip frame-count groups a workflow holds. Inputs of one family join a group only when they
+ * feed the same sampler, so two clips get two groups. An input whose sampler Studio cannot find
+ * stays alone, with no sampler, and no Duration control sets it. Each instance of a repeated
+ * subgraph keeps its own nodes, so each gets its own groups.
+ */
 export function durationGroups(
   workflow: Record<string, any> | null | undefined,
   bindings: Binding[],
+  info?: ObjectInfo,
 ): DurationGroup[] {
-  const nodes = graphNodes(workflow);
+  const graph = workflowGraph(workflow, info);
   const bindingsOf = bindingIndex(bindings);
   const groups: DurationGroup[] = [];
   for (const rule of RULES) {
     const found = (entries: Array<{ type: string; input: string; role?: string }>) =>
-      nodes.flatMap((node) =>
+      graph.nodes.flatMap((node) =>
         entries
           .filter((entry) => entry.type === node.type)
-          .flatMap((entry) => {
+          .flatMap((entry): DurationMember[] => {
             const binding = bindingsOf(node).get(entry.input);
-            return binding ? [{ binding, node, role: entry.role ?? 'frame rate' }] : [];
+            if (!binding) return [];
+            const source = node.sources.get(entry.input);
+            const primitive = source?.primitive ? graph.byKey.get(source.key) : undefined;
+            const feed = primitive && bindingsOf(primitive).get('value');
+            return [{ binding, node, role: entry.role ?? 'frame rate', ...(feed ? { feed } : {}) }];
           }),
       );
-    const members = found(rule.members);
-    if (!members.length) continue;
-    const editable = members.filter((member) => member.binding.resolved !== false);
-    const limits = editable.map((member) => member.binding);
-    groups.push({
-      family: rule.family,
-      members: editable,
-      wired: members.filter((member) => member.binding.resolved === false),
-      fps: typeof rule.fps === 'number' ? rule.fps : null,
-      rates: typeof rule.fps === 'number' ? [] : found(rule.fps),
-      grid: rule.grid,
-      min: Math.max(rule.grid.base, ...limits.map((b) => Number(bound(b, 'min') ?? -Infinity))),
-      max: Math.min(...limits.map((b) => Number(bound(b, 'max') ?? Infinity))),
-      relation: rule.relation,
+    const rates = typeof rule.fps === 'number' ? [] : found(rule.fps);
+    const entries = [
+      ...found(rule.members).map((entry) => ({ entry, rate: false })),
+      ...rates.map((entry) => ({ entry, rate: true })),
+    ].map((item) => ({ ...item, samplers: samplersOf(item.entry.node, graph) }));
+    // Entries that feed a common sampler belong to one clip.
+    const clips: Array<typeof entries> = [];
+    for (const item of entries) {
+      const joined = clips.filter((clip) =>
+        clip.some((other) => [...item.samplers].some((key) => other.samplers.has(key))),
+      );
+      clips.splice(0, clips.length, ...clips.filter((clip) => !joined.includes(clip)), [
+        ...joined.flat(),
+        item,
+      ]);
+    }
+    const found_ = clips.filter((clip) => clip.some((item) => !item.rate));
+    found_.forEach((clip, index) => {
+      const members = clip.filter((item) => !item.rate).map((item) => item.entry);
+      const editable = members.filter((member) => member.binding.resolved !== false);
+      const limits = editable.map((member) => member.binding);
+      groups.push({
+        key: `${rule.family.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-${index + 1}`,
+        family: rule.family,
+        ...(found_.length > 1 ? { clip: index + 1 } : {}),
+        members: editable,
+        wired: members.filter((member) => member.binding.resolved === false),
+        fps: typeof rule.fps === 'number' ? rule.fps : null,
+        rates: clip.filter((item) => item.rate).map((item) => item.entry),
+        samplers: [...new Set(clip.flatMap((item) => [...item.samplers]))],
+        grid: rule.grid,
+        min: Math.max(rule.grid.base, ...limits.map((b) => Number(bound(b, 'min') ?? -Infinity))),
+        max: Math.min(...limits.map((b) => Number(bound(b, 'max') ?? Infinity))),
+        relation: rule.relation,
+      });
     });
   }
   return groups;
 }
 
-/** Whether one Duration control can set every member: none is wired, and one at least is editable. */
+/**
+ * Whether one Duration control can set the clip: it knows the clip's sampler, no member is wired,
+ * and one member at least is editable.
+ */
 export function synchronized(group: DurationGroup): boolean {
-  return group.members.length > 0 && group.wired.length === 0;
+  return group.members.length > 0 && group.wired.length === 0 && group.samplers.length > 0;
 }
+
+/** The family, with the clip's number when the workflow holds more than one, as labels show it. */
+export const clipName = (group: DurationGroup) =>
+  `${group.family}${group.clip ? ` clip ${group.clip}` : ''}`;
 
 /** Each member's frame count in the draft, or null where it holds no number. */
 export function clipFrames(group: DurationGroup, values: Record<string, unknown>) {
@@ -125,18 +196,30 @@ export function clipFrames(group: DurationGroup, values: Record<string, unknown>
   });
 }
 
-/** The clip's frame rate, or the reason it is unknown. */
+/**
+ * The clip's frame rate, or the reason it is unknown. Every rate input must hold the same rate. A
+ * wired rate counts only when a primitive node feeds it; any other wire leaves the rate unknown.
+ */
 export function clipRate(
   group: DurationGroup,
   values: Record<string, unknown>,
 ): { fps: number | null; reason?: string } {
   if (group.fps !== null) return { fps: group.fps };
-  const editable = group.rates.filter((rate) => rate.binding.resolved !== false);
-  const rates = [...new Set(editable.map((rate) => currentValue(rate.binding, values)))];
-  if (!editable.length) return { fps: null, reason: 'No frame rate input sets this clip.' };
-  if (rates.length > 1)
-    return { fps: null, reason: `The frame rate inputs differ: ${rates.join(' and ')} fps.` };
-  const fps = rates[0];
+  if (!group.rates.length) return { fps: null, reason: 'No frame rate input sets this clip.' };
+  const rates: unknown[] = [];
+  for (const rate of group.rates) {
+    const binding = rate.binding.resolved === false ? rate.feed : rate.binding;
+    if (!binding)
+      return {
+        fps: null,
+        reason: `A wire sets frame_rate on node ${nodeName(rate.node)}, so the clip's frame rate is unknown.`,
+      };
+    rates.push(currentValue(binding, values));
+  }
+  const unique = [...new Set(rates)];
+  if (unique.length > 1)
+    return { fps: null, reason: `The frame rate inputs differ: ${unique.join(' and ')} fps.` };
+  const fps = unique[0];
   return typeof fps === 'number' && Number.isFinite(fps) && fps > 0
     ? { fps }
     : { fps: null, reason: 'The frame rate input holds no positive number.' };
@@ -186,7 +269,7 @@ export function inputMetadata(
 ): Record<string, InputMeta> {
   const meta: Record<string, InputMeta> = {};
   const bindingsOf = bindingIndex(bindings);
-  const counts = graphNodes(workflow).flatMap((node) => {
+  const counts = workflowGraph(workflow, info).nodes.flatMap((node) => {
     const own = bindingsOf(node);
     const length = own.get('length');
     return length && setsFrames(node, info, own) ? [{ node, binding: length }] : [];
@@ -194,9 +277,9 @@ export function inputMetadata(
   for (const { node, binding } of counts)
     meta[binding.id] = {
       unit: 'frames',
-      ...(counts.length > 1 ? { context: `node ${node.id}` } : {}),
+      ...(counts.length > 1 ? { context: `node ${nodeName(node)}` } : {}),
     };
-  for (const group of durationGroups(workflow, bindings)) {
+  for (const group of durationGroups(workflow, bindings, info)) {
     const all = [...group.members, ...group.wired];
     const wired = group.wired.map((member) => `the ${member.role}`).join(' and ');
     const note =
@@ -207,13 +290,13 @@ export function inputMetadata(
           : `${group.relation} Duration sets ${all.length === 2 ? 'both' : 'all of them'}.`;
     for (const member of all)
       meta[member.binding.id] = {
-        context: `${group.family} ${member.role}, node ${member.node.id}`,
+        context: `${clipName(group)} ${member.role}, node ${nodeName(member.node)}`,
         unit: 'frames',
         ...(note ? { note } : {}),
       };
     for (const rate of group.rates)
       meta[rate.binding.id] = {
-        context: `${group.family} ${rate.node.type}, node ${rate.node.id}`,
+        context: `${clipName(group)} ${rate.node.type}, node ${nodeName(rate.node)}`,
         unit: 'fps',
         ...(group.rates.length > 1
           ? { note: 'The clip frame rate; keep these inputs equal.' }

@@ -202,8 +202,10 @@ test('the output names the save nodes and follows their format choices in the dr
     const node = {
       id: 2,
       type: 'VHS_VideoCombine',
-      inputs: [{ name: 'audio', link: audio ? 4 : null }],
+      inputs: [{ name: 'audio', type: 'AUDIO', link: audio ? 4 : null }],
     };
+    const track = { id: 1, type: 'LoadAudio', outputs: [{ type: 'AUDIO', links: [4] }] };
+    const links = audio ? [[4, 1, 0, 2, 0, 'AUDIO']] : [];
     const bindings = [
       { id: 'g:2:format', graph_id: 'g', node_id: '2', input_name: 'format', value: format },
       {
@@ -214,7 +216,7 @@ test('the output names the save nodes and follows their format choices in the dr
         value: save,
       },
     ];
-    return outputSummary(workflowTraits({ id: 'g', nodes: [node] }, bindings, {}));
+    return outputSummary(workflowTraits({ id: 'g', nodes: [track, node], links }, bindings, {}));
   };
   assert.equal(combine('video/h264-mp4', true), 'one MP4 video with sound');
   assert.equal(combine('image/gif', false), 'one GIF video without sound');
@@ -273,7 +275,7 @@ test('a newly loaded workflow takes a supported operation, and a restored draft 
   const client = (bindings: unknown[]) =>
     ({ request: async () => ({ workflow, bindings }) }) as unknown as StudioClient;
   const read = client([{ ...width, value: 1024, schema: { type: 'INT' } }]);
-  const fit = { operation: 'edit', info: recorded };
+  const fit = { operation: () => 'edit', info: recorded };
   const operation = async (inspected: Promise<{ patch: Record<string, unknown> }>) =>
     (await inspected).patch.operation;
   assert.equal(await operation(inspectDraft(read, workflow, 'Kroma', undefined, fit)), 'image');
@@ -285,4 +287,126 @@ test('a newly loaded workflow takes a supported operation, and a restored draft 
     await operation(inspectDraft(client([]), workflow, 'Kroma', undefined, fit)),
     undefined,
   );
+});
+
+const socket = (name: string, type: string, link: number | null = null) => ({ name, type, link });
+const out = (type: string, links: number[]) => ({ type, links });
+
+test('only subgraphs that a running instance reaches count, so a bypassed video branch changes nothing', () => {
+  const still = (mode: number) => ({
+    id: 'still',
+    nodes: [
+      { id: 1, type: 'EmptyLatentImage', outputs: [out('LATENT', [1])] },
+      {
+        id: 2,
+        type: 'KSampler',
+        inputs: [socket('model', 'MODEL'), socket('latent_image', 'LATENT', 1)],
+        outputs: [out('LATENT', [2])],
+      },
+      {
+        id: 3,
+        type: 'VAEDecode',
+        inputs: [socket('samples', 'LATENT', 2)],
+        outputs: [out('IMAGE', [3])],
+      },
+      { id: 4, type: 'SaveImage', inputs: [socket('images', 'IMAGE', 3)] },
+      { id: 5, type: 'video-def', mode },
+    ],
+    links: [
+      [1, 1, 0, 2, 1, 'LATENT'],
+      [2, 2, 0, 3, 0, 'LATENT'],
+      [3, 3, 0, 4, 0, 'IMAGE'],
+    ],
+    definitions: {
+      subgraphs: [
+        {
+          id: 'video-def',
+          nodes: [
+            { id: 1, type: 'LoadVideo', outputs: [out('VIDEO', [1])] },
+            { id: 2, type: 'SaveVideo', inputs: [socket('video', 'VIDEO', 1)] },
+          ],
+          links: [
+            { id: 1, origin_id: 1, origin_slot: 0, target_id: 2, target_slot: 0, type: 'VIDEO' },
+          ],
+        },
+        // A definition that no instance uses never runs.
+        { id: 'unused-def', nodes: [{ id: 1, type: 'SaveVideo' }], links: [] },
+      ],
+    },
+  });
+  for (const mode of [2, 4]) {
+    const traits = workflowTraits(still(mode), [], {});
+    assert.equal(traits.motion, false, `mode ${mode}`);
+    assert.deepEqual([...traits.inputs], []);
+    assert.equal(operationNeed('image', traits), null);
+    assert.equal(outputSummary(traits), 'PNG image');
+  }
+  const running = workflowTraits(still(0), [], {});
+  assert.ok(running.motion);
+  assert.deepEqual([...running.inputs], ['video']);
+  assert.notEqual(operationNeed('image', running), null);
+  assert.equal(outputSummary(running), 'one video plus PNG frames');
+});
+
+test("each saved video's sound follows its own Create Video node", () => {
+  // A second branch joins the decoded frames without audio and saves them as well.
+  const silentBranch = (workflow: Record<string, any>) => {
+    workflow.nodes.push(
+      {
+        id: 30,
+        type: 'CreateVideo',
+        inputs: [socket('images', 'IMAGE', 90), socket('audio', 'AUDIO')],
+        outputs: [out('VIDEO', [91])],
+      },
+      {
+        id: 31,
+        type: 'SaveVideo',
+        inputs: [socket('video', 'VIDEO', 91)],
+        widgets_values: ['video/silent', 'mp4', 'h264'],
+      },
+    );
+    workflow.links.push([90, 11, 0, 30, 0, 'IMAGE'], [91, 30, 0, 31, 0, 'VIDEO']);
+    return workflow;
+  };
+  const mixed = silentBranch(structuredClone(graph('minimax-h3-mp4')));
+  assert.equal(
+    outputSummary(traitsOf(mixed)),
+    'one MP4 video with sound plus one MP4 video without sound',
+  );
+  // The branch with audio saves nothing once its Save Video is muted, so it promises no sound.
+  const unsaved = silentBranch(structuredClone(graph('minimax-h3-mp4')));
+  unsaved.nodes.find((node: any) => node.id === 14).mode = 2;
+  assert.equal(outputSummary(traitsOf(unsaved)), 'one MP4 video without sound');
+  // A video that no Create Video node makes leaves its sound unknown.
+  const passed = {
+    id: 'pass',
+    nodes: [
+      { id: 1, type: 'LoadVideo', outputs: [out('VIDEO', [1])] },
+      { id: 2, type: 'SaveVideo', inputs: [socket('video', 'VIDEO', 1)] },
+    ],
+    links: [[1, 1, 0, 2, 0, 'VIDEO']],
+  };
+  assert.equal(outputSummary(workflowTraits(passed, [], {})), 'one video');
+});
+
+test('an operation chosen while a workflow loads stays, and an untouched one is fitted', async () => {
+  const workflow = graph('kroma-t2i');
+  const graphId = String(workflow.id);
+  const bindings = [
+    { id: `${graphId}:7:width`, graph_id: graphId, node_id: '7', input_name: 'width', value: 1024 },
+  ];
+  let answer: (value: unknown) => void = () => {};
+  const client = {
+    request: () => new Promise((resolve) => (answer = resolve)),
+  } as unknown as StudioClient;
+  let chosen = 'edit';
+  const fit = { operation: () => chosen, info: recorded };
+  const changed = inspectDraft(client, workflow, 'Kroma', undefined, fit);
+  chosen = 'workflow';
+  answer({ workflow, bindings });
+  assert.equal((await changed).patch.operation, undefined, 'the newer choice stays');
+  chosen = 'edit';
+  const untouched = inspectDraft(client, workflow, 'Kroma', undefined, fit);
+  answer({ workflow, bindings });
+  assert.equal((await untouched).patch.operation, 'image', 'fitted when the choice did not change');
 });

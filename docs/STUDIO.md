@@ -766,12 +766,14 @@ records still use the file name.
 Under the list, an Output line says what a run saves. Studio reads it from the
 graph's save nodes and the draft's format choices, for example "PNG image",
 "PNG frames plus separate FLAC audio" or "one MP4 video with sound". Save Image
-writes frames when the graph makes video. A video has sound when a Create Video
-node takes an audio input. A preview node saves no file.
+writes frames when the graph makes video. A saved video has sound when the
+Create Video node that feeds it takes an audio input; when another node makes
+the video, the line does not say. A preview node saves no file.
 
 The Operation select labels the job, and Queue, the gallery filter and the job
 record keep that label. It lists only the operations the loaded graph supports,
-read from its nodes; muted and bypassed nodes do not count:
+read from the nodes that run. Muted and bypassed nodes do not count, and neither
+does a subgraph that no running instance reaches:
 
 - **Image** needs a node that saves or previews an image, in a graph that makes
   no video.
@@ -792,8 +794,8 @@ otherwise picks the first one it supports of Fleet, Upscale, Video, Edit and
 Image. A draft can still hold an operation its graph lacks, for example after
 Send to edit on a text to image workflow. The select then marks it not
 supported, and a line under it names the input the operation needs. That line
-does not stop Generate. Until Studio has inspected the graph, it lists every
-operation.
+does not stop Generate. An operation you choose while a workflow loads stays as
+you chose it. Until Studio has inspected the graph, it lists every operation.
 
 MiniMax H3 and LTX graphs get a Duration control after their last size field,
 or at the end of the list, on Inputs and on All inputs. These families hold one
@@ -804,12 +806,19 @@ exactly. MiniMax H3 holds the count on its conditioning node and its latent
 node, renders 5 plus a multiple of 17 frames and runs at 24 fps, so 124 frames
 is 5.17 s. LTX holds it on the video latent and the audio latent, renders 1 plus
 a multiple of 8 frames, and takes its frame rate from its `frame_rate` inputs.
-When those disagree, Duration shows frames only. When the counts differ,
-Duration shows each one, and a new value sets them all. When a wire feeds one
-of them, no value can set it, so Studio shows no Duration control. Under All
-inputs, each of these fields names its node and its unit, frames, and says how
-it relates to the other. Any other clip frame count also reads frames, with its
-node when another frame count shares its name.
+When those disagree, or a wire from anything but a primitive node sets one,
+Duration shows frames only.
+
+A clip is the set of these nodes that feed the same sampler. A graph with two
+clips, or a subgraph used twice, gets one numbered Duration control for each
+clip, and each writes only its own nodes. When Studio cannot find the sampler a
+count feeds, it shows no control for that count. When the counts of a clip
+differ, Duration shows each one, and a new value sets them all. When a wire
+feeds one of them, no value can set it, so Studio shows no Duration control.
+Under All inputs, each of these fields names its node, its clip when there are
+several, and its unit, frames, and says how it relates to the other. Any other
+clip frame count also reads frames, with its node when another frame count
+shares its name.
 
 Compilation preserves the original workflow and extension metadata. Unknown
 widgets, ambiguous bindings and unsupported graph constructs refuse execution
