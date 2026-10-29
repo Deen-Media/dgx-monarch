@@ -73,6 +73,13 @@
   Triton or a validated comfy-kitchen release (0.2.37 or 0.2.40) runs CUTLASS
   and logs one WARNING ([Models](docs/MODELS.md#int8-gemm-kernel),
   [TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
+- A 15 second MiniMax H3 clip (1344x768, 362 frames, 20 steps, INT8 ConvRot
+  with the Triton kernel) renders on the pair in about 54 minutes, once per
+  session; one Spark refuses it before loading. The row, the capacity notes
+  and a single RTX 5090's reported 8.6 minutes for the same clip are in
+  [BENCHMARKS](docs/BENCHMARKS.md#a-15-second-clip-on-the-pair-2026-10-29).
+  The kernel option's install points ran on hardware, one short render per
+  process kind ([VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
 - `compile_dit` no longer forces stock residency on the families it leaves
   eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
   tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).

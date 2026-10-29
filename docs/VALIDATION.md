@@ -2481,9 +2481,35 @@ rows or more and left the 12 at 127 rows on CUTLASS. The same run's decline
 check found comfy-kitchen 0.2.40's CUTLASS taking K = 1000 and a strided
 activation itself; the proxy handed both calls to CUTLASS unchanged, and the
 Triton kernel ran on neither. The option's wiring (the
-knob, the install points in the driver and the actors, and the fallbacks) has
-CPU tests only: no render has run through the option's own install points on
-hardware yet.
+knob, the install points in the driver and the actors, and the fallbacks) had
+CPU tests only at that point; the smoke below ran it on hardware.
+
+**The option's install points on hardware (2026-10-29).** With the merged
+option (dev `7404677`) verified-installed on both Workers, one short render of
+the H3 guide graph (pruned INT8 ConvRot DiT, NVFP4 AWQ text encoder, 29 frames,
+4 steps, a fresh seed each time) ran per process kind, and the `INT8 GEMM:`
+mode line was read from the driver log and both Worker journals:
+
+- a local actor on the head, everything at the default: 102.1 s; driver and
+  actor logged `Triton kernel on ... (int8_gemm=triton, from the default)`;
+- uly2 on the pair at the default: 108.1 s; all three processes Triton on;
+- uly2 with `DGXM_INT8_GEMM=cutlass` on the driver: 78.1 s; the driver logged
+  `stock comfy-kitchen 0.2.40 CUTLASS kernel (int8_gemm=cutlass, from
+  DGXM_INT8_GEMM)`, both actors Triton on;
+- uly2 with `int8_gemm = "cutlass"` under `[worker_args]`: 138.1 s; the driver
+  Triton on; on each Worker the root actor logged Triton on at service start
+  and its GPUWorker then logged stock CUTLASS `from [worker_args]`, the
+  in-place switch.
+
+No fallback WARNING in any process. Every render ran on stock residency with
+the identity gate INCONCLUSIVE (nothing to gate: no LoRA stack and slab
+residency not engaged) and the artifact's accuracy waiver stamp, as the
+kernel comparison's renders did. The cluster file was restored byte for byte
+afterwards. One attempt is not counted: a local-layout render asked for 15 s
+after the previous driver exited, while the head's MemAvailable was still
+60.6 GiB, and the loader footprint preflight refused the DiT with its typed
+class C message; the leg reran on uly2 after a memory wait. The walls are
+whole renders of a 29-frame, 4-step cell and compare with nothing above.
 
 ## Memory calibration
 
