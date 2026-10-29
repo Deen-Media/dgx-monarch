@@ -261,7 +261,7 @@
             /><path d="M60 46v29m0-28-6-9m6 9 6-9" /></svg
           >
           <h3>Make something remarkable.</h3>
-          <p>Choose a workflow, shape your inputs,<br />then review a submission to begin.</p>
+          <p>Choose a workflow, shape your inputs,<br />then press Generate to begin.</p>
         </div>
       {:else if shown.loading}<p role="status" class="muted">Loading selected media…</p>
       {:else if shown.error}<p role="alert" class="error">{shown.error}</p>

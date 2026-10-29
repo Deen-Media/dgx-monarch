@@ -181,11 +181,11 @@ The checks:
   Start the companion again with the same command while nothing listens on
   port 18190, and sign in with its new `sign-in.html`. Expect the Driver not
   running panel with the command `echo start-the-fixture`, a source line
-  that names `$SCRATCH/dnr.toml`, the paragraph about another address, a
-  disabled Review generation button and no red error banner. Then start the
-  fixture on port 18190 again: within 5 seconds the panel is gone, a request
-  to `/api/v1/catalog` succeeds, the button is enabled, and the restored draft
-  shows its inputs without a reload.
+  that names `$SCRATCH/dnr.toml`, the paragraph about another address,
+  disabled Generate and Review settings buttons and no red error banner. Then
+  start the fixture on port 18190 again: within 5 seconds the panel is gone, a
+  request to `/api/v1/catalog` succeeds, both buttons are enabled, and the
+  restored draft shows its inputs without a reload.
 - **Viewer status line.** Submit the workflow and watch the line above the
   viewer through the 30-second job. Expect Queued, then Running with the
   elapsed time as m:ss beside a sweeping bar labelled "Job progress, no step
@@ -200,17 +200,22 @@ The checks:
   output without a click, and Details must name the job. The recent outputs
   strip holds at most eight job outputs and no upload or mask, marks the one in
   view, and shows thumbnails for images and the video mark for videos.
-- **Review summary and expiry.** Open Review generation. Expect "Ready to
-  submit. Confirm below.", the workflow, model files, seeds, prompt text,
-  topology, checks still to run and the time the review expires, 10 minutes
-  after it was made, with the immutable record closed until opened and Submit
-  off with its reason until the box is ticked. Leave one review open for more
-  than 10 minutes: it must then say it expired and keep Submit off, also with
-  the box ticked.
+- **Review summary and expiry.** Press Generate: the job starts with no
+  dialog, and a line under the button says it was submitted, names no
+  identifier and clears itself after about five seconds. Press Generate again
+  with unchanged settings: another job starts the same way. Press Review
+  settings. Expect "Ready to generate.", the workflow, model files, seeds,
+  prompt text, topology, one checks line naming what Studio checked and what
+  the backend checks when the job runs, and when the review expires and why,
+  with no checkbox and the immutable record closed until opened; an opened
+  record scrolls inside a short box. Append a style without choosing its
+  prompt input and press Generate: the dialog opens on the refusal with Open
+  Inputs, and no job starts. Leave one review open for more than 10 minutes: it
+  must then say it expired and keep Generate off.
 - **Seeds.** In a new browser profile, new drafts use the Random policy and say
-  that review chooses the seeds. After a run, the review, the viewer footer,
-  the Queue row and the clipboard after Copy seed in the gallery must hold the
-  same seed. Use this seed puts it in the seed field with the Fixed policy as
+  that each job gets new seeds. Generate from Review settings: the review, then
+  the viewer footer, the Queue row and the clipboard after Copy seed in the
+  gallery must hold the same seed. Use this seed puts it in the seed field with the Fixed policy as
   one change that one Undo reverses.
 - **Workflow filter and palette.** Type in Create's workflow filter: the select
   keeps the packaged workflows whose title or file name holds every word, in

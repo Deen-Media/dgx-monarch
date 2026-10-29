@@ -4,6 +4,15 @@
 
 ### Everyday use
 
+- Studio's Generate checks the draft and starts the job in one action, and the
+  job keeps the same immutable submission record. Review settings shows that
+  record first. The review dialog opens by itself only for a warning, which
+  then has its own box, or for a refused draft, with a button to the Create tab
+  that holds the cause. The general confirmation box is gone, the checks fit
+  one line, and the expiry line says what expires and why. The companion's
+  review no longer reports its dispatch checks as a warning. A brief line under
+  Generate replaces the Submitted banner, and the submission record stays
+  closed in a short scrolling box in the dialog and in Queue's job details ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Studio's artifacts route lists outputs with equal creation times most
   recently stored first, as the snapshot does, so the viewer shows a finished
   job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).

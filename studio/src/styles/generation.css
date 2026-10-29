@@ -170,11 +170,19 @@
 .target-line > .muted {
   margin-left: auto;
 }
+.generate-actions {
+  display: flex;
+  gap: 8px;
+}
 .generate {
-  width: 100%;
+  flex: 1;
   justify-content: space-between;
   padding: 12px 15px !important;
   font-size: 12px;
+}
+.review-settings {
+  flex-shrink: 0;
+  font-size: 11px;
 }
 .generate span {
   font-size: 19px;
@@ -184,6 +192,9 @@
   font-size: 9px;
   text-align: center;
   margin-top: 10px;
+}
+.submission-footer > .submit-confirmation {
+  color: var(--status-ready);
 }
 .workspace-center {
   flex: 1;

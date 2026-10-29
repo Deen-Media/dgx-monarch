@@ -64,5 +64,5 @@ test('any draft edit or a reconnect makes a preview stale, and starting one does
   assert.equal(guard.previewed(preview, client), false);
   const next = guard.snapshot(client);
   assert.equal(guard.previewed(next, { name: 'new companion' }), false);
-  assert.match(DROPPED_REVIEW, /Review the generation again/);
+  assert.match(DROPPED_REVIEW, /so no job started\. Generate again\.$/);
 });

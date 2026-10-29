@@ -7,7 +7,7 @@ from copy import deepcopy
 import pytest
 
 from dgx_monarch.studio import jobs as jobs_module
-from dgx_monarch.studio.contracts import StudioError
+from dgx_monarch.studio.contracts import StudioError, digest
 from dgx_monarch.studio.history import page_jobs
 from dgx_monarch.studio.jobs import Jobs
 from dgx_monarch.studio.preview_drafts import prepare_preview
@@ -297,6 +297,26 @@ def test_fixed_seed_policy_sends_the_seed_fields_unchanged(tmp_path):
         del request["seed_policy"]
         assert Jobs(store, None).build_preview(request, schema=SEED_SCHEMA)["effective"]["seeds"] == {
             "1.seed": 5, "2.noise_seed": 9}
+    finally:
+        store.close()
+
+
+def test_a_review_raises_no_warning_and_its_review_fields_stay_out_of_the_record(tmp_path):
+    """Generate submits a review without a warning at once. The fields only a review holds, its
+    identity, times, errors and warnings, never reach the job's frozen record or its digest."""
+    store = Store(tmp_path / "state")
+    try:
+        jobs = Jobs(store, None)
+        jobs.schema = SEED_SCHEMA
+        first = jobs.build_preview(seed_request("fixed"), schema=SEED_SCHEMA)
+        second = jobs.build_preview(seed_request("fixed"), schema=SEED_SCHEMA)
+        assert first["warnings"] == [] and first["errors"] == []
+        assert first["expires_at"] - first["created_at"] == pytest.approx(jobs_module.PREVIEW_SECONDS, abs=1)
+        # Two reviews of one Fixed draft are separate records that freeze the same submission.
+        assert first["id"] != second["id"] and first["digest"] == second["digest"]
+        snapshot = jobs.reviewed_snapshot(first["id"])
+        assert not set(snapshot) & jobs_module.SNAPSHOT_OMITTED
+        assert snapshot["digest"] == digest({key: value for key, value in snapshot.items() if key != "digest"})
     finally:
         store.close()
 

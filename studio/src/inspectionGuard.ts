@@ -66,4 +66,4 @@ export function droppedInspection(name: string, state: TicketState): string {
 }
 
 export const DROPPED_REVIEW =
-  'The review was discarded because the draft or the companion connection changed while it was prepared. Review the generation again.';
+  'Studio dropped this check because the draft or the companion connection changed while it ran, so no job started. Generate again.';

@@ -13,8 +13,8 @@ overhead.
 
 | Asset | Bytes | Gzip bytes |
 |---|---:|---:|
-| `index-CPrORU9A.js` | 280,161 | 98,156 |
-| `index-CEknEx1W.css` | 35,417 | 8,560 |
+| `index-EFcPgzRc.js` | 284,708 | 99,633 |
+| `index-CEWieWJ3.css` | 35,971 | 8,676 |
 
 ## CPU observer microbenchmark
 

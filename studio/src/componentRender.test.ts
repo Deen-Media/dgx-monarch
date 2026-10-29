@@ -94,21 +94,27 @@ function generationProps(overrides: Record<string, unknown> = {}) {
   };
 }
 
-test('Generation enables Review only for a valid, unblocked draft', () => {
+/** The opening tags of the footer's Generate and Review settings buttons. */
+function generateTags(body: string) {
+  return [tagBefore(body, 'Generate <span>'), tagBefore(body, 'Review settings</button>')];
+}
+
+test('Generation enables Generate and Review settings only for a valid, unblocked draft', () => {
   const ready = html(Generation, generationProps());
-  assert.doesNotMatch(tagBefore(ready, 'Review generation'), /disabled/);
-  assert.match(ready, /Review effective settings and warnings before submitting/);
+  for (const tag of generateTags(ready)) assert.doesNotMatch(tag, /disabled/);
+  assert.match(
+    ready,
+    /Generate checks the draft and starts the job\. Review settings shows it first\./,
+  );
   const invalid = html(
     Generation,
     generationProps({ draft: { ...generationProps().draft, values: { steps: 0 } } }),
   );
-  assert.match(tagBefore(invalid, 'Review generation'), /disabled/);
+  for (const tag of generateTags(invalid)) assert.match(tag, /disabled/);
   assert.match(invalid, /Resolve 1 field issue\(s\)\./);
   for (const blocked of [{ pending: true }, { busy: true }, { draft: emptyDraft() }])
-    assert.match(
-      tagBefore(html(Generation, generationProps(blocked)), 'Review generation'),
-      /disabled/,
-    );
+    for (const tag of generateTags(html(Generation, generationProps(blocked))))
+      assert.match(tag, /disabled/);
 });
 
 test('Generation reviews a required text input left empty, but not a missing one', () => {
@@ -119,9 +125,9 @@ test('Generation reviews a required text input left empty, but not a missing one
     Generation,
     generationProps({ bindings, draft: draft({ steps: 20, double_layers: '' }) }),
   );
-  assert.doesNotMatch(tagBefore(empty, 'Review generation'), /disabled/);
+  for (const tag of generateTags(empty)) assert.doesNotMatch(tag, /disabled/);
   const missing = html(Generation, generationProps({ bindings, draft: draft({ steps: 20 }) }));
-  assert.match(tagBefore(missing, 'Review generation'), /disabled/);
+  for (const tag of generateTags(missing)) assert.match(tag, /disabled/);
   assert.match(missing, /Resolve 1 field issue\(s\)\./);
 });
 
@@ -465,15 +471,15 @@ test('no driver panel while the driver is connected or the tab is signed out', (
   assert.match(html(StatusMessages, waiting), /<h2>Driver not running<\/h2>/);
 });
 
-test('Generation keeps Review closed while the driver is not running', () => {
+test('Generation keeps Generate and Review settings off while the driver is not running', () => {
   const body = html(Generation, generationProps({ driverState: 'not running' }));
-  assert.match(tagBefore(body, 'Review generation'), /disabled/);
+  for (const tag of generateTags(body)) assert.match(tag, /disabled/);
   assert.match(
     body,
     /<small class="warning">\s*Start the driver first; see Driver not running above\.<\/small>/,
   );
   assert.match(body, />Driver not running<\/span>/);
-  assert.doesNotMatch(body, /Review effective settings and warnings before submitting/);
+  assert.doesNotMatch(body, /Generate checks the draft/);
   const ready = html(Generation, generationProps());
   assert.doesNotMatch(ready, /Start the driver first/);
 });

@@ -33,6 +33,7 @@
     busy,
     pending,
     driverState,
+    confirmation = '',
     changeDraft,
     inspect,
     fail,
@@ -59,11 +60,14 @@
     busy: boolean;
     pending: boolean;
     driverState?: string;
+    /** The brief line after an accepted submit, or ''. */
+    confirmation?: string;
     changeDraft: ChangeDraft;
     inspect: InspectWorkflow;
     fail: ReportError;
     undo: () => void;
-    prepareJob: () => Promise<void>;
+    /** Generate starts a valid job at once; with `review` true it opens Review settings first. */
+    prepareJob: (review?: boolean) => Promise<void>;
     /** Apply values that change a dynamic choice and rebuild the bindings from them. */
     rebind: (values: Draft['values']) => Promise<void>;
     catalogError?: string;
@@ -83,10 +87,11 @@
       : bindings.filter((b) => b.prominent || b.display?.prominent)
     ).sort((a, b) => Number(a.order ?? 0) - Number(b.order ?? 0)),
   );
-  // Under Random the companion replaces every seed input at review and shows the seeds it chose.
+  // Under Random the companion replaces every seed input for each job and records the seeds.
   let randomSeeds = $derived(draft.seed_policy === 'random');
-  // Nothing accepts a connection at the driver origin, so a review could not be queued.
+  // Nothing accepts a connection at the driver origin, so a job could not be queued.
   let stopped = $derived(driverState === NOT_RUNNING);
+  let generateOff = $derived(busy || !draft.workflow || !!fieldErrors.length || pending || stopped);
   // The template being inspected shows until the inspection ends; then the draft's own.
   let choosing = $state('');
   $effect(() => {
@@ -213,7 +218,7 @@
   </div>
   <small class="seed-policy-note" id="seed-policy-note"
     >{randomSeeds
-      ? 'Random: review chooses new seeds and shows them before you submit.'
+      ? 'Random: each job gets new seeds. Review settings shows them before it starts.'
       : 'Fixed: jobs use the seed fields as they are.'}</small
   >
   <div class="tabs" aria-label="Generation sections">
@@ -239,7 +244,7 @@
           {binding}
           value={draft.values[binding.id]}
           note={randomSeeds && isSeedBinding(binding)
-            ? 'Chosen at review: the Random policy replaces this value.'
+            ? 'Chosen for each job: the Random policy replaces this value.'
             : ''}
           onchange={(value) => fieldChange(binding, value)}
         />{/each}
@@ -282,18 +287,24 @@
         >Driver {driverState ?? 'unknown'}</span
       ><span class="muted">Backend admission</span>
     </div>
-    <button
-      class="primary generate"
-      onclick={prepareJob}
-      disabled={busy || !draft.workflow || !!fieldErrors.length || pending || stopped}
-      >Review generation <span>↗</span></button
-    >{#if stopped}<small class="warning"
-        >Start the driver first; see Driver not running above.</small
+    <div class="generate-actions">
+      <button class="review-settings" onclick={() => prepareJob(true)} disabled={generateOff}
+        >Review settings</button
+      ><button class="primary generate" onclick={() => prepareJob()} disabled={generateOff}
+        >Generate <span>↗</span></button
+      >
+    </div>
+    {#if stopped}<small class="warning">Start the driver first; see Driver not running above.</small
+      >{:else if confirmation}<small class="submit-confirmation" aria-hidden="true"
+        >{confirmation}</small
       >{:else if fieldErrors.length || bindingErrors.length}<small class="warning"
         >{fieldErrors.length
           ? `Resolve ${fieldErrors.length} field issue(s).`
-          : 'Workflow inspection reported issues. Review revalidates the edited inputs.'}</small
+          : 'Workflow inspection reported issues. Generate checks the edited inputs again.'}</small
       >{:else if !draft.workflow}<small>Choose or import a workflow to continue.</small
-      >{:else}<small>Review effective settings and warnings before submitting.</small>{/if}
+      >{:else}<small
+        >Generate checks the draft and starts the job. Review settings shows it first.</small
+      >{/if}
+    <span class="sr-only" role="status">{confirmation}</span>
   </div>
 </aside>

@@ -598,8 +598,8 @@ command that starts the driver with a Copy button and the place the command
 came from. It also says that if ComfyUI already runs at another address,
 `driver` in the `[studio]` table must name that address, and that the
 records belong to the current origin, so a new address needs fresh records
-([Install and start](#install-and-start)). Review generation stays disabled
-until the driver answers. Studio checks every few seconds and connects by
+([Install and start](#install-and-start)). Generate and Review settings stay
+disabled until the driver answers. Studio checks every few seconds and connects by
 itself when the driver answers: the workspace reads the catalog and inspects
 the restored draft again, with no click.
 
@@ -632,7 +632,7 @@ The catalog and workflow inspection answer HTTP 503 with the code
 `driver_not_running`, which Studio uses only for a refused connection; a
 timeout or a DNS or TLS failure stays unavailable with `driver_unknown`. A job
 dispatched while no driver listens still settles `unknown`, which is why the
-page disables Review generation.
+page disables Generate and Review settings.
 
 ## Workspace controls and media
 
@@ -783,7 +783,8 @@ Core loaders require `MODEL` sockets; `DGXMonarchLoraLoader` requires
 the inserted node identities, connection boundaries, asset names and strengths.
 Multiple ambiguous chains or incompatible typed connections refuse execution.
 An invalid LoRA strength, a removed LoRA or an out-of-range inserted loader is
-refused at review with `lora_binding`, naming the slot and input.
+refused with `lora_binding` when Generate checks the draft, naming the slot and
+input.
 The LoRA list comes from the driver catalog Studio reads at connect. Studio
 reads it again when the driver connects again or the companion restarts, and
 once more after a failed read while the driver stays connected. Refresh list on
@@ -809,30 +810,76 @@ entry whose `enabled` field is false; Create has no control that sets it. Style
 records saved before Library dropped its Style mode select may carry a `mode`
 field, `append` or `template`. Studio ignores it, and only `{prompt}` decides.
 
-Review generation opens a dialog that starts with a status line: ready to
-submit, or what blocks the job. A summary follows with the workflow and
-operation, the model files, the seeds, the prompt text the job sends, the
-requested topology, the checks the backend still runs and the time the review
-expires, 10 minutes after Studio made it. The prompt text lists each multi-line
-text input and any input a style rewrote. When a style changed the text, the
-summary also shows your draft text. A workflow with no multi-line text input
-lists every text input. The full record that a submitted job keeps sits closed
-under Immutable submission record. Submit stays off until you check the
-confirmation box, and a line under the button says why it is off. Once the
-review expires, the status line and that line say when, and Submit stays off;
-return to the draft and review again. The dialog keeps the companion's clock,
-starting from the time the companion made the review, and reads it every minute
-and at the expiry moment. The companion's own check at submit decides, so a
-submit in the last second or two can still be refused as expired. The dialog
-closes after every submit attempt, so a refusal or an unknown outcome shows its
-banner and the Reconcile request button.
+Generate checks the draft and starts the job in one action. Studio first checks
+each field against the inputs the driver reports. While a field fails, Generate
+stays off, and the line under it says how many fields to fix. Generate then asks
+the companion for the job's immutable submission record. The companion checks
+the draft again, applies styles and LoRAs, sets the seeds by the seed policy
+and freezes the prompt. When nothing needs a person, Studio submits that record at once, and the
+line under the button says the job was submitted. That line clears itself after
+five seconds. The viewer follows the job, and Queue lists it with its identifier
+and its details. Generate again with unchanged settings starts another job the
+same way, with no dialog.
 
-New drafts use the Random seed policy. At review the companion picks a new
+Review settings, beside Generate, makes the same record and shows it in a
+dialog before anything starts. Generate opens that dialog by itself only when
+something needs a person:
+
+- **A warning.** When the companion reports a warning for the job, such as a
+  resource warning, the dialog lists it under Needs your decision with its own
+  box. Generate in the dialog stays off until you tick each one, and Adjust the
+  draft closes the dialog instead. Today the companion reports no warning when
+  it checks a draft, so this case does not arise yet.
+- **A refused draft.** When the companion refuses the draft, the dialog says no
+  job started and shows the refusal with its error code. Its button opens the
+  Create tab that holds the cause: LoRAs for `lora_binding`, Inputs for a
+  style, seed or lineage refusal, All inputs for a refused workflow input and
+  Layout for any other workflow refusal.
+- **An error in the record.** The status line reads Blocked with the error, and
+  Generate stays off.
+
+A consent point never opens the dialog. The driver decides consent when it
+loads a model for the job, so a job that needs one fails with its typed refusal
+and the consent card, as
+[Read a failure and grant a consent](#read-a-failure-and-grant-a-consent)
+describes, and granting it stays a reviewed operation.
+
+The dialog starts with a status line: ready to generate, a warning that needs
+your decision, or what blocks the job. A summary follows with the workflow and
+operation, the model files, the seeds, the prompt text the job sends, the
+requested topology, one line on checks and the time the review expires. The
+checks line says that Studio checked the values against the driver's inputs and
+that the backend checks memory, topology, identity and consent when the job
+runs. The prompt text lists each multi-line text input and any input a style
+rewrote. When a style changed the text, the summary also shows your draft text.
+A workflow with no multi-line text input lists every text input. No checkbox
+appears unless a warning asks for one.
+
+The full record the job keeps sits closed under Immutable submission record
+(JSON). Studio renders it only when you open it, and it scrolls inside a short
+box. Once the job is accepted, open its row in Queue: the same record sits
+there, also closed, beside the full provenance.
+
+A review expires 10 minutes after the companion made it. The expiry does not
+bind the review to the driver's inputs: submit checks the node definitions and
+each chosen file against the live driver whatever the review's age. The expiry
+bounds how old the driver runtime that the record freezes can be, and it lets
+the companion delete reviews that were never submitted. Generate submits within
+the same action, so only a review left open in the dialog can expire. The
+dialog says when it expires and why. Once it has, Generate in the dialog stays
+off: close it and press Generate for a fresh record. The dialog keeps the
+companion's clock, starting from the time the companion made the review, and
+reads it every minute and at the expiry moment. The companion's own check at
+submit decides, so a submit in the last second or two can still be refused as
+expired. The dialog closes after every submit attempt, so a refusal or an
+unknown outcome shows its banner and the Reconcile request button.
+
+New drafts use the Random seed policy. For each job the companion picks a new
 value for each integer `seed` and `noise_seed` input and freezes it in the
-record. Your seed fields keep their values, and each one says it is chosen at
-review. Fixed sends the seed fields as they are. A saved draft or record keeps
-its own policy, and one that names no policy restores as Fixed, the companion's
-default. The review summary shows the seeds the job will use. After the job
+record. Your seed fields keep their values, and each one says it is chosen for
+each job. Fixed sends the seed fields as they are. A saved draft or record
+keeps its own policy, and one that names no policy restores as Fixed, the
+companion's default. Review settings shows the seeds the job will use. After the job
 runs, the viewer footer shows the seed of the selected output, Queue rows show
 the seeds of each job, and Copy seed in the gallery copies the seeds alone: one
 seed as a plain number, several as JSON keyed by node and input. Copy named
