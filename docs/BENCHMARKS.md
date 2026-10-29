@@ -740,7 +740,8 @@ exact attention on uly2, the pruned INT8 ConvRot DiT with the Triton kernel,
 dev `50ad5e9` on both Workers, head capped at 2100 MHz. Two sessions rendered
 it once each, 53:45 and 53:58 for the prompt: the identity gate's proof render
 took 4:43 and 4:42 with the model load inside, sampling 45:10 and 45:11, and
-text encoding, the two VAE decodes and the save the remaining 3:50. The
+text encoding, the two VAE decodes and the save the remaining 3:52 and 4:06.
+The
 two-point fit from the 5 and 10 second rows had predicted about 45 minutes of
 sampling on the pair.
 
