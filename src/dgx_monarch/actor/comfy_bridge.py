@@ -12,6 +12,7 @@ import sys
 import time
 from typing import Any, cast
 
+from ..kernels import int8_gemm
 from ..log import get_logger
 from ..transfer_utils import (
     failure_summary,
@@ -337,6 +338,7 @@ def ensure_comfy(
 ) -> None:
     """Idempotent per-proc comfy bootstrap. Safe to call from every endpoint."""
     global _BOOTSTRAPPED, _CUSTOM_NODES_DISABLED
+    int8_gemm.configure_from_worker_args(worker_args)  # before comfy imports comfy-kitchen; never raises
     custom_nodes_disabled = bool((worker_args or {}).get("disable_custom_nodes"))
     if _BOOTSTRAPPED is not None:
         if _BOOTSTRAPPED != comfy_dir:
@@ -467,6 +469,7 @@ def _apply_worker_args(worker_args: dict) -> None:
     (bool), disable_smart_memory (bool), safetensors_backend ("pread"|unset). The UMA
     guidance behind the defaults is in docs/VALIDATION.md.
     """
+    int8_gemm.configure_from_worker_args(worker_args)  # a live proc switches its INT8 GEMM in place
     import comfy.model_management as mm
 
     global _MEMORY_BASELINE_MODULE, _MEMORY_BASELINE

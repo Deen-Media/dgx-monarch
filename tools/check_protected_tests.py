@@ -49,6 +49,8 @@ SUITE_MODULES = (
     "tests/test_capacity_quote.py",
     "tests/test_gate_ledger.py",
     "tests/test_gate_ledger_properties.py",
+    "tests/test_int8_gemm_kitchen_version.py",
+    "tests/test_int8_gemm_option.py",
     "tests/test_refusal_classes.py",
     "tests/test_sweep_matrix.py",
     "tests/test_sweep_run.py",

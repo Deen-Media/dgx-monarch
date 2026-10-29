@@ -97,6 +97,10 @@ class WorkerArgs(TypedDict, total=False):
     swap_verify: int
     fsdp_prefetch_depth: int
     safetensors_backend: Literal["pread", "mmap"]
+    # The kernel for comfy-kitchen's INT8 ConvRot GEMM inside the actors;
+    # absent means "triton". The driver reads DGXM_INT8_GEMM instead
+    # (kernels/int8_gemm.py).
+    int8_gemm: Literal["triton", "cutlass"]
 
 
 _BOOL_KEYS = frozenset({
@@ -106,7 +110,7 @@ _BOOL_KEYS = frozenset({
 })
 _FLOAT_LIMITS = {"reserve_vram_gb": (0.0, 1024.0), "uma_reserve_gb": (0.0, 1024.0)}
 _KEYS = frozenset({*_BOOL_KEYS, *_FLOAT_LIMITS, "slab_weights", "swap_verify",
-                   "safetensors_backend", "fsdp_prefetch_depth"})
+                   "safetensors_backend", "fsdp_prefetch_depth", "int8_gemm"})
 
 
 def validate_worker_args(values: object, *, context: str = "worker_args",
@@ -164,6 +168,10 @@ def validate_worker_args(values: object, *, context: str = "worker_args",
         elif key == "safetensors_backend":
             if value not in ("pread", "mmap"):
                 raise ClusterConfigError(f'{field} must be "pread" or "mmap" (got {value!r})')
+            out[key] = value
+        elif key == "int8_gemm":
+            if value not in ("triton", "cutlass"):
+                raise ClusterConfigError(f'{field} must be "triton" or "cutlass" (got {value!r})')
             out[key] = value
     # Cross-key rule, so a cluster.toml cannot set a combination the Init node
     # refuses. comfy-managed residency forces both levers off inside the

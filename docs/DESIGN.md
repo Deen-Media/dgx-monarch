@@ -107,13 +107,17 @@ distribution-boundary inventory.
 1. Repository implementation is authored for this project from its
    specifications, current public APIs, and documented runtime behavior.
    Contributions must identify any external source that informed an
-   implementation and must not copy third-party implementation code. The one
-   shipped exception is the compiled Studio bundle under
+   implementation and must not copy third-party implementation code. Two
+   shipped exceptions exist. The first is the compiled Studio bundle under
    `src/dgx_monarch/studio/static/assets/`: `npm run build` produces it from
    the locked frontend packages, so it carries the MIT-licensed Svelte runtime
    and small Vite, clsx and esm-env helpers, whose notices live in
    `THIRD-PARTY-NOTICES.txt`. A lockfile change that moves one of those
-   packages updates its notice in the same change.
+   packages updates its notice in the same change. The second is the INT8 GEMM
+   kernel in `src/dgx_monarch/kernels/int8_gemm_triton.py`, vendored under the
+   MIT license from kan11's gb10-comfyui-tuning at commit `d68916b`. Section 4
+   admits it as a kernel replacement, and its notice sits in the file header,
+   `THIRD-PARTY-NOTICES.txt` and `NOTICE`.
 2. Measurements and architecture requirements belong in dated project records.
    Implementation should depend on the recorded contract, not an undocumented
    external implementation detail.
@@ -163,6 +167,18 @@ the documented matrix, quality-gate, and N/A contracts.
 | Benchmark harness | **retain** | matrix and quality gates are project-owned scripts |
 | NCCL, UMA, and fabric measurements | **retain as dated evidence** | canonical in VALIDATION.md and fabric profiles |
 | Cluster lifecycle | **use the `dgxm` CLI** | centralized preflight and idempotent service control (§6) |
+
+**Kernel replacements.** DGX Monarch replaces a dependency's kernel inside its
+own processes only when a dated record proves the replacement gives identical
+output on the shapes, dtypes and releases it admits; every other call stays on
+the stock kernel. A replacement ships on by default with an off switch. Where
+its prerequisites are missing it steps aside for the stock kernel with one
+warning and never refuses a render: §5.9's rule that rules gate accuracy, never
+availability, holds for it too. The one replacement is the INT8 ConvRot GEMM
+(`kernels/int8_gemm.py`, with the vendored kernel in
+`kernels/int8_gemm_triton.py`). Its record is
+[VALIDATION.md, INT8 GEMM kernel comparison](VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29),
+and it runs only on the comfy-kitchen releases that record covers.
 
 ---
 
@@ -1740,7 +1756,7 @@ compatibility, or release boundary that a maintainer must be able to find.
 ```
 dgx-monarch/
 ├── LICENSE                    # Apache-2.0
-├── NOTICE                     # copyright line
+├── NOTICE                     # copyright line, vendored-kernel notice
 ├── README.md                  # §8
 ├── pyproject.toml             # package metadata + pins, dgxm entrypoint
 ├── src/dgx_monarch/
@@ -1812,6 +1828,11 @@ dgx-monarch/
 │   │   │                      #   fused-norm route and attention ledger
 │   │   └── minimax_h3_packing.py # MiniMax H3 per-token packing and checkpoint
 │   │                          #   timestep embeddings
+│   ├── kernels/               # proven-exact kernel replacements (§4)
+│   │   ├── int8_gemm.py       # the int8_gemm option: knob, install points,
+│   │   │                      #   fallbacks and their log lines
+│   │   └── int8_gemm_triton.py # MIT, vendored (§3.1): the Triton INT8 GEMM,
+│   │                          #   its proxy and the import hook
 │   ├── comfy_surface.py       # runtime Comfy touchpoint/signature assertion
 │   ├── comfy_forward_contracts.py # aggregate/re-export forward compatibility map
 │   ├── comfy_rebound_signatures.py # exact stock rebound-method contracts
@@ -2099,13 +2120,13 @@ an enforced requirement. The current exceptions are:
 | module | ceiling | cohesive reason |
 |---|---:|---|
 | `mesh.py` | 690 | driver mesh lifecycle, actor dispatch, teardown, and recovery orchestration; deliberate-recycle outcomes live in `mesh_recycle.py`, creation publication in `mesh_creation.py`, worker-policy broadcast and process-group setup in `mesh_setup_transition.py`, behavior probes in `monarch_semantics.py`, and diagnostic composition in `error_utils.py` |
-| `cli/doctor.py` | 770 | user-facing preflight plus the hardware failure catalogue |
+| `cli/doctor.py` | 765 | user-facing preflight plus the hardware failure catalogue |
 | `cli/actor_reaper.py` | 603 | procfs actor identity, orphan provenance, the termination sequence, the doctor report, and the read-only liveness answer the driver asks after a stop times out |
 | `adoption_evidence.py` | 732 | opt-in, request-bound resident-adoption authority, full-file identity/cache, and strict worker/result validation; the render path retains only narrow integration hooks |
 | `actor/unbake.py` | 692 | byte-verified checkpoint capture/restore engine |
 | `config.py` | 638 | typed cluster schema, fabric profiles, validation, and TOML rendering; strict table-key vocabulary lives in `config_schema.py` |
 | `actor/sampling.py` | 620 | worker sampler protocol and distributed execution paths; per-adapter data-parallel exemptions keep raw token/weight sequences intact across ranks |
-| `actor/comfy_bridge.py` | 528 | Comfy worker bootstrap and narrowly-scoped runtime patching; DynamicVRAM state, latches, and policy live in `actor/comfy_dynamic.py`, and the pread shim lives in `pread_backend.py` |
+| `actor/comfy_bridge.py` | 531 | Comfy worker bootstrap and narrowly-scoped runtime patching; DynamicVRAM state, latches, and policy live in `actor/comfy_dynamic.py`, the pread shim lives in `pread_backend.py`, and the INT8 GEMM option lives in `kernels/int8_gemm.py`, which bootstrap configures before ComfyUI imports comfy-kitchen |
 | `actor/capacity_quote.py` | 539 | residency memory estimates and the response fields parsed by the driver, including slab LoRA bake memory and default LoRA-path selection |
 | `capacity_agreement.py` | 567 | the driver's collection, its one pure decision function and the fleet card it composes |
 | `actor/worker.py` | 509 | ordered checks and adapter installation for each freshly loaded base in `_inject_for_topology` |

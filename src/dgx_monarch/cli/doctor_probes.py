@@ -269,3 +269,23 @@ def sage_fallback_row(log_path: str = DEFAULT_FALLBACK_LOG) -> tuple[str, str, s
                 f"{real} real fallback(s) in {log_path} (sampling ran on torch "
                 "attention; the sweep records the kernel per cell)")
     return (OK, FALLBACK_NAME, f"0 real fallback(s) in {log_path}")
+
+
+def python_headers_row() -> tuple[str, str, str]:
+    """Python.h for this interpreter, which Sage and Triton compile against.
+
+    Missing python3.x-dev headers make Sage and Triton JIT compilation fail;
+    ComfyUI then runs slower torch attention without stopping.
+    """
+    try:
+        import sysconfig
+
+        header = os.path.join(sysconfig.get_paths()["include"], "Python.h")
+        if os.path.exists(header):
+            return (OK, "python dev headers", "Python.h present (triton JIT can compile)")
+        return (FAIL, "python dev headers",
+                "Python.h missing; triton and sage kernels fail to build on every call, "
+                "and ComfyUI logs an error and runs torch attention instead (up to ~20x "
+                "slower). Install the python3.x-dev package for this interpreter's version")
+    except Exception as exc:
+        return (WARN, "python dev headers", f"probe unavailable ({exc!r})")

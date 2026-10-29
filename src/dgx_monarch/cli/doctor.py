@@ -12,6 +12,7 @@ from . import (
     doctor_nccl,
     doctor_permissions,
     doctor_probes,
+    int8_gemm_row,
     json_report,
     listener_generation,
     mesh_health_row,
@@ -425,6 +426,7 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
 
     remote_torch: dict[str, str] = {}
     sol_install: dict[str, dict[str, str]] = {}
+    int8_gemm: dict[str, dict[str, str]] = {}  # empty, so unobserved, until a host's probe answers
     nccl_libs: dict[str, dict[str, str]] = {}
     for host in config.hosts:
         health = passive_worker_health(config, host, runner=run_on_host)
@@ -466,6 +468,7 @@ for state_path in glob.glob("/sys/class/infiniband/*/ports/*/state"):
         pass
 print(f"fabric_iface={{iface}} rdma_active={{active}}")
 {sol_attn_row.PROBE_SOURCE}
+{int8_gemm_row.PROBE_SOURCE}
 {doctor_nccl.PROBE_SOURCE}
 {doctor_probes.SWAP_PROBE_SOURCE}
 {listener_generation.probe_source(host.address)}
@@ -519,6 +522,7 @@ EOF
                 remote_torch[host.name] = env_fields["torch"]
             sol_line = next((ln for ln in lines if ln.startswith(sol_attn_row.LINE_PREFIX)), "")
             sol_install[host.name] = _env_tokens(sol_line) if sol_line else {}
+            int8_gemm[host.name] = int8_gemm_row.select(lines)
             nccl_libs[host.name] = doctor_nccl.fields(lines)
             swap_line = next((ln for ln in lines if ln.startswith(doctor_probes.SWAP_LINE_PREFIX)), "")
             rows.append(_row(*doctor_probes.remote_swap_row(host.name, swap_line)))
@@ -555,6 +559,8 @@ EOF
     # Sol-attn requires sequence parallelism. The early return above excludes
     # configless, single-rank runs from this mesh-wide installation check.
     rows.append(_row(*sol_attn_row.doctor_row(sol_install)))
+    # One INT8 GEMM row per host: what that Worker venv's actors can run. Never FAIL.
+    rows.extend(_row(*row) for row in int8_gemm_row.host_rows(config, int8_gemm))
 
     print(f"doctor: {len(rows)} checks, {len(_failures(rows))} failures")
     return rows
@@ -697,21 +703,10 @@ def _spark_health_rows(config: ClusterConfig | None) -> list[dict]:
                          "unobserved: the torch CUDA probe did not complete, so this row "
                          "cannot say whether the box has a usable CUDA device"))
 
-    # Missing python3.x-dev headers make Sage/Triton JIT compilation fail;
-    # ComfyUI can then fall back to slower torch attention without stopping.
-    try:
-        import sysconfig
-
-        header = os.path.join(sysconfig.get_paths()["include"], "Python.h")
-        if os.path.exists(header):
-            rows.append(_row(_OK, "python dev headers", "Python.h present (triton JIT can compile)"))
-        else:
-            rows.append(_row(_FAIL, "python dev headers",
-                             "Python.h missing; triton and sage kernels fail to build on every call, "
-                             "and ComfyUI logs an error and runs torch attention instead (up to ~20x "
-                             "slower). Install the python3.x-dev package for this interpreter's version"))
-    except Exception as exc:
-        rows.append(_row(_WARN, "python dev headers", f"probe unavailable ({exc!r})"))
+    # Missing python3.x-dev headers make Sage/Triton JIT compilation fail, and
+    # the INT8 GEMM kernel (on by default) falls back to stock CUTLASS without them.
+    rows.append(_row(*doctor_probes.python_headers_row()))
+    rows.append(_row(*int8_gemm_row.local_row_for(config)))
 
     # The Spark fan curve tracks CPU load, so the community-identified 'temp6'
     # board sensor can sit at 90 C+ without a ramp. `hwmon.py` reads the

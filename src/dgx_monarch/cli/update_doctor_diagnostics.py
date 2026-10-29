@@ -23,6 +23,7 @@ _CHECKS = {
     "fabric ifaces": "fabric_interfaces",
     "safetensors pread": "safetensors_pread",
     "python dev headers": "python_headers",
+    "INT8 GEMM here": "int8_gemm",
     "orphaned actor procs": "orphaned_actors",
 }
 _HOST_CHECKS = {
@@ -34,6 +35,7 @@ _HOST_CHECKS = {
     "swap": "worker_swap",
     "worker policy": "worker_policy",
     "worker release version": "worker_release_version",
+    "INT8 GEMM": "worker_int8_gemm",
 }
 _UNAVAILABLE = "doctor diagnostics: unavailable"
 

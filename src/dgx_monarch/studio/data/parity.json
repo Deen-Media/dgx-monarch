@@ -6,7 +6,7 @@
   "counts": {
     "cli_command": 24,
     "cli_option": 102,
-    "configuration": 51,
+    "configuration": 52,
     "node": 19,
     "node_input": 129,
     "panel_action": 7,
@@ -8441,6 +8441,45 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "src/dgx_monarch/config_schema.py:WorkerArgs.fsdp_prefetch_depth",
+      "units": null,
+      "validation": "dgx_monarch.config_schema.validate_worker_args"
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "Literal['triton', 'cutlass']",
+      "default": null,
+      "default_rule": "omitted: backend policy resolves the effective value; Init widgets take precedence",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "config.worker_args.int8_gemm",
+      "interfaces": {
+        "cli": {
+          "representation": "cluster.toml through --config",
+          "status": "available"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The owner selects the cluster configuration with --config at companion launch, or dgxm studio passes it; Studio does not edit it.",
+          "status": "equivalent"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "configuration",
+      "name": "worker_args.int8_gemm",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/config_schema.py:WorkerArgs.int8_gemm",
       "units": null,
       "validation": "dgx_monarch.config_schema.validate_worker_args"
     },

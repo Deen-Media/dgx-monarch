@@ -31,12 +31,24 @@
 
 ### Rendering
 
+- INT8 ConvRot linears run a Triton GEMM kernel in place of comfy-kitchen's
+  CUTLASS kernel, in the ComfyUI process and in every actor, with identical
+  output; in the 2026-10-28 and 29 comparison MiniMax H3 and Wan Animate 2
+  rendered 16 to 25 percent faster. `[worker_args] int8_gemm = "cutlass"` turns it off in the actors and
+  `DGXM_INT8_GEMM=cutlass` in the ComfyUI process. A process without Python.h,
+  Triton or a validated comfy-kitchen release (0.2.37 or 0.2.40) runs CUTLASS
+  and logs one WARNING ([Models](docs/MODELS.md#int8-gemm-kernel),
+  [TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
 - `compile_dit` no longer forces stock residency on the families it leaves
   eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
   tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
 
 ### Operations
 
+- `dgxm doctor` adds an `INT8 GEMM` row for this box and one per configured
+  host: the configured kernel and whether the Python headers, Triton and a
+  validated comfy-kitchen are there. The rows warn and never fail
+  ([TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
 - Worker services keep torch inductor's compile cache in
   `~/.cache/dgx-monarch/inductor`, so `compile_dit` no longer repeats its
   autotune after a reboot; set `TORCHINDUCTOR_CACHE_DIR` to place it elsewhere ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
