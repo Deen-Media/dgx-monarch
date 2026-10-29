@@ -7066,3 +7066,63 @@ injection and before any forward binds.
 `mode=local` with `gpus_per_host=1` for one GPU. At world 4 that owner
 measured `auto` (uly2+ring2) fastest for this family and ring4 next, both
 within the one-step fidelity limit; neither is reproduced here.
+
+## 138. The log shows an `INT8 GEMM:` WARNING and INT8 renders run stock CUTLASS
+
+**Symptom:** the driver log or a Worker journal shows a line such as
+
+```
+[dgx-monarch <host>] WARNING INT8 GEMM: Python.h is missing for this interpreter (Triton builds its launcher against /usr/include/python3.12); stock CUTLASS for this process
+```
+
+and INT8 ConvRot renders take their CUTLASS time. Nothing refuses, and the
+output does not change: the two kernels give identical results.
+
+**Cause:** the Triton INT8 GEMM kernel ([MODELS.md](MODELS.md#int8-gemm-kernel))
+is on by default and steps aside for comfy-kitchen's stock CUTLASS kernel, for
+the whole process, when it cannot run. The WARNING names the reason, once per
+process:
+
+- `comfy-kitchen X is not in the validated set (0.2.37, 0.2.40)`: the
+  installed comfy-kitchen is a release the kernel was not proven exact on.
+- `Python.h is missing for this interpreter (...)`: Triton compiles a small C
+  launcher against the headers of the Python that runs ComfyUI or the Worker.
+- `Triton could not be loaded (...)`.
+- `the Triton kernel failed to compile or run (...)`: the call that failed and
+  every later one in that process ran on CUTLASS.
+- `DGXM_INT8_GEMM is '...', which names neither "triton" nor "cutlass"`: a
+  typo in the ComfyUI process's environment. A wrong `[worker_args] int8_gemm`
+  never gets this far, because loading cluster.toml refuses it.
+
+**Fix:** install the headers for the interpreter's version, for example
+`sudo apt install python3.12-dev` on Ubuntu 24.04
+([INSTALL](INSTALL.md#install-the-node-pack)), then restart ComfyUI and run
+`dgxm restart` for the Worker services. Pointing CPATH or C_INCLUDE_PATH at a
+copy of the headers reaches only the ComfyUI process: no actor inherits either
+variable, so the actors, local or on a Worker host, need the headers
+installed, and `dgxm doctor` judges each process that way. For another
+comfy-kitchen release, install the one ComfyUI's requirements name, or keep
+it: renders run on CUTLASS until a dgx-monarch release validates it. Correct a
+mistyped value.
+
+To confirm which kernel runs, read the one INFO line each process writes. The
+ComfyUI process writes it when it loads the node pack, and each actor writes
+it into the Worker journal when its ComfyUI loads comfy-kitchen:
+
+```bash
+journalctl --user -u dgxm-worker.service | grep "INT8 GEMM:"
+```
+
+Worker services started with `dgxm up` log to
+`~/.local/state/dgx-monarch/worker-loop.log` instead. `INT8 GEMM: Triton
+kernel on for comfy-kitchen 0.2.40 INT8 linears (int8_gemm=triton, from the
+default)` means the kernel is in place, unless a later `failed to compile or
+run` WARNING from the same process says it stepped aside; `stock comfy-kitchen
+0.2.40 CUTLASS kernel (int8_gemm=cutlass, ...)` means a setting turned it off.
+The `INT8 GEMM` rows of
+`dgxm doctor` show the configured mode and, for each host, the Python headers,
+Triton and the comfy-kitchen release; doctor attaches no mesh, so it cannot
+see the kernel a running process uses.
+
+To turn the kernel off, set `int8_gemm = "cutlass"` in `[worker_args]` for the
+actors and start ComfyUI with `DGXM_INT8_GEMM=cutlass`.

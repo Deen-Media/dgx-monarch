@@ -59,6 +59,7 @@ on:
       - "tests/test_wan_variants.py"
       - "tests/test_worker_latent_size_tags.py"
       - "tests/test_compile_surface.py"
+      - "tests/test_int8_gemm_kitchen_version.py"
       # No step runs these files, but the files the steps run import them. The
       # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4, Lens and
       # MOSS-Image two-rank harness. tests/test_canary_path_filter.py checks
@@ -327,6 +328,14 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_compile_surface.py
+      # The INT8 GEMM kernel runs only on the comfy-kitchen releases it was
+      # proven exact against. Fail when ComfyUI's requirements or the installed
+      # package move past that set, so it is re-validated (docs/MODELS.md)
+      # instead of every box quietly falling back to stock CUTLASS.
+      - name: comfy-kitchen release vs the INT8 GEMM kernel's validated set (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_int8_gemm_kitchen_version.py
       # Keep the formula check last so its failure cannot prevent earlier
       # canaries from running; no step uses continue-on-error.
       - name: Render-memory formula vs comfy master (CPU)

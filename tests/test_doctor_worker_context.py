@@ -80,6 +80,7 @@ def generated_prefix(config, host):
         'config': config, 'host': host, '_pybin_shell': _pybin_shell, 'worker_context': worker_context,
         'comfy_dir_literal': repr('/fixture/comfy'), 'wanted_iface_literal': repr(''),
         'sol_attn_row': empty, 'doctor_nccl': empty, 'doctor_probes': empty, 'listener_generation': empty,
+        'int8_gemm_row': empty,
     })
     prefix, marker, _body = script.partition("\"$PYBIN\" - <<'EOF'")
     assert marker

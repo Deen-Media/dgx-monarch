@@ -21,17 +21,21 @@ install separately. It is not legal advice.
 | nvidia-cutlass-dsl | NVIDIA Software License Agreement | Optional CuTe compiler for the Sol-Attn path, installed separately |
 | aiohttp | Apache-2.0 | Optional `studio` extra dependency installed separately; its distribution also declares MIT for bundled parser code |
 | Pillow | MIT-CMU | Optional `studio` extra dependency installed separately |
+| Triton | MIT | Optional runtime dependency installed with PyTorch; the vendored INT8 GEMM kernel compiles with it |
 
 Dependency projects retain their own licenses, notices, and distribution
-terms. The repository's `NOTICE` file contains the dgx-monarch copyright line.
+terms. The repository's `NOTICE` file contains the dgx-monarch copyright line
+and names the vendored INT8 GEMM kernel.
 The generated wordmarks contain DejaVu Sans Bold glyph outlines; their font
 notice is preserved in `THIRD-PARTY-NOTICES.txt`. The compiled Studio bundle
 under `src/dgx_monarch/studio/static/assets/` is the one shipped third-party
 runtime: it carries code from the Svelte, Vite, clsx and esm-env packages
 listed under [Studio frontend bundle](#studio-frontend-bundle), and their
 notices are in [`THIRD-PARTY-NOTICES.txt`](THIRD-PARTY-NOTICES.txt). Apart from
-that bundle, the repository includes no vendored dependency implementations,
-and it includes no font binaries. Redistributions under
+that bundle, the repository includes one vendored source file, the
+MIT-licensed INT8 GEMM kernel under
+[Vendored INT8 GEMM kernel](#vendored-int8-gemm-kernel), and it includes no
+font binaries. Redistributions under
 Apache-2.0 section 4(d)
 keep `NOTICE` with the source. Packaging or redistributing dgx-monarch together
 with other software may create additional obligations; redistributors are
@@ -55,6 +59,23 @@ TypeScript and Prettier, put no code in the bundle. `studio/package-lock.json`
 fixes the bundled versions. A change that moves any bundled package to another
 version updates its notice in `THIRD-PARTY-NOTICES.txt` in the same change.
 
+## Vendored INT8 GEMM kernel
+
+`src/dgx_monarch/kernels/int8_gemm_triton.py` runs comfy-kitchen's INT8 GEMM
+as a Triton kernel. It is vendored from kan11's gb10-comfyui-tuning, file
+`patches/ck_int8_patch.py` at commit
+`d68916bf06c7ab01e0c557c67c64a1a06eb0ceef`, with the changes its header lists.
+
+| Component | License | Relationship |
+|---|---|---|
+| gb10-comfyui-tuning INT8 GEMM kernel | MIT | Vendored source file, copyright (c) 2026 kanthai; its changes are distributed under the same terms |
+
+The file keeps the MIT notice in its header, `THIRD-PARTY-NOTICES.txt` repeats
+it in full, and `NOTICE` names it. It is admitted under
+[DESIGN.md section 3.1](docs/DESIGN.md#31-the-rules) because a dated record
+proves its output identical to the kernel it replaces. A change to the file
+keeps its header notice and updates the header's list of changes.
+
 ## Source boundary
 
 dgx-monarch integrates with separately installed projects through their public
@@ -65,7 +86,8 @@ Contributions must be the contributor's original work or material the
 contributor has the right to submit under this repository's license. When a
 change depends on an external specification, API, or behavior, identify that
 source in the pull request. Do not copy third-party implementation code into
-this repository. Install xfuser and other runtime dependencies separately. The
+this repository; the INT8 GEMM kernel above is the one reviewed exception.
+Install xfuser and other runtime dependencies separately. The
 temporary xFuser wheel is rebuilt locally from a SHA-verified official wheel;
 no third-party wheel or source is committed. The Studio bundle is build output
 from locked packages, not copied source; rebuild it rather than edit it.

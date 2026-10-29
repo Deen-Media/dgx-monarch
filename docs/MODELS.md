@@ -1509,6 +1509,71 @@ preflight: clip encoding has a separate large memory peak. Unlisted/chained
 guides, large clips and guide decode quality have no passing reference comparison. Fun ControlNet
 takes a stock MODEL and cannot be wired into this distributed graph.
 
+<a id="int8-gemm-kernel"></a>
+
+## INT8 GEMM kernel
+
+INT8 ConvRot checkpoints run their linears through comfy-kitchen's INT8 GEMM,
+which comfy-kitchen sends to one CUTLASS kernel on sm_80 and newer. DGX Monarch
+runs that call as a Triton kernel instead: kan11's kernel from
+[gb10-comfyui-tuning](https://github.com/kanthai/gb10-comfyui-tuning/tree/d68916bf06c7ab01e0c557c67c64a1a06eb0ceef),
+vendored under the MIT license in `src/dgx_monarch/kernels/`. It applies the
+row scale, the column scale and the bias in the same order as CUTLASS, so the
+output is identical: 156 of 156 synthetic kernel cases and 1530 of 1530
+rendered frames over 28 cells matched, and the option's own GPU check matched
+240 of 240 cases over 20 shapes
+([VALIDATION](VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
+From 6144 rows up it holds about 175 TOPS on the wide linears, where CUTLASS
+loses more than half its throughput, so MiniMax H3 and Wan Animate 2 renders
+ran 16 to 25 percent faster, LTX 2.5 5 to 9 percent faster, and the small
+stills did not change
+([BENCHMARKS](BENCHMARKS.md#int8-gemm-cutlass-against-the-triton-kernel)).
+
+The kernel is on by default in the ComfyUI process and in every actor. It
+leaves on CUTLASS the fused-residual calls, rows under 128 and calls with K not
+a multiple of 16 or a strided tensor. Each process logs one line, starting
+`INT8 GEMM:`, that names the kernel it runs: the driver log for ComfyUI, the
+Worker journal for an actor.
+
+**Turn it off.** The actors read `int8_gemm` from `[worker_args]` in
+cluster.toml:
+
+```toml
+[worker_args]
+int8_gemm = "cutlass"
+```
+
+The ComfyUI process reads `DGXM_INT8_GEMM` from its environment when it loads
+the node pack, so start ComfyUI with `DGXM_INT8_GEMM=cutlass` to turn the
+kernel off there. Both take `"triton"` or `"cutlass"`, and both default to
+`"triton"`. Neither reads the other, so set both to turn the kernel off
+everywhere. To keep the default, leave the `[worker_args]` key out: writing it,
+with either value, changes the identity-gate context of every render, as any
+`[worker_args]` key does ([CLUSTER](CLUSTER.md#worker_args-optional)).
+
+**Limits.**
+
+- The first INT8 calls in each process compile the kernel, which takes
+  seconds. Triton keeps the compiled kernel in its cache, so later processes
+  load it.
+- The validated comfy-kitchen releases are 0.2.37 and 0.2.40. On any other
+  release the kernel stays off, and the process runs stock CUTLASS and logs
+  one WARNING. A release joins the set only after the GPU check in
+  `tests/test_int8_gemm_triton_equality.py` and a render comparison like the
+  recorded one pass on it. `tests/test_int8_gemm_kitchen_version.py` fails
+  when ComfyUI's requirements or the installed package move past the set.
+- Triton builds a small C launcher against `Python.h`, so each process needs
+  the Python development headers for its interpreter
+  ([INSTALL](INSTALL.md#install-the-node-pack)). Without them, or without
+  Triton, the process runs stock CUTLASS and logs one WARNING
+  ([TROUBLESHOOTING #138](TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
+- `compile_dit` was off in every comparison, so compiled DiTs have not run
+  with the kernel.
+- Two MiniMax H3 INT8 ConvRot files were not part of the comparison: the
+  unpruned fl2va file and the ref2va file. They share the pruned file's GEMM
+  shapes.
+- The tile configuration was tuned and measured on GB10 only.
+
 ## Model-adoption quant artifact catalog
 
 This catalog names checkpoint files an operator can load through the DGX

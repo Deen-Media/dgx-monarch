@@ -1,2 +1,6 @@
 dgx-monarch
 Copyright 2026 Deen Media, LLC
+
+This product includes src/dgx_monarch/kernels/int8_gemm_triton.py, vendored
+from kanthai/gb10-comfyui-tuning, Copyright (c) 2026 kanthai, under the MIT
+License. THIRD-PARTY-NOTICES.txt carries its full notice.

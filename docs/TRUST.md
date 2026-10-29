@@ -1015,8 +1015,8 @@ copied from historical evidence.
   checkpoint on non-Linux workers or Linux environments without
   `/proc/self/fd`; it never falls back to a racy path reopen. Failed-load
   integration, ownership, refusal, status, platform binding, and release are
-  [`comfy_bridge.py:161-267`](../src/dgx_monarch/actor/comfy_bridge.py#L161-L267 "anchor:slab_load"),
-  [`comfy_bridge.py:270-329`](../src/dgx_monarch/actor/comfy_bridge.py#L270-L329 "anchor:load_diffusion_model_slab"),
+  [`comfy_bridge.py:162-268`](../src/dgx_monarch/actor/comfy_bridge.py#L162-L268 "anchor:slab_load"),
+  [`comfy_bridge.py:271-330`](../src/dgx_monarch/actor/comfy_bridge.py#L271-L330 "anchor:load_diffusion_model_slab"),
   [`model_store.py:238-340`](../src/dgx_monarch/actor/model_store.py#L238-L340 "anchor:ensure"),
   [`slab_lifetime.py:22-22`](../src/dgx_monarch/actor/slab_lifetime.py#L22-L22 "anchor:_RETAINED_FAILED_LOAD_SLABS"),
   [`slab_lifetime.py:28-28`](../src/dgx_monarch/actor/slab_lifetime.py#L28-L28 "anchor:_RETAINED_FAILED_LOAD_RESOURCES"),

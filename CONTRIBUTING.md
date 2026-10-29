@@ -135,7 +135,9 @@ See [versioning policy](docs/DESIGN.md#63-versioning-and-compatibility-policy).
 Submit original work or material you have the right to contribute. Identify
 external specifications, APIs or behavior that informed the change. Do not
 copy or vendor dependency implementations; the compiled Studio bundle is build
-output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle).
+output, listed in [LICENSE-NOTES.md](LICENSE-NOTES.md#studio-frontend-bundle),
+and the one vendored source file, the MIT INT8 GEMM kernel, is listed under
+[Vendored INT8 GEMM kernel](LICENSE-NOTES.md#vendored-int8-gemm-kernel).
 xFuser remains external: its
 compatibility wheel is built locally from the verified official wheel, and
 neither the wheel nor dependency source belongs in the repository.

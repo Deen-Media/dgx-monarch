@@ -23,7 +23,10 @@ data, and cite dated evidence for empirical constants.
 ## Independent-source checklist (§3)
 
 1. Implement from the repository spec, current ComfyUI source, and public
-   dependency APIs. Do not copy external implementations.
+   dependency APIs. Do not copy external implementations. The one vendored
+   source file, the MIT INT8 GEMM kernel in
+   `src/dgx_monarch/kernels/int8_gemm_triton.py`, is a reviewed exception
+   (DESIGN §3.1).
 2. xfuser stays external. Do not vendor it. The temporary compatibility wheel
    (`tools/build_xfuser_compat_wheel.py`) is rebuilt from a SHA-verified
    official wheel and changes only the version metadata and the optional NPU

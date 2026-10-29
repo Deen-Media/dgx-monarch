@@ -2411,9 +2411,11 @@ the v1.5 option in #93: exactness first, then speed.
 **Kernel equality.** 156 synthetic cases over 13 shapes (MiniMax H3 at 29184
 rows per rank, Krea2 and Qwen stills, odd rows such as 127, 129, 1095 and 2049),
 three output dtypes, with and without a bias, per-channel and per-tensor weight
-scales: every case `torch.equal` against the CUTLASS result. The kernel declines
-exactly the calls CUTLASS declines (K not a multiple of 16, strided inputs,
-fused-residual calls, rows under 128).
+scales: every case `torch.equal` against the CUTLASS result. The kernel leaves
+on CUTLASS the fused-residual calls, rows under 128 and every call with K not a
+multiple of 16 or a strided input. Upstream found CUTLASS declining the last
+two; on comfy-kitchen 0.2.40 it takes them itself (the 2026-10-29 check below),
+so they keep the stock route either way.
 
 **Renders.** The sweep harness ran the INT8 ConvRot checkpoints of fifteen
 templates twice on the same build (v1.4.0, ComfyUI 0.43.0, comfy-kitchen
@@ -2464,6 +2466,24 @@ as a Monarch option; the option's wiring, its gate and its documentation are
 #93 item 1. torch.compile paths were not exercised (compile_dit off). The
 MXFP8 and NVFP4 single-GPU references rendered in the same stock pass as a load
 test of their recast files and are not part of the kernel comparison.
+
+**The option's GPU check (2026-10-29).** With the kernel vendored as
+`src/dgx_monarch/kernels/int8_gemm_triton.py`,
+`tests/test_int8_gemm_triton_equality.py` ran 240 cases over 20 shapes on the
+head against its own CUTLASS kernel (comfy-kitchen 0.2.40, torch 2.12.0,
+Triton 3.7.0, GPU idle, the 2100 MHz cap on): the 13 shapes above, M at
+exactly 128, H3's odd 29221 rows per rank, the Ideogram4 adaln and qkv and
+Chroma linear1 linears, and two shapes for the kernel's masked tiers, each in
+three output dtypes, with and without a bias, per-channel and per-tensor
+weight scales. All 240 were `torch.equal` called directly, and all 240 through
+the proxy a render calls, which ran the Triton kernel on the 228 cases at 128
+rows or more and left the 12 at 127 rows on CUTLASS. The same run's decline
+check found comfy-kitchen 0.2.40's CUTLASS taking K = 1000 and a strided
+activation itself; the proxy handed both calls to CUTLASS unchanged, and the
+Triton kernel ran on neither. The option's wiring (the
+knob, the install points in the driver and the actors, and the fallbacks) has
+CPU tests only: no render has run through the option's own install points on
+hardware yet.
 
 ## Memory calibration
 

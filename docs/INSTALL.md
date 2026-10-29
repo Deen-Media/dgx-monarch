@@ -184,6 +184,22 @@ The checker verifies the [known cuSPARSELt platform-tag failure](TROUBLESHOOTING
 before accepting it on Linux ARM64. Save any printed exception with the
 installation record. A failed check must be resolved before continuing.
 
+The INT8 GEMM kernel, on by default for INT8 ConvRot checkpoints, needs the
+Python development headers for `$COMFY_PYTHON` on the driver and on every
+Worker host: Triton compiles a small C launcher against `Python.h`. Without
+them each process runs comfy-kitchen's stock CUTLASS kernel and logs one
+WARNING
+([TROUBLESHOOTING #138](TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
+Check for them, and install the system package for the interpreter's version
+when the check prints `False` (`python3.12-dev` on Ubuntu 24.04):
+
+```bash
+"$COMFY_PYTHON" -c 'import os, sysconfig; path = os.path.join(sysconfig.get_paths()["include"], "Python.h"); print(path, os.path.isfile(path))'
+```
+
+`dgxm doctor` reports the same check, with Triton and the comfy-kitchen
+release, in its `INT8 GEMM` rows ([MODELS.md](MODELS.md#int8-gemm-kernel)).
+
 The installer places `dgxm` beside `$COMFY_PYTHON`. Invoke that executable so a
 shell's unrelated `dgxm` cannot select another environment:
 
