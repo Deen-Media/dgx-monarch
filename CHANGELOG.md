@@ -13,6 +13,24 @@
   review no longer reports its dispatch checks as a warning. A brief line under
   Generate replaces the Submitted banner, and the submission record stays
   closed in a short scrolling box in the dialog and in Queue's job details ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Studio's sidebar groups Grids, Fleet and Operations under Utilities, one
+  page with a tab for each and a line on what each is for. The tabs keep their
+  route ids, so Grant and retry still opens Operations, and the command palette
+  lists each tab by name ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- Studio's telemetry panel shows the followed job's step and node, then every
+  reporting host side by side with available memory, GPU memory, GPU
+  utilization, power and temperature, then the driver's readiness rows for the
+  Worker service, attached mesh and render session. When only the driver's host
+  reports, as before the first Monarch render attaches a mesh, it says so, and
+  readings kept after telemetry stops are labelled stale with their age. Its
+  chart picks a host and a metric separately and shows a choice with one option
+  as text instead of a one-item list ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- Studio's Grids page explains what a grid compares with a worked example and
+  walks a first comparison, 20 steps against 40. The Fleet page says what Fleet
+  does, when to use it and how to start. Its button, now Set up Fleet in
+  Create, loads the packaged Fleet workflow and names the next step; before,
+  Configure Fleet workflow only set the draft's Operation label and opened
+  Create with nothing to act on ([Studio](docs/STUDIO.md#run-many-prompts-with-fleet)).
 - Studio's artifacts route lists outputs with equal creation times most
   recently stored first, as the snapshot does, so the viewer shows a finished
   job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
