@@ -320,7 +320,7 @@ test('telemetry shows this tab job and keeps the raw sample closed', async () =>
 test('strip tiles keep their thumbnails across snapshot polls', async () => {
   const { readFile } = await import('node:fs/promises');
   const strip = await readFile(new URL('./views/WorkspaceOutput.svelte', import.meta.url), 'utf8');
-  assert.match(strip, /\{#each outputs as artifact \(artifact\.id\)\}/);
+  assert.match(strip, /\{#each outputs as artifact, index \(artifact\.id\)\}/);
   // Each poll replaces every artifact object; the fetch keys on values, not on the object.
   const thumbnail = await readFile(
     new URL('./components/Thumbnail.svelte', import.meta.url),

@@ -8,6 +8,16 @@
   import OutputSeeds from './OutputSeeds.svelte';
   import { displayUnknown, formatTime } from '../model';
   import { frameTarget } from '../mediaPlayback';
+  import { pendingView } from '../jobFollow';
+  import {
+    NO_MEDIA,
+    currentMedia,
+    decodeFailed,
+    failLoad,
+    finishLoad,
+    startLoad,
+    type ViewerMedia,
+  } from '../viewerMedia';
   let {
     artifact = null,
     compare = null,
@@ -37,10 +47,8 @@
     /** Open Operations for the consent the followed job's failure asks for. */
     onconsent?: () => void;
   } = $props();
-  let url = $state(''),
-    compareUrl = $state(''),
-    error = $state(''),
-    loading = $state(false);
+  // The loaded URLs with their media kinds; `shown` is what belongs to the current selection.
+  let media = $state.raw<ViewerMedia>(NO_MEDIA);
   let zoom = $state(1),
     mode = $state('fit'),
     wipe = $state(50),
@@ -63,60 +71,57 @@
       compare?.intermediate ? compare.metadata?.sha256 : null,
     ]),
   );
-  let generation = 0;
+  const shown = $derived(currentMedia(media, mediaKey));
+  // With no output shown, the followed job's workflow and state stand in for one.
+  const pending = $derived(!artifact && job ? pendingView(job) : null);
+  let alive = true;
   let pan = { x: 0, y: 0, left: 0, top: 0, active: false };
+  function revoke(old: ViewerMedia) {
+    if (old.url) URL.revokeObjectURL(old.url);
+    if (old.compareUrl) URL.revokeObjectURL(old.compareUrl);
+  }
   $effect(() => {
     const key = mediaKey;
     const [selected, secondary] = untrack(() => [artifact, compare]);
     const api = client;
-    if (!key) return;
-    const ticket = ++generation;
-    const controller = new AbortController();
-    untrack(() => {
-      if (url) URL.revokeObjectURL(url);
-      if (compareUrl) URL.revokeObjectURL(compareUrl);
-    });
-    url = '';
-    compareUrl = '';
-    error = '';
+    // The effect writes the media state but never reads it outside untrack: a read would make
+    // each finished load start the next one.
+    const previous = untrack(() => media);
+    revoke(previous);
+    const next = startLoad(previous, key, selected, secondary);
+    media = next;
+    const ticket = next.ticket;
     mediaDuration = NaN;
     zoom = 1;
     mode = 'fit';
     if (selected?.kind === 'video' || secondary?.kind === 'video') comparison = 'side';
-    if (!selected) {
-      loading = false;
-      return;
-    }
-    loading = true;
+    if (!selected) return;
+    const controller = new AbortController();
     Promise.all([
       api.media(selected.id, controller.signal),
       secondary ? api.media(secondary.id, controller.signal) : Promise.resolve(null),
     ])
       .then(([first, second]) => {
-        if (ticket !== generation) return;
+        if (!alive || media.ticket !== ticket) return;
         if (first.size > 64 * 1024 * 1024 || (second?.size ?? 0) > 64 * 1024 * 1024)
           throw new Error(
             'Media exceeds the 64 MiB viewer limit. Download from the source output directory.',
           );
-        url = URL.createObjectURL(first);
-        if (second) compareUrl = URL.createObjectURL(second);
+        const secondUrl = second ? URL.createObjectURL(second) : '';
+        media = finishLoad(media, ticket, URL.createObjectURL(first), secondUrl);
       })
       .catch((e) => {
-        if (ticket === generation) error = String(e.message ?? e);
-      })
-      .finally(() => {
-        if (ticket === generation) loading = false;
+        if (alive) media = failLoad(media, ticket, String(e.message ?? e));
       });
     return () => controller.abort();
   });
   onDestroy(() => {
-    generation++;
-    if (url) URL.revokeObjectURL(url);
-    if (compareUrl) URL.revokeObjectURL(compareUrl);
+    alive = false;
+    revoke(media);
   });
   function fullscreen() {
     viewport?.requestFullscreen().catch((e) => {
-      error = e.message;
+      media = { ...media, error: e.message };
     });
   }
   function syncPlayback() {
@@ -138,8 +143,9 @@
     video.currentTime = target;
     syncPlayback();
   }
-  function decodeError(comparing = false) {
-    error = `${comparing ? 'Comparison media' : 'Selected media'} cannot be decoded by this browser. Download the file to inspect it or open it in a compatible viewer.`;
+  /** An element could not decode its source; only the element showing the current URL counts. */
+  function decode(element: Element, comparing = false) {
+    media = decodeFailed(media, element.getAttribute('src'), comparing);
   }
   $effect(() => {
     if (sync) syncPlayback();
@@ -151,15 +157,21 @@
     <div>
       <span class="eyebrow">OUTPUT VIEWER</span>
       <h2>
-        {compare ? 'Compare results' : artifact ? artifact.filename : 'A space for your next idea'}
+        {compare
+          ? 'Compare results'
+          : artifact
+            ? artifact.filename
+            : (pending?.title ?? 'A space for your next idea')}
       </h2>
     </div>
-    <span class="tag">{artifact ? (artifact.kind ?? 'artifact') : 'No output selected'}</span>
+    <span class="tag"
+      >{artifact ? (artifact.kind ?? 'artifact') : (pending?.tag ?? 'No output selected')}</span
+    >
   </div>
   <JobStatusLine {job} {onqueue} {onconsent} />
   <div class="viewer-toolbar" aria-label="Viewer controls">
     <button
-      disabled={!url}
+      disabled={!shown.url}
       class:active={mode === 'fit'}
       aria-pressed={mode === 'fit'}
       onclick={() => {
@@ -168,7 +180,7 @@
       }}>Fit</button
     >
     <button
-      disabled={!url}
+      disabled={!shown.url}
       class:active={mode === 'actual'}
       aria-pressed={mode === 'actual'}
       onclick={() => {
@@ -177,7 +189,7 @@
       }}>1:1</button
     >
     <button
-      disabled={!url}
+      disabled={!shown.url}
       onclick={() => {
         mode = 'actual';
         zoom = Math.max(0.1, zoom - 0.25);
@@ -186,14 +198,14 @@
     >
     <span class="mono">{Math.round(zoom * 100)}%</span>
     <button
-      disabled={!url}
+      disabled={!shown.url}
       onclick={() => {
         mode = 'actual';
         zoom = Math.min(8, zoom + 0.25);
       }}
       aria-label="Zoom in">+</button
     >
-    <button disabled={!url} onclick={fullscreen}>Fullscreen</button>
+    <button disabled={!shown.url} onclick={fullscreen}>Fullscreen</button>
     <button
       disabled={!artifact}
       class:active={metadata}
@@ -201,8 +213,10 @@
       aria-controls="media-metadata"
       onclick={() => (metadata = !metadata)}>Details</button
     >
-    {#if url && artifact}<a class="button" href={url} download={artifact.filename ?? artifact.id}
-        >Download</a
+    {#if shown.url && artifact}<a
+        class="button"
+        href={shown.url}
+        download={artifact.filename ?? artifact.id}>Download</a
       >{/if}
   </div>
   <div class="viewer-frame" class:working>
@@ -235,7 +249,11 @@
       onpointerup={() => (pan.active = false)}
       onpointercancel={() => (pan.active = false)}
     >
-      {#if !artifact}
+      {#if pending}<div class="empty-art">
+          <h3>{pending.heading}</h3>
+          <p>{pending.note}</p>
+        </div>
+      {:else if !artifact}
         <div class="empty-art">
           <svg viewBox="0 0 120 100" aria-hidden="true"
             ><path
@@ -245,24 +263,25 @@
           <h3>Make something remarkable.</h3>
           <p>Choose a workflow, shape your inputs,<br />then review a submission to begin.</p>
         </div>
-      {:else if loading}<p role="status" class="muted">Loading selected media…</p>
-      {:else if error}<p role="alert" class="error">{error}</p>
-      {:else if url}
+      {:else if shown.loading}<p role="status" class="muted">Loading selected media…</p>
+      {:else if shown.error}<p role="alert" class="error">{shown.error}</p>
+      {:else if shown.url}
+        <!-- Each element takes its kind from the media it loaded, never from a newer selection. -->
         <div
           class="media-stage"
-          class:side={!!compareUrl && comparison === 'side'}
-          class:wipe={!!compareUrl && comparison === 'wipe'}
+          class:side={!!shown.compareUrl && comparison === 'side'}
+          class:wipe={!!shown.compareUrl && comparison === 'wipe'}
           style:--zoom={zoom}
         >
-          {#if artifact.kind === 'video'}<video
+          {#if shown.kind === 'video'}<video
               bind:this={video}
-              src={url}
+              src={shown.url}
               controls
               {muted}
               {loop}
               onloadedmetadata={() => (mediaDuration = video?.duration ?? NaN)}
               ondurationchange={() => (mediaDuration = video?.duration ?? NaN)}
-              onerror={() => decodeError()}
+              onerror={(e) => decode(e.currentTarget)}
               onplay={syncPlayback}
               onpause={syncPlayback}
               onseeked={syncPlayback}
@@ -270,29 +289,29 @@
               onratechange={syncPlayback}><track kind="captions" /></video
             >
           {:else}<img
-              src={url}
+              src={shown.url}
               alt={artifact.filename ?? 'Selected generated output'}
               draggable="false"
-              onerror={() => decodeError()}
+              onerror={(e) => decode(e.currentTarget)}
             />{/if}
-          {#if compareUrl && compare}
+          {#if shown.compareUrl && compare}
             <div
               class="comparison-media"
               style:clip-path={comparison === 'wipe' ? `inset(0 0 0 ${wipe}%)` : undefined}
             >
-              {#if compare.kind === 'video'}<video
+              {#if shown.compareKind === 'video'}<video
                   bind:this={secondVideo}
-                  src={compareUrl}
+                  src={shown.compareUrl}
                   controls
                   {muted}
                   {loop}
-                  onerror={() => decodeError(true)}><track kind="captions" /></video
+                  onerror={(e) => decode(e.currentTarget, true)}><track kind="captions" /></video
                 >
               {:else}<img
-                  src={compareUrl}
+                  src={shown.compareUrl}
                   alt={compare.filename ?? 'Comparison output'}
                   draggable="false"
-                  onerror={() => decodeError(true)}
+                  onerror={(e) => decode(e.currentTarget, true)}
                 />{/if}
             </div>
           {/if}

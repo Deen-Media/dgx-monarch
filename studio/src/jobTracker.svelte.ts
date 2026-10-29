@@ -9,8 +9,10 @@ import {
   NO_FOLLOW,
   adoptRequest,
   applyLookup,
+  beginsRun,
   confirmOwn,
   followSnapshot,
+  jobWorkflow,
   sameFollow,
   type Follow,
 } from './jobFollow';
@@ -27,12 +29,16 @@ export interface FollowedJob extends JobLine {
   color?: string;
   /** The consent control when the failure asks for consent, or null. */
   consent?: ConsentAction | null;
+  /** The job's workflow: a packaged workflow's title, the draft's name for it, or ''. */
+  workflow?: string;
 }
 
 /**
  * Owns what the output viewer shows: the chosen result, the comparison, and the job the viewer
  * follows. Setting `selected` or `comparison` is a user choice; the newest result of the
- * followed job never replaces a choice made after the follow began.
+ * followed job never replaces a choice made after the follow began. When the viewer begins to
+ * follow a job in flight, it stops showing the earlier result, unless a comparison is open, and
+ * shows that job until its output lands.
  */
 export class JobTracker {
   follow = $state.raw(NO_FOLLOW);
@@ -92,7 +98,8 @@ export class JobTracker {
     const line = jobLine(job, this.#clock);
     const consent = consentAction(line.failure, operations);
     const color = jobColor(presentation, job.state);
-    return { ...line, id: job.id, own: this.follow.own, color, consent };
+    const workflow = jobWorkflow(job, this.connection.workflows ?? []);
+    return { ...line, id: job.id, own: this.follow.own, color, consent, workflow };
   });
   /** Whether any job is still in flight; activity animations follow this, not unresolved jobs. */
   working = $derived.by(() => this.connection.snapshot.jobs.some(isInFlightJob));
@@ -105,7 +112,10 @@ export class JobTracker {
   /** Follow a job this tab just submitted; one it already follows keeps the user's choice. */
   own(id: string) {
     this.#request = '';
-    this.follow = confirmOwn(this.follow, id);
+    const next = confirmOwn(this.follow, id);
+    // A job this tab just submitted is in flight, though no snapshot lists it yet.
+    if (next.id !== this.follow.id) this.clearShown();
+    this.follow = next;
   }
 
   /** Run in an effect: apply each snapshot to the followed job and the viewer. */
@@ -122,6 +132,8 @@ export class JobTracker {
       const fresh = !!this.#request && this.#request === this.submission.createdKey;
       const adopted = adoptRequest(follow, this.#request, jobs, fresh);
       if (adopted) this.#request = '';
+      // A request this page sent is a new generation, whatever state its job had reached.
+      const sent = fresh && !!adopted && adopted.id !== follow.id;
       const current = adopted ?? follow;
       const step = followSnapshot(
         current,
@@ -129,7 +141,7 @@ export class JobTracker {
         artifacts,
         this.#comparison !== null,
       );
-      this.apply(follow, step);
+      this.apply(follow, step, this.known(jobs, step.follow.id), sent);
       this.readDropped(jobs, jobs_truncated === true, server);
       // One request per snapshot at most, so the bounded attempts span several polls.
       if (step.lookup && !this.lookup && server !== this.#lookedFor) {
@@ -188,9 +200,27 @@ export class JobTracker {
     this.apply(this.follow, applyLookup(this.follow, jobId, items, this.#comparison !== null));
   }
 
-  private apply(previous: Follow, step: { follow: Follow; show: Artifact | null }) {
-    if (step.show) this.#selected = step.show;
+  /**
+   * Apply one step of the follow. A step that begins to follow a job in flight, or a request this
+   * page sent, first clears the shown result. When the same step shows the output of the job it
+   * stopped following, as when a tab that submitted nothing moves on to the newest active job,
+   * the viewer shows the job it now follows and that output stays in Recent Outputs.
+   */
+  private apply(
+    previous: Follow,
+    step: { follow: Follow; show: Artifact | null },
+    jobs: readonly Job[] = [],
+    sent = false,
+  ) {
+    const begins = sent || beginsRun(previous, step.follow, jobs);
+    if (begins) this.clearShown();
+    if (step.show && (!begins || step.show.job_id === step.follow.id)) this.#selected = step.show;
     if (!sameFollow(step.follow, previous)) this.follow = step.follow;
+  }
+
+  /** Stop showing the earlier result as a new job begins; an open comparison stays as it is. */
+  private clearShown() {
+    if (this.#comparison === null) this.#selected = null;
   }
 
   /** Run in an effect: count the followed job's time once a second while it runs in view. */
