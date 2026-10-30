@@ -13,6 +13,7 @@
   import { checkImportFile, checkRequestBody, type StudioClient } from '../api';
   import { filterKeyAction, loadWorkflow, workflowChoices, workflowTitle } from '../workflowChoice';
   import { operationChoices, outputSummary, workflowTraits } from '../workflowTraits';
+  import { editImageNeed } from '../editHandoff';
   import { durationGroups, inputMetadata, synchronized } from '../frameCounts';
   import AssetEditor from '../components/AssetEditor.svelte';
   import DurationControl from '../components/DurationControl.svelte';
@@ -112,7 +113,11 @@
   let randomSeeds = $derived(draft.seed_policy === 'random');
   // Nothing accepts a connection at the driver origin, so a job could not be queued.
   let stopped = $derived(driverState === NOT_RUNNING);
-  let generateOff = $derived(busy || !draft.workflow || !!fieldErrors.length || pending || stopped);
+  // Under Edit, the image input that Send to edit fills must hold an image the driver offers.
+  let editNeed = $derived(editImageNeed(draft, bindings, catalog.object_info));
+  let generateOff = $derived(
+    busy || !draft.workflow || !!fieldErrors.length || pending || stopped || !!editNeed,
+  );
   // The template being inspected shows until the inspection ends; then the draft's own.
   let choosing = $state('');
   $effect(() => {
@@ -328,6 +333,7 @@
     {#if stopped}<small class="warning">Start the driver first; see Driver not running above.</small
       >{:else if confirmation}<small class="submit-confirmation" aria-hidden="true"
         >{confirmation}</small
+      >{:else if editNeed}<small class="warning">{editNeed}</small
       >{:else if fieldErrors.length || bindingErrors.length}<small class="warning"
         >{fieldErrors.length
           ? `Resolve ${fieldErrors.length} field issue(s).`

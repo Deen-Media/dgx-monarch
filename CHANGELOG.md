@@ -4,6 +4,15 @@
 
 ### Everyday use
 
+- Studio's Send to edit puts the output into the image input of a workflow
+  that edits images. It keeps the workflow in Create when that one supports
+  Edit, loads the one editing workflow the driver runs, lists them when there
+  are several, and says why and changes nothing when there is none. The
+  companion copies the output into the driver's input store, so the 2 MiB
+  upload limit does not apply, and the Operation becomes Edit. Under Edit,
+  Generate stays off until the image input holds an image. Before, Send to
+  edit reloaded the text to image graph as "Edit (not supported)" with only
+  lineage attached and Generate on ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Studio's Generate checks the draft and starts the job in one action, and the
   job keeps the same immutable submission record. Review settings shows that
   record first. The review dialog opens by itself only for a warning, which

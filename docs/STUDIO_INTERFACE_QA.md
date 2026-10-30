@@ -296,6 +296,19 @@ Reconcile in Queue for an unknown outcome; the review expiry at any viewport
 but 390×844; and Chromium, Safari, physical phones, assistive technology and GPU
 rendering, as before.
 
+## Tester round 4 checks, 2026-10-30
+
+Each change for the fourth round of tester reports ran a headless check of the
+controls it changed, on the bundle its own branch builds, against the CPU
+fixtures, in Firefox 159.0 headless on Ubuntu 24.04.5 LTS for arm64 through
+WebDriver BiDi with real pointer and key input, as in the
+[2026-10-28 round](#browser-evidence-2026-10-28). These rows do not repeat the
+browser procedure, and each names its bundle and its results file.
+
+| Check | Observed result and scope |
+|---|---|
+| Send to edit | Bundle `index-CJY0lZqa.js` (`8f040e40c6ec6d4e3da8cc9b0aac789970ea9107b7874fe1a69178b08ae284b7`), `index-C_Y8FigT.css` (`4928dd9879020d7cd45433566c28335b4102077279e692f727c67e0afa0e31e8`) and `index.html` (`8a5bb97fc7d9f22041a625f9fcdcf6a41de19a594375d63aa996a511b39c44d5`), at 1440×900 and 390×844, with 2-second jobs. On `studio/tests/event_driver.py` serving the recorded bundled schema without `ConditioningZeroOut`, `TextEncodeMageFlowEdit` and `TextEncodeQwenImage21`, so that FLUX.3 Klein Base image editing is the one packaged editing workflow it runs, Send to edit on a FLUX.3 Klein Base text to image output opened no dialog. It loaded the editing workflow, set the Operation to Edit, opened Inputs with the prompt and bound a `studio/` copy to node 8's image, listed and valid, with the output and the copy in the lineage. The fixture's input store held the copy as an RGBA PNG with the output's pixels. One Undo restored the text to image draft. After a second Send to edit, Generate submitted the edit with the copy as node 8's image, and after Clear bound input on the Assets tab, Generate and Review settings were off with "Edit needs an image in the image input on node 8." under Generate once the five-second submit line cleared. With the full recorded schema, the dialog listed the six packaged editing workflows in title order with focus on the first, and the stored draft stayed the same while it was open and after Cancel. Choosing the masked RGBA reference edit bound node 6's image and left the mask loader on node 7 alone, and Send to edit on that edit's output kept the workflow with no dialog and added the new output and copy to the lineage. On `studio/tests/mock_driver.py`, which runs no packaged editing workflow, the dialog said why and named where editing workflows come from, with focus on Open Create, and the draft and the selected output stayed as they were. Pages and dialogs measured no horizontal overflow, and no console error appeared. The results file, kept in the maintainer's private evidence store, has SHA-256 `f604f08babf235d33dacb48a9aa6af7549d2d07a631f366cd26687dc5f07573a`. |
+
 ## Remaining acceptance
 
 Physical iOS and Android devices, Safari, Chromium, assistive technology,
