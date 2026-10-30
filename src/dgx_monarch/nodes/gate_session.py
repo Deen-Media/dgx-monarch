@@ -5,6 +5,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
+from .gate_capacity_stop import CeremonyCapacityStop
 from .gate_fsdp import (
     FSDP_PROOF_KIND,
     FsdpGateProofError,
@@ -136,7 +137,7 @@ def run_identity_ceremony(
                 )
             elif (
                 claimed
-                and not isinstance(exc, FsdpGateProofError)
+                and not isinstance(exc, (FsdpGateProofError, CeremonyCapacityStop))
             ):
                 try:
                     with session.activate():

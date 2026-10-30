@@ -2,7 +2,8 @@
 
 No-material skips only a later empty ceremony for the exact exercised context;
 it grants no risky residency. A ceremony a measured class K guard stopped
-grants nothing either and takes no lever. Every other incomplete or prevented
+grants nothing either and takes no lever, and neither does one whose request
+cannot fit the path it would prove. Every other incomplete or prevented
 proof stays unproven and quarantines both residency levers for its own
 combination, within the exemptions of ``consent_rescue.unproven_quarantine_levers``.
 Classification is structured, token-bound evidence, never inferred from logs.
@@ -34,16 +35,23 @@ NO_MATERIAL_VERDICT = "INCONCLUSIVE_NO_MATERIAL"
 # stopped. Unproven like every abort, and it quarantines nothing.
 KNOWN_WRONG_ABORT_VERDICT = "ERROR_KNOWN_WRONG_ABORT"
 
+# The third dispatcher-only verdict: a ceremony that stopped before its proof
+# render because the request cannot fit the path it would prove
+# (nodes/gate_capacity_stop). The ledger row it wrote says INCONCLUSIVE.
+# Authorization finds no PASS and dispatches stock, and no process verdict is
+# cached, so the next request of the combination meets the same check.
+CAPACITY_STOP_DISPATCH_VERDICT = "INCONCLUSIVE_CAPACITY_STOP"
+
 # The dispatch verdicts that take no lever off the graph, read by both render
 # paths so one vocabulary decides it. ``None`` (no ceremony called for) and the
-# last two disproved nothing about residency; PASS proved the path;
+# three dispatcher-only verdicts disproved nothing about residency; PASS proved the path;
 # DUAL_MODEL_STOCK ran no ceremony and renders stock. FAIL does quarantine,
 # but only its own combination: submit turns the levers off on each dispatch
 # clone (nodes/render_quarantine), because every checkpoint on the Init node
 # shares the graph's policy dict.
 NO_QUARANTINE_VERDICTS = frozenset({
     None, "PASS", "DUAL_MODEL_STOCK", NO_MATERIAL_VERDICT,
-    KNOWN_WRONG_ABORT_VERDICT, "FAIL",
+    KNOWN_WRONG_ABORT_VERDICT, CAPACITY_STOP_DISPATCH_VERDICT, "FAIL",
 })
 
 # First-use state, distinct from ledger verdicts to prevent trust comparisons.

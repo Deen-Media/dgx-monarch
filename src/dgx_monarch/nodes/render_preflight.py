@@ -229,7 +229,7 @@ def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
 
 
 def _driver_footprint_preflight_for_request(
-    model: Any, request: dict, family: str, path: str,
+    model: Any, request: dict, family: str, path: str, weights_loaded: bool | None = None,
 ) -> None:
     """Check a pending driver-host DiT load (docs/TROUBLESHOOTING.md #52).
 
@@ -261,8 +261,8 @@ def _driver_footprint_preflight_for_request(
                 model, handle, requested_worker_args=worker_args)
         weights_resident = (
             str(getattr(mesh, "topology_preset", "auto") or "auto") != "auto"
-            or unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET,
-                             _LAST_DRIVER_CHARGED_UNET)
+            or (unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET, _LAST_DRIVER_CHARGED_UNET)
+                if weights_loaded is None else weights_loaded)
             or driver_footprint.weights_owned_by_activation_preflight(family))
         pixels, blocks, frames = driver_footprint.ref_pixel_volume_from_latents(
             request, profile)
@@ -286,7 +286,7 @@ def _driver_footprint_preflight_for_request(
 
 
 def activation_footprint_preflight_for_request(
-    model: Any, request: dict, latent: dict,
+    model: Any, request: dict, latent: dict, *, weights_loaded: bool | None = None,
 ) -> None:
     """Run family-scoped capacity checks before worker RPC.
 
@@ -295,7 +295,8 @@ def activation_footprint_preflight_for_request(
     (docs/TROUBLESHOOTING.md #52, #56 and #47). A missing shape, an unsupported
     file type, or an unreadable header with no forced family fails open, so
     unrelated render paths keep their behavior. Before a check refuses,
-    ``driver_unload`` unloads ComfyUI's own models here and runs it again.
+    ``driver_unload`` frees what this host can get back and runs it again.
+    ``weights_loaded`` stands in for the load memos (nodes/gate_capacity_stop).
     """
     unet_name = getattr(model, "unet_name", None)
     if not isinstance(unet_name, str):
@@ -327,8 +328,8 @@ def activation_footprint_preflight_for_request(
     family_select.warn_auto_admits_checkpoint(family, path)
     # Sample memo credit before any check, so this render cannot credit its
     # own newly cleared pending load.
-    memo_credit = unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET,
-                                _LAST_DRIVER_CHARGED_UNET)
+    memo_credit = (unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET, _LAST_DRIVER_CHARGED_UNET)
+                   if weights_loaded is None else weights_loaded)
     from ..render_memory_price import preflight_render_memory
 
     # The grid the workers will sample, size tags applied, computed once for
@@ -338,7 +339,7 @@ def activation_footprint_preflight_for_request(
     # In order: after an unload the run restarts at the check that refused.
     steps = [
         lambda: preflight_render_memory(path, unet_name, video_shape),
-        lambda: _driver_footprint_preflight_for_request(model, request, family, path),
+        lambda: _driver_footprint_preflight_for_request(model, request, family, path, weights_loaded),
         lambda: h3_activation.preflight_h3_activation_for_request(
             model, request, latent, family=family, path=path,
             unet_name=unet_name, memo_credit=memo_credit, latent_shape=video_shape),

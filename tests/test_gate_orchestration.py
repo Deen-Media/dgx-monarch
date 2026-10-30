@@ -121,6 +121,26 @@ def test_normal_render_authority_obeys_durable_and_session_precedence(
         assert authorization.worker_args["lora_low_rss"] is False
 
 
+def test_a_capacity_stop_row_authorizes_a_stock_dispatch(monkeypatch, tmp_path):
+    """The ceremony's capacity stop (nodes/gate_capacity_stop) writes one
+    INCONCLUSIVE row and caches no verdict. That row grants nothing, so the
+    render behind the stop dispatches with both levers off, for this dispatch
+    only."""
+    entry = {
+        "verdict": "INCONCLUSIVE", "cross_mode": "CAPACITY", "measured": None,
+        "quarantine_levers": [],
+        "capacity_detail": "StockLoadCapacityError/class-C guard=activation_footprint_preflight",
+    }
+    model, _handle, authorization = _normal_authorization_rig(
+        monkeypatch, tmp_path, lambda _context: ("inconclusive", entry))
+
+    assert authorization.residency_mode == "stock"
+    assert authorization.residency_grant is None
+    assert authorization.worker_args["slab_weights"] is False
+    assert authorization.worker_args["lora_low_rss"] is False
+    assert model.mesh.worker_args == {"slab_weights": True, "lora_low_rss": True}
+
+
 def test_normal_render_pass_is_scoped_to_concrete_topology(
     monkeypatch, tmp_path,
 ):

@@ -220,6 +220,11 @@ def gather_ceremony_evidence(
                 fsdp_scope_state["cleanup_confirmed"] = True
                 raise runtime["FsdpGateProofError"](
                     sentence, verdict="INCONCLUSIVE")
+        else:  # a residency proof prices the request on its own path first
+            runtime["gate_capacity_stop"].stop_unless_request_fits(
+                ceremony_model, frozen_request, frozen_latent, capacity_row,
+                origin=origin, run_id=run_id, loras=len(stack),
+                worker_args=original_worker_args)
         ledger.begin_retest_required(
             key,
             artifacts,
@@ -355,6 +360,9 @@ def gather_ceremony_evidence(
                 "discarding the verdict")
         provenance_attestor("post", handle, cycle_token)
     except BaseException as exc:
+        if isinstance(exc, runtime["gate_capacity_stop"].CeremonyCapacityStop):
+            ceremony_error = exc  # its one row is written; nothing to close or take
+            raise
         fsdp_refusal: FsdpGateProofError | None = None
         settled_tag = None
         retracted = False

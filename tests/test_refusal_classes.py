@@ -133,6 +133,10 @@ NOT_REFUSAL_CLASSES = frozenset({
     "UpdatePreconditionError",
     "WaiverNotAuditedError",
     "ConcurrentRenderSessionError",
+    # Like FsdpGateProofError, the identity ceremony's capacity stop
+    # (nodes/gate_capacity_stop.py) carries a refusal some guard already
+    # tagged as its own text; it raises no new answer of its own.
+    "CeremonyCapacityStop",
     "FsdpGateProofError",
     "GateLedgerReadError",
     "GateLedgerWriteError",

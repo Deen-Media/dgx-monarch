@@ -207,12 +207,27 @@ _GATE_DONE_DENIED = ("The optimized residency paths stay off for this "
                      "than PASS")
 
 
-def gate_finished(result: dict | None) -> None:
-    """Close the identity-check window and report elapsed time without raising."""
+def gate_finished(result: dict | None, capacity_stop: bool = False) -> None:
+    """Close the identity-check window and report elapsed time without raising.
+
+    ``capacity_stop`` marks a ceremony that ran no proof render because the
+    request cannot fit the path it would prove; its render runs stock.
+    """
     proofs = int(getattr(_CEREMONY, "proofs", 0))
     _CEREMONY.active = False
     _CEREMONY.proofs = 0
     _tell_tracker("close")
+    if not isinstance(result, dict) and capacity_stop:
+        notice(
+            "gate_done",
+            "auto-gate: the identity gate ran no proof render, because this "
+            "request cannot fit the residency path it would prove. Your render "
+            "runs on stock residency, and the next render of this combination "
+            "checks again. The driver log has the refusal",
+            "gate skipped for capacity, stock residency",
+            severity="warn",
+        )
+        return
     if not isinstance(result, dict):
         # With no verdict, the caller decides stock fallback or refusal. The
         # notice names both and leaves failure detail in the driver log.

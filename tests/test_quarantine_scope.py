@@ -532,6 +532,8 @@ def test_every_no_quarantine_verdict_is_a_verdict_the_render_path_can_see():
         None, "PASS", "DUAL_MODEL_STOCK",
         gate_inconclusive.NO_MATERIAL_VERDICT,
         gate_inconclusive.KNOWN_WRONG_ABORT_VERDICT,
+        # A ceremony the request's capacity stopped before its proof render.
+        gate_inconclusive.CAPACITY_STOP_DISPATCH_VERDICT,
         # FAIL quarantines each dispatch of its own combination, never the graph.
         "FAIL",
     })
