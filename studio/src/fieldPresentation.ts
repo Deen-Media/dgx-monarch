@@ -16,7 +16,7 @@ export interface FieldPresentation {
 }
 
 type Json = Record<string, any>;
-type Readers = Map<string, Array<{ node: GraphNode; input: string }>>;
+type Readers = Map<string, Array<{ node: GraphNode; input: string; slot: number }>>;
 const ROLE_NAMES: Record<PromptRole, string> = { prompt: 'Prompt', negative: 'Negative prompt' };
 const SOCKET_ROLES: Record<string, PromptRole> = { positive: 'prompt', negative: 'negative' };
 /** Input names that say the role, for a node whose text reaches both sampler inputs, or neither. */
@@ -43,7 +43,10 @@ export function layoutLabel(b: Binding): string {
   return typeof label === 'string' && label && label !== b.input_name ? label : '';
 }
 
-/** Who reads each node's outputs and on which input, following text and conditioning only. */
+/**
+ * Who reads each node's outputs, on which input and from which output slot, following text and
+ * conditioning only.
+ */
 function inputReaders(nodes: GraphNode[]): Readers {
   const readers: Readers = new Map();
   for (const node of nodes)
@@ -51,33 +54,42 @@ function inputReaders(nodes: GraphNode[]): Readers {
       const type = node.inputTypes.get(input);
       if (!source || (type && !FOLLOWED.has(type) && !SOCKET_ROLES[input])) continue;
       if (!readers.has(source.key)) readers.set(source.key, []);
-      readers.get(source.key)!.push({ node, input });
+      readers.get(source.key)!.push({ node, input, slot: source.slot });
     }
   return readers;
 }
 
 /**
- * The roles a node's text reaches: those of the nearest sampler inputs named `positive` or
- * `negative` that its output feeds, possibly both, or none within a few nodes.
+ * The roles a node's text reaches. Each output follows its own branches, within a few nodes, to
+ * the nearest sampler inputs named `positive` or `negative`, so one output that reaches a sampler
+ * first does not cut short another, as when a node encodes both texts and only its negative output
+ * passes through a zeroed copy. Within one output the nearest input decides: a prompt whose zeroed
+ * copy feeds the negative input reaches the positive input first, so it stays the prompt.
  */
 function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
-  let frontier = [start.key];
-  const seen = new Set(frontier);
-  for (let hop = 0; hop < MAX_HOPS && frontier.length; hop++) {
-    const found = new Set<PromptRole>();
-    const next: string[] = [];
-    for (const key of frontier)
-      for (const { node, input } of readers.get(key) ?? []) {
+  const roles = new Set<PromptRole>();
+  const first = readers.get(start.key) ?? [];
+  for (const slot of new Set(first.map((reader) => reader.slot))) {
+    let frontier = first.filter((reader) => reader.slot === slot);
+    const seen = new Set([start.key]);
+    for (let hop = 0; hop < MAX_HOPS && frontier.length; hop++) {
+      const found = new Set<PromptRole>();
+      const next: typeof frontier = [];
+      for (const { node, input } of frontier) {
         if (SOCKET_ROLES[input]) found.add(SOCKET_ROLES[input]);
         else if (!seen.has(node.key)) {
           seen.add(node.key);
-          next.push(node.key);
+          next.push(...(readers.get(node.key) ?? []));
         }
       }
-    if (found.size) return found;
-    frontier = next;
+      if (found.size) {
+        for (const role of found) roles.add(role);
+        break;
+      }
+      frontier = next;
+    }
   }
-  return new Set();
+  return roles;
 }
 
 /**

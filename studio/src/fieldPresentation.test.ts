@@ -167,6 +167,51 @@ test('one node that encodes both texts names them by input; a shared role adds t
   assert.equal(names.get(`${kandinsky.id}:7:qwen25_7b`)?.label, 'Negative prompt · qwen25_7b');
 });
 
+test('each output finds its own role, so a zeroed negative branch keeps Negative prompt', () => {
+  // Qwen Image 2.1's encoder with only its negative output passing through a zeroed copy: the
+  // positive output reaches the sampler first, and the negative output still reaches its input.
+  const base = graph('qwen-image21-t2i');
+  const zeroOut = {
+    id: 10,
+    type: 'ConditioningZeroOut',
+    inputs: [{ name: 'conditioning', type: 'CONDITIONING', link: 6 }],
+    outputs: [{ name: 'CONDITIONING', type: 'CONDITIONING', links: [11] }],
+  };
+  const workflow = {
+    ...base,
+    nodes: [
+      ...base.nodes.map((node: Record<string, any>) =>
+        node.id === 7
+          ? {
+              ...node,
+              inputs: node.inputs.map((socket: Record<string, any>) =>
+                socket.name === 'negative' ? { ...socket, link: 11 } : socket,
+              ),
+            }
+          : node,
+      ),
+      zeroOut,
+    ],
+    links: [
+      ...base.links.map((row: unknown[]) =>
+        row[0] === 6 ? [6, 6, 1, 10, 0, 'CONDITIONING'] : row,
+      ),
+      [11, 10, 0, 7, 2, 'CONDITIONING'],
+    ],
+  };
+  const names = presentFields({ workflow }, textBindings(workflow), recorded);
+  assert.equal(names.get(`${base.id}:6:prompt`)?.label, 'Prompt');
+  assert.equal(names.get(`${base.id}:6:negative_prompt`)?.label, 'Negative prompt');
+  assert.equal(names.get(`${base.id}:6:negative_prompt`)?.role, 'negative');
+  // A prompt whose zeroed copy feeds the negative input, as in Flux 1, stays the prompt.
+  const flux = graph('flux1-t2i');
+  const fluxNames = presentFields({ workflow: flux }, textBindings(flux), recorded);
+  assert.deepEqual(
+    [...fluxNames.values()].filter((name) => name.role).map((name) => [name.label, name.role]),
+    [['Prompt', 'prompt']],
+  );
+});
+
 test('no packaged template shows two text boxes with one name, and each names its prompt', () => {
   for (const row of bundled) {
     const bindings = textBindings(row.workflow);

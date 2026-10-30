@@ -80,7 +80,9 @@ test('Inputs names the Krea 2 boxes Prompt and Negative prompt, with no raw type
   assert.match(opener, /aria-expanded="false"/);
   assert.match(opener, new RegExp(`aria-controls="field-${KREA}:6:text"`));
   assert.match(tag(body, 'textarea', 'id', `${KREA}:6:text`), /\shidden/);
-  assert.match(tag(body, 'label', 'for', `${KREA}:6:text`), /\shidden/);
+  // A folded box shows no label: its button names it.
+  assert.equal(tag(body, 'label', 'for', `${KREA}:6:text`), '');
+  assert.doesNotMatch(visibleText(body), /Prompt .* Negative prompt Add negative prompt/);
   // A field's node shows on hover.
   assert.match(
     tag(body, 'label', 'for', `${KREA}:5:text`),
@@ -164,6 +166,8 @@ test('one layout rule keeps the whole Create pane from scrolling sideways', () =
     /\.controls-panel \.input-row \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/,
   );
   assert.match(rule, /\.controls-panel fieldset \{\s*min-width: 0;/);
+  // The hidden attribute wins over any field rule that sets display, such as `.field label`.
+  assert.match(css, /\.field \[hidden\] \{\s*display: none;\s*\}/);
 });
 
 test('a short window keeps a field list floor and pins the footer, which fields stop above', () => {
@@ -182,18 +186,34 @@ test('a short window keeps a field list floor and pins the footer, which fields 
   assert.match(view, /<div class="submission-footer" use:footerRoom>/);
 });
 
-test('the footer action keeps the pane told of the footer height, and forgets it on removal', () => {
+test('the footer action tracks the footer height, brings focused controls clear of it, and cleans up', () => {
   const room: string[] = [];
   let watch = () => {};
   let watching = false;
+  const listeners = new Map<string, (event: Event) => void>();
   const pane = {
     style: {
       setProperty: (name: string, value: string) => room.push(`${name}=${value}`),
       removeProperty: (name: string) => room.push(`${name} removed`),
     },
+    addEventListener: (type: string, listener: (event: Event) => void) =>
+      listeners.set(type, listener),
+    removeEventListener: (type: string) => listeners.delete(type),
   };
-  const footer = { parentElement: pane, offsetHeight: 151 };
+  const box = (top: number, bottom: number) => () => ({ top, bottom });
+  const inside = {
+    getBoundingClientRect: box(730, 760),
+    scrollIntoView: () => assert.fail('a footer control stays where it is'),
+  };
+  const footer = {
+    parentElement: pane,
+    offsetHeight: 151,
+    contains: (n: unknown) => n === inside,
+    getBoundingClientRect: box(717, 868),
+  };
   const original = globalThis.ResizeObserver;
+  const frame = globalThis.requestAnimationFrame;
+  globalThis.requestAnimationFrame = ((callback: () => void) => (callback(), 0)) as never;
   globalThis.ResizeObserver = class {
     constructor(callback: () => void) {
       watch = callback;
@@ -210,11 +230,23 @@ test('the footer action keeps the pane told of the footer height, and forgets it
     const action = footerRoom(footer as unknown as HTMLElement);
     footer.offsetHeight = 216;
     watch();
+    // Once a focus settles, a field left under the footer scrolls clear of it; a field clear of
+    // the footer and a control inside the footer stay put.
+    const scrolled: string[] = [];
+    const field = (name: string, top: number, bottom: number) => ({
+      getBoundingClientRect: box(top, bottom),
+      scrollIntoView: (options: { block: string }) => scrolled.push(`${name} ${options.block}`),
+    });
+    for (const target of [field('under', 660, 723), field('clear', 559, 596), inside])
+      listeners.get('focusin')!({ target } as unknown as Event);
+    assert.deepEqual(scrolled, ['under nearest']);
     action.destroy?.();
     assert.deepEqual(room, ['--footer-room=151px', '--footer-room=216px', '--footer-room removed']);
     assert.equal(watching, false);
+    assert.equal(listeners.size, 0);
   } finally {
     globalThis.ResizeObserver = original;
+    globalThis.requestAnimationFrame = frame;
   }
 });
 

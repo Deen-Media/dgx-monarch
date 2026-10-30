@@ -61,15 +61,14 @@
       aria-controls={fieldId}
       onclick={unfold}>Add {label.toLowerCase()}</button
     >{/if}
-  <label
-    for={fieldId}
-    hidden={folded}
-    title={presentation && presentation.source !== label ? presentation.source : undefined}
-    >{label}
-    {#if meta?.context}<span class="field-context">{meta.context}</span>{/if}{#if tag}<span
-        class="field-type">{tag}</span
-      >{/if}</label
-  >
+  {#if !folded}<label
+      for={fieldId}
+      title={presentation && presentation.source !== label ? presentation.source : undefined}
+      >{label}
+      {#if meta?.context}<span class="field-context">{meta.context}</span>{/if}{#if tag}<span
+          class="field-type">{tag}</span
+        >{/if}</label
+    >{/if}
   {#if locked}
     <input id={fieldId} value={locked} disabled />
   {:else if binding.resolved === false}

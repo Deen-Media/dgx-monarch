@@ -273,3 +273,7 @@
   padding: 5px 9px;
   color: var(--muted);
 }
+/* A field rule that sets display must not show a control the field hides, such as a folded box. */
+.field [hidden] {
+  display: none;
+}
