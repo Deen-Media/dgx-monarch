@@ -502,7 +502,7 @@ def test_an_h3_render_still_short_refuses_with_the_reading_after_the_unload(
     message = str(excinfo.value)
     assert calls.unload == 1 and rig.rpc == []
     assert message.startswith("[dgxm:C guard=activation_footprint_preflight waivable=0] "
-                              "minimax_h3 activation preflight: 20.7 GiB needed per rank, "
+                              "minimax_h3 activation preflight: 21.2 GiB needed per rank, "
                               "19.1 GiB usable (24.1 GiB MemAvailable minus a 5.0 GiB reserve")
     assert message.endswith("MemAvailable read 2.0 GiB before the unload and 24.1 GiB "
                             "after it, and the figures above are the reading after it.")

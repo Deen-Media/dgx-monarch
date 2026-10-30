@@ -2,8 +2,9 @@
 h3_activation (docs/TROUBLESHOOTING.md #56).
 
 CPU only, with comfy present only as small stubs. The three modules import no
-torch and do integer arithmetic over duck-typed shapes, so the 2026-08-05 kill
-and the hardware-proven world-2 run at the same shape both replay here.
+torch and do integer arithmetic over duck-typed shapes, so the 2026-08-05 kill,
+the hardware-proven world-2 run at the same shape and the 2026-10-29 15 second
+render all replay here.
 
 Provenance for every number below:
 
@@ -14,20 +15,25 @@ Provenance for every number below:
   single-rank bf16 render recorded 103.3 GiB of anon RSS and was OOM-killed
   twice;
 * the hardware-proven world-2 uly2 run at Config B, 727.6 s bf16, and the
-  single-GPU Config B int8-convrot completion, both from docs/VALIDATION.md.
+  single-GPU Config B int8-convrot completion, both from docs/VALIDATION.md;
+* the 2026-10-29 1344x768x362 render on the pair, uly2, pruned int8-convrot
+  (docs/VALIDATION.md, H3 capacity): 109,463 packed rows, 17.6 GiB of GPU
+  reservation per actor beyond the weights, and the two readings at which the
+  old constants refused it.
 
-The acceptance surface is those last three: the shape that was killed must
-refuse, and the two shapes that completed on this rig must not. Every
-calibration constant is pinned against the window those requirements bound, so
-an edit to the block factor fails here with the reason.
+The acceptance surface is those four hardware points: the shape that was
+killed must refuse, and the three shapes that completed on this rig must not.
+The fixed floor and the slope are pinned against the region those
+requirements bound, so an edit to either fails here with the reason.
 """
 from __future__ import annotations
 
 import ast
+import itertools
 import json
-import math
 import sys
 import types
+from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
@@ -82,7 +88,14 @@ MEM_PENDING = int(92.2 * _GIB)
 # h3_calibration.py, charges the larger non-pruned file: 31.70 + 16.7 + 5.8 =
 # 54.2 GiB resident, and 114.7 minus that is 60.5 GiB.
 MEM_SINGLE_RANK_INT8 = int(60.5 * _GIB)
-RESERVE = 4 * _GIB
+# The shipped reserve: the driver floor, 5 GiB since 2026-09-04
+# (driver_footprint.reserve_bytes). The three postures above leave 27.4, 87.2
+# and 55.5 GiB usable at it.
+RESERVE = 5 * _GIB
+# The reserve the 2026-08-05 fit used. Its readings were 28.4, 88.2 and
+# 56.5 GiB usable. A refusal requirement is held to this larger budget, so the
+# killed shape refuses at either reserve.
+RESERVE_2026_08 = 4 * _GIB
 
 # --- the two committed shapes ----------------------------------------------
 CONFIG_A = (512, 320, 5)
@@ -100,6 +113,26 @@ FRAME_ROWS_B = 1_008      # ceil(48/2) * ceil(84/2)
 # shipped constant sits above it.
 INCIDENT_UNATTRIBUTED = int(24.9 * _GIB)
 
+# The 2026-10-29 render on the pair (docs/VALIDATION.md, H3 capacity):
+# 1344x768x362 on uly2, pruned int8-convrot, weights resident. Each actor's GPU
+# use beyond its 19.53 GiB of weights peaked at 17.6 GiB, a lower bound on what
+# the shape needs per rank, as the incident's 24.9 GiB is for Config B.
+CONFIG_362 = (1344, 768, 362)
+CONFIG_362_STREAMS = (107_856, 1_206, 401)          # video, audio, text
+CONFIG_362_TOTAL = sum(CONFIG_362_STREAMS)          # 109,463
+CONFIG_362_PER_RANK = -(-CONFIG_362_TOTAL // 2)     # 54,732
+MEASURED_362_RESERVATION = int(17.6 * _GIB)
+# The two readings at which the old constants refused it in the same session:
+# the second request, after the driver unloaded its VAEs (56.5 GiB
+# MemAvailable, 51.5 usable), and the gate's slab path after its proof render
+# (56.3 GiB usable).
+MEM_SECOND_RENDER = int(56.5 * _GIB)
+MEM_GATE_PATH = int(61.3 * _GIB)
+# The same cell on one Spark, as the loader node read it: video and audio rows
+# only, the pruned DiT not yet loaded, 92.8 GiB MemAvailable.
+CONFIG_362_LOADER_TOTAL = 107_856 + 1_206           # 109,062
+MEM_ONE_SPARK = int(92.8 * _GIB)
+
 
 def _rows(**fields: int) -> h3_rows.H3Rows:
     return h3_rows.H3Rows(resolved=True, **fields)
@@ -108,6 +141,10 @@ def _rows(**fields: int) -> h3_rows.H3Rows:
 ROWS_A = _rows(video=320, audio=16, text=20, frame_rows=FRAME_ROWS_A, latent_t=2)
 ROWS_B = _rows(video=37_296, audio=414, text=20, frame_rows=FRAME_ROWS_B,
                latent_t=37)
+ROWS_362 = _rows(video=107_856, audio=1_206, text=401, frame_rows=FRAME_ROWS_B,
+                 latent_t=107)
+ROWS_362_LOADER = _rows(video=107_856, audio=1_206, frame_rows=FRAME_ROWS_B,
+                        latent_t=107)
 
 
 @pytest.fixture(autouse=True)
@@ -376,7 +413,7 @@ def test_extras_are_maxed_across_entries_never_summed():
     family's nodes never ask it to, so the same extras list lands on every
     positive entry. Summing would multiply one reference block by the entry
     count: a two-entry positive carrying one Config B video_audio reference
-    would add 37,710 phantom rows, 38.8 GiB at one rank, enough to refuse a
+    would add 37,710 phantom rows, 24.9 GiB at one rank, enough to refuse a
     render that fits. Each entry is its own model call building its own packed
     layout, so the peak is one layout and the count must not move with the
     entry count."""
@@ -483,14 +520,15 @@ def test_ref_extras_keys_match_the_driver_stack_profile():
         pytest.fail(f"the profile's keys moved: {profile.ref_extras_keys}")
 
 
-# 2. Calibration: the constants, and the window they have to sit in.
+# 2. Calibration: the constants, and the region they have to sit in.
 
 def test_the_calibration_constants_are_pinned():
     """Changing any of these is a recalibration, which needs its own
     evidence."""
     expected = {
         "H3_HIDDEN_DIM": 5_376,
-        "H3_SHARDED_ROW_BYTES": 1_032_192,
+        "H3_ACTIVATION_FLOOR_BYTES": 8_053_063_680,      # 7.5 GiB
+        "H3_SHARDED_ROW_BYTES": 634_368,
         "H3_REPLICATED_ROW_BYTES": 73_728,
     }
     for name, want in expected.items():
@@ -498,71 +536,252 @@ def test_the_calibration_constants_are_pinned():
         if got != want:
             pytest.fail(f"{name} is {got}, was calibrated at {want}; see "
                         "docs/TROUBLESHOOTING.md #56 before moving it")
-    if h3_activation.H3_SHARDED_ROW_BYTES != 96 * h3_calibration.H3_HIDDEN_DIM * 2:
+    if h3_activation.H3_SHARDED_ROW_BYTES != 59 * h3_calibration.H3_HIDDEN_DIM * 2:
         pytest.fail("the sharded row cost must stay block_factor x hidden x 2")
     if h3_activation.H3_FAMILY != "minimax_h3":
         pytest.fail("the guard is family scoped to minimax_h3")
 
 
-def _calibration_window() -> tuple[float, float]:
-    """The intersection of every constraint the rig records, recomputed from
-    the committed totals rather than from h3_calibration.py's arithmetic.
+def test_the_postures_use_the_shipped_reserve():
+    """The 2026-08-05 fit ran at a 4 GiB reserve. The driver floor has been
+    5 GiB since 2026-09-04, so this file states its postures there and keeps
+    the older reserve only to hold a refusal to the larger budget."""
+    floor = driver_footprint.reserve_bytes(None)
+    if RESERVE != floor:
+        pytest.fail(f"the shipped floor is {floor} bytes, this file uses {RESERVE}")
+    if RESERVE_2026_08 >= RESERVE:
+        pytest.fail("the 2026-08-05 reserve was the smaller one")
 
-    Two requirements bound the sharded row cost S from opposite sides, and a
-    third comes from the one single-rank Config B run that completed:
 
-    * Config B at one rank at bf16 must refuse, in both postures: it is the
-      shape that was killed twice.
-    * Config B at world-2 uly2 must pass. It is hardware-proven at 727.6 s.
-    * Config B at one rank on int8-convrot must pass under an explicit preset,
-      charged at the non-pruned file (see MEM_SINGLE_RANK_INT8).
+@dataclass(frozen=True)
+class _Requirement:
+    """One hardware point in one posture, as a margin linear in (F, S).
+
+    margin = sign * (F + per_rank*S + total*R + weight - budget), where sign is
+    +1 when the charge must exceed the budget (a shape that must refuse, or a
+    measured lower bound) and -1 when it must not (a shape that must pass).
+    Recomputed from the committed totals, not from h3_calibration.py's
+    arithmetic.
     """
-    total = CONFIG_B_TOTAL
-    per_rank_2 = -(-total // 2)
-    replicated = h3_activation.H3_REPLICATED_ROW_BYTES
-    floors: list[float] = []
-    ceilings: list[float] = []
-    for usable, weight in ((MEM_RESIDENT - RESERVE, 0),
-                           (MEM_PENDING - RESERVE, DIT_REF2VA_BF16)):
-        budget = usable - weight
-        floors.append(budget / total - replicated)                  # refuse at N=1
-        ceilings.append((budget - total * replicated) / per_rank_2)  # pass at N=2
-    # The single-rank int8 completion ran an explicit preset, so its weights
-    # were already inside the reading and nothing is charged for them.
-    ceilings.append((MEM_SINGLE_RANK_INT8 - RESERVE) / total - replicated)
-    return max(floors), min(ceilings)
+
+    name: str
+    sign: int
+    per_rank: int
+    total: int
+    weight: int
+    budget: int
+
+    def constant(self, sharded: float) -> float:
+        """Every term but the floor, less the budget."""
+        replicated = h3_calibration.H3_REPLICATED_ROW_BYTES
+        return (self.per_rank * sharded + self.total * replicated
+                + self.weight - self.budget)
+
+    def margin(self, floor: float, sharded: float) -> float:
+        return self.sign * (floor + self.constant(sharded))
 
 
-def test_the_block_factor_sits_inside_its_calibration_window():
-    """A new measurement moves the constant by changing an inequality here."""
-    floor, ceiling = _calibration_window()
-    sharded = h3_activation.H3_SHARDED_ROW_BYTES
-    if not floor < sharded <= ceiling:
-        pytest.fail(
-            f"H3_SHARDED_ROW_BYTES {sharded} left its calibration window "
-            f"({floor:.0f}, {ceiling:.0f}]: below it the Config B single-rank "
-            "bf16 kill passes, above it a hardware-proven run refuses")
-    centre = math.sqrt(floor * ceiling)
-    if not 0.85 * centre <= sharded <= 1.15 * centre:
-        pytest.fail(f"the window is a factor of two wide by construction, so "
-                    f"the defensible pick is its geometric centre {centre:.0f}; "
-                    f"{sharded} is not near it")
+# Each requirement takes the reserve that makes it harder: a refusal the larger
+# 2026-08-05 budget, a pass the shipped one, so every verdict holds at either.
+_CONFIG_B_PER_RANK_2 = -(-CONFIG_B_TOTAL // 2)
+REQUIREMENTS = (
+    _Requirement("1 killed, resident", +1, CONFIG_B_TOTAL, CONFIG_B_TOTAL, 0,
+                 MEM_RESIDENT - RESERVE_2026_08),
+    _Requirement("1 killed, pending", +1, CONFIG_B_TOTAL, CONFIG_B_TOTAL,
+                 DIT_REF2VA_BF16, MEM_PENDING - RESERVE_2026_08),
+    _Requirement("2 uly2 bf16, resident", -1, _CONFIG_B_PER_RANK_2,
+                 CONFIG_B_TOTAL, 0, MEM_RESIDENT - RESERVE),
+    _Requirement("2 uly2 bf16, pending", -1, _CONFIG_B_PER_RANK_2,
+                 CONFIG_B_TOTAL, DIT_REF2VA_BF16, MEM_PENDING - RESERVE),
+    _Requirement("3 one-rank int8, preset", -1, CONFIG_B_TOTAL, CONFIG_B_TOTAL,
+                 0, MEM_SINGLE_RANK_INT8 - RESERVE),
+    _Requirement("4 362 frames, second render", -1, CONFIG_362_PER_RANK,
+                 CONFIG_362_TOTAL, 0, MEM_SECOND_RENDER - RESERVE),
+    _Requirement("4 362 frames, gate slab path", -1, CONFIG_362_PER_RANK,
+                 CONFIG_362_TOTAL, 0, MEM_GATE_PATH - RESERVE),
+    _Requirement("4 362 frames, measured lower bound", +1, CONFIG_362_PER_RANK,
+                 CONFIG_362_TOTAL, 0, MEASURED_362_RESERVATION),
+)
+# Not a requirement: the cell the owner's measured one-Spark ladder decides.
+ONE_SPARK_362 = _Requirement(
+    "one Spark, 362 frames", -1, CONFIG_362_LOADER_TOTAL,
+    CONFIG_362_LOADER_TOTAL, DIT_REF2VA_INT8_PRUNED, MEM_ONE_SPARK - RESERVE)
 
 
-def test_the_block_factor_is_above_the_anatomy_floor_and_the_measured_slope():
-    """Two lower bounds, both below the shipped constant.
+def _det3(m: list[list[float]]) -> float:
+    return (m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]))
 
-    The anatomy floor is what one H3 block holds at once during an
+
+def _maximin(requirements) -> tuple[float, float, float, frozenset[str]]:
+    """The floor and slope that leave the smallest margin as large as it can
+    be: (that margin, F, S, the requirements that tie there).
+
+    Every margin is linear in (F, S), so the optimum sits where three of them
+    tie. This solves each triple by Cramer's rule and keeps the best tie that
+    no other requirement undercuts.
+    """
+    best: tuple[float, float, float, frozenset[str]] | None = None
+    for trio in itertools.combinations(requirements, 3):
+        system = [[float(r.sign), float(r.sign * r.per_rank), -1.0] for r in trio]
+        rhs = [-r.sign * r.constant(0.0) for r in trio]
+        det = _det3(system)
+        if abs(det) < 1e-9:
+            continue
+        solved = []
+        for column in range(3):
+            swapped = [row[:] for row in system]
+            for i in range(3):
+                swapped[i][column] = rhs[i]
+            solved.append(_det3(swapped) / det)
+        floor, sharded, margin = solved
+        if min(r.margin(floor, sharded) for r in requirements) < margin - 1.0:
+            continue
+        if best is None or margin > best[0]:
+            best = (margin, floor, sharded, frozenset(r.name for r in trio))
+    if best is None:
+        pytest.fail("no tie of three requirements bounds the region")
+    return best
+
+
+def _floor_window(requirements, sharded: float) -> tuple[float, float]:
+    """The floors that meet every requirement at this slope, as (lo, hi]."""
+    lo = max(-r.constant(sharded) for r in requirements if r.sign > 0)
+    hi = min(-r.constant(sharded) for r in requirements if r.sign < 0)
+    return lo, hi
+
+
+def _slope_window(requirements, floor: float) -> tuple[float, float]:
+    """The slopes that meet every requirement at this floor, as (lo, hi]."""
+    bounds = [(r.sign, -(floor + r.constant(0.0)) / r.per_rank)
+              for r in requirements]
+    lo = max(bound for sign, bound in bounds if sign > 0)
+    hi = min(bound for sign, bound in bounds if sign < 0)
+    return lo, hi
+
+
+def test_the_floor_and_slope_are_the_rounded_optimum_of_the_four_points():
+    """With two unknowns the defensible pick is the pair whose smallest margin
+    is as large as it can be. The budgets carry whole-GiB doubt (the 92.2 GiB
+    pending reading is derived, the encoder reads 14.6 or 16.7 GiB, the VAEs
+    5.41 or 5.8), so margins are compared in GiB, not as ratios. Three
+    requirements tie at the optimum: the killed shape resident, the world-2
+    bf16 run pending and the 362-frame render's second request."""
+    margin, floor, sharded, binding = _maximin(REQUIREMENTS)
+    want = {"1 killed, resident", "2 uly2 bf16, pending",
+            "4 362 frames, second render"}
+    if binding != want:
+        pytest.fail(f"the requirements that bind moved: {sorted(binding)}")
+    if not 4.0 * _GIB < margin < 4.2 * _GIB:
+        pytest.fail(f"the optimum's margin moved to {margin / _GIB:.2f} GiB; "
+                    "h3_calibration.py prints 4.09")
+    shipped_floor = h3_calibration.H3_ACTIVATION_FLOOR_BYTES
+    shipped_slope = h3_calibration.H3_SHARDED_ROW_BYTES
+    if abs(shipped_floor - floor) > 0.25 * _GIB:
+        pytest.fail(f"the floor {shipped_floor / _GIB:.2f} GiB is not the "
+                    f"optimum {floor / _GIB:.2f} GiB rounded")
+    if abs(shipped_slope - sharded) > h3_calibration.H3_HIDDEN_DIM * 2:
+        pytest.fail(f"the slope {shipped_slope} is more than one block factor "
+                    f"from the optimum {sharded:.0f}")
+    worst = min(r.margin(shipped_floor, shipped_slope) for r in REQUIREMENTS)
+    if worst < 0.95 * margin:
+        pytest.fail(f"rounding gave up too much: {worst / _GIB:.2f} GiB against "
+                    f"the optimum's {margin / _GIB:.2f}")
+
+
+def test_each_constant_sits_mid_window_with_the_other_held():
+    """Two cross sections of the region: the slopes that meet every
+    requirement at the shipped floor, and the floors that meet them at the
+    shipped slope. Below either window the killed shape passes; above it a
+    hardware-proven run refuses. A new measurement moves a constant by moving
+    an end here."""
+    floor = h3_calibration.H3_ACTIVATION_FLOOR_BYTES
+    sharded = h3_calibration.H3_SHARDED_ROW_BYTES
+    for name, value, (lo, hi) in (
+            ("H3_SHARDED_ROW_BYTES", sharded,
+             _slope_window(REQUIREMENTS, floor)),
+            ("H3_ACTIVATION_FLOOR_BYTES", floor,
+             _floor_window(REQUIREMENTS, sharded))):
+        if not lo < value <= hi:
+            pytest.fail(f"{name} {value} left its window ({lo:.0f}, {hi:.0f}]")
+        place = (value - lo) / (hi - lo)
+        if not 1 / 3 < place < 2 / 3:
+            pytest.fail(f"{name} sits {place:.2f} of the way across "
+                        f"({lo:.0f}, {hi:.0f}], not near its middle")
+
+
+@pytest.mark.parametrize(("point", "rows", "sp", "mem", "weight", "resident",
+                          "stated"), [
+    ("1 killed, resident", ROWS_B, 1, MEM_RESIDENT, DIT_REF2VA_BF16, True,
+     (-4.98, -3.98)),
+    ("1 killed, pending", ROWS_B, 1, MEM_PENDING, DIT_REF2VA_BF16, False,
+     (-6.91, -5.91)),
+    ("2 uly2 bf16, resident", ROWS_B, 2, MEM_RESIDENT, DIT_REF2VA_BF16, True,
+     (6.16, 7.16)),
+    ("2 uly2 bf16, pending", ROWS_B, 2, MEM_PENDING, DIT_REF2VA_BF16, False,
+     (4.24, 5.24)),
+    ("3 one-rank int8, preset", ROWS_B, 1, MEM_SINGLE_RANK_INT8,
+     DIT_REF2VA_INT8, True, (23.12, 24.12)),
+    ("4 362 frames, second render", ROWS_362, 2, MEM_SECOND_RENDER,
+     DIT_REF2VA_INT8_PRUNED, True, (4.15, None)),
+    ("4 362 frames, gate slab path", ROWS_362, 2, MEM_GATE_PATH,
+     DIT_REF2VA_INT8_PRUNED, True, (8.95, None)),
+])
+def test_each_hardware_point_clears_by_the_margin_h3_calibration_states(
+        point, rows, sp, mem, weight, resident, stated):
+    """The margin table in h3_calibration.py, through the shipped estimator: GiB
+    to spare for a pass, and negative, GiB over, for a refusal. The first
+    figure is at the shipped 5 GiB reserve, the second at the 2026-08-05 4 GiB
+    one where that posture existed."""
+    for reserve, want in zip((RESERVE, RESERVE_2026_08), stated,
+                             strict=True):
+        if want is None:
+            continue
+        estimate = _estimate(rows, sp=sp, weight=weight, resident=resident,
+                             mem=mem, reserve=reserve)
+        got = (estimate.usable - estimate.projected) / _GIB
+        if abs(got - want) > 0.01:
+            pytest.fail(f"{point} at a {reserve / _GIB:.0f} GiB reserve clears "
+                        f"by {got:+.2f} GiB; h3_calibration.py states {want:+.2f}")
+        if estimate.fits != (want > 0):
+            pytest.fail(f"{point}: the verdict and the stated margin disagree")
+
+
+def test_the_estimate_clears_both_measured_lower_bounds():
+    """Two readings are lower bounds on what a shape needs: the 24.9 GiB the
+    2026-08-05 kill left unattributed at Config B on one rank, and the 17.6 GiB
+    each actor reserved beyond its weights at 362 frames on the pair. The
+    estimate stays above both. The kill's reading is not enough by itself: an
+    estimate equal to it would pass the shape it came from at either reserve,
+    so the margin above it is the guard."""
+    killed = _estimate(ROWS_B, sp=1).activation_bytes
+    if killed / INCIDENT_UNATTRIBUTED < 1.25:
+        pytest.fail(f"Config B at one rank is only "
+                    f"{killed / INCIDENT_UNATTRIBUTED:.2f}x the kill's reading; "
+                    "h3_calibration.py prints 1.30")
+    for reserve in (RESERVE, RESERVE_2026_08):
+        if INCIDENT_UNATTRIBUTED > MEM_RESIDENT - reserve:
+            pytest.fail("an estimate equal to the kill's reading would refuse "
+                        "the shape; the margin argument needs a new reason")
+    pair = _estimate(ROWS_362, sp=2, mem=MEM_SECOND_RENDER).activation_bytes
+    ratio = pair / MEASURED_362_RESERVATION
+    if not 2.5 < ratio < 2.9:
+        pytest.fail(f"the 362-frame estimate is {ratio:.2f}x the measured "
+                    "reservation; h3_calibration.py prints 2.69")
+    if pair <= 27 * _GIB:
+        pytest.fail("the estimate must also clear the host-level reading, "
+                    "about 27 GiB with the RSS and page cache growth")
+
+
+def test_the_slope_is_above_the_anatomy_floor():
+    """The anatomy floor is what one H3 block holds at once during an
     autograd-free forward: x, h, fc1 out, the swiglu product and fc2 out. In
     comfy.ldm.minimax.model.MLP, fc1 is Linear(hidden, 2 x ffn) and swiglu
     halves its output; at H3's hidden 5,376 and ffn 14,336 the five sum to
     1 + 1 + 16/3 + 8/3 + 1 = 11.0 x hidden elements. mesh_safety's generic
     placeholder factor (8) is below that floor, one reason it cannot be reused
     here.
-
-    The measured slope is the 2026-08-05 kill's own unattributed bytes, and a
-    constant calibrated to it would not have intercepted the incident it was
-    calibrated on: it is a lower bound taken at a kill.
     """
     hidden = h3_calibration.H3_HIDDEN_DIM
     anatomy = 11 * hidden * 2
@@ -572,48 +791,132 @@ def test_the_block_factor_is_above_the_anatomy_floor_and_the_measured_slope():
     if mesh_safety._ACTIVATION_BLOCK_FACTOR * hidden * 2 >= anatomy:
         pytest.fail("the SCAIL placeholder is no longer below H3's anatomy "
                     "floor; restate why it still cannot be reused")
-    measured = INCIDENT_UNATTRIBUTED / CONFIG_B_TOTAL - h3_activation.H3_REPLICATED_ROW_BYTES
-    if sharded <= measured:
-        pytest.fail(f"{sharded} is at or below the measured slope {measured:.0f}")
-    if sharded / measured < 1.5:
-        pytest.fail(f"the margin over the measured slope is only "
-                    f"{sharded / measured:.2f}x; at the measurement itself the "
-                    "single-rank Config B estimate equals the measured value "
-                    "and passes")
-    # Why the margin is needed, as arithmetic.
-    at_the_measurement = CONFIG_B_TOTAL * (
-        int(measured) + h3_activation.H3_REPLICATED_ROW_BYTES)
-    if at_the_measurement > MEM_RESIDENT - RESERVE:
-        pytest.fail("a constant equal to the measured slope would have "
-                    "intercepted the incident; the margin argument needs a "
-                    "new reason")
+
+
+def test_the_362_frame_rows_match_the_measured_render():
+    """1344x768x362 with the template's 401-token prompt is 109,463 rows, split
+    107,856/1,206/401, and 54,732 per rank on uly2. The loader node sees no
+    text and reads 109,062. The 2026-10-29 driver logs print all four."""
+    rows = h3_rows.rows_from_request(_request(text=401), _latent(CONFIG_362))
+    if (rows.video, rows.audio, rows.text) != CONFIG_362_STREAMS:
+        pytest.fail(f"the 362-frame split is {(rows.video, rows.audio, rows.text)}")
+    if rows.total != CONFIG_362_TOTAL or rows.per_rank(2) != CONFIG_362_PER_RANK:
+        pytest.fail(f"the 362-frame total is {rows.total}, "
+                    f"{rows.per_rank(2)} per rank")
+    if rows.latent_t != 107 or rows.frame_rows != FRAME_ROWS_B:
+        pytest.fail(f"the 362-frame grid is {rows.frame_rows} x {rows.latent_t}")
+    loader = h3_rows.rows_from_prompt_graph(_h3_graph(CONFIG_362))
+    if loader.total != CONFIG_362_LOADER_TOTAL:
+        pytest.fail(f"the loader node reads {loader.total} rows, expected "
+                    f"{CONFIG_362_LOADER_TOTAL}")
+
+
+@pytest.mark.parametrize("mem", [MEM_SECOND_RENDER, MEM_GATE_PATH])
+def test_the_362_frame_pair_render_fits_both_readings_that_refused_it(mem):
+    """The session's second request (51.5 GiB usable) and the gate's slab path
+    (56.3 GiB usable) both refused under the old constants, 8.7 and 3.8 GiB
+    short, though the first render completed from a lower reading. The
+    explicit preset loaded the weights, so they are credited."""
+    estimate = _estimate(ROWS_362, sp=2, weight=DIT_REF2VA_INT8_PRUNED,
+                         resident=True, mem=mem)
+    if not estimate.fits:
+        pytest.fail(f"a hardware-proven render was refused: "
+                    f"{estimate.projected / _GIB:.2f} GiB against "
+                    f"{estimate.usable / _GIB:.2f} GiB usable")
+
+
+def test_the_one_spark_362_frame_verdict_is_pinned_not_required():
+    """The model's answer for the cell on one Spark, as the loader node read it
+    on 2026-10-29: 109,062 rows on one rank, the pruned DiT pending, 92.8 GiB
+    MemAvailable. It refuses, 11.2 GiB short (the old slope: 44.1). This pins
+    the answer docs/VALIDATION.md and h3_calibration.py print; it is not a
+    requirement. The owner's measured one-Spark ladder, 243 frames and then
+    362, decides the cell, and a result from it changes the constants and this
+    test. The 243-frame rung fits at the same reading."""
+    estimate = _estimate(ROWS_362_LOADER, sp=1, weight=DIT_REF2VA_INT8_PRUNED,
+                         resident=False, mem=MEM_ONE_SPARK)
+    if estimate.fits:
+        pytest.fail("the model now admits the one-Spark cell; restate the "
+                    "verdict in h3_calibration.py and docs/VALIDATION.md")
+    if not 11.0 * _GIB < estimate.shortfall < 11.3 * _GIB:
+        pytest.fail(f"the shortfall moved to {estimate.shortfall / _GIB:.2f} GiB")
+    if not 79.3 * _GIB < estimate.activation_bytes < 79.5 * _GIB:
+        pytest.fail(f"the activations moved to "
+                    f"{estimate.activation_bytes / _GIB:.2f} GiB")
+    rung = h3_rows.rows_from_prompt_graph(_h3_graph((1344, 768, 243)))
+    first = _estimate(rung, sp=1, weight=DIT_REF2VA_INT8_PRUNED,
+                      resident=False, mem=MEM_ONE_SPARK)
+    if rung.total != 73_386 or not first.fits:
+        pytest.fail(f"the 243-frame rung ({rung.total} rows) must fit")
+    if not 12.0 * _GIB < first.usable - first.projected < 12.8 * _GIB:
+        pytest.fail(f"the 243-frame rung's room moved to "
+                    f"{(first.usable - first.projected) / _GIB:.2f} GiB")
+
+
+def test_admitting_the_one_spark_cell_would_cost_the_requirements_their_margin():
+    """The knife edge, stated rather than hidden. Constants that admit the
+    one-Spark cell exist, but none keeps this fit's margins: holding the cell
+    to the same footing as the four points, the best tie is about 2.5 GiB for
+    the killed shape, the world-2 bf16 run pending and the cell itself, against
+    the 4 GiB the fit keeps. From a slope of 48 x hidden x 2 up, a pair that
+    admits the cell refuses the killed shape by under 1 GiB, and from 49 up no
+    pair that meets the four points admits it. The constants were not tuned to
+    this case."""
+    shipped = min(r.margin(h3_calibration.H3_ACTIVATION_FLOOR_BYTES,
+                           h3_calibration.H3_SHARDED_ROW_BYTES)
+                  for r in REQUIREMENTS)
+    with_cell = (*REQUIREMENTS, ONE_SPARK_362)
+    margin, _floor, _sharded, binding = _maximin(with_cell)
+    if not 2.4 * _GIB < margin < 2.6 * _GIB:
+        pytest.fail(f"the best tie with the cell moved to {margin / _GIB:.2f} GiB")
+    if ONE_SPARK_362.name not in binding or margin >= shipped:
+        pytest.fail(f"admitting the cell must cost margin: {sorted(binding)}, "
+                    f"{margin / _GIB:.2f} against {shipped / _GIB:.2f} GiB")
+    killed = REQUIREMENTS[0]
+    step = h3_calibration.H3_HIDDEN_DIM * 2
+    lo, hi = _floor_window(with_cell, 48 * step)
+    if not lo < hi:
+        pytest.fail("at 48 x hidden x 2 some pair should still admit the cell")
+    if not 0 < killed.margin(hi, 48 * step) < 1.0 * _GIB:
+        pytest.fail(f"at 48 x hidden x 2 the killed shape refuses by "
+                    f"{killed.margin(hi, 48 * step) / _GIB:.2f} GiB at best")
+    lo, hi = _floor_window(with_cell, 49 * step)
+    if lo < hi:
+        pytest.fail("at 49 x hidden x 2 no pair that meets the four points "
+                    "should admit the cell")
 
 
 # 3. The estimate: what refuses, what must never refuse, and the per-rank rule.
 
+@pytest.mark.parametrize("reserve", [RESERVE, RESERVE_2026_08])
 @pytest.mark.parametrize(("posture", "mem", "weight", "resident"), [
     ("resident", MEM_RESIDENT, DIT_REF2VA_BF16, True),
     ("pending", MEM_PENDING, DIT_REF2VA_BF16, False),
 ])
 def test_config_b_single_rank_bf16_refuses_in_both_postures(
-        posture, mem, weight, resident):
+        posture, mem, weight, resident, reserve):
     """The 2026-08-05 kill: 103.3 GiB of anon RSS, OOM-killed twice, when no
-    capacity boundary the repo owned counted packed rows."""
-    estimate = _estimate(ROWS_B, sp=1, weight=weight, resident=resident, mem=mem)
+    capacity boundary the repo owned counted packed rows. It refuses at the
+    shipped reserve and at the larger budget the 2026-08-05 reserve left."""
+    estimate = _estimate(ROWS_B, sp=1, weight=weight, resident=resident,
+                         mem=mem, reserve=reserve)
     if estimate.fits:
         pytest.fail(f"{posture}: the incident shape must refuse, "
                     f"{estimate.projected / _GIB:.2f} GiB against "
                     f"{estimate.usable / _GIB:.2f} GiB usable")
 
 
+@pytest.mark.parametrize("reserve", [RESERVE, RESERVE_2026_08])
 @pytest.mark.parametrize(("posture", "mem", "weight", "resident"), [
     ("resident", MEM_RESIDENT, DIT_REF2VA_BF16, True),
     ("pending", MEM_PENDING, DIT_REF2VA_BF16, False),
 ])
-def test_config_b_uly2_bf16_fits_in_both_postures(posture, mem, weight, resident):
+def test_config_b_uly2_bf16_fits_in_both_postures(posture, mem, weight, resident,
+                                                  reserve):
     """Hardware-proven at 727.6 s (docs/VALIDATION.md). A false refusal here
     would block the run the guard offers as a remedy: world 2."""
-    estimate = _estimate(ROWS_B, sp=2, weight=weight, resident=resident, mem=mem)
+    estimate = _estimate(ROWS_B, sp=2, weight=weight, resident=resident, mem=mem,
+                         reserve=reserve)
     if not estimate.fits:
         pytest.fail(f"{posture}: a hardware-proven run was refused, "
                     f"{estimate.projected / _GIB:.2f} GiB against "
@@ -623,14 +926,15 @@ def test_config_b_uly2_bf16_fits_in_both_postures(posture, mem, weight, resident
 def test_the_tightest_surviving_cell_is_named_and_pinned():
     """Config B at world 2 under `auto`, at bf16, is the narrowest cell that
     still passes: the load has not happened yet, so the whole 61.7 GiB weight
-    charge sits on top of the sharded activations. At this file's 4 GiB
-    calibration reserve its margin is 1.07x, and it false-refuses whenever real
-    MemAvailable at dispatch falls below about 86.5 GiB; the same shape under an
-    explicit `uly2` preset runs the 1.37x resident posture instead. The reserve
-    floor has been 5 GiB since 2026-09-04; docs/TROUBLESHOOTING.md #56 gives
-    the figures at that floor. The 92.2 GiB MemAvailable the pending posture
-    starts from is derived, not measured (see MEM_PENDING); the cell's first
-    hardware pass, 2026-08-05, is in docs/TROUBLESHOOTING.md #56.
+    charge sits on top of the activations. It is one of the three requirements
+    the fit ties at its optimum. At the shipped 5 GiB reserve its pending
+    estimate is 83.0 GiB, a 1.05x margin, and it false-refuses whenever real
+    MemAvailable at dispatch falls below about 88.0 GiB, the figures
+    docs/TROUBLESHOOTING.md #56 prints; the same shape under an explicit
+    `uly2` preset runs the 1.29x resident posture instead. The 92.2 GiB
+    MemAvailable the pending posture starts from is derived, not measured (see
+    MEM_PENDING); the cell's first hardware pass, 2026-08-05, is in
+    docs/TROUBLESHOOTING.md #56.
     """
     estimate = _estimate(ROWS_B, sp=2, weight=DIT_REF2VA_BF16, resident=False,
                          mem=MEM_PENDING)
@@ -638,14 +942,16 @@ def test_the_tightest_surviving_cell_is_named_and_pinned():
         pytest.fail(f"the tightest surviving cell must still pass: "
                     f"{estimate.projected / _GIB:.2f} GiB against "
                     f"{estimate.usable / _GIB:.2f} GiB usable")
+    if f"{estimate.projected / _GIB:.1f}" != "83.0":
+        pytest.fail(f"the pending estimate moved to "
+                    f"{estimate.projected / _GIB:.2f} GiB; #56 prints 83.0")
     margin = estimate.usable / estimate.projected
-    if not 1.0 < margin < 1.15:
-        pytest.fail(f"this cell's margin moved to {margin:.3f}; it was 1.07 and "
-                    "docs/TROUBLESHOOTING.md #56 prints that number")
+    if not 1.0 < margin < 1.1:
+        pytest.fail(f"this cell's margin moved to {margin:.3f}; it was 1.05")
     floor = estimate.projected + estimate.reserve
-    if not 86.0 * _GIB < floor < 87.0 * _GIB:
+    if not 87.5 * _GIB < floor < 88.5 * _GIB:
         pytest.fail(f"the MemAvailable this cell needs moved to "
-                    f"{floor / _GIB:.1f} GiB; #56 says about 86.5")
+                    f"{floor / _GIB:.1f} GiB; #56 says about 88.0")
     if not _estimate(ROWS_B, sp=2, mem=MEM_RESIDENT).fits:
         pytest.fail("the explicit-preset sibling of this cell must stay the "
                     "comfortable one, or the doc's contrast is wrong")
@@ -654,7 +960,8 @@ def test_the_tightest_surviving_cell_is_named_and_pinned():
 @pytest.mark.parametrize(("posture", "mem", "resident"), [
     ("resident", MEM_RESIDENT, True), ("pending", MEM_PENDING, False)])
 def test_config_a_single_rank_bf16_fits_in_both_postures(posture, mem, resident):
-    """356 rows is 0.37 GiB of activations. The guard must never refuse here."""
+    """356 rows is 7.7 GiB of activations, 7.5 GiB of it the fixed floor. The
+    guard must never refuse here."""
     estimate = _estimate(ROWS_A, sp=1, weight=DIT_REF2VA_BF16,
                          resident=resident, mem=mem)
     if not estimate.fits:
@@ -691,8 +998,8 @@ def test_config_b_single_rank_int8_with_an_explicit_preset_fits():
 
 def test_sp_degree_divides_only_the_sharded_term():
     """Sequence parallel shards the packed row axis and nothing else. Weights
-    are replicated on every rank under Ulysses, and so is the staging in the
-    replicated floor."""
+    are replicated on every rank under Ulysses, and so are the fixed floor and
+    the replicated staging."""
     previous = None
     for sp in (1, 2, 3, 4):
         estimate = _estimate(ROWS_B, sp=sp, weight=DIT_REF2VA_BF16, resident=False,
@@ -703,12 +1010,14 @@ def test_sp_degree_divides_only_the_sharded_term():
             pytest.fail(f"sp {sp}: the sharded term is not rows/rank x S")
         if estimate.weight_bytes != DIT_REF2VA_BF16:
             pytest.fail(f"sp {sp}: sequence parallel must never divide weights")
+        if estimate.floor_bytes != h3_calibration.H3_ACTIVATION_FLOOR_BYTES:
+            pytest.fail(f"sp {sp}: sequence parallel must never divide the floor")
         if previous is not None and estimate.sharded_bytes >= previous:
             pytest.fail(f"sp {sp}: the sharded term must fall with the degree")
         previous = estimate.sharded_bytes
 
 
-def test_the_replicated_floor_is_charged_at_the_full_packed_total():
+def test_the_replicated_term_is_charged_at_the_full_packed_total():
     """Several buffers in the H3 forward are indexed by the full packed total
     on every rank whatever the degree (the fp32 patchify and both patch
     projections, the full-length assembly buffer, the sp_gather output and the
@@ -720,19 +1029,26 @@ def test_the_replicated_floor_is_charged_at_the_full_packed_total():
         if estimate.replicated_bytes != want:
             pytest.fail(f"sp {sp}: replicated staging is "
                         f"{estimate.replicated_bytes}, expected {want}")
-        if estimate.activation_bytes != estimate.sharded_bytes + estimate.replicated_bytes:
-            pytest.fail(f"sp {sp}: the two terms must sum to the activations")
+        if estimate.activation_bytes != (estimate.floor_bytes
+                                         + estimate.sharded_bytes
+                                         + estimate.replicated_bytes):
+            pytest.fail(f"sp {sp}: the three terms must sum to the activations")
+        if estimate.activation_bytes != h3_activation.activation_bytes_for(ROWS_B, sp):
+            pytest.fail(f"sp {sp}: the estimate and the loader-site formula "
+                        "must be one formula")
 
 
 def test_the_committed_activation_figures():
     """The activation bytes at the two committed shapes, pinned so a constant
     edit fails here with the figure it moved."""
-    if _estimate(ROWS_A, sp=1).activation_bytes != 393_707_520:
-        pytest.fail("Config A at one rank is 0.37 GiB of activations")
-    if _estimate(ROWS_B, sp=1).activation_bytes != 41_726_361_600:
-        pytest.fail("Config B at one rank is 38.86 GiB of activations")
-    if _estimate(ROWS_B, sp=2).activation_bytes != 22_254_059_520:
-        pytest.fail("Config B at world 2 is 20.73 GiB of activations")
+    if _estimate(ROWS_A, sp=1).activation_bytes != 8_305_145_856:
+        pytest.fail("Config A at one rank is 7.73 GiB of activations")
+    if _estimate(ROWS_B, sp=1).activation_bytes != 34_769_525_760:
+        pytest.fail("Config B at one rank is 32.38 GiB of activations")
+    if _estimate(ROWS_B, sp=2).activation_bytes != 22_802_173_440:
+        pytest.fail("Config B at world 2 is 21.24 GiB of activations")
+    if _estimate(ROWS_362, sp=2).activation_bytes != 50_843_781_120:
+        pytest.fail("1344x768x362 at world 2 is 47.35 GiB of activations")
 
 
 def test_max_total_rows_is_reachable():
@@ -752,14 +1068,15 @@ def test_max_total_rows_is_reachable():
 def test_max_total_rows_is_reachable_at_a_budget_that_needs_the_ceiling_correction():
     """`fits` charges ceil(total/N) sharded rows; the closed form solves the
     linear relaxation, and floor-dividing that solution does not undo the
-    ceiling. At the budget below the linear answer is 51,701 and it refuses,
+    ceiling. At the budget below the linear answer is 57,407 and it refuses,
     so an operator who shrank to the offered number would be refused again."""
     sp = 2
-    usable = 30_494_490_624
+    usable = 30_494_267_801
     sharded = h3_activation.H3_SHARDED_ROW_BYTES
     replicated = h3_activation.H3_REPLICATED_ROW_BYTES
-    linear = usable * sp // (sharded + replicated * sp)
-    if linear != 51_701:
+    budget = usable - h3_activation.H3_ACTIVATION_FLOOR_BYTES
+    linear = budget * sp // (sharded + replicated * sp)
+    if linear != 57_407:
         pytest.fail(f"this fixture exists for the off-by-one; linear is {linear}")
     estimate = _estimate(ROWS_B, sp=sp, mem=usable + RESERVE)
     if estimate.usable != usable:
@@ -931,6 +1248,39 @@ def test_a_weight_charge_that_alone_overruns_offers_no_row_bound():
         pytest.fail(f"the message must say no length clears this: {message}")
     if f"{estimate.shortfall / _GIB:.1f} GiB more free memory" not in message:
         pytest.fail(f"the shortfall stays the surviving lever: {message}")
+
+
+def test_a_fixed_floor_that_overruns_offers_no_row_bound():
+    """The weight charge alone can fit and still leave less than the fixed
+    floor, which no row count removes. Then no length fits either, and the
+    message names the floor among the reasons."""
+    mem = RESERVE + DIT_REF2VA_BF16 + h3_calibration.H3_ACTIVATION_FLOOR_BYTES // 2
+    estimate = _estimate(ROWS_A, sp=1, weight=DIT_REF2VA_BF16, resident=False,
+                         mem=mem)
+    if estimate.usable <= estimate.weight_bytes:
+        pytest.fail("this test is only worth running when the weights fit")
+    if estimate.max_total_rows:
+        pytest.fail(f"no row fits under the floor, offered "
+                    f"{estimate.max_total_rows}")
+    message = h3_activation.h3_refusal(estimate, UNET_NAME)
+    if "the fixed activation floor and the reserve leave no room" not in message:
+        pytest.fail(f"the message must name the floor among the reasons: {message}")
+
+
+def test_refusal_names_the_fixed_floor_beside_the_sharded_and_replicated_terms():
+    """Three terms make up the activations, and the message prints each one, in
+    the order the formula adds them, after the budget figures the gate's
+    200-character diagnostics keep."""
+    estimate = _estimate(ROWS_B, sp=1)
+    message = h3_activation.h3_refusal(estimate, UNET_NAME)
+    clause = (f"of which {estimate.floor_bytes / _GIB:.1f} GiB is the fixed "
+              f"activation floor, {estimate.sharded_bytes / _GIB:.1f} GiB "
+              f"shards with the sequence and "
+              f"{estimate.replicated_bytes / _GIB:.1f} GiB is replicated staging")
+    if clause not in message:
+        pytest.fail(f"the three terms must read in order: {message}")
+    if message.index("GiB needed per rank") > message.index("fixed activation floor"):
+        pytest.fail("the budget must come first")
 
 
 def test_a_gate_leg_truncation_keeps_the_numbers():
@@ -1243,7 +1593,7 @@ def test_an_unresolved_row_count_stands_this_guard_down(monkeypatch, tmp_path):
     zero rows and a bound the operator cannot act on."""
     model, _latent_ignored = _render_rig(monkeypatch, tmp_path,
                                          size=DIT_REF2VA_BF16, mem=MEM_RESIDENT)
-    # 61.7 GiB pending against 28.4 usable: the weight term alone refuses, so
+    # 61.7 GiB pending against 27.4 usable: the weight term alone refuses, so
     # this passes only because the guard stands down without a row count.
     _run(model, {"samples": _Fake((1, 24, 2))})     # fewer than 5 dims
 
@@ -1442,11 +1792,13 @@ def test_h3_modules_are_leaves():
 
 def test_the_calibration_record_is_its_own_leaf():
     """A recalibration is an evidence change and a guard edit is a logic
-    change, so they are different diffs. Both constants keep their spelling on
-    h3_activation, because every caller and every message reads them there."""
+    change, so they are different diffs. The three constants keep their
+    spelling on h3_activation, because every caller and every message reads
+    them there."""
     from dgx_monarch import h3_calibration
 
-    for name in ("H3_SHARDED_ROW_BYTES", "H3_REPLICATED_ROW_BYTES"):
+    for name in ("H3_ACTIVATION_FLOOR_BYTES", "H3_SHARDED_ROW_BYTES",
+                 "H3_REPLICATED_ROW_BYTES"):
         if getattr(h3_activation, name) != getattr(h3_calibration, name):
             pytest.fail(f"{name} diverged between the calibration record and "
                         "the guard that reads it")
@@ -1530,10 +1882,13 @@ PRETEND_SIZE = {
 # The graph's own stack, before any activation term: text encoder at
 # loader_graph's 1.15 resident ratio (1.144 measured, rounded up) plus both VAEs.
 STACK_NO_ACTIVATIONS = int(TE_NVFP4 * 1.15) + VAE_VIDEO + VAE_AUDIO
-# Chosen so the legacy load arena refuses the transient window (slab is the
-# remedy), while the settled window fits without the render's activations and
-# fails with them. The loader-site fold must preserve that distinction.
-MEM_LOADER = 64_334_622_731
+# Chosen inside (66.6, 71.6) GiB. Below 71.6 GiB the stock load's host copy
+# refuses the transient window, so slab is the remedy. From 66.6 GiB the
+# settled window holds Config A's render (7.7 GiB of activations) beside the
+# stack, and it never holds Config B's (32.4 GiB): it fits Config B without the
+# render's activations and fails with them. The loader-site fold must preserve
+# that distinction.
+MEM_LOADER = 69 * _GIB
 
 
 def _h3_graph(canvas: tuple[int, int, int], *, dit: str = UNET_NAME,
@@ -1652,6 +2007,9 @@ def test_loader_site_folds_graph_activations_into_the_settled_window(artifacts):
                     "degree at the loader node too")
     if not terms.activation_note:
         pytest.fail("the term must carry a note naming what it could not see")
+    if "fixed activation floor" not in terms.activation_note:
+        pytest.fail(f"the loader note must name the floor it charged: "
+                    f"{terms.activation_note}")
 
 
 def test_loader_site_reads_the_largest_declared_canvas_not_the_sum(artifacts):
@@ -1773,7 +2131,7 @@ def test_loader_site_rescue_is_not_offered_when_slab_only_fixes_the_load(loader_
     change the verdict."""
     prompt = _h3_graph(CONFIG_B)
     terms = _terms(prompt)
-    without = MEM_LOADER - 4 * _GIB - STACK_NO_ACTIVATIONS
+    without = MEM_LOADER - RESERVE - STACK_NO_ACTIVATIONS
     if not DIT_REF2VA_INT8 <= without:
         pytest.fail("this fixture must fit the settled window WITHOUT the "
                     "render's activations, or it proves nothing")
@@ -1852,7 +2210,7 @@ def test_the_budget_clause_names_activations_only_when_it_charged_them(
     # spent and stay charged.
     loader_preflight.reset_memos()
     monkeypatch.setattr(loader_graph, "_comfy_has_loaded_models", lambda: True)
-    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(70 * _GIB))
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(66 * _GIB))
     credited = _refuse_loader(_Mesh(), UNET_NAME, _h3_graph(CONFIG_B))
     reason = loader_graph.credited_terms(_terms(_h3_graph(CONFIG_B))).credit_reason
     if not reason:

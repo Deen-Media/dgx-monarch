@@ -297,8 +297,9 @@ def test_the_shipped_row_sum_sits_just_above_the_measured_slope():
 
 def test_the_h3_slope_is_not_transferable_to_ltx():
     """Never borrow the H3 slope: h3_calibration's block factor at LTX's width
-    is 2.7x the measured LTX cost and would refuse shapes this rig completes,
-    so the LTX block factor is fitted."""
+    was 2.7x the measured LTX cost when LTX was fitted, and would refuse shapes
+    this rig completes, so the LTX block factor is fitted. The 2026-10-29 H3
+    refit left it 1.7x."""
     from dgx_monarch import h3_calibration
 
     if (h3_calibration.H3_SHARDED_ROW_BYTES

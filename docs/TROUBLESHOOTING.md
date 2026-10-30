@@ -2290,14 +2290,16 @@ named as the driver floor (5 GiB) or your larger `uma_reserve_gb`. Then the
 charged terms: the DiT weights, with a note that says whether they were
 charged, credited as resident, or stood down for a `weight_dtype` cast; and the
 packed activations, with the total row count and its five-stream split. Then
-rows per rank over the sequence-parallel degree, and the split between the part
-that shards with the sequence and the replicated staging that no topology
-divides. Then what would fit: the largest packed total this topology and budget
-admit, beside the render's own total, and the free memory the render is short
-by. The offered row bound is reachable: shrinking to exactly that number
-passes, and one row more refuses. When the weight charge alone fills the budget
-the message offers no row bound and says so. No canvas change fixes that one,
-so take a smaller artifact or free memory.
+rows per rank over the sequence-parallel degree, and the activations in three
+parts: the fixed activation floor (7.5 GiB), which every render pays whatever
+its length or topology, the part that shards with the sequence, and the
+replicated staging that no topology divides. Then what would fit: the largest
+packed total this topology and budget admit, beside the render's own total,
+and the free memory the render is short by. The offered row bound is
+reachable: shrinking to exactly that number passes, and one row more refuses.
+When the weight charge and the fixed floor fill the budget the message offers
+no row bound and says so. No canvas change fixes that one, so take a smaller
+artifact or free memory.
 
 **Fix,** in the order the message prints them:
 
@@ -2333,17 +2335,22 @@ still prices a load that replaces a Worker resident with that resident held.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the step off, and the guard
 then refuses on the first reading.
 
-**Calibration and limits:** the estimate uses 1,032,192 bytes per sharded
-row and 73,728 bytes per replicated row. Constants and derivation are in
-`src/dgx_monarch/h3_calibration.py` (`H3_SHARDED_ROW_BYTES` and
-`H3_REPLICATED_ROW_BYTES`); measured cases are in VALIDATION.md. Calibration
-rejects the killed single-rank 1344x768x124 bf16 case while admitting its
-world-2 Ulysses and single-rank int8-convrot controls. The current 5 GiB floor
-preserves those outcomes. The observed kill slope is only a lower bound and
-would admit the killed shape if used directly.
+**Calibration and limits:** the estimate charges each rank a fixed 7.5 GiB
+floor, 634,368 bytes per sharded row and 73,728 bytes per replicated row.
+Constants and derivation are in `src/dgx_monarch/h3_calibration.py`
+(`H3_ACTIVATION_FLOOR_BYTES`, `H3_SHARDED_ROW_BYTES` and
+`H3_REPLICATED_ROW_BYTES`); measured cases are in
+[VALIDATION](VALIDATION.md#h3-capacity). Calibration rejects the killed
+single-rank 1344x768x124 bf16 case while admitting its world-2 Ulysses and
+single-rank int8-convrot controls, and the 2026-10-29 1344x768x362 render on
+the pair at both readings where the constants before that date refused it,
+with about 4 GiB to spare on each case that binds. Either reserve, 4 or 5 GiB,
+gives those outcomes. The kill's own reading is only a lower bound and would
+admit the killed shape if used directly. On one Spark the 1344x768x362 cell
+still refuses at the 2026-10-29 reading, 11.2 GiB short.
 
 For 1344x768x124 bf16 at world 2 under `auto`, the pending estimate is
-82.5 GiB, requiring about 87.5 GiB MemAvailable with the default floor, or
+83.0 GiB, requiring about 88.0 GiB MemAvailable with the default floor, or
 more with a larger `uma_reserve_gb`. The 92.2 GiB pending-memory example is
 derived from idle memory minus encoder/VAEs, not directly measured. An explicit
 `uly2` preset uses the already-resident calculation; select it or free memory
