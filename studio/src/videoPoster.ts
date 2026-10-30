@@ -22,6 +22,8 @@ export const UNPLAYABLE = 'Cannot play in this browser';
 export const POSTER_SIZE = 320;
 /** How long a video may take to show its first frame before the tile gives up on it. */
 export const FRAME_TIMEOUT_MS = 15_000;
+/** How long a download may run before the tile gives up on it and frees its turn. */
+export const DOWNLOAD_TIMEOUT_MS = 20_000;
 /** Videos that download and decode at once, so a page of videos does not start them all. */
 const AT_ONCE = 2;
 /** Posters kept for the page's life, the least recently used dropped first; each is a small JPEG. */
@@ -175,6 +177,7 @@ export async function videoPoster(
   digest: unknown,
   signal: AbortSignal,
   draw: typeof drawPoster = drawPoster,
+  downloadTimeoutMs = DOWNLOAD_TIMEOUT_MS,
 ): Promise<VideoPoster> {
   const key = JSON.stringify([id, digest ?? null]);
   const known = kept.get(key);
@@ -184,12 +187,24 @@ export async function videoPoster(
     return known;
   }
   const free = await place(signal);
+  // The download holds one of the turns, so it carries its own deadline: a response that stops
+  // making progress is abandoned, the turn passes on, and the thumbnail stays missing for now.
+  const download = new AbortController();
+  const leave = () => download.abort(signal.reason);
+  signal.addEventListener('abort', leave, { once: true });
+  const deadline = setTimeout(
+    () => download.abort(new Error('download deadline')),
+    downloadTimeoutMs,
+  );
   try {
     let blob: Blob;
     try {
-      blob = await client.media(id, signal);
+      blob = await client.media(id, download.signal);
     } catch {
       return { poster: null, duration: null, problem: 'missing' };
+    } finally {
+      clearTimeout(deadline);
+      signal.removeEventListener('abort', leave);
     }
     const { lasting, ...result } = await draw(blob, signal);
     if (lasting) {

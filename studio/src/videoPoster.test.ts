@@ -237,6 +237,29 @@ test('two videos download at a time, and a tile that goes away leaves the queue'
   for (const index of [0, 1, 3]) assert.equal((await posters[index]).problem, '');
 });
 
+test('a stalled download gives up at its deadline and lets the next video start', async () => {
+  // The companion answers only when the request is abandoned, as a response that stops does.
+  const asked: string[] = [];
+  const client = {
+    media: (id: string, signal?: AbortSignal) =>
+      new Promise<Blob>((resolve, reject) => {
+        asked.push(id);
+        if (id === 'stall-3') return resolve(clip);
+        signal?.addEventListener('abort', () => reject(signal.reason), { once: true });
+      }),
+  };
+  const signal = new AbortController().signal;
+  const posters = ['stall-1', 'stall-2', 'stall-3'].map((id) =>
+    videoPoster(client, id, undefined, signal, async () => drawn(), 5),
+  );
+  await settle();
+  assert.deepEqual(asked, ['stall-1', 'stall-2'], 'two downloads hold the turns');
+  for (const index of [0, 1])
+    assert.deepEqual(await posters[index], { poster: null, duration: null, problem: 'missing' });
+  assert.equal((await posters[2]).problem, '', 'the third video got its turn after the deadline');
+  assert.deepEqual(asked, ['stall-1', 'stall-2', 'stall-3']);
+});
+
 test('a video tile starts with the video mark until its poster is drawn', async () => {
   const body = await renderComponent('./components/Thumbnail.svelte', {
     artifact: { id: 'v', job_id: 'j', kind: 'video', filename: 'clip.mp4', created_at: 1 },
