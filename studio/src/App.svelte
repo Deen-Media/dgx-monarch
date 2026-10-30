@@ -22,13 +22,14 @@
   import { isActiveJob, requestJobAction } from './jobActions';
   import { OperationOpener } from './operationOpener.svelte';
   import { persistRecord } from './recordPersistence';
-  import { artifactDraft } from './artifactDraft';
+  import { artifactDraft, reuseNotice } from './artifactDraft';
   import { inspectDraft, rebuildBindings } from './workflowInspector';
   import StatusMessages from './components/StatusMessages.svelte';
   import AppShell from './components/AppShell.svelte';
   import CommandPalette from './components/CommandPalette.svelte';
   import SubmissionReview from './components/SubmissionReview.svelte';
   import Viewer from './components/Viewer.svelte';
+  import EditHandoff from './components/EditHandoff.svelte';
   import Generation from './views/Generation.svelte';
   import WorkspaceOutput from './views/WorkspaceOutput.svelte';
   import Gallery from './views/Gallery.svelte';
@@ -63,7 +64,7 @@
     width = $state(340);
   let pendingActions = 0,
     workflowId = $state('');
-  let palettePanel: CommandPalette, previewPanel: SubmissionReview;
+  let palettePanel: CommandPalette, previewPanel: SubmissionReview, handoff: EditHandoff;
   let jobs = $derived(connection.snapshot.jobs),
     activeJobs = $derived(jobs.filter(isActiveJob));
   const refresh = () => connection.refresh();
@@ -97,7 +98,7 @@
       busy = false;
     }
   }
-  async function importDraft(value: Draft) {
+  async function importDraft(value: Draft, templateId = '') {
     const previous = structuredClone($state.snapshot(draft));
     changeDraft(value);
     draft = value;
@@ -105,7 +106,7 @@
     connections = [];
     bindingErrors = [];
     rawWorkflow = '';
-    if (draft.workflow) await inspect(draft.workflow, draft.workflowName, true);
+    if (draft.workflow) await inspect(draft.workflow, draft.workflowName, true, templateId);
     undoDraft = previous;
   }
   function setNotice(message: string) {
@@ -176,6 +177,14 @@
     });
   }
   async function reuse(artifact: Artifact, operation?: string) {
+    if (operation === 'edit')
+      return handoff.send(artifact, {
+        withBusy,
+        importDraft,
+        navigate,
+        setNotice,
+        selectTab: (tab) => (controlTab = tab),
+      });
     await withBusy(() => loadArtifact(artifact, operation));
   }
   async function loadArtifact(artifact: Artifact, operation?: string) {
@@ -192,11 +201,7 @@
     if (error) return;
     navigate('workspace');
     dirty = true;
-    setNotice(
-      operation
-        ? `Output lineage attached. Set the corresponding workflow asset input before generating ${operation}.`
-        : 'Recorded settings loaded into a new editable draft.',
-    );
+    setNotice(reuseNotice(operation));
   }
 
   async function saveRecord(kind: RecordKind, data: RecordData, id?: string, revision = 0) {
@@ -487,3 +492,4 @@
   onoperation={opener.operation}
 />
 <SubmissionReview bind:this={previewPanel} {submission} {busy} {submitPreview} bind:controlTab />
+<EditHandoff bind:this={handoff} {connection} {draft} {bindings} {workflowId} />

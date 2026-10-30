@@ -824,7 +824,7 @@ does a subgraph that no running instance reaches:
 Loading a workflow keeps the draft's operation when the graph supports it, and
 otherwise picks the first one it supports of Fleet, Upscale, Video, Edit and
 Image. A draft can still hold an operation its graph lacks, for example after
-Send to edit on a text to image workflow. The select then marks it not
+Upscale on an output of a text to image workflow. The select then marks it not
 supported, and a line under it names the input the operation needs. That line
 does not stop Generate. An operation you choose while a workflow loads stays as
 you chose it. Until Studio has inspected the graph, it lists every operation.
@@ -1012,9 +1012,29 @@ Reuse loads the recorded executable prompt with its resolved seeds as a fixed
 draft. Already expanded styles and inserted LoRAs remain in that prompt and are
 not applied twice; original workflow metadata is retained separately. A
 recorded prompt or workflow that holds a whole number above 9007199254740991
-does not load, since a draft field cannot hold it exactly: Reuse settings, Send
-to edit, Upscale and Load workflow name each such input with its digits and
-leave the draft unchanged.
+does not load, since a draft field cannot hold it exactly: Reuse settings,
+Upscale and Load workflow name each such input with its digits and leave the
+draft unchanged.
+
+Send to edit, in the viewer footer and on a gallery card, puts an image output
+into the image input of a workflow that edits images. When the workflow in
+Create supports Edit and has an image input that Studio can set, Send to edit
+keeps it. Otherwise it looks in the Workflow list for an editing workflow: one
+that loads an image from the driver's input store, makes no video, has no
+upscale or Fleet node and uses only node classes the driver lists. When it
+finds one, it loads it. When it finds several, a dialog lists them, and the
+draft stays as it is until you choose one. When it finds none, the dialog says
+why and names where editing workflows come from: the Workflow list, Import JSON
+and workflows saved in Library. The draft and the selected output stay as they
+are. The companion copies the output into the driver's input store as an
+upload of its own, and Studio binds the copy to the image input that the
+workflow's App Mode layout lists first, never to a mask input. It sets the
+Operation to Edit, opens the tab that lists the prompt and the image, and
+records the output and its copy as lineage, after any lineage a kept workflow
+already has. One Undo restores the earlier draft.
+Send to edit takes no video output or uploaded mask. Under Edit, Generate and
+Review settings stay off until the image input holds an image the driver
+offers, and the line under Generate says why.
 
 A review binds to the definitions of the node classes its prompt uses, without
 their file lists, so adding a model, LoRA or input file does not void it.
@@ -1375,7 +1395,9 @@ Studio decodes at most 16 megapixels (4096 x 4096 pixels) per image, for input
 uploads and thumbnails alike, and checks that from the file header before it
 decodes. Input uploads accept PNG, JPEG or WebP files of at most 2 MiB, keep
 mask alpha, and store an orientation-normalized RGBA PNG; a larger image is
-refused with a request to downscale it. Thumbnails return at most 320 pixels per
+refused with a request to downscale it. Send to edit stores its copy of an
+output the same way, read from the driver's file, so the 2 MiB limit on what a
+browser sends does not apply to it. Thumbnails return at most 320 pixels per
 edge and run at most two decodes at once. A 65 MiB ceiling on the normalized
 upload and on a thumbnail's source file is only a backstop that no 8-bit image
 within the pixel limit reaches. Live previews retain at most 16 identity-bound
