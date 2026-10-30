@@ -678,6 +678,15 @@ Metric picks one of that host's metrics, with a rail rate for each rail. A
 choice with a single option shows as text, and the chart opens on GPU
 utilization.
 
+The telemetry panel keeps the job rows, a Readiness line and both hosts in view.
+Readiness, under the driver's state, gives the worst state among the readiness
+layers, such as active, and names the layers in it; it never reads better than
+the driver's own verdict. Detailed telemetry, under the hosts, holds the
+readiness rows with the driver's sentences, the metric history with its Host and
+Metric choices, sample inspection, the sample table, export and the raw host
+sample. It starts closed, and the browser keeps it open or closed with the other
+layout preferences. The Fleet page shows all of it at once.
+
 Phone layouts use a scrolling bottom navigation rail, larger touch controls and
 stacked panels. Expanded viewer details remain reachable without clipping the
 output area. Dialogs and disclosures use short transitions; generation adds a
@@ -733,6 +742,21 @@ label. The telemetry panel names this tab's job, or the newest active job, with
 its state and time, and while it runs the step count and node the status line
 shows; it never ties the driver's last render to a job. The raw host sample
 stays closed until you open it.
+
+A video's preview in the strip, the Gallery and Queue is its first frame, drawn
+in the browser, with its length from the video's own metadata in the corner. To
+draw it Studio downloads the video once per page, two videos at a time, within
+the viewer's 64 MiB limit. A tile that gets no frame, after a failed download or
+for a file with no picture, says No thumbnail, with the length when known. Only
+a video the browser cannot decode says Cannot play in this browser.
+
+Over an image in the output viewer, the mouse wheel zooms in and out around the
+point under the pointer, between 10% and 800% as the zoom buttons do, and the
+first step from Fit starts at the size Fit shows. While the pointer is over the
+image the wheel never scrolls the page. Anywhere else, over a video, or for a
+sideways scroll, the wheel scrolls as before, and Fit, 1:1, the zoom buttons,
+drag to pan and the arrow keys on the focused frame work as before. An image
+smaller than the frame stays in its middle at any zoom.
 
 Image previews retain their source proportions across portrait, landscape and
 extreme aspect ratios. The mask canvas follows the displayed source bounds, so

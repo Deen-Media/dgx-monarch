@@ -3,10 +3,8 @@
   import type { Artifact, Job, Seeds, Telemetry, ReuseArtifact } from '../contracts';
   import type { FollowedJob } from '../jobTracker.svelte';
   import { isJobOutput } from '../jobFollow';
-  import { formatTime } from '../model';
   import { recentStep } from '../recentOutputs';
-  import TelemetryCharts from '../components/TelemetryCharts.svelte';
-  import HostHealth from '../components/HostHealth.svelte';
+  import TelemetryPanel from '../components/TelemetryPanel.svelte';
   import Thumbnail from '../components/Thumbnail.svelte';
   import type { MetricSeries, Presentation } from '../telemetryHistory';
   import Viewer from '../components/Viewer.svelte';
@@ -105,67 +103,13 @@
     </div>
   </div>
 </div>
-{#if showTelemetry}<aside class="telemetry-panel" id="studio-telemetry">
-    <div class="panel-title">
-      <h2>Spark telemetry</h2>
-    </div>
-    <div class="sample-state">
-      <span class="status-dot" class:healthy={connectionState === 'connected'}
-      ></span>{telemetry?.state === 'connected'
-        ? 'Latest sample'
-        : telemetry?.observed_at
-          ? 'Last known sample'
-          : 'No telemetry sample'}<small
-        >{telemetry?.observed_at ? formatTime(telemetry.observed_at) : 'Not sampled'} · {telemetry?.state ??
-          'unknown'}</small
-      >
-    </div>
-    <div class="telemetry-summary">
-      <span>Active or unresolved jobs</span><strong>{activeCount}</strong><span>Driver</span><strong
-        class="text-small">{driverState ?? 'unknown'}</strong
-      >
-      <!-- This tab's job, never the driver's global render block. -->
-      <span>{job && !job.own ? 'Newest active job' : "This tab's job"}</span><strong
-        class="text-small">{job?.headline ?? 'None'}</strong
-      >{#if job?.detail}<small class="job-stage">{job.detail}</small>{/if}
-    </div>
-    <HostHealth
-      {telemetry}
-      {presentation}
-      now={serverTime}
-      live={connectionState === 'connected'}
-      heading="Hosts"
-    />
-    <TelemetryCharts {history} {presentation} />
-    <details>
-      <summary>Authoritative host sample</summary>
-      <pre>{JSON.stringify(telemetry ?? {}, null, 2)}</pre>
-    </details>
-    <div class="memory-legend">
-      <span><i style="background:#22d3ee"></i>GPU</span><span
-        ><i style="background:#34d399"></i>Slab</span
-      ><span><i style="background:#fb923c"></i>Retained pool</span><span
-        ><i style="background:#c084fc"></i>Anonymous</span
-      ><span><i style="background:#64748b"></i>Other</span><span
-        ><i style="background:#facc15"></i>Reclaimable cache</span
-      >
-    </div>
-    <small
-      >Unknown counters stay unknown. Overlapping memory categories are not added together.</small
-    >
-  </aside>{/if}
-
-<style>
-  .job-stage {
-    grid-column: 1 / -1;
-    text-align: right;
-    font-size: 10px;
-    color: var(--muted);
-  }
-  /* The two-column panel of narrower screens sets the summary beside the taller host list. */
-  @media (max-width: 1050px) {
-    .telemetry-summary {
-      align-self: start;
-    }
-  }
-</style>
+{#if showTelemetry}<TelemetryPanel
+    {telemetry}
+    {history}
+    {presentation}
+    {driverState}
+    {connectionState}
+    {serverTime}
+    {activeCount}
+    {job}
+  />{/if}
