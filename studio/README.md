@@ -92,13 +92,16 @@ inspections and job reviews, `assetEditorState.svelte.ts` keeps the asset
 editor across tab and view switches, and `operationOpener.svelte.ts` holds the
 operation Operations opens next. `jobFailure.ts` reads a failed job's recorded
 error for the status line and Queue. `workflowTraits.ts` reads what a graph
-loads, makes and saves for Create's Operation select and Output line, and
+loads, makes and saves for Create's Job category select and Output line, and
 `frameCounts.ts` finds the clip frame counts that the Duration control sets
 together. `navigation.ts` defines the rail and the Utilities tabs: Grids, Fleet
 and Operations keep their route ids, and the `utilities` alias opens the tab
 used last. `hostHealth.ts` reads the telemetry panel's per-host overview and
 `chartChoice.ts` its Host and Metric choices; `fleetSetup.ts` decides what Set
-up Fleet loads. All TypeScript/Svelte source modules are below 500 lines. CSS
+up Fleet loads. `fieldIssues.ts` names each field the draft cannot submit for
+Create's issue summary and its Show field action, and `issueRefresh.ts` inspects
+the draft again after an edit leaves the shown workflow issues stale, as
+`inspectionGuard.ts` decides. All TypeScript/Svelte source modules are below 500 lines. CSS
 is split by surface under `styles/`.
 
 The [CPU HTTP fixture](tests/README.md) exercises the companion's actual HTTP

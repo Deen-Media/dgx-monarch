@@ -392,6 +392,7 @@
           {undo}
           {prepareJob}
           {rebind}
+          issueRefresh={{ guard, apply: (next) => ({ errors: bindingErrors, connections } = next) }}
           catalogError={connection.catalogError}
           refreshCatalog={() => connection.refreshCatalog()}
         /><WorkspaceOutput
