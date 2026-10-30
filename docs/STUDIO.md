@@ -764,10 +764,8 @@ packaged workflow carries a layout, and ComfyUI's App Mode shows the same one.
 It lists, where the graph has them: the prompt, the negative prompt, the seed,
 the image size, steps, CFG and any Flux guidance, sampler and scheduler, the
 denoise or strength of an upscale, the input image, video or audio, the LoRA
-strength and the model file. A field keeps its input name, so on most graphs
-the prompt and the negative prompt both read `text`; the prompt comes first. A
-graph that samples in two stages, or holds the size on two nodes, lists each
-copy side by side; change them together. All inputs lists every supported
+strength and the model file. A graph that samples in two stages, or holds the
+size on two nodes, lists each copy side by side; change them together. All inputs lists every supported
 primitive field, such as the DGX Monarch Init settings, the frame count and the
 VAE and text encoder files. The Layout tab changes which inputs are
 prominent, their labels and their order without changing binding identity, and
@@ -779,6 +777,33 @@ controls for the new choice's inputs appear, those of the old choice leave the
 draft, and review accepts edits to the new inputs. Inside a subgraph, Studio
 lists only the inputs of the saved choice. Multiline fields retain line breaks, and import controls
 allow selecting the same file again after a success or error.
+
+The prompt boxes read Prompt and Negative prompt. The inputs chosen under
+Ordered prompt styles take those roles; otherwise the graph decides: the text
+that reaches a sampler's `positive` input is the prompt, and the text that
+reaches its `negative` input is the negative prompt. A node that encodes both
+texts, such as Qwen Image 2.1's, gives each the role its input name says. When
+several boxes share a role, each adds its input name or its node. Any other
+multi-line text box, and a text box whose input name another one repeats, reads
+its node's title or class and its input name, such as `CLIPTextEncode · text`,
+with the node id when two would still read the same. Every other field keeps its
+input name, and pointing at a name shows the field's node. The prompt box starts
+taller and grows with its text up to a limit, then scrolls. On Inputs, an empty
+negative prompt waits behind Add negative prompt, and the raw types, such as
+STRING, INT and COMBO, show only on All inputs.
+
+Reuse settings, Send to edit and Upscale record the output they start from as
+the draft's input lineage, and each asset you upload on the Assets tab joins it.
+Inputs and All inputs list each lineage id in full under Input lineage, wrapped
+to fit, with a Copy button that copies the whole id and shows it when you point
+at it. Clear lineage empties the list. Lineage records ancestry; the asset
+controls set the input the job reads. Create's pane never scrolls sideways, at
+any pane width: ids, file names and labels wrap, and fields narrow to fit. Only
+the row of tabs scrolls along its own line when the pane is too narrow for all
+five. On a short window the field list keeps at least 280 pixels, or 40 percent
+of the window's height when that is less, and the pane scrolls instead, with
+Generate pinned at its foot. A field brought into view stops above Generate,
+and the prompt box grows no taller than 30 percent of the window's height.
 
 The Workflow list names each packaged workflow by the title of its Note node,
 in title order, and shows the chosen workflow's file name in small type under
@@ -901,9 +926,10 @@ field, `append` or `template`. Studio ignores it, and only `{prompt}` decides.
 
 Generate checks the draft and starts the job in one action. Studio first checks
 each field against the inputs the driver reports. While a field fails, Generate
-stays off, and the line under it names the first such field, its node and the
-problem, for example "Fix unet_name on node 3: Choose an available value." Show
-field opens the tab that lists the field, Inputs or All inputs, scrolls to it and
+stays off, and the line under it names the first such field, by the name the
+field shows, and the problem, for example "Fix unet_name: Choose an available
+value." It adds the field's node, such as "seed on node 10", only when another
+field shows the same name. Show field opens the tab that lists the field, Inputs or All inputs, scrolls to it and
 focuses it. With more than one issue, a list of them all opens under the line,
 each with its own Show field, and these controls stay on while Generate and
 Review settings are off. When only the workflow check reports a problem, the

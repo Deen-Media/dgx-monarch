@@ -228,3 +228,52 @@
   flex-direction: column;
   overflow: hidden;
 }
+/* Create's pane never scrolls sideways, at any pane width. Text with no space to break at, such
+   as an id or a file name, wraps anywhere; a grid column or a fieldset may be narrower than its
+   widest control; and should anything still be wider, the pane clips it instead of scrolling. */
+.controls-panel {
+  overflow-wrap: anywhere;
+}
+.controls-panel,
+.controls-scroll {
+  overflow-x: hidden;
+}
+.controls-panel .input-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.controls-panel fieldset {
+  min-width: 0;
+}
+/* On a short window the field list keeps a usable height and the pane scrolls instead, with the
+   footer pinned at its foot. A field brought into view stops above the footer, and the main
+   prompt never grows taller than the list's floor. */
+.controls-scroll {
+  min-height: min(280px, 40vh);
+}
+.controls-panel {
+  scroll-padding-bottom: var(--footer-room, 0px);
+  scrollbar-width: thin;
+}
+.submission-footer {
+  position: sticky;
+  bottom: 0;
+  z-index: 1;
+}
+.field textarea.prompt-text {
+  max-height: min(30vh, 420px);
+}
+@media (max-width: 760px) {
+  /* The page scrolls on a phone, under the navigation bar fixed at its foot. */
+  html {
+    scroll-padding-bottom: calc(80px + env(safe-area-inset-bottom, 0px));
+  }
+}
+.field-opener {
+  font-size: 11px;
+  padding: 5px 9px;
+  color: var(--muted);
+}
+/* A field rule that sets display must not show a control the field hides, such as a folded box. */
+.field [hidden] {
+  display: none;
+}

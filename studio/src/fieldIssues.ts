@@ -6,9 +6,12 @@ export interface FieldIssue {
   /** The binding's id; Field gives the field's control the element id `field-${id}`. */
   id: string;
   label: string;
-  /** The node that holds the input, after any subgraph instances that hold it, such as 3 or 12/5. */
+  /**
+   * The node that holds the input, after any subgraph instances that hold it, such as 3 or 12/5,
+   * unless the field's name is one no other field shows.
+   */
   node?: string;
-  /** The title the workflow gives the node, when it gives one. */
+  /** The title the workflow gives that node, when it gives one. */
   title?: string;
   message: string;
   /** Listed on the Inputs tab as well as on All inputs. */
@@ -37,14 +40,29 @@ function nodeOf(workflow: Json | null | undefined, binding: Binding): Json | und
   return nodes.find((node): node is Json => isObject(node) && String(node.id) === binding.node_id);
 }
 
-/** A field issue for a binding and a message, named for people. */
-export function fieldIssue(binding: Binding, message: string, workflow?: Json | null): FieldIssue {
-  const node = nodeOf(workflow, binding);
+/** The names Create's fields show, by binding id, such as Prompt for a prompt box. */
+export type FieldNames = Map<string, { label: string }>;
+
+/**
+ * A field issue for a binding and a message, named for people. Given the names the fields show,
+ * the issue uses the field's own name and names its node only when another field shows the same
+ * name, so the footer's line stays short.
+ */
+export function fieldIssue(
+  binding: Binding,
+  message: string,
+  workflow?: Json | null,
+  names?: FieldNames,
+): FieldIssue {
+  const shown = names?.get(binding.id)?.label;
+  const shared =
+    shown === undefined || [...names!.values()].filter((name) => name.label === shown).length > 1;
+  const node = shared ? nodeOf(workflow, binding) : undefined;
   const title = node?._meta?.title ?? node?.title;
   return {
     id: binding.id,
-    label: fieldLabel(binding),
-    ...(binding.node_id !== undefined
+    label: shown ?? fieldLabel(binding),
+    ...(shared && binding.node_id !== undefined
       ? { node: [...(binding.instance_path ?? []), binding.node_id].join('/') }
       : {}),
     ...(typeof title === 'string' && title ? { title } : {}),
@@ -58,6 +76,7 @@ export function fieldIssues(
   bindings: Binding[],
   values: Record<string, unknown>,
   workflow?: Json | null,
+  names?: FieldNames,
 ): FieldIssue[] {
   const rank = (binding: Binding) => [
     binding.prominent || binding.display?.prominent ? 0 : 1,
@@ -71,12 +90,12 @@ export function fieldIssues(
       const [x, y] = [rank(a.binding), rank(b.binding)];
       return x[0] - y[0] || x[1] - y[1];
     })
-    .map(({ binding, message }) => fieldIssue(binding, message, workflow));
+    .map(({ binding, message }) => fieldIssue(binding, message, workflow, names));
 }
 
 const sentence = (text: string) => (/[.!?]$/.test(text) ? text : `${text}.`);
 
-/** An issue in words: "unet_name on node 3: Choose an available value." */
+/** An issue in words: "unet_name on node 3: Choose an available value.", or without the node. */
 export function issueText(issue: FieldIssue): string {
   const node = issue.node === undefined ? '' : ` on node ${issue.node}`;
   return `${issue.label}${node}${issue.title ? ` (${issue.title})` : ''}: ${sentence(issue.message)}`;
@@ -91,6 +110,7 @@ export function inspectionIssues(
   errors: string[],
   bindings: Binding[],
   workflow?: Json | null,
+  names?: FieldNames,
 ): Issue[] {
   return errors.map((error) => {
     const matches = bindings
@@ -101,7 +121,12 @@ export function inspectionIssues(
       .filter(({ binding, prefix }) => binding.input_name && error.startsWith(prefix))
       .sort((a, b) => b.prefix.length - a.prefix.length);
     if (!matches.length) return { text: error };
-    const field = fieldIssue(matches[0].binding, error.slice(matches[0].prefix.length), workflow);
+    const field = fieldIssue(
+      matches[0].binding,
+      error.slice(matches[0].prefix.length),
+      workflow,
+      names,
+    );
     return { text: issueText(field), field };
   });
 }

@@ -17,9 +17,12 @@
   import { durationGroups, inputMetadata, synchronized } from '../frameCounts';
   import { fieldIssues, inspectionIssues, summaryIssues } from '../fieldIssues';
   import { followIssues, type IssueRefresh } from '../issueRefresh';
+  import { presentFields } from '../fieldPresentation';
+  import { footerRoom } from '../footerRoom';
   import AssetEditor from '../components/AssetEditor.svelte';
   import DurationControl from '../components/DurationControl.svelte';
   import Field from '../components/Field.svelte';
+  import InputLineage from '../components/InputLineage.svelte';
   import IssueSummary from '../components/IssueSummary.svelte';
   import LoraStack from '../components/LoraStack.svelte';
   import PromptStyles from '../components/PromptStyles.svelte';
@@ -85,10 +88,13 @@
     /** The workflow filter's text; it starts empty on each mount unless a parent binds it. */
     workflowQuery?: string;
   } = $props();
-  // A field the draft cannot submit keeps Generate off; the summary names it, its node and why.
-  let invalid = $derived(fieldIssues(bindings, draft.values, draft.workflow));
+  // Prompt and Negative prompt where the roles are known; other text boxes name their node.
+  let names = $derived(presentFields(draft, bindings, catalog.object_info));
+  // A field the draft cannot submit keeps Generate off; the summary names it, by the name the
+  // field shows, its node when another field shows that name too, and why.
+  let invalid = $derived(fieldIssues(bindings, draft.values, draft.workflow, names));
   let issues = $derived(
-    summaryIssues(invalid, inspectionIssues(bindingErrors, bindings, draft.workflow)),
+    summaryIssues(invalid, inspectionIssues(bindingErrors, bindings, draft.workflow, names)),
   );
   // An edit can resolve a workflow issue, so Create checks the draft again once edits settle.
   let checking = $state(false);
@@ -264,7 +270,7 @@
     </div>
   </div>
   <small class="operation-note" id="operation-note"
-    >Labels the job in Queue, the gallery and its record, while the workflow decides what runs.</small
+    >Labels the job; the workflow decides what runs.</small
   >{#if operationNeed}<small class="warning operation-need" id="operation-need"
       >{operationNeed}</small
     >{/if}<small class="seed-policy-note" id="seed-policy-note"
@@ -300,6 +306,8 @@
           {binding}
           value={draft.values[binding.id]}
           meta={metadata[binding.id]}
+          presentation={names.get(binding.id)}
+          compact={controlTab === 'inputs'}
           locked={seedLocked(binding) ? 'Random each run' : ''}
           note={seedLocked(binding)
             ? 'Choose the Fixed seed policy to set this seed.'
@@ -320,12 +328,10 @@
           {#each bindingErrors as issue}<p>{issue}</p>{/each}
         </div>{/if}
       <PromptStyles {draft} {bindings} {changeDraft} />
-      {#if draft.parent_artifact_ids.length}<div class="surface">
-          <h3>Input lineage</h3>
-          <p class="mono">{draft.parent_artifact_ids.join(', ')}</p>
-          <small>Lineage records ancestry. Workflow asset controls specify the actual input.</small
-          ><button onclick={() => changeDraft({ parent_artifact_ids: [] })}>Clear lineage</button>
-        </div>{/if}
+      {#if draft.parent_artifact_ids.length}<InputLineage
+          ids={draft.parent_artifact_ids}
+          clear={() => changeDraft({ parent_artifact_ids: [] })}
+        />{/if}
     {:else if controlTab === 'assets'}<AssetEditor
         {client}
         {draft}
@@ -348,7 +354,7 @@
       />
     {/if}
   </div>
-  <div class="submission-footer">
+  <div class="submission-footer" use:footerRoom>
     <div class="target-line">
       <span class="status-dot" class:healthy={driverState === 'connected'}></span><span
         >Driver {driverState ?? 'unknown'}</span
