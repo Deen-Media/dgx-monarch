@@ -4,6 +4,13 @@
 
 ### Everyday use
 
+- Studio is a supported interface from this release, beside the CLI, the TUI
+  and the ComfyUI panel. Its docs and the capability contract in Settings no
+  longer call it a draft. The
+  [acceptance record](docs/STUDIO_ACCEPTANCE.md), the
+  [measurement record](docs/STUDIO_PERFORMANCE.md#runtime-acceptance) and the
+  [interface QA record](docs/STUDIO_INTERFACE_QA.md#remaining-acceptance) still
+  list every open item ([Studio](docs/STUDIO.md)).
 - Studio's Workflow needs attention list follows the draft. The companion's
   inspection now checks the draft's edited values, not the saved template, and
   after a value edit Create inspects the draft again once the edits pause. A

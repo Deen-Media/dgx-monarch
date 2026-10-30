@@ -1,12 +1,20 @@
 # Studio acceptance record
 
-Status: **incomplete draft**, not release acceptance. Baseline:
-`5604ac77799f1f3e1a077a2f841dfce59fbcb892` (v1.2.0).
+Status: **incomplete**, not release acceptance. From v1.5 on, Studio is a
+supported interface of DGX Monarch. That decision sets the product's status; it
+closes no gate below, and every open item and **NOT RUN** check stays open.
+What ran, and when: the CPU suite, mocked service tests and the packaged-file
+check, last recorded here on 2026-10-21 ([current result](#current-result));
+headless browser rounds on 2026-10-21, 2026-10-22 and 2026-10-28, the last on
+the release candidate ([interface QA record](STUDIO_INTERFACE_QA.md)); a live
+service start on the maintainer's rig on 2026-10-22; and the lifecycle hardware
+pass on 2026-10-21, which ran the driver's observation hooks with no Studio
+companion. Baseline: `5604ac77799f1f3e1a077a2f841dfce59fbcb892` (v1.2.0).
 
 The original [specification](STUDIO_SPEC.md) remains the complete deliverable.
 Unimplemented work below is not a proposed reduction of that scope.
 
-| Required acceptance | Draft evidence and remaining work |
+| Required acceptance | Evidence and remaining work |
 |---|---|
 | Complete interface parity | Generated source inventory covers 19 node schemas, 129 ordered inputs, 71 workflows, config, panel and TUI actions. All 126 CLI command/option rows are mapped: 101 have explicit action, parameter, selector, context or presentation mappings, and the 25 rows of `dgxm studio` carry a written waiver, because they start, stop, open or reach the companion itself and the page cannot run them for itself; checks reject missing mappings and mismatched defaults/choices. Closed registries map all 7 panel handlers and 9 TUI bindings to a Studio operation, route or equivalent, or waive them with a reason (consent dismiss and revoke, the automatic rescue setting, and the terminal quit, pause, animation and theme keys); a new handler or binding fails generation. Node schema and node input rows record source coverage only, because Studio reads them from the live object_info, so no closed check yet fails when such a backend feature lacks a Studio representation. Typed workflow controls work for supported graphs. Source coverage and CPU tests do **not** establish live cross-interface acceptance. |
 | Bundled optional companion | Python entry point, authenticated loopback host, compiled Svelte assets and explicit package data implemented. `dgxm-studio --check` hashes every packaged Studio file against the manifest. Update requires `--config` and `--driver-service` in both modes; without either, Studio lists update as unavailable and names the missing setting, so it is unavailable when ComfyUI runs from the documented foreground launcher rather than a systemd user unit. The CLI update is unaffected. It binds the selected checkout to the driver's `custom_nodes/dgx-monarch` target, defaults to the verified transaction, and runs in a frozen controller with the driver unit's interpreter, a retained transaction lock and durable receipts. A CPU test runs Studio's review and execution through the real verified transaction against a scratch checkout and a local bare origin, with scripted Worker steps. Real shutdown/update/restart transaction acceptance against a live driver unit and Workers is **NOT RUN**. The project owner kept the `--driver-service` rule, and the maintainer's rig runs ComfyUI from the foreground launcher with no systemd user unit, so Studio offers no update there. `dgxm studio` starts the companion with the driver origin, port, driver unit and start command of the `[studio]` table in cluster.toml, and signs the browser in with a link that carries the token in its fragment, through an owner-only `sign-in.html` page for a browser it starts; a companion started with `--allow-management` never makes a link. `dgxm studio up` installs, enables and starts an opt-in user unit, `dgxm-studio.service`, which the owner approved on 2026-10-22, and `dgxm studio down` removes it. `dgxm studio tunnel` prints the SSH line and the address to browse from another computer, and the page shows a Driver not running panel with the command that starts the driver. CPU tests cover the config rules, the printing rules, the unit text, its checks, the operations lock that keeps `up`, `down` and `token --rotate` from stopping a review or operation the companion accepted, the check that `down` removes the unit file only after the service stopped, and the tunnel lines. The Sign-in link and Driver not running browser rows passed on 2026-10-22 in headless Firefox 158.0 at 1440×900 and 390×844 ([interface QA record](STUDIO_INTERFACE_QA.md#browser-evidence)). A live service start passed on the maintainer's rig on 2026-10-22: `dgxm studio up` with a private copy of cluster.toml, the installed unit and its files, the companion's HTTP answers, `dgxm studio open` with and without a terminal, and `dgxm studio down` ([interface QA record](STUDIO_INTERFACE_QA.md#browser-evidence), results SHA-256 `9b57551debc32d832399fa966151796d7c739f2c3e8596616b16fadd70a2d3f8`). That run predates the operations lock and the stop check, which no rig has run yet. `dgxm studio token --rotate` and a restart after the process is killed are **NOT RUN** on a rig. The one-URL pattern, a Studio unit that starts a driver unit, is **NOT RUN** on that rig, which has no driver unit. |
@@ -111,7 +119,7 @@ companion (`tests/test_studio_tooling.py`). These checks do not establish real
 video synchronization, screen-reader behavior, complete keyboard coverage or the
 performance rows above.
 
-All tests in this draft are CPU or mocked service tests unless explicitly
+All tests in this record are CPU or mocked service tests unless explicitly
 identified otherwise. They do not authorize live maintenance, grant capacity,
 waive class P/K guards or establish native RDMA, ACK or model fidelity.
 

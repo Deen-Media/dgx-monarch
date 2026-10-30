@@ -182,7 +182,7 @@ def create_app(store: Store, client: ComfyClient, token: str, *, allowed_hosts: 
         return json_response({**schema_document(), "instance_id": instance, "operations": ops.capabilities(),
                                   "presentation": presentation_contract(), "driver_origin": client.origin,
                                   "driver_start": ops.driver_start,
-                                  "support_status": "draft; see docs/STUDIO_ACCEPTANCE.md for unimplemented acceptance criteria"})
+                                  "support_status": "supported; docs/STUDIO_ACCEPTANCE.md lists the acceptance items that remain open"})
 
     async def snapshot(request: web.Request) -> web.Response:
         rows, omitted, cursor = snapshot_window(store)

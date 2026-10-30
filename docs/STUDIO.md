@@ -1,15 +1,17 @@
-# DGX Monarch Studio (draft)
+# DGX Monarch Studio
 
 Studio is an optional Svelte interface served by a separate Python companion.
 The companion uses the existing ComfyUI queue and Monarch nodes. It does not
 load models, own a mesh, schedule GPU work, or change ComfyUI source. The CLI,
 TUI and ComfyUI panel remain available independently.
 
-This implementation is a draft against v1.2.0 source commit
-`5604ac77799f1f3e1a077a2f841dfce59fbcb892`. The full agreed product contract is
-[STUDIO_SPEC.md](STUDIO_SPEC.md); the [acceptance record](STUDIO_ACCEPTANCE.md)
-identifies incomplete features and unperformed checks. An inventory row is
-evidence of source coverage, not proof of a working Studio operation.
+From v1.5 on, Studio is a supported interface of DGX Monarch, beside the CLI,
+the TUI and the ComfyUI panel. It has shipped with DGX Monarch since v1.3.0,
+and this guide describes it as it stands in this tree. The full agreed product
+contract is [STUDIO_SPEC.md](STUDIO_SPEC.md), written against v1.2.0; the
+[acceptance record](STUDIO_ACCEPTANCE.md) identifies incomplete features and
+unperformed checks. An inventory row is evidence of source coverage, not proof
+of a working Studio operation.
 The [measurement record](STUDIO_PERFORMANCE.md) separates packaged asset sizes
 from unperformed host and browser performance acceptance.
 
