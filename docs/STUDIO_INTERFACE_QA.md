@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22 and on 2026-10-28, with two rows added on 2026-10-22 and fourteen on 2026-10-28. Status: **scoped local validation; the twelve browser rows and fourteen new ones ran headless on the 2026-10-28 release candidate bundle; the three faults found there are fixed and re-checked on rebuilt bundles; draft acceptance remains incomplete**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22 and on 2026-10-28, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30. Status: **scoped local validation; the twelve browser rows and fourteen new ones ran headless on the 2026-10-28 release candidate bundle; the three faults found there are fixed and re-checked on rebuilt bundles; draft acceptance remains incomplete**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -57,7 +57,8 @@ and revision rather than fetched on every snapshot poll.
 
 This section records the rounds up to 2026-10-22. The
 [2026-10-28 round](#browser-evidence-2026-10-28) on the release candidate
-follows it, with its own table.
+follows it, with its own table, and the
+[tester round 4 rows](#tester-round-4-checks-2026-10-30) follow that.
 
 On 2026-10-22 all twelve rows below ran again on the bundle rebuilt after two
 review fixes: Review generation takes empty text in a required input, and a
@@ -298,16 +299,42 @@ rendering, as before.
 
 ## Tester round 4 checks, 2026-10-30
 
-Each change for the fourth round of tester reports ran a headless check of the
-controls it changed, on the bundle its own branch builds, against the CPU
-fixtures, in Firefox 159.0 headless on Ubuntu 24.04.5 LTS for arm64 through
-WebDriver BiDi with real pointer and key input, as in the
-[2026-10-28 round](#browser-evidence-2026-10-28). These rows do not repeat the
-browser procedure, and each names its bundle and its results file.
+Issue #116 lists a Studio tester's fourth round. Each change for it adds its
+rows here, run headless against the CPU event fixture on the bundle that change
+built. These rows check one change each, not a full round, so the
+[browser procedure](../studio/tests/README.md#browser-checks) still lists the
+rows of the 2026-10-28 round.
+
+The validation rows ran on 2026-10-30 on `index-R1VZxs78.js`
+(`1a96401ad171340a55e151b403978474431046453dd9c4405869bda173a52625`),
+`index-Dzp3gAvP.css`
+(`66451f61bfd3028a3ab81ae4ca76c78cce1698bf41166ba7fe916c6d2d03badf`) and
+`index.html` (`50224c3d0a3d4223d4a2deca153a5e0eb93dea9ad16b54e2b52905cdb6a39291`),
+in Mozilla Firefox 159.0, headless on Ubuntu 24.04.5 LTS for arm64, driven
+through WebDriver BiDi with real pointer and key input, at 1440×900, 1024×600,
+768×1024 and 390×844. `studio/tests/event_driver.py` served the recorded schema
+of the packaged templates without `kromoss_bf16.safetensors`, so the packaged
+Kromoss text to image template, loaded from the Create filter, showed the
+tester's `3.unet_name: Value is not an available choice`. A second companion
+served the dev bundle, `index-DOGuRWwd.js`, from the same fixture for the
+height comparison. No row logged a console error or warning. The results file is
+kept in the maintainer's private evidence store, outside the repository and the
+packages, and its SHA-256 is
+`807187da603fe272aa6ad0ae302b986baaaeece4e2beccece800997864cf8a91`.
 
 | Check | Observed result and scope |
 |---|---|
+| Resolved workflow issue (QA-09) | After the template loaded, Workflow needs attention listed the `3.unet_name` error. Typing 40 into steps sent one inspection, with steps at 40 in its values, and 0.77 seconds after the last key the check had ended with the error still listed, as a remaining error should be. Typing "kroma-v" into the focused unet_name select picked `kroma-v0.3.1-turbo-opd.safetensors`, Create sent one inspection with that file, and 442 ms after the change the card and the footer's issue line were gone and Generate was on. A job then ran to "Finished in 0:06" and the card stayed gone. |
+| Invalid field summary (QA-08) | At load, Generate and Review settings were off, each with `aria-describedby` naming the summary, which read "Fix unet_name on node 3: Choose an available value." beside a Show field button that was on. From the Assets tab, Show field opened Inputs, scrolled the field list 908 pixels and focused the select, inside the list's visible box. With denoise at 5 and steps at 0 as well, the line named steps, and All 3 issues listed steps, unet_name and denoise, each with a Show field that stayed on. From the LoRAs tab, the Show field for denoise closed the list, opened All inputs and focused denoise in view. At 768×1024 and 390×844 Show field focused the select in view, and on a phone the line scrolls clear of the bottom navigation. At 1024×600 it focused the select, but the field list there is 20 pixels tall, on the dev bundle too, so the field stays partly hidden. No viewport scrolled sideways. At 1440×900 the field list is 116 pixels tall with the line against 181 on dev, since the line and the job category sentence take room. |
+| Random seed field (QA-05) | A new draft under Random showed the seed field off, reading Random each run, with "Choose the Fixed seed policy to set this seed." A click and a typed 5 changed nothing. Fixed turned it into a number field holding 42 that took 123, and Random locked it again. After the job, Use this seed set Fixed and put the job's seed, 1308273264083596, in the editable field. |
+| Job category (QA-02) | The select read Job category, with "Labels the job in Queue, the gallery and its record, while the workflow decides what runs." under it, named by its `aria-describedby`. |
+
 | Send to edit | Bundle `index-CJY0lZqa.js` (`8f040e40c6ec6d4e3da8cc9b0aac789970ea9107b7874fe1a69178b08ae284b7`), `index-C_Y8FigT.css` (`4928dd9879020d7cd45433566c28335b4102077279e692f727c67e0afa0e31e8`) and `index.html` (`8a5bb97fc7d9f22041a625f9fcdcf6a41de19a594375d63aa996a511b39c44d5`), at 1440×900 and 390×844, with 2-second jobs. On `studio/tests/event_driver.py` serving the recorded bundled schema without `ConditioningZeroOut`, `TextEncodeMageFlowEdit` and `TextEncodeQwenImage21`, so that FLUX.3 Klein Base image editing is the one packaged editing workflow it runs, Send to edit on a FLUX.3 Klein Base text to image output opened no dialog. It loaded the editing workflow, set the Operation to Edit, opened Inputs with the prompt and bound a `studio/` copy to node 8's image, listed and valid, with the output and the copy in the lineage. The fixture's input store held the copy as an RGBA PNG with the output's pixels. One Undo restored the text to image draft. After a second Send to edit, Generate submitted the edit with the copy as node 8's image, and after Clear bound input on the Assets tab, Generate and Review settings were off with "Edit needs an image in the image input on node 8." under Generate once the five-second submit line cleared. With the full recorded schema, the dialog listed the six packaged editing workflows in title order with focus on the first, and the stored draft stayed the same while it was open and after Cancel. Choosing the masked RGBA reference edit bound node 6's image and left the mask loader on node 7 alone, and Send to edit on that edit's output kept the workflow with no dialog and added the new output and copy to the lineage. On `studio/tests/mock_driver.py`, which runs no packaged editing workflow, the dialog said why and named where editing workflows come from, with focus on Open Create, and the draft and the selected output stayed as they were. Pages and dialogs measured no horizontal overflow, and no console error appeared. The results file, kept in the maintainer's private evidence store, has SHA-256 `f604f08babf235d33dacb48a9aa6af7549d2d07a631f366cd26687dc5f07573a`. |
+
+**NOT RUN:** a refresh the companion fails or answers late, a field issue
+inside a subgraph instance, arrow keys on a select, which left it unchanged in
+this headless Firefox, and Chromium, Safari, physical phones and assistive
+technology.
 
 ## Remaining acceptance
 

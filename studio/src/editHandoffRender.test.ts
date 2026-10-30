@@ -130,5 +130,7 @@ test('under Edit, an image the driver offers turns Generate on, and other operat
   const image = body('', { operation: 'image' });
   for (const tag of buttons(image)) assert.match(tag, /disabled/);
   assert.ok(!image.includes(REASON));
-  assert.match(image, /Resolve 1 field issue\(s\)\./);
+  // The footer's issue summary (from the validation flow) names the field instead of counting it.
+  assert.ok(image.includes('id="generate-issues"'));
+  assert.match(image, /issue-line warning/);
 });

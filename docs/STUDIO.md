@@ -800,8 +800,10 @@ writes frames when the graph makes video. A saved video has sound when the
 Create Video node that feeds it takes an audio input; when another node makes
 the video, the line does not say. A preview node saves no file.
 
-The Operation select labels the job, and Queue, the gallery filter and the job
-record keep that label. It lists only the operations the loaded graph supports,
+The Job category select sets the job's operation. It labels the job, and Queue,
+the gallery filter and the job record keep that label. The loaded workflow
+decides what runs, as the line under the select says, so Image and Workflow run
+the same graph. The select lists only the operations the loaded graph supports,
 read from the nodes that run. Muted and bypassed nodes do not count, and neither
 does a subgraph that no running instance reaches:
 
@@ -899,7 +901,17 @@ field, `append` or `template`. Studio ignores it, and only `{prompt}` decides.
 
 Generate checks the draft and starts the job in one action. Studio first checks
 each field against the inputs the driver reports. While a field fails, Generate
-stays off, and the line under it says how many fields to fix. Generate then asks
+stays off, and the line under it names the first such field, its node and the
+problem, for example "Fix unet_name on node 3: Choose an available value." Show
+field opens the tab that lists the field, Inputs or All inputs, scrolls to it and
+focuses it. With more than one issue, a list of them all opens under the line,
+each with its own Show field, and these controls stay on while Generate and
+Review settings are off. When only the workflow check reports a problem, the
+line starts with Check and Generate stays on. Workflow needs attention, under the
+fields, lists what the companion found when it inspected the workflow with the
+draft's values. After you edit a value, Studio inspects the draft again once
+your edits pause, so a problem you fixed, such as a model file the driver lacks,
+leaves the list and the line, and one that remains stays. Generate then asks
 the companion for the job's immutable submission record. The companion checks
 the draft again, applies styles and LoRAs, sets the seeds by the seed policy
 and freezes the prompt. When nothing needs a person, Studio submits that record at once, and the
@@ -963,8 +975,10 @@ unknown outcome shows its banner and the Reconcile request button.
 
 New drafts use the Random seed policy. For each job the companion picks a new
 value for each integer `seed` and `noise_seed` input and freezes it in the
-record. Your seed fields keep their values, and each one says it is chosen for
-each job. Fixed sends the seed fields as they are. A saved draft or record
+record. Your seed fields keep their values, but under Random each one is off and
+reads Random each run, with a line that says to choose Fixed to set it. A seed
+field with a value Studio cannot submit stays open until you repair it. Fixed
+makes the seed fields editable and sends them as they are. A saved draft or record
 keeps its own policy, and one that names no policy restores as Fixed, the
 companion's default. Review settings shows the seeds the job will use. After the job
 runs, the viewer footer shows the seed of the selected output, Queue rows show
@@ -1414,7 +1428,9 @@ A 401 while polling returns to the token form, because a restarted companion
 issues a new token. A sign-in link from before a restart stops working the
 same way; `dgxm studio open` prints a new one. A workflow inspection or job review is discarded, with a
 notice, when the workflow, its values or the connection change while it runs;
-edits to other draft controls do not discard an inspection.
+edits to other draft controls do not discard an inspection. The inspection Create
+runs again after a value edit is dropped without a notice in the same cases, and
+the next edit runs it again.
 
 Snapshot refreshes preserve the event replay cursor so bursts spanning several
 pages reach the console. Evicted replay gaps are labelled explicitly. Media
