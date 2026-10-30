@@ -216,3 +216,27 @@
   flex-direction: column;
   overflow: hidden;
 }
+/* Create's pane never scrolls sideways, at any pane width. Text with no space to break at, such
+   as an id or a file name, wraps anywhere; a grid column or a fieldset may be narrower than its
+   widest control; and should anything still be wider, the pane clips it instead of scrolling. */
+.controls-panel {
+  overflow-wrap: anywhere;
+}
+.controls-panel,
+.controls-scroll {
+  overflow-x: hidden;
+}
+.controls-panel .input-row {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.controls-panel fieldset {
+  min-width: 0;
+}
+.field textarea.prompt-text {
+  max-height: min(45vh, 420px);
+}
+.field-opener {
+  font-size: 11px;
+  padding: 5px 9px;
+  color: var(--muted);
+}

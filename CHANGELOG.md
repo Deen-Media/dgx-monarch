@@ -62,6 +62,14 @@
   records keep their inputs.
 - Studio's guide says which workflows Studio lists, what an imported workflow
   needs, and what an update does to bundled and saved copies ([Studio](docs/STUDIO.md#workflow-sources-and-updates)).
+- Studio's Create pane no longer scrolls sideways at any pane width. Long
+  lineage ids, file names and field names wrap, fields narrow to fit, and each
+  lineage id has a Copy button that copies the whole id ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Studio names the prompt boxes Prompt and Negative prompt, from the inputs
+  chosen for prompt styles or else the sampler inputs their text reaches, and
+  names other text boxes by their node. The prompt box starts taller and grows
+  with its text, an empty negative prompt waits behind Add negative prompt on
+  Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
 
 ### Rendering
 

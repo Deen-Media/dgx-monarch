@@ -1,14 +1,19 @@
 <script lang="ts">
+  import { tick } from 'svelte';
   import { fieldLabel, bindingType, bindingOptions, bindingError } from '../model';
   import type { Binding } from '../model';
   import { numberField } from '../numberField';
   import type { InputMeta } from '../frameCounts';
+  import type { FieldPresentation } from '../fieldPresentation';
+  import { growText } from '../textGrowth';
   let {
     binding,
     value,
     note = '',
     meta,
     onchange,
+    presentation,
+    compact = false,
   }: {
     binding: Binding;
     value: unknown;
@@ -17,19 +22,50 @@
     /** The input's node, unit and relation to other inputs, such as a clip frame count. */
     meta?: InputMeta;
     onchange: (value: unknown) => void;
+    /** The field's name and prompt role; without one the field shows its input name. */
+    presentation?: FieldPresentation;
+    /** The Inputs tab: no raw type such as STRING, and an empty negative prompt folded away. */
+    compact?: boolean;
   } = $props();
   let type = $derived(bindingType(binding));
   let options = $derived(bindingOptions(binding));
   let error = $derived(bindingError(binding, value));
   let fieldId = $derived(`field-${binding.id}`);
+  let label = $derived(presentation?.label ?? fieldLabel(binding));
+  let tag = $derived(
+    [compact ? '' : type.toLowerCase(), meta?.unit ?? ''].filter(Boolean).join(' · '),
+  );
+  // The main prompt starts taller and grows with its text; an empty negative prompt waits behind
+  // a small button on Inputs until it is wanted.
+  let prompt = $derived(presentation?.role === 'prompt');
+  let unfolded = $state(false);
+  let folded = $derived(
+    compact && presentation?.role === 'negative' && !unfolded && !error && (value ?? '') === '',
+  );
+  let area = $state<HTMLTextAreaElement>();
+  async function unfold() {
+    unfolded = true;
+    await tick();
+    area?.focus();
+  }
 </script>
 
 <div class="field" class:field-invalid={!!error}>
-  <label for={fieldId}
-    >{fieldLabel(binding)}
-    {#if meta?.context}<span class="field-context">{meta.context}</span>{/if}<span
-      class="field-type">{type.toLowerCase()}{meta?.unit ? ` · ${meta.unit}` : ''}</span
-    ></label
+  {#if folded}<button
+      type="button"
+      class="field-opener"
+      aria-expanded="false"
+      aria-controls={fieldId}
+      onclick={unfold}>Add {label.toLowerCase()}</button
+    >{/if}
+  <label
+    for={fieldId}
+    hidden={folded}
+    title={presentation && presentation.source !== label ? presentation.source : undefined}
+    >{label}
+    {#if meta?.context}<span class="field-context">{meta.context}</span>{/if}{#if tag}<span
+        class="field-type">{tag}</span
+      >{/if}</label
   >
   {#if binding.resolved === false}
     <div class="unresolved-field">{binding.reason ?? 'Unresolved binding'}</div>
@@ -64,9 +100,13 @@
   {:else if ['STRING', 'TEXT'].includes(type)}
     <textarea
       id={fieldId}
-      rows={/prompt|text|positive|negative/i.test(fieldLabel(binding)) ? 4 : 2}
+      bind:this={area}
+      hidden={folded}
+      class:prompt-text={prompt}
+      rows={prompt ? 7 : /prompt|text|positive|negative/i.test(fieldLabel(binding)) ? 4 : 2}
       value={String(value ?? '')}
       oninput={(e) => onchange(e.currentTarget.value)}
+      use:growText={{ value, grow: prompt }}
       spellcheck={true}
       aria-invalid={!!error}></textarea>
   {:else}
@@ -80,6 +120,6 @@
   {/if}
   {#if note}<small class="field-note">{note}</small>{/if}
   {#if meta?.note}<small class="field-note">{meta.note}</small>{/if}
-  {#if binding.description}<small>{binding.description}</small>{/if}
+  {#if binding.description && !folded}<small>{binding.description}</small>{/if}
   {#if error}<small class="error" role="status">{error}</small>{/if}
 </div>

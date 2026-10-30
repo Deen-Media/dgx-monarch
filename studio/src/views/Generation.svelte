@@ -14,9 +14,11 @@
   import { filterKeyAction, loadWorkflow, workflowChoices, workflowTitle } from '../workflowChoice';
   import { operationChoices, outputSummary, workflowTraits } from '../workflowTraits';
   import { durationGroups, inputMetadata, synchronized } from '../frameCounts';
+  import { presentFields } from '../fieldPresentation';
   import AssetEditor from '../components/AssetEditor.svelte';
   import DurationControl from '../components/DurationControl.svelte';
   import Field from '../components/Field.svelte';
+  import InputLineage from '../components/InputLineage.svelte';
   import LoraStack from '../components/LoraStack.svelte';
   import PromptStyles from '../components/PromptStyles.svelte';
   import WorkflowLayout from '../components/WorkflowLayout.svelte';
@@ -100,6 +102,8 @@
   let operations = $derived(operationChoices(traits, draft.operation));
   let operationNeed = $derived(operations.find((o) => o.id === draft.operation)?.need ?? null);
   let metadata = $derived(inputMetadata(draft.workflow, bindings, catalog.object_info));
+  // Prompt and Negative prompt where the roles are known; other text boxes name their node.
+  let names = $derived(presentFields(draft, bindings, catalog.object_info));
   let durations = $derived(
     durationGroups(draft.workflow, bindings, catalog.object_info).filter(synchronized),
   );
@@ -273,6 +277,8 @@
           {binding}
           value={draft.values[binding.id]}
           meta={metadata[binding.id]}
+          presentation={names.get(binding.id)}
+          compact={controlTab === 'inputs'}
           note={randomSeeds && isSeedBinding(binding)
             ? 'Chosen for each job: the Random policy replaces this value.'
             : ''}
@@ -284,12 +290,10 @@
           {#each bindingErrors as issue}<p>{issue}</p>{/each}
         </div>{/if}
       <PromptStyles {draft} {bindings} {changeDraft} />
-      {#if draft.parent_artifact_ids.length}<div class="surface">
-          <h3>Input lineage</h3>
-          <p class="mono">{draft.parent_artifact_ids.join(', ')}</p>
-          <small>Lineage records ancestry. Workflow asset controls specify the actual input.</small
-          ><button onclick={() => changeDraft({ parent_artifact_ids: [] })}>Clear lineage</button>
-        </div>{/if}
+      {#if draft.parent_artifact_ids.length}<InputLineage
+          ids={draft.parent_artifact_ids}
+          clear={() => changeDraft({ parent_artifact_ids: [] })}
+        />{/if}
     {:else if controlTab === 'assets'}<AssetEditor
         {client}
         {draft}

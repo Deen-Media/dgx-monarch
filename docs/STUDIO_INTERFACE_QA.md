@@ -296,6 +296,24 @@ Reconcile in Queue for an unknown outcome; the review expiry at any viewport
 but 390×844; and Chromium, Safari, physical phones, assistive technology and GPU
 rendering, as before.
 
+## Tester round 4 checks, 2026-10-30
+
+A Studio tester reported ten items on dev `156db4c`, tracked in issue #116.
+Each row below checks one fix, headless in Mozilla Firefox 159.0, build
+20261022150525, on Ubuntu 24.04.5 LTS for arm64, driven through WebDriver BiDi
+with real pointer and key input, against `studio/tests/event_driver.py` serving
+the recorded bundled schema. Each row names the bundle it ran on and cites its
+results file by SHA-256; the files are kept in the maintainer's private evidence
+store, outside the repository and the packages. These rows are not a full
+browser round, so the
+[browser procedure](../studio/tests/README.md#browser-checks) does not list
+them.
+
+| Check | Observed result and scope |
+|---|---|
+| Input pane width | Bundle `index-BddHe-Q3.js` (`4a0591ea3f16d02261573ad6ab9db5d51ca3993e15dea03cee1c3d508f0635dc`), `index-rwrFflq5.css` (`5839b79ff6b7a9e49a0ae462fc6ab3a909ca6b61032f30a4f595d2854cadc6b3`) and `index.html` (`d80bcedf8cb302e5af11c91a2bb019d572dab626ab75a44e20949268642edffd`), against dev `e277238`. A draft imported through Settings held two lineage ids, a UUID and a 152-character id with nowhere to break, a 170-character workflow file name, and model file names of 145 and 127 characters added to the fixture's schema. On dev the lineage line ran 827 pixels past the scroll box at the default 340-pixel pane, 887 at the narrowest 280-pixel pane, 873 at 1024×600 and 780 at 390×844, so the box scrolled sideways, and LTX 2.5's frame rate label ran 28 pixels past it at 280 pixels. On the bundle, at 340 and 280 pixels on a 1440×900 viewport, at 1024×600 and at 390×844, no element or text of the pane passed its edge on Inputs, All inputs, Assets, LoRAs or Layout, for Krea 2 and for LTX 2.5 with its Duration fields, and the pane and its scroll box measured a scroll width equal to their width. Each id wrapped beside a Copy button whose title held the whole id; with the clipboard replaced by a recorder, Copy wrote the 152-character id exactly and said so. Clear lineage stayed in the pane and took the pointer at every size. At 1024×600 the scroll box is 20 pixels tall, as on dev, a height this change leaves alone. The tab row keeps its own sideways scroll at 280 and 300 pixels, by design. Results SHA-256 `159b4e36322ac1473a7d9029c60c08424e9ed59ded624186b913e8d33f7f9c09`. |
+| Prompt fields | Same bundle and results file. On dev the Krea 2 template's Inputs tab showed two 106-pixel boxes called `text` and tagged STRING, the first scrolling its text. On the bundle it showed Prompt and an Add negative prompt button, with `aria-expanded` false and the box's id in `aria-controls`, and no raw type on any field. The prompt box opened tall enough for the template's prompt, 342 pixels at 1440×900, grew as 14 lines were typed and stopped at its ceiling, 45 percent of the viewport height: 405 pixels at 1440×900, 270 at 1024×600 and 380 at 390×844, past which it scrolled. Add negative prompt opened the empty box with the focus in it. All inputs showed Prompt and Negative prompt with the raw types, and pointing at a name showed its node, such as `CLIPTextEncode · text · node 5`. No console message appeared. |
+
 ## Remaining acceptance
 
 Physical iOS and Android devices, Safari, Chromium, assistive technology,
