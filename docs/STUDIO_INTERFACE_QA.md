@@ -296,6 +296,39 @@ Reconcile in Queue for an unknown outcome; the review expiry at any viewport
 but 390×844; and Chromium, Safari, physical phones, assistive technology and GPU
 rendering, as before.
 
+## Tester round 4 checks, 2026-10-30
+
+These rows cover items that a Studio tester raised on dev `156db4c`, tracked in
+issue #116. They ran headless on 2026-10-30 on this change's bundle:
+`index-DU5xDZ_U.js`
+(`c27df9b2bb5a184f723501455376fecd7a81ee55650dde3894d41024993f959a`),
+`index-DswKAz5H.css`
+(`e5d45b1d5dd60b2780503ab2931f818ed3414a9c5bd456bc291eab8181c6ff11`) and
+`index.html` (`b5c4c10bbae9b767ea4730b6a2fd6d0c922c57024ceb12632530d6f23c218b4c`).
+A companion started from this change's tree served those bytes. The browser was
+Mozilla Firefox 159.0, driven through WebDriver BiDi with real pointer, wheel
+and key input, at 1440×900, 1024×600, 768×1024 and 390×844, and again at
+1024×600 in a profile that reports reduced motion. A second companion served the
+dev bundle at `e277238`, `index-DOGuRWwd.js`, for the before readings at
+1440×900 and 1024×600.
+
+The driver was a QA-side subclass of the CPU fixture. It sent a synthetic
+two-host telemetry sample with placeholder host names and a readiness report
+with an active mesh and render session, and it returned one clip per prompt
+beside the PNG: the round's 2-second 128×96 H.264 and VP9 clips, a 4.2-second
+640×360 H.264 clip, an audio-only MP4 and a file of MP4 header bytes and filler.
+A 1600×1000 test pattern, uploaded as an input image, stood in for a large
+output. No run logged a console message. The results file is kept in the
+maintainer's private evidence store, outside the repository and the packages,
+and its SHA-256 is
+`939b7119b7a1e2c2fd73b7f10679fc6049db54d8aa3b3a7611c939e5d229048b`.
+
+| Check | Observed result and scope |
+|---|---|
+| Wheel zoom | The test pattern opened in Fit at 15.8% to 21.4%. One wheel step up over it zoomed to 1.19 times that scale, and the pixel under the pointer moved at most 0.18 pixels along the axis the image then filled; along the other the image stayed centered. Ten more steps in and out, with the image filling the frame, moved that pixel at most 0.46 pixels. The zoom stopped at 800%, and below Fit the image sat in the middle of the frame within 0.01 pixels. While the pointer was over the image, the viewer column, the page and every other scroll box kept their positions. Over the toolbar, over the frame beside the image and over a video, a step down zoomed nothing and scrolled what holds the pointer: the viewer column, the main area for the toolbar and the frame at 768×1024, and the page at 390×844. Fit, 1:1, Zoom in and Zoom out read 100%, 100%, 125%, then 100% and 75%, as before. A drag of 80 by 50 pixels panned the zoomed image by exactly that, and Down, Down and Right scrolled the focused frame by 102 and 41 pixels. The reduced-motion profile gave the same readings. On the dev bundle a step down over the image scrolled the viewer column by 44 pixels at 1440×900 and 100 at 1024×600, and the zoom stayed at 100%. |
+| Telemetry details | A new profile opened the panel with Detailed telemetry closed. The panel showed the job rows, "Readiness ! active" with "Attached mesh, Render session" 163 to 217 pixels below its top, and both host cards with all five readings. The readiness rows, the chart, Inspect sample and Export history stayed hidden. The panel's content measured 831 pixels at 1440×900, in a panel 792 pixels tall, against 1,589 on the dev bundle, which showed everything at once, and 397 against 1,099 at 1024×600. A click on Detailed telemetry showed the readiness rows with their sentences, the Host and Metric choices, the chart, Inspect sample and Export history, and the stored layout gained `"telemetryDetails": true` beside its width, showTelemetry and showConsole. A reload kept it open, and after a click closed it a reload kept it closed, with the other three keys intact. Every viewport and the reduced-motion profile gave the same results. |
+| Video tiles | In Recent Outputs, the Gallery and Queue, the H.264 and VP9 clips showed 128×96 posters marked "▶ 0:02", and the 640×360 clip a 320×180 poster marked "▶ 0:04". Each poster's centre pixel read 236, 230, 110, a JPEG of the yellow, 255, 241, 2, that Firefox decoded at the centre of the clips' first frame. The audio-only file said "No thumbnail · 0:02", and the header-only file "Cannot play in this browser"; Firefox refused only that file, with MediaError 4. Image tiles kept the companion's thumbnails. Tiles beyond the near-viewport margin stayed unloaded, by design, and every other tile read the same at every viewport and with reduced motion. On the dev bundle every video tile said "Preview unavailable". |
+
 ## Remaining acceptance
 
 Physical iOS and Android devices, Safari, Chromium, assistive technology,

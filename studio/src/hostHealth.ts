@@ -59,11 +59,26 @@ export interface ReadinessRow {
   /** A stale label with the report's age while its readings are retained, or ''. */
   stale: string;
 }
+/** One line for the whole readiness report, for a panel too narrow for its rows. */
+export interface ReadinessOverall {
+  /**
+   * ready, active, unknown or blocked: the worst layer's state, or the driver's own verdict when
+   * that is worse, as when its telemetry refresh failed. An idle layer counts as ready.
+   */
+  state: string;
+  /** The layers in that state, by name; none while every layer is ready or idle. */
+  layers: string[];
+  mark: StatusMark;
+  /** The rows' stale label while the readings are retained, or ''. */
+  stale: string;
+}
 export interface HealthSummary {
   hosts: HostCard[];
   /** Why the list has one host or none, or which Workers sent no readings; '' otherwise. */
   note: string;
   readiness: ReadinessRow[];
+  /** The readiness rows in one line, or null when the driver sends no readiness report. */
+  overall: ReadinessOverall | null;
   /** Why every reading shown is a retained one, with its age, or '' while they are current. */
   stale: string;
 }
@@ -268,6 +283,32 @@ function readiness(
   });
 }
 
+/** How bad a layer state is for the overall line; the worst one decides it. */
+const RANK: Record<string, number> = { ready: 0, idle: 0, active: 1, unknown: 2, blocked: 3 };
+
+function overall(
+  rows: ReadinessRow[],
+  verdict: unknown,
+  kept: Held | null,
+  presentation?: Presentation,
+): ReadinessOverall | null {
+  if (!rows.length) return null;
+  let state = rows.reduce(
+    (worst, row) => (RANK[row.state] > RANK[worst] ? row.state : worst),
+    'ready',
+  );
+  // The driver's verdict can only make the line worse, never better than its own rows.
+  if ((verdict === 'unknown' || verdict === 'blocked') && RANK[verdict] > RANK[state])
+    state = verdict;
+  return {
+    state,
+    layers:
+      state === 'ready' ? [] : rows.filter((row) => row.state === state).map((row) => row.label),
+    mark: mark(presentation, kept ? 'unknown' : LAYER_TOKEN[state]),
+    stale: rows[0].stale,
+  };
+}
+
 function note(hosts: number, workers: number, silent: number, telemetry: Telemetry): string {
   if (!hosts) {
     if (typeof telemetry.sample_omitted === 'string') return telemetry.sample_omitted;
@@ -290,7 +331,8 @@ function note(hosts: number, workers: number, silent: number, telemetry: Telemet
 }
 
 /**
- * Every host the latest sample reports, side by side, with the driver's readiness report. Values
+ * Every host the latest sample reports, side by side, with the driver's readiness report as rows
+ * and as one overall line. Values
  * come from the presentation contract's metric sources and units, so they read as the charts do;
  * unknown stays unknown, and memory categories are never added into one total. Readings the
  * companion retained after its telemetry stopped, or that Studio holds after losing the
@@ -305,6 +347,8 @@ export function hostSummary(
     observed = finite(telemetry?.observed_at),
     kept = held(telemetry, clock);
   const { hosts, workers, silent } = sources(sample);
+  const rows = readiness(sample, observed, kept, presentation),
+    report = record(sample.readiness);
   return {
     hosts: hosts.map((source) => ({
       host: source.host,
@@ -313,7 +357,8 @@ export function hostSummary(
       age: age(source, observed, kept, presentation),
     })),
     note: note(hosts.length, workers, silent, telemetry ?? {}),
-    readiness: readiness(sample, observed, kept, presentation),
+    readiness: rows,
+    overall: overall(rows, report.schema_version === 1 ? report.overall : null, kept, presentation),
     stale: staleNote(kept, observed),
   };
 }

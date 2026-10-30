@@ -4,6 +4,19 @@
 
 ### Everyday use
 
+- Over an image in Studio's output viewer, the mouse wheel zooms around the
+  point under the pointer. Anywhere else the wheel still scrolls the page, and
+  Fit, 1:1, the zoom buttons and drag to pan work as before, except that a
+  zoomed image smaller than the frame now stays in its middle instead of at the
+  left edge ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- Studio's telemetry panel keeps the jobs, one Readiness line and both hosts in
+  view, and folds the readiness rows, metric history, sample inspection, export
+  and raw sample into Detailed telemetry, which the browser keeps open or closed
+  with the layout ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- Studio's video tiles in Recent Outputs, the Gallery and Queue show the
+  video's first frame and its length instead of "Preview unavailable". A tile
+  with no frame says No thumbnail, and only a video the browser cannot decode
+  says Cannot play in this browser ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 - Studio's Generate checks the draft and starts the job in one action, and the
   job keeps the same immutable submission record. Review settings shows that
   record first. The review dialog opens by itself only for a warning, which

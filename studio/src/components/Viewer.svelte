@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy, untrack } from 'svelte';
+  import { flushSync, onDestroy, untrack } from 'svelte';
   import type { StudioClient } from '../api';
   import type { Artifact, Job, ReuseArtifact, Seeds } from '../contracts';
   import type { FollowedJob } from '../jobTracker.svelte';
@@ -9,6 +9,7 @@
   import { displayUnknown, formatTime } from '../model';
   import { frameTarget } from '../mediaPlayback';
   import { pendingView } from '../jobFollow';
+  import { anchorAt, scrollToAnchor, shownScale, wheelZoom } from '../viewerZoom';
   import {
     NO_MEDIA,
     currentMedia,
@@ -150,6 +151,31 @@
   $effect(() => {
     if (sync) syncPlayback();
   });
+  /**
+   * The wheel over an image zooms around the point under the pointer and never scrolls the
+   * viewer or the page. Anywhere else, over a video, or for a sideways scroll, it scrolls.
+   */
+  function wheel(event: WheelEvent) {
+    const image = event.target;
+    if (!(image instanceof HTMLImageElement) || !image.naturalWidth || !image.naturalHeight) return;
+    const natural = { width: image.naturalWidth, height: image.naturalHeight };
+    const before = image.getBoundingClientRect();
+    // From Fit, start at the scale the image shows at, so the first step does not jump.
+    const from = mode === 'actual' ? zoom : shownScale(before, natural);
+    const next = wheelZoom(from, event.deltaX, event.deltaY, event.deltaMode);
+    if (next === null) return;
+    event.preventDefault();
+    if (next === from) return;
+    const pointer = { x: event.clientX, y: event.clientY };
+    const anchor = anchorAt(before, natural, pointer);
+    flushSync(() => {
+      mode = 'actual';
+      zoom = next;
+    });
+    const shift = scrollToAnchor(anchor, image.getBoundingClientRect(), natural, pointer);
+    viewport.scrollLeft += shift.x;
+    viewport.scrollTop += shift.y;
+  }
 </script>
 
 <section class="viewer">
@@ -248,6 +274,7 @@
       }}
       onpointerup={() => (pan.active = false)}
       onpointercancel={() => (pan.active = false)}
+      onwheel={wheel}
     >
       {#if pending}<div class="empty-art">
           <h3>{pending.heading}</h3>
