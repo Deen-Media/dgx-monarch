@@ -88,10 +88,13 @@
     /** The workflow filter's text; it starts empty on each mount unless a parent binds it. */
     workflowQuery?: string;
   } = $props();
-  // A field the draft cannot submit keeps Generate off; the summary names it, its node and why.
-  let invalid = $derived(fieldIssues(bindings, draft.values, draft.workflow));
+  // Prompt and Negative prompt where the roles are known; other text boxes name their node.
+  let names = $derived(presentFields(draft, bindings, catalog.object_info));
+  // A field the draft cannot submit keeps Generate off; the summary names it, by the name the
+  // field shows, its node when another field shows that name too, and why.
+  let invalid = $derived(fieldIssues(bindings, draft.values, draft.workflow, names));
   let issues = $derived(
-    summaryIssues(invalid, inspectionIssues(bindingErrors, bindings, draft.workflow)),
+    summaryIssues(invalid, inspectionIssues(bindingErrors, bindings, draft.workflow, names)),
   );
   // An edit can resolve a workflow issue, so Create checks the draft again once edits settle.
   let checking = $state(false);
@@ -119,8 +122,6 @@
   let operations = $derived(operationChoices(traits, draft.operation));
   let operationNeed = $derived(operations.find((o) => o.id === draft.operation)?.need ?? null);
   let metadata = $derived(inputMetadata(draft.workflow, bindings, catalog.object_info));
-  // Prompt and Negative prompt where the roles are known; other text boxes name their node.
-  let names = $derived(presentFields(draft, bindings, catalog.object_info));
   let durations = $derived(
     durationGroups(draft.workflow, bindings, catalog.object_info).filter(synchronized),
   );
@@ -269,7 +270,7 @@
     </div>
   </div>
   <small class="operation-note" id="operation-note"
-    >Labels the job in Queue, the gallery and its record, while the workflow decides what runs.</small
+    >Labels the job; the workflow decides what runs.</small
   >{#if operationNeed}<small class="warning operation-need" id="operation-need"
       >{operationNeed}</small
     >{/if}<small class="seed-policy-note" id="seed-policy-note"

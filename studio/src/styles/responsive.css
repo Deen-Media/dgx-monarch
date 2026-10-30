@@ -53,10 +53,11 @@
     height: auto;
     min-height: 100%;
   }
+  /* The pane fits the window between the header and the status bar, so its pinned footer
+     stays in view and the pane scrolls instead. */
   .controls-panel {
     width: 300px;
     max-height: calc(100vh - 110px);
-    min-height: 600px;
   }
   .workspace-center {
     min-height: 600px;

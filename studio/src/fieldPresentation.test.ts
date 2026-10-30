@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { bundled, graph, recorded, widgetBindings } from './workflowFixtures.js';
 import { graphRoles, presentFields, promptRoles } from './fieldPresentation.ts';
+import { fieldIssue, issueText } from './fieldIssues.ts';
 import type { Binding } from './model.ts';
 
 const KREA = 'krea-2-text-to-image';
@@ -182,4 +183,33 @@ test('no packaged template shows two text boxes with one name, and each names it
     const prompts = bindings.filter((b) => b.prominent && names.get(b.id)?.role === 'prompt');
     assert.ok(prompts.length, `${row.name} shows no Prompt on Inputs`);
   }
+});
+
+test('a field issue uses the name its field shows, and its node only when that name repeats', () => {
+  const { workflow, bindings } = krea();
+  const names = presentFields({ workflow }, bindings, recorded);
+  const prompt = bindings.find((b) => b.node_id === '5')!;
+  const issue = fieldIssue(prompt, 'A value is required', workflow, names);
+  assert.equal(issueText(issue), 'Prompt: A value is required.');
+  assert.equal(issue.node, undefined);
+  // Two seeds, as a graph that samples in two stages has, keep their nodes apart.
+  const seed = (node: string): Binding => ({
+    id: `${KREA}:${node}:seed`,
+    graph_id: KREA,
+    node_id: node,
+    input_name: 'seed',
+    label: 'seed',
+    type: 'INT',
+  });
+  const twins = [...bindings, seed('8'), seed('9')];
+  const twinNames = presentFields({ workflow }, twins, recorded);
+  assert.equal(
+    issueText(fieldIssue(twins[2], 'Enter a finite number', workflow, twinNames)),
+    'seed on node 8: Enter a finite number.',
+  );
+  // Without the names the issue keeps the input name and the node, as before.
+  assert.equal(
+    issueText(fieldIssue(prompt, 'A value is required', workflow)),
+    'text on node 5: A value is required.',
+  );
 });

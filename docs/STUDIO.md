@@ -926,9 +926,10 @@ field, `append` or `template`. Studio ignores it, and only `{prompt}` decides.
 
 Generate checks the draft and starts the job in one action. Studio first checks
 each field against the inputs the driver reports. While a field fails, Generate
-stays off, and the line under it names the first such field, its node and the
-problem, for example "Fix unet_name on node 3: Choose an available value." Show
-field opens the tab that lists the field, Inputs or All inputs, scrolls to it and
+stays off, and the line under it names the first such field, by the name the
+field shows, and the problem, for example "Fix unet_name: Choose an available
+value." It adds the field's node, such as "seed on node 10", only when another
+field shows the same name. Show field opens the tab that lists the field, Inputs or All inputs, scrolls to it and
 focuses it. With more than one issue, a list of them all opens under the line,
 each with its own Show field, and these controls stay on while Generate and
 Review settings are off. When only the workflow check reports a problem, the

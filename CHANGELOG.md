@@ -9,17 +9,18 @@
   after a value edit Create inspects the draft again once the edits pause. A
   repaired value, such as a model file changed to one the driver has, leaves the
   list and the footer, and a problem that remains stays ([Studio](docs/STUDIO.md#working-with-workflows)).
-- Create's footer names the field that keeps Generate off, its node and the
-  problem, with a Show field button that opens Inputs or All inputs, scrolls to
+- Create's footer names the field that keeps Generate off, by the name the
+  field shows, and the problem, with its node only when another field shows the
+  same name, and a Show field button that opens Inputs or All inputs, scrolls to
   the field and focuses it. With more than one issue, a list of them all, each
   with its own Show field, stays usable while Generate and Review settings are
   off ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Under the Random seed policy each seed field reads Random each run and takes
   no edits, with a line that says Fixed sets it, and Fixed makes it editable
   again. The seed under a result and Use this seed are unchanged ([Studio](docs/STUDIO.md#working-with-workflows)).
-- Create's Operation select is now labelled Job category, with a line under it
-  that says it labels the job in Queue, the gallery and its record while the
-  workflow decides what runs, so Image and Workflow run the same graph ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Create's Operation select is now labelled Job category, with one line under
+  it: it labels the job in Queue, the gallery and its record, and the workflow
+  decides what runs, so Image and Workflow run the same graph ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Studio's Send to edit puts the output into the image input of a workflow
   that edits images. It keeps the workflow in Create when that one supports
   Edit, loads the one editing workflow the driver runs, lists them when there

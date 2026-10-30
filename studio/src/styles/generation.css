@@ -252,6 +252,7 @@
 }
 .controls-panel {
   scroll-padding-bottom: var(--footer-room, 0px);
+  scrollbar-width: thin;
 }
 .submission-footer {
   position: sticky;

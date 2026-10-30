@@ -388,11 +388,8 @@ test('the footer names the invalid field and keeps its details open to use while
   for (const label of ['Review settings', 'Generate <span>'])
     assert.match(buttonTag(body, label), /disabled="" aria-describedby="generate-issues"/);
   const footer = footerText(body);
-  assert.match(
-    footer,
-    /^Fix unet_name on node 3: Choose an available value\. Show field All 3 issues/,
-  );
-  assert.match(footer, /steps on node 10: Minimum 1\. Show field/);
+  assert.match(footer, /^Fix unet_name: Choose an available value\. Show field All 3 issues/);
+  assert.match(footer, /steps: Minimum 1\. Show field/);
   assert.match(footer, /App Mode input 4: Widget missing Show issues/);
   // Neither Show field nor the list of issues is ever disabled.
   const summary = body.slice(body.indexOf('id="generate-issues"'), body.indexOf('</details>'));
@@ -404,10 +401,7 @@ test('with only workflow issues Generate stays on and the footer names the first
   const body = await render({ bindingErrors: [ERROR] });
   assert.doesNotMatch(buttonTag(body, 'Generate <span>'), /disabled/);
   const footer = footerText(body);
-  assert.match(
-    footer,
-    /^Check unet_name on node 3: Value is not an available choice\. Show field$/,
-  );
+  assert.match(footer, /^Check unet_name: Value is not an available choice\. Show field$/);
   assert.match(body, /id="inspection-issues" tabindex="-1"/);
   const clean = await render();
   assert.doesNotMatch(clean, /generate-issues/);
@@ -432,15 +426,12 @@ test('under Random a valid seed field reads Random each run and cannot be edited
     visibleText(invalid),
     /Chosen for each job: the Random policy replaces this value\./,
   );
-  assert.match(visibleText(invalid), /seed on node 10: Enter a finite number\./);
+  assert.match(visibleText(invalid), /seed: Enter a finite number\./);
 });
 
 test('Operation reads as the job category and says the workflow decides what runs', async () => {
   const body = await render({ draft: draftOf({}, { operation: 'workflow' }) });
   assert.match(body, /<label for="generation-operation">Job category<\/label>/);
   assert.match(body, /<select id="generation-operation" aria-describedby="operation-note">/);
-  assert.match(
-    visibleText(body),
-    /Labels the job in Queue, the gallery and its record, while the workflow decides what runs\./,
-  );
+  assert.match(visibleText(body), /Labels the job; the workflow decides what runs\./);
 });
