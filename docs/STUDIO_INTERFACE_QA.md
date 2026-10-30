@@ -58,7 +58,7 @@ and revision rather than fetched on every snapshot poll.
 This section records the rounds up to 2026-10-22. The
 [2026-10-28 round](#browser-evidence-2026-10-28) on the release candidate
 follows it, with its own table, and the
-[tester round 4 rows](#tester-round-4-browser-checks) follow that.
+[tester round 4 rows](#tester-round-4-checks-2026-10-30) follow that.
 
 On 2026-10-22 all twelve rows below ran again on the bundle rebuilt after two
 review fixes: Review generation takes empty text in a required input, and a
@@ -297,7 +297,7 @@ Reconcile in Queue for an unknown outcome; the review expiry at any viewport
 but 390×844; and Chromium, Safari, physical phones, assistive technology and GPU
 rendering, as before.
 
-## Tester round 4 browser checks
+## Tester round 4 checks, 2026-10-30
 
 Issue #116 lists a Studio tester's fourth round. Each change for it adds its
 rows here, run headless against the CPU event fixture on the bundle that change
