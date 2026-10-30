@@ -338,6 +338,27 @@ def test_the_three_studio_docs_share_one_status_word():
         assert "proposed" not in status.lower()
 
 
+def _companion_support_status() -> str:
+    """The support_status the companion's capabilities route returns, read
+    from the source so this file imports no aiohttp."""
+    tree = ast.parse((SRC / "studio" / "server.py").read_text())
+    values = [value.value for node in ast.walk(tree) if isinstance(node, ast.Dict)
+              for key, value in zip(node.keys, node.values, strict=True)
+              if isinstance(key, ast.Constant) and key.value == "support_status"
+              and isinstance(value, ast.Constant) and isinstance(value.value, str)]
+    assert len(values) == 1, values
+    return values[0]
+
+
+def test_the_companion_reports_the_status_the_docs_state():
+    """Settings shows this string under Capability contract."""
+    status = _companion_support_status()
+    assert status.split(";", 1)[0] == "supported"
+    assert "draft" not in status.lower()
+    assert "docs/STUDIO_ACCEPTANCE.md" in status
+    assert (REPO / "docs" / "STUDIO_ACCEPTANCE.md").is_file()
+
+
 # The design map names the new boundary owners
 
 
