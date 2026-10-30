@@ -4,6 +4,12 @@
 
 ### Everyday use
 
+- Studio is a supported interface from this release, beside the CLI, the TUI
+  and the ComfyUI panel, and its docs no longer call it a draft. The
+  [acceptance record](docs/STUDIO_ACCEPTANCE.md), the
+  [measurement record](docs/STUDIO_PERFORMANCE.md#runtime-acceptance) and the
+  [interface QA record](docs/STUDIO_INTERFACE_QA.md#remaining-acceptance) still
+  list every open item ([Studio](docs/STUDIO.md)).
 - Studio's Generate checks the draft and starts the job in one action, and the
   job keeps the same immutable submission record. Review settings shows that
   record first. The review dialog opens by itself only for a warning, which

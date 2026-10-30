@@ -58,7 +58,7 @@ line that reaches it from a laptop.
 
 [![DGX Monarch Studio with test fixture data](docs/media/dgxm-studio.png)](docs/STUDIO.md)
 
-Shown with the CPU test fixture, so no model ran. Studio is a draft; the
+Shown with the CPU test fixture, so no model ran. The
 [Studio guide](docs/STUDIO.md) covers setup, remote access and what is not
 finished yet.
 
@@ -208,9 +208,9 @@ and rollback.
 
 ## Documentation
 
-[Studio draft](docs/STUDIO.md) describes the optional browser companion and its
-current acceptance gaps. Existing CLI, TUI and ComfyUI workflows remain the
-supported interfaces while Studio's complete specification is under development.
+[Studio](docs/STUDIO.md) describes the optional browser companion and its
+current acceptance gaps. Studio, the CLI, the TUI and ComfyUI workflows are all
+supported interfaces.
 
 [Documentation index](docs/README.md) · [Model guide](docs/MODELS.md) · [Troubleshooting](docs/TROUBLESHOOTING.md) · [FAQ](docs/FAQ.md) · [Contributing](CONTRIBUTING.md)
 

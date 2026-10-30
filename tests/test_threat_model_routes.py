@@ -308,7 +308,7 @@ def test_studio_spec_is_marked_as_the_original_specification():
     status = text.split("\n\n", 2)[1]
     assert status.startswith("Status: original specification")
     assert "(STUDIO.md)" in status and "(STUDIO_ACCEPTANCE.md)" in status
-    assert "**draft**" in status
+    assert "**supported**" in status
     for stale in ("proposed work, not existing features", "proposed engineering work",
                   "The known backend currently mounts", "unless the user explicitly enables its service"):
         assert stale not in text, stale
@@ -328,10 +328,12 @@ def test_studio_spec_is_marked_as_the_original_specification():
 def test_the_three_studio_docs_share_one_status_word():
     spec_status = STUDIO_SPEC.read_text().split("\n\n", 2)[1]
     studio = STUDIO.read_text()
+    studio_status = next(block for block in studio.split("\n\n") if "(STUDIO_SPEC.md)" in block)
     acceptance_status = STUDIO_ACCEPTANCE.read_text().split("\n\n", 2)[1]
-    assert "draft" in spec_status
-    assert "draft" in studio.splitlines()[0].lower()
-    assert "draft" in acceptance_status.lower()
+    assert studio.splitlines()[0] == "# DGX Monarch Studio"
+    for status in (spec_status, studio_status, acceptance_status):
+        assert "supported interface" in _flat(status.replace("**", ""))
+        assert "draft" not in status.lower()
     for status in (spec_status, acceptance_status):
         assert "proposed" not in status.lower()
 
