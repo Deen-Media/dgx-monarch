@@ -178,7 +178,13 @@
   }
   async function reuse(artifact: Artifact, operation?: string) {
     if (operation === 'edit')
-      return handoff.send(artifact, { withBusy, importDraft, navigate, setNotice });
+      return handoff.send(artifact, {
+        withBusy,
+        importDraft,
+        navigate,
+        setNotice,
+        selectTab: (tab) => (controlTab = tab),
+      });
     await withBusy(() => loadArtifact(artifact, operation));
   }
   async function loadArtifact(artifact: Artifact, operation?: string) {

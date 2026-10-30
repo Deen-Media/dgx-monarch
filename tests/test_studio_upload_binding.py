@@ -36,6 +36,8 @@ class Driver:
         self.uploads = []
         # Files the driver saved as job outputs, served through /view as ComfyUI does.
         self.outputs: dict[str, bytes] = {}
+        # When set, /view drops the connection mid-request, as a driver going away does.
+        self.drop_view = False
 
     def object_info(self):
         files = sorted(self.inputs)
@@ -68,6 +70,9 @@ class Driver:
             return web.json_response({"name": fields["image"], "subfolder": fields["subfolder"], "type": "input"})
 
         async def view(request):
+            if self.drop_view:
+                request.transport.close()
+                return web.Response(status=500)
             data = self.outputs.get(request.query.get("filename", ""))
             if request.query.get("type") != "output" or data is None:
                 return web.json_response({"error": "missing"}, status=404)
@@ -388,6 +393,20 @@ def test_send_to_edit_refuses_anything_but_a_saved_image_output(tmp_path, body, 
             request = {"kind": "input", **({"artifact_id": output} if output else {}), **body}
             answer, refused = await system.call("POST", "/assets", json=request)
             assert (answer, refused["error"]["code"]) == (status, code), refused
+            assert system.driver.uploads == []
+    asyncio.run(scenario())
+
+
+def test_send_to_edit_names_a_dropped_driver_connection(tmp_path):
+    # A driver that goes away while the output is read is a copy failure the user can act on,
+    # with its own code, not an internal error; no upload is made.
+    async def scenario():
+        async with companion(tmp_path) as system:
+            output = saved_output(system)
+            system.driver.drop_view = True
+            status, refused = await system.call("POST", "/assets", json={"kind": "input", "artifact_id": output})
+            assert (status, refused["error"]["code"]) == (503, "asset_copy"), refused
+            assert "Send to edit again" in refused["error"]["message"]
             assert system.driver.uploads == []
     asyncio.run(scenario())
 

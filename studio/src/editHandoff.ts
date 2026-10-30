@@ -2,7 +2,7 @@ import type { StudioClient } from './api';
 import type { AssetReceipt } from './assetEditorState.svelte';
 import type { Artifact, Inspection, Workflow, WorkflowEntry } from './contracts';
 import type { Binding, Draft } from './model';
-import { bindingError, bindingType, fieldLabel } from './model.ts';
+import { bindingError, bindingOptions, bindingType, fieldLabel } from './model.ts';
 import { byTitle, workflowTitle } from './workflowChoice.ts';
 import {
   bindingIndex,
@@ -159,7 +159,16 @@ export function editImageNeed(draft: Draft, bindings: Binding[], info?: ObjectIn
   const target = editTarget(draft.workflow, bindings, info);
   if (!target) return null;
   const value = draft.values[target.id] ?? target.value;
-  if (value !== undefined && value !== null && value !== '' && !bindingError(target, value))
+  // A choice input holds an image only when the driver lists it: an empty list offers none, so a
+  // name the workflow still carries is no image either, and the companion would refuse it.
+  const listed = bindingType(target) !== 'COMBO' || bindingOptions(target).includes(value);
+  if (
+    value !== undefined &&
+    value !== null &&
+    value !== '' &&
+    listed &&
+    !bindingError(target, value)
+  )
     return null;
   return `Edit needs an image in the ${fieldLabel(target)} input on node ${target.node_id}. Use Send to edit on an output, or upload an image on the Assets tab.`;
 }
@@ -170,6 +179,8 @@ export interface EditActions {
   importDraft: (value: Draft, templateId?: string) => Promise<void>;
   navigate: (view: string) => void;
   setNotice: (message: string) => void;
+  /** Show the Inputs or the All inputs tab, so the bound image is in view after the import. */
+  selectTab?: (tab: 'inputs' | 'advanced') => void;
 }
 
 /**
@@ -227,7 +238,12 @@ export async function bindOutput(
   const next = editDraft(context.draft(), target, receipt.binding_value, lineage, load);
   await actions.importDraft(next, choice ? choice.id : context.workflowId());
   // An inspection that failed leaves no bindings and shows its own error.
-  if (!context.bindings().length) return;
+  const bound = context.bindings();
+  if (!bound.length) return;
+  // The import shows Inputs when any input is prominent; an image input that App Mode leaves
+  // under All inputs would then be out of view, so that tab opens instead.
+  const shown = bound.find((binding) => binding.id === target.id);
+  if (shown && !(shown.prominent || shown.display?.prominent)) actions.selectTab?.('advanced');
   actions.navigate('workspace');
   actions.setNotice(
     `Send to edit put the output in the ${fieldLabel(target)} input on node ${target.node_id} of ${label} and set the Operation to Edit. Describe the change in the prompt, then Generate. Undo restores the previous draft.`,

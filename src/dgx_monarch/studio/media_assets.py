@@ -118,17 +118,27 @@ class MediaAssets:
         if source.get("job_id") is None or source.get("kind") != "image" or source.get("source") == "live_preview":
             raise StudioError("asset_source", "Only a saved image output of a job can become an input image.")
         async with self.semaphore:
-            response = await self.client.media(source)
+            # A dropped driver connection, a read that stops or the driver's own timeout is a copy
+            # failure the user can act on, not an internal error; the limits keep their own codes.
             try:
-                if response.content_length and response.content_length > SOURCE_BYTES:
-                    raise StudioError("asset_limit", "The output exceeds the 65 MiB backstop. " + _DOWNSCALE, 413)
-                raw = bytearray()
-                async for chunk in response.content.iter_chunked(65536):
-                    raw.extend(chunk)
-                    if len(raw) > SOURCE_BYTES:
+                response = await self.client.media(source)
+                try:
+                    if response.content_length and response.content_length > SOURCE_BYTES:
                         raise StudioError("asset_limit", "The output exceeds the 65 MiB backstop. " + _DOWNSCALE, 413)
-            finally:
-                response.release()
+                    raw = bytearray()
+                    async for chunk in response.content.iter_chunked(65536):
+                        raw.extend(chunk)
+                        if len(raw) > SOURCE_BYTES:
+                            raise StudioError("asset_limit", "The output exceeds the 65 MiB backstop. " + _DOWNSCALE, 413)
+                finally:
+                    response.release()
+            except StudioError:
+                raise
+            except (aiohttp.ClientError, TimeoutError, OSError) as exc:
+                raise StudioError(
+                    "asset_copy",
+                    "The output could not be read from the driver, so no copy was made. "
+                    "Check the driver connection and use Send to edit again.", 503) from exc
             data, metadata = await asyncio.to_thread(normalized, bytes(raw))
             return await self._store(data, metadata, "input", source_artifact_id=identity)
 

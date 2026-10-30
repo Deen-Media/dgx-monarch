@@ -79,6 +79,8 @@ interface Setup {
   info?: Record<string, any>;
   workflows?: WorkflowEntry[];
   assets?: (state: { draft: Draft }) => unknown;
+  /** A binding the import lists under All inputs only, as App Mode may leave an image input. */
+  hidden?: string;
 }
 
 /** Send to edit against a fake companion and App: it records each request, import and notice. */
@@ -94,6 +96,7 @@ function harness(setup: Setup) {
   const notices: string[] = [];
   const errors: string[] = [];
   const offers: EditOffer[] = [];
+  const tabs: string[] = [];
   const client = {
     async request(path: string, body: any) {
       calls.push({ path, body });
@@ -123,15 +126,18 @@ function harness(setup: Setup) {
       imports.push({ value: structuredClone(value), templateId });
       // The import inspects the workflow with the draft's values, so a bound copy is a choice.
       state.draft = value;
-      state.bindings = inspected(value.workflow!, value.values);
+      state.bindings = inspected(value.workflow!, value.values).map((binding) =>
+        binding.id === setup.hidden ? { ...binding, prominent: false } : binding,
+      );
       state.workflowId = templateId ?? '';
     },
     navigate: (view) => views.push(view),
     setNotice: (text) => notices.push(text),
+    selectTab: (tab) => tabs.push(tab),
   };
   const send = (artifact: Artifact) =>
     sendToEdit(artifact, context, actions, (plan) => offers.push(plan));
-  return { state, calls, imports, views, notices, errors, offers, send };
+  return { state, calls, imports, views, notices, errors, offers, tabs, send };
 }
 
 test('the editing workflows are the packaged ones that load an image, make no video and run on the driver', () => {
@@ -175,8 +181,26 @@ test('Send to edit keeps a loaded workflow that supports Edit and binds the outp
   assert.equal(templateId, entry('flux3-klein-base-edit').id);
   assert.deepEqual(run.views, ['workspace']);
   assert.match(run.notices[0], /the image input on node 8 of FLUX\.3 Klein Base image editing/);
+  // The Inputs tab shows the prominent image input, so no other tab is chosen.
+  assert.deepEqual(run.tabs, []);
   // With the copy bound, Generate no longer waits for an image.
   assert.equal(editImageNeed(run.state.draft, run.state.bindings, recorded), null);
+});
+
+test('an image input that App Mode leaves under All inputs opens that tab after the bind', async () => {
+  const draft = loaded('flux3-klein-base-edit');
+  const image = 'flux.3-klein-base-image-editing:8:image';
+  const run = harness({
+    draft,
+    workflowId: entry('flux3-klein-base-edit').id,
+    info: recorded,
+    hidden: image,
+  });
+  await run.send(output);
+  assert.deepEqual(run.errors, []);
+  assert.equal(run.imports[0].value.values[image], 'studio/copy.png');
+  assert.deepEqual(run.tabs, ['advanced']);
+  assert.deepEqual(run.views, ['workspace']);
 });
 
 test('with one editing workflow on the driver, Send to edit loads it and binds the output', async () => {
@@ -348,6 +372,12 @@ test('under Edit, Generate waits until the image input holds an image the driver
   assert.equal(need(''), reason);
   // A file the driver does not offer is no image either.
   assert.equal(need('missing.png'), reason);
+  // A driver with no input images offers none, whatever name the workflow still carries.
+  const bare = inspected(draft.workflow!).map((b) =>
+    b.id === image ? { ...b, schema: { ...b.schema, choices: [] } } : b,
+  );
+  const named = { ...draft, values: { ...draft.values, [image]: 'reference.png' } };
+  assert.equal(editImageNeed(named, bare, recorded), reason);
   assert.equal(need(IMAGE_CHOICES[0]), null);
   // With no draft value the graph's own runs, and this driver offers reference.png.
   assert.ok(IMAGE_CHOICES.includes('reference.png'));
