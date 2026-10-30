@@ -6,6 +6,7 @@ import { graph, recorded, widgetBindings } from './workflowFixtures.js';
 import { emptyDraft } from './model.ts';
 import type { Binding } from './model.ts';
 import { fittedHeight } from './textGrowth.ts';
+import { footerRoom } from './footerRoom.ts';
 
 const KREA = 'krea-2-text-to-image';
 const UUID = '3f2a9c1e-7b4d-4e8a-9c6f-2d1b0a9e8f7c';
@@ -163,6 +164,58 @@ test('one layout rule keeps the whole Create pane from scrolling sideways', () =
     /\.controls-panel \.input-row \{\s*grid-template-columns: repeat\(2, minmax\(0, 1fr\)\);/,
   );
   assert.match(rule, /\.controls-panel fieldset \{\s*min-width: 0;/);
+});
+
+test('a short window keeps a field list floor and pins the footer, which fields stop above', () => {
+  const css = readFileSync(new URL('./styles/generation.css', import.meta.url), 'utf8');
+  const rule = css.slice(css.indexOf('/* On a short window the field list keeps'));
+  assert.match(rule, /\.controls-scroll \{\s*min-height: min\(280px, 40vh\);/);
+  assert.match(rule, /\.controls-panel \{\s*scroll-padding-bottom: var\(--footer-room, 0px\);/);
+  assert.match(rule, /\.submission-footer \{\s*position: sticky;\s*bottom: 0;/);
+  // The prompt's ceiling stays under the list's floor, so the whole box fits in the list.
+  assert.match(rule, /textarea\.prompt-text \{\s*max-height: min\(30vh, 420px\);/);
+  assert.match(
+    rule,
+    /@media \(max-width: 760px\) \{[^}]*html \{\s*scroll-padding-bottom: calc\(80px/,
+  );
+  const view = readFileSync(new URL('./views/Generation.svelte', import.meta.url), 'utf8');
+  assert.match(view, /<div class="submission-footer" use:footerRoom>/);
+});
+
+test('the footer action keeps the pane told of the footer height, and forgets it on removal', () => {
+  const room: string[] = [];
+  let watch = () => {};
+  let watching = false;
+  const pane = {
+    style: {
+      setProperty: (name: string, value: string) => room.push(`${name}=${value}`),
+      removeProperty: (name: string) => room.push(`${name} removed`),
+    },
+  };
+  const footer = { parentElement: pane, offsetHeight: 151 };
+  const original = globalThis.ResizeObserver;
+  globalThis.ResizeObserver = class {
+    constructor(callback: () => void) {
+      watch = callback;
+    }
+    observe() {
+      watching = true;
+    }
+    unobserve() {}
+    disconnect() {
+      watching = false;
+    }
+  } as unknown as typeof ResizeObserver;
+  try {
+    const action = footerRoom(footer as unknown as HTMLElement);
+    footer.offsetHeight = 216;
+    watch();
+    action.destroy?.();
+    assert.deepEqual(room, ['--footer-room=151px', '--footer-room=216px', '--footer-room removed']);
+    assert.equal(watching, false);
+  } finally {
+    globalThis.ResizeObserver = original;
+  }
 });
 
 test('the main prompt fits its text between its empty height and its ceiling', () => {

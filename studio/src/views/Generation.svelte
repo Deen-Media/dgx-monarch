@@ -15,6 +15,7 @@
   import { operationChoices, outputSummary, workflowTraits } from '../workflowTraits';
   import { durationGroups, inputMetadata, synchronized } from '../frameCounts';
   import { presentFields } from '../fieldPresentation';
+  import { footerRoom } from '../footerRoom';
   import AssetEditor from '../components/AssetEditor.svelte';
   import DurationControl from '../components/DurationControl.svelte';
   import Field from '../components/Field.svelte';
@@ -316,7 +317,7 @@
       />
     {/if}
   </div>
-  <div class="submission-footer">
+  <div class="submission-footer" use:footerRoom>
     <div class="target-line">
       <span class="status-dot" class:healthy={driverState === 'connected'}></span><span
         >Driver {driverState ?? 'unknown'}</span

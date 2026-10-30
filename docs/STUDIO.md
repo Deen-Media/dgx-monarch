@@ -797,8 +797,13 @@ the draft's input lineage, and each asset you upload on the Assets tab joins it.
 Inputs and All inputs list each lineage id in full under Input lineage, wrapped
 to fit, with a Copy button that copies the whole id and shows it when you point
 at it. Clear lineage empties the list. Lineage records ancestry; the asset
-controls set the input the job reads. Nothing in Create's pane scrolls sideways
-at any pane width: ids, file names and labels wrap, and fields narrow to fit.
+controls set the input the job reads. Create's pane never scrolls sideways, at
+any pane width: ids, file names and labels wrap, and fields narrow to fit. Only
+the row of tabs scrolls along its own line when the pane is too narrow for all
+five. On a short window the field list keeps at least 280 pixels, or 40 percent
+of the window's height when that is less, and the pane scrolls instead, with
+Generate pinned at its foot. A field brought into view stops above Generate,
+and the prompt box grows no taller than 30 percent of the window's height.
 
 The Workflow list names each packaged workflow by the title of its Note node,
 in title order, and shows the chosen workflow's file name in small type under
