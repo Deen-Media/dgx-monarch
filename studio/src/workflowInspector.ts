@@ -1,6 +1,7 @@
 import type { StudioClient } from './api';
 import type { Inspection, Workflow } from './contracts';
 import { droppedInspection, type InspectionGuard } from './inspectionGuard.ts';
+import { stampIssues } from './issueRefresh.ts';
 import type { Binding, Draft } from './model';
 import type { ObjectInfo } from './workflowGraph.ts';
 import { fittedOperation, workflowTraits } from './workflowTraits.ts';
@@ -68,8 +69,9 @@ export async function inspectDraft(
 /**
  * Inspect again after a dynamic choice changed, so the bindings list that choice's inputs, and
  * return them with the draft whose values follow them. Returns null when a newer inspection or
- * another workflow superseded it; an ordinary field edited meanwhile keeps its value. A changed
- * connection refuses with the usual reason.
+ * another workflow superseded it; an ordinary field edited meanwhile keeps its value. The errors
+ * carry this inspection's ticket, so after such an edit Create sees them as stale and checks the
+ * draft again. A changed connection refuses with the usual reason.
  */
 export async function rebuildBindings(
   connection: { client: StudioClient },
@@ -86,5 +88,9 @@ export async function rebuildBindings(
   if (state === 'reconnected') throw new Error(droppedInspection(workflowName, state));
   const draft = current();
   if (state === 'newer' || draft.workflow !== workflow) return null;
-  return { ...result, draft: { ...draft, values: bindingValues(result.bindings, draft.values) } };
+  return {
+    ...result,
+    errors: stampIssues(result.errors, ticket),
+    draft: { ...draft, values: bindingValues(result.bindings, draft.values) },
+  };
 }

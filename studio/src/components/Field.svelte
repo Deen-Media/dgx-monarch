@@ -10,6 +10,7 @@
     binding,
     value,
     note = '',
+    locked = '',
     meta,
     onchange,
     presentation,
@@ -17,6 +18,8 @@
   }: {
     binding: Binding;
     value: unknown;
+    /** Text the field shows in place of its value while the draft does not use it, or ''. */
+    locked?: string;
     /** A line about how the draft uses this value, such as a seed chosen at review. */
     note?: string;
     /** The input's node, unit and relation to other inputs, such as a clip frame count. */
@@ -67,7 +70,9 @@
         class="field-type">{tag}</span
       >{/if}</label
   >
-  {#if binding.resolved === false}
+  {#if locked}
+    <input id={fieldId} value={locked} disabled />
+  {:else if binding.resolved === false}
     <div class="unresolved-field">{binding.reason ?? 'Unresolved binding'}</div>
   {:else if options.length}
     <select

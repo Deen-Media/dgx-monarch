@@ -208,6 +208,13 @@ def _primitive_definition(nid: str, graph: Mapping[str, Any], info: Mapping[str,
     return {"input": {"required": {"value": [combined.pop("choices") if kind == "COMBO" else kind, combined]}}}
 
 
+def _editable(bindings: list[dict[str, Any]], inactive: list[str]) -> set[str]:
+    """Binding IDs a draft may edit: resolved inputs, their legacy aliases and inputs an edited choice dropped."""
+    editable = {key for item in bindings if item["resolved"] for key in (item["id"], *item.get("aliases", []))}
+    editable.update(inactive)
+    return editable
+
+
 def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any] | None = None,
                      edits: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """Inspect all typed inputs, preserving unresolved App Mode selections.
@@ -215,7 +222,10 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
     ``edits`` are draft values by binding ID. A dynamic choice they change lists
     the child inputs of the edited choice; ``inactive`` names the saved choice's
     children that the edits leave out. Subgraph instances keep their saved
-    choices' children.
+    choices' children. ``errors`` validate the graph with the edits that compile
+    accepts, so an edit that repairs a saved value clears its error. Edits to
+    inputs the bindings do not list, such as a connected input, are left out
+    rather than reported.
     """
     if not isinstance(workflow, dict):
         raise WorkflowError("Workflow must be an object")
@@ -332,7 +342,9 @@ def inspect_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
     if not errors:
         try:
             from .workflow_compile import compile_graph
-            prompt = compile_graph(workflow, info, {})
+            editable = _editable(bindings, inactive)
+            prompt = compile_graph(workflow, info, {key: value for key, value in (edits or {}).items()
+                                                    if key in editable})
         except WorkflowError as exc:
             errors.append(str(exc))
     return {"adapter_version": ADAPTER_VERSION, "workflow": copy.deepcopy(workflow),
@@ -355,8 +367,7 @@ def compile_workflow(workflow: Mapping[str, Any], object_info: Mapping[str, Any]
                   if not item["resolved"] and (item.get("requires_resolution") or item["prominent"])]
     if unresolved or any(not item["resolved"] for item in inspection["outputs"]):
         raise WorkflowError("Resolve App Mode bindings before submission")
-    editable = {key for item in inspection["bindings"] if item["resolved"] for key in (item["id"], *item.get("aliases", []))}
-    editable.update(inspection["inactive"])
+    editable = _editable(inspection["bindings"], inspection["inactive"])
     if any(key not in editable and any(row.get("definition_binding_id") == key for row in inspection["bindings"])
            for key in (values or {})):
         raise WorkflowError("Shared subgraph binding is ambiguous; choose a specific instance")

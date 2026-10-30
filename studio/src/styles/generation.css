@@ -71,6 +71,18 @@
   display: block;
   margin: -10px 0 16px;
 }
+.operation-note {
+  display: block;
+  margin: -10px 0 16px;
+  color: var(--muted);
+}
+/* A field the draft does not use, such as a seed under the Random policy. */
+.field input:disabled {
+  color: var(--muted);
+  background: transparent;
+  border-style: dashed;
+  cursor: not-allowed;
+}
 .import-label {
   font-weight: 500;
   margin: 0;

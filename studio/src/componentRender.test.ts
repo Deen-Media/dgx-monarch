@@ -111,7 +111,7 @@ test('Generation enables Generate and Review settings only for a valid, unblocke
     generationProps({ draft: { ...generationProps().draft, values: { steps: 0 } } }),
   );
   for (const tag of generateTags(invalid)) assert.match(tag, /disabled/);
-  assert.match(invalid, /Resolve 1 field issue\(s\)\./);
+  assert.match(invalid, /Fix steps: Minimum 1\./);
   for (const blocked of [{ pending: true }, { busy: true }, { draft: emptyDraft() }])
     for (const tag of generateTags(html(Generation, generationProps(blocked))))
       assert.match(tag, /disabled/);
@@ -128,7 +128,7 @@ test('Generation reviews a required text input left empty, but not a missing one
   for (const tag of generateTags(empty)) assert.doesNotMatch(tag, /disabled/);
   const missing = html(Generation, generationProps({ bindings, draft: draft({ steps: 20 }) }));
   for (const tag of generateTags(missing)) assert.match(tag, /disabled/);
-  assert.match(missing, /Resolve 1 field issue\(s\)\./);
+  assert.match(missing, /Fix double_layers: A value is required\./);
 });
 
 test('an empty required operation parameter keeps its notice, as the companion refuses it', () => {

@@ -825,8 +825,10 @@ writes frames when the graph makes video. A saved video has sound when the
 Create Video node that feeds it takes an audio input; when another node makes
 the video, the line does not say. A preview node saves no file.
 
-The Operation select labels the job, and Queue, the gallery filter and the job
-record keep that label. It lists only the operations the loaded graph supports,
+The Job category select sets the job's operation. It labels the job, and Queue,
+the gallery filter and the job record keep that label. The loaded workflow
+decides what runs, as the line under the select says, so Image and Workflow run
+the same graph. The select lists only the operations the loaded graph supports,
 read from the nodes that run. Muted and bypassed nodes do not count, and neither
 does a subgraph that no running instance reaches:
 
@@ -847,7 +849,7 @@ does a subgraph that no running instance reaches:
 Loading a workflow keeps the draft's operation when the graph supports it, and
 otherwise picks the first one it supports of Fleet, Upscale, Video, Edit and
 Image. A draft can still hold an operation its graph lacks, for example after
-Send to edit on a text to image workflow. The select then marks it not
+Upscale on an output of a text to image workflow. The select then marks it not
 supported, and a line under it names the input the operation needs. That line
 does not stop Generate. An operation you choose while a workflow loads stays as
 you chose it. Until Studio has inspected the graph, it lists every operation.
@@ -924,7 +926,17 @@ field, `append` or `template`. Studio ignores it, and only `{prompt}` decides.
 
 Generate checks the draft and starts the job in one action. Studio first checks
 each field against the inputs the driver reports. While a field fails, Generate
-stays off, and the line under it says how many fields to fix. Generate then asks
+stays off, and the line under it names the first such field, its node and the
+problem, for example "Fix unet_name on node 3: Choose an available value." Show
+field opens the tab that lists the field, Inputs or All inputs, scrolls to it and
+focuses it. With more than one issue, a list of them all opens under the line,
+each with its own Show field, and these controls stay on while Generate and
+Review settings are off. When only the workflow check reports a problem, the
+line starts with Check and Generate stays on. Workflow needs attention, under the
+fields, lists what the companion found when it inspected the workflow with the
+draft's values. After you edit a value, Studio inspects the draft again once
+your edits pause, so a problem you fixed, such as a model file the driver lacks,
+leaves the list and the line, and one that remains stays. Generate then asks
 the companion for the job's immutable submission record. The companion checks
 the draft again, applies styles and LoRAs, sets the seeds by the seed policy
 and freezes the prompt. When nothing needs a person, Studio submits that record at once, and the
@@ -988,8 +1000,10 @@ unknown outcome shows its banner and the Reconcile request button.
 
 New drafts use the Random seed policy. For each job the companion picks a new
 value for each integer `seed` and `noise_seed` input and freezes it in the
-record. Your seed fields keep their values, and each one says it is chosen for
-each job. Fixed sends the seed fields as they are. A saved draft or record
+record. Your seed fields keep their values, but under Random each one is off and
+reads Random each run, with a line that says to choose Fixed to set it. A seed
+field with a value Studio cannot submit stays open until you repair it. Fixed
+makes the seed fields editable and sends them as they are. A saved draft or record
 keeps its own policy, and one that names no policy restores as Fixed, the
 companion's default. Review settings shows the seeds the job will use. After the job
 runs, the viewer footer shows the seed of the selected output, Queue rows show
@@ -1023,9 +1037,29 @@ Reuse loads the recorded executable prompt with its resolved seeds as a fixed
 draft. Already expanded styles and inserted LoRAs remain in that prompt and are
 not applied twice; original workflow metadata is retained separately. A
 recorded prompt or workflow that holds a whole number above 9007199254740991
-does not load, since a draft field cannot hold it exactly: Reuse settings, Send
-to edit, Upscale and Load workflow name each such input with its digits and
-leave the draft unchanged.
+does not load, since a draft field cannot hold it exactly: Reuse settings,
+Upscale and Load workflow name each such input with its digits and leave the
+draft unchanged.
+
+Send to edit, in the viewer footer and on a gallery card, puts an image output
+into the image input of a workflow that edits images. When the workflow in
+Create supports Edit and has an image input that Studio can set, Send to edit
+keeps it. Otherwise it looks in the Workflow list for an editing workflow: one
+that loads an image from the driver's input store, makes no video, has no
+upscale or Fleet node and uses only node classes the driver lists. When it
+finds one, it loads it. When it finds several, a dialog lists them, and the
+draft stays as it is until you choose one. When it finds none, the dialog says
+why and names where editing workflows come from: the Workflow list, Import JSON
+and workflows saved in Library. The draft and the selected output stay as they
+are. The companion copies the output into the driver's input store as an
+upload of its own, and Studio binds the copy to the image input that the
+workflow's App Mode layout lists first, never to a mask input. It sets the
+Operation to Edit, opens the tab that lists the prompt and the image, and
+records the output and its copy as lineage, after any lineage a kept workflow
+already has. One Undo restores the earlier draft.
+Send to edit takes no video output or uploaded mask. Under Edit, Generate and
+Review settings stay off until the image input holds an image the driver
+offers, and the line under Generate says why.
 
 A review binds to the definitions of the node classes its prompt uses, without
 their file lists, so adding a model, LoRA or input file does not void it.
@@ -1386,7 +1420,9 @@ Studio decodes at most 16 megapixels (4096 x 4096 pixels) per image, for input
 uploads and thumbnails alike, and checks that from the file header before it
 decodes. Input uploads accept PNG, JPEG or WebP files of at most 2 MiB, keep
 mask alpha, and store an orientation-normalized RGBA PNG; a larger image is
-refused with a request to downscale it. Thumbnails return at most 320 pixels per
+refused with a request to downscale it. Send to edit stores its copy of an
+output the same way, read from the driver's file, so the 2 MiB limit on what a
+browser sends does not apply to it. Thumbnails return at most 320 pixels per
 edge and run at most two decodes at once. A 65 MiB ceiling on the normalized
 upload and on a thumbnail's source file is only a backstop that no 8-bit image
 within the pixel limit reaches. Live previews retain at most 16 identity-bound
@@ -1417,7 +1453,9 @@ A 401 while polling returns to the token form, because a restarted companion
 issues a new token. A sign-in link from before a restart stops working the
 same way; `dgxm studio open` prints a new one. A workflow inspection or job review is discarded, with a
 notice, when the workflow, its values or the connection change while it runs;
-edits to other draft controls do not discard an inspection.
+edits to other draft controls do not discard an inspection. The inspection Create
+runs again after a value edit is dropped without a notice in the same cases, and
+the next edit runs it again.
 
 Snapshot refreshes preserve the event replay cursor so bursts spanning several
 pages reach the console. Evicted replay gaps are labelled explicitly. Media

@@ -254,7 +254,7 @@ test('Queue rows show the seeds of their job', async () => {
   assert.match(body, /queued image job-3 Seed 18446744073709551615/);
 });
 
-test('under Random the seed field says each job chooses it', async () => {
+test('under Random the seed field reads Random each run and says how to set it', async () => {
   const props = (seed_policy: string) => ({
     client: {},
     draft: { ...draft(), seed_policy },
@@ -288,13 +288,10 @@ test('under Random the seed field says each job chooses it', async () => {
       'Random: each job gets new seeds. Review settings shows them before it starts.',
     ),
   );
-  assert.equal(
-    random.split('Chosen for each job: the Random policy replaces this value.').length,
-    2,
-  );
+  assert.equal(random.split('Choose the Fixed seed policy to set this seed.').length, 2);
   const fixed = visibleText(await renderComponent('./views/Generation.svelte', props('fixed')));
   assert.ok(fixed.includes('Fixed: jobs use the seed fields as they are.'));
-  assert.doesNotMatch(fixed, /Chosen for each job/);
+  assert.doesNotMatch(fixed, /Chosen for each job|Choose the Fixed seed policy/);
 });
 
 // Run the shipped Gallery copy handler against a fake clipboard.
