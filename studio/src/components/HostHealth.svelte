@@ -8,6 +8,7 @@
     heading = '',
     now = null,
     live = true,
+    part = 'all',
   }: {
     telemetry: Telemetry;
     presentation?: Presentation;
@@ -17,12 +18,36 @@
     now?: number | null;
     /** Whether Studio still reaches the companion; without it every reading is retained. */
     live?: boolean;
+    /**
+     * What to show: the hosts and the readiness rows, as Fleet does, or either alone; the narrow
+     * telemetry panel keeps the hosts in view and the rows in its detailed telemetry.
+     */
+    part?: 'all' | 'hosts' | 'readiness';
   } = $props();
   const summary = $derived(hostSummary(telemetry, presentation, { now, live }));
 </script>
 
-<section class="host-health" aria-label="Host readings">
+<section
+  class="host-health"
+  aria-label={part === 'readiness' ? 'Readiness report' : 'Host readings'}
+>
   {#if heading}<h3>{heading}</h3>{/if}
+  {#if part !== 'readiness'}{@render hosts()}{/if}
+  {#if part !== 'hosts' && summary.readiness.length}<dl
+      class="readiness-rows"
+      aria-label="Driver readiness"
+    >
+      {#each summary.readiness as row (row.label)}<dt>{row.label}</dt>
+        <dd>
+          {#if row.mark.icon}<span class="status-icon" style:color={row.mark.hex} aria-hidden="true"
+              >{row.mark.icon}</span
+            >{/if}{row.state}{#if row.stale}<span class="stale-tag">{row.stale}</span>{/if}
+        </dd>
+        <dd class="detail">{row.detail}</dd>{/each}
+    </dl>{/if}
+</section>
+
+{#snippet hosts()}
   {#if summary.stale}<p class="stale-note" role="status">{summary.stale}</p>{/if}
   {#if summary.hosts.length}<div class="host-cards">
       {#each summary.hosts as host (host.host)}<div class="host-card" class:stale={!!summary.stale}>
@@ -49,16 +74,7 @@
         </div>{/each}
     </div>{/if}
   {#if summary.note}<p class="host-note">{summary.note}</p>{/if}
-  {#if summary.readiness.length}<dl class="readiness-rows" aria-label="Driver readiness">
-      {#each summary.readiness as row (row.label)}<dt>{row.label}</dt>
-        <dd>
-          {#if row.mark.icon}<span class="status-icon" style:color={row.mark.hex} aria-hidden="true"
-              >{row.mark.icon}</span
-            >{/if}{row.state}{#if row.stale}<span class="stale-tag">{row.stale}</span>{/if}
-        </dd>
-        <dd class="detail">{row.detail}</dd>{/each}
-    </dl>{/if}
-</section>
+{/snippet}
 
 <style>
   .host-health {

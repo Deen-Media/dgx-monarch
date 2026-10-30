@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22 and on 2026-10-28, with two rows added on 2026-10-22 and fourteen on 2026-10-28. Status: **scoped local validation; the twelve browser rows and fourteen new ones ran headless on the 2026-10-28 release candidate bundle; the three faults found there are fixed and re-checked on rebuilt bundles; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22 and on 2026-10-28, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30. Status: **scoped local validation; the twelve browser rows and fourteen new ones ran headless on the 2026-10-28 release candidate bundle; the three faults found there are fixed and re-checked on rebuilt bundles; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -57,7 +57,8 @@ and revision rather than fetched on every snapshot poll.
 
 This section records the rounds up to 2026-10-22. The
 [2026-10-28 round](#browser-evidence-2026-10-28) on the release candidate
-follows it, with its own table.
+follows it, with its own table, and the
+[tester round 4 rows](#tester-round-4-checks-2026-10-30) follow that.
 
 On 2026-10-22 all twelve rows below ran again on the bundle rebuilt after two
 review fixes: Review generation takes empty text in a required input, and a
@@ -295,6 +296,74 @@ either; Grant and retry, which needs `--allow-management` and a host operation;
 Reconcile in Queue for an unknown outcome; the review expiry at any viewport
 but 390×844; and Chromium, Safari, physical phones, assistive technology and GPU
 rendering, as before.
+
+## Tester round 4 checks, 2026-10-30
+
+Issue #116 lists a Studio tester's fourth round. Each change for it adds its
+rows here, run headless against the CPU event fixture on the bundle that change
+built. These rows check one change each, not a full round, so the
+[browser procedure](../studio/tests/README.md#browser-checks) still lists the
+rows of the 2026-10-28 round.
+
+The validation rows ran on 2026-10-30 on `index-R1VZxs78.js`
+(`1a96401ad171340a55e151b403978474431046453dd9c4405869bda173a52625`),
+`index-Dzp3gAvP.css`
+(`66451f61bfd3028a3ab81ae4ca76c78cce1698bf41166ba7fe916c6d2d03badf`) and
+`index.html` (`50224c3d0a3d4223d4a2deca153a5e0eb93dea9ad16b54e2b52905cdb6a39291`),
+in Mozilla Firefox 159.0, headless on Ubuntu 24.04.5 LTS for arm64, driven
+through WebDriver BiDi with real pointer and key input, at 1440×900, 1024×600,
+768×1024 and 390×844. `studio/tests/event_driver.py` served the recorded schema
+of the packaged templates without `kromoss_bf16.safetensors`, so the packaged
+Kromoss text to image template, loaded from the Create filter, showed the
+tester's `3.unet_name: Value is not an available choice`. A second companion
+served the dev bundle, `index-DOGuRWwd.js`, from the same fixture for the
+height comparison. No row logged a console error or warning. The results file is
+kept in the maintainer's private evidence store, outside the repository and the
+packages, and its SHA-256 is
+`807187da603fe272aa6ad0ae302b986baaaeece4e2beccece800997864cf8a91`.
+
+The viewer, telemetry and video tile rows ran headless on 2026-10-30 on this change's bundle:
+`index-DU5xDZ_U.js`
+(`c27df9b2bb5a184f723501455376fecd7a81ee55650dde3894d41024993f959a`),
+`index-DswKAz5H.css`
+(`e5d45b1d5dd60b2780503ab2931f818ed3414a9c5bd456bc291eab8181c6ff11`) and
+`index.html` (`b5c4c10bbae9b767ea4730b6a2fd6d0c922c57024ceb12632530d6f23c218b4c`).
+A companion started from this change's tree served those bytes. The browser was
+Mozilla Firefox 159.0, driven through WebDriver BiDi with real pointer, wheel
+and key input, at 1440×900, 1024×600, 768×1024 and 390×844, and again at
+1024×600 in a profile that reports reduced motion. A second companion served the
+dev bundle at `e277238`, `index-DOGuRWwd.js`, for the before readings at
+1440×900 and 1024×600.
+
+The driver was a QA-side subclass of the CPU fixture. It sent a synthetic
+two-host telemetry sample with placeholder host names and a readiness report
+with an active mesh and render session, and it returned one clip per prompt
+beside the PNG: the round's 2-second 128×96 H.264 and VP9 clips, a 4.2-second
+640×360 H.264 clip, an audio-only MP4 and a file of MP4 header bytes and filler.
+A 1600×1000 test pattern, uploaded as an input image, stood in for a large
+output. No run logged a console message. The results file is kept in the
+maintainer's private evidence store, outside the repository and the packages,
+and its SHA-256 is
+`939b7119b7a1e2c2fd73b7f10679fc6049db54d8aa3b3a7611c939e5d229048b`.
+
+| Check | Observed result and scope |
+|---|---|
+| Resolved workflow issue (QA-09) | After the template loaded, Workflow needs attention listed the `3.unet_name` error. Typing 40 into steps sent one inspection, with steps at 40 in its values, and 0.77 seconds after the last key the check had ended with the error still listed, as a remaining error should be. Typing "kroma-v" into the focused unet_name select picked `kroma-v0.3.1-turbo-opd.safetensors`, Create sent one inspection with that file, and 442 ms after the change the card and the footer's issue line were gone and Generate was on. A job then ran to "Finished in 0:06" and the card stayed gone. |
+| Invalid field summary (QA-08) | At load, Generate and Review settings were off, each with `aria-describedby` naming the summary, which read "Fix unet_name on node 3: Choose an available value." beside a Show field button that was on. From the Assets tab, Show field opened Inputs, scrolled the field list 908 pixels and focused the select, inside the list's visible box. With denoise at 5 and steps at 0 as well, the line named steps, and All 3 issues listed steps, unet_name and denoise, each with a Show field that stayed on. From the LoRAs tab, the Show field for denoise closed the list, opened All inputs and focused denoise in view. At 768×1024 and 390×844 Show field focused the select in view, and on a phone the line scrolls clear of the bottom navigation. At 1024×600 it focused the select, but the field list there is 20 pixels tall, on the dev bundle too, so the field stays partly hidden. No viewport scrolled sideways. At 1440×900 the field list is 116 pixels tall with the line against 181 on dev, since the line and the job category sentence take room. |
+| Random seed field (QA-05) | A new draft under Random showed the seed field off, reading Random each run, with "Choose the Fixed seed policy to set this seed." A click and a typed 5 changed nothing. Fixed turned it into a number field holding 42 that took 123, and Random locked it again. After the job, Use this seed set Fixed and put the job's seed, 1308273264083596, in the editable field. |
+| Job category (QA-02) | The select read Job category, with "Labels the job in Queue, the gallery and its record, while the workflow decides what runs." under it, named by its `aria-describedby`. |
+| Send to edit | Bundle `index-CJY0lZqa.js` (`8f040e40c6ec6d4e3da8cc9b0aac789970ea9107b7874fe1a69178b08ae284b7`), `index-C_Y8FigT.css` (`4928dd9879020d7cd45433566c28335b4102077279e692f727c67e0afa0e31e8`) and `index.html` (`8a5bb97fc7d9f22041a625f9fcdcf6a41de19a594375d63aa996a511b39c44d5`), at 1440×900 and 390×844, with 2-second jobs. On `studio/tests/event_driver.py` serving the recorded bundled schema without `ConditioningZeroOut`, `TextEncodeMageFlowEdit` and `TextEncodeQwenImage21`, so that FLUX.3 Klein Base image editing is the one packaged editing workflow it runs, Send to edit on a FLUX.3 Klein Base text to image output opened no dialog. It loaded the editing workflow, set the Operation to Edit, opened Inputs with the prompt and bound a `studio/` copy to node 8's image, listed and valid, with the output and the copy in the lineage. The fixture's input store held the copy as an RGBA PNG with the output's pixels. One Undo restored the text to image draft. After a second Send to edit, Generate submitted the edit with the copy as node 8's image, and after Clear bound input on the Assets tab, Generate and Review settings were off with "Edit needs an image in the image input on node 8." under Generate once the five-second submit line cleared. With the full recorded schema, the dialog listed the six packaged editing workflows in title order with focus on the first, and the stored draft stayed the same while it was open and after Cancel. Choosing the masked RGBA reference edit bound node 6's image and left the mask loader on node 7 alone, and Send to edit on that edit's output kept the workflow with no dialog and added the new output and copy to the lineage. On `studio/tests/mock_driver.py`, which runs no packaged editing workflow, the dialog said why and named where editing workflows come from, with focus on Open Create, and the draft and the selected output stayed as they were. Pages and dialogs measured no horizontal overflow, and no console error appeared. The results file, kept in the maintainer's private evidence store, has SHA-256 `f604f08babf235d33dacb48a9aa6af7549d2d07a631f366cd26687dc5f07573a`. |
+| Input pane width | Bundle `index-7Kng0dI4.js` (`37b3d360900beec2858062ad4ca4a5babfbf4fbe3ca347de602cf8c42891c459`), `index-B9Dz3Fwu.css` (`08669cb8ed1c350d74fd729d102927831b88a5690d15c28ad70736ec8bf992db`) and `index.html` (`22c87d0c9bed12d83a7de6bf0dc4b2d0020a8ac314f30f3823a3bf85fa1f2825`), against dev `16e481b` served from the same fixture. A draft imported through Settings held two lineage ids, a UUID and a 152-character id with nowhere to break, a 170-character workflow file name, and model file names of 145 and 127 characters added to the fixture's schema. On dev the lineage line ran 827 pixels past the scroll box at the default 340-pixel pane, 887 at the narrowest 280-pixel pane, 873 at 1024×600 and 780 at 390×844, so the box scrolled sideways, and LTX 2.5's frame rate label ran 28 pixels past it at 280 pixels. On the bundle, at 340 and 280 pixels on a 1440×900 viewport, at 1024×600 and at 390×844, no element or text of the pane passed its edge on Inputs, All inputs, Assets, LoRAs or Layout, for Krea 2 and for LTX 2.5 with its Duration fields, and the pane and its scroll box measured a scroll width equal to their width. Each id wrapped beside a Copy button whose title held the whole id; with the clipboard replaced by a recorder, Copy wrote the 152-character id exactly and said so. Clear lineage stayed in the pane and took the pointer at every size. The tab row keeps its own sideways scroll at 280 and 300 pixels, by design. Results SHA-256 `e6c53e3ae7212ef9c96f401ff348d4654ead0a8004bed53dc72e07b6c5025d79`. |
+| Prompt fields | Same bundle and results file. On dev the Krea 2 template's Inputs tab showed two boxes called `text` and tagged STRING, 106 pixels tall at 1440×900, the first scrolling its text. On the bundle it showed Prompt and an Add negative prompt button, with `aria-expanded` false and the box's id in `aria-controls`, and no raw type on any field. The folded field showed only that button: it rendered no label, and its box computed `display: none`. The prompt box opened at its ceiling for the template's prompt, 30 percent of the viewport height, and scrolled as 14 more lines were typed: 270 pixels at 1440×900, 180 at 1024×600 and 253 at 390×844, each lower than the field list. Add negative prompt opened the empty box with the focus in it. All inputs showed Prompt and Negative prompt with the raw types, and pointing at a name showed its node, such as `CLIPTextEncode · text · node 5`. No console message appeared. |
+| Short window and Show field | Same bundle and results file, against dev `16e481b`. Field list and prompt box, dev then bundle: at 1440×900 with the 340-pixel pane, list 127 and 280 pixels, prompt 106 and 270; at 1024×600, list 20 and 240, prompt 106 and 180; at 390×844, where the page scrolls, list 480 and 480, prompt 126 and 253. On the bundle the pane scrolls instead and its footer stays flush with the pane's foot. At 1024×600 the pane is 490 pixels tall, between the header and the status bar, because the tablet rule in `responsive.css` no longer holds it at 600 pixels; with that minimum the pinned footer sat under the status bar, and a click on Show field landed on the bar. With a missing model file the footer read "Fix unet_name: Choose an available value.", one row at 1440×900 and 390×844 and two at 1024×600, where dev read "Fix unet_name on node 3: Choose an available value." in two rows at each size. The Job category line, "Labels the job; the workflow decides what runs.", took one row at 1440×900 and 390×844 and two at 1024×600; dev's took two, three and two. From the Assets tab with every scroll at its top, Show field opened Inputs and focused the model field inside the list, clear of the footer and under the pointer, at all three sizes; on dev at 1024×600 the field ended outside the 20-pixel list and under the footer. Tab from the field before it moved the focus to the last field clear of the footer on Inputs at all three sizes and on All inputs at 1440×900 and 390×844; at 1024×600 the last All inputs box ended 7 pixels under the footer's top edge, where dev's ended under the footer on both tabs. Headless Firefox fires no focus events, even after `browsingContext.activate`, so the footer action's correction for that case, which waits for a focus to settle and scrolls a control left under the footer clear of it, is covered by its CPU test only. This host renders DejaVu Sans, a wide fallback font, so a narrower system font fits more on each row. |
+| Wheel zoom | The test pattern opened in Fit at 15.8% to 21.4%. One wheel step up over it zoomed to 1.19 times that scale, and the pixel under the pointer moved at most 0.18 pixels along the axis the image then filled; along the other the image stayed centered. Ten more steps in and out, with the image filling the frame, moved that pixel at most 0.46 pixels. The zoom stopped at 800%, and below Fit the image sat in the middle of the frame within 0.01 pixels. While the pointer was over the image, the viewer column, the page and every other scroll box kept their positions. Over the toolbar, over the frame beside the image and over a video, a step down zoomed nothing and scrolled what holds the pointer: the viewer column, the main area for the toolbar and the frame at 768×1024, and the page at 390×844. Fit, 1:1, Zoom in and Zoom out read 100%, 100%, 125%, then 100% and 75%, as before. A drag of 80 by 50 pixels panned the zoomed image by exactly that, and Down, Down and Right scrolled the focused frame by 102 and 41 pixels. The reduced-motion profile gave the same readings. On the dev bundle a step down over the image scrolled the viewer column by 44 pixels at 1440×900 and 100 at 1024×600, and the zoom stayed at 100%. |
+| Telemetry details | A new profile opened the panel with Detailed telemetry closed. The panel showed the job rows, "Readiness ! active" with "Attached mesh, Render session" 163 to 217 pixels below its top, and both host cards with all five readings. The readiness rows, the chart, Inspect sample and Export history stayed hidden. The panel's content measured 831 pixels at 1440×900, in a panel 792 pixels tall, against 1,589 on the dev bundle, which showed everything at once, and 397 against 1,099 at 1024×600. A click on Detailed telemetry showed the readiness rows with their sentences, the Host and Metric choices, the chart, Inspect sample and Export history, and the stored layout gained `"telemetryDetails": true` beside its width, showTelemetry and showConsole. A reload kept it open, and after a click closed it a reload kept it closed, with the other three keys intact. Every viewport and the reduced-motion profile gave the same results. |
+| Video tiles | In Recent Outputs, the Gallery and Queue, the H.264 and VP9 clips showed 128×96 posters marked "▶ 0:02", and the 640×360 clip a 320×180 poster marked "▶ 0:04". Each poster's centre pixel read 236, 230, 110, a JPEG of the yellow, 255, 241, 2, that Firefox decoded at the centre of the clips' first frame. The audio-only file said "No thumbnail · 0:02", and the header-only file "Cannot play in this browser"; Firefox refused only that file, with MediaError 4. Image tiles kept the companion's thumbnails. Tiles beyond the near-viewport margin stayed unloaded, by design, and every other tile read the same at every viewport and with reduced motion. On the dev bundle every video tile said "Preview unavailable". |
+
+**NOT RUN:** a refresh the companion fails or answers late, a field issue
+inside a subgraph instance, arrow keys on a select, which left it unchanged in
+this headless Firefox, and Chromium, Safari, physical phones and assistive
+technology.
 
 ## Remaining acceptance
 

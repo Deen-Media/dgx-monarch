@@ -3,17 +3,41 @@ import type { Draft } from './model.ts';
 
 const LAYOUT_KEY = 'dgxm.studio.layout.v1';
 
-/** Keep the layout for the next visit; the settings still work in this tab when storage fails. */
-export function saveLayout(layout: {
+/** The layout preferences this browser keeps; a panel may add one of its own. */
+interface LayoutPreferences {
   width: number;
   showTelemetry: boolean;
   showConsole: boolean;
-}) {
+  /** Whether the telemetry panel's detailed telemetry is open; closed until opened. */
+  telemetryDetails: boolean;
+}
+
+/** The stored preferences, or none when storage fails or holds no readable object. */
+function storedLayout(): Record<string, unknown> {
   try {
-    localStorage.setItem(LAYOUT_KEY, JSON.stringify(layout));
+    const value = JSON.parse(localStorage.getItem(LAYOUT_KEY) ?? 'null');
+    return value && typeof value === 'object' && !Array.isArray(value) ? value : {};
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Keep layout preferences for the next visit, merged into the stored ones, so the workspace's
+ * save and a panel's save never drop each other's; the settings still work in this tab when
+ * storage fails.
+ */
+export function saveLayout(layout: Partial<LayoutPreferences>) {
+  try {
+    localStorage.setItem(LAYOUT_KEY, JSON.stringify({ ...storedLayout(), ...layout }));
   } catch {
     /* Settings remain usable in this tab. */
   }
+}
+
+/** Whether the telemetry panel's detailed telemetry was left open; closed by default. */
+export function telemetryDetailsOpen(): boolean {
+  return storedLayout().telemetryDetails === true;
 }
 
 /** Restore request identity independently of optional draft and layout preferences. */

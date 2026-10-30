@@ -11,6 +11,45 @@
   [measurement record](docs/STUDIO_PERFORMANCE.md#runtime-acceptance) and the
   [interface QA record](docs/STUDIO_INTERFACE_QA.md#remaining-acceptance) still
   list every open item ([Studio](docs/STUDIO.md)).
+- Studio's Workflow needs attention list follows the draft. The companion's
+  inspection now checks the draft's edited values, not the saved template, and
+  after a value edit Create inspects the draft again once the edits pause. A
+  repaired value, such as a model file changed to one the driver has, leaves the
+  list and the footer, and a problem that remains stays ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Create's footer names the field that keeps Generate off, by the name the
+  field shows, and the problem, with its node only when another field shows the
+  same name, and a Show field button that opens Inputs or All inputs, scrolls to
+  the field and focuses it. With more than one issue, a list of them all, each
+  with its own Show field, stays usable while Generate and Review settings are
+  off ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Under the Random seed policy each seed field reads Random each run and takes
+  no edits, with a line that says Fixed sets it, and Fixed makes it editable
+  again. The seed under a result and Use this seed are unchanged ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Create's Operation select is now labelled Job category, with one line under
+  it: it labels the job in Queue, the gallery and its record, and the workflow
+  decides what runs, so Image and Workflow run the same graph ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Studio's Send to edit puts the output into the image input of a workflow
+  that edits images. It keeps the workflow in Create when that one supports
+  Edit, loads the one editing workflow the driver runs, lists them when there
+  are several, and says why and changes nothing when there is none. The
+  companion copies the output into the driver's input store, so the 2 MiB
+  upload limit does not apply, and the Operation becomes Edit. Under Edit,
+  Generate stays off until the image input holds an image. Before, Send to
+  edit reloaded the text to image graph as "Edit (not supported)" with only
+  lineage attached and Generate on ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Over an image in Studio's output viewer, the mouse wheel zooms around the
+  point under the pointer. Anywhere else the wheel still scrolls the page, and
+  Fit, 1:1, the zoom buttons and drag to pan work as before, except that a
+  zoomed image smaller than the frame now stays in its middle instead of at the
+  left edge ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- Studio's telemetry panel keeps the jobs, one Readiness line and both hosts in
+  view, and folds the readiness rows, metric history, sample inspection, export
+  and raw sample into Detailed telemetry, which the browser keeps open or closed
+  with the layout ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
+- Studio's video tiles in Recent Outputs, the Gallery and Queue show the
+  video's first frame and its length instead of "Preview unavailable". A tile
+  with no frame says No thumbnail, and only a video the browser cannot decode
+  says Cannot play in this browser ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 - Studio's Generate checks the draft and starts the job in one action, and the
   job keeps the same immutable submission record. Review settings shows that
   record first. The review dialog opens by itself only for a warning, which
@@ -69,6 +108,16 @@
   records keep their inputs.
 - Studio's guide says which workflows Studio lists, what an imported workflow
   needs, and what an update does to bundled and saved copies ([Studio](docs/STUDIO.md#workflow-sources-and-updates)).
+- Studio's Create pane no longer scrolls sideways at any pane width. Long
+  lineage ids, file names and field names wrap, fields narrow to fit, and each
+  lineage id has a Copy button that copies the whole id. On a short window the
+  field list keeps a usable height and the pane scrolls instead, with Generate
+  pinned at its foot ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Studio names the prompt boxes Prompt and Negative prompt, from the inputs
+  chosen for prompt styles or else the sampler inputs their text reaches, and
+  names other text boxes by their node. The prompt box starts taller and grows
+  with its text, an empty negative prompt waits behind Add negative prompt on
+  Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
 
 ### Rendering
 
