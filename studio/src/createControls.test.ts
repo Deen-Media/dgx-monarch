@@ -80,7 +80,7 @@ test('an operation the graph does not support stays selected and names the input
     'workflow:Workflow',
   ]);
   assert.match(body, /<option value="edit" selected="">Edit \(not supported\)<\/option>/);
-  assert.match(body, /aria-describedby="operation-need"/);
+  assert.match(body, /aria-describedby="operation-note operation-need"/);
   assert.match(
     visibleText(body),
     /Edit needs an image, video or mask input node, such as Load Image\. This workflow has none\./,

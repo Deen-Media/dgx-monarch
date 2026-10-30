@@ -70,6 +70,16 @@ function largeNumbers(value: unknown, path: string[] = []): { input: boolean; te
   return Object.entries(value).flatMap(([key, item]) => largeNumbers(item, [...path, key]));
 }
 
+/**
+ * The notice after Reuse settings, Upscale or Load workflow loads a recorded draft. Send to edit
+ * takes its own path and says what it bound.
+ */
+export function reuseNotice(operation?: string): string {
+  return operation
+    ? `Output lineage attached. Set the corresponding workflow asset input before generating ${operation}.`
+    : 'Recorded settings loaded into a new editable draft.';
+}
+
 /** The snapshot's current copy of a chosen artifact, or the chosen copy when the snapshot omits it. */
 export function liveArtifact(artifacts: Artifact[], item: Artifact | null): Artifact | null {
   return item ? (artifacts.find((artifact) => artifact.id === item.id) ?? item) : null;
