@@ -4,6 +4,22 @@
 
 ### Everyday use
 
+- Studio's Workflow needs attention list follows the draft. The companion's
+  inspection now checks the draft's edited values, not the saved template, and
+  after a value edit Create inspects the draft again once the edits pause. A
+  repaired value, such as a model file changed to one the driver has, leaves the
+  list and the footer, and a problem that remains stays ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Create's footer names the field that keeps Generate off, its node and the
+  problem, with a Show field button that opens Inputs or All inputs, scrolls to
+  the field and focuses it. With more than one issue, a list of them all, each
+  with its own Show field, stays usable while Generate and Review settings are
+  off ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Under the Random seed policy each seed field reads Random each run and takes
+  no edits, with a line that says Fixed sets it, and Fixed makes it editable
+  again. The seed under a result and Use this seed are unchanged ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Create's Operation select is now labelled Job category, with a line under it
+  that says it labels the job in Queue, the gallery and its record while the
+  workflow decides what runs, so Image and Workflow run the same graph ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Studio's Generate checks the draft and starts the job in one action, and the
   job keeps the same immutable submission record. Review settings shows that
   record first. The review dialog opens by itself only for a warning, which

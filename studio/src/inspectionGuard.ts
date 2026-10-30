@@ -31,7 +31,10 @@ export class InspectionGuard<Client = unknown> {
     return { inspection: this.inspection, revision: this.revision, client };
   }
 
-  /** Capture the draft revision before a preview without superseding an inspection. */
+  /**
+   * Capture the draft revision before a preview, or before Create checks its shown issues again,
+   * without superseding an inspection.
+   */
   snapshot(client: Client): Ticket<Client> {
     return { inspection: this.inspection, revision: this.revision, client };
   }
