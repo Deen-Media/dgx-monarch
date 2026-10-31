@@ -362,6 +362,14 @@ def _token_count_5d(shape: Iterable[int]) -> int:
     return max(b, 1) * t * -(-h // 2) * -(-w // 2)
 
 
+def ref_pose_token_counts(video_shape: Iterable[int], ref_shapes: Iterable[Iterable[int]] = (),
+                          pose_shape: Iterable[int] | None = None) -> tuple[int, int]:
+    """(video plus reference tokens, pose tokens): the rows the preflight below
+    prices and the sample deadline (sample_deadline.py) scales with."""
+    video_tokens = _token_count_5d(video_shape) + sum(_token_count_5d(s) for s in ref_shapes)
+    return video_tokens, (_token_count_5d(pose_shape) if pose_shape is not None else 0)
+
+
 def activation_footprint_preflight(
     family: str,
     path: str,
@@ -391,9 +399,8 @@ def activation_footprint_preflight(
     # double-charge every warm render.
     weight_bytes = 0 if weights_resident else (
         os.path.getsize(path) if os.path.exists(path) else 0)
-    video_tokens = _token_count_5d(video_shape) + sum(
-        _token_count_5d(s) for s in ref_shapes)
-    pose_tokens = _token_count_5d(pose_shape) if pose_shape is not None else 0
+    video_tokens, pose_tokens = ref_pose_token_counts(
+        video_shape, ref_shapes, pose_shape)
     total_tokens = video_tokens + pose_tokens
     tokens_per_rank = -(-total_tokens // max(int(sp_degree), 1))
     bytes_per_token = hidden_dim * _ACTIVATION_BF16_BYTES * _ACTIVATION_BLOCK_FACTOR

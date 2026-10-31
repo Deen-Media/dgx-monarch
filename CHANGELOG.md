@@ -129,13 +129,20 @@
   Triton or a validated comfy-kitchen release (0.2.37 or 0.2.40) runs CUTLASS
   and logs one WARNING ([Models](docs/MODELS.md#int8-gemm-kernel),
   [TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
-- A 15 second MiniMax H3 clip (1344x768, 362 frames, 20 steps, INT8 ConvRot
-  with the Triton kernel) renders on the pair in about 54 minutes, once per
-  session; one Spark refuses it before loading. The row, the capacity notes
-  and a single RTX 5090's reported 8.6 minutes for the same clip are in
-  [BENCHMARKS](docs/BENCHMARKS.md#a-15-second-clip-on-the-pair-2026-10-29).
   The kernel option's install points ran on hardware, one short render per
   process kind ([VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
+- MiniMax H3 image to video now has speed and memory records at 5, 10 and 15
+  seconds (1344x768, 20 steps) on the pair and on one Spark. On the pair a
+  15 second clip samples in about 45 minutes with exact attention and 26 with
+  Sol-Attn under its waiver, and a session admits it twice. One rank on the
+  sibling alone rendered it in 83:31 with 75 GiB free at the lowest, after
+  the one-hour sample timeout cut off a first attempt. A single RTX 5090's
+  reported 8.6 minutes for the same clip stays beside them
+  ([BENCHMARKS](docs/BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)).
+  The activation charge is 2.7 to 2.9 times the measured activation on the
+  pair and 4.7 to 4.8 times on one rank, with no constant changed, and a BF16
+  capacity rescue on the pair ends refused with no card
+  ([VALIDATION](docs/VALIDATION.md#h3-capacity)).
 - The MiniMax H3 activation preflight charges each rank a fixed 7.5 GiB floor
   plus 634,368 bytes per row on the rank, fitted to four hardware points, in
   place of 1,032,192 bytes per row with no floor. On the pair it now admits
@@ -154,6 +161,15 @@
   the whole request before its proof render: a request that cannot fit the
   slab path gets one INCONCLUSIVE capacity row and no proof render, renders on
   stock residency, and the next request checks again ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- The driver's deadline for a render's sample call grows with the work. For
+  MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2 it allows 600 s per step at
+  109,466 packed rows per rank, scaled linearly with the rows on each rank, at
+  least 120 s per step and at most six hours in all. `DGXM_SAMPLE_TIMEOUT`
+  stays the floor, 3600 s unless set, and wins over the cap. A 15 second H3
+  clip on one Spark, which sampled for 80 minutes and was cut off at the hour,
+  now gets 200 minutes; other families keep the larger of the floor and 120 s
+  per step. Each render logs its deadline and the terms behind it at INFO
+  ([TROUBLESHOOTING #139](docs/TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
 - A capacity-rescue consent now keeps slab residency when stock residency
   cannot load the checkpoint. The identity gate records INCONCLUSIVE with
   `cross_mode=CAPACITY`, takes no lever, and the render proceeds under slab;

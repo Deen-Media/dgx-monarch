@@ -450,6 +450,10 @@ A loader `weight_dtype` cast disables this preflight because file size no
 longer predicts resident size. Quarantine overrides consent; only a fresh
 Identity Gate retest can clear it
 ([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)).
+After a rescue whose gate returned an unproven INCONCLUSIVE, because stock
+could not load a reference, the gate has switched slab off for that
+combination, so the loader prices stock only and raises no card
+([VALIDATION](VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
 
 **If quarantine state is unknown:** consent cannot override it. The message
 identifies the missing evidence:
@@ -7182,3 +7186,81 @@ see the kernel a running process uses.
 
 To turn the kernel off, set `int8_gemm = "cutlass"` in `[worker_args]` for the
 actors and start ComfyUI with `DGXM_INT8_GEMM=cutlass`.
+
+## 139. A long render fails with `TimeoutError` when the sample deadline passes
+
+**Symptom:** a long render, such as a long video clip on one Spark, samples
+for an hour or more and then fails. The ComfyUI console shows
+`!!! Exception during processing !!!` and a traceback that runs through
+`collect_with_liveness` in `mesh_lease.py` and ends in a bare `TimeoutError`,
+while the actors were still sampling and had memory to spare. The driver logs
+the deadline it gives each render after that render's `render topology:` line:
+
+```
+[dgx-monarch <host>] INFO sample deadline: 12000 s (3:20:00) from 20 steps x 600.0 s; terms: floor 3600 s (default), 20 steps x 600.0 s = 12000 s for 109466 packed rows per rank (minimax_h3: 109466 rows over 1 rank(s); 600 s per step at 109466 rows per rank, at least 120 s), ceiling 21600 s
+```
+
+**Cause:** the driver waits a bounded time for the actors' sample call. When
+the deadline passes it stops waiting, asks the actors to cancel and abandons
+the result, and a later render heals the abandoned lease with new actors and
+loads the model again
+([#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)).
+The deadline used to be the larger of the floor and 120 s per
+step, one hour for 20 steps whatever the clip. On 2026-10-30 a 15 second
+MiniMax H3 clip (1344x768, 362 frames, 20 steps) on one Spark sampled for 80
+minutes, so the driver gave up at the hour while the actor held 37 GiB with
+79 GiB free. With `DGXM_SAMPLE_TIMEOUT=14400` the same render finished in
+83:31, 79:33 of it sampling. The pair's 15 second render, 45 minutes of
+sampling, also passed the hour once while the head's CPU was busy.
+
+The deadline now grows with the work. The driver counts packed rows for
+MiniMax H3 with `h3_rows`, and for Wan SCAIL, SCAIL-2 and Animate 2 with the
+token count their activation preflight prices
+([#47](#47-wan-scailscail-2-render-refused-activation-footprint-preflight)).
+For those families the deadline is the step count times an allowance per
+step. The allowance is 600 s per step at 109,466 packed rows per rank, the
+15 second clip's rows on one Spark, and scales linearly with rows per rank,
+but is never less than 120 s per step. Rows per rank are the packed total
+divided by the sequence-parallel degree, ulysses times ring; cfg and dp give
+each rank whole sequences. The product is capped at 21600 s (six hours), so a
+hung actor that keeps reporting progress is still caught. Above 180 steps the
+cap binds before the step floor does, so such a render gets less time than the
+old rule gave it. `DGXM_SAMPLE_TIMEOUT` sets the floor, 3600 s by default, and
+the floor wins over the cap. Every other family, and any render whose rows the
+driver cannot read, keeps the old rule, the larger of the floor and 120 s per
+step, with no cap.
+
+Measured sampling against the deadline each render now gets (20 steps, CFG
+1, exact attention, pruned INT8 ConvRot, the head capped at 2100 MHz):
+
+| clip | layout | packed rows per rank | sampled | deadline |
+|---|---|---|---|---|
+| 5 s, 124 frames | pair, uly2 | 18,865 | 7:31 | 60 min |
+| 10 s, 243 frames | pair, uly2 | 36,895 | 22:31 | 67 min |
+| 15 s, 362 frames | pair, uly2 | 54,732 | 45:19 | 100 min |
+| 10 s, 243 frames | one Spark | 73,790 | 38:34 | 135 min |
+| 15 s, 362 frames | one Spark | 109,466 | 79:33 | 200 min |
+
+Each deadline is at least twice the measured time, and the 5 second render
+on the pair keeps the hour it had. The times come from the 2026-10-30 H3
+suite ([BENCHMARKS](BENCHMARKS.md)).
+
+**Fix:**
+
+- Read the failed render's `sample deadline:` line against the time it ran.
+  The line names the term that set the deadline: the floor, the steps or the
+  ceiling.
+- To give a render longer, start ComfyUI with a higher floor, in seconds,
+  for example `DGXM_SAMPLE_TIMEOUT=14400`. The floor applies to every render
+  and wins over the cap, so a hung render then holds the queue that long;
+  drop the setting once the long render is done.
+- Past the table the margin shrinks. A step's time grows faster than its rows,
+  because attention grows with the square of the sequence: on one Spark, 1.48
+  times the rows took 2.06 times as long per step, while the allowance grew
+  1.48 times. At 20 steps the cap binds from about 197,000 rows per rank.
+  Raise the floor for a clip longer than the table's longest.
+- A render whose single step outlasts the stall budget ends as a stall, not
+  at this deadline: the stall guard stops the wait when the fleet sends no
+  progress for that long
+  ([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)).
+  Raise `DGXM_SAMPLE_STALL_TIMEOUT_S` too for such a render.

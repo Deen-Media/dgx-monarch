@@ -598,7 +598,7 @@ copied from historical evidence.
     Authorization, setup binding, driver validation, and
     worker revalidation are
     [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"),
-    [`render_submit.py:243-480`](../src/dgx_monarch/nodes/render_submit.py#L243-L480 "anchor:_submit_render_guarded"),
+    [`render_submit.py:241-478`](../src/dgx_monarch/nodes/render_submit.py#L241-L478 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:90-153`](../src/dgx_monarch/mesh_residency.py#L90-L153 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:240-372`](../src/dgx_monarch/mesh_residency.py#L240-L372 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"), and
@@ -812,7 +812,7 @@ copied from historical evidence.
   boundaries are
   [`gate_identity.py:280-290`](../src/dgx_monarch/nodes/gate_identity.py#L280-L290 "anchor:model_for_request"),
   [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"),
-  [`render_submit.py:243-480`](../src/dgx_monarch/nodes/render_submit.py#L243-L480 "anchor:_submit_render_guarded"),
+  [`render_submit.py:241-478`](../src/dgx_monarch/nodes/render_submit.py#L241-L478 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
@@ -958,7 +958,7 @@ copied from historical evidence.
   handle before refusing the full render. The
   abort path, and the price that precedes it, are
   [`gate_ceremony.py:333-458`](../src/dgx_monarch/nodes/gate_ceremony.py#L333-L458 "anchor:gather_ceremony_evidence"),
-  [`gate_ceremony.py:191-222`](../src/dgx_monarch/nodes/gate_ceremony.py#L191-L222 "anchor:gather_ceremony_evidence"),
+  [`gate_ceremony.py:191-230`](../src/dgx_monarch/nodes/gate_ceremony.py#L191-L230 "anchor:gather_ceremony_evidence"),
   [`fsdp_reload_price.py:240-279`](../src/dgx_monarch/fsdp_reload_price.py#L240-L279 "anchor:price_fsdp_clean_reload") and
   [`gate_session.py:20-178`](../src/dgx_monarch/nodes/gate_session.py#L20-L178 "anchor:run_identity_ceremony"),
   [`gate_fsdp.py:179-235`](../src/dgx_monarch/nodes/gate_fsdp.py#L179-L235 "anchor:cleanup_aborted_fsdp_proof"),
