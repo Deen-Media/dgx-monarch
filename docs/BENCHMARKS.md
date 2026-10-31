@@ -866,8 +866,10 @@ What the rows show, and what they do not:
   than the sibling alone. The head carries the clock cap and the driver, and
   these rows do not separate the two. The loader
   refused the 15 s clip there before loading, 10.8 GiB short on the
-  activation charge
-  ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30)).
+  activation charge of that day
+  ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30));
+  the 2026-10-31 refit admits it there with 37.1 GiB to spare, on paper
+  ([VALIDATION](VALIDATION.md#h3-capacity)).
 - **BF16 did not render.** Every attempt with the 61.7 GiB BF16 file
   refused, on every layout, and slab rescue on the pair ended in a refusal
   too ([VALIDATION](VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).

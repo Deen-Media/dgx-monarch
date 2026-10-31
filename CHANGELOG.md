@@ -172,6 +172,17 @@
   render measured; one Spark still refuses the clip, 11.2 GiB short
   ([VALIDATION](docs/VALIDATION.md#h3-capacity),
   [TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- The MiniMax H3 activation preflight is refitted again, to five hardware
+  points and Config A's measured use: it charges each rank an 11.0 GiB floor,
+  129,024 bytes per row on the rank and 73,728 per row of the whole sequence,
+  in place of the 7.5 GiB floor and 634,368 bytes above. The one-rank BF16
+  shape that the 2026-08-05 kill made a refusal rendered on 2026-10-31 beside
+  the driver, holding 5.5 GiB, so the preflight now admits it, and it admits
+  the 15 second clip on one Spark with 36.7 GiB to spare. Each completed
+  render clears by 6.5 GiB or more, and the charge stays above what every
+  measured render used
+  ([VALIDATION](docs/VALIDATION.md#h3-capacity),
+  [TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 - `compile_dit` no longer forces stock residency on the families it leaves
   eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
   tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).

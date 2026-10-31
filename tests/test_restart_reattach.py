@@ -578,7 +578,10 @@ H3_DIT_BF16 = 66_280_487_368
 H3_MEM = int(92.2 * 2 ** 30)
 # 1344x768 at 37 latent frames, whose activations price at about 39 GiB on one
 # rank, and 512x320 at 2, about 0.4 GiB.
-H3_LONG_CLIP = (1, 24, 37, 48, 84)
+# The 15 second clip, 362 frames: at the 2026-10-31 activation price the
+# 124-frame shape fits beside the bf16 weights in this posture, and this one
+# does not, while its weights and its activations each fit alone.
+H3_LONG_CLIP = (1, 24, 107, 48, 84)
 H3_SHORT_CLIP = (1, 24, 2, 20, 32)
 
 

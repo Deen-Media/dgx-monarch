@@ -784,16 +784,18 @@ def test_an_h3_render_still_short_refuses_with_the_reading_after_the_unload(
         monkeypatch, tmp_path, box):
     rig = _h3_rig(monkeypatch, tmp_path, preset="uly2")
     box.mem = 2 * _GIB
-    calls = _comfy(monkeypatch, box)
+    # Only the VAE is left to unload: the text encoder's 16.7 GiB alone would
+    # make room for this render at the 2026-10-31 activation price.
+    calls = _comfy(monkeypatch, box, models=((H3VideoVAE, VAE_BYTES),))
     with pytest.raises(mesh_safety.StockLoadCapacityError) as excinfo:
         render_preflight.activation_footprint_preflight_for_request(
             rig.model, _h3_request(), _h3_latent())
     message = str(excinfo.value)
     assert calls.unload == 1 and rig.rpc == []
     assert message.startswith("[dgxm:C guard=activation_footprint_preflight waivable=0] "
-                              "minimax_h3 activation preflight: 21.2 GiB needed per rank, "
-                              "19.1 GiB usable (24.1 GiB MemAvailable minus a 5.0 GiB reserve")
-    assert message.endswith("MemAvailable read 2.0 GiB before the unload and 24.1 GiB "
+                              "minimax_h3 activation preflight: 15.9 GiB needed per rank, "
+                              "2.4 GiB usable (7.4 GiB MemAvailable minus a 5.0 GiB reserve")
+    assert message.endswith("MemAvailable read 2.0 GiB before the unload and 7.4 GiB "
                             "after it, and the figures above are the reading after it.")
 
 
