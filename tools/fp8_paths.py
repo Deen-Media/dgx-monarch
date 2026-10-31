@@ -207,6 +207,19 @@ def _weight_dtype(header, keys: dict[str, str]) -> str | None:
     return TORCH_NAMES.get(counts.most_common(1)[0][0], counts.most_common(1)[0][0])
 
 
+def _loaded_layers(confs: dict[str, dict], keys: dict[str, str]) -> dict[str, dict]:
+    """The records whose layer survives ComfyUI's prefix selection.
+
+    ``comfy_load_keys`` returns the surviving keys with the diffusion-model
+    prefix stripped, so a record names a loaded layer when its name is the
+    stripped name or ends with it under the prefix. Records for a VAE or text
+    encoder packed into the same file reach no layer and are not counted.
+    """
+    loaded = {key[: -len(".weight")] for key in keys if key.endswith(".weight")}
+    return {name: conf for name, conf in confs.items()
+            if name in loaded or any(name.endswith("." + layer) for layer in loaded)}
+
+
 def read_facts(path: Path) -> Facts:
     facts = Facts(name=path.name)
     try:
@@ -215,6 +228,7 @@ def read_facts(path: Path) -> Facts:
         keys = comfy_load_keys({key: d.dtype for key, d in header.tensors.items()}, header.metadata)
         facts.kitchen = any(key.endswith(".comfy_quant") for key in keys)
         confs, facts.sources = _layer_confs(path, header)
+        confs = _loaded_layers(confs, keys)
         formats = Counter(str(conf.get("format")) for conf in confs.values())
         facts.formats = dict(sorted(formats.items()))
         facts.convrot_layers = sum(1 for conf in confs.values()

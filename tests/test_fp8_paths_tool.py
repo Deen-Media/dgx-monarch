@@ -156,6 +156,25 @@ def test_a_record_outside_the_unet_prefix_reaches_no_layer(tmp_path):
     assert _picks(tmp_path / "outside.safetensors")[PLAIN].operations == "manual_cast"
 
 
+def test_layer_counts_follow_the_prefix_selection(tmp_path):
+    """A combined checkpoint: quantized diffusion layers beside quantized VAE
+    layers. Only the layers ComfyUI loads count towards the formats, the
+    full-precision count and the kitchen label."""
+    tensors: dict = {}
+    for i in range(6):
+        tensors[f"model.diffusion_model.blocks.{i}.w.weight"] = ("F8_E4M3", [32, 32])
+        tensors[f"model.diffusion_model.blocks.{i}.w.comfy_quant"] = _record({"format": "float8_e4m3fn"})
+    for i in range(3):
+        tensors[f"first_stage_model.decoder.{i}.w.weight"] = ("F8_E4M3", [16, 16])
+        tensors[f"first_stage_model.decoder.{i}.w.comfy_quant"] = _record(
+            {"format": "float8_e4m3fn", "full_precision_matrix_mult": True})
+    facts = fp8_paths.read_facts(_write(tmp_path / "combined.safetensors", tensors))
+    assert facts.kitchen is True
+    assert facts.formats == {"float8_e4m3fn": 6}
+    assert facts.full_precision_layers == 0
+    assert "full precision" not in fp8_paths.kitchen_label(facts)
+
+
 def test_the_cli_prints_names_not_paths_and_survives_a_bad_file(tmp_path, capsys):
     models = tmp_path / "models"
     (models / "nested").mkdir(parents=True)
