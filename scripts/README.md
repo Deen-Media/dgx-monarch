@@ -45,13 +45,19 @@ split on whitespace; pass real arguments when a value contains spaces.
 
 ## FP8 compute flag
 
+The flag is not recommended on GB10. On 2026-10-31 the FP8 matmul path it
+selects rendered a plain FP8 checkpoint as noise there, in the driver and in
+the actors alike ([VALIDATION](../docs/VALIDATION.md#fp8-compute-paths)), so
+the launcher leaves it out.
+
 `--fast fp8_matrix_mult` after `--` gives the models this ComfyUI process
 builds, such as a stock graph's, ComfyUI's FP8 matmul path for plain FP8
 checkpoints. It does not reach the DGX Monarch actors, which start ComfyUI
 without its arguments: `[worker_args] fp8_matrix_mult` in cluster.toml is
 their switch ([MODELS.md](../docs/MODELS.md#fp8-compute-paths)). Name the
 feature: `--fast` alone turns on every ComfyUI performance feature, and
-autotune among them keeps ComfyUI's asynchronous allocator off.
+autotune among them keeps ComfyUI's asynchronous allocator off. Pass
+`--fast fp8_matrix_mult` only to measure the path:
 
 ```bash
 bash scripts/comfy-driver.sh \
