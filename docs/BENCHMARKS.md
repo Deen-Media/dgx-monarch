@@ -16,7 +16,7 @@ comparison fields. Times below are seconds unless marked otherwise.
 | Krea2 RAW | 74.1 s | 48.1 s | BF16, 1536x1536, 8 steps, CFG 1, CFG++ sampler, Ulysses |
 | Ideogram4 | 36.0 s | 26.0 s | FP8-scaled dual-model, 1024x1024, 20 steps, CFG 7, Ulysses |
 | MiniMax H3 video/audio | 42:03 | 23:07 | INT8 ConvRot, 1280x720, 241 frames, 20 steps, CFG 1, exact-attention Ulysses; times are minutes:seconds |
-| MiniMax H3 image to video, 15 s | refused | 53:45 | INT8 ConvRot with the Triton GEMM, 1344x768, 362 frames, 20 steps, CFG 1, exact-attention Ulysses, stock residency; a first render of its session, gate proof and model load inside; one Spark cannot hold the activations; times are minutes:seconds; head capped at 2100 MHz; [details](#a-15-second-clip-on-the-pair-2026-10-29) |
+| MiniMax H3 image to video, 15 s | 83:31 | 50:30 | INT8 ConvRot with the Triton GEMM, 1344x768, 362 frames, 20 steps, CFG 1, exact attention; one GPU is one rank on the sibling with the driver on the head, a first render with the sample timeout raised; two GPUs is uly2, a second render that loaded the model again; times are minutes:seconds; head capped at 2100 MHz, sibling uncapped; [details](#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped) |
 | Qwen Image 2.1 | Not timed | Not timed | Matching native output recorded for 25-step T2I and editing; no comparable timing published here |
 | FLUX.3 Klein | 10.2 s | 6.7 s | Step-distilled BF16, 1024x1024, 16 steps, CFG 1, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
 | FLUX.3 Klein Base | 29.8 s | 20.0 s | BF16, 1024x1024, 25 steps, CFG 3.5, Euler, Ulysses; warm sampler walls, bit-identical to one GPU; head capped at 2100 MHz |
@@ -732,45 +732,6 @@ between the passes.
 | Mage Flow edit turbo | single | 6.0 | 6.0 | 0% |
 | Mage Flow edit turbo | uly2 | 4.0 | 4.0 | 0% |
 
-### A 15 second clip on the pair (2026-10-29)
-
-The pair rendered a 15 second H3 image-to-video clip, the mp4 template of the
-rows above at its 362-frame ceiling: 1344x768 at 24 fps, 20 steps, CFG 1,
-exact attention on uly2, the pruned INT8 ConvRot DiT with the Triton kernel,
-dev `50ad5e9` on both Workers, head capped at 2100 MHz. Two sessions rendered
-it once each, 53:45 and 53:58 for the prompt: the identity gate's proof render
-took 4:43 and 4:42 with the model load inside, sampling 45:10 and 45:11, and
-text encoding, the two VAE decodes and the save the remaining 3:52 and 4:06.
-The
-two-point fit from the 5 and 10 second rows had predicted about 45 minutes of
-sampling on the pair.
-
-What the cell showed about capacity:
-
-- One Spark refuses it before loading. The loader footprint preflight charges
-  112.3 GiB of activations for the 109062 packed rows on one rank and finds no
-  budget for any DiT file: 44.1 GiB more free memory than the box has.
-- The pair renders it once per session. After the first render the loaded
-  stack leaves 56.5 GiB on the head once the driver has unloaded its VAEs, and
-  the activation preflight needs 65.1 GiB (60.1 GiB per rank plus the 5 GiB
-  reserve), so it refuses the second request 8.7 GiB short. A new session
-  renders it cold again, as the second session did.
-- The gate cannot conclude at this length. Its slab-path preflight came up
-  3.8 GiB short after the proof render, so the gate forced stock residency,
-  which the 124-frame rows above ran on as well, and the session paid the
-  proof render for nothing. #93 carries the follow-ups.
-
-Reported, not reproduced: a single RTX 5090 renders the same 362-frame clip at
-1344x768 in 518.0 s, 8.6 minutes
-([ai-muninn.com, 2026-09-03](https://ai-muninn.com/en/blog/minimax-h3-rtx5090-config-stack)),
-with a different recipe: the pruned NVFP4 DiT and an NVFP4 text encoder, 14
-steps, the KJNodes head-group attention and chunked feed-forward patches
-(exact), torch 2.13.0+cu130 on Windows and SageAttention. The same post gives
-99.6 s for 124 frames, 2208 s at coarse chunking and an out-of-memory failure
-without the chunking patches. Per step that is about 37 s against the pair's
-136 s at 362 frames, and 7 s against the pair's 26 s and one Spark's 42 s at
-124 frames: the 5090 holds about 3.6 times the pair's pace at both lengths.
-
 GEMM throughput across M on the families' own linears, same box and cap
 (ratio is Triton over CUTLASS; TOPS at 29184 rows, the H3 per-rank count):
 
@@ -795,6 +756,137 @@ the worst reading 0.92 on the Ideogram4 qkv linear at 1024 rows; from 4096 rows
 up the kernel is at or above CUTLASS on every shape but one reading (Ideogram4
 adaln at 8192 rows, 0.96), and from 6144 rows up CUTLASS loses more than half
 its throughput on the wide linears while the Triton kernel holds about 175 TOPS.
+
+<a id="minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped"></a>
+<a id="a-15-second-clip-on-the-pair-2026-10-29"></a>
+
+## MiniMax H3: speed and memory by clip length
+
+The H3 image-to-video mp4 template ran at 5, 10 and 15 seconds, which are 124,
+243 and 362 frames at 24 fps, on the pair and on one Spark from 2026-10-29 to
+2026-10-30. Every cell is 1344x768, 20 steps and CFG 1. Attention is exact
+(TORCH_FLASH) unless Sol-Attn is named, and the DiT is the pruned INT8 ConvRot
+file with the Triton GEMM unless another file is named. Both Workers ran dev
+`e277238` and then `f129c62`; the change between tiers moved no timing. The
+head was capped at 2100 MHz and the sibling uncapped. A 1 Hz sampler on each
+host logged MemAvailable and each GPU process's memory, and an 8 GiB
+free-memory watchdog never fired.
+
+Pair rows run uly2. Sibling alone rows put one rank on the sibling through a
+one-host cluster file and keep the driver on the head. Head beside the driver
+rows run the local layout on the head. A wall is the whole prompt, timed by
+the harness at 10 s granularity, and sampling comes from the driver log. A
+first render pays the model load and the identity gate's first-use work; the
+second render of a session reuses what the first loaded.
+
+Times are minutes:seconds, the wall with sampling in parentheses:
+
+| Layout | Clip | Attention | DiT file | First render | Second render |
+|---|---|---|---|---|---|
+| Pair | 5 s | exact | pruned INT8 | 11:00 (7:31) | 8:50 (7:32) |
+| Pair | 5 s | Sol-Attn 0.7 | pruned INT8 | 6:50 (5:03) | 6:10 (4:58) |
+| Pair | 10 s | exact | pruned INT8 | 25:50 (22:46) | 24:50 (22:31) |
+| Pair | 10 s | Sol-Attn 0.7 | pruned INT8 | 16:20 (13:25) | 15:40 (13:17) |
+| Pair | 15 s | exact | pruned INT8 | 53:45 to 54:05 (45:10 to 45:19), on 2026-10-29 | 50:30 (45:23), model loaded again |
+| Pair | 15 s | Sol-Attn 0.7 | pruned INT8 | 29:50 (25:48) | 29:10 (25:41) |
+| Pair | 15 s | Sol-Attn 0.6 | pruned INT8 | 32:00 (27:58) | not run |
+| Pair | 15 s | Sol-Attn 1.0 | pruned INT8 | 28:40 (24:23) | not run |
+| Pair | 15 s | exact | pruned NVFP4 | 58:51 (45:36) | 48:10 (44:35) |
+| Pair | 15 s | exact | unpruned INT8, 31.7 GiB | 59:00 (45:19) | not run |
+| Sibling alone | 10 s | exact | pruned INT8 | 41:30 (38:34) | not run |
+| Sibling alone | 15 s | exact | pruned INT8 | 83:31 (79:33) | not run |
+| Sibling alone | 15 s | exact | pruned NVFP4 | 97:31 (77:47) | not run |
+| Head beside the driver | 10 s | exact | pruned INT8 | 52:10 (40:55) | not run |
+| Head beside the driver | 10 s | exact | pruned NVFP4 | 51:10 (40:04) | not run |
+| Head beside the driver | 15 s | exact | pruned INT8 | refused before loading | not run |
+
+Memory in GiB: each actor's GPU memory peak, the driver's GPU memory peak, and
+the lowest MemAvailable each host read during the cell's renders:
+
+| Layout | Clip | Attention and file | Actor GPU peak | Driver GPU peak | Lowest free, head | Lowest free, sibling |
+|---|---|---|--:|--:|--:|--:|
+| Pair | 5 s | exact | 26.8 | 19.7 | 40.2 | 75.0 |
+| Pair | 5 s | Sol-Attn 0.7 | 26.0 | 19.7 | 50.7 | 79.6 |
+| Pair | 10 s | exact | 32.0 | 19.7 | 43.5 | 73.5 |
+| Pair | 10 s | Sol-Attn 0.7 | 30.5 | 19.8 | 44.3 | 74.9 |
+| Pair | 15 s | exact | 37.1 | 14.6 | 47.9 | 68.1 |
+| Pair | 15 s | Sol-Attn 0.7 | 34.9 | 19.8 | 39.1 | 70.3 |
+| Pair | 15 s | Sol-Attn 0.6 | 34.9 | 19.8 | 39.3 | 70.4 |
+| Pair | 15 s | Sol-Attn 1.0 | 34.9 | 19.8 | 38.9 | 70.3 |
+| Pair | 15 s | NVFP4 | 29.3 | 19.8 | 43.8 | 73.6 |
+| Pair | 15 s | unpruned INT8 | 49.4 | 14.6 | 35.5 | 55.1 |
+| Sibling alone | 10 s | exact | 31.1 | 19.8 | 85.3 | 78.2 |
+| Sibling alone | 15 s | exact | 36.5 | 19.8 | 83.6 | 75.3 |
+| Sibling alone | 15 s | NVFP4 | 32.8 | 19.8 | 83.3 | 77.3 |
+| Head beside the driver | 10 s | exact | 30.1 | 19.8 | 52.6 | not used |
+| Head beside the driver | 10 s | NVFP4 | 25.0 | 19.8 | 55.6 | not used |
+
+In the memory table the pair's 15 s exact row counts the two renders of
+2026-10-30, the first of which the sample timeout cut off. The measured
+render of 2026-10-29 read 47.5 GiB on the head and 68.2 GiB on the sibling at
+their lowest
+([VALIDATION](VALIDATION.md#the-15-second-render-measured-2026-10-29)).
+
+What the rows show, and what they do not:
+
+- **Timing and memory only.** No row compares output.
+  [VALIDATION](VALIDATION.md#evidence-minimax-h3-t2va-fl2va-ref2va-av) holds
+  the H3 comparisons, and [H3 capacity](VALIDATION.md#h3-capacity) sets these
+  memory readings against the activation charge.
+- **Sol-Attn renders a different video.** It runs approximate attention under
+  the class K waiver, so each Sol-Attn output carries the waiver stamp
+  ([TROUBLESHOOTING #55](TROUBLESHOOTING.md#55-rendering-under-an-accuracy-waiver-and-what-the-stamp-means))
+  and a different composition from the exact render. Its rows time that
+  video, not the exact one done faster. Sampling falls by a third at 5 s, 41
+  percent at 10 s and 43 percent at 15 s. At 15 s the three taus sit within
+  15 percent of each other, and 1.0 is fastest.
+- **The file does not set the pace.** The pruned NVFP4 DiT and the unpruned
+  31.7 GiB INT8 file sample within about 2 percent of the pruned INT8 file.
+  NVFP4 holds 7.8 GiB less per actor on the pair at 15 s and 3.7 GiB less on
+  one rank; the unpruned file holds 12.3 GiB more, its extra weights. A first
+  render's wall also carries the load and the gate's first-use work, which
+  differ by file: on the sibling alone NVFP4 spent 19:44 outside sampling and
+  INT8 3:58. Compare sampling.
+- **The pair's 15 s exact row spans two builds.** The suite's own first
+  render ran past the one-hour sample timeout while test suites loaded the
+  head's CPU, so the row's first-render figures come from three sessions on
+  2026-10-29, dev `50ad5e9`, before the activation refit. The suite session's
+  second render loaded the model again after that timeout, so its wall
+  includes a load. Its sampling matches the first renders.
+- **The pair now admits a second 15 s request in a session.** The Sol-Attn
+  0.7 and NVFP4 second renders reused the loaded weights, and the exact
+  second render, which loaded again, was admitted too. On 2026-10-29 the
+  activation charge before the refit refused that second request, 8.7 GiB
+  short.
+- **One Spark renders the 15 s clip.** With one rank on the sibling alone,
+  the sibling never fell below 75 GiB free. The one-hour sample timeout cut
+  off the first attempt; with `DGXM_SAMPLE_TIMEOUT` raised the next one
+  finished in 83:31
+  ([TROUBLESHOOTING #139](TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-after-an-hour-of-sampling)).
+- **The head beside the driver.** At 10 s it sampled about 6 percent slower
+  than the sibling alone. The head carries the clock cap and the driver, and
+  these rows do not separate the two. The loader
+  refused the 15 s clip there before loading, 10.8 GiB short on the
+  activation charge
+  ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30)).
+- **BF16 did not render.** Every attempt with the 61.7 GiB BF16 file
+  refused, on every layout, and slab rescue on the pair ended in a refusal
+  too ([VALIDATION](VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
+- **Lowest free memory.** Among renders that completed, the head's lowest
+  reading was 35.5 GiB, with the unpruned file beside the driver, and the
+  sibling's 55.1 GiB. The BF16 rescue attempts went lower, to 15.1 GiB on the
+  head and 36.2 GiB on the sibling.
+
+Reported, not reproduced: a single RTX 5090 renders the same 362-frame clip at
+1344x768 in 518.0 s, 8.6 minutes
+([ai-muninn.com, 2026-09-03](https://ai-muninn.com/en/blog/minimax-h3-rtx5090-config-stack)),
+with a different recipe: the pruned NVFP4 DiT and an NVFP4 text encoder, 14
+steps, the KJNodes head-group attention and chunked feed-forward patches
+(exact), torch 2.13.0+cu130 on Windows and SageAttention. The same post gives
+99.6 s for 124 frames, 2208 s at coarse chunking and an out-of-memory failure
+without the chunking patches. Per step that is about 37 s against the pair's
+136 s at 362 frames, and 7 s against the pair's 26 s and one Spark's 42 s at
+124 frames: the 5090 holds about 3.6 times the pair's pace at both lengths.
 
 <a id="the-fsdp-round-capacity-path-not-speed"></a>
 

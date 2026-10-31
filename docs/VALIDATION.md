@@ -2767,9 +2767,10 @@ row sat near the centre of the window points 1 to 3 left, which was
 5 GiB, and 1.63 times above the kill's reading, with every fixed cost folded
 into the slope. At point 4 it charged 60.1 GiB per rank, refusing the
 session's second render 8.7 GiB short and the gate's slab path 3.8 GiB short,
-and on one Spark it charged 112.3 GiB for 109,062 rows. The capacity notes in
-[BENCHMARKS](BENCHMARKS.md#a-15-second-clip-on-the-pair-2026-10-29) quote that
-model.
+and on one Spark it charged 112.3 GiB for 109,062 rows. The 2026-10-29 first
+renders in
+[BENCHMARKS](BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)
+ran under that model.
 
 On one Spark the loader node reads the 362-frame cell as 109,062 rows of video
 and audio. With the pruned DiT pending (19.53 GiB), 92.8 GiB MemAvailable and
@@ -2780,6 +2781,14 @@ that admit the 362-frame cell exist, but every pair that does leaves point 1's
 refusal, point 2's pending pass or the cell itself with 2.5 GiB or less,
 against the 4 GiB this fit keeps. A measured one-Spark run decides that cell,
 not the constants.
+
+The suite of 2026-10-29 and 30 ran both one-Spark layouts. On the head beside
+the driver the 243-frame cell rendered, as this fit predicts, with the head at
+52.6 GiB MemAvailable at its lowest. The 362-frame cell refused there at the
+loader, 10.8 GiB short at 93.2 GiB MemAvailable, so that layout has no
+measurement at 362 frames. One rank on the sibling alone, with the driver on
+the head, rendered the 362-frame cell
+([measured points](#activation-across-clip-lengths-measured-2026-10-29-and-30)).
 
 
 A 61.73-GiB BF16 reference-to-video load left 60.9 GiB available before
@@ -2838,6 +2847,74 @@ so each peak is a lower bound. In the same session the second request read
 56.5 GiB MemAvailable on the head after the driver unloaded its VAEs, and the
 gate's slab path read 61.3 GiB after its proof render; the model before the
 refit refused both.
+
+### Activation across clip lengths, measured (2026-10-29 and 30)
+
+The suite in
+[BENCHMARKS](BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)
+rendered 1344x768 clips of 124, 243 and 362 frames at 20 steps with exact
+attention and the pruned INT8 ConvRot DiT, on the pair (uly2) and as one rank
+on the sibling alone, with 1 Hz samplers on both hosts. Each actor's GPU
+memory peak less the 19.53 GiB of weights is the activation it held. Beside it
+stands the refit's charge per rank: the 7.5 GiB floor, 634,368 bytes per row
+on the rank and 73,728 bytes per row of the whole packed total. In GiB:
+
+| layout | frames | rows per rank | actor GPU peak | beyond the weights | charge per rank | charge over measured |
+|---|---:|---:|---:|---:|---:|---:|
+| pair, uly2 | 124 | 18,865 | 26.8 | 7.3 | 21.24 | 2.91 |
+| pair, uly2 | 243 | 36,895 | 32.0 | 12.5 | 34.36 | 2.75 |
+| pair, uly2 | 362 | 54,732 | 37.1 | 17.6 | 47.35 | 2.69 |
+| one rank, the sibling alone | 243 | 73,790 | 31.1 | 11.6 | 56.16 | 4.84 |
+| one rank, the sibling alone | 362 | 109,466 | 36.5 | 17.0 | 79.69 | 4.69 |
+
+The 362-frame pair row measures point 4 again, with the same 17.6 GiB. The
+unpruned 31.70 GiB INT8 file held
+17.7 GiB beyond its weights at that shape, so the file does not move the
+activation. A 1 Hz sampler can miss a short spike, so each measured figure is
+a lower bound.
+
+One rank holding every row held no more than a pair rank holding half of
+them: 11.6 against 12.5 GiB at 243 frames, and 17.0 against 17.6 at 362. The
+charge follows a rank's own rows, so it runs 2.7 to 2.9 times the pair's
+measurements and 4.7 to 4.8 times the one-rank ones.
+
+On one rank the 362-frame clip completed and the sibling never fell below
+75.3 GiB MemAvailable, while the charge for that rank is 79.69 GiB of
+activations against the 17.0 GiB it held. On the head beside the driver the
+same charge refuses the cell at the loader by 10.8 GiB, and the cell was not
+run there. These points change no constant. The fit must still refuse point
+1, the one-rank BF16 kill of 2026-08-05, and the suite could not retest that
+shape, because the BF16 rescue below never rendered. Whether the measured
+points should replace that constraint is the maintainer's decision;
+[issue #93](https://github.com/Deen-Media/dgx-monarch/issues/93) carries it.
+
+### BF16 capacity rescue (2026-10-30), a recorded limitation
+
+The 61.7 GiB BF16 file rendered on no layout, so this record is a limitation,
+not a pass. Stock residency cannot load the file on this hardware: on the
+pair the loader charges 129.6 GiB on the driver host against about 88 GiB
+usable and refuses, class C and waivable.
+
+On the pair at 1344x768x124, with consent from `DGXM_ALLOW_SLAB_RESCUE=1` or
+from `DGXM_AUTO_RESCUE=1`, both ranks loaded the file into slab residency. The
+head fell to 15.1 GiB MemAvailable and the sibling to 36.2 GiB, above the
+8 GiB watchdog. The identity gate ran its proof renders, and then its
+cross-residency check needed a stock reference of the same seed, priced at
+134.6 GiB, which cannot load. The gate returned INCONCLUSIVE, unproven, and
+switched slab off for the combination. The render then refused under stock at
+the cross-rank capacity check before any rank loaded, and a second request
+refused the same way. Afterwards the loader priced the combination at stock
+only and raised no consent card, so the panel offered no way back.
+[DESIGN.md](DESIGN.md#the-residency-ladder) says that active rescue consent
+keeps slab after this verdict; neither headless form reached that rule.
+
+On one Spark no rescue began. With the rank on the sibling alone the actor's
+load failed, and its own rescue offer never reached the driver's consent
+list. On the head beside the driver the loader refused outright, 61.7 GiB to
+place against 55.8 GiB usable, a refusal no consent can waive. With the
+driver preflights off, the head actor's load failed as the sibling's had, and
+its offer did not reach the driver either.
+[Issue #93](https://github.com/Deen-Media/dgx-monarch/issues/93) carries the follow-up.
 
 ### Driver unload before a render-site refusal (2026-10-29)
 
