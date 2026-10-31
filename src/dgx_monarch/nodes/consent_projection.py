@@ -35,11 +35,12 @@ log = get_logger(__name__)
 # restore the previous policy.
 _PROJECTION_ATTR = "_dgxm_rescue_projection"
 
-# Session lifetime: record one non-memo WAIVER per kind, combination, and
-# channel per fleet generation. Recycle clears the map for the next context.
-# Each value is the claim object of the audit call that owns the token, so a
-# call that failed to write releases its own claim and never a newer one.
-_AUDITED_NON_MEMO_GRANTS: dict[tuple[str, str, str], object] = {}
+# Session lifetime: record one non-memo WAIVER per kind, combination, channel
+# and consent id per fleet generation. Recycle clears the map for the next
+# context. Each value is the claim object of the audit call that owns the
+# token, so a call that failed to write releases its own claim and never a
+# newer one.
+_AUDITED_NON_MEMO_GRANTS: dict[tuple[str, str, str, str], object] = {}
 # Guards the check and claim of a token in the map above, its release after a
 # failed write, and the recycle's clear, which runs on an executor thread.
 _AUDIT_LOCK = threading.Lock()
@@ -233,7 +234,11 @@ def audit_non_memo_grant(grant: Any, *, combo_key: str, artifacts: Any, unet_nam
         return
     source = str(getattr(grant, "consent_source", "") or "")
     kind = str(getattr(grant, "kind", "") or RESCUE_KIND)
-    token = (kind, combo_key, source)
+    consent_id = str(getattr(grant, "id", "") or "")
+    # The id is part of the token: a headless memo remade after eviction or a
+    # checkpoint replacement carries a new id that later rows cite, so each id
+    # needs its own grant row, and one id still writes one row.
+    token = (kind, combo_key, source, consent_id)
     # Claim the token before the slow ledger write. A recycle that clears the
     # map during the write then leaves the next generation free to write its
     # own row; adding the token after the write would carry it across. The
@@ -257,7 +262,7 @@ def audit_non_memo_grant(grant: Any, *, combo_key: str, artifacts: Any, unet_nam
         spec = KIND_SPECS[kind]
         recorded = record_waiver(
             action="grant", kind=kind, target_guard=spec.default_guard,
-            consent_id=str(getattr(grant, "id", "")), consent_source=source,
+            consent_id=consent_id, consent_source=source,
             reason=str(getattr(grant, "reason", "") or spec.risk),
             combo_key=combo_key, artifacts=artifacts_digest(artifacts),
             memo_context=dict(context), capability_context=None,

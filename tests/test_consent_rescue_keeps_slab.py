@@ -534,11 +534,19 @@ def test_the_card_is_offered_listed_and_accepted_after_a_capacity_verdict(
     assert "waivable=1" in refused and "Load with slab residency" in refused
     (card,) = consent_routes.consent_state()["pending"]
     assert card["kind"] == KIND
+    scope = consent_pending.peek_pending(card["key"], card["id"]).descriptor.scope
+    assert scope is not None
     status, payload = consent_routes.handle_action(
         {"action": "accept", "key": card["key"], "id": card["id"]})
     assert status == 200, payload
+    # The memo keeps the card's scope, so the panel lists the consent on the
+    # evidence it was accepted on and the operator keeps its Revoke button.
+    assert [row["key"] for row in consent_routes.consent_state()["active"]] == [card["key"]]
+    assert consent_store.read()["consents"][card["key"]]["scope"] == scope
     load = loader_preflight.preflight_loader_footprint(mesh, NAME, {}, None)
     assert load is not None and mesh.worker_args["slab_weights"] is True
+    assert consent_routes.handle_action({"action": "revoke", "key": card["key"]})[0] == 200
+    assert consent_routes.consent_state()["active"] == []
 
 
 def test_a_session_quarantine_is_named_where_slab_cannot_be_offered(monkeypatch, rig):
@@ -632,3 +640,27 @@ def test_the_toggle_and_the_variables_reach_a_load_on_another_host(
     rescue_rows = [(row["consent_source"], row["consent_id"]) for row in _rows(rig, "WAIVER")
                    if row.get("waiver_kind") == KIND]
     assert (expected, load.consent_id) in rescue_rows
+
+
+def test_a_headless_consent_remade_after_eviction_writes_its_own_grant_row(monkeypatch, rig):
+    """The non-memo audit runs once per consent id, not once per kind,
+    combination and source. A headless memo evicted past CONSENT_LIMIT, or
+    remade for a replaced checkpoint, carries a new id that later certificate
+    rows cite, so that id gets its own WAIVER grant row; the same id twice
+    still writes one."""
+    _consent("env", monkeypatch)
+    _ceremony(monkeypatch, rig)
+    monkeypatch.setattr(consent_store, "CONSENT_LIMIT", 1)
+    first = consent_projection.project_for_loader(_LoaderMesh(co_resident=False), NAME, {})
+    again = consent_projection.project_for_loader(_LoaderMesh(co_resident=False), NAME, {})
+    assert first is not None and again is not None
+    assert again.consent_id == first.consent_id
+    # A second question evicts the first memo, and the next load remakes it.
+    consent_store.headless_memo(
+        KIND, f"{rig.tmp}/loras/{LORA}", {"combo_key": "another", "weight_dtype": "default"},
+        source="env", target_guard="stock_load_preflight", waiver_class="C", reason="r")
+    remade = consent_projection.project_for_loader(_LoaderMesh(co_resident=False), NAME, {})
+    assert remade is not None and remade.consent_id != first.consent_id
+    cited = [row["consent_id"] for row in _rows(rig, "WAIVER")
+             if row.get("waiver_kind") == KIND and row.get("consent_source") == "env"]
+    assert cited == [first.consent_id, remade.consent_id]

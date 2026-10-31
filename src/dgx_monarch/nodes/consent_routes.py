@@ -122,41 +122,40 @@ def _rate_limit_ok(now: float | None = None) -> bool:
         return True
 
 
-def _card_asks(desc: Any) -> Any:
-    """A card's quarantine query, and the scoped one an ``unknown`` is asked again under.
+def _asks(item: Any) -> Any:
+    """A card's or memo's query, and the scoped one an ``unknown`` is asked again under.
 
     The pair the raising site read (``consent_quarantine.offer_decisions``), so
-    a card offered on a load's scope is listed and accepted on that scope too.
+    a card offered on a load's scope is listed and accepted on that scope, and
+    the memo its accept wrote is listed on that scope too.
     """
     from .consent_quarantine import capacity_query
 
-    args = (desc.kind, desc.combo_key, desc.artifacts, desc.artifacts_legacy,
-            desc.artifacts_legacy_complete)
-    query = capacity_query(*args, desc.capability_context)
-    fallback = (capacity_query(*args, desc.scope)
-                if query is not None and desc.capability_context is None
-                and desc.scope is not None else None)
+    args = (item.kind, item.combo_key, item.artifacts, item.artifacts_legacy,
+            item.artifacts_legacy_complete)
+    query = capacity_query(*args, item.capability_context)
+    fallback = (capacity_query(*args, item.scope)
+                if query is not None and item.capability_context is None
+                and item.scope is not None else None)
     return query, fallback
 
 
 def _live_rows(memo: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Project rows against one quarantine snapshot without mutating state.
 
-    A card whose first read is unknown takes one more scan, under its scope.
+    A card or memo whose first read is unknown takes one more scan, under its scope.
     """
-    from .consent_quarantine import capacity_query, offer_decisions
+    from .consent_quarantine import offer_decisions
 
     rows: list[tuple[dict[str, Any], Any, bool]] = []
     for card in consent_pending.pending_cards():
         entry = consent_pending.peek_pending(str(card["key"]), str(card["id"]))
         if entry is not None:
-            rows.append((card, _card_asks(entry.descriptor), True))
+            rows.append((card, _asks(entry.descriptor), True))
     for row in consent_store.list_active(memo):
         record = consent_store.ConsentRecord.from_json(memo["consents"].get(row["key"]))
         if record is not None:
-            rows.append((row, (capacity_query(
-                record.kind, record.combo_key, record.artifacts, record.artifacts_legacy,
-                record.artifacts_legacy_complete, record.capability_context), None), False))
+            rows.append((row, _asks(record), False))
     asked = [asks for _row, asks, _pending in rows if asks[0] is not None]
     decided = iter(offer_decisions(asked))
     pending_rows: list[dict[str, Any]] = []
@@ -232,7 +231,7 @@ def _accept(key: str, pending_id: str, source: str = "panel") -> tuple[int, dict
                      "detail": "no pending consent for that request; queue the render again"}
     desc = entry.descriptor
     spec = consent_pending.KIND_SPECS[desc.kind]
-    asks = _card_asks(desc)
+    asks = _asks(desc)
     if asks[0] is not None:
         from .consent_quarantine import offer_decisions
 
@@ -302,6 +301,7 @@ def _accept(key: str, pending_id: str, source: str = "panel") -> tuple[int, dict
         capability_context=desc.capability_context,
         unet_name=desc.unet_name or desc.artifact,
         loras=desc.loras,
+        scope=desc.scope,
     )
     try:
         consent_store.grant(record, key)

@@ -774,7 +774,7 @@ copied from historical evidence.
     therefore never reports durable success while the old grant might return
     after a crash. The publication boundary is
     [`consent_store.py:268-289`](../src/dgx_monarch/consent_store.py#L268-L289 "anchor:_write_atomic") and
-    [`consent_store.py:292-306`](../src/dgx_monarch/consent_store.py#L292-L306 "anchor:_fsync_parent_directory"), covered by
+    [`consent_store.py:296-310`](../src/dgx_monarch/consent_store.py#L296-L310 "anchor:_fsync_parent_directory"), covered by
     [`test_consent_store.py:122-140`](../tests/test_consent_store.py#L122-L140 "anchor:test_directory_fsync_failure_after_replace_is_loud") and
     [`test_consent_store.py:143-165`](../tests/test_consent_store.py#L143-L165 "anchor:test_directory_fsync_cancellation_is_not_recast_as_success").
     A ceremony FAIL that quarantines a lever also revokes the class C memo that

@@ -63,7 +63,8 @@ class ConsentDescriptor:
     the kind's narrow context used by the memo key (``consent_store``).
     ``scope`` is the load capability the raising site read quarantine under
     (:func:`load_scope`); the panel asks an unknown again under it, as that site
-    did. It stays on the card and never reaches a memo or a ledger row.
+    did, and the memo an accept writes keeps it so the panel lists that consent
+    on the same evidence. It never reaches a ledger row.
     """
 
     kind: str

@@ -117,6 +117,7 @@ class ConsentRecord:
     capability_context: dict[str, Any] | None = None
     unet_name: str | None = None
     loras: int = 0
+    scope: dict[str, Any] | None = None
 
     def as_json(self) -> dict[str, Any]:
         epoch = _as_finite_float(self.granted_epoch)
@@ -143,6 +144,7 @@ class ConsentRecord:
             "capability_context": self.capability_context,
             "unet_name": self.unet_name,
             "loras": int(self.loras),
+            "scope": self.scope,
         }
 
     @classmethod
@@ -165,6 +167,7 @@ class ConsentRecord:
             return None
         context = raw.get("memo_context")
         capability = raw.get("capability_context")
+        scope = raw.get("scope")
         loras = raw.get("loras", 0)
         epoch = _as_finite_float(raw.get("granted_epoch"))
         if epoch is None:
@@ -190,6 +193,7 @@ class ConsentRecord:
             capability_context=dict(capability) if isinstance(capability, dict) else None,
             unet_name=_as_optional_str(raw.get("unet_name")),
             loras=int(loras) if isinstance(loras, int) and not isinstance(loras, bool) else 0,
+            scope=dict(scope) if isinstance(scope, dict) else None,
         )
 
 
