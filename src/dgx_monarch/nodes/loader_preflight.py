@@ -113,23 +113,9 @@ def _slab_capable_path(path: str) -> bool:
     return path.lower().endswith((".safetensors", ".sft"))
 
 
-def effective_worker_args(mesh: Any) -> dict[str, Any]:
-    """The worker args every driver-side residency check must read.
-
-    The graph's own overrides merged with configured cluster policy, which is
-    what the worker will run with. The read is safe before the mesh is live and
-    advisory: a handle that cannot answer leaves the graph's args in place. Both
-    loader checks in this module read this one merge: a quarantine can turn a
-    residency lever off between two separate merges, and the checks would disagree.
-    """
-    worker_args = dict(getattr(mesh, "worker_args", None) or {})
-    handle = getattr(mesh, "handle", None)
-    if handle is None:
-        return worker_args
-    try:
-        return dict(handle.effective_worker_args(worker_args))
-    except Exception:  # advisory merge only
-        return worker_args
+# The one merge both loader checks and every consent read use
+# (consent_rescue.mesh_worker_args says why there is only one).
+effective_worker_args = consent_rescue.mesh_worker_args
 
 
 def preflight_upstream_gated_artifact(unet_name: str) -> None:
@@ -551,7 +537,12 @@ def preflight_loader_footprint(
             floor_reserve=floor_reserve, rescue=rescue, window=window)
         if blocked:
             # Report the existing residency constraint without offering override.
-            message = (f"{message} Slab residency is not offered here: {blocked}, so this "
+            # The merged copy above cannot name a session quarantine; the graph's
+            # own dict can (gate_quarantine_scope.session_blocker).
+            from .gate_quarantine_scope import session_blocker
+
+            message = (f"{message} Slab residency is not offered here: "
+                       f"{session_blocker(live_args) or blocked}, so this "
                        "refusal is about the setting on the graph, not about a consent.")
         elif grant is not None:
             # Consent cannot disable the guard when slab also exceeds capacity.
@@ -570,7 +561,7 @@ def preflight_loader_footprint(
                 "artifacts_legacy": artifacts.legacy,
                 "artifacts_legacy_complete": artifacts.legacy_complete,
                 "artifact": os.path.basename(unet_name), "unet_name": unet_name,
-                "target_guard": LOADER_GUARD, "loras": 0,
+                "target_guard": LOADER_GUARD, "loras": 0, "scope": scope,
                 "numbers": (f"needs {_gib(binding.projected)} GiB, "
                             f"{_gib(binding.usable)} GiB usable"),
             })

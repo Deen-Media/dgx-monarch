@@ -8,7 +8,9 @@ CAPACITY cross-mode verdict and, when the slab leg's certificates and the
 refusal's measured numbers are both complete, a certificate row
 (``gate_audit.record_ceremony_certificate``). Card registration
 is best effort and must never replace the typed refusal; incomplete local
-identity grants nothing.
+identity grants nothing. A card carries the load scope of the policy the
+offering actors ran, the scope the loader node stamps on its own card, so the
+panel reads quarantine for an actor's offer exactly as for the loader's.
 """
 from __future__ import annotations
 
@@ -72,8 +74,12 @@ def _already_granted(kind: str, path: str, memo_context: dict[str, Any]) -> bool
         return False
 
 
-def observe_refusal(exc: object) -> dict[str, Any] | None:
-    """Register and return the requested card, or return None."""
+def observe_refusal(exc: object, worker_args: object = None) -> dict[str, Any] | None:
+    """Register and return the requested card, or return None.
+
+    ``worker_args`` is the policy the refusing actors ran (the handle's
+    ``active_worker_args``); the card's scope is its slab-resident load.
+    """
     try:
         text = refusal_text(exc)
         if consent_descriptor.DESCRIPTOR_BEGIN not in text:
@@ -114,6 +120,8 @@ def observe_refusal(exc: object) -> dict[str, Any] | None:
                 artifacts_legacy=artifacts.legacy,
                 artifacts_legacy_complete=artifacts.legacy_complete,
                 memo_context=memo_context,
+                scope=consent_pending.load_scope(
+                    worker_args if isinstance(worker_args, dict) else None),
             ))
         if card is not None:
             log.info("consent card raised for %s (%s)", descriptor.unet_name, descriptor.kind)

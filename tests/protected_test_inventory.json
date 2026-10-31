@@ -652,6 +652,20 @@
       "test_torn_row_after_fail_then_pass_hides_and_refuses_without_mutation": "9b6b9ba2134d8aa9",
       "test_unscoped_pass_cannot_clear_unscoped_fail_for_contextual_consent": "9d46a0c789857404"
     },
+    "tests/test_consent_rescue_keeps_slab.py": {
+      "test_a_capacity_settlement_never_hides_an_earlier_fail": "f1c0124e0053c5ab",
+      "test_a_consented_capacity_inconclusive_keeps_slab_and_renders_under_it": "9d50609d2afc06b0",
+      "test_a_headless_memo_lasts_for_the_process_and_joins_every_row": "6940dbba507a10ba",
+      "test_a_lora_stack_a_divergence_or_an_untyped_refusal_still_quarantines": "0e115b400f261de5",
+      "test_a_session_quarantine_is_named_where_slab_cannot_be_offered": "db5df40beb0d56f5",
+      "test_an_actor_offer_where_the_driver_holds_no_rank_becomes_a_card_to_accept": "16170e496c1fce9b",
+      "test_the_card_is_offered_listed_and_accepted_after_a_capacity_verdict": "6f257603e6d4c0d9",
+      "test_the_click_the_toggle_and_both_variables_produce_one_memo_shape": "c4fe38da2a306d34",
+      "test_the_consent_reader_reads_through_only_a_typed_capacity_settlement": "a5509bc56f7cee08",
+      "test_the_ledger_records_the_settlement_and_its_certificate_as_today": "0c120fa9abe83741",
+      "test_the_toggle_and_the_variables_reach_a_load_on_another_host": "cdb25c4aa3df9f31",
+      "test_without_a_consent_the_capacity_inconclusive_quarantines_as_before": "13a6a35ec26b846e"
+    },
     "tests/test_design_capacity_table.py": {
       "test_every_function_the_table_names_still_exists": "30aee239b1d17031",
       "test_the_table_carries_one_row_for_every_rung_the_ladder_returns": "ae2f986732de5421"

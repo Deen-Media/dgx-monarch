@@ -6,11 +6,15 @@ Context-scoped records expire for both readers when the gate protocol or
 package version changes. Older unscoped records retain their quarantine.
 
 A FAIL copied to an equivalent slab context applies only when the original
-cross-residency comparison failed.
+cross-residency comparison failed. One INCONCLUSIVE reads through: a ceremony
+whose slab legs agreed and whose stock reference a typed class C capacity
+refusal kept from loading, with no LoRA stack, holds nothing against slab
+residency; it records the premise of a capacity rescue (docs/DESIGN.md, "Where
+the ceremony cannot help").
 """
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -30,8 +34,9 @@ _RETESTING_REASON = (
     "until a terminal verdict is recorded; consent cannot enable slab residency"
 )
 _INCONCLUSIVE_REASON = (
-    "the identity gate was INCONCLUSIVE for these exact artifacts; only a later explicit "
-    "PASS can clear an earlier quarantine, so consent cannot enable slab residency"
+    "the identity gate was INCONCLUSIVE for these exact artifacts for a reason other "
+    "than a stock reference that cannot load, so consent cannot enable slab residency "
+    "until a later explicit PASS"
 )
 _CONTEXTLESS_TERMINAL_REASON = (
     "the newest matching identity-gate PASS has no capability context and is diagnostic-"
@@ -112,6 +117,27 @@ _UNKNOWN_UNSCOPED_DAMAGE = QuarantineDecision(
     "unknown", _UNKNOWN_UNSCOPED_DAMAGE_REASON)
 _UNKNOWN_UNBOUND = QuarantineDecision("unknown", _UNKNOWN_UNBOUND_REASON)
 _UNKNOWN_VERDICT = QuarantineDecision("unknown", _UNKNOWN_VERDICT_REASON)
+
+
+def stock_reference_unavailable(entry: Mapping[str, Any]) -> bool:
+    """Whether one INCONCLUSIVE row records only that stock residency cannot load.
+
+    Every clause is a fact the ceremony wrote: its slab legs agreed (a zero
+    latent difference), a typed class C capacity refusal kept the stock
+    reference from loading (``capacity_detail`` in the FSDP capacity stop's
+    vocabulary), no LoRA stack rode along and no lever was taken. A
+    same-residency divergence, an untyped refusal, a LoRA stack or a row from
+    before ``capacity_detail`` existed keeps the INCONCLUSIVE denial.
+    """
+    from ..fsdp_reload_price import CAPACITY_CROSS_MODE, classification_class
+
+    loras, diff = entry.get("loras"), entry.get("max_abs_latent_diff")
+    return (entry.get("verdict") == "INCONCLUSIVE"
+            and entry.get("cross_mode") == CAPACITY_CROSS_MODE
+            and type(loras) is int and loras == 0
+            and entry.get("quarantine_levers") == []
+            and type(diff) in (int, float) and diff == 0
+            and classification_class(entry.get("capacity_detail")) == "C")
 
 
 def quarantine_query(combo_key_value: object, artifacts: Any,
@@ -221,7 +247,7 @@ def _scope_decision(rows: Sequence[tuple[int, dict[str, Any]]], damage: int,
     if verdict == "RETESTING":
         return _RETESTING
     if verdict == "INCONCLUSIVE":
-        return _INCONCLUSIVE
+        return _CLEAR if stock_reference_unavailable(latest) else _INCONCLUSIVE
     if verdict != "PASS":
         return _UNKNOWN_VERDICT
     return _CLEAR
@@ -301,6 +327,40 @@ def quarantine_decisions(
                                      if item.state == "denied"), None)
                             or unknown or _CLEAR)
     return decisions
+
+
+def capacity_query(kind: object, combo_key: object, artifacts: object,
+                   artifacts_legacy: object, legacy_complete: object,
+                   capability_context: object) -> QuarantineQuery | None:
+    """The query one class C card or memo is read under; None for another class."""
+    from .. import consent_pending
+    from ..gate_ledger import ArtifactSetSignature
+
+    spec = consent_pending.KIND_SPECS.get(str(kind or ""))
+    if spec is None or spec.refusal_class != "C":
+        return None
+    if (not isinstance(artifacts, str) or not artifacts
+            or not isinstance(artifacts_legacy, str) or not artifacts_legacy
+            or not isinstance(legacy_complete, bool)):
+        return quarantine_query("", "")
+    signature = ArtifactSetSignature(artifacts, artifacts_legacy, legacy_complete)
+    return quarantine_query(combo_key, signature, capability_context)
+
+
+def offer_decisions(asks: Sequence[tuple[QuarantineQuery, QuarantineQuery | None]],
+                    ) -> list[QuarantineDecision]:
+    """Decide each query, asking an ``unknown`` again under its fallback scope.
+
+    The order ``quarantine_decision_for_load`` reads in, so the panel lists and
+    accepts a card on the evidence the refusal that raised it was offered on.
+    At most two ledger scans for the whole batch.
+    """
+    first = quarantine_decisions(tuple({query for query, _fallback in asks}))
+    retry = {fallback for query, fallback in asks
+             if fallback is not None and first[query].state == "unknown"}
+    second = quarantine_decisions(tuple(retry)) if retry else {}
+    return [second[fallback] if fallback in second and first[query].state == "unknown"
+            else first[query] for query, fallback in asks]
 
 
 def quarantine_decision(combo_key_value: object, artifacts: Any,

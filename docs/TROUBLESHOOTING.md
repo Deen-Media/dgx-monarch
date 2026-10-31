@@ -429,10 +429,22 @@ bypass and capability context. Neither consent nor a byte certificate grants
 PASS. You do not need `auto_gate=off` for capacity rescue
 ([#67](#67-what-auto_gateoff-costs-and-what-it-does-not)).
 
+The headless forms count exactly as the click. `DGXM_ALLOW_SLAB_RESCUE=1`,
+`DGXM_AUTO_RESCUE=1` and the panel's Auto-allow toggle each give the same
+consent record, so the gate keeps `slab_weights` and `lora_low_rss` on for that
+combination, takes no lever, and the render proceeds under slab. The driver log
+says so in one line that starts `identity gate kept slab residency`. A LoRA
+stack, slab proof renders that disagree, or a stock refusal with no class tag
+still return the combination to stock. The same holds when the driver holds no
+rank, as with a one-host cluster file that names only another Spark: the
+Worker's rescue offer becomes the same panel card on the driver, and the two
+variables and the toggle reach that Worker's load before it has to ask.
+
 **If no card appears:** the refusal names the blocker: a non-safetensors
 checkpoint, FSDP, `compile_dit`, `lora_low_rss` off, `slab_weights=off`, Gate
-quarantine, or insufficient memory even for slab. Comfy-managed residency
-forces slab off and cannot offer this rescue
+quarantine, or insufficient memory even for slab. A session quarantine from an
+identity gate that could not complete names that ceremony; restart ComfyUI to
+clear it. Comfy-managed residency forces slab off and cannot offer this rescue
 ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)).
 A loader `weight_dtype` cast disables this preflight because file size no
 longer predicts resident size. Quarantine overrides consent; only a fresh
@@ -2057,7 +2069,9 @@ capped by the arena stock loading would retain. Consent cannot add memory.
 
 **Headless consent:** set the error's variable on the driver before ComfyUI
 starts. Capacity rescue uses `DGXM_ALLOW_SLAB_RESCUE=1`. It writes the same
-ledger authorization but no persistent memo; authority lasts for the process.
+ledger authorization and produces the same consent record a click does, held
+in driver memory and never written to the memo file, so its authority lasts
+for the process.
 
 **Scope and revocation:** panel memos bind checkpoint device, inode, size,
 mtime, ctime, consent kind, and a narrow context. Replacing or rewriting the
@@ -2074,8 +2088,8 @@ failure to write this per-combination row does not stop an already-authorized
 load; the driver logs the missing audit record.
 
 `DGXM_AUTO_RESCUE=1` grants the same process-wide standing authority without a
-card or memo. It covers every auto-eligible kind and every checkpoint the
-process loads. Slab is currently the only eligible kind, so
+card or a memo file entry. It covers every auto-eligible kind and every
+checkpoint the process loads. Slab is currently the only eligible kind, so
 `DGXM_ALLOW_SLAB_RESCUE=1` has the same scope. The panel shows an environment-
 enabled toggle checked and disabled; unset the variable and restart the driver
 to change it. Automatic rescue never grants an accuracy waiver.
@@ -2089,8 +2103,14 @@ not residency settings.
 Both list and accept recheck the ledger. List hides cards/consents for FAIL,
 RETESTING, unknown, or corrupt state without altering stored state; accept
 returns a conflict. Without a governing FAIL, INCONCLUSIVE and RETESTING deny
-acceptance without consuming the card or revoking the memo. Later INCONCLUSIVE
-or RETESTING cannot override FAIL. Only a newer current-source PASS in the
+acceptance without consuming the card or revoking the memo. One INCONCLUSIVE
+denies nothing: a gate whose only finding is that stock residency cannot load
+the checkpoint (`cross_mode=CAPACITY`, no LoRA stack), which is the premise of
+the rescue ([#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)). List and
+accept read a card's evidence as the refusal that raised it did, so an unknown
+read is asked again under the load's own capability and a card the refusal
+offered is a card the panel lists. Later INCONCLUSIVE or RETESTING cannot
+override FAIL. Only a newer current-source PASS in the
 same canonical capability context clears that FAIL and permits new consent.
 Consent never turns INCONCLUSIVE into PASS
 ([#5](#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)).

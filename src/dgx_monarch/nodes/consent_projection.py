@@ -26,6 +26,7 @@ from .consent_rescue import (
     combo_identity,
     live_grant,
     memo_context,
+    mesh_load_scope,
 )
 
 log = get_logger(__name__)
@@ -45,14 +46,21 @@ _AUDIT_LOCK = threading.Lock()
 
 
 def projection_blocker(worker_args: Mapping[str, Any]) -> str:
-    """Return why this policy cannot accept projected rescue, or ``""``."""
+    """Return why this policy cannot accept projected rescue, or ``""``.
+
+    A session quarantine in the graph's own policy dict is named by the
+    ceremony that wrote it (``gate_quarantine_scope.session_blocker``).
+    """
     if residency_mode.requested(worker_args):
         return ("this worker runs comfy-managed residency, which places the weights "
                 "through ComfyUI's own DynamicVRAM and forces slab_weights off; it is "
                 "a bootstrap policy, so it cannot be turned off for one render "
                 "(docs/TROUBLESHOOTING.md #62)")
     if worker_args.get(QUARANTINE_LEVER) is False:
-        return ("slab residency is explicitly off for this graph (the Init node's "
+        from .gate_quarantine_scope import session_blocker
+
+        return (session_blocker(worker_args)
+                or "slab residency is explicitly off for this graph (the Init node's "
                 "slab_weights=off, or an identity-gate quarantine)")
     if worker_args.get(SLAB_PRECONDITION_LEVER) is False:
         return ("lora_low_rss is explicitly off for this graph and slab residency "
@@ -127,7 +135,8 @@ def _projection_grant(model_or_mesh: Any, unet_name: str, options: Any,
         return None
     combo, artifacts = combo_identity(unet_name, options, str(path), loras)
     grant = live_grant(path=str(path), unet_name=unet_name, options=options,
-                       loras=loras, combo=(combo, artifacts))
+                       loras=loras, combo=(combo, artifacts),
+                       scope=mesh_load_scope(model_or_mesh))
     return grant, combo, artifacts, str(path)
 
 

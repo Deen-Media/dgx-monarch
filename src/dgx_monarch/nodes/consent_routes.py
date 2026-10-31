@@ -122,58 +122,50 @@ def _rate_limit_ok(now: float | None = None) -> bool:
         return True
 
 
-def _capacity_query(kind: object, combo_key: object, artifacts: object,
-                    artifacts_legacy: object, legacy_complete: object,
-                    capability_context: object) -> Any:
-    spec = consent_pending.KIND_SPECS.get(str(kind or ""))
-    if spec is None or spec.refusal_class != "C":
-        return None
-    from ..gate_ledger import ArtifactSetSignature
-    from .consent_rescue import quarantine_query
-    if (not isinstance(artifacts, str) or not artifacts
-            or not isinstance(artifacts_legacy, str) or not artifacts_legacy
-            or not isinstance(legacy_complete, bool)):
-        return quarantine_query("", "")
-    signature = ArtifactSetSignature(artifacts, artifacts_legacy, legacy_complete)
-    return quarantine_query(combo_key, signature, capability_context)
+def _card_asks(desc: Any) -> Any:
+    """A card's quarantine query, and the scoped one an ``unknown`` is asked again under.
+
+    The pair the raising site read (``consent_quarantine.offer_decisions``), so
+    a card offered on a load's scope is listed and accepted on that scope too.
+    """
+    from .consent_quarantine import capacity_query
+
+    args = (desc.kind, desc.combo_key, desc.artifacts, desc.artifacts_legacy,
+            desc.artifacts_legacy_complete)
+    query = capacity_query(*args, desc.capability_context)
+    fallback = (capacity_query(*args, desc.scope)
+                if query is not None and desc.capability_context is None
+                and desc.scope is not None else None)
+    return query, fallback
 
 
 def _live_rows(memo: dict[str, Any]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-    """Project rows against one quarantine snapshot without mutating state."""
-    pending: list[tuple[dict[str, Any], Any]] = []
-    queries: set[Any] = set()
+    """Project rows against one quarantine snapshot without mutating state.
+
+    A card whose first read is unknown takes one more scan, under its scope.
+    """
+    from .consent_quarantine import capacity_query, offer_decisions
+
+    rows: list[tuple[dict[str, Any], Any, bool]] = []
     for card in consent_pending.pending_cards():
         entry = consent_pending.peek_pending(str(card["key"]), str(card["id"]))
-        if entry is None:
-            continue
-        desc = entry.descriptor
-        query = _capacity_query(
-            desc.kind, desc.combo_key, desc.artifacts, desc.artifacts_legacy,
-            desc.artifacts_legacy_complete, desc.capability_context)
-        if query is not None:
-            queries.add(query)
-        pending.append((card, query))
-
-    listed_active = consent_store.list_active(memo)
-    active: list[tuple[dict[str, Any], Any]] = []
-    for row in listed_active:
+        if entry is not None:
+            rows.append((card, _card_asks(entry.descriptor), True))
+    for row in consent_store.list_active(memo):
         record = consent_store.ConsentRecord.from_json(memo["consents"].get(row["key"]))
-        if record is None:
-            continue
-        query = _capacity_query(
-            record.kind, record.combo_key, record.artifacts, record.artifacts_legacy,
-            record.artifacts_legacy_complete, record.capability_context)
-        if query is not None:
-            queries.add(query)
-        active.append((row, query))
-
-    from .consent_rescue import quarantine_decisions
-    decisions = quarantine_decisions(tuple(queries))
-    pending_rows = [card for card, query in pending
-                    if query is None or decisions[query].state == "clear"]
+        if record is not None:
+            rows.append((row, (capacity_query(
+                record.kind, record.combo_key, record.artifacts, record.artifacts_legacy,
+                record.artifacts_legacy_complete, record.capability_context), None), False))
+    asked = [asks for _row, asks, _pending in rows if asks[0] is not None]
+    decided = iter(offer_decisions(asked))
+    pending_rows: list[dict[str, Any]] = []
     active_rows: list[dict[str, Any]] = []
-    for row, query in active:
-        if query is not None and decisions[query].state != "clear":
+    for row, asks, is_card in rows:
+        if asks[0] is not None and next(decided).state != "clear":
+            continue
+        if is_card:
+            pending_rows.append(row)
             continue
         spec = consent_pending.KIND_SPECS.get(str(row.get("kind", "")))
         row["style"] = spec.style if spec is not None else "capacity"
@@ -240,13 +232,11 @@ def _accept(key: str, pending_id: str, source: str = "panel") -> tuple[int, dict
                      "detail": "no pending consent for that request; queue the render again"}
     desc = entry.descriptor
     spec = consent_pending.KIND_SPECS[desc.kind]
-    query = _capacity_query(
-        desc.kind, desc.combo_key, desc.artifacts, desc.artifacts_legacy,
-        desc.artifacts_legacy_complete, desc.capability_context)
-    if query is not None:
-        from .consent_rescue import quarantine_decisions
+    asks = _card_asks(desc)
+    if asks[0] is not None:
+        from .consent_quarantine import offer_decisions
 
-        decision = quarantine_decisions((query,))[query]
+        decision = offer_decisions([asks])[0]
         if decision.state != "clear":
             if decision.state == "fail":
                 consent_pending.take_pending(key, pending_id)

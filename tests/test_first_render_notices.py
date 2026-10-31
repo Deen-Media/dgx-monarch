@@ -419,6 +419,28 @@ def test_a_capacity_stop_says_the_render_runs_stock_and_checks_again(ring, sent)
     assert first_render.note_proof_render() is None
 
 
+def test_a_consent_settled_capacity_verdict_says_the_render_runs_on_slab(sent):
+    """The one non-PASS the summary must not call a denial: stock residency
+    cannot load the checkpoint, a rescue consent is active, and the render
+    runs on slab residency (nodes/gate_inconclusive stamps the result)."""
+    from dgx_monarch.nodes import gate_inconclusive
+
+    first_render.gate_started("unknown")
+    first_render.note_proof_render()
+    sent.clear()
+    first_render.gate_finished({
+        "verdict": "INCONCLUSIVE", "wall_s": 147.8,
+        gate_inconclusive.RESCUE_RESULT_KEY: {"consent_id": "c" * 32, "consent_source": "env"}})
+
+    payload = sent[0][1]
+    assert ("identity gate INCONCLUSIVE in 147.8s over 1 proof renders"
+            in payload["message"])
+    assert "your render runs on slab residency" in payload["message"]
+    assert "stay off" not in payload["message"]
+    assert payload["note"] == "gate INCONCLUSIVE in 147.8s, slab residency under consent"
+    assert payload["severity"] == "warn"
+
+
 def test_a_raising_ceremony_still_closes_the_window(
     monkeypatch, gate_session, ring
 ):

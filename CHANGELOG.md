@@ -154,6 +154,15 @@
   the whole request before its proof render: a request that cannot fit the
   slab path gets one INCONCLUSIVE capacity row and no proof render, renders on
   stock residency, and the next request checks again ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- A capacity-rescue consent now keeps slab residency when stock residency
+  cannot load the checkpoint. The identity gate records INCONCLUSIVE with
+  `cross_mode=CAPACITY`, takes no lever, and the render proceeds under slab;
+  on 2026-10-30 the 61.7 GiB MiniMax H3 bf16 file was refused under stock
+  instead. `DGXM_ALLOW_SLAB_RESCUE=1`, `DGXM_AUTO_RESCUE=1` and the Auto-allow
+  toggle give the same consent record as the panel click. The panel now lists
+  the rescue card a refusal offers after such a verdict or after an update, and
+  a Worker's rescue offer becomes that card when the driver holds no rank
+  ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)).
 
 ### Operations
 
