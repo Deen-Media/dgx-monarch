@@ -1434,8 +1434,10 @@ checkpoint, the Gate has no stock reference and returns INCONCLUSIVE. This is
 unproven correctness, class U, rather than measured error, class K.
 
 With active capacity-rescue consent and no LoRA stack, this outcome keeps
-`slab_weights` and its required `lora_low_rss` enabled. Returning to stock
-would retry the load already found not to fit. A LoRA stack introduces a
+`slab_weights` and its required `lora_low_rss` enabled. The consent is the
+panel click, the standing auto-rescue toggle or `DGXM_AUTO_RESCUE`, or
+`DGXM_ALLOW_SLAB_RESCUE`; each produces the same consent record. Returning to
+stock would retry the load already found not to fit. A LoRA stack introduces a
 separate unproven path, so both settings are disabled, except that FSDP keeps
 `lora_low_rss` as described above. `CAPACITY_CERTIFIED` records the load's
 byte verification and availability; it is never an accuracy verdict.

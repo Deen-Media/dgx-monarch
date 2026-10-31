@@ -170,6 +170,15 @@
   now gets 200 minutes; other families keep the larger of the floor and 120 s
   per step. Each render logs its deadline and the terms behind it at INFO
   ([TROUBLESHOOTING #139](docs/TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
+- A capacity-rescue consent now keeps slab residency when stock residency
+  cannot load the checkpoint. The identity gate records INCONCLUSIVE with
+  `cross_mode=CAPACITY`, takes no lever, and the render proceeds under slab;
+  on 2026-10-30 the 61.7 GiB MiniMax H3 bf16 file was refused under stock
+  instead. `DGXM_ALLOW_SLAB_RESCUE=1`, `DGXM_AUTO_RESCUE=1` and the Auto-allow
+  toggle give the same consent record as the panel click. The panel now lists
+  the rescue card a refusal offers after such a verdict or after an update, and
+  a Worker's rescue offer becomes that card when the driver holds no rank
+  ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)).
 
 ### Operations
 

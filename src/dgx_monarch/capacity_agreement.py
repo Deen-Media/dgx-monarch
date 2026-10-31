@@ -555,7 +555,7 @@ def agree_or_refuse(handle: Any, request: dict, *,
         from .consent_observe import observe_refusal
 
         try:
-            observe_refusal(exc)
+            observe_refusal(exc, getattr(handle, "active_worker_args", None))
         except BaseException as observe_exc:
             safe_note(exc, "cross-rank capacity offer observation failed", observe_exc)
         raise

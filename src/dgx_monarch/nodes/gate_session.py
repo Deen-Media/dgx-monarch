@@ -13,7 +13,7 @@ from .gate_fsdp import (
     model_declares_fsdp_proof,
     settled_refusal_tag,
 )
-from .gate_inconclusive import is_no_material
+from .gate_inconclusive import RESCUE_RESULT_KEY, is_no_material
 from .gate_provenance import ProofCohortAttestor
 
 
@@ -100,11 +100,14 @@ def run_identity_ceremony(
                     and result.get("verdict") not in ("PASS", "FAIL")
                     and result.get("proof_kind") != FSDP_PROOF_KIND
                     and not is_no_material(result)
+                    and not result.get(RESCUE_RESULT_KEY)
                 ):
                     # Keep quarantine inside this ceremony capability: another
                     # queue must not dispatch under the rejected risky policy.
                     # A ceremony that had nothing to prove rejected nothing, so
-                    # it takes no lever from the queues behind it. A measured
+                    # it takes no lever from the queues behind it, and neither
+                    # does one a capacity-rescue consent settled: its stock
+                    # reference cannot load, so stock is no fallback. A measured
                     # FAIL is left out: it quarantines only its own
                     # combination, the verdict step has already pushed that
                     # combination's levers off from a per-dispatch clone, and

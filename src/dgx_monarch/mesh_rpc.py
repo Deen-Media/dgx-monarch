@@ -111,7 +111,7 @@ def call_all_bound(
         from .consent_observe import observe_refusal
 
         try:
-            observe_refusal(exc)
+            observe_refusal(exc, getattr(handle, "active_worker_args", None))
         except BaseException as observe_exc:
             safe_note(exc, "worker refusal observation failed", observe_exc)
         ambiguous = (

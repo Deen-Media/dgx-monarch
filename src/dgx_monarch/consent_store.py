@@ -1,9 +1,12 @@
 """Persist consent memos and the standing auto-rescue toggle.
 
 A memo authorizes one bypass for an exact checkpoint identity and narrow
-context. Standing and environment grants resolve in ``consent_pending`` and
-never create memos. The append-only gate ledger records evidence; it cannot
-authorize a bypass because revoked grants remain in its history.
+context. A panel or Studio accept persists one. A capacity grant from the
+standing auto-rescue toggle or an environment variable produces the same
+record, held in process memory and never written here (:func:`headless_memo`),
+so its authority ends with the process and every reader sees one memo shape.
+The append-only gate ledger records evidence; it cannot authorize a bypass
+because revoked grants remain in its history.
 
 Memo keys bind ``dev:ino:size:mtime_ns:ctime_ns`` so replacement and same-size
 rewrites invalidate consent. Residency context binds combination and loader
@@ -45,6 +48,11 @@ CONSENT_LIMIT = 128
 STALE_PRUNE_S = 30 * 24 * 3600
 
 _LOCK = threading.Lock()
+
+# Process lifetime, never persisted, bounded like the memo file: one headless
+# memo per (memo key, source), so its consent id stays one value across the
+# WAIVER row, the certificate row and every dispatch that cites it.
+_HEADLESS: dict[tuple[str, str], ConsentRecord] = {}
 
 
 class ConsentStoreError(OSError):
@@ -109,6 +117,7 @@ class ConsentRecord:
     capability_context: dict[str, Any] | None = None
     unet_name: str | None = None
     loras: int = 0
+    scope: dict[str, Any] | None = None
 
     def as_json(self) -> dict[str, Any]:
         epoch = _as_finite_float(self.granted_epoch)
@@ -135,6 +144,7 @@ class ConsentRecord:
             "capability_context": self.capability_context,
             "unet_name": self.unet_name,
             "loras": int(self.loras),
+            "scope": self.scope,
         }
 
     @classmethod
@@ -157,6 +167,7 @@ class ConsentRecord:
             return None
         context = raw.get("memo_context")
         capability = raw.get("capability_context")
+        scope = raw.get("scope")
         loras = raw.get("loras", 0)
         epoch = _as_finite_float(raw.get("granted_epoch"))
         if epoch is None:
@@ -182,6 +193,7 @@ class ConsentRecord:
             capability_context=dict(capability) if isinstance(capability, dict) else None,
             unet_name=_as_optional_str(raw.get("unet_name")),
             loras=int(loras) if isinstance(loras, int) and not isinstance(loras, bool) else 0,
+            scope=dict(scope) if isinstance(scope, dict) else None,
         )
 
 
@@ -408,6 +420,58 @@ def list_active(memo: dict[str, Any] | None = None) -> list[dict[str, Any]]:
             "stale": _current_identity(record.path) != record.file_identity,
         })
     return rows
+
+
+def headless_memo(kind: str, path: str, context: dict[str, Any], *, source: str,
+                  target_guard: str, waiver_class: str, reason: str) -> ConsentRecord:
+    """The process memo a headless source grants for this exact question.
+
+    The same fields a panel accept persists, the checkpoint's artifact columns
+    included as a card's carry them, made once per memo key and source and
+    remade when the checkpoint's identity changes. Raises ``OSError`` when the
+    checkpoint does not stat, which the resolver reads as no grant.
+    """
+    from .gate_audit_vocab import new_consent_id, waiver_key
+
+    identity = file_identity(path)
+    slot = (memo_key(kind, path, context), source)
+    with _LOCK:
+        record = _HEADLESS.get(slot)
+    if record is not None and record.file_identity == identity:
+        return record
+    # Outside the lock: the sample reads up to 3 MiB of the checkpoint.
+    from .gate_artifacts import UNRESOLVED_SIGNATURES
+    from .gate_ledger import artifact_set_signature, artifact_signature
+
+    signature = artifact_signature(path)
+    if signature in UNRESOLVED_SIGNATURES:  # a sentinel identifies no bytes
+        raise OSError(f"{os.path.basename(path)} has no stable artifact identity")
+    artifacts = artifact_set_signature([signature])
+    combo = str(context.get("combo_key", "") or "")
+    with _LOCK:
+        record = _HEADLESS.get(slot)
+        if record is not None and record.file_identity == identity:
+            return record
+        record = ConsentRecord(
+            id=new_consent_id(), kind=kind, target_guard=target_guard,
+            waiver_class=waiver_class, artifact=os.path.basename(path), path=path,
+            file_identity=identity, memo_context=dict(context),
+            granted_at=time.strftime("%Y-%m-%d %H:%M:%S"), granted_epoch=time.time(),
+            consent_source=source, reason=reason, ledger_key=waiver_key(kind, combo),
+            combo_key=combo or None, artifacts=artifacts.current,
+            artifacts_legacy=artifacts.legacy,
+            artifacts_legacy_complete=artifacts.legacy_complete,
+            unet_name=os.path.basename(path))
+        _HEADLESS[slot] = record
+        while len(_HEADLESS) > CONSENT_LIMIT:
+            _HEADLESS.pop(next(iter(_HEADLESS)))
+        return record
+
+
+def forget_headless() -> None:
+    """Drop every process memo (driver teardown, tests)."""
+    with _LOCK:
+        _HEADLESS.clear()
 
 
 def auto_rescue() -> bool:

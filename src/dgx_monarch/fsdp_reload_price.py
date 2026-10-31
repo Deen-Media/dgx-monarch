@@ -296,6 +296,19 @@ def capacity_classification(exc: BaseException) -> str:
     return f"{name}/class-{tag.refusal_class.value} guard={tag.guard or 'none'}"
 
 
+def classification_class(detail: object) -> str | None:
+    """The refusal class one :func:`capacity_classification` value names.
+
+    None for an untagged, malformed or missing value, so a reader that needs a
+    typed refusal fails closed on anything this module did not write.
+    """
+    if not isinstance(detail, str):
+        return None
+    _name, marker, rest = detail.partition("/class-")
+    named = rest.split(" ", 1)[0] if marker else ""
+    return named if named in {member.value for member in RefusalClass} else None
+
+
 def operator_sentence(
     price: ReloadPrice, unet_name: str, *, stage: str = "preflight",
 ) -> str:

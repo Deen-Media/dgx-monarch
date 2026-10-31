@@ -5,6 +5,7 @@ from collections.abc import Callable, Mapping
 from typing import Any
 
 from .. import first_render
+from ..fsdp_reload_price import capacity_classification
 from ..gate_audit import fold_rank_certificates, parse_measured
 
 # Re-exported for nodes/gate.py: the verdict half's persist block reads the
@@ -85,7 +86,11 @@ def run_cross_residency_reference(
             # can record what was proven (these bytes are the checkpoint's)
             # beside what was not (that the render matches stock). Both fold to
             # None on incomplete evidence, and then no certificate row is written.
+            # ``capacity_detail`` names the refusal's class and guard in the
+            # FSDP capacity stop's bounded vocabulary, never its text: the
+            # consent reader keeps slab only behind a typed class C refusal.
             return {"verdict": "CAPACITY", "detail": detail,
+                    "capacity_detail": capacity_classification(exc),
                     "certificate": fold_rank_certificates(
                         getattr(slab_proof, "cycle", None), getattr(handle, "world", None)),
                     "measured": measured}, None

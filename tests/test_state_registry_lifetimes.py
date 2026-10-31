@@ -530,7 +530,7 @@ def test_a_recycle_drains_every_loader_site_memo():
     across a recycle, which is this class again."""
     loader_graph.remember(loader_preflight._CLEARED_UNETS, "model.safetensors")
     loader_graph.remember(loader_graph._CHARGED_STACK_ARTIFACTS, "te.safetensors")
-    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel")] = object()
+    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel", "c" * 32)] = object()
 
     loader_preflight.reset_memos()
 
@@ -551,7 +551,7 @@ def test_a_recycle_does_not_re_arm_the_headless_warning(monkeypatch):
     monkeypatch.setattr(loader_preflight, "_UNPRICED_STACK_WARNED", {"minimax_h3"})
     loader_graph.remember(loader_preflight._CLEARED_UNETS, "model.safetensors")
     loader_graph.remember(loader_graph._CHARGED_STACK_ARTIFACTS, "te.safetensors")
-    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel")] = object()
+    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel", "c" * 32)] = object()
 
     loader_preflight.reset_memos()
 
@@ -742,7 +742,7 @@ def _drain_case(case: str):
         "grant-audit": (consent_projection._AUDIT_LOCK,
                         consent_projection.reset_grant_audit,
                         consent_projection._AUDITED_NON_MEMO_GRANTS,
-                        ("rescue-slab", "combo", "panel")),
+                        ("rescue-slab", "combo", "panel", "c" * 32)),
     }[case]
 
 
@@ -755,7 +755,7 @@ def test_every_drain_step_waits_for_the_writer_holding_its_lock(
     lock, drain_step, store, member = _drain_case(case)
     loader_graph.remember(loader_preflight._CLEARED_UNETS, "model.safetensors")
     loader_graph.remember(loader_graph._CHARGED_STACK_ARTIFACTS, "te.safetensors")
-    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel")] = object()
+    consent_projection._AUDITED_NON_MEMO_GRANTS[("rescue-slab", "combo", "panel", "c" * 32)] = object()
     drain = threading.Thread(target=drain_step, daemon=True)
 
     with lock:
@@ -823,7 +823,7 @@ def test_a_drain_racing_the_prompt_thread_never_breaks_a_memo_write(
     assert len(loader_graph._CHARGED_STACK_ARTIFACTS) <= loader_graph._MEMO_LIMIT
 
 
-_AUDIT_TOKEN = ("rescue-slab", "combo", "env")
+_AUDIT_TOKEN = ("rescue-slab", "combo", "env", "c" * 32)
 
 
 def _environment_bypass(tmp_path, monkeypatch, writer):

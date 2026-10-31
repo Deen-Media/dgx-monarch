@@ -248,7 +248,9 @@ def publish_ceremony_verdict(
         detail = {"model": model_request["unet_name"], "loras": len(stack), "origin": origin,
                   "run_id": run_id, "max_abs_latent_diff": max_diff,
                   "quarantine_levers": quarantine_levers,
-                  **({"cross_mode": cross_mode["verdict"]} if cross_mode else {})}
+                  **({"cross_mode": cross_mode["verdict"]} if cross_mode else {}),
+                  **({"capacity_detail": cross_mode.get("capacity_detail")}
+                     if cross_mode and cross_mode["verdict"] == "CAPACITY" else {})}
         ledger.record(key, artifacts, commit, verdict,
                       runtime["_gate_inconclusive"].ledger_detail(detail, result), capability_context)
         if not fsdp_proof_scope:
@@ -259,6 +261,11 @@ def publish_ceremony_verdict(
                           {**detail, "stamped": "slab-mode-equivalence"}, sibling)
         runtime["record_ceremony_certificate"](
             ledger, key, artifacts, commit, cross_mode, capability_context, detail)
+        if verdict == "INCONCLUSIVE" and not fsdp_proof_scope:
+            # After the rows: the consent read must see this verdict, not the
+            # RETESTING row it supersedes.
+            runtime["_gate_inconclusive"].settle_stock_reference_unavailable(
+                model, result, detail)
         report_row = {k: v for k, v in result.items()
                       if k != "latent" and not k.startswith("_")}
         with open(os.path.join(runtime["_ledger_dir"](), "dgxm_gate_reports.jsonl"), "a") as f:

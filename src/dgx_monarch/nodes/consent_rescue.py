@@ -227,15 +227,34 @@ def load_capability_context(worker_args: Mapping[str, Any] | None) -> dict[str, 
     after it are one shape. ``None`` where the args carry a value the ledger
     cannot canonicalize, which is the contextless read to fall back on.
     """
-    from .. import consent_store
-
-    context = {"worker_args": {**dict(worker_args or {}), QUARANTINE_LEVER: True}}
-    try:
-        consent_store.canonical_context(context)
-    except (TypeError, ValueError, RecursionError) as exc:
-        log.warning("this load's capability context is not canonicalizable (%r)", exc)
-        return None
+    context = consent_pending.load_scope(dict(worker_args or {}))
+    if context is None:
+        log.warning("this load's capability context is not canonicalizable")
     return context
+
+
+def mesh_worker_args(mesh: Any) -> dict[str, Any]:
+    """The worker args every driver-side residency check must read.
+
+    The graph's own overrides merged with configured cluster policy, which is
+    what the worker will run with. The read is safe before the mesh is live and
+    advisory: a handle that cannot answer leaves the graph's args in place. The
+    loader checks and every consent read below use this one merge, because a
+    quarantine can turn a residency lever off between two separate merges.
+    """
+    worker_args = dict(getattr(mesh, "worker_args", None) or {})
+    handle = getattr(mesh, "handle", None)
+    if handle is None:
+        return worker_args
+    try:
+        return dict(handle.effective_worker_args(worker_args))
+    except Exception:  # advisory merge only
+        return worker_args
+
+
+def mesh_load_scope(mesh: Any) -> dict[str, Any] | None:
+    """The load scope a rescue on this mesh runs under, as the loader node reads it."""
+    return load_capability_context(mesh_worker_args(mesh))
 
 
 def quarantine_reason_for_load(combo_key_value: str, artifacts: Any,
@@ -252,8 +271,10 @@ def live_grant(*, path: str, unet_name: str, options: Mapping[str, Any] | None,
 
     Use the load's capability context for both the preliminary quarantine check
     and grant resolution. Different scopes could repeatedly offer a card whose
-    accepted memo is then refused. If the grant contains its own context, use
-    that exact operator-approved context.
+    accepted memo is then refused, so every caller passes ``scope``
+    (:func:`mesh_load_scope`) and an ``unknown`` is asked again under it, as the
+    loader node asks. If the grant contains its own context, use that exact
+    operator-approved context.
     """
     try:
         combo_key_value, artifacts = (
@@ -315,13 +336,15 @@ def unproven_quarantine_levers(model: Any) -> dict[str, bool]:
         if _graph_declares_fsdp(model):
             levers.pop(SLAB_PRECONDITION_LEVER)
         return levers  # no rescue for an unproven swap path
-    if render_grant_is_live(model):
+    grant = render_grant(model)
+    if grant is not None:
         levers.pop(QUARANTINE_LEVER)
         levers.pop(SLAB_PRECONDITION_LEVER)
-        log.warning("auto-gate could not complete for %s; a capacity-rescue consent keeps "
-                    "slab residency on, with the lora_low_rss lever it needs (the consent "
-                    "lets the load fit; it proves nothing about accuracy)",
-                    getattr(model, "unet_name", "?"))
+        log.warning("auto-gate has no PASS for %s, and capacity-rescue consent %s from %s "
+                    "is active, so slab residency stays on with the lora_low_rss lever it "
+                    "needs (the consent lets the load fit; it proves nothing about accuracy)",
+                    getattr(model, "unet_name", "?"), getattr(grant, "id", "?"),
+                    getattr(grant, "consent_source", "?"))
     return levers
 
 
@@ -378,7 +401,8 @@ def render_grant(model: Any) -> Any:
             return None
         return live_grant(path=str(path), unet_name=unet_name,
                           options=getattr(model, "options", None) or {},
-                          loras=getattr(model, "loras", ()) or ())
+                          loras=getattr(model, "loras", ()) or (),
+                          scope=mesh_load_scope(mesh))
     except Exception as exc:
         log.warning("rescue consent lookup failed for a ceremony (%r)", exc)
         return None

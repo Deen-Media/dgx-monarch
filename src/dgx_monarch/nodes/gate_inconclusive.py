@@ -3,10 +3,12 @@
 No-material skips only a later empty ceremony for the exact exercised context;
 it grants no risky residency. A ceremony a measured class K guard stopped
 grants nothing either and takes no lever, and neither does one whose request
-cannot fit the path it would prove. Every other incomplete or prevented
-proof stays unproven and quarantines both residency levers for its own
-combination, within the exemptions of ``consent_rescue.unproven_quarantine_levers``.
-Classification is structured, token-bound evidence, never inferred from logs.
+cannot fit the path it would prove, nor one whose stock reference cannot load
+while a capacity-rescue consent covers the slab load it proved. Every other
+incomplete or prevented proof stays unproven and quarantines both residency
+levers for its own combination, within the exemptions of
+``consent_rescue.unproven_quarantine_levers``. Classification is structured,
+token-bound evidence, never inferred from logs.
 """
 from __future__ import annotations
 
@@ -42,16 +44,26 @@ KNOWN_WRONG_ABORT_VERDICT = "ERROR_KNOWN_WRONG_ABORT"
 # cached, so the next request of the combination meets the same check.
 CAPACITY_STOP_DISPATCH_VERDICT = "INCONCLUSIVE_CAPACITY_STOP"
 
+# The fourth: a ceremony whose stock reference a typed class C capacity refusal
+# kept from loading, with no LoRA stack, agreeing slab legs and an active
+# capacity-rescue consent (docs/DESIGN.md, "Where the ceremony cannot help").
+# The ledger rows say INCONCLUSIVE with cross_mode CAPACITY; the consent, not
+# a PASS, authorizes the slab dispatch that follows.
+CAPACITY_RESCUE_DISPATCH_VERDICT = "INCONCLUSIVE_CAPACITY_RESCUE"
+# Where the result carries the consent that settled it.
+RESCUE_RESULT_KEY = "capacity_rescue"
+
 # The dispatch verdicts that take no lever off the graph, read by both render
 # paths so one vocabulary decides it. ``None`` (no ceremony called for) and the
-# three dispatcher-only verdicts disproved nothing about residency; PASS proved the path;
+# four dispatcher-only verdicts disproved nothing about residency; PASS proved the path;
 # DUAL_MODEL_STOCK ran no ceremony and renders stock. FAIL does quarantine,
 # but only its own combination: submit turns the levers off on each dispatch
 # clone (nodes/render_quarantine), because every checkpoint on the Init node
 # shares the graph's policy dict.
 NO_QUARANTINE_VERDICTS = frozenset({
     None, "PASS", "DUAL_MODEL_STOCK", NO_MATERIAL_VERDICT,
-    KNOWN_WRONG_ABORT_VERDICT, CAPACITY_STOP_DISPATCH_VERDICT, "FAIL",
+    KNOWN_WRONG_ABORT_VERDICT, CAPACITY_STOP_DISPATCH_VERDICT,
+    CAPACITY_RESCUE_DISPATCH_VERDICT, "FAIL",
 })
 
 # First-use state, distinct from ledger verdicts to prevent trust comparisons.
@@ -139,7 +151,42 @@ def dispatch_verdict(result: Mapping[str, Any]) -> str:
     """Return the dispatch verdict for a newly completed ceremony."""
     if finished_no_material(result):
         return NO_MATERIAL_VERDICT
+    if str(result.get("verdict")) == "INCONCLUSIVE" and result.get(RESCUE_RESULT_KEY):
+        return CAPACITY_RESCUE_DISPATCH_VERDICT
     return str(result.get("verdict"))
+
+
+def settle_stock_reference_unavailable(model: Any, result: dict, detail: Mapping[str, Any]) -> bool:
+    """Keep slab for a ceremony stock cannot reference when a rescue consent is live.
+
+    Runs after the terminal rows are written, so the consent read sees the
+    ceremony's own verdict (``consent_quarantine.stock_reference_unavailable``)
+    and not its RETESTING row. Stamps the result and logs one line; takes no
+    lever. Anything else, or any fault, leaves today's quarantine to the caller.
+    """
+    try:
+        from .consent_quarantine import stock_reference_unavailable
+        from .consent_rescue import render_grant
+
+        if not stock_reference_unavailable({**detail, "verdict": result.get("verdict")}):
+            return False
+        grant = render_grant(model)
+        if grant is None:
+            return False
+        result[RESCUE_RESULT_KEY] = {"consent_id": str(getattr(grant, "id", "")),
+                                     "consent_source": str(getattr(grant, "consent_source", ""))}
+        log.warning(
+            "identity gate kept slab residency for %s: stock residency cannot load it "
+            "(%s), so the gate has no stock reference, and capacity-rescue consent %s "
+            "from %s is active; INCONCLUSIVE recorded with cross_mode CAPACITY and no "
+            "lever taken (the consent lets the load fit; it proves nothing about accuracy)",
+            result.get("model"), detail.get("capacity_detail"),
+            result[RESCUE_RESULT_KEY]["consent_id"],
+            result[RESCUE_RESULT_KEY]["consent_source"])
+        return True
+    except Exception as exc:  # the caller's quarantine is the fail-closed answer
+        log.warning("the capacity-rescue settlement was not read (%r)", exc)
+        return False
 
 
 def known_wrong_abort_verdict(cause: BaseException) -> str | None:

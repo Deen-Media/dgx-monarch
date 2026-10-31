@@ -26,6 +26,7 @@ from .consent_rescue import (
     combo_identity,
     live_grant,
     memo_context,
+    mesh_load_scope,
 )
 
 log = get_logger(__name__)
@@ -34,25 +35,33 @@ log = get_logger(__name__)
 # restore the previous policy.
 _PROJECTION_ATTR = "_dgxm_rescue_projection"
 
-# Session lifetime: record one non-memo WAIVER per kind, combination, and
-# channel per fleet generation. Recycle clears the map for the next context.
-# Each value is the claim object of the audit call that owns the token, so a
-# call that failed to write releases its own claim and never a newer one.
-_AUDITED_NON_MEMO_GRANTS: dict[tuple[str, str, str], object] = {}
+# Session lifetime: record one non-memo WAIVER per kind, combination, channel
+# and consent id per fleet generation. Recycle clears the map for the next
+# context. Each value is the claim object of the audit call that owns the
+# token, so a call that failed to write releases its own claim and never a
+# newer one.
+_AUDITED_NON_MEMO_GRANTS: dict[tuple[str, str, str, str], object] = {}
 # Guards the check and claim of a token in the map above, its release after a
 # failed write, and the recycle's clear, which runs on an executor thread.
 _AUDIT_LOCK = threading.Lock()
 
 
 def projection_blocker(worker_args: Mapping[str, Any]) -> str:
-    """Return why this policy cannot accept projected rescue, or ``""``."""
+    """Return why this policy cannot accept projected rescue, or ``""``.
+
+    A session quarantine in the graph's own policy dict is named by the
+    ceremony that wrote it (``gate_quarantine_scope.session_blocker``).
+    """
     if residency_mode.requested(worker_args):
         return ("this worker runs comfy-managed residency, which places the weights "
                 "through ComfyUI's own DynamicVRAM and forces slab_weights off; it is "
                 "a bootstrap policy, so it cannot be turned off for one render "
                 "(docs/TROUBLESHOOTING.md #62)")
     if worker_args.get(QUARANTINE_LEVER) is False:
-        return ("slab residency is explicitly off for this graph (the Init node's "
+        from .gate_quarantine_scope import session_blocker
+
+        return (session_blocker(worker_args)
+                or "slab residency is explicitly off for this graph (the Init node's "
                 "slab_weights=off, or an identity-gate quarantine)")
     if worker_args.get(SLAB_PRECONDITION_LEVER) is False:
         return ("lora_low_rss is explicitly off for this graph and slab residency "
@@ -127,7 +136,8 @@ def _projection_grant(model_or_mesh: Any, unet_name: str, options: Any,
         return None
     combo, artifacts = combo_identity(unet_name, options, str(path), loras)
     grant = live_grant(path=str(path), unet_name=unet_name, options=options,
-                       loras=loras, combo=(combo, artifacts))
+                       loras=loras, combo=(combo, artifacts),
+                       scope=mesh_load_scope(model_or_mesh))
     return grant, combo, artifacts, str(path)
 
 
@@ -224,7 +234,11 @@ def audit_non_memo_grant(grant: Any, *, combo_key: str, artifacts: Any, unet_nam
         return
     source = str(getattr(grant, "consent_source", "") or "")
     kind = str(getattr(grant, "kind", "") or RESCUE_KIND)
-    token = (kind, combo_key, source)
+    consent_id = str(getattr(grant, "id", "") or "")
+    # The id is part of the token: a headless memo remade after eviction or a
+    # checkpoint replacement carries a new id that later rows cite, so each id
+    # needs its own grant row, and one id still writes one row.
+    token = (kind, combo_key, source, consent_id)
     # Claim the token before the slow ledger write. A recycle that clears the
     # map during the write then leaves the next generation free to write its
     # own row; adding the token after the write would carry it across. The
@@ -248,7 +262,7 @@ def audit_non_memo_grant(grant: Any, *, combo_key: str, artifacts: Any, unet_nam
         spec = KIND_SPECS[kind]
         recorded = record_waiver(
             action="grant", kind=kind, target_guard=spec.default_guard,
-            consent_id=str(getattr(grant, "id", "")), consent_source=source,
+            consent_id=consent_id, consent_source=source,
             reason=str(getattr(grant, "reason", "") or spec.risk),
             combo_key=combo_key, artifacts=artifacts_digest(artifacts),
             memo_context=dict(context), capability_context=None,

@@ -127,7 +127,7 @@ def write_scoped_quarantine(
     # expose one lever disabled while the other remains risky.
     worker_args.update(**levers)
     if changed:
-        _remember(model, worker_args, requested)
+        _remember(model, worker_args, requested, abort_class(cause))
         log.error(
             "auto-gate could not complete for %s on %s; %s disabled for that "
             "combination for the rest of this session",
@@ -135,7 +135,8 @@ def write_scoped_quarantine(
     return changed
 
 
-def _remember(model: Any, worker_args: Any, requested: dict[str, Any]) -> None:
+def _remember(model: Any, worker_args: Any, requested: dict[str, Any],
+              cause: str = "an unproved verdict") -> None:
     """Bind this quarantine to the combination whose ceremony aborted."""
     try:
         record = _record_for(worker_args)
@@ -150,9 +151,32 @@ def _remember(model: Any, worker_args: Any, requested: dict[str, Any]) -> None:
         for lever, value in requested.items():
             record["requested"].setdefault(lever, value)
         record["combination"] = combination(model)
+        record["label"], record["cause"] = combination_label(model), cause
     except BaseException as exc:  # An unscoped quarantine is still a quarantine.
         log.warning(
             "an unproven quarantine was not bound to its combination (%r)", exc)
+
+
+def session_blocker(worker_args: Any) -> str:
+    """Name the session quarantine holding slab residency off in this policy, or "".
+
+    A refusal that cannot offer slab says which ceremony took the levers and
+    what clears them, rather than pointing at an Init widget the operator never
+    set. Empty when the graph itself set slab_weights off, or nothing is known.
+    """
+    try:
+        record = None if worker_args is None else _record_for(worker_args)
+        if (record is None or "slab_weights" not in record["requested"]
+                or worker_args.get("slab_weights") is not _OFF):
+            return ""
+        return (f"the identity gate for {record.get('label', 'a combination')} could "
+                f"not complete on {record.get('cause', 'an unproved verdict')} earlier "
+                f"in this session and turned {', '.join(sorted(record['requested']))} off "
+                "on this Init node for the rest of the session, and no consent can turn "
+                "them back on; restart ComfyUI to clear it, and the next session prices "
+                "this load with the graph's own settings")
+    except BaseException:  # A refusal's wording never replaces the refusal.
+        return ""
 
 
 def restore_requested_levers(model: Any) -> list[str]:

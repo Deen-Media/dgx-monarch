@@ -205,6 +205,11 @@ _GATE_DONE_DENIED = ("The optimized residency paths stay off for this "
                      "falls back to stock residency or is refused, and "
                      "docs/TROUBLESHOOTING.md #61 explains a verdict other "
                      "than PASS")
+# The one non-PASS a consent answers (nodes/gate_inconclusive, "capacity_rescue").
+_GATE_DONE_RESCUED = ("Stock residency cannot load this checkpoint, so there is "
+                      "no stock reference, and a capacity-rescue consent is "
+                      "active: your render runs on slab residency, byte-verified "
+                      "but with no accuracy verdict (docs/TROUBLESHOOTING.md #5)")
 
 
 def gate_finished(result: dict | None, capacity_stop: bool = False) -> None:
@@ -248,11 +253,14 @@ def gate_finished(result: dict | None, capacity_stop: bool = False) -> None:
              else "")
     counted = f" over {proofs} proof renders" if proofs else ""
     passed = verdict == "PASS"
+    rescued = not passed and bool(result.get("capacity_rescue"))
     notice(
         "gate_done",
         f"auto-gate: identity gate {verdict}{spent}{counted}. "
-        + (_GATE_DONE_VOUCHED if passed else _GATE_DONE_DENIED),
+        + (_GATE_DONE_VOUCHED if passed
+           else _GATE_DONE_RESCUED if rescued else _GATE_DONE_DENIED),
         (f"gate {verdict}{spent}, render starting" if passed
+         else f"gate {verdict}{spent}, slab residency under consent" if rescued
          else f"gate {verdict}{spent}, optimized residency off"),
         severity="info" if passed else "warn",
     )
