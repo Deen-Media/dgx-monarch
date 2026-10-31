@@ -14,7 +14,7 @@ from ..transfer_utils import (
     reconcile_error,
     safe_note,
 )
-from . import fsdp_checkpoint_pin, load_fault, rendezvous
+from . import fsdp_checkpoint_pin, load_fault, rendezvous, vae_decode
 from .attention_dispatch import _AttentionDispatch as _AttentionDispatch
 from .comfy_bridge import ensure_comfy
 from .worker_authorization import (
@@ -468,6 +468,7 @@ def teardown_parallel_state(worker, release_models: bool = True) -> None:
         lambda: fsdp_checkpoint_pin.close_store_pins(worker.store))
     stages = (
         ("model unload", unload),
+        ("decode VAE", (lambda: vae_decode.drop_resident(worker)) if release_models else (lambda: None)),
         ("attention dispatch", invalidate_attention),
         ("model-parallel groups", destroy_model_parallel),
         ("distributed environment", destroy_distributed_environment),

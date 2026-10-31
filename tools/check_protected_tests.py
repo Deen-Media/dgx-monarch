@@ -54,6 +54,10 @@ SUITE_MODULES = (
     "tests/test_refusal_classes.py",
     "tests/test_sweep_matrix.py",
     "tests/test_sweep_run.py",
+    # Worker-assisted VAE decode: the byte identity with ComfyUI's tiled
+    # decode, and the decode VAE an actor holds in its accounting.
+    "tests/test_vae_decode_split_comfy.py",
+    "tests/test_vae_decode_worker.py",
 )
 CAPACITY_MODULES = (
     "tests/test_capacity_agreement.py",
