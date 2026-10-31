@@ -136,7 +136,7 @@
   The FP8 matmul path's speed and fidelity on GB10 are NOT RUN
   ([Models](docs/MODELS.md#fp8-compute-paths),
   [VALIDATION](docs/VALIDATION.md#fp8-compute-paths),
-  [TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-fp8-renders-run-no-faster-than-bf16)).
+  [TROUBLESHOOTING #141](docs/TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
 - INT8 ConvRot linears run a Triton GEMM kernel in place of comfy-kitchen's
   CUTLASS kernel, in the ComfyUI process and in every actor, with identical
   output; in the 2026-10-28 and 29 comparison MiniMax H3 and Wan Animate 2
@@ -195,6 +195,26 @@
   the rescue card a refusal offers after such a verdict or after an update, and
   a Worker's rescue offer becomes that card when the driver holds no rank
   ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc)).
+- Worker-assisted VAE decode, off by default: with
+  `[worker_args] worker_vae_decode = "auto"` the stock VAE Decode and VAE
+  Decode (Tiled) nodes split a video decode over the Workers, the driver
+  decoding its own share and each rank on another GPU the rest. ComfyUI's own
+  decode loop runs once on the driver with only its per-unit decode swapped,
+  so the output is byte-identical to the one-host tiled decode: MiniMax H3
+  through both nodes, and the Wan 2.1 and 2.2, HunyuanVideo 1.0 and 1.5 and LTX
+  video VAEs through VAE Decode (Tiled). A Worker loads the driver's VAE file
+  in the driver's dtype, decodes under the driver's attention and torch
+  backend flags, holds one decode VAE that `status()` reports and `clear_vram`
+  drops, and declines any unit it cannot decode exactly, which the driver then
+  decodes with one WARNING; a reply of any other shape or dtype than the stock
+  function's is refused the same way. Replies waiting on the driver stay
+  within a 2 GiB budget. Each decode logs whether it split and over how many
+  ranks, and `dgxm doctor` shows the last one. The key stays out of the
+  Gate's contexts and the trust fingerprint. CPU tests compare bytes against
+  real ComfyUI; the hardware compare is NOT RUN
+  ([Models](docs/MODELS.md#worker-assisted-vae-decode),
+  [VALIDATION](docs/VALIDATION.md#worker-assisted-vae-decode),
+  [TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
 
 ### Operations
 

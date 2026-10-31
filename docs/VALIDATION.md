@@ -2577,6 +2577,61 @@ moves the output past the floor, the launch notes say the plain FP8 path is the
 slow one and the knob stays at `auto`. The kitchen rows check that neither
 switch changes those files; a change there is a finding against this record.
 
+## Worker-assisted VAE decode
+
+The v1.5 option (#93, item 4; DESIGN.md section 5.6) splits a stock video VAE
+decode over the Workers and must give the bytes of ComfyUI's one-host tiled
+decode. CPU tests hold the orchestration: `tests/test_vae_decode_split_comfy.py`
+replays ComfyUI's own `tiled_scale_multidim` and MiniMax H3's chunked decode
+against real ComfyUI with simulated ranks and compares bytes for 1-D, 2-D and
+3-D tiles, odd sizes and overlaps, the Wan and MiniMax H3 index formulas, a
+batch of two, a single tile, more ranks than tiles, more tiles than ranks, and
+ranks that raise, decline, time out or answer in the wrong dtype. No hardware
+leg has run. Whether a GB10 Worker's decode of a unit equals the driver's, and
+what the split saves, are **NOT RUN**, and the option stays off by default
+until the byte compare below passes.
+
+What the hardware leg must show per family, on the pair, with the head capped
+at 2100 MHz, ComfyUI restarted between configurations and the commit recorded:
+
+1. **Byte compare.** Save the sampled latent once (Save Latent), then decode
+   it from Load Latent twice: once with `worker_vae_decode` absent (the
+   one-host tiled decode) and once with `"auto"`. The decode graph keeps an
+   Init node with an explicit topology, which sets the mesh up without a
+   render. Where a latent does not round-trip through Save Latent (MiniMax
+   H3's packed audio and video latent), render the same seed twice instead,
+   which compares the decode only where the render itself is repeatable.
+   Compare every saved frame's decoded pixels. Pass means every frame
+   byte-identical and the decode's INFO line saying it split over 2 ranks with
+   units on rank 1.
+2. **Timings.** Cold (the Worker builds the VAE) and warm (resident), against
+   the one-host decode of the same latent: the INFO line's seconds and the
+   prompt wall.
+3. **Memory.** The sibling's MemAvailable before, during and after, `status()`
+   reporting the resident decode VAE, and Clear VRAM (DGX Monarch) at `soft`
+   releasing it. On the driver, whether the 2 GiB reply budget binds: the
+   decode line's pauses and `render.vae_decode.peak_reply_gib`.
+
+| family | template that drives it | node | byte compare | cold | warm | memory |
+|---|---|---|---|---|---|---|
+| MiniMax H3 video, 1344x768, 124 and 362 frames | `dgx-monarch-minimax-h3-mp4.json` | VAE Decode | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| Wan 2.1 | `dgx-monarch-wan-t2v.json`, VAE Decode swapped for VAE Decode (Tiled) | VAE Decode (Tiled) | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| Wan 2.2 TI2V | no template ships; a Wan 2.2 TI2V graph with VAE Decode (Tiled) | VAE Decode (Tiled) | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| HunyuanVideo 1.0 | `dgx-monarch-kandinsky5-video-lite.json`, node swapped | VAE Decode (Tiled) | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| HunyuanVideo 1.5 | `dgx-monarch-hunyuan-video.json`, node swapped | VAE Decode (Tiled) | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| LTX 2.3 | `dgx-monarch-ltx-i2v-av.json` | VAE Decode (Tiled) | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+| LTX 2.5, diffusion decoder | `dgx-monarch-ltx25-t2v.json` | VAE Decode (Tiled) | NOT RUN | NOT RUN | NOT RUN | NOT RUN |
+
+Three checks beside the table, all **NOT RUN**: a MiniMax H3 decode with the
+driver started with `--use-sage-attention` and `--bf16-vae`, which the Worker
+must adopt; one decode with the VAE file renamed on the sibling, which must
+log the decline WARNING and keep the frames byte-identical; and a MiniMax H3
+decode with less than 512 MiB free on one side, where the model batches fewer
+tiles per call and the bytes may differ. What the CPU tests cannot see: whether
+cuDNN and cuBLAS choose the same kernels on both boxes for the same shapes,
+how fast a 173 MB reply crosses Monarch messaging, and how much the
+pre-touched return buffers save.
+
 ## Memory calibration
 
 GB10 host and GPU allocations share one physical pool. A CUDA-allocated

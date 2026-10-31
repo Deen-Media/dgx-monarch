@@ -1645,6 +1645,9 @@ driver's lines are in ComfyUI's log and an actor's in its Worker journal
 FP8 compute: this actor picked manual_cast for weights stored as float8_e4m3fn, compute dtype bfloat16 (fp8_optimizations=False, --fast fp8_matrix_mult off, FP8 compute supported, fp8_matrix_mult=auto from the default); FP8 weights are dequantized to the compute dtype for every matmul
 ```
 
+[TROUBLESHOOTING #141](TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)
+says what to do for each class a line names.
+
 **Not measured yet.** The `fp8_ops` path has not run on GB10 in the driver or
 in the actors, so this page's quantization advice does not change for it. The
 hardware leg in [VALIDATION](VALIDATION.md#fp8-compute-paths) measures speed
@@ -1667,6 +1670,73 @@ dequantized path nobody has measured here.
   ([scripts/README.md](../scripts/README.md)).
 - On a GPU without FP8 compute (below sm_89) no setting selects `fp8_ops`.
 - No render has run `fp8_ops` under FSDP, slab residency or `comfy_managed`.
+
+<a id="worker-assisted-vae-decode"></a>
+
+## Worker-assisted VAE decode
+
+A video decode runs in the ComfyUI driver and takes tens of seconds to a
+minute on one GB10 while the Workers sit idle. With
+`[worker_args] worker_vae_decode = "auto"` in cluster.toml, the stock VAE
+Decode and VAE Decode (Tiled) nodes split a decode's units over the Workers:
+the driver decodes its own share and each Worker rank on another GPU decodes
+the rest. The output is byte-identical to ComfyUI's one-host tiled decode for
+that VAE, because ComfyUI's own loop runs once on the driver with only the
+per-unit decode swapped (DESIGN.md section 5.6). It is off by default until the
+hardware byte compare passes ([VALIDATION](VALIDATION.md#worker-assisted-vae-decode)).
+
+| family | VAE files the templates load | splits under | unit | hardware byte compare |
+|---|---|---|---|---|
+| MiniMax H3 video | `minimax_h3_video_vae_fp16.safetensors` | VAE Decode and VAE Decode (Tiled), which run the same decode on this VAE | one temporal chunk, which the VAE tiles inside | NOT RUN |
+| Wan 2.1 (also Wan 2.2 14B, FlowRVS, SCAIL, WanDancer, Wan-Animate 2) | `wan_2.1_vae.safetensors`, `Wan2_1_VAE_bf16.safetensors`, `wan21_flow_rvs_mask_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | NOT RUN |
+| Wan 2.2 TI2V | `Wan2_2_VAE_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
+| HunyuanVideo 1.0 (also Kandinsky5 Video) | `hunyuan_video_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
+| HunyuanVideo 1.5 | `hunyuanvideo15_vae_fp16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
+| LTX 2.3 and LTX 2.5 | `LTX23_video_vae_bf16.safetensors`, `ltx-2.5-video-vae-bf16.safetensors`, `ltx-2.5-video-vae-conv-bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
+
+**Which node.** On every family but MiniMax H3, VAE Decode runs the whole
+latent through the model at once, a different result from the tiled decode,
+so it stays on the driver; to split, use VAE Decode (Tiled), as the LTX
+templates already do. The Wan, HunyuanVideo and Kandinsky5 templates use VAE
+Decode and so keep their one-host decode. The MiniMax H3 templates split as
+shipped.
+
+**What stays on the driver.** CogVideoX, whose tiles are not independent; an
+LTX VAE whose decode draws unseeded noise (timestep conditioning or injected
+noise), which has no reproducible reference; image VAEs and every other class;
+a still at or under 1.2 MP, which decodes in about a second; a MiniMax H3
+still, which is one chunk; a VAE that came from a checkpoint rather than a VAE
+loader file, since no Worker can name its bytes; and every encode. Each decode
+logs one line saying whether it split and why not
+([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+
+**Limits.**
+
+- Each Worker needs the driver's VAE file under the same name in its own
+  `models/vae` folder with the same artifact signature, and the same ComfyUI
+  commit, torch and CUDA build and comfy-kitchen release. A Worker adopts the
+  driver's VAE dtype, attention functions and torch backend flags for the
+  decode, so a driver started with `--use-sage-attention` needs the sage
+  package on every Worker host. Any difference makes that rank decline, and
+  the driver decodes its units.
+- A Worker that took a unit keeps the decode VAE resident beside its DiT until
+  `clear_vram`, `unload` or a teardown that releases models drops it: about
+  5 GB for the MiniMax H3 video VAE in fp16 or bf16 (twice that in fp32) and
+  0.25 to 2.5 GB for the others. The driver's free-before-refusing step drops
+  it before a render-site capacity refusal.
+- Decoded units a Worker finished wait on the driver until the decode reaches
+  them, beside the decode's own output, within a 2 GiB budget. A Worker claims
+  only units the budget can hold, near the driver's position, and pauses while
+  it is full; the decode's line counts the pauses. The budget holds about
+  twelve MiniMax H3 chunks at 1344x768 in fp16 or bf16, and a 362-frame clip
+  leaves about ten on the Worker's side.
+- MiniMax H3's decoder batches up to four spatial tiles per call by the free
+  memory it reads, and Comfy's tiled loop casts and blends in the order of its
+  own code. Both are the same on a GB10 with memory to spare, which the
+  hardware compare confirms.
+- No speed has been measured. Two ranks should roughly halve a long decode, less
+  the transfer of each unit's pixels (about 173 MB per MiniMax H3 chunk at
+  1344x768).
 
 ## Model-adoption quant artifact catalog
 

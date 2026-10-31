@@ -294,7 +294,7 @@ def test_doctor_and_status_show_the_setting(args, value, source):
     status, name, detail = fp8_matmul_row.doctor_row(config)
     assert (status, name) == ("ok", "FP8 matmul (actors)")
     assert detail.startswith(f"fp8_matrix_mult={value} from {source}: ")
-    assert "`FP8 compute:`" in detail and "docs/TROUBLESHOOTING.md #140" in detail
+    assert "`FP8 compute:`" in detail and "docs/TROUBLESHOOTING.md #141" in detail
     assert fp8_matmul_row.status_fields(config) == {"value": value, "source": source}
     line = fp8_matmul_row.status_line(config)
     # Status keeps its rows as they were for a file that sets nothing.

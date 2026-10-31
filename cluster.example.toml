@@ -50,6 +50,7 @@ gpus = 1
 # fsdp_prefetch_depth = 1        # FSDP all-gather blocks ahead (1..8); above 1 costs reserved memory
 # int8_gemm = "cutlass"          # INT8 GEMM kernel off in the actors; leave it out for "triton" (docs/MODELS.md)
 # fp8_matrix_mult = "on"         # plain FP8 files take ComfyUI's FP8 matmul in the actors; leave it out for "auto" (docs/MODELS.md)
+# worker_vae_decode = "auto"     # driver only: split stock video VAE decodes over the Workers; off by default (docs/MODELS.md)
 
 # Optional pinned Monarch process policy. These defaults do not enable native RDMA.
 # Keep cluster.rdma_latent_return=false by default. Selected-rail native opt-in

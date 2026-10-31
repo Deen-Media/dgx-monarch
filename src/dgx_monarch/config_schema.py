@@ -5,6 +5,7 @@ import ipaddress
 import math
 import re
 import socket
+from collections.abc import Mapping
 from itertools import pairwise
 from pathlib import Path
 from typing import Literal, TypedDict, cast
@@ -105,6 +106,10 @@ class WorkerArgs(TypedDict, total=False):
     # follows the loader's weight_dtype, "on" is the actors' form of ComfyUI's
     # --fast fp8_matrix_mult, "off" never passes it (fp8_compute.py).
     fp8_matrix_mult: Literal["auto", "on", "off"]
+    # Worker-assisted VAE decode (vae_decode_route.py); absent means "off".
+    # The driver alone reads it: DRIVER_ONLY_KEYS keeps it out of the actors'
+    # policy and the Gate's contexts, since a decode changes no DiT math.
+    worker_vae_decode: Literal["off", "auto"]
 
 
 _BOOL_KEYS = frozenset({
@@ -115,7 +120,16 @@ _BOOL_KEYS = frozenset({
 _FLOAT_LIMITS = {"reserve_vram_gb": (0.0, 1024.0), "uma_reserve_gb": (0.0, 1024.0)}
 _KEYS = frozenset({*_BOOL_KEYS, *_FLOAT_LIMITS, "slab_weights", "swap_verify",
                    "safetensors_backend", "fsdp_prefetch_depth", "int8_gemm",
-                   "fp8_matrix_mult"})
+                   "fp8_matrix_mult", "worker_vae_decode"})
+# Keys only the driver reads. They never reach an actor, so they stay out of
+# the published worker policy, its key and every Gate capability context
+# (actor_worker_args), and out of the trust fingerprint (monarch_policy_io).
+DRIVER_ONLY_KEYS = frozenset({"worker_vae_decode"})
+
+
+def actor_worker_args(values: Mapping[str, object] | None) -> dict[str, object]:
+    """The config policy an actor takes: every key but the driver-only ones."""
+    return {key: value for key, value in (values or {}).items() if key not in DRIVER_ONLY_KEYS}
 
 
 def validate_worker_args(values: object, *, context: str = "worker_args",
@@ -181,6 +195,10 @@ def validate_worker_args(values: object, *, context: str = "worker_args",
         elif key == "fp8_matrix_mult":
             if value not in ("auto", "on", "off"):
                 raise ClusterConfigError(f'{field} must be "auto", "on" or "off" (got {value!r})')
+            out[key] = value
+        elif key == "worker_vae_decode":
+            if value not in ("off", "auto"):
+                raise ClusterConfigError(f'{field} must be "off" or "auto" (got {value!r})')
             out[key] = value
     # Cross-key rule, so a cluster.toml cannot set a combination the Init node
     # refuses. comfy-managed residency forces both levers off inside the

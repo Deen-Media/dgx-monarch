@@ -15,7 +15,7 @@ from ..fp8_compute import AUTO, OFF, ON, WORKER_ARG, setting
 from .probe_certainty import OK
 
 NAME = "FP8 matmul (actors)"
-ENTRY = "docs/TROUBLESHOOTING.md #140"
+ENTRY = "docs/TROUBLESHOOTING.md #141"
 _MEANING = {
     AUTO: ("the actors pass ComfyUI's fp8_optimizations only where a loader's weight_dtype is "
            "fp8_e4m3fn_fast, as stock ComfyUI does without --fast"),

@@ -7265,7 +7265,65 @@ suite ([BENCHMARKS](BENCHMARKS.md)).
   ([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)).
   Raise `DGXM_SAMPLE_STALL_TIMEOUT_S` too for such a render.
 
-## 140. FP8 renders run no faster than BF16
+## 140. A VAE decode did not split over the Workers
+
+**Symptom:** `[worker_args] worker_vae_decode = "auto"` is set, yet a decode
+runs as long as before and the Workers stay idle. The driver logs one line per
+decode, for example:
+
+```
+[dgx-monarch <host>] INFO VAE decode not split (wan21, VAE Decode): VAE Decode runs the whole latent through the model at once on this family, a different result from the tiled decode; use VAE Decode (Tiled) to split it
+```
+
+When a rank failed partway, a WARNING follows the decode's line:
+
+```
+[dgx-monarch <host>] WARNING Worker-assisted VAE decode fell back to this driver for 3 of 7 units, so the image is the one-host decode: rank 1: rank 1 on <host> declined: this host's vae/minimax_h3_video_vae_fp16.safetensors is not the driver's file (artifact signature differs)
+```
+
+`dgxm doctor` shows the last decode in its `worker VAE decode` row. A split
+line that ends `ranks paused N times on the reply budget` is no fault: the
+decoded units waiting on the driver reached their 2 GiB budget, and the Workers
+waited for the driver to catch up.
+
+**Cause:** the split runs only where it can be byte-identical to ComfyUI's
+one-host tiled decode (DESIGN.md section 5.6), and every doubt keeps the
+decode, or one unit of it, on the driver. The line names the reason:
+
+| reason in the line | meaning | fix |
+|---|---|---|
+| `no split for <class>` | the VAE is not in the family table ([MODELS](MODELS.md#worker-assisted-vae-decode)) | none: it decodes on the driver |
+| `CogVideoX tiles frames inside its spatial loop` | its tiles are not independent | none |
+| `draws unseeded noise` | this LTX VAE has no reproducible reference | none |
+| `use VAE Decode (Tiled) to split it` | on this family VAE Decode runs untiled, a different result | use VAE Decode (Tiled) |
+| `stills at or under 1.2 MP` | a small still decodes in about a second | none |
+| `no live DGX Monarch mesh`, `has not finished setup` | no Init node ran in this ComfyUI process, or no render has set the mesh up | queue the graph with its Init node and sampler |
+| `no Worker rank sits on a GPU other than this driver's` | every rank shares the driver's GPU | none |
+| `did not come from a VAE loader file`, `outside ComfyUI's vae folders` | no Worker can name the VAE's bytes | load the VAE with Load VAE from `models/vae` |
+| `the mesh is busy or not ready` | another render session held the mesh | queue again once it ends |
+| `one tile`, `one temporal chunk` | the decode has a single unit | none |
+
+The WARNING names the rank and its first cause:
+
+- `is not the driver's file` or `not found on host`: copy the driver's VAE
+  file into that Worker's `models/vae` under the same name.
+- `differs from the driver's` (ComfyUI commit, torch, CUDA, comfy-kitchen or
+  VAE class): bring that Worker host to the driver's versions; `dgxm doctor`
+  compares torch across hosts.
+- `attention '<name>' is not available on this host`: the Worker adopts the
+  driver's attention for the decode, so install that package on the Worker,
+  or start ComfyUI without the flag that selects it.
+- `not enough memory to`: that Worker could not hold the VAE or one unit.
+  Clear VRAM (DGX Monarch) with `level=soft` drops a resident decode VAE.
+- `no answer for unit`, `TimeoutError` or a supervision error: the Worker was
+  slow, stuck or gone; a dead actor evicts the fleet, and the next render
+  respawns it.
+
+**Fix:** act on the reason, then queue again. A fallback never changes the
+image: every unit a rank did not decode was decoded on the driver by
+ComfyUI's own code.
+
+## 141. FP8 renders run no faster than BF16
 
 **Symptom:** an FP8 checkpoint renders at about its BF16 speed, or slower, on
 the driver or on the cluster, and setting `--fast fp8_matrix_mult` on the
