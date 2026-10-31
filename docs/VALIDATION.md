@@ -2720,74 +2720,94 @@ geometry metadata preserved through loading.
 
 ## H3 capacity
 
-Activation pricing charges each rank a fixed floor of 7.5 GiB, 634,368 bytes
-per packed row on that rank (59 x 5376 x 2) and 73,728 bytes per row of the
-whole packed total, which no topology divides. Four hardware points set the
-floor and the per-rank slope; the constants and their derivation are in
-`src/dgx_monarch/h3_calibration.py`.
+Activation pricing charges each rank a fixed floor of 11.0 GiB, 129,024 bytes
+per packed row on that rank (12 x 5376 x 2) and 73,728 bytes per row of the
+whole packed total, which no topology divides. Five hardware points and one
+reading of Config A set the floor and the slope; the constants and their
+derivation are in `src/dgx_monarch/h3_calibration.py`.
 
 | point | shape and stack | outcome | the estimate must |
 |---|---|---|---|
-| 1 | 1344x768x124, 37,730 rows, one rank, BF16 (2026-08-05) | killed twice | refuse, resident and pending |
-| 2 | the same on world-2 uly2, BF16 (2026-08-05) | completed in 727.6 s | pass, resident and pending |
+| A | 512x320x5, 336 video and audio rows, one rank, BF16, stock single process (2026-08-05) | completed with about 4 GiB of activations and runtime | charge more than 4 GiB |
+| 1 | 1344x768x124, 38,111 rows, one rank on the head beside the driver, BF16 slab (2026-10-31) | completed in 1320 s, 5.5 GiB held beyond the slab | pass, resident and pending, and charge more than 5.5 GiB |
+| 2 | 1344x768x124, 37,730 rows, world-2 uly2, BF16 (2026-08-05) | completed in 727.6 s | pass, resident and pending |
 | 3 | the same on one rank, pruned INT8 (2026-08-03) | completed at 50.74 s per step | pass under an explicit preset |
-| 4 | 1344x768x362, 109,463 rows, uly2, pruned INT8 ConvRot (2026-10-29) | completed | pass at 51.5 and 56.3 GiB usable, and charge more than the 17.6 GiB measured |
+| 4 | 1344x768x362, 109,463 rows, uly2, pruned INT8 ConvRot (2026-10-29) | completed, 17.6 GiB held per rank | pass at 51.5 and 56.3 GiB usable, and charge more than 17.6 GiB |
+| 5 | the same 109,463 rows as one rank on the sibling alone (2026-10-30) | completed in 5011 s, 17.0 GiB held | pass at 85.29 GiB usable, and charge more than 17.0 GiB |
 
-The budgets carry whole-GiB doubt, so the fit maximises the smallest margin
-in GiB. It holds point 1 to the larger budget the old 4 GiB reserve left and
-every pass to the shipped 5 GiB reserve, so the verdicts hold at either. The
-optimum, a 7.70 GiB floor and 631,756 bytes per row, ties point 1 resident,
-point 2 pending and point 4's second render at 4.09 GiB. The rounded constants
-clear each point as follows, in GiB per rank, with the 4 GiB reserve's figures
-in brackets:
+Point A is the stock single-process reference run that went from 114.7 GiB
+idle to a 28.4 GiB floor; points 2 and 3 take their budgets from it. Its
+prompt length is not on record, so its bound counts the 336 video and audio
+rows only. Point 1's readings are the head's: 92.34 GiB MemAvailable with the
+text encoder and VAEs in and the DiT not yet loaded, and 29.70 GiB with the
+slab mapped, the second before the actor's pool grew. Point 5's is the
+sibling's 90.29 GiB at the same moment. The budgets carry whole-GiB doubt, so
+the fit maximises the smallest margin in GiB, and each pass takes the shipped
+5 GiB reserve, the harder budget. The five points alone would put the floor at
+-4.03 GiB, which charges a small render less than nothing and the pair's
+124-frame shape less than the 7.3 GiB it held; point A holds the floor up. The
+optimum, a 10.87 GiB floor and 120,545 bytes per row, ties point A, point 1
+resident and point 4's lower bound at 6.93 GiB. The floor rounds to 11.0 GiB.
+The nearest block factor, 11, is the anatomy floor that the per-row cost must
+exceed, so the slope takes 12. The constants clear each point as follows, in
+GiB per rank, with the 4 GiB reserve's figures in brackets:
 
-| point and posture | estimate | usable | margin |
+| point and posture | estimate | usable or used | margin |
 |---|---:|---:|---|
-| 1, resident | 32.38 | 27.4 [28.4] | refuses by 4.98 [3.98] |
-| 1, pending, 61.73 GiB of weights | 94.11 | 87.2 [88.2] | refuses by 6.91 [5.91] |
-| 2, resident | 21.24 | 27.4 [28.4] | passes by 6.16 [7.16] |
-| 2, pending, 61.73 GiB of weights | 82.96 | 87.2 [88.2] | passes by 4.24 [5.24] |
-| 3, explicit preset | 32.38 | 55.5 [56.5] | passes by 23.12 [24.12] |
-| 4, second render | 47.35 | 51.5 | passes by 4.15 |
-| 4, gate slab path | 47.35 | 56.3 | passes by 8.95 |
+| A, used | 11.06 | 4.0 | above by 7.06 |
+| 1, resident | 18.20 | 24.70 [25.70] | passes by 6.51 [7.51] |
+| 1, pending, 61.73 GiB of weights | 79.92 | 87.34 [88.34] | passes by 7.42 [8.42] |
+| 1, held | 18.20 | 5.5 | above by 12.70 |
+| 2, resident | 15.86 | 27.4 [28.4] | passes by 11.54 [12.54] |
+| 2, pending, 61.73 GiB of weights | 77.59 | 87.2 [88.2] | passes by 9.61 [10.61] |
+| 3, explicit preset | 18.12 | 55.5 [56.5] | passes by 37.38 [38.38] |
+| 4, second render | 25.09 | 51.5 | passes by 26.41 |
+| 4, gate slab path | 25.09 | 56.3 | passes by 31.21 |
+| 4, held | 25.09 | 17.6 | above by 7.49 |
+| 5, resident | 31.67 | 85.29 [86.29] | passes by 53.63 [54.63] |
+| 5, held | 31.67 | 17.0 | above by 14.67 |
 
-Both measured points are lower bounds on what their shapes need. The estimate
-is 1.30 times the 24.9 GiB the point 1 kill left unattributed and 2.69 times
-the 17.6 GiB each actor reserved at point 4. The killed run still carried the
-legacy load path's retained arena, since removed, so its reading overstates
-what that shape needs now. A stock small-shape BF16 reference went from
-114.7 GiB idle to a 28.4 GiB floor, and points 1 and 2 take their budgets from
-it. The two VAE files total 5,813,063,304 bytes (5.41 GiB), not the 5.8 GiB
-the pending budgets subtract; with exact bytes point 2's pending pass gains
-0.39 GiB and point 1's pending refusal loses as much.
+The charge also clears the other measured reservations below, by 1.43 times
+at the pair's 362 frames and up to 3.31 times. Those readings follow the
+whole packed total, not a rank's own rows, so a larger term per total row
+would follow them more closely. No requirement forces it, and the floor
+carries the difference: past world 2, where the readings would not fall as
+ranks share the rows, the charge still sits above the line they draw, though
+no render above world 2 is on record. The two VAE files total 5,813,063,304
+bytes (5.41 GiB), not the 5.8 GiB point 2's pending budget subtracts; with
+exact bytes that pass gains 0.39 GiB.
 
-The first fit, of 2026-08-05, had no floor. Its 1,032,192 sharded bytes per
-row sat near the centre of the window points 1 to 3 left, which was
+The 2026-08-05 kill of point 1's shape is history. It ran with the legacy
+load path's retained arena, since removed, and left 24.9 GiB unattributed.
+The first fit, of that day, had no floor: its 1,032,192 sharded bytes per row
+sat 1.63 times above that reading, inside the window points 1 to 3 left,
 (734,495, 1,359,225] bytes at the 4 GiB reserve and (706,036, 1,302,308] at
-5 GiB, and 1.63 times above the kill's reading, with every fixed cost folded
-into the slope. At point 4 it charged 60.1 GiB per rank, refusing the
-session's second render 8.7 GiB short and the gate's slab path 3.8 GiB short,
-and on one Spark it charged 112.3 GiB for 109,062 rows. The 2026-10-29 first
-renders in
+5 GiB. At point 4 it charged 60.1 GiB per rank, refusing the session's second
+render 8.7 GiB short and the gate's slab path 3.8 GiB short, and on one Spark
+it charged 112.3 GiB for 109,062 rows. The 2026-10-29 fit kept the kill as a
+must-refuse point, added a 7.5 GiB floor and charged 634,368 bytes per row;
+it still refused the one-Spark cell, 11.2 GiB short. The 2026-10-31 head
+render of the killed shape made point 1 a pass. The 2026-10-29 first renders
+in
 [BENCHMARKS](BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)
-ran under that model.
+ran under the 2026-08-05 model, and the suite after them under the 2026-10-29
+one.
 
 On one Spark the loader node reads the 362-frame cell as 109,062 rows of video
 and audio. With the pruned DiT pending (19.53 GiB), 92.8 GiB MemAvailable and
-the 5 GiB reserve, the model charges 79.4 GiB of activations (7.5 floor,
-64.4 sharded, 7.5 replicated) and refuses, 11.2 GiB short. The 243-frame
-cell, 73,386 rows, fits at the same reading with 12.4 GiB to spare. Constants
-that admit the 362-frame cell exist, but every pair that does leaves point 1's
-refusal, point 2's pending pass or the cell itself with 2.5 GiB or less,
-against the 4 GiB this fit keeps. A measured one-Spark run decides that cell,
-not the constants.
+the 5 GiB reserve, the model charges 31.6 GiB of activations (11.0 floor,
+13.1 sharded, 7.5 replicated) and admits it with 36.7 GiB to spare. The
+243-frame cell, 73,386 rows, fits at the same reading with 43.4 GiB to spare.
+Nothing was tuned for the cell: held to the same footing as the requirements,
+it leaves the optimum where it is.
 
 The suite of 2026-10-29 and 30 ran both one-Spark layouts. On the head beside
-the driver the 243-frame cell rendered, as this fit predicts, with the head at
-52.6 GiB MemAvailable at its lowest. The 362-frame cell refused there at the
-loader, 10.8 GiB short at 93.2 GiB MemAvailable, so that layout has no
-measurement at 362 frames. One rank on the sibling alone, with the driver on
-the head, rendered the 362-frame cell
+the driver the 243-frame cell rendered, with the head at 52.6 GiB MemAvailable
+at its lowest. The 362-frame cell refused there at the loader under the
+2026-10-29 fit, 10.8 GiB short at 93.2 GiB MemAvailable, so that layout has no
+measurement at 362 frames; the 2026-10-31 fit admits it there with 37.1 GiB to
+spare. One rank on the sibling alone, with the driver on the head, rendered
+the 362-frame cell
 ([measured points](#activation-across-clip-lengths-measured-2026-10-29-and-30)).
 
 
@@ -2855,17 +2875,20 @@ The suite in
 rendered 1344x768 clips of 124, 243 and 362 frames at 20 steps with exact
 attention and the pruned INT8 ConvRot DiT, on the pair (uly2) and as one rank
 on the sibling alone, with 1 Hz samplers on both hosts. Each actor's GPU
-memory peak less the 19.53 GiB of weights is the activation it held. Beside it
-stands the refit's charge per rank: the 7.5 GiB floor, 634,368 bytes per row
-on the rank and 73,728 bytes per row of the whole packed total. In GiB:
+memory peak less the 19.53 GiB of weights is the activation it held. A last
+row, from 2026-10-31, is the BF16 file at 124 frames as one rank on the head
+beside the driver. Beside each stands the charge per rank at the 2026-10-31
+fit: the 11.0 GiB floor, 129,024 bytes per row on the rank and 73,728 bytes
+per row of the whole packed total. In GiB:
 
 | layout | frames | rows per rank | actor GPU peak | beyond the weights | charge per rank | charge over measured |
 |---|---:|---:|---:|---:|---:|---:|
-| pair, uly2 | 124 | 18,865 | 26.8 | 7.3 | 21.24 | 2.91 |
-| pair, uly2 | 243 | 36,895 | 32.0 | 12.5 | 34.36 | 2.75 |
-| pair, uly2 | 362 | 54,732 | 37.1 | 17.6 | 47.35 | 2.69 |
-| one rank, the sibling alone | 243 | 73,790 | 31.1 | 11.6 | 56.16 | 4.84 |
-| one rank, the sibling alone | 362 | 109,466 | 36.5 | 17.0 | 79.69 | 4.69 |
+| pair, uly2 | 124 | 18,865 | 26.8 | 7.3 | 15.86 | 2.17 |
+| pair, uly2 | 243 | 36,895 | 32.0 | 12.5 | 20.50 | 1.64 |
+| pair, uly2 | 362 | 54,732 | 37.1 | 17.6 | 25.09 | 1.43 |
+| one rank, the sibling alone | 243 | 73,790 | 31.1 | 11.6 | 24.93 | 2.15 |
+| one rank, the sibling alone | 362 | 109,463 | 36.5 | 17.0 | 31.67 | 1.86 |
+| one rank, the head beside the driver, BF16 slab (2026-10-31) | 124 | 38,111 | 5.5 | 5.5 | 18.20 | 3.31 |
 
 The 362-frame pair row measures point 4 again, with the same 17.6 GiB. The
 unpruned 31.70 GiB INT8 file held
@@ -2873,20 +2896,37 @@ unpruned 31.70 GiB INT8 file held
 activation. A 1 Hz sampler can miss a short spike, so each measured figure is
 a lower bound.
 
+The BF16 row ran on 2026-10-31 on dev e4f23be, head capped at 2100 MHz, 20
+steps in 1320 s, through the capacity-rescue path: a standing consent from
+`DGXM_AUTO_RESCUE=1` kept the 61.73 GiB file slab-resident, and both driver
+preflights were off for the measurement, since the fit of that day refused
+the shape. The gate's stock reference could not load, so the gate recorded
+INCONCLUSIVE with `cross_mode=CAPACITY` and kept slab. The slab is host
+memory the actor maps, so the actor's GPU reading, 0.3 GiB before its first
+step and 5.5 GiB through every step, is what it held beyond the weights. The
+head read 29.7 GiB MemAvailable before that step and about 24 GiB through
+sampling; its lowest reading, 16.4 GiB, came during the driver's VAE decode,
+which the driver footprint prices, not the activation charge. This run is
+point 1 of the fit in [H3 capacity](#h3-capacity).
+
 One rank holding every row held no more than a pair rank holding half of
 them: 11.6 against 12.5 GiB at 243 frames, and 17.0 against 17.6 at 362. The
-charge follows a rank's own rows, so it runs 2.7 to 2.9 times the pair's
-measurements and 4.7 to 4.8 times the one-rank ones.
+charge follows a rank's own rows more than the readings do, so it runs 1.4 to
+2.2 times the pair's measurements and 1.9 to 3.3 times the one-rank ones.
 
 On one rank the 362-frame clip completed and the sibling never fell below
-75.3 GiB MemAvailable, while the charge for that rank is 79.69 GiB of
-activations against the 17.0 GiB it held. On the head beside the driver the
-same charge refuses the cell at the loader by 10.8 GiB, and the cell was not
-run there. These points change no constant. The fit must still refuse point
-1, the one-rank BF16 kill of 2026-08-05, and the suite could not retest that
-shape, because the BF16 rescue below never rendered. Whether the measured
-points should replace that constraint is the maintainer's decision;
-[issue #93](https://github.com/Deen-Media/dgx-monarch/issues/93) carries it.
+75.3 GiB MemAvailable, against a charge of 31.67 GiB for the 17.0 GiB it
+held; the 2026-10-31 fit takes that run as point 5. The 2026-10-31 head run
+of the BF16 shape replaced the one-rank BF16 kill of 2026-08-05 as point 1, a
+pass, which answers the question
+[issue #93](https://github.com/Deen-Media/dgx-monarch/issues/93) carried.
+
+Two hardware checks of the 2026-10-31 fit wait for the maintainer:
+
+| check | what it must show | status |
+|---|---|---|
+| The BF16 cell above, one rank on the head beside the driver, with both driver preflights on and only `DGXM_AUTO_RESCUE=1` set | the activation preflight admits it resident and pending, and the render completes | NOT RUN |
+| The 362-frame cell on one Spark at the loader node: the rank on the sibling alone, as point 5 ran, and the rank on the head beside the driver, where the 2026-10-29 fit refused it | the loader admits both, and the head layout renders | NOT RUN |
 
 ### BF16 capacity rescue (2026-10-30), a recorded limitation
 
@@ -2915,6 +2955,12 @@ place against 55.8 GiB usable, a refusal no consent can waive. With the
 driver preflights off, the head actor's load failed as the sibling's had, and
 its offer did not reach the driver either.
 [Issue #93](https://github.com/Deen-Media/dgx-monarch/issues/93) carries the follow-up.
+
+On 2026-10-31, on dev e4f23be, which keeps slab under a rescue consent, the
+file rendered as one rank on the head beside the driver, with both driver
+preflights off for the measurement; the BF16 row in
+[the measured points](#activation-across-clip-lengths-measured-2026-10-29-and-30)
+records it.
 
 ### Driver unload before a render-site refusal (2026-10-29)
 

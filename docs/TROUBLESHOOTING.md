@@ -2308,7 +2308,10 @@ stream across the entries, not their sum: the peak is one call.
 In two tests of a 1344x768x124 bf16 render on one rank, the kernel recorded
 103.3 GiB of anonymous RSS for the ComfyUI process (61.7 GiB slab weights, 16.7
 GiB resident text encoder, and roughly 25 GiB of activations and runtime) and
-killed it. The capacity checks then in place had allowed both runs.
+killed it. The capacity checks then in place had allowed both runs. Those runs
+carried the legacy load path's retained arena, since removed: on 2026-10-31
+the same shape rendered as one rank beside the driver, holding 5.5 GiB of
+activations.
 
 **Reading the error.** After the tag comes the budget: bytes needed per rank,
 bytes usable, the MemAvailable reading, and the reserve subtracted from it,
@@ -2317,7 +2320,7 @@ charged terms: the DiT weights, with a note that says whether they were
 charged, credited as resident, or stood down for a `weight_dtype` cast; and the
 packed activations, with the total row count and its five-stream split. Then
 rows per rank over the sequence-parallel degree, and the activations in three
-parts: the fixed activation floor (7.5 GiB), which every render pays whatever
+parts: the fixed activation floor (11.0 GiB), which every render pays whatever
 its length or topology, the part that shards with the sequence, and the
 replicated staging that no topology divides. Then what would fit: the largest
 packed total this topology and budget admit, beside the render's own total,
@@ -2388,22 +2391,24 @@ residency, and the next request of the combination checks again. Each proof
 render then meets the guard once more, after the one before it filled the
 actors' caches, and the release above answers that case.
 
-**Calibration and limits:** the estimate charges each rank a fixed 7.5 GiB
-floor, 634,368 bytes per sharded row and 73,728 bytes per replicated row.
+**Calibration and limits:** the estimate charges each rank a fixed 11.0 GiB
+floor, 129,024 bytes per sharded row and 73,728 bytes per replicated row.
 Constants and derivation are in `src/dgx_monarch/h3_calibration.py`
 (`H3_ACTIVATION_FLOOR_BYTES`, `H3_SHARDED_ROW_BYTES` and
 `H3_REPLICATED_ROW_BYTES`); measured cases are in
-[VALIDATION](VALIDATION.md#h3-capacity). Calibration rejects the killed
-single-rank 1344x768x124 bf16 case while admitting its world-2 Ulysses and
-single-rank int8-convrot controls, and the 2026-10-29 1344x768x362 render on
-the pair at both readings where the constants before that date refused it,
-with about 4 GiB to spare on each case that binds. Either reserve, 4 or 5 GiB,
-gives those outcomes. The kill's own reading is only a lower bound and would
-admit the killed shape if used directly. On one Spark the 1344x768x362 cell
-still refuses at the 2026-10-29 reading, 11.2 GiB short.
+[VALIDATION](VALIDATION.md#h3-capacity). Calibration admits five shapes that
+completed on this hardware: 1344x768x124 bf16 as one rank on the head beside
+the driver, the shape the 2026-08-05 kill once made a must-refuse point; the
+same shape on world-2 Ulysses; its single-rank int8-convrot control; and the
+1344x768x362 clip on the pair and as one rank on the sibling alone. The
+closest clears by 6.5 GiB at the 5 GiB reserve. The charge stays above what
+each measured render used, Config A's about 4 GiB on the 2026-08-05 reference
+run among them, which holds the floor up. On one Spark at the 2026-10-29
+reading the 1344x768x362 cell is now admitted with 36.7 GiB to spare; the
+2026-10-29 fit refused it, 11.2 GiB short.
 
 For 1344x768x124 bf16 at world 2 under `auto`, the pending estimate is
-83.0 GiB, requiring about 88.0 GiB MemAvailable with the default floor, or
+77.6 GiB, requiring about 82.6 GiB MemAvailable with the default floor, or
 more with a larger `uma_reserve_gb`. The 92.2 GiB pending-memory example is
 derived from idle memory minus encoder/VAEs, not directly measured. An explicit
 `uly2` preset uses the already-resident calculation; select it or free memory
