@@ -14,7 +14,6 @@ different functions.
 """
 from __future__ import annotations
 
-import os
 import uuid
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
@@ -46,7 +45,7 @@ from ..log import get_logger
 from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
-from . import consent_waiver, model_patch_preflight, render_preflight
+from . import consent_waiver, model_patch_preflight, render_preflight, render_rows
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_identity import (
     authorize_normal_render,
@@ -72,7 +71,6 @@ if TYPE_CHECKING:
 
 log = get_logger(__name__)
 
-_SAMPLE_TIMEOUT_S = float(os.environ.get("DGXM_SAMPLE_TIMEOUT", "3600"))
 _latent_without_topology_metadata = render_preflight.latent_without_topology_metadata
 _UNCLAIMED_ADOPTION_CONTEXT = object()
 # Render lifetime: set only while a RenderPipeline submit runs, and reset when
@@ -402,7 +400,7 @@ def _submit_render_guarded(
                 "sync_ulysses": spec.sync_ulysses,
             }
 
-    timeout = max(_SAMPLE_TIMEOUT_S, steps_hint * 120.0)
+    timeout = render_rows.sample_deadline_s(model, request, latent, topo, steps_hint)
     from ..telemetry import render_progress
 
     # What the finished render's summary records beside its wall time: the

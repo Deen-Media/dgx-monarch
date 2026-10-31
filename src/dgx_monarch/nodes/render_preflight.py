@@ -19,6 +19,7 @@ from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
 from ..refusal import RefusalClass, refusal
 from ..sampling_contract import latent_size_tags
 from .latent_outputs import is_direct_nested_tensor
+from .render_rows import ref_pose_shapes
 from .render_validation import validate_render_topology
 
 LATENT_DOWNSCALE_METADATA_KEY = "_dgxm_latent_downscale"
@@ -353,29 +354,15 @@ def activation_footprint_preflight_for_request(
 
 def _ref_pose_activation_preflight(family: str, path: str, unet_name: str,
                                    request: dict, video_shape: Any) -> None:
-    """The reference/pose check (#47) over every positive entry's extras: the
-    SCAIL pose path can land on a later entry, and reference_latents append.
-    Malformed extras degrade to shape-only estimation. The negative mirrors the
-    positive and runs as its own model call, so the positive bounds the peak."""
-    positive = request.get("positive") if isinstance(request, dict) else None
-    ref_latents: list = []
-    pose_latent = None
-    for entry in positive if isinstance(positive, (list, tuple)) else ():
-        extra = entry[1] if isinstance(entry, (list, tuple)) and len(entry) > 1 else None
-        if not isinstance(extra, dict):
-            continue
-        ref_latents.extend(extra.get("reference_latents") or ())
-        if pose_latent is None:
-            pose_latent = extra.get("pose_video_latent")
-    ref_shapes = [
-        shape for t in ref_latents
-        if (shape := getattr(t, "shape", None)) is not None
-    ]
+    """The reference/pose check (#47) over every positive entry's extras, as
+    ``render_rows.ref_pose_shapes`` reads them; the sample deadline counts the
+    same rows."""
+    ref_shapes, pose_shape = ref_pose_shapes(request)
     mesh_safety.activation_footprint_preflight(
         family, path, unet_name,
         video_shape=video_shape,
         ref_shapes=ref_shapes,
-        pose_shape=getattr(pose_latent, "shape", None) if pose_latent is not None else None,
+        pose_shape=pose_shape,
         sp_degree=1,  # sharding only shrinks the true footprint: never a
                       # false pass, at worst an over-eager refusal.
         weights_resident=(unet_name in (_LAST_RENDERED_UNET, _LAST_SUBMITTED_UNET)),
