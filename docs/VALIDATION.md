@@ -2577,6 +2577,55 @@ moves the output past the floor, the launch notes say the plain FP8 path is the
 slow one and the knob stays at `auto`. The kitchen rows check that neither
 switch changes those files; a change there is a finding against this record.
 
+## Item 6 probes: NVFP4 GEMM and Sol-Attn (2026-10-31)
+
+The two probes of #93 item 6 ran on the head on 2026-10-31, GPU idle and
+capped at 2100 MHz (torch 2.12.0, comfy-kitchen 0.2.40, sol_attn 0.5.0). Both
+closed the item with no feature. The probe scripts and their JSON records are
+in the maintainer's validation tree.
+
+**NVFP4 GEMM.** The MiniMax H3 block linears (fc1 28672 x 5376, fc2 5376 x
+14336, qkv 21504 x 5376 and out 5376 x 7168) at 18,865, 19,456, 36,895 and
+37,730 rows, on NVFP4 operands quantized as ComfyUI's NVFP4 linear quantizes
+them:
+
+| Path | TFLOPS | Against comfy-kitchen's own pick |
+|---|---|---|
+| comfy-kitchen's own pick, its cuda backend (a cuBLAS FP4 GEMM) | 294 to 353 | the fastest at every shape |
+| comfy-kitchen's eager backend (torch's scaled_mm with block-wise scales) | 298 to 353 | identical output in the same time |
+| torch._scaled_mm on the same operands | 196 to 291 | 0.6 to 0.8 times as fast; output NRMS 0.003 apart |
+| a BF16 linear on the dequantized operands | 89 to 97 | 0.26 to 0.33 times as fast |
+
+Every FP4 path landed within NRMS 0.0026 to 0.0039 of the FP32 product of the
+dequantized operands, comfy-kitchen's the closest. Quantizing the activation
+cost 3.9 to 20.5 ms per call at these shapes, the same for every path. The bar
+for a feature was another path at least 1.3 times faster than comfy-kitchen's
+own pick; none came close, because comfy-kitchen's CUDA path already is a
+cuBLAS GEMM, so FastVideo's GB10 finding for another library does not carry
+over. NVFP4 linears stay as they are.
+
+**Sol-Attn.** Exact SDPA, the sol_attn package as the lever calls it and
+comfy-kitchen's built-in kernel, at 21 heads (one uly2 rank's share of
+MiniMax H3's 42) with a 1024-row exact-key sink, on synthetic video-like q, k
+and v. With the CUTLASS DSL and apache-tvm-ffi installed, the lever's dispatch
+put GB10 on the package's CuTe sm120 kernel; its Triton reference gave the
+same error against exact attention at about 1.9 times the time. At tau 0.7,
+NRMS against exact attention:
+
+| Tokens | Exact | Package (CuTe) | comfy-kitchen | Package NRMS | comfy-kitchen NRMS |
+|---|---|---|---|---|---|
+| 37,730 | 197.6 ms | 84.9 ms | 85.0 ms | 0.089 | 0.157 |
+| 73,790 | 747.5 ms | 312.1 ms | 210.6 ms | 0.077 | 0.153 |
+| 109,466 | 1642.8 ms | 697.3 ms | 669.0 ms | 0.066 | 0.141 |
+
+comfy-kitchen's kernel ran as fast as the package's at 37,730 and 109,466
+tokens and 1.5 times faster at 73,790, held about 1.4 times its memory, and
+missed exact attention by 1.7 to 2.1 times the package's error at every tau
+(0.6, 0.7 and 1.0) and length, because its CUDA kernel multiplies in INT8.
+The bar for a switch was an error within 10 percent of the package's, so the
+lever keeps the sol_attn package. The inputs were synthetic; a reading on q,
+k and v captured from a render comes first if the question reopens.
+
 ## Worker-assisted VAE decode
 
 The v1.5 option (#93, item 4; DESIGN.md section 5.6) splits a stock video VAE
