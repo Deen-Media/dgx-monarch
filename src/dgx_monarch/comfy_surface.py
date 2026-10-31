@@ -45,10 +45,7 @@ __all__ = ["TOUCHPOINTS", "Touchpoint", "assert_comfy_surface"]
 TOUCHPOINTS: tuple[Touchpoint, ...] = (
     # Core weight loading, progress, and tensor helpers.
     _call("comfy.utils", "load_torch_file", "safe_load", "device", "return_metadata", positional=("ckpt",)),
-    _call(
-        "comfy.utils", "convert_old_quants", "model_prefix", "metadata",
-        positional=("state_dict",),
-    ),
+    _call("comfy.utils", "convert_old_quants", "model_prefix", "metadata", positional=("state_dict",)),
     _call("comfy.utils", "ProgressBar", positional=("total",)),
     _call("comfy.utils", "ProgressBar.update_absolute", positional=("self", "value", "total")),
     _call("comfy.utils", "repeat_to_batch_size", positional=("tensor", "batch_size")),
@@ -94,6 +91,9 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.lora", "calculate_weight", positional=("patches", "weight", "key")),
     _call("comfy.float", "stochastic_rounding", "seed", positional=("value", "dtype")),
     _attr("comfy.quant_ops", "QUANT_ALGOS"),
+    # The build-time operations pick that fp8_compute.py wraps, logging the
+    # class it returns in the driver and in every actor.
+    _call("comfy.ops", "pick_operations", "load_device", "disable_fast_fp8", "fp8_optimizations", "model_config", positional=("weight_dtype", "compute_dtype")),
     _call("comfy.quant_ops", "get_layout_class", positional=("name",)),
     _call("comfy.quant_ops", "QuantizedTensor", positional=("qdata", "layout_cls", "params")),
     _call("comfy_kitchen.tensor", "QuantizedTensor", positional=("qdata", "layout_cls", "params")),

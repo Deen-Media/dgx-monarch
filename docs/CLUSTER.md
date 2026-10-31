@@ -375,7 +375,8 @@ stock ComfyUI defaults. Allowed keys are:
   `swap_verify` (-1..64 integer) and `fsdp_prefetch_depth` (1..8 integer;
   above 1, FSDP prefetches that many blocks ahead, paid in reserved memory);
 * `slab_weights` (boolean or `"auto"`), `safetensors_backend` (`"pread"` or
-  `"mmap"`) and `int8_gemm` (`"triton"` or `"cutlass"`).
+  `"mmap"`), `int8_gemm` (`"triton"` or `"cutlass"`) and `fp8_matrix_mult`
+  (`"auto"`, `"on"` or `"off"`).
 
 The UMA guidance behind these values is in docs/VALIDATION.md.
 
@@ -416,6 +417,21 @@ here. The ComfyUI process does not read it; start ComfyUI with
 `DGXM_INT8_GEMM=cutlass` to turn the kernel off there too. A change reaches an
 actor at its next setup, or in place through a worker-args update, with no
 reload: both kernels give the same output.
+
+`fp8_matrix_mult` decides whether the models the actors build take ComfyUI's
+FP8 matmul path ([MODELS.md](MODELS.md#fp8-compute-paths)). ComfyUI's own
+`--fast fp8_matrix_mult` reaches only the models the driver builds, because
+the actors start ComfyUI without its argument list. `"on"` gives every model
+an actor builds the loader option that flag stands in for, so a plain FP8
+checkpoint runs `torch._scaled_mm`; `"off"` builds a loader's `fp8_e4m3fn_fast`
+as `fp8_e4m3fn`; `"auto"`, the default, follows each loader's weight dtype. A
+checkpoint with comfy-kitchen quantization metadata runs comfy-kitchen's
+kernels under all three. Leave the key out for the default: writing it changes
+every render's capability context like any key here. ComfyUI picks the path
+when it builds a model, so a changed value drops each actor's resident models,
+and the next render loads them again. The `FP8 matmul (actors)` row of
+`dgxm doctor` shows the value, `dgxm status` prints it when the file sets the
+key, and `dgxm status --json` always carries it.
 
 `disable_custom_nodes = true` is a startup setting for sealed validation: the
 worker imports ComfyUI core and built-in nodes and runs no third-party pack. It

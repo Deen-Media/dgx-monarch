@@ -101,6 +101,10 @@ class WorkerArgs(TypedDict, total=False):
     # absent means "triton". The driver reads DGXM_INT8_GEMM instead
     # (kernels/int8_gemm.py).
     int8_gemm: Literal["triton", "cutlass"]
+    # Whether the actors' DiT builds pass comfy's fp8_optimizations: "auto"
+    # follows the loader's weight_dtype, "on" is the actors' form of ComfyUI's
+    # --fast fp8_matrix_mult, "off" never passes it (fp8_compute.py).
+    fp8_matrix_mult: Literal["auto", "on", "off"]
 
 
 _BOOL_KEYS = frozenset({
@@ -110,7 +114,8 @@ _BOOL_KEYS = frozenset({
 })
 _FLOAT_LIMITS = {"reserve_vram_gb": (0.0, 1024.0), "uma_reserve_gb": (0.0, 1024.0)}
 _KEYS = frozenset({*_BOOL_KEYS, *_FLOAT_LIMITS, "slab_weights", "swap_verify",
-                   "safetensors_backend", "fsdp_prefetch_depth", "int8_gemm"})
+                   "safetensors_backend", "fsdp_prefetch_depth", "int8_gemm",
+                   "fp8_matrix_mult"})
 
 
 def validate_worker_args(values: object, *, context: str = "worker_args",
@@ -172,6 +177,10 @@ def validate_worker_args(values: object, *, context: str = "worker_args",
         elif key == "int8_gemm":
             if value not in ("triton", "cutlass"):
                 raise ClusterConfigError(f'{field} must be "triton" or "cutlass" (got {value!r})')
+            out[key] = value
+        elif key == "fp8_matrix_mult":
+            if value not in ("auto", "on", "off"):
+                raise ClusterConfigError(f'{field} must be "auto", "on" or "off" (got {value!r})')
             out[key] = value
     # Cross-key rule, so a cluster.toml cannot set a combination the Init node
     # refuses. comfy-managed residency forces both levers off inside the

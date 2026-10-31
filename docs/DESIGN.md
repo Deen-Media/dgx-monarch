@@ -1869,6 +1869,9 @@ dgx-monarch/
 │   │   │                      #   fallbacks and their log lines
 │   │   └── int8_gemm_triton.py # MIT, vendored (§3.1): the Triton INT8 GEMM,
 │   │                          #   its proxy and the import hook
+│   ├── fp8_compute.py         # [worker_args] fp8_matrix_mult on each actor
+│   │                          #   build, and the `FP8 compute:` line a wrapper
+│   │                          #   on comfy.ops.pick_operations logs per build
 │   ├── comfy_surface.py       # runtime Comfy touchpoint/signature assertion
 │   ├── comfy_forward_contracts.py # aggregate/re-export forward compatibility map
 │   ├── comfy_rebound_signatures.py # exact stock rebound-method contracts
@@ -2105,6 +2108,9 @@ dgx-monarch/
 │                              #   src/dgx_monarch/studio/resource_hashes.py,
 │                              #   the Studio data files and
 │                              #   web/js/dgx_monarch_presentation.js; --check verifies
+├── tools/fp8_paths.py        # ComfyUI's operations pick for a checkpoint, read
+│                              #   from its header; the comfy canary checks the
+│                              #   reproduced rule against comfy master
 ├── tools/gen_dgxm_top_image.py # renders docs/media/dgxm-top.svg from a
 │                              #   synthetic recording
 ├── example_workflows/artifacts.toml # the model files each template needs

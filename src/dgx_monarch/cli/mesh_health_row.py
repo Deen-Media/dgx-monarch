@@ -16,7 +16,7 @@ from collections.abc import Mapping
 
 from ..config import ClusterConfig
 from ..mesh_evidence import mesh_block_dirty, mesh_block_unobserved
-from . import comfy_ports, json_report, lifecycle
+from . import comfy_ports, fp8_matmul_row, json_report, lifecycle
 
 _TIMEOUT_S = 1.5
 _ENTRY = "docs/TROUBLESHOOTING.md #65"
@@ -225,11 +225,15 @@ def status_report(
         rows = lifecycle.status(config)
         block = fetch_mesh_block()
         print(f"  mesh: {status_line(block)}")
+        fp8_line = fp8_matmul_row.status_line(config)
+        if fp8_line is not None:
+            print(f"  {fp8_line}")
         return rows, block
     rows = json_report.quietly(lambda: lifecycle.status(config))
     block = fetch_mesh_block()
     json_report.emit(json_report.status_payload(
-        rows, state_name(block), status_line(block), mesh_block=block))
+        rows, state_name(block), status_line(block), mesh_block=block,
+        fp8_matrix_mult=fp8_matmul_row.status_fields(config)))
     return rows, block
 
 
