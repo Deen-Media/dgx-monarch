@@ -174,10 +174,11 @@ def _layer_confs(path: Path, header) -> tuple[dict[str, dict], list[str]]:
     else:
         marker = _legacy_marker(tensors)
         if marker is not None:
-            numel = math.prod(marker.shape) if marker.shape else 1
+            shape = getattr(marker, "shape", None)
+            numel = math.prod(shape) if shape else 1
             for key in tensors:
                 if key.endswith(".scale_weight"):
-                    conf = {"format": "float8_e4m3fn"}
+                    conf: dict[str, object] = {"format": "float8_e4m3fn"}
                     if numel == 2:
                         conf["full_precision_matrix_mult"] = True
                     confs[key[: -len(".scale_weight")]] = conf
@@ -185,9 +186,9 @@ def _layer_confs(path: Path, header) -> tuple[dict[str, dict], list[str]]:
     direct = 0
     for key, descriptor in tensors.items():
         if key.endswith(".comfy_quant") and key[: -len(".comfy_quant")] not in confs:
-            conf = _record(path, descriptor)
-            if conf is not None:
-                confs[key[: -len(".comfy_quant")]] = conf
+            record = _record(path, descriptor)
+            if record is not None:
+                confs[key[: -len(".comfy_quant")]] = record
                 direct += 1
     if direct:
         sources.append("per-layer comfy_quant tensors")
