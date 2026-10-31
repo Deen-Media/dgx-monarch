@@ -263,6 +263,19 @@ class _Route:
                                       "the stock decode asked for no unit the split can take")
             publish(self.record)
 
+    @staticmethod
+    def _board(shapes: list[tuple[int, ...]], dtype: Any) -> UnitBoard:
+        """A board whose budget charges each unit the bytes of its expected reply."""
+        import math
+
+        import torch
+
+        from .vae_decode_remote import REPLY_BUDGET_BYTES
+
+        size = torch.empty((), dtype=dtype).element_size()
+        return UnitBoard(len(shapes), unit_bytes=[math.prod(shape) * size for shape in shapes],
+                         budget_bytes=REPLY_BUDGET_BYTES)
+
     @contextmanager
     def _pumps(self, board: UnitBoard, kind: str, inputs: list[Any], output_dtype: Any,
                expected: Callable[[int], tuple[int | None, ...]], reply_dtype: Any) -> Iterator[None]:
@@ -297,6 +310,8 @@ class _Route:
         self.record.units += stats.units
         self.record.local += stats.local
         self.record.fallback += stats.fallback
+        self.record.budget_waits += stats.budget_waits
+        self.record.peak_reply_bytes = max(self.record.peak_reply_bytes, stats.peak_bytes)
         for rank, count in stats.remote.items():
             self.record.remote[rank] = self.record.remote.get(rank, 0) + count
         for failure in stats.failures:
@@ -309,7 +324,13 @@ class _Route:
         return FIRST_UNIT_TIMEOUT_S + 60.0
 
     def split_multidim(self, original: Callable[..., Any], arguments: dict[str, Any]) -> Any:
-        from .vae_decode_plan import MultidimReplay, PlanError, multidim_input, multidim_plan
+        from .vae_decode_plan import (
+            MultidimReplay,
+            PlanError,
+            multidim_input,
+            multidim_output_shapes,
+            multidim_plan,
+        )
 
         samples = arguments["samples"]
         try:
@@ -324,16 +345,14 @@ class _Route:
             self.note("the tiled decode is one tile here, so there is nothing to split")
             return original(**arguments)
         inputs = [multidim_input(samples, geometry, self.vae.vae_dtype) for geometry in plan]
-        board = UnitBoard(len(plan))
+        # Every dimension of a reply is checked against what the stock decode
+        # returns for that tile, so a wrong-size reply never reaches the blend.
+        shapes = multidim_output_shapes(plan, arguments["upscale_amount"], int(arguments["out_channels"]))
+        output_dtype = self.vae.vae_output_dtype()
+        board = self._board(shapes, output_dtype)
         replay = MultidimReplay(board, plan, samples, arguments["function"], arguments["output_device"],
                                 max_wait_s=self._wait_s(), check_interrupt=_interrupt)
-        output_dtype = self.vae.vae_output_dtype()
-
-        def expected(unit: int) -> tuple[int | None, ...]:
-            size = plan[unit].size
-            return (size[0], int(arguments["out_channels"]), *([None] * (len(size) - 2)))
-
-        with self._pumps(board, MULTIDIM, inputs, output_dtype, expected, output_dtype):
+        with self._pumps(board, MULTIDIM, inputs, output_dtype, shapes.__getitem__, output_dtype):
             result = original(**{**arguments, "function": replay})
         self._broken(replay)
         return result
@@ -362,15 +381,15 @@ class _Route:
         if output_buffer is not None and output_buffer.device.type == "cpu":
             output_buffer.zero_()  # pre-touch from the CPU before the GPU writes it
         inputs = [window.contiguous().cpu() for window in plan]
-        board = UnitBoard(len(plan))
+        shapes = [h3_canvas_shape(fsm, window) for window in plan]
+        board = self._board(shapes, z.dtype)
         replay = H3Replay(board, plan, fsm, max_wait_s=self._wait_s(), check_interrupt=_interrupt)
         fsm._adaptive_decode = replay
         try:
             # The canvas dtype is the decoder's, which a quantized decoder may
             # not share with the latent, so the replay checks it against the
             # first stock canvas instead of here.
-            with self._pumps(board, H3_CHUNK, inputs, None,
-                             lambda unit: h3_canvas_shape(fsm, plan[unit]), None):
+            with self._pumps(board, H3_CHUNK, inputs, None, shapes.__getitem__, None):
                 return original(z, output_buffer)
         finally:
             fsm.__dict__.pop("_adaptive_decode", None)

@@ -155,6 +155,41 @@ def test_the_resident_shows_in_status_and_clear_vram_and_unload_release_it(monke
     assert actor._vae_resident is None
 
 
+def test_a_teardown_that_releases_models_drops_the_decode_vae(monkeypatch):
+    """teardown_group(release_models=True) frees every model, the decode VAE included.
+
+    A teardown that keeps the models is for a process about to stop, whose exit
+    frees them; it keeps the decode VAE as it keeps the DiT.
+    """
+    from dgx_monarch.actor import worker as worker_mod
+
+    parallel_state = types.ModuleType("xfuser.core.distributed.parallel_state")
+    parallel_state.destroy_model_parallel = lambda: None
+    parallel_state.destroy_distributed_environment = lambda: None
+    for name in ("xfuser", "xfuser.core", "xfuser.core.distributed"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+    monkeypatch.setitem(sys.modules, parallel_state.__name__, parallel_state)
+    monkeypatch.setattr(vae_decode, "_empty_cache", lambda: None)
+    unloads = []
+    actor = worker_mod.GPUWorker.__new__(worker_mod.GPUWorker)
+    actor.store = SimpleNamespace(unload_all=lambda: unloads.append("dit"), current=None, uncond=None)
+    actor._attn = SimpleNamespace(invalidate=lambda: None)
+
+    def set_up():
+        actor._setup_key, actor._setup_generation, actor._setup_provenance = ("topology",), 3, None
+        actor._setup_cleanup_failed = False
+        actor.rank, actor.world, actor.topology = 1, 2, {"ulysses": 2}
+        actor._vae_resident = _held()
+
+    set_up()
+    reply = actor._teardown_group_impl(True)
+    assert reply["torn_down"] is True and reply["cleanup_state"] == "UNSETUP"
+    assert unloads == ["dit"] and actor._vae_resident is None
+    set_up()
+    reply = actor._teardown_group_impl(False)
+    assert reply["cleanup_state"] == "DIRTY" and actor._vae_resident is not None
+
+
 def test_status_reports_the_decode_vae_before_setup(monkeypatch):
     from dgx_monarch.actor import worker_status
 

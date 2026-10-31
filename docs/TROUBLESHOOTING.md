@@ -7281,7 +7281,10 @@ When a rank failed partway, a WARNING follows the decode's line:
 [dgx-monarch <host>] WARNING Worker-assisted VAE decode fell back to this driver for 3 of 7 units, so the image is the one-host decode: rank 1: rank 1 on <host> declined: this host's vae/minimax_h3_video_vae_fp16.safetensors is not the driver's file (artifact signature differs)
 ```
 
-`dgxm doctor` shows the last decode in its `worker VAE decode` row.
+`dgxm doctor` shows the last decode in its `worker VAE decode` row. A split
+line that ends `ranks paused N times on the reply budget` is no fault: the
+decoded units waiting on the driver reached their 2 GiB budget, and the Workers
+waited for the driver to catch up.
 
 **Cause:** the split runs only where it can be byte-identical to ComfyUI's
 one-host tiled decode (DESIGN.md section 5.6), and every doubt keeps the

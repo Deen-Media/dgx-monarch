@@ -13,8 +13,9 @@ outside ComfyUI's model manager, so loading it can never evict the resident
 DiT. Its load is priced against MemAvailable before any byte is read, and each
 unit's working set before it runs, both with the absolute host floor; a price
 that does not fit is a decline. ``status()`` reports it, and ``clear_vram`` (at
-either level) and ``unload`` drop it, so the driver's own free-before-refusing
-step reclaims it like any other reloadable cache.
+either level), ``unload`` and a teardown that releases models drop it, so the
+driver's own free-before-refusing step reclaims it like any other reloadable
+cache.
 """
 from __future__ import annotations
 
@@ -270,7 +271,7 @@ def _empty_cache() -> None:
 
 
 def drop_resident(worker: Any) -> bool:
-    """Release the decode VAE, if any; ``clear_vram`` and ``unload`` call this."""
+    """Release the decode VAE, if any; ``clear_vram``, ``unload`` and a releasing teardown call this."""
     held: ResidentVae | None = getattr(worker, "_vae_resident", None)
     worker._vae_resident = None
     if held is None:

@@ -977,6 +977,12 @@ it for the mesh it attaches (`vae_decode_route.py`). Six rules hold it:
 - **The driver decodes its own share.** It takes units from the front of the
   loop as the loop reaches them; ranks on other GPUs claim units from the back
   (`vae_decode_schedule.py`). A rank that shares the driver's GPU takes none.
+  A rank's reply waits on the driver until the loop reaches it, so a rank
+  claims only within a window ahead of the loop and within a reply budget
+  (`vae_decode_remote.REPLY_BUDGET_BYTES`, 2 GiB): each claim reserves the
+  bytes of the reply the stock function would return, and the reservation ends
+  when the loop takes the reply or the unit fails. While the next unit would
+  not fit, the rank waits, and it resumes as the loop drains replies.
 - **A Worker's decode must be the driver's decode.** The Worker loads the same
   file (same name, same artifact signature) with the driver's VAE dtype, casts
   to the driver's output dtype, and decodes under the driver's attention
@@ -990,13 +996,14 @@ it for the mesh it attaches (`vae_decode_route.py`). Six rules hold it:
   read (the stock placement factor times the file, plus the absolute host
   floor or the operator's larger reserve), and each unit's working set before
   it runs; a price that does not fit is a decline. `status()` reports it with
-  its bytes, and `clear_vram` at either level and `unload` drop it, so the
-  driver's free-before-refusing step (§5.9) reclaims it like any other
-  reloadable cache. A DiT price reads MemAvailable, which counts a resident
+  its bytes, and `clear_vram` at either level, `unload` and a teardown that
+  releases models drop it, so the driver's free-before-refusing step (§5.9)
+  reclaims it like any other reloadable cache. A DiT price reads MemAvailable, which counts a resident
   decode VAE as spent until it is dropped.
 - **Fail-open, and the knob stays on the driver.** A rank that raises,
-  declines, times out or answers with the wrong dtype or shape is retired for
-  that decode, and its units are decoded on the driver with one WARNING naming
+  declines, times out or answers with the wrong dtype or shape (every
+  dimension is checked against what the stock function returns for that
+  unit) is retired for that decode, and its units are decoded on the driver with one WARNING naming
   the cause: a failure costs time, never a wrong image. `worker_vae_decode`
   never reaches an actor, so it stays out of the published worker policy,
   every Gate capability context and the trust fingerprint, because a decode

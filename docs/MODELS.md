@@ -1623,10 +1623,16 @@ logs one line saying whether it split and why not
   package on every Worker host. Any difference makes that rank decline, and
   the driver decodes its units.
 - A Worker that took a unit keeps the decode VAE resident beside its DiT until
-  `clear_vram` or `unload` drops it: about 5 GB for the MiniMax H3 video VAE in
-  fp16 or bf16 (twice that in fp32) and 0.25 to 2.5 GB for the others. The
-  driver's free-before-refusing step drops it before a render-site capacity
-  refusal.
+  `clear_vram`, `unload` or a teardown that releases models drops it: about
+  5 GB for the MiniMax H3 video VAE in fp16 or bf16 (twice that in fp32) and
+  0.25 to 2.5 GB for the others. The driver's free-before-refusing step drops
+  it before a render-site capacity refusal.
+- Decoded units a Worker finished wait on the driver until the decode reaches
+  them, beside the decode's own output, within a 2 GiB budget. A Worker claims
+  only units the budget can hold, near the driver's position, and pauses while
+  it is full; the decode's line counts the pauses. The budget holds about
+  twelve MiniMax H3 chunks at 1344x768 in fp16 or bf16, and a 362-frame clip
+  leaves about ten on the Worker's side.
 - MiniMax H3's decoder batches up to four spatial tiles per call by the free
   memory it reads, and Comfy's tiled loop casts and blends in the order of its
   own code. Both are the same on a GB10 with memory to spare, which the

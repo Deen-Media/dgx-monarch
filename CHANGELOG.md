@@ -190,8 +190,10 @@
   in the driver's dtype, decodes under the driver's attention and torch
   backend flags, holds one decode VAE that `status()` reports and `clear_vram`
   drops, and declines any unit it cannot decode exactly, which the driver then
-  decodes with one WARNING. Each decode logs whether it split and over how
-  many ranks, and `dgxm doctor` shows the last one. The key stays out of the
+  decodes with one WARNING; a reply of any other shape or dtype than the stock
+  function's is refused the same way. Replies waiting on the driver stay
+  within a 2 GiB budget. Each decode logs whether it split and over how many
+  ranks, and `dgxm doctor` shows the last one. The key stays out of the
   Gate's contexts and the trust fingerprint. CPU tests compare bytes against
   real ComfyUI; the hardware compare is NOT RUN
   ([Models](docs/MODELS.md#worker-assisted-vae-decode),

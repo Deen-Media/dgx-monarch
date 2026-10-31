@@ -10,6 +10,17 @@ instead, which is the reference decode for that unit. Nothing in this module
 can change an output: it only decides who decodes which unit, and every
 result the loop accepts was produced for that exact unit.
 
+A rank's result waits on the driver until the loop reaches it, so the board
+caps those results with a byte budget. Each claim reserves its unit's
+expected bytes, and the reservation ends when the loop takes the result or the
+unit fails. A rank claims only within a window ahead of the loop, as many units
+as the budget holds at the largest unit's size, taking the window's back first;
+results it finishes therefore drain as the loop advances, and the window moves
+with the loop. While the next unit would not fit, the rank claims nothing and
+waits, and it resumes once the loop drains results or moves the window. One
+unit always fits an empty budget, so a unit larger than the budget still runs.
+With no budget the window spans every unit.
+
 The board knows no tensors, Monarch or ComfyUI, so CPU tests drive it with
 plain callables (tests/test_vae_decode_schedule.py).
 """
@@ -18,7 +29,7 @@ from __future__ import annotations
 import threading
 import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -45,43 +56,94 @@ class BoardStats:
     remote: dict[int, int] = field(default_factory=dict)
     fallback: int = 0
     failures: list[RankFailure] = field(default_factory=list)
+    budget_waits: int = 0  # times a rank stopped claiming because the budget was full
+    peak_bytes: int = 0  # most reserved reply bytes at once
 
 
 class UnitBoard:
     """Who decodes each unit of one decode call."""
 
-    def __init__(self, count: int, *, lookahead: int = 1) -> None:
+    def __init__(self, count: int, *, lookahead: int = 1, unit_bytes: Sequence[int] | None = None,
+                 budget_bytes: int | None = None) -> None:
         if count < 0:
             raise ValueError("a board needs a non-negative unit count")
+        if unit_bytes is not None and len(unit_bytes) != count:
+            raise ValueError("a board needs one byte size per unit")
         self._cond = threading.Condition()
         self._state = [UNCLAIMED] * count
         self._results: dict[int, Any] = {}
         self._owner: dict[int, int] = {}
         self._front = 0  # the next unit the loop will reach
-        self._back = count - 1  # the next unit a rank may claim
         self._lookahead = max(0, int(lookahead))
         self._closed = False
         self._retired: set[int] = set()
+        self._unit_bytes = [max(0, int(n)) for n in unit_bytes] if unit_bytes is not None else [0] * count
+        self._budget = None if budget_bytes is None else max(0, int(budget_bytes))
+        largest = max(self._unit_bytes, default=0)
+        # How many units ahead of the loop a rank may claim: what the budget
+        # holds at the largest unit's size.
+        self._window = (count if self._budget is None or not largest
+                        else max(1, self._budget // largest))
+        self._reserved = 0
+        self._held: dict[int, int] = {}  # claimed unit -> its reserved bytes
         self.stats = BoardStats(units=count)
 
+    def _next_claimable_locked(self) -> int | None:
+        """The farthest unclaimed unit inside the window ahead of the loop, if any."""
+        low = self._front + self._lookahead
+        for unit in range(min(len(self._state) - 1, low + self._window - 1), low - 1, -1):
+            if self._state[unit] == UNCLAIMED:
+                return unit
+        return None
+
+    def _work_left_locked(self) -> bool:
+        return UNCLAIMED in self._state[self._front + self._lookahead:]
+
+    def _fits_locked(self, unit: int) -> bool:
+        return (self._budget is None or not self._reserved
+                or self._reserved + self._unit_bytes[unit] <= self._budget)
+
     def claim(self, rank: int) -> int | None:
-        """The next unit for ``rank``, from the back, or None when none is left.
+        """The farthest free unit in the window for ``rank``, or None when none is free now.
 
         A rank never claims the unit the loop will reach next: that one stays
         here, so the driver's own GPU is never idle waiting for a transfer.
+        None also means the budget is full; ``wait_for_room`` tells the cases
+        apart.
         """
         with self._cond:
             if self._closed or rank in self._retired:
                 return None
-            while self._back >= 0 and self._state[self._back] != UNCLAIMED:
-                self._back -= 1
-            if self._back < self._front + self._lookahead:
+            unit = self._next_claimable_locked()
+            if unit is None or not self._fits_locked(unit):
                 return None
-            unit = self._back
-            self._back -= 1
             self._state[unit] = CLAIMED
             self._owner[unit] = rank
+            self._held[unit] = self._unit_bytes[unit]
+            self._reserved += self._unit_bytes[unit]
+            self.stats.peak_bytes = max(self.stats.peak_bytes, self._reserved)
             return unit
+
+    def wait_for_room(self, rank: int) -> bool:
+        """Block while the budget or the window holds ``rank`` back.
+
+        True once it may claim again, False when no unit is left for any rank.
+        """
+        waited = False
+        with self._cond:
+            while True:
+                if self._closed or rank in self._retired or not self._work_left_locked():
+                    return False
+                unit = self._next_claimable_locked()
+                if unit is not None and self._fits_locked(unit):
+                    return True
+                if not waited:
+                    waited = True
+                    self.stats.budget_waits += 1
+                self._cond.wait(_POLL_S)
+
+    def _release_locked(self, unit: int) -> None:
+        self._reserved -= self._held.pop(unit, 0)
 
     def deliver(self, unit: int, rank: int, result: Any) -> None:
         """Record one rank's result; a unit the loop already gave up on drops it."""
@@ -104,6 +166,7 @@ class UnitBoard:
         for unit, owner in self._owner.items():
             if owner == rank and self._state[unit] == CLAIMED:
                 self._state[unit] = FAILED
+                self._release_locked(unit)
 
     def reject(self, unit: int, cause: str) -> None:
         """The loop refused a delivered result; count the unit as decoded here and retire its rank."""
@@ -127,16 +190,23 @@ class UnitBoard:
         with self._cond:
             return self._closed
 
+    @property
+    def reserved_bytes(self) -> int:
+        with self._cond:
+            return self._reserved
+
     def take(self, unit: int, *, max_wait_s: float,
              check_interrupt: Callable[[], None] | None = None) -> tuple[bool, Any]:
         """The loop reaches ``unit``: ``(True, result)`` from a rank, else ``(False, None)``.
 
         ``(False, None)`` means decode it here. A claimed unit whose rank goes
         quiet for ``max_wait_s`` is decoded here too, and the rank is retired.
+        Taking a result frees its share of the budget.
         """
         deadline = time.monotonic() + max(0.0, float(max_wait_s))
         with self._cond:
             self._front = max(self._front, unit + 1)
+            self._cond.notify_all()  # the window moved with the loop
             while True:
                 state = self._state[unit]
                 if state == UNCLAIMED:
@@ -146,6 +216,8 @@ class UnitBoard:
                 if state == DONE:
                     rank = self._owner[unit]
                     self.stats.remote[rank] = self.stats.remote.get(rank, 0) + 1
+                    self._release_locked(unit)
+                    self._cond.notify_all()
                     return True, self._results.pop(unit)
                 if state == FAILED:
                     self.stats.fallback += 1
@@ -155,6 +227,7 @@ class UnitBoard:
                 if remaining <= 0:
                     self._retire_locked(
                         self._owner[unit], f"no answer for unit {unit} within {max_wait_s:.0f} s")
+                    self._cond.notify_all()
                     continue
                 self._cond.wait(min(_POLL_S, remaining))
                 if check_interrupt is not None:
@@ -181,7 +254,9 @@ def pump(board: UnitBoard, rank: int, send: Send, wait: Wait, *,
     decline, a wrong shape); ``unwrap`` turns an accepted reply into what the
     loop receives. Up to ``window`` units are in flight, so the next unit's
     transfer overlaps this one's decode. The first wait gets
-    ``first_timeout_s``: it may include loading the VAE on that rank.
+    ``first_timeout_s``: it may include loading the VAE on that rank. With the
+    budget full and nothing in flight, the pump waits for the loop to drain
+    results instead of ending.
     """
     inflight: deque[tuple[int, Any]] = deque()
     first = True
@@ -196,6 +271,8 @@ def pump(board: UnitBoard, rank: int, send: Send, wait: Wait, *,
                 board.fail(rank, f"could not send unit {unit}: {_summary(exc)}")
                 return
         if not inflight:
+            if board.wait_for_room(rank):
+                continue
             return
         unit, handle = inflight.popleft()
         try:

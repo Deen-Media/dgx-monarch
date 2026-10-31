@@ -308,3 +308,18 @@ def test_the_decode_record_and_its_lines(caplog):
     from dgx_monarch import telemetry
 
     assert any(event.get("kind") == "vae_decode" for event in telemetry.events_tail(16))
+
+
+def test_each_tile_has_its_full_expected_shape_and_its_bytes_on_the_board():
+    from dgx_monarch.vae_decode_plan import Geometry, multidim_output_shapes
+
+    plan = [Geometry(0, (1, 16, 2, 8, 8), (1, 1, 1, 1, 1)), Geometry(5, (1, 16, 1, 6, 8), (1, 1, 1, 1, 1))]
+    wan = (lambda a: max(0, a * 4 - 3), 8, 8)
+    assert multidim_output_shapes(plan, wan, 3) == [(1, 3, 5, 64, 64), (1, 3, 1, 48, 64)]
+    flat = [Geometry(0, (1, 4, 37, 53), (1, 1, 1, 1))]
+    assert multidim_output_shapes(flat, 8, 3) == [(1, 3, 296, 424)]
+    board = vae_decode_route._Route._board([(1, 3, 5, 64, 64), (1, 3, 1, 48, 64)], torch.float32)
+    assert board._unit_bytes == [3 * 5 * 64 * 64 * 4, 3 * 48 * 64 * 4]
+    assert board._budget == vae_decode_remote.REPLY_BUDGET_BYTES == 2 << 30
+    bf16 = vae_decode_route._Route._board([(1, 3, 28, 768, 1344)], torch.bfloat16)
+    assert bf16._unit_bytes == [3 * 28 * 768 * 1344 * 2]

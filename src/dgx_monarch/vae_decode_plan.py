@@ -76,6 +76,27 @@ def _scaled(size: int, factor: Any, downscale: bool) -> int:
     return round(size / factor if downscale else factor * size)
 
 
+def _factors(upscale_amount: Any, dims: int) -> list[Any]:
+    return list(upscale_amount) if isinstance(upscale_amount, (tuple, list)) else [upscale_amount] * dims
+
+
+def multidim_output_shapes(plan: list[Geometry], upscale_amount: Any, out_channels: int) -> list[tuple[int, ...]]:
+    """The shape the stock decode function returns for each planned tile.
+
+    The scale rule is the one the stock loop sizes its own output buffer with
+    (``upscale_amount`` per axis, a callable or a factor), applied to each
+    tile's own sizes, so a Worker reply of any other shape is refused before
+    the stock blend sees it.
+    """
+    shapes = []
+    for geometry in plan:
+        spatial = geometry.size[2:]
+        factors = _factors(upscale_amount, len(spatial))
+        shapes.append((geometry.size[0], int(out_channels),
+                       *(_scaled(size, factor, False) for size, factor in zip(spatial, factors, strict=True))))
+    return shapes
+
+
 def multidim_plan(original: Callable[..., Any], samples: Any, *, tile: Sequence[int],
                   overlap: Any, upscale_amount: Any, out_channels: int, downscale: bool,
                   index_formulas: Any) -> list[Geometry]:
@@ -83,7 +104,7 @@ def multidim_plan(original: Callable[..., Any], samples: Any, *, tile: Sequence[
     import torch
 
     dims = len(tile)
-    factors = list(upscale_amount) if isinstance(upscale_amount, (tuple, list)) else [upscale_amount] * dims
+    factors = _factors(upscale_amount, dims)
     meta = torch.empty_strided(tuple(samples.shape), tuple(samples.stride()),
                                dtype=samples.dtype, device="meta")
     units: list[Geometry] = []

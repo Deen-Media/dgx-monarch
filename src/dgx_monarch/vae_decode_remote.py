@@ -29,6 +29,12 @@ SCHEMA = 1
 # The first unit a rank takes may include building its VAE from disk.
 FIRST_UNIT_TIMEOUT_S = 600.0
 UNIT_TIMEOUT_S = 300.0
+# Decoded replies a rank finished wait on the driver until the stock loop
+# reaches them, beside the decode's own output buffer. This caps their bytes,
+# reserved at claim (vae_decode_schedule.UnitBoard): about twelve MiniMax H3
+# chunk canvases at 1344x768 in fp16 or bf16, against the ten a 362-frame
+# clip leaves on a remote rank when both ranks decode at the same pace.
+REPLY_BUDGET_BYTES = 2 << 30
 
 
 def vae_source(vae: Any) -> dict[str, Any] | str:

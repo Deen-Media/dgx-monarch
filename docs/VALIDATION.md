@@ -2543,7 +2543,8 @@ at 2100 MHz, ComfyUI restarted between configurations and the commit recorded:
    prompt wall.
 3. **Memory.** The sibling's MemAvailable before, during and after, `status()`
    reporting the resident decode VAE, and Clear VRAM (DGX Monarch) at `soft`
-   releasing it.
+   releasing it. On the driver, whether the 2 GiB reply budget binds: the
+   decode line's pauses and `render.vae_decode.peak_reply_gib`.
 
 | family | template that drives it | node | byte compare | cold | warm | memory |
 |---|---|---|---|---|---|---|

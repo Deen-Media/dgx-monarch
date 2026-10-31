@@ -33,6 +33,8 @@ class DecodeRecord:
     fallback: int = 0
     failures: list[str] = field(default_factory=list)
     seconds: float = 0.0
+    budget_waits: int = 0
+    peak_reply_bytes: int = 0
 
     @property
     def ranks(self) -> int:
@@ -44,7 +46,8 @@ class DecodeRecord:
                 "reason": self.reason, "ranks": self.ranks, "units": self.units, "local": self.local,
                 "remote": {str(rank): count for rank, count in sorted(self.remote.items())},
                 "fallback": self.fallback, "failures": list(self.failures[:4]),
-                "seconds": round(self.seconds, 2)}
+                "seconds": round(self.seconds, 2), "budget_waits": self.budget_waits,
+                "peak_reply_gib": round(self.peak_reply_bytes / (1 << 30), 2)}
 
 
 _NODES = {"decode": "VAE Decode", "decode_tiled": "VAE Decode (Tiled)"}
@@ -56,8 +59,10 @@ def info_line(record: DecodeRecord) -> str:
     if not record.split:
         return f"VAE decode not split ({record.family or 'unknown'}, {node}): {record.reason}"
     shares = ", ".join(f"{count} on rank {rank}" for rank, count in sorted(record.remote.items()) if count)
+    waits = (f"; ranks paused {record.budget_waits} times on the reply budget, "
+             f"{record.peak_reply_bytes / (1 << 30):.2f} GiB held at most" if record.budget_waits else "")
     return (f"VAE decode split over {record.ranks} ranks ({record.family}, {node}): "
-            f"{record.units} units, {record.local} here, {shares}, {record.seconds:.1f} s")
+            f"{record.units} units, {record.local} here, {shares}, {record.seconds:.1f} s{waits}")
 
 
 def warning_line(record: DecodeRecord) -> str | None:

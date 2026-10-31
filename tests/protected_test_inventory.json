@@ -2403,19 +2403,22 @@
       "test_the_query_split_equals_one_dense_composite_mask": "185dc44ae15a5663"
     },
     "tests/test_vae_decode_split_comfy.py": {
-      "test_a_failing_rank_falls_back_with_the_stock_bytes": "8436834af46badcb",
-      "test_a_plan_the_stock_loop_leaves_decodes_the_rest_here": "489dbf6c4f0b505e",
-      "test_a_real_vae_file_splits_through_the_stock_decode_and_the_worker_body": "d37bcc57e3edc7ae",
-      "test_h3_chunked_decode_split_is_byte_identical": "7c482a7948727113",
-      "test_h3_still_and_a_failing_rank_keep_the_stock_bytes": "bc23cc437a4c03ac",
-      "test_more_ranks_than_tiles_and_a_single_tile": "dab1854a2f09873c",
-      "test_multidim_split_is_byte_identical_to_stock": "bbff8f0cd90c305e",
+      "test_a_failing_rank_falls_back_with_the_stock_bytes": "967dab1dc27932d8",
+      "test_a_plan_the_stock_loop_leaves_decodes_the_rest_here": "f1f2bc6815f467df",
+      "test_a_real_vae_file_splits_through_the_stock_decode_and_the_worker_body": "0b3f9277d3df4ea7",
+      "test_a_tight_reply_budget_keeps_the_stock_bytes_and_its_bound": "a6470000e2f8dc2d",
+      "test_a_wrong_size_reply_is_refused_before_the_stock_blend": "9ee378dd6b8cf03b",
+      "test_h3_chunked_decode_split_is_byte_identical": "5f9787d0d074811c",
+      "test_h3_still_and_a_failing_rank_keep_the_stock_bytes": "c357b7b2d1d90f28",
+      "test_more_ranks_than_tiles_and_a_single_tile": "fd113e526d913d2a",
+      "test_multidim_split_is_byte_identical_to_stock": "db2c59004e6681db",
       "test_stock_seams_the_split_replays": "9541976ae1d51934",
-      "test_the_stock_decode_tiled_3d_path_splits_through_the_installed_wrappers": "85110c282504df86"
+      "test_the_stock_decode_tiled_3d_path_splits_through_the_installed_wrappers": "56eec59395b53ca7"
     },
     "tests/test_vae_decode_worker.py": {
       "test_a_decoded_unit_comes_back_on_the_wire_as_the_stock_function_returns_it": "7abae8dfc98f3627",
       "test_a_different_decode_environment_is_declined": "7ff584d0c4faa107",
+      "test_a_teardown_that_releases_models_drops_the_decode_vae": "4f041f5a01bf5768",
       "test_a_unit_that_does_not_fit_is_declined": "6a42369f499a896d",
       "test_a_unit_this_rank_cannot_decode_is_declined_not_raised": "36a8d00726b7f48f",
       "test_an_attention_kernel_this_host_cannot_run_is_a_decline": "3bd7b255220c0407",

@@ -133,6 +133,8 @@ class _Ranks:
         output = self.compute(latent)
         if failure == "dtype":
             output = output.to(torch.float16)
+        if failure == "size":
+            output = output[..., :-1].contiguous()  # right batch, channels and dtype; one column short
         return {"schema": 1, "ok": True, "unit": unit, "rank": rank, "host": "sibling", "output": output}
 
     def waiter(self, handle):
@@ -267,6 +269,50 @@ def test_a_failing_rank_falls_back_with_the_stock_bytes(comfy, ranks, monkeypatc
 
     publish(route.record)
     assert "Worker-assisted VAE decode fell back to this driver for" in caplog.text
+
+
+@pytest.mark.parametrize("case", ["2d", "3d-wan"])
+def test_a_wrong_size_reply_is_refused_before_the_stock_blend(comfy, ranks, case):
+    shape, tile, overlap, upscale, formulas, dtype = CASES[case]
+    torch.manual_seed(17)
+    samples = torch.randn(shape)
+    factors = list(upscale) if isinstance(upscale, tuple) else [upscale] * len(tile)
+    fake = _fake_decode(factors)
+    function = lambda a: fake(a.to(dtype)).to(dtype=torch.float32)  # noqa: E731
+    arguments = {"samples": samples, "function": _slow_first(function), "tile": tile, "overlap": overlap,
+                 "upscale_amount": upscale, "out_channels": 3, "output_device": "cpu", "downscale": False,
+                 "index_formulas": formulas, "pbar": None}
+    vae = SimpleNamespace(vae_dtype=dtype, vae_output_dtype=lambda: torch.float32)
+    ranks(_Ranks(lambda latent: fake(latent).to(torch.float32), fail=lambda rank, unit: "size"))
+    route = _route(vae, MULTIDIM, [1])
+    split = route.split_multidim(comfy.tiled, arguments)
+    assert same_bytes(split, comfy.tiled(**{**arguments, "function": function}))
+    assert sum(route.record.remote.values()) == 0
+    assert "returned shape" in route.record.failures[0] and "expected (1, 3," in route.record.failures[0]
+
+
+def test_a_tight_reply_budget_keeps_the_stock_bytes_and_its_bound(comfy, ranks, monkeypatch):
+    shape, tile, overlap, upscale, formulas, dtype = CASES["3d-wan"]
+    torch.manual_seed(19)
+    samples = torch.randn(shape)
+    fake = _fake_decode(list(upscale))
+    function = lambda a: fake(a.to(dtype)).to(dtype=torch.float32)  # noqa: E731
+    arguments = {"samples": samples, "function": _slow_first(function), "tile": tile, "overlap": overlap,
+                 "upscale_amount": upscale, "out_channels": 3, "output_device": "cpu", "downscale": False,
+                 "index_formulas": formulas, "pbar": None}
+    from dgx_monarch.vae_decode_plan import multidim_output_shapes, multidim_plan
+
+    plan = multidim_plan(comfy.tiled, samples, tile=tile, overlap=overlap, upscale_amount=upscale,
+                         out_channels=3, downscale=False, index_formulas=formulas)
+    largest = max(4 * int(torch.tensor(s).prod()) for s in multidim_output_shapes(plan, upscale, 3))
+    monkeypatch.setattr(vae_decode_remote, "REPLY_BUDGET_BYTES", 2 * largest)
+    vae = SimpleNamespace(vae_dtype=dtype, vae_output_dtype=lambda: torch.float32)
+    ranks(_Ranks(lambda latent: fake(latent).to(torch.float32), delay_s=0.01))
+    route = _route(vae, MULTIDIM, [1, 2])
+    split = route.split_multidim(comfy.tiled, arguments)
+    assert same_bytes(split, comfy.tiled(**{**arguments, "function": function}))
+    assert len(plan) > 4 and sum(route.record.remote.values()) >= 1 and not route.record.failures
+    assert 0 < route.record.peak_reply_bytes <= 2 * largest
 
 
 def test_a_plan_the_stock_loop_leaves_decodes_the_rest_here(comfy, ranks, monkeypatch):
