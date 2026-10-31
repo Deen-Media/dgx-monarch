@@ -11,7 +11,7 @@
 
 Generate images and video across two DGX Sparks from one ComfyUI window. Split a render between the GPUs, run separate prompts at once, or shard supported model weights to fit larger checkpoints.
 
-DGX Monarch provides model loaders, samplers, memory controls, and 71 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI.
+DGX Monarch provides model loaders, samplers, memory controls, and 71 example workflows. Text encoding, VAE decode, saving, and the rest of your graph stay in ComfyUI; an opt-in setting lets the Workers share a long video decode.
 
 [Get started](docs/QUICKSTART.md) · [Installation](docs/INSTALL.md) · [Model support](docs/MODELS.md) · [Benchmarks](docs/BENCHMARKS.md)
 
@@ -25,6 +25,7 @@ DGX Monarch provides model loaders, samplers, memory controls, and 71 example wo
 - **Avoid unnecessary model copies.** Slab residency and low-RSS LoRA handling reduce duplicate weights in shared memory. Built-in checks compare these paths with stock residency before reuse.
 - **Start with a model workflow.** Choose a template, select your files, and queue it. Automatic selection chooses a supported GPU layout for the model; the model guide explains the manual options.
 - **See what the pair is doing.** The ComfyUI sidebar and `dgxm top` show memory use, render progress, connection state, and errors.
+- **Decode video on both GPUs (opt-in).** With `worker_vae_decode = "auto"` the stock VAE decode nodes split a video decode over the Workers, byte-identical to ComfyUI's tiled decode. It stays off by default until its hardware check passes ([Model support](docs/MODELS.md#worker-assisted-vae-decode)).
 
 ## Studio
 

@@ -375,7 +375,8 @@ stock ComfyUI defaults. Allowed keys are:
   `swap_verify` (-1..64 integer) and `fsdp_prefetch_depth` (1..8 integer;
   above 1, FSDP prefetches that many blocks ahead, paid in reserved memory);
 * `slab_weights` (boolean or `"auto"`), `safetensors_backend` (`"pread"` or
-  `"mmap"`) and `int8_gemm` (`"triton"` or `"cutlass"`).
+  `"mmap"`) and `int8_gemm` (`"triton"` or `"cutlass"`);
+* `worker_vae_decode` (`"off"` or `"auto"`), which only the driver reads.
 
 The UMA guidance behind these values is in docs/VALIDATION.md.
 
@@ -416,6 +417,18 @@ here. The ComfyUI process does not read it; start ComfyUI with
 `DGXM_INT8_GEMM=cutlass` to turn the kernel off there too. A change reaches an
 actor at its next setup, or in place through a worker-args update, with no
 reload: both kernels give the same output.
+
+`worker_vae_decode = "auto"` turns on Worker-assisted VAE decode: the stock VAE
+Decode and VAE Decode (Tiled) nodes split a video decode over the Workers
+where the family allows ([MODELS.md](MODELS.md#worker-assisted-vae-decode)),
+byte-identical to the one-host tiled decode. Absent or `"off"`, the default,
+every decode stays on the driver. It is the one key here only the driver
+reads: it never reaches an actor, so it stays out of the worker policy, every
+identity-gate capability context and the trust fingerprint, and writing it
+re-proves no PASS. The Init node arms it when it runs, which a change to the
+file triggers in cluster mode. Each decode logs one line saying whether it
+split, and `dgxm doctor` shows the last one
+([docs/TROUBLESHOOTING.md #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
 
 `disable_custom_nodes = true` is a startup setting for sealed validation: the
 worker imports ComfyUI core and built-in nodes and runs no third-party pack. It

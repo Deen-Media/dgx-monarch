@@ -21,6 +21,8 @@ _PUBLIC_EVENT_FIELDS = {
     "restart_reattach": ("outcome", "verdict", "moved", "teardown", "wall_s"),
     "swap": ("model", "from", "to", "total_s"),
     "uma_reserve_breach": ("available_gib", "reserve_gib"),
+    "vae_decode": ("family", "entry", "split", "ranks", "units", "local", "fallback", "seconds", "reason",
+                   "budget_waits"),
     "verify": ("checked", "of"),
 }
 

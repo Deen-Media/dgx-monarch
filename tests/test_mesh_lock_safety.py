@@ -1127,6 +1127,10 @@ _OFF_LOOP_BY_CONSTRUCTION = {
         "ContextVar read, not a monarch future",
     ("nodes/render_submit.py", "_reattach_facts"):
         "ContextVar read, not a monarch future",
+    ("vae_decode_route.py", "_entry_wrapper.decode"):
+        "ContextVar read, not a monarch future",
+    ("vae_decode_route.py", "_tiled_wrapper.tiled_scale_multidim"):
+        "ContextVar read, not a monarch future",
 }
 
 

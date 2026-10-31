@@ -60,6 +60,7 @@ on:
       - "tests/test_worker_latent_size_tags.py"
       - "tests/test_compile_surface.py"
       - "tests/test_int8_gemm_kitchen_version.py"
+      - "tests/test_vae_decode_split_comfy.py"
       # No step runs these files, but the files the steps run import them. The
       # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4, Lens and
       # MOSS-Image two-rank harness. tests/test_canary_path_filter.py checks
@@ -328,6 +329,14 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_compile_surface.py
+      # Worker-assisted VAE decode replays ComfyUI's own tile loop and MiniMax
+      # H3's chunked decode with simulated ranks, and the bytes must match
+      # stock; the file also pins the stock seams the split replays. The
+      # regular CI job has no ComfyUI, so it skips there.
+      - name: Worker-assisted VAE decode split vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_vae_decode_split_comfy.py
       # The INT8 GEMM kernel runs only on the comfy-kitchen releases it was
       # proven exact against. Fail when ComfyUI's requirements or the installed
       # package move past that set, so it is re-validated (docs/MODELS.md)
@@ -388,3 +397,4 @@ jobs:
           tests/test_skip_layer_guidance_comfy.py
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
+          tests/test_vae_decode_split_comfy.py
