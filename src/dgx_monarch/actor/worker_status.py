@@ -108,6 +108,7 @@ def status_impl(worker) -> dict:
     from .. import monarch_policy, return_diagnostics, runtime_diagnostics
     from ..monarch_capabilities import diagnostic_identity
     from ..telemetry import event_snapshot
+    from . import vae_decode
 
     event_seq, events = event_snapshot(32)
     info: dict[str, Any] = {
@@ -116,6 +117,9 @@ def status_impl(worker) -> dict:
         "world": worker.world,
         "topology": dict(worker.topology),
         "models": worker.store.snapshot(),
+        # The decode VAE this actor holds beside the DiT, priced and reported
+        # like any resident (actor/vae_decode.py).
+        "vae_decode": vae_decode.status_block(worker),
         "nccl": False,
         # A failed setup/teardown rollback is a persistent dirty-state latch.
         # Publish only its boolean verdict: the exception detail stays in the

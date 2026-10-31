@@ -259,6 +259,7 @@ def _telemetry_uncached() -> dict:
         runtime_diagnostics,
         telemetry,
         telemetry_fleet,
+        vae_decode_telemetry,
     )
     from ..gate_ledger import comfy_commit
     from ..mesh_health import mesh_health_snapshot
@@ -273,9 +274,10 @@ def _telemetry_uncached() -> dict:
         "t": time.time(),
         "comfy": comfy_commit(),
         "driver_host": telemetry.host_stats(),
-        # The Fleet block sits inside the render block it belongs to, so every
-        # reader of `render` gets the per-job rows without a second key.
-        "render": telemetry_fleet.with_fleet(telemetry.render_progress.snapshot()),
+        # The Fleet block and the last VAE decode sit inside the render block
+        # they belong to, so every reader of `render` gets them without a second key.
+        "render": vae_decode_telemetry.with_vae_decode(
+            telemetry_fleet.with_fleet(telemetry.render_progress.snapshot())),
         "events": telemetry.events_tail(64),
         "diagnostics": runtime_diagnostics.snapshot(),
         "return_ownership": return_diagnostics.driver_snapshot(),

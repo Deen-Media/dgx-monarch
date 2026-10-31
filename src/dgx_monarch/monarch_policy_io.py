@@ -8,7 +8,7 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any
 
-from .config_schema import ClusterConfigError, validate_worker_args
+from .config_schema import ClusterConfigError, actor_worker_args, validate_worker_args
 from .monarch_policy import MonarchPolicy, parse_policy
 
 
@@ -41,7 +41,8 @@ def trust_config_fingerprint(config, fallback: str) -> str:
 
     The Gate capability context binds this value (DESIGN.md section 5.2). Out
     of it: lifecycle-only keys (auto_heal, ssh_key), the readiness budget
-    (monarch.startup_timeout_s), export settings (monarch.diagnostics) and the
+    (monarch.startup_timeout_s), export settings (monarch.diagnostics), the
+    driver-only [worker_args] keys (config_schema.DRIVER_ONLY_KEYS) and the
     config path, which the context binds separately as config_source. Editing
     those keeps persisted PASS rows.
     """
@@ -51,6 +52,7 @@ def trust_config_fingerprint(config, fallback: str) -> str:
         return fallback
     full = asdict(config)
     payload = {name: value for name, value in full.items() if name not in UNTRUSTED_FIELDS}
+    payload["worker_args"] = actor_worker_args(full.get("worker_args"))
     payload["hosts"] = [{name: value for name, value in host.items() if name not in UNTRUSTED_HOST_FIELDS}
                         for host in full["hosts"]]
     payload["monarch"] = {name: value for name, value in full["monarch"].items()

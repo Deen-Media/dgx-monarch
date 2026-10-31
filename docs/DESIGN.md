@@ -265,7 +265,11 @@ endpoints:
   generation. With a manifest it also returns strict saved pre-READY setup and
   fresh post-operation runtime snapshots, Comfy-resolved artifact metadata
   identities, and an event watermark, serialized behind prior GPU mutations.
-- `clear_vram(level)`: soft/hard cleanup with typed failure reporting.
+- `clear_vram(level)`: soft/hard cleanup with typed failure reporting. Either
+  level also drops a resident decode VAE (§5.6).
+- `vae_decode(request)`: one unit of a Worker-assisted VAE decode (§5.6), on
+  the GPU thread under the lock. It never raises: a unit the rank cannot
+  decode exactly comes back declined, with its reason.
 
 Same-handle topology replacement is a generation transaction. Driver and worker
 retirement publish DIRTY before clearing the prior READY setup identity or
@@ -319,7 +323,8 @@ set, the complete effective worker policy, physical config identity, resolved
 topology and attention, and the selected READY setup generation/key. The
 physical config identity hashes only the `cluster.toml` settings that can
 change math, residency or transport, leaving out `auto_heal`, `ssh_key`,
-`monarch.startup_timeout_s` and `[monarch.diagnostics]`
+`monarch.startup_timeout_s`, `[monarch.diagnostics]` and the driver-only
+`[worker_args]` keys (`config_schema.DRIVER_ONLY_KEYS`)
 (`monarch_policy_io.trust_config_fingerprint`). A Gate
 ceremony proves exactly one model, so dual-model requests are forced onto
 complete stock residency while driver and worker artifact preflight still bind
@@ -945,8 +950,66 @@ sampling-spec drift fails closed.
   every latent stays byte-identical.
 - The VAE and text encoder stay on the driver as stock ComfyUI nodes, so
   CONDITIONING and LATENT objects flow through the graph as usual and the node
-  ecosystem keeps working. Worker-side TE/VAE is a later headless-pipeline
-  option, not the node path.
+  ecosystem keeps working. Worker-side text encoding is a later
+  headless-pipeline option, not the node path. Worker-assisted VAE decode,
+  below, keeps the stock decode nodes on the driver too: only the units of
+  their own decode loop travel.
+
+**Worker-assisted VAE decode.** With `[worker_args] worker_vae_decode =
+"auto"` (absent means off, the default), the stock VAE Decode and VAE Decode
+(Tiled) nodes split a video decode over the Workers wherever the family
+allows ([MODELS.md](MODELS.md#worker-assisted-vae-decode)). The Init node arms
+it for the mesh it attaches (`vae_decode_route.py`). Six rules hold it:
+
+- **The reference is ComfyUI's one-host tiled decode**, and the split output
+  is byte-identical to it. Stock tiled and untiled decodes already differ, so
+  the untiled VAE Decode of a family that tiles through `tiled_scale_multidim`
+  never splits; MiniMax H3's VAE tiles itself, so both nodes split there.
+- **ComfyUI's loop runs once, on the driver, with only its per-unit decode
+  swapped.** The split reimplements no ComfyUI code. The plan of
+  `tiled_scale_multidim` comes from running the stock function on meta
+  tensors, and MiniMax H3's temporal chunks from the model's own chunk helper
+  (`vae_decode_plan.py`). A Worker's unit is used only for the exact input the
+  stock loop asks for, checked by view geometry or `torch.equal`, and only when
+  it matches the first unit the driver decoded in dtype and channel count.
+  Every other unit, and every unit after a mismatch, is decoded on the driver
+  by the stock function.
+- **The driver decodes its own share.** It takes units from the front of the
+  loop as the loop reaches them; ranks on other GPUs claim units from the back
+  (`vae_decode_schedule.py`). A rank that shares the driver's GPU takes none.
+- **A Worker's decode must be the driver's decode.** The Worker loads the same
+  file (same name, same artifact signature) with the driver's VAE dtype, casts
+  to the driver's output dtype, and decodes under the driver's attention
+  functions and torch backend flags, putting its own back after. A different
+  ComfyUI commit, torch or CUDA build, comfy-kitchen release or VAE class is a
+  decline, and so is an attention kernel the Worker cannot run
+  (`vae_decode_env.py`).
+- **What an actor may hold.** One decode VAE beside its DiT, placed on the GPU
+  directly rather than through ComfyUI's model manager, so loading it never
+  evicts the DiT. Its load is priced against MemAvailable before any byte is
+  read (the stock placement factor times the file, plus the absolute host
+  floor or the operator's larger reserve), and each unit's working set before
+  it runs; a price that does not fit is a decline. `status()` reports it with
+  its bytes, and `clear_vram` at either level and `unload` drop it, so the
+  driver's free-before-refusing step (§5.9) reclaims it like any other
+  reloadable cache. A DiT price reads MemAvailable, which counts a resident
+  decode VAE as spent until it is dropped.
+- **Fail-open, and the knob stays on the driver.** A rank that raises,
+  declines, times out or answers with the wrong dtype or shape is retired for
+  that decode, and its units are decoded on the driver with one WARNING naming
+  the cause: a failure costs time, never a wrong image. `worker_vae_decode`
+  never reaches an actor, so it stays out of the published worker policy,
+  every Gate capability context and the trust fingerprint, because a decode
+  changes no DiT math.
+
+Per unit, the wire carries the unit's latent as a CPU tensor in the VAE dtype,
+the VAE's file identity, dtype and header metadata, the output dtype and the
+driver's decode environment. The reply is the decoded unit in the dtype the
+stock function returns, copied into CPU pages the Worker touched first
+(`vae_decode_remote.py`). Every decode logs one INFO line on the driver saying
+whether it split and over how many ranks, and `dgxm doctor` reads the last one.
+The hardware byte compare per family is in
+[VALIDATION.md](VALIDATION.md#worker-assisted-vae-decode).
 
 ### 5.7 ComfyUI node surface
 
@@ -1565,7 +1628,8 @@ again from the one that refused. An actor keeps the last render's activations
 in its allocator cache for the next render, and on the driver host those count
 as spent too. So if a check still refuses and the render's mesh is live and set
 up, the driver asks every actor to release its allocator cache (the Worker
-`clear_vram` endpoint at `soft`, which unloads no model) and runs the checks
+`clear_vram` endpoint at `soft`, which unloads no DiT and drops a resident
+decode VAE, §5.6) and runs the checks
 once more from the one that refused. Only the last answer refuses, and it says
 what was unloaded and released and the readings around each step, which keeps
 the class C rule of offering the fitting strategy first. Each step runs at most
@@ -1847,6 +1911,8 @@ dgx-monarch/
 │   │   │                      #   its Worker refusal
 │   │   ├── lora_shape_guard.py # the refusal of a LoRA patch that changes a
 │   │   │                      #   weight's shape, before any bake
+│   │   ├── vae_decode.py      # the vae_decode endpoint and the one resident
+│   │   │                      #   decode VAE an actor may hold (§5.6)
 │   │   └── rdma_handoff.py    # durable worker descriptor ownership + ACK
 │   ├── adapters/              # §5.3 registry (one file per family)
 │   │   ├── flux_shared.py     # control-span/shard helpers the flux forwards
@@ -1937,6 +2003,20 @@ dgx-monarch/
 │   ├── driver_unload.py       # free ComfyUI's driver models, then the actors'
 │   │                          #   allocator caches, before a render-site
 │   │                          #   capacity refusal, checking again after each
+│   ├── vae_decode_route.py    # Worker-assisted VAE decode (§5.6): the knob,
+│   │                          #   the keyed stock-decode wrappers and the split
+│   ├── vae_decode_plan.py     # unit plans read off ComfyUI's own loops, and
+│   │                          #   their verified replays
+│   ├── vae_decode_schedule.py # the two-ended unit board: the driver takes the
+│   │                          #   front, the ranks the back (stdlib leaf)
+│   ├── vae_decode_families.py # which VAEs split, through which stock decode,
+│   │                          #   and why the rest do not
+│   ├── vae_decode_env.py      # what a Worker's decode shares with the
+│   │                          #   driver's: compared, or adopted for the decode
+│   ├── vae_decode_remote.py   # the per-unit RPC, its wire shape and the VAE's
+│   │                          #   file identity
+│   ├── vae_decode_telemetry.py # one INFO line per decode, the fallback
+│   │                          #   WARNING and the last record
 │   ├── fsdp_proof_scope.py    # FSDP clean-reload scope + the topology test
 │   │                          #   that selects it, below either caller
 │   ├── operator_actions.py    # inert, safety-classed readiness remediation catalog
@@ -2095,6 +2175,8 @@ dgx-monarch/
 │       ├── update_transaction.py # certainty-aware verified-update state machine
 │       ├── update_types.py     # certainty-bearing update operation contract
 │       ├── update_worker_lifecycle.py # generation-bound Worker update settlement
+│       ├── vae_decode_row.py   # doctor row: the decode knob and the driver's
+│       │                       #   last VAE decode, read over HTTP
 │       ├── update_worktree.py  # owned detached-worktree cleanup
 │       └── update_worker_attestation.py # exact remote source/pin-payload proof
 ├── web/js/dgx_monarch_readiness_model.js # pure fail-closed browser normalizer

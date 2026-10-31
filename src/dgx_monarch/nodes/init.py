@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from .. import family_select, first_render
+from .. import family_select, first_render, vae_decode_route
 from ..adapters import SELECTABLE_FAMILIES
 from ..config import find_config_path
 from ..constants import MESH_TYPE, NODE_CATEGORY
@@ -234,6 +234,9 @@ class DGXMonarchInit:
     ):
         """Initialize with an explicit custom-node bootstrap policy."""
         handle = get_mesh(config_path=config_path, mode=mode, gpus_per_host=gpus_per_host)
+        # [worker_args] worker_vae_decode routes the stock VAE decodes over
+        # this mesh's Workers (vae_decode_route.py); arming never raises.
+        vae_decode_route.arm(handle)
         if topology != "auto":
             # An explicit preset sets the fleet up below, which an abandoned
             # lease refuses; heal it first so the spec carries the new fleet.

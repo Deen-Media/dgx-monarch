@@ -18,6 +18,7 @@ from . import (
     mesh_health_row,
     probe_certainty,
     sol_attn_row,
+    vae_decode_row,
 )
 from .advertised_address import hostname_row, unresolved_row
 from .comfy_ports import find_comfy_ports as _find_comfy_ports
@@ -232,10 +233,7 @@ def _frontend_skew_row() -> dict:
 
 
 def _mesh_health_row() -> dict:
-    """The driver's own mesh state, read from the driver over HTTP.
-
-    No host probe can see it; `cli/mesh_health_row.py` says why.
-    """
+    """The driver's own mesh state over HTTP; no host probe can see it (`cli/mesh_health_row.py`)."""
     kind, detail = mesh_health_row.doctor_verdict(mesh_health_row.fetch_mesh_block())
     return _row({"fail": _FAIL, "warn": _WARN}.get(kind, _OK), "mesh health", detail)
 
@@ -414,7 +412,7 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
 
     # Driver-side failure state can block the next render even when all
     # Worker service checks pass.
-    rows.append(_mesh_health_row())
+    rows.extend((_mesh_health_row(), _row(*vae_decode_row.doctor_row(config))))
 
     driver_torch = ""
     try:

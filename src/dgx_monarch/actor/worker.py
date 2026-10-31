@@ -13,7 +13,7 @@ Endpoint surface; Monarch preserves every typed exception for the driver.
   ack_latent_handoff: retire one generation-bound RDMA descriptor owner
   status / renew_client_lease: snapshot and lease heartbeat, both lock-free
   provenance_baseline: setup-bound GPU-queue/source/event watermark
-  clear_vram: soft/hard cache clearing
+  clear_vram: soft/hard cache clearing; vae_decode (actor/vae_decode.py): one Worker-assisted VAE decode unit
 """
 from __future__ import annotations
 
@@ -56,6 +56,7 @@ from .sampling import (
     run_custom,
     run_ksampler,
 )
+from .vae_decode import VaeDecodeMixin, drop_resident
 from .worker_compile import compile_dit_allowed
 from .worker_env import _AttentionDispatch, _maybe_compile_dit
 from .worker_status import _latent_signature
@@ -63,7 +64,7 @@ from .worker_status import _latent_signature
 log = get_logger(__name__)
 
 
-class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Actor):
+class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, VaeDecodeMixin, Actor):
     def __init__(self) -> None:
         self.store = ModelStore()
         self.rank: int | None = None
@@ -337,6 +338,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
             return await self._on_gpu(self._unload_impl)
 
     def _unload_impl(self) -> dict:
+        drop_resident(self)
         self.store.unload_all()
         # Do not force-free RDMA ownership here: tokenized HandoffRegistry
         # entries retain backing until exact generation/token ACK or actor
@@ -473,6 +475,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Ac
             return await self._on_gpu(self._clear_vram_impl, level)
 
     def _clear_vram_impl(self, level: str = "soft") -> dict:
+        drop_resident(self)  # a decode VAE is reloadable cache at either level
         if self._setup_key is None:
             # Before setup there is no allocator to clear, and touching CUDA here
             # would bind the wrong device (worker_status.status_impl).

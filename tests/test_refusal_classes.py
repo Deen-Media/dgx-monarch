@@ -157,6 +157,11 @@ NOT_REFUSAL_CLASSES = frozenset({
     # one caller where it decides an outcome, the loader-site preflight,
     # converts it into a tagged class C refusal (2026-09-04).
     "UnresolvedArtifactIdentityError",
+    # Worker-assisted VAE decode's internal fail-open signals (2026-10-31): a
+    # rank's decline and an unreadable tile plan each send the unit back to the
+    # driver's own stock decode, so neither ever answers a render.
+    "Decline",
+    "PlanError",
     "WorkerSpawnError",
     "_Abort",
     "_InvalidQuantConfError",

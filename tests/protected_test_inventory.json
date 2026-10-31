@@ -1746,7 +1746,7 @@
     "tests/test_refusal_classes.py": {
       "test_class_rules_hold_at_every_classified_site": "4ee2e1b5b2a46a3d",
       "test_classified_refusal_sites_match_the_ledger": "ee29c1431639accd",
-      "test_every_declared_exception_is_classified_as_refusal_or_not": "b9ac5c8297b1c5ca",
+      "test_every_declared_exception_is_classified_as_refusal_or_not": "158b21274b4f9b79",
       "test_every_waivable_guard_message_names_the_panel_and_the_env_fallback": "28e23825921f635e",
       "test_guard_vocabulary_agrees_with_the_frozen_ledger_vocabulary": "9525b2023313c356",
       "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "40bdc0c681effe0f",
@@ -2401,6 +2401,30 @@
       "test_strength_one_is_the_unbiased_attention_bit_for_bit": "687802ed2badab8b",
       "test_the_guard_is_not_compiled_into_one_render_s_decision": "75902c199051d651",
       "test_the_query_split_equals_one_dense_composite_mask": "185dc44ae15a5663"
+    },
+    "tests/test_vae_decode_split_comfy.py": {
+      "test_a_failing_rank_falls_back_with_the_stock_bytes": "8436834af46badcb",
+      "test_a_plan_the_stock_loop_leaves_decodes_the_rest_here": "489dbf6c4f0b505e",
+      "test_a_real_vae_file_splits_through_the_stock_decode_and_the_worker_body": "d37bcc57e3edc7ae",
+      "test_h3_chunked_decode_split_is_byte_identical": "7c482a7948727113",
+      "test_h3_still_and_a_failing_rank_keep_the_stock_bytes": "bc23cc437a4c03ac",
+      "test_more_ranks_than_tiles_and_a_single_tile": "dab1854a2f09873c",
+      "test_multidim_split_is_byte_identical_to_stock": "bbff8f0cd90c305e",
+      "test_stock_seams_the_split_replays": "9541976ae1d51934",
+      "test_the_stock_decode_tiled_3d_path_splits_through_the_installed_wrappers": "85110c282504df86"
+    },
+    "tests/test_vae_decode_worker.py": {
+      "test_a_decoded_unit_comes_back_on_the_wire_as_the_stock_function_returns_it": "7abae8dfc98f3627",
+      "test_a_different_decode_environment_is_declined": "7ff584d0c4faa107",
+      "test_a_unit_that_does_not_fit_is_declined": "6a42369f499a896d",
+      "test_a_unit_this_rank_cannot_decode_is_declined_not_raised": "36a8d00726b7f48f",
+      "test_an_attention_kernel_this_host_cannot_run_is_a_decline": "3bd7b255220c0407",
+      "test_output_buffers_are_pre_touched_from_the_cpu_before_the_copy": "d68e22ed76d6435a",
+      "test_status_reports_the_decode_vae_before_setup": "4f7157a40ae0176d",
+      "test_the_compared_fields_and_their_text": "aeae454b649a3726",
+      "test_the_resident_is_reused_for_the_same_file_and_dtype": "b860fa4f74b85502",
+      "test_the_resident_shows_in_status_and_clear_vram_and_unload_release_it": "3d1adbf896ba8c9c",
+      "test_the_worker_decodes_under_the_drivers_attention_and_flags_then_restores": "fd23187ac64ced4d"
     },
     "tests/test_wan_variants.py": {
       "test_audio_injector_collapses_to_o_of_v": "1ad9e670e8aec9c9",
