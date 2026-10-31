@@ -61,6 +61,7 @@ on:
       - "tests/test_compile_surface.py"
       - "tests/test_int8_gemm_kitchen_version.py"
       - "tests/test_vae_decode_split_comfy.py"
+      - "tests/test_fp8_paths_tool.py"
       # No step runs these files, but the files the steps run import them. The
       # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4, Lens and
       # MOSS-Image two-rank harness. tests/test_canary_path_filter.py checks
@@ -85,6 +86,8 @@ on:
       - "tools/make_pin_probe_lora.py"
       # The cfg combine seam loads this file with benchmark/ on sys.path.
       - "benchmark/gates.py"
+      # The FP8 operations-rule step loads this file by path.
+      - "tools/fp8_paths.py"
       # The auto-topology step imports test_sweep_matrix.py, which loads these.
       # report.py is not here: only test functions no step runs import it.
       - "benchmark/sweep/__init__.py"
@@ -345,6 +348,14 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_int8_gemm_kitchen_version.py
+      # tools/fp8_paths.py reproduces how ComfyUI picks a model's operations
+      # class for FP8 checkpoints (docs/MODELS.md, FP8 compute paths). Fail when
+      # a clause it reproduces is gone from this ComfyUI, so the table and the
+      # docs are re-read instead of quietly going wrong.
+      - name: FP8 operations rule vs comfy (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_fp8_paths_tool.py
       # Keep the formula check last so its failure cannot prevent earlier
       # canaries from running; no step uses continue-on-error.
       - name: Render-memory formula vs comfy master (CPU)

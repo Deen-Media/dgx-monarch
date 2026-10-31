@@ -121,6 +121,27 @@
 
 ### Rendering
 
+- `[worker_args] fp8_matrix_mult` (`"auto"`, `"on"` or `"off"`) chooses whether
+  the models the actors build take ComfyUI's FP8 matmul path. ComfyUI's
+  `--fast fp8_matrix_mult` reaches only the driver's own loads, because the
+  actors start ComfyUI without its argument list: `"on"` gives every actor build
+  the loader option the flag stands in for, `"off"` builds a loader's
+  `fp8_e4m3fn_fast` as `fp8_e4m3fn`, and `"auto"`, the default, keeps the
+  previous behaviour. Every model build in the driver and in each actor logs
+  one `FP8 compute:` line naming the operations class ComfyUI picked.
+  `dgxm doctor` shows the setting, `dgxm status` prints it when cluster.toml
+  sets the key and `dgxm status --json` always carries it, and
+  `tools/fp8_paths.py` reads from a checkpoint's header which class it takes
+  under each setting.
+  The FP8 matmul path's speed and fidelity on GB10 are NOT RUN
+  ([Models](docs/MODELS.md#fp8-compute-paths),
+  [VALIDATION](docs/VALIDATION.md#fp8-compute-paths),
+  [TROUBLESHOOTING #141](docs/TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
+- The two probes of #93 item 6 ran on the head and changed nothing: comfy-kitchen's
+  own NVFP4 GEMM was the fastest path at every MiniMax H3 linear shape, and its
+  built-in Sol-Attn kernel ran as fast as the sol_attn package's with about twice
+  its error against exact attention, so the lever keeps the package
+  ([VALIDATION](docs/VALIDATION.md#item-6-probes-nvfp4-gemm-and-sol-attn-2026-10-31)).
 - INT8 ConvRot linears run a Triton GEMM kernel in place of comfy-kitchen's
   CUTLASS kernel, in the ComfyUI process and in every actor, with identical
   output; in the 2026-10-28 and 29 comparison MiniMax H3 and Wan Animate 2

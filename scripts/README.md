@@ -43,6 +43,26 @@ while leaving the terminal attached. The launcher refuses ComfyUI's TLS flags,
 because its confirmation probe speaks plain HTTP. `EXTRA_ARGS` accepts a list
 split on whitespace; pass real arguments when a value contains spaces.
 
+## FP8 compute flag
+
+`--fast fp8_matrix_mult` after `--` gives the models this ComfyUI process
+builds, such as a stock graph's, ComfyUI's FP8 matmul path for plain FP8
+checkpoints. It does not reach the DGX Monarch actors, which start ComfyUI
+without its arguments: `[worker_args] fp8_matrix_mult` in cluster.toml is
+their switch ([MODELS.md](../docs/MODELS.md#fp8-compute-paths)). Name the
+feature: `--fast` alone turns on every ComfyUI performance feature, and
+autotune among them keeps ComfyUI's asynchronous allocator off.
+
+```bash
+bash scripts/comfy-driver.sh \
+  --comfy-dir /opt/ComfyUI \
+  --python /opt/ComfyUI/.venv/bin/python \
+  -- --fast fp8_matrix_mult
+```
+
+The launcher never passes `--bf16-unet`, which upcasts FP8 weights to BF16 at
+load so that no FP8 path runs. Keep it out of any wrapper used to measure one.
+
 ## Optional dashboard alongside ComfyUI
 
 Add `--with-top --cluster-config /absolute/path/to/cluster.toml` to the

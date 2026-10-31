@@ -5,6 +5,7 @@ import os
 import socket
 import time
 
+from .. import fp8_compute
 from ..accuracy_waiver import RESULT_KEY as _ACCURACY_WAIVER_RESULT_KEY
 from ..log import get_logger
 from ..transfer import LatentReturn
@@ -39,11 +40,7 @@ ACCURACY_WAIVER_RESULT_KEY = _ACCURACY_WAIVER_RESULT_KEY
 
 
 def apply_worker_args_impl(worker, worker_args: dict) -> dict:
-    from .comfy_bridge import (
-        _CUSTOM_NODES_DISABLED,
-        _apply_worker_args,
-        _uma_memory_defaults,
-    )
+    from .comfy_bridge import _CUSTOM_NODES_DISABLED, _apply_worker_args, _uma_memory_defaults
 
     if _CUSTOM_NODES_DISABLED is not None and (
         bool(worker_args.get("disable_custom_nodes"))
@@ -56,13 +53,14 @@ def apply_worker_args_impl(worker, worker_args: dict) -> dict:
 
     wa = _uma_memory_defaults(dict(worker_args or {}))
     _apply_worker_args(wa)
-    compile_changed = (os.environ.get("DGXM_COMPILE_DIT") == "1") is not bool(
-        wa.get("compile_dit"))
-    # The shared activation scale wraps forwards at load, so a resident built
-    # under the previous setting cannot serve this one either.
+    compile_changed = (os.environ.get("DGXM_COMPILE_DIT") == "1") is not bool(wa.get("compile_dit"))
+    # The shared activation scale wraps forwards at load and the FP8 matmul
+    # setting picks comfy's operations class there, so a resident built under
+    # the previous setting of either cannot serve this one.
     from ..adapters.quant_activation_scale import env_from_worker_args
 
     scale_changed = env_from_worker_args(wa, getattr(worker, "_active_worker_args", None))
+    fp8_changed = fp8_compute.configure_from_worker_args(wa)
     if wa.get("compile_dit"):
         os.environ["DGXM_COMPILE_DIT"] = "1"
     else:
@@ -89,7 +87,7 @@ def apply_worker_args_impl(worker, worker_args: dict) -> dict:
     worker.fsdp_prefetch_depth = int(wa.get("fsdp_prefetch_depth", 1))
     worker.uma_reserve_gb = float(wa.get("uma_reserve_gb", getattr(worker, "uma_reserve_gb", 0.0)))
     worker.store.uma_reserve_gb = worker.uma_reserve_gb
-    if compile_changed or family_changed or scale_changed:
+    if compile_changed or family_changed or scale_changed or fp8_changed:
         # Each binds at model load, so prior residents cannot serve this policy.
         worker.store.unload_all()
     else:
@@ -269,9 +267,10 @@ def setup_impl(worker, env: dict) -> dict:
     _wa_eff = _uma_defaults(dict(env.get("worker_args") or {}))
     from ..family_select import override_from_worker_args
 
-    # Setup starts with no resident, so this is a plain assignment; the eviction
+    # Setup starts with no resident, so these are plain assignments; the eviction
     # on a later change belongs to apply_worker_args_impl above.
     worker.store.family_override = override_from_worker_args(_wa_eff)
+    fp8_compute.configure_from_worker_args(_wa_eff)
     worker.store.set_lora_mode(bool(_wa_eff.get("lora_low_rss")))
     worker.store.set_slab_mode(worker._slab_mode_effective(_wa_eff, env["topology"]),
                                slab_mode_reason(_wa_eff, env["topology"]))

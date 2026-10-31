@@ -7322,3 +7322,55 @@ The WARNING names the rank and its first cause:
 **Fix:** act on the reason, then queue again. A fallback never changes the
 image: every unit a rank did not decode was decoded on the driver by
 ComfyUI's own code.
+
+## 141. FP8 renders run no faster than BF16
+
+**Symptom:** an FP8 checkpoint renders at about its BF16 speed, or slower, on
+the driver or on the cluster, and setting `--fast fp8_matrix_mult` on the
+ComfyUI command line changes nothing on a DGX Monarch graph.
+
+**Cause:** FP8 storage does not mean FP8 compute. ComfyUI picks a model's
+operations class when it builds the model, and the class decides whether the
+matmuls run in FP8 ([MODELS.md](MODELS.md#fp8-compute-paths)):
+
+- A plain FP8 file, with FP8 weights and no comfy-kitchen metadata, takes
+  `manual_cast` unless the loader's weight dtype is `fp8_e4m3fn_fast` or the
+  process runs with `--fast fp8_matrix_mult`. `manual_cast` dequantizes every
+  FP8 weight to BF16 for every matmul.
+- A file with comfy-kitchen metadata runs comfy-kitchen's kernels whatever the
+  flags say, and a layer whose record sets `full_precision_matrix_mult`
+  dequantizes to BF16. Some fp8_scaled releases set it on every layer.
+- The actors start ComfyUI without its argument list, so `--fast` on the
+  ComfyUI command line reaches only the models the driver builds itself.
+- A launcher that passes `--bf16-unet` upcasts FP8 weights to BF16 at load.
+
+**Fix:** read the line each model build logs. The driver writes it to the
+ComfyUI log; each actor writes it to its Worker journal:
+
+```bash
+journalctl --user -u dgxm-worker.service | grep "FP8 compute:"
+```
+
+Worker services started with `dgxm up` log to
+`~/.local/state/dgx-monarch/worker-loop.log` instead.
+
+- `picked manual_cast for weights stored as float8_e4m3fn`: the dequantizing
+  path. For the actors, set `fp8_matrix_mult = "on"` in `[worker_args]`, or
+  pick `fp8_e4m3fn_fast` on the DGX Monarch loader; for the driver's own
+  loads, start ComfyUI with `--fast fp8_matrix_mult`
+  ([scripts/README.md](../scripts/README.md)). A changed `[worker_args]` value
+  drops each actor's resident models, so the next render loads them again.
+- `picked fp8_ops for weights stored as float8_e4m3fn`: the FP8 matmul path
+  already runs.
+- `picked mixed_precision_ops for comfy-kitchen quantized weights`: no flag
+  changes this file. Run `python tools/fp8_paths.py` on it to count the layers
+  that set `full_precision_matrix_mult`. When most do, the file computes in
+  BF16; an INT8 ConvRot export runs its own kernel
+  ([MODELS.md](MODELS.md#int8-gemm-kernel)).
+- `weights stored as bfloat16`: the file is BF16, or a launcher passed
+  `--bf16-unet`. Remove that flag to measure an FP8 path.
+
+The `FP8 matmul (actors)` row of `dgxm doctor` shows what cluster.toml asks of
+the actors; doctor attaches no mesh, so only the log line says what a build
+picked. Whether `fp8_ops` is faster on GB10, and how far its output moves, is
+not measured yet ([VALIDATION](VALIDATION.md#fp8-compute-paths)).

@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from .. import attention_pins, lora_quant_guard, residency_mode
+from .. import attention_pins, fp8_compute, lora_quant_guard, residency_mode
 from ..compile_policy import compile_dit_blocks_slab, compile_dit_is_known_noop
 from ..constants import TRANSITION_LOAD
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error
@@ -74,7 +74,11 @@ def fresh_load(
         "diffusion_models",
         unet_name,
     )
-    model_options = _to_comfy_model_options(options)
+    # [worker_args] fp8_matrix_mult decides whether this build passes comfy's
+    # fp8_optimizations, the actors' form of --fast fp8_matrix_mult, and the
+    # build logs the operations class comfy picks (fp8_compute.py).
+    fp8_compute.install("this actor")
+    model_options = fp8_compute.load_options(_to_comfy_model_options(options))
     checkpoint_quant = (
         fsdp_checkpoint_proof.quant_kind
         if fsdp_checkpoint_proof is not None

@@ -12,6 +12,7 @@ from . import (
     doctor_nccl,
     doctor_permissions,
     doctor_probes,
+    fp8_matmul_row,
     int8_gemm_row,
     json_report,
     listener_generation,
@@ -701,10 +702,9 @@ def _spark_health_rows(config: ClusterConfig | None) -> list[dict]:
                          "unobserved: the torch CUDA probe did not complete, so this row "
                          "cannot say whether the box has a usable CUDA device"))
 
-    # Missing python3.x-dev headers make Sage/Triton JIT compilation fail, and
-    # the INT8 GEMM kernel (on by default) falls back to stock CUTLASS without them.
+    # Without python3.x-dev headers Sage/Triton JIT builds fail and the INT8 GEMM kernel runs CUTLASS.
     rows.append(_row(*doctor_probes.python_headers_row()))
-    rows.append(_row(*int8_gemm_row.local_row_for(config)))
+    rows.extend(_row(*row) for row in (int8_gemm_row.local_row_for(config), fp8_matmul_row.doctor_row(config)))
 
     # The Spark fan curve tracks CPU load, so the community-identified 'temp6'
     # board sensor can sit at 90 C+ without a ramp. `hwmon.py` reads the

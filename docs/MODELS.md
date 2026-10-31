@@ -1574,6 +1574,103 @@ with either value, changes the identity-gate context of every render, as any
   shapes.
 - The tile configuration was tuned and measured on GB10 only.
 
+## FP8 compute paths
+
+ComfyUI picks how a model's linears compute once, when it builds the model.
+A checkpoint stored in FP8 takes one of three paths:
+
+| The checkpoint | ComfyUI's operations class | What the matmuls do |
+|---|---|---|
+| Carries comfy-kitchen quantization metadata, as Comfy-Org's fp8_scaled and fp8mixed releases and the INT8 ConvRot, MXFP8 and NVFP4 exports do | `mixed_precision_ops` | comfy-kitchen's kernels run the quantized linears whatever any flag says. A layer whose record sets `full_precision_matrix_mult` dequantizes to BF16 first. |
+| Plain FP8 weights, no flag | `manual_cast` | Every FP8 weight is dequantized to BF16 for every matmul: FP8 storage, BF16 compute. |
+| Plain FP8 weights, with `--fast fp8_matrix_mult` or the loader's `fp8_e4m3fn_fast` | `fp8_ops` | `torch._scaled_mm` runs on the FP8 tensor cores. The activations are clamped to plus or minus 448 and cast to FP8 with a unit scale, so the output differs from the dequantized path. |
+
+The flag and the loader option meet in one `or` inside ComfyUI, so either one
+selects `fp8_ops`. On a BF16 or FP16 checkpoint the flag selects `fp8_ops` too,
+but those linears keep the cast path and compute as before. The loader's
+`fp8_e4m3fn_fast` instead casts such weights to FP8 at load with no scale,
+which loses precision.
+
+To see which path a file takes, read its header:
+
+```bash
+python tools/fp8_paths.py ~/ComfyUI/models/diffusion_models
+```
+
+The tool reads safetensors headers only and imports neither ComfyUI nor torch.
+For each file it prints the quantization metadata it carries, its weight dtype
+and the class ComfyUI picks in four settings: plain, `--fast fp8_matrix_mult`,
+`weight_dtype=fp8_e4m3fn_fast`, and both. `--comfy-dir` checks that a ComfyUI
+checkout still holds the rule the tool reproduces. Among the FP8 files the
+templates name, the Qwen-Image 2512 and HunyuanImage 2.1 files are plain FP8.
+The Wan 2.1 T2V and I2V 14B fp8_scaled files and the LTX 2.3 distilled
+fp8_scaled file mark every layer full precision, so they compute in BF16 under
+every setting. The Krea2 fp8_scaled files mark 96 of their 256 quantized
+layers: each block's attention gate, output projection and MLP down
+projection.
+
+**ComfyUI's flags do not reach the actors.** Each actor starts ComfyUI with an
+empty argument list, so `--fast fp8_matrix_mult` on the ComfyUI command line
+changes only the models the driver builds itself, such as a stock graph's.
+The actors take `fp8_matrix_mult` from `[worker_args]` in cluster.toml:
+
+```toml
+[worker_args]
+fp8_matrix_mult = "on"
+```
+
+| Value | What the actors build |
+|---|---|
+| `"auto"` (the default) | What each loader's weight dtype asks for, as stock ComfyUI does without the flag: `fp8_ops` only under `fp8_e4m3fn_fast`. |
+| `"on"` | Every model passes the loader option the flag stands in for, so plain FP8 checkpoints take `fp8_ops`, as the flag makes the driver's own loads do. |
+| `"off"` | No model passes it: a loader's `fp8_e4m3fn_fast` builds as `fp8_e4m3fn` and takes `manual_cast`. |
+
+A checkpoint with comfy-kitchen metadata takes `mixed_precision_ops` under all
+three. Leave the key out for the default: writing it changes every render's
+identity-gate context, as any `[worker_args]` key does
+([CLUSTER](CLUSTER.md#worker_args-optional)). Because ComfyUI picks the class
+when it builds a model, a changed value drops each actor's resident models, and
+the next render loads them again. The `FP8 matmul (actors)` row of
+`dgxm doctor` shows the value, `dgxm status` prints it when the file sets the
+key, and `dgxm status --json` always carries it.
+
+**Read the log.** Every model ComfyUI builds, in the driver and in each actor,
+logs one INFO line that starts `FP8 compute:`. It names the class ComfyUI
+picked, whether `fp8_optimizations` was set, whether the process runs with
+`--fast fp8_matrix_mult`, and for an actor the `fp8_matrix_mult` value. The
+driver's lines are in ComfyUI's log and an actor's in its Worker journal
+([TROUBLESHOOTING #4](TROUBLESHOOTING.md#4-supervisionerror--process-exited-with-non-zero-code)):
+
+```
+FP8 compute: this actor picked manual_cast for weights stored as float8_e4m3fn, compute dtype bfloat16 (fp8_optimizations=False, --fast fp8_matrix_mult off, FP8 compute supported, fp8_matrix_mult=auto from the default); FP8 weights are dequantized to the compute dtype for every matmul
+```
+
+[TROUBLESHOOTING #141](TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)
+says what to do for each class a line names.
+
+**Not measured yet.** The `fp8_ops` path has not run on GB10 in the driver or
+in the actors, so this page's quantization advice does not change for it. The
+hardware leg in [VALIDATION](VALIDATION.md#fp8-compute-paths) measures speed
+and one-step NRMS for plain FP8 and fp8_scaled files against a BF16 control
+and against the same file without the feature, on one GPU, uly2 and cfg2.
+Until it does, `fp8_ops` is an untested speed option whose error against the
+dequantized path nobody has measured here.
+
+**Limits.**
+
+- `fp8_ops` runs the FP8 matmul only for a weight stored as `float8_e4m3fn`;
+  a `float8_e5m2` file keeps the cast path.
+- A linear that carries a runtime weight patch, such as a LoRA ComfyUI applies
+  on the fly rather than merging, keeps the cast path.
+- `--fast` with no feature list turns on every ComfyUI performance feature,
+  autotune and FP16 accumulation included, and autotune keeps ComfyUI's
+  asynchronous allocator off. Pass `--fast fp8_matrix_mult` alone.
+- A launcher that passes `--bf16-unet` upcasts FP8 weights to BF16 at load, so
+  no FP8 path runs. The maintained launcher does not pass it
+  ([scripts/README.md](../scripts/README.md)).
+- On a GPU without FP8 compute (below sm_89) no setting selects `fp8_ops`.
+- No render has run `fp8_ops` under FSDP, slab residency or `comfy_managed`.
+
 <a id="worker-assisted-vae-decode"></a>
 
 ## Worker-assisted VAE decode
