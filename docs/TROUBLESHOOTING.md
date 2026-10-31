@@ -438,6 +438,10 @@ A loader `weight_dtype` cast disables this preflight because file size no
 longer predicts resident size. Quarantine overrides consent; only a fresh
 Identity Gate retest can clear it
 ([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)).
+After a rescue whose gate returned an unproven INCONCLUSIVE, because stock
+could not load a reference, the gate has switched slab off for that
+combination, so the loader prices stock only and raises no card
+([VALIDATION](VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
 
 **If quarantine state is unknown:** consent cannot override it. The message
 identifies the missing evidence:
