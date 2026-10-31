@@ -135,11 +135,10 @@
   seconds (1344x768, 20 steps) on the pair and on one Spark. On the pair a
   15 second clip samples in about 45 minutes with exact attention and 26 with
   Sol-Attn under its waiver, and a session admits it twice. One rank on the
-  sibling alone renders it in 83:31 with 75 GiB free at the lowest, once the
-  sample timeout is raised. A single RTX 5090's reported 8.6 minutes for the
-  same clip stays beside them
-  ([BENCHMARKS](docs/BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped),
-  [TROUBLESHOOTING #139](docs/TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-after-an-hour-of-sampling)).
+  sibling alone rendered it in 83:31 with 75 GiB free at the lowest, after
+  the one-hour sample timeout cut off a first attempt. A single RTX 5090's
+  reported 8.6 minutes for the same clip stays beside them
+  ([BENCHMARKS](docs/BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)).
   The activation charge is 2.7 to 2.9 times the measured activation on the
   pair and 4.7 to 4.8 times on one rank, with no constant changed, and a BF16
   capacity rescue on the pair ends refused with no card

@@ -860,9 +860,8 @@ What the rows show, and what they do not:
   short.
 - **One Spark renders the 15 s clip.** With one rank on the sibling alone,
   the sibling never fell below 75 GiB free. The one-hour sample timeout cut
-  off the first attempt; with `DGXM_SAMPLE_TIMEOUT` raised the next one
-  finished in 83:31
-  ([TROUBLESHOOTING #139](TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-after-an-hour-of-sampling)).
+  off the first attempt, and the next one finished in 83:31 with
+  `DGXM_SAMPLE_TIMEOUT=14400`.
 - **The head beside the driver.** At 10 s it sampled about 6 percent slower
   than the sibling alone. The head carries the clock cap and the driver, and
   these rows do not separate the two. The loader

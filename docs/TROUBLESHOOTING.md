@@ -7166,32 +7166,3 @@ see the kernel a running process uses.
 
 To turn the kernel off, set `int8_gemm = "cutlass"` in `[worker_args]` for the
 actors and start ComfyUI with `DGXM_INT8_GEMM=cutlass`.
-
-## 139. A long render fails with `TimeoutError` after an hour of sampling
-
-**Symptom:** a long render fails with a `TimeoutError` about an hour into
-sampling, although it was still making progress and memory was not short. A
-15 second MiniMax H3 clip on one Spark does this: on 2026-10-30 the driver
-stopped waiting at the hour while the actor held 36.5 GiB and the sibling
-never had less than 75 GiB free.
-
-**Cause:** the driver waits for the actors' sample call for at most
-`DGXM_SAMPLE_TIMEOUT` seconds, 3600 by default, or 120 s per step when that
-is longer, so at 20 steps the hour applies. At the deadline it asks the
-actors to cancel and abandons the result, and the next render heals the
-abandoned lease and loads the model again
-([#87](#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)).
-At 1344x768 and 20 steps a 15 second H3 clip samples for about 80 minutes on
-one Spark and about 45 on the pair
-([BENCHMARKS](BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)).
-A pair render can pass the hour too when something else loads the head's
-CPU: one did on 2026-10-30 while test suites ran there, and the next render
-of that session sampled in its usual 45 minutes.
-
-**Fix:** set `DGXM_SAMPLE_TIMEOUT`, a number of seconds, in the environment
-ComfyUI starts with, then restart ComfyUI. The driver reads it once, when it
-loads the node pack, and the Workers do not read it. With
-`DGXM_SAMPLE_TIMEOUT=14400` the one-Spark 15 second clip completed in 83:31.
-A raised deadline does not hide a hung fleet: the stall guard still stops a
-render whose progress stops
-([#86](#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)).
