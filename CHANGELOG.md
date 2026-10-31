@@ -154,6 +154,15 @@
   the whole request before its proof render: a request that cannot fit the
   slab path gets one INCONCLUSIVE capacity row and no proof render, renders on
   stock residency, and the next request checks again ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- The driver's deadline for a render's sample call grows with the work. For
+  MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2 it allows 600 s per step at
+  109,466 packed rows per rank, scaled linearly with the rows on each rank, at
+  least 120 s per step and at most six hours in all. `DGXM_SAMPLE_TIMEOUT`
+  stays the floor, 3600 s unless set, and wins over the cap. A 15 second H3
+  clip on one Spark, which sampled for 80 minutes and was cut off at the hour,
+  now gets 200 minutes; other families keep the larger of the floor and 120 s
+  per step. Each render logs its deadline and the terms behind it at INFO
+  ([TROUBLESHOOTING #139](docs/TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
 
 ### Operations
 
