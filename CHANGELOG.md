@@ -188,6 +188,14 @@
   measured render used
   ([VALIDATION](docs/VALIDATION.md#h3-capacity),
   [TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- The refitted price passed its hardware checks on 2026-10-31 with both
+  driver preflights on. The 15 second MiniMax H3 clip rendered on one Spark
+  in both layouts: one rank on the sibling alone in 99:31, and one rank on
+  the head beside the driver in 105:51, where the fit before refused it at
+  the loader. The 61.7 GiB BF16 file rendered at 5 seconds as one rank beside
+  the driver through the capacity rescue in 22:30
+  ([VALIDATION](docs/VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30),
+  [BENCHMARKS](docs/BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)).
 - `compile_dit` no longer forces stock residency on the families it leaves
   eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
   tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).

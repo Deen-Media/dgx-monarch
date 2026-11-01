@@ -2405,7 +2405,8 @@ closest clears by 6.5 GiB at the 5 GiB reserve. The charge stays above what
 each measured render used, Config A's about 4 GiB on the 2026-08-05 reference
 run among them, which holds the floor up. On one Spark at the 2026-10-29
 reading the 1344x768x362 cell is now admitted with 36.7 GiB to spare; the
-2026-10-29 fit refused it, 11.2 GiB short.
+2026-10-29 fit refused it, 11.2 GiB short. On 2026-10-31 it rendered on one
+Spark in both layouts with both driver preflights on.
 
 For 1344x768x124 bf16 at world 2 under `auto`, the pending estimate is
 77.6 GiB, requiring about 82.6 GiB MemAvailable with the default floor, or

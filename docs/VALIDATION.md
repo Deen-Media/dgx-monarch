@@ -3044,11 +3044,12 @@ it leaves the optimum where it is.
 The suite of 2026-10-29 and 30 ran both one-Spark layouts. On the head beside
 the driver the 243-frame cell rendered, with the head at 52.6 GiB MemAvailable
 at its lowest. The 362-frame cell refused there at the loader under the
-2026-10-29 fit, 10.8 GiB short at 93.2 GiB MemAvailable, so that layout has no
-measurement at 362 frames; the 2026-10-31 fit admits it there with 37.1 GiB to
-spare. One rank on the sibling alone, with the driver on the head, rendered
-the 362-frame cell
-([measured points](#activation-across-clip-lengths-measured-2026-10-29-and-30)).
+2026-10-29 fit, 10.8 GiB short at 93.2 GiB MemAvailable. One rank on the
+sibling alone, with the driver on the head, rendered the 362-frame cell. On
+2026-10-31, at the refit's commit and with both driver preflights on, the
+362-frame cell rendered in both layouts and the BF16 cell of point 1 rendered
+through the capacity rescue
+([measured points and hardware checks](#activation-across-clip-lengths-measured-2026-10-29-and-30)).
 
 
 A 61.73-GiB BF16 reference-to-video load left 60.9 GiB available before
@@ -3115,11 +3116,11 @@ The suite in
 rendered 1344x768 clips of 124, 243 and 362 frames at 20 steps with exact
 attention and the pruned INT8 ConvRot DiT, on the pair (uly2) and as one rank
 on the sibling alone, with 1 Hz samplers on both hosts. Each actor's GPU
-memory peak less the 19.53 GiB of weights is the activation it held. A last
-row, from 2026-10-31, is the BF16 file at 124 frames as one rank on the head
-beside the driver. Beside each stands the charge per rank at the 2026-10-31
-fit: the 11.0 GiB floor, 129,024 bytes per row on the rank and 73,728 bytes
-per row of the whole packed total. In GiB:
+memory peak less the 19.53 GiB of weights is the activation it held. Two last
+rows, from 2026-10-31, put one rank on the head beside the driver: the BF16
+file at 124 frames and the pruned INT8 file at 362. Beside each stands the
+charge per rank at the 2026-10-31 fit: the 11.0 GiB floor, 129,024 bytes per
+row on the rank and 73,728 bytes per row of the whole packed total. In GiB:
 
 | layout | frames | rows per rank | actor GPU peak | beyond the weights | charge per rank | charge over measured |
 |---|---:|---:|---:|---:|---:|---:|
@@ -3129,6 +3130,7 @@ per row of the whole packed total. In GiB:
 | one rank, the sibling alone | 243 | 73,790 | 31.1 | 11.6 | 24.93 | 2.15 |
 | one rank, the sibling alone | 362 | 109,463 | 36.5 | 17.0 | 31.67 | 1.86 |
 | one rank, the head beside the driver, BF16 slab (2026-10-31) | 124 | 38,111 | 5.5 | 5.5 | 18.20 | 3.31 |
+| one rank, the head beside the driver (2026-10-31) | 362 | 109,463 | 35.0 | 15.5 | 31.67 | 2.04 |
 
 The 362-frame pair row measures point 4 again, with the same 17.6 GiB. The
 unpruned 31.70 GiB INT8 file held
@@ -3150,9 +3152,10 @@ which the driver footprint prices, not the activation charge. This run is
 point 1 of the fit in [H3 capacity](#h3-capacity).
 
 One rank holding every row held no more than a pair rank holding half of
-them: 11.6 against 12.5 GiB at 243 frames, and 17.0 against 17.6 at 362. The
-charge follows a rank's own rows more than the readings do, so it runs 1.4 to
-2.2 times the pair's measurements and 1.9 to 3.3 times the one-rank ones.
+them: 11.6 against 12.5 GiB at 243 frames, and 17.0 against 17.6 at 362; the
+same 362-frame rank on the head beside the driver held 15.5. The charge
+follows a rank's own rows more than the readings do, so it runs 1.4 to 2.2
+times the pair's measurements and 1.9 to 3.3 times the one-rank ones.
 
 On one rank the 362-frame clip completed and the sibling never fell below
 75.3 GiB MemAvailable, against a charge of 31.67 GiB for the 17.0 GiB it
@@ -3161,12 +3164,20 @@ of the BF16 shape replaced the one-rank BF16 kill of 2026-08-05 as point 1, a
 pass, which answers the question
 [issue #93](https://github.com/Deen-Media/dgx-monarch/issues/93) carried.
 
-Two hardware checks of the 2026-10-31 fit wait for the maintainer:
+The hardware checks of the 2026-10-31 fit ran later that day at dev
+`4b71822`, both Workers on that commit, the head capped at 2100 MHz, with both
+driver preflights on, 20 steps and exact attention. All three passed:
 
-| check | what it must show | status |
-|---|---|---|
-| The BF16 cell above, one rank on the head beside the driver, with both driver preflights on and only `DGXM_AUTO_RESCUE=1` set | the activation preflight admits it resident and pending, and the render completes | NOT RUN |
-| The 362-frame cell on one Spark at the loader node: the rank on the sibling alone, as point 5 ran, and the rank on the head beside the driver, where the 2026-10-29 fit refused it | the loader admits both, and the head layout renders | NOT RUN |
+| check | result |
+|---|---|
+| The BF16 cell above, one rank on the head beside the driver, with only `DGXM_AUTO_RESCUE=1` set | PASS. The activation preflight admitted it resident and pending, the standing consent projected slab, and the gate ran 3 proof renders in 225.2 s and kept slab, INCONCLUSIVE with `cross_mode=CAPACITY`. The render completed in 1350.2 s, 962.0 s of it sampling. The actor held 5.5 GiB beyond the slab, the head read 15.8 GiB MemAvailable at its lowest, during the driver's VAE decode, and the sibling stayed idle at 114.2 GiB. |
+| The 362-frame cell, one rank on the sibling alone with the driver on the head | PASS. The loader admitted it, and the render completed in 5971.1 s, 4765.1 s of it sampling. The actor peaked at 36.5 GiB, the sibling read 74.5 GiB at its lowest and the head 82.5 GiB. |
+| The 362-frame cell, one rank on the head beside the driver, which the 2026-10-29 fit refused at the loader 10.8 GiB short | PASS. The loader admitted it, and the render completed in 6351.0 s, 5078.3 s of it sampling. The actor peaked at 35.0 GiB, the head read 45.9 GiB at its lowest, and the sibling stayed idle at 114.1 GiB. |
+
+On both 362-frame cells the gate found nothing to gate, recorded INCONCLUSIVE
+after 2 proof renders (960.2 and 1024.0 s), and the render ran on stock
+residency. The head beside the driver sampled about 7 percent slower than the
+sibling alone, close to the 6 percent it lost at 243 frames.
 
 ### BF16 capacity rescue (2026-10-30), a recorded limitation
 
@@ -3200,7 +3211,9 @@ On 2026-10-31, on dev e4f23be, which keeps slab under a rescue consent, the
 file rendered as one rank on the head beside the driver, with both driver
 preflights off for the measurement; the BF16 row in
 [the measured points](#activation-across-clip-lengths-measured-2026-10-29-and-30)
-records it.
+records it. Later that day, at dev `4b71822` with both driver preflights on and
+only `DGXM_AUTO_RESCUE=1` set, it rendered again, the first of the hardware
+checks there.
 
 ### Driver unload before a render-site refusal (2026-10-29)
 
