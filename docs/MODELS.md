@@ -1583,7 +1583,7 @@ A checkpoint stored in FP8 takes one of three paths:
 |---|---|---|
 | Carries comfy-kitchen quantization metadata, as Comfy-Org's fp8_scaled and fp8mixed releases and the INT8 ConvRot, MXFP8 and NVFP4 exports do | `mixed_precision_ops` | comfy-kitchen's kernels run the quantized linears whatever any flag says. A layer whose record sets `full_precision_matrix_mult` dequantizes to BF16 first. |
 | Plain FP8 weights, no flag | `manual_cast` | Every FP8 weight is dequantized to BF16 for every matmul: FP8 storage, BF16 compute. |
-| Plain FP8 weights, with `--fast fp8_matrix_mult` or the loader's `fp8_e4m3fn_fast` | `fp8_ops` | `torch._scaled_mm` runs on the FP8 tensor cores. The activations are clamped to plus or minus 448 and cast to FP8 with a unit scale, so the output differs from the dequantized path. |
+| Plain FP8 weights, with `--fast fp8_matrix_mult` or the loader's `fp8_e4m3fn_fast` | `fp8_ops` | `torch._scaled_mm` runs on the FP8 tensor cores. The activations are clamped to plus or minus 448 and cast to FP8 with a unit scale, so the output differs from the dequantized path. On GB10 this path renders noise ([measured on GB10](#fp8-on-gb10)). |
 
 The flag and the loader option meet in one `or` inside ComfyUI, so either one
 selects `fp8_ops`. On a BF16 or FP16 checkpoint the flag selects `fp8_ops` too,
@@ -1616,14 +1616,14 @@ The actors take `fp8_matrix_mult` from `[worker_args]` in cluster.toml:
 
 ```toml
 [worker_args]
-fp8_matrix_mult = "on"
+fp8_matrix_mult = "off"
 ```
 
 | Value | What the actors build |
 |---|---|
 | `"auto"` (the default) | What each loader's weight dtype asks for, as stock ComfyUI does without the flag: `fp8_ops` only under `fp8_e4m3fn_fast`. |
-| `"on"` | Every model passes the loader option the flag stands in for, so plain FP8 checkpoints take `fp8_ops`, as the flag makes the driver's own loads do. |
-| `"off"` | No model passes it: a loader's `fp8_e4m3fn_fast` builds as `fp8_e4m3fn` and takes `manual_cast`. |
+| `"on"` | Every model passes the loader option the flag stands in for, so plain FP8 checkpoints take `fp8_ops`, as the flag makes the driver's own loads do. Unsafe on GB10: plain FP8 renders noise. |
+| `"off"` | No model passes it: a loader's `fp8_e4m3fn_fast` builds as `fp8_e4m3fn` and takes `manual_cast`, so no actor build takes `fp8_ops`. |
 
 A checkpoint with comfy-kitchen metadata takes `mixed_precision_ops` under all
 three. Leave the key out for the default: writing it changes every render's
@@ -1648,13 +1648,28 @@ FP8 compute: this actor picked manual_cast for weights stored as float8_e4m3fn, 
 [TROUBLESHOOTING #141](TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)
 says what to do for each class a line names.
 
-**Not measured yet.** The `fp8_ops` path has not run on GB10 in the driver or
-in the actors, so this page's quantization advice does not change for it. The
-hardware leg in [VALIDATION](VALIDATION.md#fp8-compute-paths) measures speed
-and one-step NRMS for plain FP8 and fp8_scaled files against a BF16 control
-and against the same file without the feature, on one GPU, uly2 and cfg2.
-Until it does, `fp8_ops` is an untested speed option whose error against the
-dequantized path nobody has measured here.
+<a id="fp8-on-gb10"></a>
+
+**Measured on GB10.** On 2026-10-31 the core of the FP8 leg ran on the pair,
+in the actors and in the driver ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
+It decides what to use on this GPU and build:
+
+- FP8 speed comes from comfy-kitchen files, not from ComfyUI's FP8 matmul.
+  The one measured, the Krea2 Turbo fp8_scaled file, sampled in 65 s against
+  73 s for BF16, at one-step NRMS 0.068 against BF16, inside the 0.10 floor.
+  A kitchen file that marks every layer full precision, such as the Wan 2.1
+  T2V 14B fp8_scaled file, dequantizes every layer and computes in BF16.
+- The plain FP8 fast path, `fp8_ops`, rendered noise: Qwen-Image 2512 FP8 came
+  out as a full-frame speckle field under `"on"` in the actors and under
+  `--fast fp8_matrix_mult` in the driver alike, though it sampled 24 to 30
+  percent faster. It is not a method here.
+- `fp8_e4m3fn_fast` on a BF16 file renders a plausible image 18 percent
+  faster but drifts past the floor, at one-step NRMS 0.19 against BF16. The
+  plain `fp8_e4m3fn` cast stays inside it, at 0.055, and cuts the actor's
+  GPU peak from 25.7 to 13.9 GiB, at 4 percent more sampling time.
+- Keep `fp8_matrix_mult` at `"auto"` by leaving the key out. `"on"` is unsafe
+  on GB10 until a later torch or ComfyUI build passes the leg again. `"off"`
+  keeps a workflow's `fp8_e4m3fn_fast` loader off `fp8_ops` in the actors.
 
 **Limits.**
 
@@ -1664,7 +1679,8 @@ dequantized path nobody has measured here.
   on the fly rather than merging, keeps the cast path.
 - `--fast` with no feature list turns on every ComfyUI performance feature,
   autotune and FP16 accumulation included, and autotune keeps ComfyUI's
-  asynchronous allocator off. Pass `--fast fp8_matrix_mult` alone.
+  asynchronous allocator off. To measure the path, pass
+  `--fast fp8_matrix_mult` alone.
 - A launcher that passes `--bf16-unet` upcasts FP8 weights to BF16 at load, so
   no FP8 path runs. The maintained launcher does not pass it
   ([scripts/README.md](../scripts/README.md)).

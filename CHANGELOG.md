@@ -132,8 +132,13 @@
   `dgxm doctor` shows the setting, `dgxm status` prints it when cluster.toml
   sets the key and `dgxm status --json` always carries it, and
   `tools/fp8_paths.py` reads from a checkpoint's header which class it takes
-  under each setting.
-  The FP8 matmul path's speed and fidelity on GB10 are NOT RUN
+  under each setting. On 2026-10-31 the FP8 matmul path rendered plain FP8
+  files as noise on GB10, in the actors under `"on"` and in the driver under
+  `--fast fp8_matrix_mult` alike, though it sampled 24 to 30 percent faster,
+  so `"on"` is unsafe there and the default stays `"auto"`. FP8 speed on GB10
+  comes from comfy-kitchen files: the Krea2 Turbo fp8_scaled file sampled in
+  65 s against 73 s for BF16 at one-step NRMS 0.068, while a BF16 file cast to
+  `fp8_e4m3fn_fast` drifted past the 0.10 floor
   ([Models](docs/MODELS.md#fp8-compute-paths),
   [VALIDATION](docs/VALIDATION.md#fp8-compute-paths),
   [TROUBLESHOOTING #141](docs/TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).

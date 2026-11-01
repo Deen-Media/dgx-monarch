@@ -7330,9 +7330,14 @@ ComfyUI's own code.
 
 ## 141. FP8 renders run no faster than BF16
 
-**Symptom:** an FP8 checkpoint renders at about its BF16 speed, or slower, on
-the driver or on the cluster, and setting `--fast fp8_matrix_mult` on the
+**Symptom A.** An FP8 checkpoint renders at about its BF16 speed, or slower,
+on the driver or on the cluster, and setting `--fast fp8_matrix_mult` on the
 ComfyUI command line changes nothing on a DGX Monarch graph.
+
+**Symptom B.** A render comes out as a full-frame speckle field, noise where
+the prompt's subject should be, after you passed `--fast fp8_matrix_mult` to
+ComfyUI, set `fp8_matrix_mult = "on"` in `[worker_args]`, or picked
+`fp8_e4m3fn_fast` on the loader of a plain FP8 file.
 
 **Cause:** FP8 storage does not mean FP8 compute. ComfyUI picks a model's
 operations class when it builds the model, and the class decides whether the
@@ -7341,7 +7346,11 @@ matmuls run in FP8 ([MODELS.md](MODELS.md#fp8-compute-paths)):
 - A plain FP8 file, with FP8 weights and no comfy-kitchen metadata, takes
   `manual_cast` unless the loader's weight dtype is `fp8_e4m3fn_fast` or the
   process runs with `--fast fp8_matrix_mult`. `manual_cast` dequantizes every
-  FP8 weight to BF16 for every matmul.
+  FP8 weight to BF16 for every matmul: correct output at BF16 speed.
+- Under either of those, the file takes `fp8_ops`, ComfyUI's FP8 matmul path,
+  instead. On GB10 that path renders noise: on 2026-10-31 Qwen-Image 2512 FP8
+  came out as a speckle field on `fp8_ops` in the actors and in the driver
+  alike ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
 - A file with comfy-kitchen metadata runs comfy-kitchen's kernels whatever the
   flags say, and a layer whose record sets `full_precision_matrix_mult`
   dequantizes to BF16. Some fp8_scaled releases set it on every layer.
@@ -7359,14 +7368,19 @@ journalctl --user -u dgxm-worker.service | grep "FP8 compute:"
 Worker services started with `dgxm up` log to
 `~/.local/state/dgx-monarch/worker-loop.log` instead.
 
+- `picked fp8_ops for weights stored as float8_e4m3fn`: the path that renders
+  a plain FP8 file as noise on GB10, and a BF16 file cast at load as an image
+  past the fidelity floor. Turn it off: drop `--fast fp8_matrix_mult` from the
+  ComfyUI command line, take `fp8_matrix_mult = "on"` out of `[worker_args]`,
+  and set the loader's weight dtype back to `default`. When a shared
+  workflow's loader asks for `fp8_e4m3fn_fast`, `fp8_matrix_mult = "off"`
+  builds it on the dequantizing path in the actors. A changed `[worker_args]`
+  value drops each actor's resident models, so the next render loads them
+  again.
 - `picked manual_cast for weights stored as float8_e4m3fn`: the dequantizing
-  path. For the actors, set `fp8_matrix_mult = "on"` in `[worker_args]`, or
-  pick `fp8_e4m3fn_fast` on the DGX Monarch loader; for the driver's own
-  loads, start ComfyUI with `--fast fp8_matrix_mult`
-  ([scripts/README.md](../scripts/README.md)). A changed `[worker_args]` value
-  drops each actor's resident models, so the next render loads them again.
-- `picked fp8_ops for weights stored as float8_e4m3fn`: the FP8 matmul path
-  already runs.
+  path. It renders correctly, so keep it. For FP8 speed, use a file with
+  comfy-kitchen metadata, such as the family's fp8_scaled release where one
+  exists.
 - `picked mixed_precision_ops for comfy-kitchen quantized weights`: no flag
   changes this file. Run `python tools/fp8_paths.py` on it to count the layers
   that set `full_precision_matrix_mult`. When most do, the file computes in
@@ -7377,5 +7391,7 @@ Worker services started with `dgxm up` log to
 
 The `FP8 matmul (actors)` row of `dgxm doctor` shows what cluster.toml asks of
 the actors; doctor attaches no mesh, so only the log line says what a build
-picked. Whether `fp8_ops` is faster on GB10, and how far its output moves, is
-not measured yet ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
+picked. On 2026-10-31 `fp8_ops` sampled plain FP8 24 to 30 percent faster than
+the dequantizing path and rendered noise, while the Krea2 Turbo fp8_scaled file
+sampled 11 percent faster than BF16 inside the fidelity floor
+([VALIDATION](VALIDATION.md#fp8-compute-paths)).

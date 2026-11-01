@@ -2513,10 +2513,13 @@ whole renders of a 29-frame, 4-step cell and compare with nothing above.
 
 ## FP8 compute paths
 
-**Status: NOT RUN.** No render in this record has run ComfyUI's `fp8_ops` path
-on GB10, in the driver or in an actor, and no render has run with
-`[worker_args] fp8_matrix_mult` set. The rows below are the leg that will
-measure it; each reads NOT RUN until a dated run replaces it.
+**Status: the core subset ran on 2026-10-31. The other cells are NOT RUN.**
+The 17 core cells ran on dev 7b5b59e, deployed to both Workers, with ComfyUI
+0.43.0 and torch 2.12.0+cu132. The head ran its 2100 MHz cap and the sibling
+ran uncapped. ComfyUI's FP8 matmul path, `fp8_ops`, rendered plain FP8 as
+noise, in the actors and in the driver alike. The one FP8 route that sampled
+faster than BF16 inside the 0.10 floor was the Krea2 Turbo fp8_scaled file.
+The other 32 cells of the 49-cell matrix did not run.
 
 ComfyUI 0.43.0 picks a model's operations class when it builds the model
 ([MODELS](MODELS.md#fp8-compute-paths)): a checkpoint with comfy-kitchen
@@ -2527,55 +2530,122 @@ otherwise. The actors start ComfyUI without its argument list, so the flag
 reaches only the driver's own loads, and `fp8_matrix_mult` is the actors'
 switch. On 2026-10-31 `tools/fp8_paths.py` read every candidate below from its
 header on the head and confirmed its path, and its rule check passed against
-the ComfyUI 0.43.0 checkout (426f5eea5). Two of the brief's candidates are
-not FP8 compute files at all: the Wan 2.1 T2V 14B fp8_scaled file marks all
-406 of its layers `full_precision_matrix_mult`, so it computes in BF16 under
-every setting, and the Krea2 fp8_scaled files mark 96 of their 256 layers so.
+the ComfyUI 0.43.0 checkout (426f5eea5). Two of the candidates are not FP8
+compute files at all: the Wan 2.1 T2V 14B fp8_scaled file marks all 406 of its
+layers `full_precision_matrix_mult`, so it computes in BF16 under every
+setting, and the Krea2 fp8_scaled files mark 96 of their 256 layers so.
 Qwen-Image 2512, HunyuanImage 2.1 and Wan 2.1 T2V 14B have no BF16 file on
 the head; their cells compare against the same file without the feature, and
 the Krea2 BF16 cells give the FP8 paths a BF16 reference on the same weights.
 
-**Method.** One driver session per cell, started through the maintained
-launcher with `--fast fp8_matrix_mult` where the cell names it and never with
-`--bf16-unet`, which upcasts FP8 at load. The cell sets `fp8_matrix_mult` in
-the cluster file for that session and restores the file afterwards. Each cell
-renders its template once in full and once cut to one step, at a fixed seed
-per family, and keeps the latent and the decoded pixels. Fidelity is the
-one-step NRMS (rms of the difference over the reference's standard
-deviation, the 0.10 floor of `benchmark/gates.py`) and the pixel NRMS of the
-full render, against the BF16 control where one exists and against the same
-file and layout at the baseline setting. Speed is the wall and sampling time of
-the full render. 1 Hz samplers record MemAvailable and each GPU process on
-both hosts. The `FP8 compute:` lines of the driver log and both Worker journals
-name the class each build picked, so every row states which path it measured.
-The head runs its 2100 MHz cap. `auto_gate` and `slab_weights` are off: the
-leg measures compute paths on stock residency, not residency.
+**Method.** Each cell started one driver through the maintained launcher,
+whose profile passes `--disable-pinned-memory --disable-async-offload
+--reserve-vram 2 --bf16-vae --bf16-text-enc --dont-upcast-attention`. The
+three cells that name the flag added `--fast fp8_matrix_mult` after `--`, and
+no cell passed `--bf16-unet`, which upcasts FP8 at load. The harness read each
+driver's argument list back from the running process, and all 17 matched
+their cells. Each cell set `fp8_matrix_mult` in the cluster file for its
+session and restored the file afterwards. A setting of "none" below means the
+key unset (`auto`), the loader's default weight dtype and no flag. The
+one-GPU cells ran a local actor on the head beside the driver, the uly2 cells
+ran one rank on each Spark, and the stock cells ran a stock graph in the
+ComfyUI process with no actor. `auto_gate`, `slab_weights`, `comfy_managed`
+and `compile_dit` were off, so every actor loaded on stock residency. Each
+cell rendered its template once cut to one step and once in full, at seed
+1031: Qwen-Image 2512 at 20 steps, Krea2 Turbo and Wan 2.1 at their
+templates' steps, Wan at 33 frames. Fidelity is the one-step latent NRMS (rms
+of the difference over the reference's standard deviation, the 0.10 floor of
+`benchmark/gates.py`) and the pixel NRMS of the full render (rms of the
+difference over the reference's rms), against the same file and layout
+without the feature and against the BF16 control where one exists.
+"Identical" means every element equal. Sampling is the actor's own sample
+time for the full render. Wall is the harness's time for the full render,
+which it polls every 5 s; the stock cells have no actor, so they report wall
+only. 1 Hz samplers recorded MemAvailable and each GPU process on both hosts,
+under an 8 GiB watchdog that never fired. The `FP8 compute:` lines of the
+driver log and both Worker journals named the class each build picked. The
+head's SM clock read 2093 MHz at the start of every leg.
 
-| Group | File | Loader weight_dtype | `--fast fp8_matrix_mult` | `fp8_matrix_mult` | Layouts | What it measures | Status |
+**Results (2026-10-31).**
+
+| Cell | File | Setting | Layout | Class logged | Sampling, s | Wall, s | One-step NRMS | Pixel NRMS | Lowest MemAvailable, GiB, head / sibling | Actor GPU peak, GiB |
+|---|---|---|---|---|---|---|---|---|---|---|
+| qA_1_unset | Qwen-Image 2512 FP8 | none | one GPU | `manual_cast` | 105.9 | 110 | reference | reference | 63.8 / 114.2 | 20.3 |
+| qA_1_on | Qwen-Image 2512 FP8 | `fp8_matrix_mult = "on"` | one GPU | `fp8_ops` | 80.8 | 85 | 6.90 against qA_1_unset | 1.89 | 63.2 / 114.4 | 20.1 |
+| qA_u2_unset | Qwen-Image 2512 FP8 | none | uly2 | `manual_cast` on both Workers | 80.4 | 85 | reference | reference | 62.3 / 82.5 | 21.6 each |
+| qA_u2_on | Qwen-Image 2512 FP8 | `fp8_matrix_mult = "on"` | uly2 | `fp8_ops` on both Workers | 55.9 | 60 | 6.90 against qA_u2_unset | 1.89 | 62.5 / 76.4 | 21.6 each |
+| qA_1_ldfast_off | Qwen-Image 2512 FP8 | loader `fp8_e4m3fn_fast`, `fp8_matrix_mult = "off"` | one GPU | `manual_cast` | 108.9 | 110 | identical to qA_1_unset | identical | 62.5 / 114.2 | 20.3 |
+| qA_u2_drvfast | Qwen-Image 2512 FP8 | driver `--fast fp8_matrix_mult` | uly2 | `manual_cast` on both Workers | 79.9 | 85 | identical to qA_u2_unset | identical | 62.7 / 82.8 | 21.6 each |
+| kB_1_bf16 | Krea2 Turbo BF16 | none | one GPU | `disable_weight_init` | 72.9 | 75 | reference | reference | 52.7 / 114.4 | 25.7 |
+| kB_1_cast | Krea2 Turbo BF16 | loader `fp8_e4m3fn` | one GPU | `manual_cast` | 75.9 | 80 | 0.055 against kB_1_bf16 | 0.32 | 69.1 / 114.4 | 13.9 |
+| kB_1_castfast | Krea2 Turbo BF16 | loader `fp8_e4m3fn_fast` | one GPU | `fp8_ops` | 59.8 | 65 | 0.206 against kB_1_cast, 0.191 against kB_1_bf16 | 0.41, 0.42 | 65.4 / 114.4 | 13.8 |
+| kC_1_unset | Krea2 Turbo fp8_scaled | none | one GPU | `mixed_precision_ops` | 65.2 | 70 | 0.068 against kB_1_bf16 | 0.40 | 76.1 / 114.4 | 14.1 |
+| kC_1_on | Krea2 Turbo fp8_scaled | `fp8_matrix_mult = "on"` | one GPU | `mixed_precision_ops` | 63.1 | 65 | identical to kC_1_unset; 0.068 against kB_1_bf16 | identical; 0.40 | 77.6 / 114.4 | 14.1 |
+| wC_1_unset | Wan 2.1 T2V 14B fp8_scaled, 33 frames | none | one GPU | `mixed_precision_ops` | 301.6 | 310 | reference | reference | 77.7 / 114.4 | 16.9 |
+| wC_1_on | Wan 2.1 T2V 14B fp8_scaled, 33 frames | `fp8_matrix_mult = "on"` | one GPU | `mixed_precision_ops` | 304.7 | 315 | identical to wC_1_unset | identical | 79.5 / 114.4 | 16.9 |
+| qD_plain | Qwen-Image 2512 FP8, stock graph | none | the driver | `manual_cast` | no actor | 110 | reference | reference | 79.9 / 114.4 | no actor |
+| qD_fast | Qwen-Image 2512 FP8, stock graph | `--fast fp8_matrix_mult` | the driver | `fp8_ops` | no actor | 85 | 6.90 against qD_plain | 1.89 | 79.9 / 114.4 | no actor |
+| kD_bf16 | Krea2 Turbo BF16, stock graph | none | the driver | `disable_weight_init` | no actor | 75 | reference | reference | 75.0 / 114.4 | no actor |
+| kD_bf16_fast | Krea2 Turbo BF16, stock graph | `--fast fp8_matrix_mult` | the driver | `fp8_ops`, its linears on the cast path | no actor | 75 | identical to kD_bf16 | identical | 75.3 / 114.4 | no actor |
+
+What the core shows:
+
+- Plain FP8 on `fp8_ops` renders noise on this GPU and build. Qwen-Image 2512
+  sampled 24 percent faster than on the dequantizing path on one GPU and 30
+  percent faster on uly2, but its one-step NRMS was 6.90 and its pixel NRMS
+  1.89. The figures are the same in the actors on one GPU, in the actors on
+  uly2 and in the driver under `--fast fp8_matrix_mult`. The maintainer
+  checked the saved images by eye: each `fp8_ops` render is a full-frame
+  speckle field where the reference shows the prompt's street scene. The knob
+  is not the cause, since the driver's own stock path renders the same noise.
+- A BF16 file cast to FP8 at load stays inside the floor only on the
+  dequantizing path. `fp8_e4m3fn` read 0.055 against BF16 and cut the actor's
+  GPU peak from 25.7 to 13.9 GiB, but sampled 4 percent slower.
+  `fp8_e4m3fn_fast` sampled 18 percent faster and rendered a plausible image,
+  but read 0.191 against BF16 and 0.206 against the cast, past the floor.
+- The Krea2 Turbo fp8_scaled file sampled 11 percent faster than BF16, 65.2 s
+  against 72.9 s, at 0.068 against BF16, inside the floor, with a 14.1 GiB
+  actor peak. Its comfy-kitchen metadata sends 160 of its 256 quantized
+  layers to comfy-kitchen's kernels and marks the other 96 full precision.
+- The switches behave as built. `off` turned the loader's `fp8_e4m3fn_fast`
+  back into the dequantizing path with identical output. The driver flag left
+  the uly2 actors' output identical. `on` changed neither kitchen file, and
+  their sampling times moved by 2.1 s and 3.1 s. On the BF16 file the driver
+  flag picked `fp8_ops`, but its linears kept the cast path, with identical
+  output and the same wall.
+- Full-render pixel NRMS against BF16 was 0.32 to 0.42 for every FP8 route on
+  Krea2 Turbo, the fp8_scaled file included. The floor applies to the one-step
+  figure.
+- The head's lowest MemAvailable was 52.7 to 79.9 GiB, lowest in the BF16
+  Krea2 cell. The sibling moved only in the uly2 cells, to 76.4 to 82.8 GiB.
+
+**Not run.** The core decided the question, so the other 32 cells of the
+49-cell matrix were not run: HunyuanImage 2.1 plain FP8 would repeat the
+Qwen-Image rows, and the Chroma and Ideogram4 kitchen files the Krea2
+fp8_scaled rows.
+
+| Group | File | Loader weight_dtype | `--fast fp8_matrix_mult` | `fp8_matrix_mult` | Layouts | What it would measure | Status |
 |---|---|---|---|---|---|---|---|
-| A | Qwen-Image 2512 FP8 | default | off | auto | single, uly2, cfg2 | the dequantizing path, the baseline | NOT RUN |
-| A | Qwen-Image 2512 FP8 | default | off | on | single, uly2, cfg2 | `fp8_ops` in the actors | NOT RUN |
+| A | Qwen-Image 2512 FP8 | default | off | auto, on | cfg2 | the plain FP8 pair on cfg2 | NOT RUN |
 | A | Qwen-Image 2512 FP8 | fp8_e4m3fn_fast | off | auto | single | the loader route to `fp8_ops`, against `on` | NOT RUN |
-| A | Qwen-Image 2512 FP8 | fp8_e4m3fn_fast | off | off | single | `off` turns the loader's request into the dequantizing path | NOT RUN |
-| A | Qwen-Image 2512 FP8 | default | on | auto | uly2 | the driver flag does not reach the actors | NOT RUN |
 | A | HunyuanImage 2.1 FP8 | default | off | auto, on | single, uly2, cfg2 | the same pair on a second plain FP8 family | NOT RUN |
-| B | Krea2 Turbo BF16 | default, fp8_e4m3fn, fp8_e4m3fn_fast | off | auto | single, uly2, cfg2 | BF16, the FP8 cast dequantized and the FP8 cast on `fp8_ops`, on the same weights | NOT RUN |
+| B | Krea2 Turbo BF16 | default, fp8_e4m3fn, fp8_e4m3fn_fast | off | auto | uly2, cfg2 | the BF16 file and its two FP8 casts on the pair | NOT RUN |
 | B | Krea2 Turbo BF16 | default | off | on | single | what `on` costs a BF16 model, whose linears keep the cast path | NOT RUN |
-| C | Krea2 Turbo fp8_scaled | default | off | auto, on | single, uly2, cfg2 | a kitchen file: no change expected | NOT RUN |
-| C | Chroma1-HD fp8mixed, Ideogram4 fp8_scaled pair, Wan 2.1 T2V 14B fp8_scaled | default | off | auto, on | single | the same on three more kitchen files | NOT RUN |
+| C | Krea2 Turbo fp8_scaled | default | off | auto, on | uly2, cfg2 | the kitchen file on the pair | NOT RUN |
+| C | Chroma1-HD fp8mixed, Ideogram4 fp8_scaled pair | default | off | auto, on | single | the same on two more kitchen files | NOT RUN |
 | C | Krea2 Turbo fp8_scaled, Chroma1-HD fp8mixed, Ideogram4 fp8_scaled pair, Wan 2.1 T2V 14B fp8_scaled | fp8_e4m3fn_fast | off | auto | single | what the loader's FP8 dtype does to the weights comfy-kitchen leaves unquantized | NOT RUN |
 | C | Chroma1-HD BF16, Ideogram4 BF16 pair | default | off | auto | single | the BF16 references for Chroma and Ideogram4 | NOT RUN |
-| D | Qwen-Image 2512 FP8, stock graph | default, fp8_e4m3fn_fast | off, on | none | the ComfyUI process, one GPU | the driver's own path | NOT RUN |
-| D | Krea2 Turbo BF16, stock graph | default | off, on | none | the ComfyUI process, one GPU | what `fp8_ops` costs a BF16 model on the cast path | NOT RUN |
+| D | Qwen-Image 2512 FP8, stock graph | fp8_e4m3fn_fast | off, on | none | the ComfyUI process, one GPU | the loader route in the driver, alone and with the flag | NOT RUN |
 
-**What the outcome changes.** If `fp8_ops` renders a plain FP8 file
-measurably faster than the dequantizing path, with one-step NRMS against it
-inside the 0.10 floor on every layout, MODELS.md recommends
-`fp8_matrix_mult = "on"` for plain FP8 files and `--fast fp8_matrix_mult` for
-the driver's own loads, and the launch notes say so. If it is no faster, or
-moves the output past the floor, the launch notes say the plain FP8 path is the
-slow one and the knob stays at `auto`. The kitchen rows check that neither
-switch changes those files; a change there is a finding against this record.
+**What the result changes.** The plain FP8 path is not a method on GB10, so
+the knob stays at `auto`. [MODELS](MODELS.md#fp8-compute-paths) and
+[CLUSTER](CLUSTER.md#worker_args-optional) mark `on` unsafe on GB10, the
+[launch notes](../scripts/README.md#fp8-compute-flag) say
+`--fast fp8_matrix_mult` is not recommended there, and
+[TROUBLESHOOTING #141](TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)
+names the noise and its fix. The kitchen rows changed under neither switch, as
+predicted. A later torch or ComfyUI build reopens the question: rerun the
+Qwen-Image cells of groups A and D before any doc recommends `on`.
 
 ## Item 6 probes: NVFP4 GEMM and Sol-Attn (2026-10-31)
 

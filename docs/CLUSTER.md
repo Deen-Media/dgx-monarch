@@ -427,8 +427,10 @@ an actor builds the loader option that flag stands in for, so a plain FP8
 checkpoint runs `torch._scaled_mm`; `"off"` builds a loader's `fp8_e4m3fn_fast`
 as `fp8_e4m3fn`; `"auto"`, the default, follows each loader's weight dtype. A
 checkpoint with comfy-kitchen quantization metadata runs comfy-kitchen's
-kernels under all three. Leave the key out for the default: writing it changes
-every render's capability context like any key here. ComfyUI picks the path
+kernels under all three. Do not set `"on"` on GB10: there ComfyUI's FP8 matmul
+renders plain FP8 checkpoints as noise
+([MODELS.md](MODELS.md#fp8-on-gb10)). Leave the key out for the default:
+writing it changes every render's capability context like any key here. ComfyUI picks the path
 when it builds a model, so a changed value drops each actor's resident models,
 and the next render loads them again. The `FP8 matmul (actors)` row of
 `dgxm doctor` shows the value, `dgxm status` prints it when the file sets the
