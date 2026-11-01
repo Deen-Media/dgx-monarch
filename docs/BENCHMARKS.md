@@ -798,7 +798,7 @@ Times are minutes:seconds, the wall with sampling in parentheses:
 | Sibling alone | 15 s | exact | pruned NVFP4 | 97:31 (77:47) | not run |
 | Head beside the driver | 10 s | exact | pruned INT8 | 52:10 (40:55) | not run |
 | Head beside the driver | 10 s | exact | pruned NVFP4 | 51:10 (40:04) | not run |
-| Head beside the driver | 15 s | exact | pruned INT8 | refused before loading | not run |
+| Head beside the driver | 15 s | exact | pruned INT8 | 105:51 (84:38), on 2026-10-31 at dev `4b71822` | not run |
 
 Memory in GiB: each actor's GPU memory peak, the driver's GPU memory peak, and
 the lowest MemAvailable each host read during the cell's renders:
@@ -820,6 +820,7 @@ the lowest MemAvailable each host read during the cell's renders:
 | Sibling alone | 15 s | NVFP4 | 32.8 | 19.8 | 83.3 | 77.3 |
 | Head beside the driver | 10 s | exact | 30.1 | 19.8 | 52.6 | not used |
 | Head beside the driver | 10 s | NVFP4 | 25.0 | 19.8 | 55.6 | not used |
+| Head beside the driver | 15 s | exact, on 2026-10-31 | 35.0 | 19.8 | 45.9 | not used |
 
 In the memory table the pair's 15 s exact row counts the two renders of
 2026-10-30, the first of which the sample timeout cut off. The measured
@@ -864,15 +865,22 @@ What the rows show, and what they do not:
   `DGXM_SAMPLE_TIMEOUT=14400`.
 - **The head beside the driver.** At 10 s it sampled about 6 percent slower
   than the sibling alone. The head carries the clock cap and the driver, and
-  these rows do not separate the two. The loader
-  refused the 15 s clip there before loading, 10.8 GiB short on the
-  activation charge of that day
-  ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30));
-  the 2026-10-31 refit admits it there with 37.1 GiB to spare, on paper
-  ([VALIDATION](VALIDATION.md#h3-capacity)).
+  these rows do not separate the two. In the suite the loader refused the
+  15 s clip there before loading, 10.8 GiB short on the activation charge of
+  that day. After the 2026-10-31 refit, which admits it with 37.1 GiB to
+  spare, it rendered there on 2026-10-31 in 105:51 with both driver
+  preflights on, the head at 45.9 GiB free at its lowest. Its 84:38 of
+  sampling ran about 7 percent slower than the sibling alone's 79:25 the
+  same day
+  ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30)).
 - **BF16 did not render.** Every attempt with the 61.7 GiB BF16 file
   refused, on every layout, and slab rescue on the pair ended in a refusal
   too ([VALIDATION](VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
+  On 2026-10-31, after the rescue change and the refit, the file rendered at
+  5 s as one rank on the head beside the driver with both driver preflights
+  on, through the capacity rescue: 22:30 (16:02), the head at 15.8 GiB free
+  at its lowest, during the driver's VAE decode
+  ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30)).
 - **Lowest free memory.** Among renders that completed, the head's lowest
   reading was 35.5 GiB, with the unpruned file beside the driver, and the
   sibling's 55.1 GiB. The BF16 rescue attempts went lower, to 15.1 GiB on the
