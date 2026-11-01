@@ -232,7 +232,8 @@
   within a 2 GiB budget. Each decode logs whether it split and over how many
   ranks, and `dgxm doctor` shows the last one. The key stays out of the
   Gate's contexts and the trust fingerprint. CPU tests compare bytes against
-  real ComfyUI; the hardware compare is NOT RUN
+  real ComfyUI. On the pair, MiniMax H3, Wan 2.1 and LTX 2.5 passed the
+  hardware byte compare on 2026-10-31, and the other families are unchecked
   ([Models](docs/MODELS.md#worker-assisted-vae-decode),
   [VALIDATION](docs/VALIDATION.md#worker-assisted-vae-decode),
   [TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
