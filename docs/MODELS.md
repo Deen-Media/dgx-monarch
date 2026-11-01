@@ -1707,7 +1707,7 @@ are unchecked
 
 | family | VAE files the templates load | splits under | unit | hardware byte compare |
 |---|---|---|---|---|
-| MiniMax H3 video | `minimax_h3_video_vae_fp16.safetensors` | VAE Decode and VAE Decode (Tiled), which run the same decode on this VAE | one temporal chunk, which the VAE tiles inside | passed 2026-10-31: 124 of 124 frames at 1344x768 |
+| MiniMax H3 video | `minimax_h3_video_vae_fp16.safetensors` | VAE Decode and VAE Decode (Tiled), which run the same decode on this VAE | one temporal chunk, which the VAE tiles inside | passed 2026-11-01: 124 of 124 frames at 1344x768, saved as PNG straight from the decoder |
 | Wan 2.1 (also Wan 2.2 14B, FlowRVS, SCAIL, WanDancer, Wan-Animate 2) | `wan_2.1_vae.safetensors`, `Wan2_1_VAE_bf16.safetensors`, `wan21_flow_rvs_mask_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | passed 2026-10-31 with `wan_2.1_vae.safetensors`, 33 of 33 frames. The other two files are unchecked. |
 | Wan 2.2 TI2V | `Wan2_2_VAE_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
 | HunyuanVideo 1.0 (also Kandinsky5 Video) | `hunyuan_video_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |

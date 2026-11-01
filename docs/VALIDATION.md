@@ -2706,8 +2706,9 @@ against real ComfyUI with simulated ranks and compares bytes for 1-D, 2-D and
 3-D tiles, odd sizes and overlaps, the Wan and MiniMax H3 index formulas, a
 batch of two, a single tile, more ranks than tiles, more tiles than ranks, and
 ranks that raise, decline, time out or answer in the wrong dtype. On the pair,
-the byte compare passed for MiniMax H3, Wan 2.1 and LTX 2.5 on 2026-10-31. The
-other families are unchecked, and the option stays off by default.
+the byte compare passed for Wan 2.1 and LTX 2.5 on 2026-10-31 and for MiniMax
+H3 on 2026-11-01. The other families are unchecked, and the option stays off
+by default.
 
 **Method.** Each graph rendered twice at seed 1031 on the pair, uly2: once
 with `[worker_args] worker_vae_decode` absent, so the driver decoded alone,
@@ -2715,17 +2716,25 @@ and once with `"auto"`. ComfyUI restarted between the two renders. The driver
 ran with `--use-sage-attention`, `--bf16-vae` and `--bf16-text-enc`, whose
 attention and VAE dtype a Worker must adopt, and the head was capped at
 2100 MHz. The driver logged the same latent sha256 for both renders of each
-family, MiniMax H3's audio latent included, so each pair compares the decode
-alone. The MiniMax H3 check compared the frames of the video stream by ffmpeg
-framemd5 and the audio track as ffmpeg-decoded 32-bit float stereo samples.
-The Wan and LTX checks compared the saved PNG frames pixel for pixel as RGB
-arrays, because the PNG files differ only by the prompt ComfyUI embeds. Each
-split decode was the first of its session, so the sibling built its decode VAE
-inside it.
+pair, MiniMax H3's audio latent included, and the MiniMax H3 rerun of
+2026-11-01 sampled the same latents as the renders of 2026-10-31, so each pair
+compares the decode alone. The Wan and LTX graphs save PNG frames, and their
+checks compared those frames pixel for pixel as RGB arrays, because the PNG
+files differ only by the prompt ComfyUI embeds. MiniMax H3 has two checks. On
+2026-10-31 the shipped template saved its mp4, H.264 video at CRF 18 with AAC
+audio, and the check compared the saved video's frames by ffmpeg framemd5 and
+its audio as ffmpeg-decoded 32-bit float stereo samples. Both codecs are lossy
+and could hide a small difference in the decoder's output, so on 2026-11-01
+the same graph ran again with a SaveImage node on the VAE Decode output, which
+saved the 124 frames as PNG straight from the decoder before any encoding.
+That lossless rerun carries the byte claim, and the renders of 2026-10-31 give
+the timing and the saved-output evidence. Each split decode was the first of
+its session, so the sibling built its decode VAE inside it.
 
 | family, graph and node | build and time | frames compared | split line in the driver log | prompt wall, absent / auto |
 |---|---|---|---|---|
-| MiniMax H3 video, 1344x768x124, 20 steps, pruned INT8 ConvRot; `dgx-monarch-minimax-h3-mp4.json`, VAE Decode as shipped | dev `746a229`, 2026-10-31 10:25 to 10:49 | 124 of 124 identical, and the audio track sample-identical | `7 units, 3 here, 4 on rank 1, 39.3 s` | 570.1 s / 530.1 s |
+| MiniMax H3 video, 1344x768x124, 20 steps, pruned INT8 ConvRot; `dgx-monarch-minimax-h3-mp4.json` with a SaveImage node on the VAE Decode output | dev `4b71822`, 2026-11-01 09:53 to 10:16 | 124 of 124 PNG frames pixel-identical | `7 units, 3 here, 4 on rank 1, 39.9 s` | 670.5 s / 535.2 s |
+| MiniMax H3 video, saved streams; `dgx-monarch-minimax-h3-mp4.json` as shipped, VAE Decode | dev `746a229`, 2026-10-31 10:25 to 10:49 | saved streams: 124 of 124 H.264 frames identical by framemd5, and the AAC audio sample-identical | `7 units, 3 here, 4 on rank 1, 39.3 s` | 570.1 s / 530.1 s |
 | Wan 2.1 T2V 14B fp8_scaled, 832x480x33; `dgx-monarch-wan-t2v.json`, VAE Decode (Tiled) swapped in for VAE Decode | dev `4b71822`, 2026-10-31 22:10 to 22:20 | 33 of 33 pixel-identical | `2 units, 1 here, 1 on rank 1, 3.7 s` | 260.1 s / 210.2 s |
 | LTX 2.5 22B distilled INT8 ConvRot t2v, 1280x704x121; `dgx-monarch-ltx25-t2v.json`, VAE Decode (Tiled) as shipped | dev `4b71822`, 2026-10-31 22:21 to 22:27 | 121 of 121 pixel-identical | `18 units, 7 here, 11 on rank 1, 18.8 s` | 120.1 s / 110.1 s |
 | Wan 2.2 TI2V; no template ships, a Wan 2.2 TI2V graph with VAE Decode (Tiled) | not run | NOT RUN | not run | not run |
@@ -2733,40 +2742,41 @@ inside it.
 | HunyuanVideo 1.5; `dgx-monarch-hunyuan-video.json`, node swapped | not run | NOT RUN | not run | not run |
 | LTX 2.3; `dgx-monarch-ltx-i2v-av.json`, VAE Decode (Tiled) as shipped | not run | NOT RUN | not run | not run |
 
-What the three rows show:
+What the rows show:
 
-- **Speed.** The two MiniMax H3 renders sampled for 452.5 and 452.3 s, and
-  execution fell by 37.7 s with the split, so the driver alone took about
-  77 s against the split's 39.3 s. The head's 1 Hz memory trace agrees: the
-  driver's GPU memory rose as the decode began and fell 77 s later in the
-  absent render and 39 s later in the auto render. For LTX 2.5 the record
-  holds the prompt walls, 120.1 s against 110.1 s, and the split's 18.8 s,
-  but no driver-alone decode time. The Wan walls do not time the decode: the
-  absent render ran the identity gate's two proof renders first, 43.3 s, and
-  the split decode took 3.7 s.
+- **Speed.** The two MiniMax H3 renders of 2026-10-31 sampled for 452.5 and
+  452.3 s, and execution fell by 37.7 s with the split, so the driver alone
+  took about 77 s against the split's 39.3 s. The head's 1 Hz memory trace
+  agrees: the driver's GPU memory rose as the decode began and fell 77 s
+  later in the absent render and 39 s later in the auto render. For LTX 2.5
+  the record holds the prompt walls, 120.1 s against 110.1 s, and the split's
+  18.8 s, but no driver-alone decode time. The Wan walls and the MiniMax H3
+  walls of 2026-11-01 do not time the decode: each absent render ran the
+  identity gate's two proof renders first, 43.3 s for Wan and 101.1 s for
+  MiniMax H3, and the split decodes took 3.7 s and 39.9 s.
 - **Audio.** The audio VAEs of MiniMax H3 and LTX 2.5 stay on the driver, and
-  their decodes logged `not split`, as designed. The MiniMax H3 audio track,
-  decoded to samples, came out identical in both renders. The two mp4 files
-  still differ in bytes, so compare the decoded streams, not the files.
-- **Memory, MiniMax H3.** The sibling's lowest MemAvailable fell from 78.7 to
-  72.9 GiB with the split, for its decode VAE and the units in flight, and
-  after the render it read 74.0 GiB against 78.8, which is the resident decode
-  VAE. The head's lowest fell from 51.0 to 49.5 GiB, and each actor's GPU peak
-  stayed between 26.8 and 27.1 GiB. The Wan and LTX legs ran no memory
-  sampler.
+  their decodes logged `not split`, as designed. In the MiniMax H3 renders of
+  2026-10-31 the saved AAC track, decoded to samples, came out identical. The
+  two mp4 files still differ in bytes, so compare the decoded streams, not the
+  files.
+- **Memory, MiniMax H3, 2026-10-31.** The sibling's lowest MemAvailable fell
+  from 78.7 to 72.9 GiB with the split, for its decode VAE and the units in
+  flight, and after the render it read 74.0 GiB against 78.8, which is the
+  resident decode VAE. The head's lowest fell from 51.0 to 49.5 GiB, and each
+  actor's GPU peak stayed between 26.8 and 27.1 GiB. The Wan, LTX and
+  2026-11-01 MiniMax H3 legs ran no memory sampler.
 
 Not run: the four unchecked rows above; the fail-open check, one decode with
 the VAE file renamed on the sibling, which must log the decline WARNING and
 keep the frames byte-identical; a warm decode, with the decode VAE already
 resident, against the cold ones above; a MiniMax H3 decode with less than
-512 MiB free on one side, where the model batches fewer tiles per call and
-the bytes may differ; whether the 2 GiB reply budget binds, read from the
-decode line's pauses and `render.vae_decode.peak_reply_gib`; and Clear VRAM
-releasing the resident decode VAE. The remaining families take the same
-method. Neither the CPU tests nor the three hardware checks show whether cuDNN
-and cuBLAS choose the same kernels on both boxes at other shapes, how fast a
-173 MB reply crosses Monarch messaging, or how much the pre-touched return
-buffers save.
+512 MiB free on one side, where the model batches fewer tiles per call and the
+bytes may differ; whether the 2 GiB reply budget binds, read from the decode
+line's pauses and `render.vae_decode.peak_reply_gib`; and Clear VRAM releasing
+the resident decode VAE. The remaining families take the same method. Neither
+the CPU tests nor the hardware checks show whether cuDNN and cuBLAS choose the
+same kernels on both boxes at other shapes, how fast a 173 MB reply crosses
+Monarch messaging, or how much the pre-touched return buffers save.
 
 ## Memory calibration
 
