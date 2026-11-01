@@ -1757,10 +1757,11 @@ logs one line saying whether it split and why not
   compare matched; a decode with less than 512 MiB free on one side is
   unchecked.
 - On the pair a 124-frame MiniMax H3 decode at 1344x768 took 39.3 s split
-  against about 77 s in the driver alone, and a 121-frame LTX 2.5 decode at
-  1280x704 18.8 s against about 34 s. Both split figures include the sibling
-  building its decode VAE, and each MiniMax H3 chunk carries about 173 MB of
-  pixels back to the driver ([BENCHMARKS](BENCHMARKS.md#worker-assisted-vae-decode)).
+  against about 77 s in the driver alone. A 121-frame LTX 2.5 decode at
+  1280x704 took 18.8 s split, in a prompt that ran 110.1 s against 120.1 s
+  without the split. Both split figures include the sibling building its
+  decode VAE, and each MiniMax H3 chunk carries about 173 MB of pixels back to
+  the driver ([BENCHMARKS](BENCHMARKS.md#worker-assisted-vae-decode)).
 
 ## Model-adoption quant artifact catalog
 

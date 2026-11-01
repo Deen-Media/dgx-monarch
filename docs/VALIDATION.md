@@ -2717,14 +2717,15 @@ attention and VAE dtype a Worker must adopt, and the head was capped at
 2100 MHz. The driver logged the same latent sha256 for both renders of each
 family, MiniMax H3's audio latent included, so each pair compares the decode
 alone. The MiniMax H3 check compared the frames of the video stream by ffmpeg
-framemd5, and the Wan and LTX checks compared the saved PNG frames pixel for
-pixel, because those files differ only by the prompt ComfyUI embeds. Each split
-decode was the first of its session, so the sibling built its decode VAE
+framemd5 and the audio track as ffmpeg-decoded 32-bit float stereo samples.
+The Wan and LTX checks compared the saved PNG frames pixel for pixel as RGB
+arrays, because the PNG files differ only by the prompt ComfyUI embeds. Each
+split decode was the first of its session, so the sibling built its decode VAE
 inside it.
 
 | family, graph and node | build and time | frames compared | split line in the driver log | prompt wall, absent / auto |
 |---|---|---|---|---|
-| MiniMax H3 video, 1344x768x124, 20 steps, pruned INT8 ConvRot; `dgx-monarch-minimax-h3-mp4.json`, VAE Decode as shipped | dev `746a229`, 2026-10-31 10:25 to 10:49 | 124 of 124 identical | `7 units, 3 here, 4 on rank 1, 39.3 s` | 570.1 s / 530.1 s |
+| MiniMax H3 video, 1344x768x124, 20 steps, pruned INT8 ConvRot; `dgx-monarch-minimax-h3-mp4.json`, VAE Decode as shipped | dev `746a229`, 2026-10-31 10:25 to 10:49 | 124 of 124 identical, and the audio track sample-identical | `7 units, 3 here, 4 on rank 1, 39.3 s` | 570.1 s / 530.1 s |
 | Wan 2.1 T2V 14B fp8_scaled, 832x480x33; `dgx-monarch-wan-t2v.json`, VAE Decode (Tiled) swapped in for VAE Decode | dev `4b71822`, 2026-10-31 22:10 to 22:20 | 33 of 33 pixel-identical | `2 units, 1 here, 1 on rank 1, 3.7 s` | 260.1 s / 210.2 s |
 | LTX 2.5 22B distilled INT8 ConvRot t2v, 1280x704x121; `dgx-monarch-ltx25-t2v.json`, VAE Decode (Tiled) as shipped | dev `4b71822`, 2026-10-31 22:21 to 22:27 | 121 of 121 pixel-identical | `18 units, 7 here, 11 on rank 1, 18.8 s` | 120.1 s / 110.1 s |
 | Wan 2.2 TI2V; no template ships, a Wan 2.2 TI2V graph with VAE Decode (Tiled) | not run | NOT RUN | not run | not run |
@@ -2738,16 +2739,15 @@ What the three rows show:
   execution fell by 37.7 s with the split, so the driver alone took about
   77 s against the split's 39.3 s. The head's 1 Hz memory trace agrees: the
   driver's GPU memory rose as the decode began and fell 77 s later in the
-  absent render and 39 s later in the auto render. The LTX 2.5 renders sampled
-  for 35.8 and 36.5 s, and outside sampling, execution fell by 15.1 s against
-  an 18.8 s split decode, so the driver alone took about 34 s. No memory trace
-  ran there. The Wan walls do not time the decode: the absent render ran the
-  identity gate's two proof renders first, 43.3 s, and the split decode took
-  3.7 s.
+  absent render and 39 s later in the auto render. For LTX 2.5 the record
+  holds the prompt walls, 120.1 s against 110.1 s, and the split's 18.8 s,
+  but no driver-alone decode time. The Wan walls do not time the decode: the
+  absent render ran the identity gate's two proof renders first, 43.3 s, and
+  the split decode took 3.7 s.
 - **Audio.** The audio VAEs of MiniMax H3 and LTX 2.5 stay on the driver, and
-  their decodes logged `not split`, as designed. The MiniMax H3 check compared
-  the video stream only. The two mp4 files differ in bytes, and the check did
-  not compare their audio tracks on their own.
+  their decodes logged `not split`, as designed. The MiniMax H3 audio track,
+  decoded to samples, came out identical in both renders. The two mp4 files
+  still differ in bytes, so compare the decoded streams, not the files.
 - **Memory, MiniMax H3.** The sibling's lowest MemAvailable fell from 78.7 to
   72.9 GiB with the split, for its decode VAE and the units in flight, and
   after the render it read 74.0 GiB against 78.8, which is the resident decode
