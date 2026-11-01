@@ -881,10 +881,12 @@ What the rows show, and what they do not:
   on, through the capacity rescue: 22:30 (16:02), the head at 15.8 GiB free
   at its lowest, during the driver's VAE decode
   ([VALIDATION](VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30)).
-- **Lowest free memory.** Among renders that completed, the head's lowest
-  reading was 35.5 GiB, with the unpruned file beside the driver, and the
-  sibling's 55.1 GiB. The BF16 rescue attempts went lower, to 15.1 GiB on the
-  head and 36.2 GiB on the sibling.
+- **Lowest free memory in the 2026-10-29 and 30 suite.** Among its renders
+  that completed, the head's lowest reading was 35.5 GiB, with the unpruned
+  file beside the driver, and the sibling's 55.1 GiB. The suite's BF16 rescue
+  attempts went lower, to 15.1 GiB on the head and 36.2 GiB on the sibling.
+  The 2026-10-31 BF16 render above, which completed, went to 15.8 GiB on the
+  head during the driver's VAE decode.
 
 Reported, not reproduced: a single RTX 5090 renders the same 362-frame clip at
 1344x768 in 518.0 s, 8.6 minutes
