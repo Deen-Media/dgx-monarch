@@ -2,6 +2,57 @@
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-11-01
+
+**Upgrading from 1.4.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-140). If a host's
+Workers run from a release slot, use only `dgxm update --verify`
+([TROUBLESHOOTING #118](docs/TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)). The torchmonarch pin, the required
+dependencies and Gate protocol 14 do not change, but a saved Gate grant names
+the package version, so each model, residency and LoRA combination runs its
+first-use Gate again, once
+([TROUBLESHOOTING #114](docs/TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
+INT8 ConvRot linears now run a Triton GEMM kernel by default, with identical
+output. It needs the Python headers on the driver and every Worker host;
+without them a process runs stock CUTLASS and logs one WARNING.
+`[worker_args] int8_gemm = "cutlass"` and `DGXM_INT8_GEMM=cutlass` turn it off
+([TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
+A 1.4.0 checkout refuses a cluster.toml whose `[worker_args]` holds
+`int8_gemm`, `fp8_matrix_mult` or `worker_vae_decode`, so add those keys only
+after the driver and every checkout that reads the file run this release. The
+MiniMax H3 activation preflight now charges each rank an 11.0 GiB floor and
+129,024 bytes per row on the rank, in place of 1,032,192 bytes per row, so
+one Spark admits the 15 second clip, 362 frames at 1344x768. Before a
+render-site capacity check refuses, the driver unloads the models ComfyUI holds
+on its host and asks the actors to release their allocator caches;
+`DGXM_DISABLE_DRIVER_UNLOAD=1` turns both off
+([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+The deadline for a render's sample call grows with the work for MiniMax H3
+and Wan SCAIL, SCAIL-2 and Animate 2, up to six hours, and
+`DGXM_SAMPLE_TIMEOUT` stays the floor
+([TROUBLESHOOTING #139](docs/TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
+A capacity-rescue consent now keeps slab residency when stock residency cannot
+load the checkpoint, and `DGXM_ALLOW_SLAB_RESCUE=1`, `DGXM_AUTO_RESCUE=1` and
+the Auto-allow toggle each count as that consent
+([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
+[#53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+Worker-assisted VAE decode is new and off by default, behind
+`[worker_args] worker_vae_decode`
+([TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+`[worker_args] fp8_matrix_mult` is new, and every model build logs one
+`FP8 compute:` line. Never set it to `"on"` on GB10, where ComfyUI's FP8 matmul
+renders plain FP8 files as noise
+([TROUBLESHOOTING #141](docs/TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
+`compile_dit` no longer forces stock residency on the families it leaves
+eager, Worker services keep torch inductor's compile cache under
+`~/.cache/dgx-monarch/inductor`
+([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)),
+and the Init node says `sync_ulysses` has no effect on the pinned xfuser 0.7.0.
+Studio is a supported interface from this release. Generate now checks the
+draft and starts the job in one action, Grids, Fleet and Operations sit under
+Utilities, and the tester's fourth round renamed Operation to Job category and
+changed Send to edit, the viewer and the telemetry panel. The `studio` extra
+does not change ([Studio](docs/STUDIO.md)).
+
 ### Everyday use
 
 - Studio is a supported interface from this release, beside the CLI, the TUI
@@ -77,9 +128,6 @@
   Create, loads the packaged Fleet workflow and names the next step; before,
   Configure Fleet workflow only set the draft's Operation label and opened
   Create with nothing to act on ([Studio](docs/STUDIO.md#run-many-prompts-with-fleet)).
-- Studio's artifacts route lists outputs with equal creation times most
-  recently stored first, as the snapshot does, so the viewer shows a finished
-  job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 - Studio's viewer shows an image chosen after a video at once. Before, it could
   report "Selected media cannot be decoded by this browser" until another
   output was chosen ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
@@ -199,6 +247,9 @@
 - `compile_dit` no longer forces stock residency on the families it leaves
   eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4; the Init
   tooltip names the families it compiles ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+- Before a render-site capacity check refuses, the driver unloads the models
+  ComfyUI holds on its host, such as the last render's text encoder and VAE,
+  and checks again; set `DGXM_DISABLE_DRIVER_UNLOAD=1` to turn this off ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 - Before a render-site capacity check refuses, the driver now also asks the
   actors to release their allocator caches once ComfyUI's own models are
   unloaded, so a session's second render no longer counts the first render's
@@ -255,12 +306,6 @@
 - Worker services keep torch inductor's compile cache in
   `~/.cache/dgx-monarch/inductor`, so `compile_dit` no longer repeats its
   autotune after a reboot; set `TORCHINDUCTOR_CACHE_DIR` to place it elsewhere ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
-
-### Rendering
-
-- Before a render-site capacity check refuses, the driver unloads the models
-  ComfyUI holds on its host, such as the last render's text encoder and VAE,
-  and checks again; set `DGXM_DISABLE_DRIVER_UNLOAD=1` to turn this off ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 
 ## [1.4.0] - 2026-10-28
 
@@ -372,6 +417,9 @@ and `[studio]` tables and your `[worker_args]` keys, so stop adding them back
   identity, once per snapshot while it may still change and once after it has
   ended, so its status line, failure text and Open Queue link stay, and the
   link makes Queue read the job by its identity and pin its row.
+- Studio's artifacts route lists outputs with equal creation times most
+  recently stored first, as the snapshot does, so the viewer shows a finished
+  job's last output even when the snapshot leaves it out ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 
 ### Installation and updates
 

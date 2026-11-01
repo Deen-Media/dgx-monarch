@@ -292,6 +292,95 @@ persistent Worker identities stayed unchanged and final idle checks passed.
 Native latent-return RDMA was **NOT RUN / HOLD** in this October 11 record;
 see the later [selected-rail checks](#native-rdma).
 
+<a id="release-1-5-0-checks"></a>
+
+## Release 1.5.0 checks
+
+**2026-10-28 to 2026-11-01, two DGX Sparks with GB10 GPUs, the head capped at
+2100 MHz throughout.** The hardware evidence for this release sits in the
+feature records below, each naming the commit it ran on. The last code change
+is `4b71822`; the commits after it change documentation and one comment in
+cluster.example.toml. The release commit adds documentation and the version
+over them; it is not an exact-release-commit hardware retest.
+
+- INT8 GEMM kernel, 2026-10-28 and 29
+  ([record](#int8-gemm-kernel-comparison-2026-10-28-and-29)): the render
+  comparison ran the v1.4.0 build with the Triton kernel patched into every
+  process, and all 1530 frames of its 28 cells came out pixel-identical to
+  stock CUTLASS. The vendored kernel then matched CUTLASS in 240 of 240 GPU
+  cases, in a run whose commit the record does not name, and the merged
+  option on dev `7404677` ran one short render per process kind, each process
+  logging the kernel it took.
+- Driver unload before a render-site refusal, 2026-10-29, on dev `d34d9b0`
+  ([record](#driver-unload-before-a-render-site-refusal-2026-10-29)): the
+  unload freed 19.0 GiB and let a refused render through, and a render that
+  still did not fit refused with the readings taken after the unload.
+- MiniMax H3 speed and memory at 5, 10 and 15 seconds, 2026-10-29 and 30
+  ([BENCHMARKS](BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped),
+  [activation record](#activation-across-clip-lengths-measured-2026-10-29-and-30)):
+  both Workers on dev `e277238` and then `f129c62`, and the pair's first
+  15 second renders on dev `50ad5e9`
+  ([record](#the-15-second-render-measured-2026-10-29)). These rows time
+  renders and read memory; none compares output.
+- BF16 capacity rescue on the head, 2026-10-31, on dev `e4f23be`
+  ([record](#activation-across-clip-lengths-measured-2026-10-29-and-30)): the
+  61.7 GiB file rendered at 1344x768x124 as one rank beside the driver under a
+  `DGXM_AUTO_RESCUE=1` consent, with both driver preflights off for the
+  measurement, and the gate kept slab, INCONCLUSIVE with
+  `cross_mode=CAPACITY`. The rescue attempts of 2026-10-30, before that
+  change, ended refused
+  ([record](#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
+- The refitted H3 price, 2026-10-31, on dev `4b71822` with both driver
+  preflights on
+  ([record](#activation-across-clip-lengths-measured-2026-10-29-and-30)): all
+  three checks passed. The BF16 cell above rendered again in 1350.2 s with
+  only `DGXM_AUTO_RESCUE=1` set, and the 362-frame cell rendered as one rank
+  on the sibling alone in 5971.1 s and as one rank on the head beside the
+  driver in 6351.0 s, where the 2026-10-29 fit refused it.
+- Worker-assisted VAE decode on the pair, uly2
+  ([record](#worker-assisted-vae-decode)), each pair of renders sampling the
+  same latents: MiniMax H3 on dev `746a229` on 2026-10-31, 124 of 124 H.264
+  frames identical by framemd5 and the AAC audio sample-identical, then on
+  dev `4b71822` on 2026-11-01 with the decoder's frames saved as PNG, 124 of
+  124 pixel-identical; Wan 2.1 T2V 14B, 33 of 33 frames, and LTX 2.5, 121 of
+  121, pixel-identical on dev `4b71822` on 2026-10-31.
+- FP8 compute paths, 2026-10-31, on dev `7b5b59e`
+  ([record](#fp8-compute-paths)): 17 core cells. ComfyUI's FP8 matmul path
+  rendered plain FP8 as noise in the actors and in the driver alike, and the
+  Krea2 Turbo fp8_scaled file sampled 11 percent faster than BF16 at a
+  one-step NRMS of 0.068.
+- The item 6 probes, 2026-10-31 on the head
+  ([record](#item-6-probes-nvfp4-gemm-and-sol-attn-2026-10-31)):
+  comfy-kitchen's NVFP4 GEMM stays, and the Sol-Attn lever keeps the sol_attn
+  package. The record names no dgx-monarch commit.
+- Studio: the tester round 4 rows of 2026-10-30
+  ([STUDIO_INTERFACE_QA](STUDIO_INTERFACE_QA.md#tester-round-4-checks-2026-10-30)),
+  each run headless against the CPU event fixture on the bundle its own change
+  built.
+- Verified updates of both Workers on 2026-10-30 and 31 through `e4f23be`,
+  `746a229`, `7b5b59e` and `4b71822`. Both Workers run `4b71822`, and
+  `dgxm doctor` on 2026-11-01 reported 49 checks and 0 failures.
+- **NOT RUN:** the other 32 cells of the 49-cell FP8 matrix; the
+  Worker-assisted VAE decode rows for Wan 2.2 TI2V, HunyuanVideo 1.0 and 1.5
+  and LTX 2.3, with its fail-open check, a warm decode, a MiniMax H3 decode
+  short of memory, the reply budget and Clear VRAM dropping the decode VAE;
+  the BF16 rescue on the pair, on the sibling alone, through the panel click
+  and through `DGXM_ALLOW_SLAB_RESCUE=1` since the rescue change; the driver
+  unload with a pipelined submission behind a render in flight; a full Studio
+  browser round on this release's bundle; every layout at world 4; and the
+  full sweep runbook. The sample deadline, the actors' cache release before a
+  refusal, the gate's capacity check before its proof render, compile_dit's
+  eager families and the inductor cache have CPU tests and no hardware record
+  of their own.
+- Build and install, on the release commit, in a disposable Python 3.12 venv
+  that holds only `build` and `pip`: `python -m build` wrote the sdist and
+  the wheel (@@FILES@@ files, the `dgxm` and `dgxm-studio` console scripts and
+  the Studio bundle inside). The wheel installed with `--no-deps` and
+  reported 1.5.0, as did an editable install of a fresh clone of the commit
+  after it; @@HELP@@ The full INSTALL recipe, which rebuilds the xFuser
+  compatibility wheel against a ComfyUI interpreter, was **NOT RUN** for this
+  release; the rig's own venv already carries that wheel.
+
 <a id="release-1-4-0-checks"></a>
 
 ## Release 1.4.0 checks
