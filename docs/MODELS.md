@@ -1698,17 +1698,22 @@ Decode and VAE Decode (Tiled) nodes split a decode's units over the Workers:
 the driver decodes its own share and each Worker rank on another GPU decodes
 the rest. The output is byte-identical to ComfyUI's one-host tiled decode for
 that VAE, because ComfyUI's own loop runs once on the driver with only the
-per-unit decode swapped (DESIGN.md section 5.6). It is off by default until the
-hardware byte compare passes ([VALIDATION](VALIDATION.md#worker-assisted-vae-decode)).
+per-unit decode swapped (DESIGN.md section 5.6). It is off by default. On the
+pair the byte compare passed for MiniMax H3, Wan 2.1 and LTX 2.5 with the
+driver started with `--use-sage-attention`, `--bf16-vae` and `--bf16-text-enc`,
+so with one of those three families you can set `"auto"`. The other families
+are unchecked
+([VALIDATION](VALIDATION.md#worker-assisted-vae-decode)).
 
 | family | VAE files the templates load | splits under | unit | hardware byte compare |
 |---|---|---|---|---|
-| MiniMax H3 video | `minimax_h3_video_vae_fp16.safetensors` | VAE Decode and VAE Decode (Tiled), which run the same decode on this VAE | one temporal chunk, which the VAE tiles inside | NOT RUN |
-| Wan 2.1 (also Wan 2.2 14B, FlowRVS, SCAIL, WanDancer, Wan-Animate 2) | `wan_2.1_vae.safetensors`, `Wan2_1_VAE_bf16.safetensors`, `wan21_flow_rvs_mask_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | NOT RUN |
+| MiniMax H3 video | `minimax_h3_video_vae_fp16.safetensors` | VAE Decode and VAE Decode (Tiled), which run the same decode on this VAE | one temporal chunk, which the VAE tiles inside | passed 2026-11-01: 124 of 124 frames at 1344x768, saved as PNG straight from the decoder |
+| Wan 2.1 (also Wan 2.2 14B, FlowRVS, SCAIL, WanDancer, Wan-Animate 2) | `wan_2.1_vae.safetensors`, `Wan2_1_VAE_bf16.safetensors`, `wan21_flow_rvs_mask_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | passed 2026-10-31 with `wan_2.1_vae.safetensors`, 33 of 33 frames. The other two files are unchecked. |
 | Wan 2.2 TI2V | `Wan2_2_VAE_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
 | HunyuanVideo 1.0 (also Kandinsky5 Video) | `hunyuan_video_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
 | HunyuanVideo 1.5 | `hunyuanvideo15_vae_fp16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
-| LTX 2.3 and LTX 2.5 | `LTX23_video_vae_bf16.safetensors`, `ltx-2.5-video-vae-bf16.safetensors`, `ltx-2.5-video-vae-conv-bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
+| LTX 2.5, diffusion decoder | `ltx-2.5-video-vae-bf16.safetensors` | VAE Decode (Tiled) | one tile | passed 2026-10-31: 121 of 121 frames at 1280x704 |
+| LTX 2.3, and LTX 2.5's convolutional VAE | `LTX23_video_vae_bf16.safetensors`, `ltx-2.5-video-vae-conv-bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
 
 **Which node.** On every family but MiniMax H3, VAE Decode runs the whole
 latent through the model at once, a different result from the tiled decode,
@@ -1748,11 +1753,15 @@ logs one line saying whether it split and why not
   leaves about ten on the Worker's side.
 - MiniMax H3's decoder batches up to four spatial tiles per call by the free
   memory it reads, and Comfy's tiled loop casts and blends in the order of its
-  own code. Both are the same on a GB10 with memory to spare, which the
-  hardware compare confirms.
-- No speed has been measured. Two ranks should roughly halve a long decode, less
-  the transfer of each unit's pixels (about 173 MB per MiniMax H3 chunk at
-  1344x768).
+  own code. At 1344x768, with memory to spare on both hosts, the hardware
+  compare matched; a decode with less than 512 MiB free on one side is
+  unchecked.
+- On the pair a 124-frame MiniMax H3 decode at 1344x768 took 39.3 s split
+  against about 77 s in the driver alone. A 121-frame LTX 2.5 decode at
+  1280x704 took 18.8 s split, in a prompt that ran 110.1 s against 120.1 s
+  without the split. Both split figures include the sibling building its
+  decode VAE, and each MiniMax H3 chunk carries about 173 MB of pixels back to
+  the driver ([BENCHMARKS](BENCHMARKS.md#worker-assisted-vae-decode)).
 
 ## Model-adoption quant artifact catalog
 

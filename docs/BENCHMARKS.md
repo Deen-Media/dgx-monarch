@@ -899,6 +899,31 @@ without the chunking patches. Per step that is about 37 s against the pair's
 136 s at 362 frames, and 7 s against the pair's 26 s and one Spark's 42 s at
 124 frames: the 5090 holds about 3.6 times the pair's pace at both lengths.
 
+## Worker-assisted VAE decode
+
+On 2026-10-31 the pair rendered the 5 s exact cell from the tables above twice
+at one seed, on dev `746a229` with the head capped at 2100 MHz: once with
+`[worker_args] worker_vae_decode` absent, so the driver decoded the video
+alone, and once with `"auto"`, so the decode split over the head and the
+sibling. Each render was the first of a new driver session, and the driver ran
+with `--use-sage-attention`, `--bf16-vae` and `--bf16-text-enc`. Times are
+seconds:
+
+| Cell | Video decode, driver alone | Video decode, split | Prompt wall, absent / auto | Sampling, absent / auto |
+|---|--:|--:|--:|--:|
+| Pair, 5 s, 124 frames, exact, pruned INT8 | 77 | 39.3 | 570.1 / 530.1 | 452.5 / 452.3 |
+
+Two readings give the driver-alone decode. Execution fell by 37.7 s at equal
+sampling, and 37.7 s added to the split's 39.3 s makes 77 s. On the head's
+1 Hz memory trace, the driver's GPU memory rose as the decode began and fell
+77 s later in the first render and 39 s later in the second. The split ran 3
+of its 7 temporal chunks on the head and 4 on the sibling, and its time
+includes the sibling building its decode VAE. The frames and the audio track
+decoded from the two saved mp4 files matched. A lossless rerun on 2026-11-01
+saved the decoder's 124 frames as PNG, split the decode in 39.9 s and matched
+every frame pixel for pixel
+([VALIDATION](VALIDATION.md#worker-assisted-vae-decode)).
+
 <a id="the-fsdp-round-capacity-path-not-speed"></a>
 
 ## FSDP memory capacity and render time
