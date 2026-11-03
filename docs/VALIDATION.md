@@ -374,12 +374,20 @@ over them; it is not an exact-release-commit hardware retest.
   of their own.
 - Build and install, on the release commit, in a disposable Python 3.12 venv
   that holds only `build` and `pip`: `python -m build` wrote the sdist and
-  the wheel (@@FILES@@ files, the `dgxm` and `dgxm-studio` console scripts and
+  the wheel (540 files, the `dgxm` and `dgxm-studio` console scripts and
   the Studio bundle inside). The wheel installed with `--no-deps` and
   reported 1.5.0, as did an editable install of a fresh clone of the commit
-  after it; @@HELP@@ The full INSTALL recipe, which rebuilds the xFuser
-  compatibility wheel against a ComfyUI interpreter, was **NOT RUN** for this
-  release; the rig's own venv already carries that wheel.
+  after it; `dgxm --help` answered with the runtime dependencies of the rig's
+  Monarch venv on the path. The full INSTALL recipe, which rebuilds the xFuser
+  compatibility wheel against a ComfyUI interpreter, ran on 2026-11-03 on the
+  head in two disposable venvs against a fresh ComfyUI clone at master
+  `8a98ecf5`, up to the step that starts services: the wheel built
+  byte-identical in both venvs, every torch file matched its RECORD, the
+  dependency check passed, and the native Monarch, xFuser and ComfyUI imports
+  and `dgxm --help` worked. Two findings from that run are open for the
+  owner: ComfyUI's install guide now installs torch 2.15.0 while every
+  hardware record here is on 2.12.0+cu132, and torchaudio 2.11.0+cu132 no
+  longer resolves from the public indexes.
 
 <a id="release-1-4-0-checks"></a>
 
