@@ -30584,7 +30584,7 @@
       }
     },
     {
-      "digest": "9926317bffc55fe9633220e735d5daa91c2bd5b15d07bc64a5fe4985ad18c889",
+      "digest": "ec6e6bbdb7a8d99a8e799f20c684eae89758f6001def87a1f73bd6fb64761aee",
       "id": "workflow.dgx-monarch-minimax-h3-mp4",
       "name": "dgx-monarch-minimax-h3-mp4",
       "source": "example_workflows/dgx-monarch-minimax-h3-mp4.json",
@@ -31297,6 +31297,13 @@
             "widgets_values": []
           },
           {
+            "dgxm_widgets": {
+              "bit_depth": 8,
+              "chroma_subsampling": "auto",
+              "codec": "none",
+              "color_space": "sRGB",
+              "fps": 24.0
+            },
             "flags": {},
             "id": 13,
             "inputs": [
@@ -31337,13 +31344,14 @@
             },
             "size": [
               315,
-              206
+              228
             ],
             "type": "CreateVideo",
             "widgets_values": [
               24.0,
               8,
               "sRGB",
+              "auto",
               "none"
             ]
           },
@@ -41234,7 +41242,7 @@
       }
     },
     {
-      "digest": "2a907f004d2f4dc9fc61a2d09239c523a67185850845e0f41c162f8f9671b784",
+      "digest": "203a8f873764475f5b137991ac6c248b807ac83d1937baec7d74cb72ec697058",
       "id": "workflow.dgx-monarch-wan-animate2-base-quality",
       "name": "dgx-monarch-wan-animate2-base-quality",
       "source": "example_workflows/dgx-monarch-wan-animate2-base-quality.json",
@@ -42627,6 +42635,13 @@
             "widgets_values": []
           },
           {
+            "dgxm_widgets": {
+              "bit_depth": 8,
+              "chroma_subsampling": "auto",
+              "codec": "none",
+              "color_space": "sRGB",
+              "fps": ""
+            },
             "flags": {},
             "id": 23,
             "inputs": [
@@ -42667,13 +42682,14 @@
             },
             "size": [
               315,
-              206
+              228
             ],
             "type": "CreateVideo",
             "widgets_values": [
               "",
               8,
               "sRGB",
+              "auto",
               "none"
             ]
           },
@@ -42721,7 +42737,7 @@
       }
     },
     {
-      "digest": "11079e06bd21d407add04247c3611b7e8dc33aed6797c180e623f509cf5abb8e",
+      "digest": "dfe1bae950b39863dab757cba23ea9adae0f75af03e6542282de7ae324162a74",
       "id": "workflow.dgx-monarch-wan-animate2-bfloat16-warm",
       "name": "dgx-monarch-wan-animate2-bfloat16-warm",
       "source": "example_workflows/dgx-monarch-wan-animate2-bfloat16-warm.json",
@@ -44240,6 +44256,13 @@
             "widgets_values": []
           },
           {
+            "dgxm_widgets": {
+              "bit_depth": 8,
+              "chroma_subsampling": "auto",
+              "codec": "none",
+              "color_space": "sRGB",
+              "fps": ""
+            },
             "flags": {},
             "id": 25,
             "inputs": [
@@ -44280,13 +44303,14 @@
             },
             "size": [
               315,
-              206
+              228
             ],
             "type": "CreateVideo",
             "widgets_values": [
               "",
               8,
               "sRGB",
+              "auto",
               "none"
             ]
           },
@@ -44334,7 +44358,7 @@
       }
     },
     {
-      "digest": "9acc1357077ad1709953707a72e8d60e11225ca41db4989d0e25bffbb2f96092",
+      "digest": "5d968763e071ac13c0ed1f4363ebef8434d6a3cabd3041486803493c1150ae79",
       "id": "workflow.dgx-monarch-wan-animate2-distilled",
       "name": "dgx-monarch-wan-animate2-distilled",
       "source": "example_workflows/dgx-monarch-wan-animate2-distilled.json",
@@ -45727,6 +45751,13 @@
             "widgets_values": []
           },
           {
+            "dgxm_widgets": {
+              "bit_depth": 8,
+              "chroma_subsampling": "auto",
+              "codec": "none",
+              "color_space": "sRGB",
+              "fps": ""
+            },
             "flags": {},
             "id": 23,
             "inputs": [
@@ -45767,13 +45798,14 @@
             },
             "size": [
               315,
-              206
+              228
             ],
             "type": "CreateVideo",
             "widgets_values": [
               "",
               8,
               "sRGB",
+              "auto",
               "none"
             ]
           },
@@ -45821,7 +45853,7 @@
       }
     },
     {
-      "digest": "5df9fe1dca5917e7669926726c4d36f715c5ad255deb7da823e8ba5d467930d9",
+      "digest": "3338cd0a6e139377f80c462c40bde0ca33c20f84d76839ef574b06b5735a93a1",
       "id": "workflow.dgx-monarch-wan-animate2-memory-saver",
       "name": "dgx-monarch-wan-animate2-memory-saver",
       "source": "example_workflows/dgx-monarch-wan-animate2-memory-saver.json",
@@ -47340,6 +47372,13 @@
             "widgets_values": []
           },
           {
+            "dgxm_widgets": {
+              "bit_depth": 8,
+              "chroma_subsampling": "auto",
+              "codec": "none",
+              "color_space": "sRGB",
+              "fps": ""
+            },
             "flags": {},
             "id": 25,
             "inputs": [
@@ -47380,13 +47419,14 @@
             },
             "size": [
               315,
-              206
+              228
             ],
             "type": "CreateVideo",
             "widgets_values": [
               "",
               8,
               "sRGB",
+              "auto",
               "none"
             ]
           },
@@ -47434,7 +47474,7 @@
       }
     },
     {
-      "digest": "ab9a6a599bb62cb81023b5f4260fa2a7b0c17d882f5241790b4884e6b09fcdc3",
+      "digest": "4bb6a4c209ee01f837357b3bc13bbceb6ec6099f9ea62138a838ad37ce67fffa",
       "id": "workflow.dgx-monarch-wan-animate2",
       "name": "dgx-monarch-wan-animate2",
       "source": "example_workflows/dgx-monarch-wan-animate2.json",
@@ -48882,6 +48922,13 @@
             "widgets_values": []
           },
           {
+            "dgxm_widgets": {
+              "bit_depth": 8,
+              "chroma_subsampling": "auto",
+              "codec": "none",
+              "color_space": "sRGB",
+              "fps": ""
+            },
             "flags": {},
             "id": 24,
             "inputs": [
@@ -48922,13 +48969,14 @@
             },
             "size": [
               315,
-              206
+              228
             ],
             "type": "CreateVideo",
             "widgets_values": [
               "",
               8,
               "sRGB",
+              "auto",
               "none"
             ]
           },

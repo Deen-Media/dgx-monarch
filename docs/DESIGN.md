@@ -989,7 +989,10 @@ it for the mesh it attaches (`vae_decode_route.py`). Six rules hold it:
   functions and torch backend flags, putting its own back after. A different
   ComfyUI commit, torch or CUDA build, comfy-kitchen release or VAE class is a
   decline, and so is an attention kernel the Worker cannot run
-  (`vae_decode_env.py`).
+  (`vae_decode_env.py`). A driver VAE whose compute dtype ComfyUI's VAE
+  Compute Dtype node set stays on the driver: that node keeps the weights the
+  loader built, and a Worker builds its VAE in one dtype
+  (`vae_decode_remote.vae_source`).
 - **What an actor may hold.** One decode VAE beside its DiT, placed on the GPU
   directly rather than through ComfyUI's model manager, so loading it never
   evicts the DiT. Its load is priced against MemAvailable before any byte is
@@ -1850,6 +1853,15 @@ Skills call `dgxm` rather than reimplementing operations.
   release, so a red master beside a green release indicates an upstream
   change, and a red release on an unchanged tag indicates a change in this
   repository.
+- Templates follow master's widget order. A stock widget that ComfyUI
+  inserts mid-node, and that a ComfyUI release this project supports still
+  lacks, is a row in `stock_widget_drift.py`: the widget, the widget it
+  follows, and the value every template holds, its default. The row leaves
+  when the support floor passes the release that added the widget. A reader
+  that maps `widgets_values` by a running ComfyUI's order re-reads with the
+  row only when the values outrun that order, and drops the widget only at
+  that value; the frontend extension restores the node by name. The canary
+  requires that value on every ComfyUI it runs against.
 
 ---
 
@@ -1946,6 +1958,8 @@ dgx-monarch/
 │   │                          #   build, and the `FP8 compute:` line a wrapper
 │   │                          #   on comfy.ops.pick_operations logs per build
 │   ├── comfy_surface.py       # runtime Comfy touchpoint/signature assertion
+│   ├── stock_widget_drift.py  # stock widgets older supported ComfyUI
+│   │                          #   releases lack, and what templates hold
 │   ├── comfy_forward_contracts.py # aggregate/re-export forward compatibility map
 │   ├── comfy_rebound_signatures.py # exact stock rebound-method contracts
 │   ├── comfy_rebound_sites.py # declared static self.bind/Adapter.bind inventory

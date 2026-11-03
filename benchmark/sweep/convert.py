@@ -16,6 +16,8 @@ import urllib.request
 from collections.abc import Callable
 from pathlib import Path
 
+from dgx_monarch import stock_widget_drift
+
 REPO = Path(__file__).resolve().parents[2]
 CONTROL = frozenset({"fixed", "increment", "decrement", "randomize"})
 SKIP_TYPES = frozenset({"Note", "MarkdownNote", "Reroute"})
@@ -159,29 +161,44 @@ def convert(ui: dict, names: WidgetNames) -> dict:
             if slot.get("link") is not None:
                 inputs[slot["name"]] = list(links[slot["link"]])
         values = list(node.get("widgets_values") or [])
-        index = 0
-        for name in names(node_class):
-            if name in inputs:
-                # A linked V3 widget still owns its positional serialization
-                # slot.  Keep the link as the API value, but consume that slot
-                # before reading the next widget; otherwise CreateVideo with a
-                # linked FPS turns [fps, bit_depth, color_space, codec] into
-                # [fps, "", 8, "sRGB"].
-                if index < len(values):
-                    index += 1
-                    follower = values[index] if index < len(values) else None
-                    if name in SEED_NAMES and isinstance(follower, str) and follower in CONTROL:
-                        index += 1
-                continue
-            if index >= len(values):
-                break
-            inputs[name] = values[index]
-            index += 1
-            follower = values[index] if index < len(values) else None
-            if name in SEED_NAMES and isinstance(follower, str) and follower in CONTROL:
-                index += 1
+        order = names(node_class)
+        linked = dict(inputs)
+        absent = stock_widget_drift.missing(node_class, order)
+        if _read_widgets(order, values, inputs) < len(values) and absent:
+            # Master-shaped values on a ComfyUI without a newer widget: read
+            # them in master's order, then drop that widget where it holds its
+            # template value (dgx_monarch/stock_widget_drift.py).
+            inputs = linked
+            _read_widgets(stock_widget_drift.with_newer(node_class, order), values, inputs)
+            inputs = stock_widget_drift.without_defaults(inputs, absent)
         api[str(node["id"])] = {"class_type": node_class, "inputs": inputs}
     return api
+
+
+def _read_widgets(order: list[str], values: list, inputs: dict) -> int:
+    """Set ``inputs`` from ``values`` in widget order; return the slots read."""
+    index = 0
+    for name in order:
+        if name in inputs:
+            # A linked V3 widget still owns its positional serialization
+            # slot.  Keep the link as the API value, but consume that slot
+            # before reading the next widget; otherwise CreateVideo with a
+            # linked FPS turns [fps, bit_depth, color_space, codec] into
+            # [fps, "", 8, "sRGB"].
+            if index < len(values):
+                index += 1
+                follower = values[index] if index < len(values) else None
+                if name in SEED_NAMES and isinstance(follower, str) and follower in CONTROL:
+                    index += 1
+            continue
+        if index >= len(values):
+            break
+        inputs[name] = values[index]
+        index += 1
+        follower = values[index] if index < len(values) else None
+        if name in SEED_NAMES and isinstance(follower, str) and follower in CONTROL:
+            index += 1
+    return index
 
 
 def _step_widget(node: dict) -> str:

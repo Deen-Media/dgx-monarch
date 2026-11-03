@@ -7308,6 +7308,8 @@ decode, or one unit of it, on the driver. The line names the reason:
 | `did not come from a VAE loader file`, `outside ComfyUI's vae folders` | no Worker can name the VAE's bytes | load the VAE with Load VAE from `models/vae` |
 | `the mesh is busy or not ready` | another render session held the mesh | queue again once it ends |
 | `one tile`, `one temporal chunk` | the decode has a single unit | none |
+| `the Sol-H3-VAE decoder decodes the whole clip in one pass`, `the p-h3-image VAE decodes single frames` | two MiniMax H3 VAEs in ComfyUI 0.44.0 or newer that this project does not split: one has no temporal chunks, the other decodes one frame ([MODELS](MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av)) | none: it decodes on the driver |
+| `the VAE Compute Dtype node set this VAE to compute in <dtype>` | ComfyUI's VAE Compute Dtype node keeps the weights the loader built and changes only the compute dtype; a Worker builds its VAE in one dtype, so its decode may differ | set the node's dtype to `default`, or drop the node and start ComfyUI with the VAE dtype flag you want, such as `--fp32-vae`, to split |
 
 The WARNING names the rank and its first cause:
 

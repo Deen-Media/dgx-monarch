@@ -1050,7 +1050,7 @@
    ],
    "size": [
     315,
-    206
+    228
    ],
    "flags": {},
    "order": 22,
@@ -1089,8 +1089,16 @@
     "",
     8,
     "sRGB",
+    "auto",
     "none"
-   ]
+   ],
+   "dgxm_widgets": {
+    "fps": "",
+    "bit_depth": 8,
+    "color_space": "sRGB",
+    "chroma_subsampling": "auto",
+    "codec": "none"
+   }
   },
   {
    "id": 24,

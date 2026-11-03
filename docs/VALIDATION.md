@@ -2778,6 +2778,26 @@ the CPU tests nor the hardware checks show whether cuDNN and cuBLAS choose the
 same kernels on both boxes at other shapes, how fast a 173 MB reply crosses
 Monarch messaging, or how much the pre-touched return buffers save.
 
+## ComfyUI 0.44.0 additions
+
+ComfyUI 0.44.0, tagged on 2026-11-03, carries changes that touch this
+project. The comfy canary runs the CPU checks against ComfyUI master and its
+newest release tag, which were the same commit that day: the template widgets
+with Create Video's new `chroma_subsampling`
+(`tests/canary/template_widget_canary.py`), the native MP4 export, and the
+decode split's declines for the Sol-H3-VAE decoder, the p-h3-image VAE and a
+VAE whose compute dtype the VAE Compute Dtype node set
+(`tests/test_vae_decode_split_comfy.py`). On ComfyUI 0.43 and older the tests
+for these additions skip with a reason. No hardware has run any of the rows
+below.
+
+| behaviour | upstream change | what a run must show | status |
+|---|---|---|---|
+| The FP8 fast loader dtype on a BF16 file | #16941: under dynamic VRAM, ComfyUI's FP8 linear reads the dtype a weight is cast to, not its file dtype, so `fp8_e4m3fn_fast` computes in FP8 there instead of falling back to BF16 | the `kB_1_castfast` cell of [FP8 compute paths](#fp8-compute-paths) on ComfyUI 0.44.0, in the actors and in a dynamic-VRAM driver, against its release figures (18 percent faster, NRMS 0.191 against BF16) | NOT RUN |
+| The VAE Compute Dtype node under Worker-assisted VAE decode | #17450: the node clones the VAE and computes in another dtype over the loader's weights | the decode logs `not split` with the VAE Compute Dtype reason and gives the one-host frames; with the node at `default` the decode splits as in [Worker-assisted VAE decode](#worker-assisted-vae-decode) | NOT RUN |
+| MiniMax H3 context windows under sequence parallelism | #17425: a MiniMax H3 Context Windows node that patches a stock MODEL | none yet: the node cannot connect to a DGX Monarch loader's DGXM_MODEL, so no render on the Workers runs windowed, and the activation preflight and the sample deadline price the whole clip. Supporting it needs the patch carried to the Workers and a windowed render checked against stock | NOT RUN |
+| The Create Video templates on ComfyUI 0.43 | #17463: `chroma_subsampling` between `color_space` and `codec` | `dgx-monarch-minimax-h3-mp4.json` loaded in a ComfyUI 0.43 frontend shows `codec` at `none`, and its MP4 matches one rendered on 0.44.0 frame for frame | NOT RUN in a browser; the restore is checked under node (`tests/test_stock_widget_drift.py`) |
+
 ## Memory calibration
 
 GB10 host and GPU allocations share one physical pool. A CUDA-allocated

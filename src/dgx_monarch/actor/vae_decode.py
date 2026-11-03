@@ -204,6 +204,9 @@ def _decode(worker: Any, held: ResidentVae, spec: UnitRequest) -> Any:
 
     vae = held.vae
     fsm = vae.first_stage_model
+    if spec.kind == "h3_chunk" and (getattr(fsm, "noncausal", False) or getattr(vae, "not_video", False)):
+        # The driver declines these (vae_decode_families.py); a driver without that check meets this.
+        raise Decline("this MiniMax H3 VAE decodes the whole clip or a single frame, so it has no chunk to decode")
     _require_room(worker, int(vae.memory_used_decode(tuple(spec.input.shape), vae.vae_dtype)), "decode the unit")
     latent = spec.input.to(vae.device)
     import comfy.model_management as mm

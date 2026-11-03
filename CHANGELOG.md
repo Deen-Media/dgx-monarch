@@ -119,6 +119,17 @@
   with its text, an empty negative prompt waits behind Add negative prompt on
   Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
 
+### Compatibility and verification
+
+- The video templates follow ComfyUI 0.44.0's Create Video, which gained
+  `chroma_subsampling` before `codec` (ComfyUI #17463); they hold its default,
+  `auto`. On ComfyUI 0.43 and older, which lack the widget, this pack's
+  frontend extension restores Create Video by name, and Studio and the sweep
+  converter skip the slot, so `codec` stays `none` there. The comfy canary's
+  template step, red against ComfyUI master since 2026-11-01, passes again,
+  and it now checks Save Video's format and codec against the options the
+  running ComfyUI offers ([MODELS](docs/MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av)).
+
 ### Rendering
 
 - `[worker_args] fp8_matrix_mult` (`"auto"`, `"on"` or `"off"`) chooses whether
@@ -245,6 +256,16 @@
   ([Models](docs/MODELS.md#worker-assisted-vae-decode),
   [VALIDATION](docs/VALIDATION.md#worker-assisted-vae-decode),
   [TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+- Worker-assisted VAE decode keeps three ComfyUI 0.44.0 decodes on the
+  driver, with one line each: the Sol-H3-VAE decoder, which decodes the whole
+  clip in one pass, the p-h3-image VAE, which decodes one frame, and a VAE
+  whose compute dtype the VAE Compute Dtype node set, which a Worker cannot
+  build the same way ([TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+  [MODELS](docs/MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av) says what
+  this project does with ComfyUI 0.44.0's p-h3-image model, Sol-H3-VAE
+  decoder and MiniMax H3 context windows, and
+  [VALIDATION](docs/VALIDATION.md#comfyui-0440-additions) lists the
+  behaviours no hardware has run.
 
 ### Operations
 
