@@ -20,13 +20,19 @@ from types import SimpleNamespace
 
 import pytest
 import torch
-from benchmark.sweep import convert
 
 from dgx_monarch.adapters import detect, wan_family
 from dgx_monarch.topology import choose_auto_topology
 from module_location_helpers import from_checkout
 
 ROOT = Path(__file__).resolve().parents[1]
+# The sweep converter is not installed: the comfy-canary job runs plain pytest,
+# so the checkout root goes on sys.path, as tests/test_sweep_matrix.py does.
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from benchmark.sweep import convert  # noqa: E402
+
 NAME = "dgx-monarch-wan22-ti2v"
 UNET = "wan2.2_ti2v_5B_fp16.safetensors"
 VAE = "wan2.2_vae.safetensors"
