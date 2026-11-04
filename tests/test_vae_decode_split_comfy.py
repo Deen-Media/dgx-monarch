@@ -14,7 +14,11 @@ attention. Every case compares bytes (``same_bytes``):
 * MiniMax H3's own chunked decode (``MiniMaxH3VideoVAE.decode``), with and
   without the preallocated output buffer VAE Decode passes;
 * fail-open: a rank that raises, declines, answers in the wrong dtype or
-  never answers, and a plan that the stock loop leaves.
+  never answers, and a plan that the stock loop leaves;
+* what stays on the driver on ComfyUI 0.44.0 and later: the Sol-H3-VAE
+  decoder and the p-h3-image VAE (one INFO line each), and a VAE whose compute
+  dtype the VAE Compute Dtype node set, whose decode a Worker's VAE built in
+  that dtype does not reproduce. These skip on a ComfyUI without them.
 
 What a hardware leg must still show: that a GB10 Worker's real decode of a
 unit equals the driver's (docs/VALIDATION.md, Worker-assisted VAE decode).
@@ -35,7 +39,7 @@ import pytest
 import torch
 
 from dgx_monarch import vae_decode_remote, vae_decode_route
-from dgx_monarch.vae_decode_families import H3_CHUNK, MULTIDIM, Family
+from dgx_monarch.vae_decode_families import H3_CHUNK, MULTIDIM, Family, classify
 from dgx_monarch.vae_decode_telemetry import DecodeRecord
 from module_location_helpers import from_checkout
 
@@ -507,9 +511,86 @@ def test_stock_seams_the_split_replays(comfy):
     temporal = inspect.getsource(comfy.minimax.MiniMaxH3VideoVAE.decode_temporal)
     assert "self._adaptive_decode(clip_z)" in temporal
     assert "self._decode_temporal_chunks(z.shape[2])" in temporal
-    assert "self.decode_temporal(z, output_buffer)" in inspect.getsource(comfy.minimax.MiniMaxH3VideoVAE.decode)
+    decode = inspect.getsource(comfy.minimax.MiniMaxH3VideoVAE.decode)
+    assert "self.decode_temporal(z, output_buffer)" in decode
+    if hasattr(comfy.minimax.MiniMaxH3VideoVAE, "decode_noncausal"):
+        # The Sol-H3-VAE path never reaches decode_temporal, which the split shadows.
+        assert "if self.noncausal:\n            return self.decode_noncausal(z, output_buffer)" in decode
     # vae_decode_remote.vae_source names the file from the loader's reload factory.
     assert list(inspect.signature(comfy.sd.load_vae_patcher).parameters)[:3] == ["vae_path", "metadata", "device"]
     loader = (os.path.join(_comfy_dir(), "nodes.py"))
     with open(loader, encoding="utf-8") as handle:
         assert "cached_patcher_init = (comfy.sd.load_vae_patcher, (vae_path, metadata, None))" in handle.read()
+
+
+def test_the_sol_h3_and_p_h3_image_vaes_stay_on_the_driver_with_one_info_line(comfy, caplog):
+    import inspect
+
+    if "noncausal_decoder" not in inspect.signature(comfy.minimax.MiniMaxH3VideoVAE.__init__).parameters:
+        pytest.skip("this ComfyUI has no Sol-H3-VAE decoder (ComfyUI 0.44.0 added it)")
+    fsm = comfy.minimax.MiniMaxH3VideoVAE(encoder=False, decoder=False, noncausal_decoder=True)
+    fsm.decoder = _Decoder()
+    sol = SimpleNamespace(first_stage_model=fsm, handles_tiling=True, latent_dim=3, not_video=False)
+    family, why = classify(sol)
+    assert family is None and "Sol-H3-VAE" in why
+    caplog.set_level(logging.INFO, logger="dgx_monarch.vae_decode")
+    assert vae_decode_route._open(sol, torch.zeros(1, 24, 12, 6, 7), "decode") is None
+    lines = [record.getMessage() for record in caplog.records if "not split" in record.getMessage()]
+    assert len(lines) == 1 and "Sol-H3-VAE" in lines[0], lines
+    # PH3ImageVAE builds the full H3 encoder; the check reads only its class and flags.
+    image = comfy.minimax.PH3ImageVAE.__new__(comfy.minimax.PH3ImageVAE)
+    torch.nn.Module.__init__(image)
+    family, why = classify(SimpleNamespace(first_stage_model=image, handles_tiling=True, latent_dim=3,
+                                           not_video=True))
+    assert family is None and "p-h3-image" in why
+
+
+def _tiny_vae_file(comfy, tmp_path):
+    """A small real AutoencoderKL, its weights in a file under a vae folder."""
+    from safetensors.torch import save_file
+
+    config = {"params": {"embed_dim": 4, "ddconfig": {
+        "double_z": True, "z_channels": 4, "resolution": 64, "in_channels": 3, "out_ch": 3, "ch": 32,
+        "ch_mult": [1, 1, 1, 1], "num_res_blocks": 1, "attn_resolutions": [], "dropout": 0.0}}}
+    shapes = comfy.sd.VAE(sd={}, config=config, device=torch.device("cpu"), dtype=torch.float32)
+    generator = torch.Generator().manual_seed(3)
+    state = {key: torch.randn(value.shape, generator=generator) * 0.05
+             for key, value in shapes.first_stage_model.state_dict().items()}
+    folder = tmp_path / "vae"
+    folder.mkdir()
+    path = folder / "tiny.safetensors"
+    save_file(state, str(path))
+
+    def loaded(dtype):
+        vae = comfy.sd.VAE(sd=dict(state), config=config, device=torch.device("cpu"), dtype=dtype)
+        # What VAELoader records, and what vae_source names the file from.
+        vae.patcher.cached_patcher_init = (comfy.sd.load_vae_patcher, (str(path), None, None))
+        return vae
+    return folder, loaded
+
+
+def test_a_vae_compute_dtype_clone_stays_on_the_driver(comfy, tmp_path, monkeypatch):
+    """The node's clone keeps the loader's weights and patches the compute dtype; a Worker cannot match it."""
+    try:
+        from comfy_extras.nodes_model_advanced import VAEComputeDtype
+    except ImportError:
+        VAEComputeDtype = None
+    if VAEComputeDtype is None or not hasattr(comfy.sd.VAE, "clone"):
+        pytest.skip("this ComfyUI has no VAE Compute Dtype node (ComfyUI 0.44.0 added it)")
+    import folder_paths
+
+    folder, loaded = _tiny_vae_file(comfy, tmp_path)
+    _paths, extensions = folder_paths.folder_names_and_paths["vae"]
+    monkeypatch.setitem(folder_paths.folder_names_and_paths, "vae", ([str(folder)], extensions))
+    driver = loaded(torch.bfloat16)
+    clone = VAEComputeDtype.execute(driver, "fp32").args[0]
+    assert vae_decode_remote.vae_source(driver)["dtype"] == "torch.bfloat16"
+    assert isinstance(vae_decode_remote.vae_source(VAEComputeDtype.execute(driver, "default").args[0]), dict)
+    why = vae_decode_remote.vae_source(clone)
+    assert isinstance(why, str) and "VAE Compute Dtype" in why and "torch.float32" in why
+    # Why it declines: a Worker builds the file in the dtype it is sent, fp32
+    # here, while the clone computes in fp32 over bf16 weights.
+    latent = torch.randn(1, 4, 8, 8, generator=torch.Generator().manual_seed(4))
+    with torch.inference_mode():
+        assert not same_bytes(clone.decode(latent), loaded(torch.float32).decode(latent))
+        assert same_bytes(driver.decode(latent), loaded(torch.bfloat16).decode(latent))

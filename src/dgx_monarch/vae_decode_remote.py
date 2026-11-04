@@ -50,6 +50,13 @@ def vae_source(vae: Any) -> dict[str, Any] | str:
     factory, args = init
     if getattr(factory, "__name__", "") != "load_vae_patcher":
         return "the VAE did not come from a VAE loader file, so no Worker can load the same bytes"
+    # ComfyUI's VAE Compute Dtype node clones the VAE and patches its compute
+    # dtype over the weights the loader built. A Worker builds its VAE in the
+    # one dtype sent here, so its weights may round differently.
+    patched = (getattr(vae.patcher, "object_patches", None) or {}).get("manual_cast_dtype")
+    if patched is not None:
+        return (f"the VAE Compute Dtype node set this VAE to compute in {patched} over the loader's "
+                "weights, and a Worker builds its VAE in one dtype, so the decode stays here")
     path = os.path.realpath(str(args[0]))
     metadata = args[1] if len(args) > 1 and isinstance(args[1], dict) else None
     import folder_paths

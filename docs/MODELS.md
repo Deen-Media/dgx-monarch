@@ -1485,6 +1485,34 @@ with native ComfyUI nodes at 24 fps. The original workflow retains separate
 PNG/FLAC outputs. Export-format coverage does not extend the model's fidelity
 evidence.
 
+Its Create Video node, like the Wan-Animate 2 templates', follows ComfyUI
+0.44.0, which added `chroma_subsampling` before `codec`; the templates hold
+its default, `auto`. ComfyUI 0.43 and older lack that widget and read a saved
+node by position, so their frontend would put `auto` in `codec`. Then Create
+Video encodes the clip to H.264 at once, and Save Video copies its video and
+encodes its audio again: the same pixels, but frame times rounded to whole
+milliseconds and the soundtrack encoded to AAC twice. This pack's frontend
+extension restores the node by name, and Studio and the sweep converter skip
+the missing slot, so `codec` stays `none` on every ComfyUI this project
+supports (`src/dgx_monarch/stock_widget_drift.py`).
+
+**ComfyUI 0.44.0 additions.** This project does not yet support the
+p-h3-image model (ComfyUI #17506) or the Sol-H3-VAE decoder: no template
+loads them, and Worker-assisted VAE decode leaves both decodes on the driver
+with one line saying why, since the Sol-H3-VAE decoder decodes the whole clip
+in one pass and p-h3-image decodes one frame
+([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+Do not load the p-h3-image DiT through the DGX Monarch loader: it carries
+MiniMax H3's keys, so ComfyUI and this project both read it as MiniMax H3, but
+it needs ComfyUI's ModelSamplingMiniMaxH3 node at 1.0 and 1.0, a stock MODEL
+patch that cannot connect to DGXM_MODEL, so the Workers would sample it at
+H3's default shifts, 12.0 and 3.0.
+ComfyUI's MiniMax H3 Context Windows node (#17425) patches a stock MODEL, so it
+cannot connect to a DGX Monarch loader's DGXM_MODEL and no render on the
+Workers runs windowed. The activation preflight and the sample deadline price
+the whole clip, which is what the Workers sample. No windowed render has a
+hardware record ([VALIDATION](VALIDATION.md#comfyui-0440-additions)).
+
 **Tested configurations.** Ulysses/ring with audio and anchored guides at the sizes listed in the linked results. The FP8 xFuser compatibility test at 512x320x5 also reproduced both latent streams, five decoded frames and audio.
 
 **Known limitations.** Batch one; packed DP/cfg2 and world-2 single refuse. Padded ring and Sol-Attn need explicit accuracy waivers. BF16 FSDP completed a render but has no reference comparison. Stacked PDD heads and other guide settings have no passing reference comparison.
@@ -1727,7 +1755,13 @@ LTX VAE whose decode draws unseeded noise (timestep conditioning or injected
 noise), which has no reproducible reference; image VAEs and every other class;
 a still at or under 1.2 MP, which decodes in about a second; a MiniMax H3
 still, which is one chunk; a VAE that came from a checkpoint rather than a VAE
-loader file, since no Worker can name its bytes; and every encode. Each decode
+loader file, since no Worker can name its bytes; and every encode. On ComfyUI
+0.44.0 and later, so do the Sol-H3-VAE decoder, which decodes the whole clip
+in one pass, the p-h3-image VAE, which decodes one frame, and a VAE that went
+through the VAE Compute Dtype node with a dtype other than `default`: that
+node keeps the weights the loader built and changes only the compute dtype,
+while a Worker builds its VAE in one dtype, so its decode may differ. Each
+decode
 logs one line saying whether it split and why not
 ([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
 

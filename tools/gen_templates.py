@@ -32,6 +32,7 @@ if _ADDED_SRC:
     sys.path.insert(0, _SRC)
 try:
     from dgx_monarch.nodes import NODE_CLASS_MAPPINGS
+    from dgx_monarch.stock_widget_drift import NEWER as NAMED_STOCK
 finally:
     if _ADDED_SRC:
         sys.path.remove(_SRC)
@@ -215,8 +216,11 @@ STOCK = {
     "SaveWEBM": ["filename_prefix", "codec", "fps", "crf"],
     # Create Video is V3. Every declared widget retains a positional slot even
     # when a graph wires it: the converter consumes that slot while preserving
-    # the link, so bit_depth/color_space/codec never shift behind a linked FPS.
-    "CreateVideo": ["fps", "bit_depth", "color_space", "codec"],
+    # the link, so the later widgets never shift behind a linked FPS.
+    # chroma_subsampling arrived in ComfyUI 0.44.0 (#17463). Every template
+    # holds its default, "auto", which dgx_monarch/stock_widget_drift.py lets
+    # an older ComfyUI skip.
+    "CreateVideo": ["fps", "bit_depth", "color_space", "chroma_subsampling", "codec"],
     "SaveVideo": ["filename_prefix", "format", "codec"],
     "SaveAudioAdvanced": ["filename_prefix", "format"],
     "Note": [],  # Note stores its text in widgets_values directly
@@ -631,10 +635,12 @@ def build(spec: dict) -> dict:
         if ntype == "Note":
             title = spec["title"].removeprefix("DGX Monarch ")
             node_out["title"] = f"DGX Monarch | {title}"
-        if ntype in NODE_CLASS_MAPPINGS:
+        if ntype in NODE_CLASS_MAPPINGS or ntype in NAMED_STOCK:
             # This is the name-to-value map web/js/dgx_monarch_widgets.js saves,
             # so a widget added after release never sends a shipped template
-            # through the positional heal meant for legacy saves.
+            # through the positional heal meant for legacy saves. A stock node
+            # in NAMED_STOCK carries one too, so a ComfyUI without one of its
+            # newer widgets restores the rest by name.
             node_out["dgxm_widgets"] = dict(zip(_widget_names(ntype), wv, strict=True))
         nodes_out.append(node_out)
     # A testing-only spec carries no layout, so its graph keeps an empty extra.
@@ -656,7 +662,7 @@ def _default_for(ntype: str, wname: str):
                 "clip_l": "", "qwen25_7b": "", "frame_rate": 24.0, "steps": 20,
                 "max_shift": 2.05, "base_shift": 0.95, "stretch": True, "terminal": 0.1,
                 "mu": 0.0, "std": 1.75, "noise_seed": 0, "sampler_name": "euler",
-                "filename_prefix": "dgx_monarch"}.get(wname, "")
+                "filename_prefix": "dgx_monarch", "chroma_subsampling": "auto"}.get(wname, "")
     cls = NODE_CLASS_MAPPINGS[ntype]
     declared = cls.INPUT_TYPES()
     for section in ("required", "optional"):
