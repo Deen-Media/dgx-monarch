@@ -1,6 +1,6 @@
 # Studio interface QA
 
-Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22 and on 2026-10-28, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30. Status: **scoped local validation; the twelve browser rows and fourteen new ones ran headless on the 2026-10-28 release candidate bundle; the three faults found there are fixed and re-checked on rebuilt bundles; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
+Date: 2026-10-20; browser rows repeated on 2026-10-21, twice on 2026-10-22, on 2026-10-28 and on 2026-11-03, with two rows added on 2026-10-22, fourteen on 2026-10-28 and tester round 4 rows from 2026-10-30, checked again on 2026-11-03. Status: **scoped local validation; the 26 browser rows and the eleven tester round 4 rows ran headless on the 1.5.0 bundle on 2026-11-03 and passed; the three faults that the 2026-10-28 round found are fixed; Studio's acceptance remains incomplete, as [Remaining acceptance](#remaining-acceptance) lists**.
 
 This pass inventoried every authored interactive control in `studio/src` and
 traced its handler, conditional visibility, disabled state and recovery path.
@@ -58,7 +58,9 @@ and revision rather than fetched on every snapshot poll.
 This section records the rounds up to 2026-10-22. The
 [2026-10-28 round](#browser-evidence-2026-10-28) on the release candidate
 follows it, with its own table, and the
-[tester round 4 rows](#tester-round-4-checks-2026-10-30) follow that.
+[tester round 4 rows](#tester-round-4-checks-2026-10-30) follow that. The
+[2026-11-03 round](#browser-evidence-2026-11-03) on the 1.5.0 bundle and its
+[tester round 4 re-check](#tester-round-4-checks-again-2026-11-03) come last.
 
 On 2026-10-22 all twelve rows below ran again on the bundle rebuilt after two
 review fixes: Review generation takes empty text in a required input, and a
@@ -364,6 +366,142 @@ and its SHA-256 is
 inside a subgraph instance, arrow keys on a select, which left it unchanged in
 this headless Firefox, and Chromium, Safari, physical phones and assistive
 technology.
+
+## Browser evidence, 2026-11-03
+
+On 2026-11-03 the 26 rows of the
+[browser procedure](../studio/tests/README.md#browser-checks) ran on the 1.5.0
+bundle, the one dev builds at commit `14d7e90`. The release commit adds only
+documentation and the version over that commit, so this bundle is the
+release's. It is the set that `RESOURCE_SHA256` names there:
+`index-u89IKTnP.js`
+(`8d2b9a6fa6c18847bb64f5d3cdef82d596303b5f1e79063b538b242dc6493bd0`),
+`index-DZRUgSeS.css`
+(`2b07ca82a5ce27a8f7853831d60d95e24ce8bd2040940d03a6e1ce79e0f9b854`) and
+`index.html` (`e408cec995f6f6e5686efd0373c8a2ce00fe15a58a58e55c80e403f22c936c0b`).
+`npm ci` and `npm run build` in that checkout wrote the same bytes, the
+inventory check passed, and the round's companions served those bytes
+unchanged. The browser was Mozilla Firefox 159.0.1, build 20261102214503, the
+snap package, headless on Ubuntu 24.04.5 LTS for arm64, driven through
+WebDriver BiDi with real pointer and key input. Its profiles turned off
+hardware video decoding, WebGL and GPU compositing, and no process the round
+started could see a CUDA device. The snap draws Studio's text in Noto Sans,
+where the Firefox of the earlier rounds drew DejaVu Sans, so wrapped text can
+take fewer rows than those rounds record. The rows ran at 360×800, 390×844,
+768×1024 and 1024×600 viewports, and Gallery actions at 1440×900 too. The
+palette and job rows ran again in a profile that reports reduced motion, a
+review waited out its expiry at 390×844 in a profile of its own, and the
+Sign-in link and Driver not running rows ran at 1440×900 and 390×844 with
+companions, a fixture and new browser profiles of their own.
+
+Most rows used `studio/tests/mock_driver.py` with a 30-second job and the
+2-second 24fps 320×240 H.264 clip of the 2026-10-28 round, each session with a
+fixture and a companion of its own. That fixture has no event socket and writes
+only successful history entries, so the Step bar, App Mode inputs and Failure
+details and Queue link rows, and the failure states of the Responsive routes
+row, ran on `studio/tests/event_driver.py` with a 30-second job and the
+recorded schema of the packaged templates. For the Large seeds row, a prompt
+whose seed is 18446744073709551615 went straight to the CPU fixture's
+`/prompt`.
+
+No row logged a console message. In each of the ten browsers, a capture
+self-test caught both a `console.error` call and an uncaught exception. A scan
+of the evidence for the 14 owner tokens this round's companions issued, and 6
+left by the earlier runs that day, found none outside the token files. Each row names its results files,
+`<row>_<viewport>.json`, which list the row's screenshots. They and the merged
+results file are kept in the maintainer's private evidence store, outside the
+repository and the packages, and the merged file's SHA-256 is
+`be658e0f5af70c3128cff2258407433b09b01d1d43136afbcfad9d2ae590c36e`.
+
+A first attempt on the same bundle and browser stopped partway when the host's
+desktop session closed and took its browsers down, which is no Studio fault.
+In that attempt one harness check was wrong: the Queue link check at 205 newer
+jobs read one 200-row page of the job listing to place the job, which that page
+cannot hold, so the check failed while the row's other checks passed. This
+run's check follows the listing's cursor. The first attempt's results agree
+with this run's and are kept beside them; this record cites only this run.
+
+The round found no Studio fault. Every row passed at each viewport where its
+check applies.
+
+| Check | Observed result and scope |
+|---|---|
+| Responsive routes | PASS. Page and main-content horizontal overflow measured zero on all eight routes at all four viewports, after jobs, uploads, grids, styles, presets and operation reviews existed and with every disclosure closed. On the event fixture, with failed jobs, Create and Queue measured zero too: a consent request's status line wrapped inside 314 pixels at 360×800, and Queue reason lines wrapped beside 64×64 pixel thumbnails. Evidence: `responsive_<viewport>.json` and `responsive_failure_<viewport>.json`. |
+| Phone controls | PASS. At 360 and 390 pixels wide, all 34 visible inputs, selects and textareas across the eight routes used 16px text and at least 44px height, one fewer than in the 2026-10-28 run. The 768×1024 and 1024×600 viewports keep desktop sizing, where the rule does not apply. Evidence: `phone_controls_<viewport>.json`. |
+| Palette and motion | PASS. Palette search held focus after a pointer click and after Ctrl+K, and took focus 3ms to 7ms after a scripted open. Escape closed the palette and returned focus to its button. The dialog reveal was declared at 200ms and finished 200ms to 217ms after opening; with reduced motion neither the dialog nor the backdrop animated. A disclosure-closing sample captured 35 or 36 frames with a longest interval of 17.2ms to 17.5ms. Firefox 159 still lacks `interpolate-size`, so the disclosure transition never applies. Evidence: `palette_<viewport>.json` in the default and the reduced-motion session. |
+| Image previews | PASS. The five test images filled their frames at every viewport, with at most 0.053 percent aspect-ratio error and no centering error. Evidence: `image_previews_<viewport>.json`. |
+| Image upload | PASS. At every viewport the uploaded portrait came back from the fixture as 120×480 RGBA, 230,400 decoded bytes, with pixels and file bytes identical to the source. Evidence: `image_upload_<viewport>.json`. |
+| Mask alignment | PASS. Canvas bounds matched the preview. A press at the canvas center gave a transparent box of `(44, 224, 76, 256)` at 768×1024 and 1024×600 and `(43, 224, 76, 256)` at 360×800 and 390×844, centered within 0.022 pixels of the press, with center alpha 0 and corner alpha 255. Evidence: `mask_alignment_<viewport>.json`. |
+| Video controls | PASS. The clip decoded, played and paused in the viewer, and Mute and Loop each changed state. Frame stepping stayed disabled, with "Frame stepping needs valid duration and frame rate; use native seek controls", because ComfyUI reports no frame rate for the videos it saves, and Details opened the metadata panel at its full 260px at every viewport. Evidence: `video_controls_<viewport>.json`. |
+| Generation activity | PASS. While a 30-second job ran, the viewer border ran its 2.4-second animation and passed clicks through to the viewer at every viewport, and the logo animated at 768 and 1024 pixels wide; the phone layout hides it. With reduced motion both stood still, and the status line's bar became a dim full-width bar at opacity 0.35. Evidence: `generation_activity_<viewport>.json` in both sessions. |
+| Editing and saved state | PASS. Editing a reviewed two-cell grid removed its confirmation and submit control and said "Grid definition changed. Validate every cell again before submission." Renaming a preset while a different draft was active kept the preset's values. Enter kept two lines in the prompt field, also after a tab switch. Evidence: `editing_saved_state_<viewport>.json`. |
+| Operation review | PASS. The read-only version review and its durable record opened at every viewport, and each new receipt joined the end of the list. No host operation was applied. Evidence: `operation_review_<viewport>.json`. |
+| Sign-in link | PASS at 1440×900 and 390×844. The `sign-in.html` page connected the workspace without typing in 0.28 seconds at both viewports. `location.hash` was empty and the stored token matched the token file by SHA-256. None of the 30 requests recorded at each viewport carried the token in its request line or a `Referer` header. A reload stayed connected, an old link after a restart showed the stale-link sentence and the token form, the closed profile's history held one `token=` row for the old link, visited twice, and a companion started with `--allow-management` wrote no `sign-in.html` and showed the token form. Evidence: `sign_in_link_<viewport>.json`. |
+| Driver not running | PASS at 1440×900 and 390×844. With nothing on the driver port, the page showed the panel with `echo start-the-fixture`, the source line naming the configuration file, the paragraph about another address and disabled Generate and Review settings buttons, with no red banner, and the catalog answered 503 `driver_not_running`. 1.77 seconds after the fixture listened, at both viewports, the panel was gone, both buttons were enabled and the restored draft showed its inputs without a reload; the catalog then answered 200. Evidence: `driver_not_running_<viewport>.json`. |
+| Viewer status line | PASS. Generate started the job with no dialog, and the submitted line named no job. The line read Queued, then Running with the elapsed time as m:ss, counting from 0:00 or 0:01 to 0:29 to 0:31, beside a sweeping indeterminate bar, then "Finished in 0:30", 16.5px tall, and the bar went away. The telemetry panel's "This tab's job" row matched the line while running and after, and its raw sample stayed closed. Under reduced motion the bar stood still. Evidence: `status_line_<viewport>.json` and `telemetry_job_<viewport>.json`. |
+| Step bar | PASS. On the event fixture the line read Running with "step 2 of 20 on node 1" and so on beside the elapsed time, rising to step 20, with a determinate bar whose fill matched the step share of its 314 to 590 pixel track to within 0.001 pixels. When node 2 began, the step text and the count went away and the bar swept until the job finished. Evidence: `status_line_steps_<viewport>.json`. |
+| Newest result | PASS. Within 0.02 to 0.11 seconds of "Finished", the viewer showed the job's last stored output without a click, and the metadata panel named the job. The recent outputs strip held up to eight job outputs and no upload or mask, marked the one in view, and showed 128×96 thumbnails for images and 320×240 posters marked "▶ 0:02" for the clip, where the 2026-10-28 bundle showed "Preview unavailable". Evidence: `newest_result_<viewport>.json` and `newest_result_steps_<viewport>.json`. |
+| Review summary and expiry | PASS. Generate started a job with no dialog, and a line under the button said it was submitted, named no identifier and cleared itself 5.12 to 5.16 seconds later; a second Generate started another job the same way. Review settings opened on "Ready to generate." with the workflow, model files, seeds, prompt text, topology, one checks line and "This review expires at 4:33:04 PM, 10 minutes after Studio made it, because it records the driver's runtime as it was then." and similar, with no checkbox and the immutable record closed until opened; opened, it scrolled inside a short box. A style appended without its prompt input opened the dialog on "Choose an explicit prompt input for the selected styles." with Open Inputs, and no job started. A review left open past its 600 seconds at 390×844 then read "This review expired at 4:28:53 PM. Close it and generate again for a fresh one.", its Expiry line turned to the past tense, and Generate stayed off. Evidence: `review_summary_<viewport>.json`, `expiry_open_390x844.json` and `review_expiry_390x844.json`. |
+| Seeds | PASS. New drafts used the Random policy, with "Random: each job gets new seeds. Review settings shows them before it starts." After a run from Review settings, the review's seed, the viewer footer, the Queue row and the clipboard after Copy seed in the gallery held the same digits. Use this seed put them in the seed field with the Fixed policy and said so, and one Undo restored Random. Evidence: `seeds_<viewport>.json`. |
+| Workflow filter and palette | PASS. Create listed all 71 packaged workflows by title in title order. "flux" kept the six that match by title or file name, a filter with no match said "No packaged workflow matches this filter.", Escape cleared the filter, Enter loaded the first "z-image" match while no packaged workflow was chosen and did nothing once one was, and Clear emptied the box and kept focus there. The palette showed its LOAD A WORKFLOW group with "Type a title or file name to find a packaged workflow." on an empty search, listed the 14 matches for "wan", and loaded the chosen one in Create. Evidence: `workflow_filter_<viewport>.json`. |
+| Prompt styles and Grids how-to | PASS. Create explained style order with its worked example. With two saved styles applied, the ends of the list had Move up or Move down off with "Already first" and "Already last", review showed "((a red fox, oil painting))", Move up turned it into "((a red fox)), oil painting", and Undo restored the order. Grids opened on its five-step how-to with empty value fields, and the line under Validate every cell named the missing workflow in a new profile, then no axis, empty, invalid, non-list and empty-list values and an empty style axis B, until the axes were valid. Evidence: `prompt_styles_<viewport>.json`, `grids_guide_<viewport>.json` and `grids_no_workflow_390x844.json`. |
+| App Mode inputs | PASS. At 1024×600, each of the 71 packaged templates opened Create on the Inputs tab with its App Mode inputs in the order of its layout, 8 to 21 inputs each, all typed controls and no alert, against the recorded schema; Flux 1 text to image did the same at the other three viewports. Against the CPU fixture, whose schema lacks the templates' nodes, Flux 1 text to image showed the same ten inputs in order, each marked as missing from `object_info`. Evidence: `app_mode_recorded_schema_<viewport>.json` and `app_mode_fixture_schema_<viewport>.json`. |
+| Failure details and Queue link | PASS. A class P refusal read "Failed after 0:10" with "Refused, class P (physics): CPU fixture: a synthetic class P refusal for the browser checks.", Open Queue and "Troubleshooting #135". A class C rescue added the consent request, the panel button's name, "Load with slab residency", Review consent and why this companion cannot grant it; Review consent opened Operations on `consent.apply` with the job, model and consent id, and nothing was applied. Open Queue opened the job's row expanded with its summary in view within 0.32 to 0.37 seconds, a second visit to Queue opened no row, and the row showed the full refusal. At 1024×600, with 45 newer jobs Queue turned to History page 2 for it; with 105, outside the first 100-row load, it pinned the row above the history from the snapshot; with 205, past the companion's 200-job snapshot, the status line kept "Failed after 0:10" and its link made Queue read the job by its identity and pin its row, open and in view within 0.33 seconds. Evidence: `failure_p_<viewport>.json`, `failure_c_<viewport>.json`, `consent_review_<viewport>.json`, `open_queue_page2_1024x600.json`, `open_queue_pinned_1024x600.json` and `open_queue_identity_1024x600.json`. |
+| Queue thumbnails | PASS. With 37 and 40 rows, Queue fetched thumbnails only for the rows within reach when it opened, at most five, and none for the rest until scrolling brought them near. Where the page scrolls, at 360 and 390 pixels wide, a row's request began 135 to 193 pixels below the visible area. Where the main area scrolls, at 768 and 1024 pixels wide, it began only once the row was 8 to 66 pixels inside the visible area, as on 2026-10-28. Thumbnails measured 64×64 pixels. On the event fixture they showed the images; on the CPU fixture, where each job's newest output is its video, they showed posters marked "▶ 0:02". Evidence: `queue_thumbnails_<viewport>.json` in both sessions. |
+| Large seeds | PASS. For the job with seed 18446744073709551615, Copy named inputs, Copy API prompt and Export provenance kept every digit: the 101-byte and 167-byte clipboard texts and the 1,528-byte exported file, which holds the seed twice, parsed back to the exact number, with no rounded form. Copy seed wrote the 20 digits alone and the viewer footer showed them. Reuse settings, from the card and from the viewer, refused with "Settings not loaded: 1.seed is 18446744073709551615." and why, Use this seed refused with "Seed 18446744073709551615 is too large for a draft field" and why, and the draft stayed unchanged each time. Evidence: `large_seed_<viewport>.json`. |
+| Gallery actions | PASS at the four viewports and 1440×900. A real click on Actions opened the menu above the card's buttons, 8 pixels or more below the card's top and inside its card, on an opaque background, and a second click on Actions closed it with no action and no clipboard change. Evidence: `gallery_actions_<viewport>.json`. |
+| Grids style axes | PASS. With saved styles, the open Saved prompt-style axes list fit at all four viewports with zero page and main overflow, and every Use as axis button stayed in view and under the pointer. Evidence: `style_axes_<viewport>.json`. |
+| Panels | PASS. The telemetry panel has no close button and the event console only Clear view. The footer's Telemetry and Console toggles showed and hid them with matching `aria-expanded`, and the Settings checkboxes did the same at every viewport. Evidence: `panels_<viewport>.json`. |
+
+**NOT RUN:** a step count or a failure on the CPU fixture, which cannot produce
+either; Grant and retry, which needs `--allow-management` and a host operation;
+Reconcile in Queue for an unknown outcome; the review expiry at any viewport
+but 390×844; and Chromium, Safari, physical phones, assistive technology and GPU
+rendering, as before.
+
+## Tester round 4 checks again, 2026-11-03
+
+On 2026-11-03 the eleven rows of the
+[tester round 4 checks](#tester-round-4-checks-2026-10-30) ran again on the
+1.5.0 bundle of the [round above](#browser-evidence-2026-11-03), from the same
+commit and in the same Firefox 159.0.1 snap, headless and driven through
+WebDriver BiDi with real pointer, wheel and key input. They ran earlier that
+day than the round above. Each row used the fixture its change used, each
+schema made again from the checkout's recorded schema and equal to the
+2026-10-30 one: `studio/tests/event_driver.py` with 6-second jobs and the
+recorded schema without `kromoss_bf16.safetensors` for the four validation
+rows; for Send to edit, the event fixture with the full schema, the event
+fixture with that schema less `ConditioningZeroOut`, `TextEncodeMageFlowEdit`
+and `TextEncodeQwenImage21`, and `studio/tests/mock_driver.py`, each with
+2-second jobs; the event fixture with the two long model file names added to
+its schema for the input pane rows; and the QA-side subclass of the CPU fixture
+with the synthetic two-host telemetry sample, placeholder host names and one
+clip per prompt for the viewer, telemetry and video tile rows. These rows check
+the bundle against what the 2026-10-30 rows recorded and make no new
+comparison with a dev bundle. Every row passed, and no run logged a console
+message. Each row names its screenshots, which sit beside the results file in
+the maintainer's private evidence store, outside the repository and the
+packages; the results file's SHA-256 is
+`92ec8ee6603c4d1900d9d07a36f923fdfecb1fc59fe422983b62973011747411`.
+
+| Check | Observed result and scope |
+|---|---|
+| Resolved workflow issue (QA-09) | PASS at 1440×900, 1024×600, 768×1024 and 390×844. After the template loaded, Workflow needs attention listed `3.unet_name: Value is not an available choice`. Typing 40 into steps sent one inspection with steps at 40, and 0.76 to 0.78 seconds after the last key the check had ended with the error still listed. Typing "kroma-v" into the focused unet_name select picked `kroma-v0.3.1-turbo-opd.safetensors`, Create sent one inspection, and 440 to 460 ms after the change the card and the issue line were gone and Generate was on. A job then ran to "Finished in 0:06" and the card stayed gone. Evidence: `01-template-loaded.png` to `11-use-this-seed.png` for each viewport. |
+| Invalid field summary (QA-08) | PASS at the same four viewports. At load, Generate and Review settings were off, each with `aria-describedby` naming the summary, which read "Fix unet_name: Choose an available value." beside a Show field button that was on; the line no longer names the node since the input pane change. From the Assets tab, Show field opened Inputs, scrolled the field list 884 to 912 pixels and focused the select inside the list's visible box. With denoise at 5 and steps at 0 as well, the line named steps, and All 3 issues listed steps, unet_name and denoise, each with a Show field that stayed on; the Show field for denoise closed the list, opened All inputs and focused denoise in view. The field list measured 280 pixels at 1440×900 and 768×1024, 480 at 390×844 and 240 at 1024×600, where the 2026-10-30 run found 20. No viewport scrolled sideways. Evidence: `02-show-field-from-assets.png` to `05-show-denoise.png`. |
+| Random seed field (QA-05) | PASS at the same four viewports. A new draft under Random showed the seed field off, reading "Random each run", with "Choose the Fixed seed policy to set this seed.", and a typed value changed nothing. Fixed turned it into a number field holding 42 that took 123, and Random locked it again. After the job, Use this seed set Fixed and put the job's seed, 16 digits each time, in the editable field. Evidence: `08-seed-fixed.png`, `09-seed-random-again.png` and `11-use-this-seed.png`. |
+| Job category (QA-02) | PASS at the same four viewports. The select read Job category, with "Labels the job; the workflow decides what runs." under it, named by its `aria-describedby`; the input pane change shortened the 2026-10-30 sentence to this one. Evidence: the row's entries in the results file. |
+| Send to edit | PASS at 1440×900 and 390×844. On the event fixture whose schema leaves FLUX.3 Klein Base image editing as the one packaged editing workflow it runs, Send to edit on a FLUX.3 Klein Base text to image output opened no dialog. It loaded the editing workflow, set the Operation to Edit, opened Inputs and bound a `studio/` copy to node 8's image, listed and valid, with the output and the copy in the lineage, and the fixture's input store held the copy with the output's pixels. One Undo restored the text to image draft. After a second Send to edit, Generate submitted the edit with the copy as node 8's image, and with that image cleared on the Assets tab, Generate was off with "Edit needs an image in the image input on node 8." and how to fill it. With the full schema, the dialog listed the six packaged editing workflows in title order with focus on the first, and the draft stayed the same while it was open and after Cancel. The masked RGBA reference edit bound node 6's image and left the mask loader on node 7 alone, and Send to edit on that edit's output kept the workflow with no dialog and added the new output and copy to the lineage. On `studio/tests/mock_driver.py` the dialog read "No workflow can edit this output" and said why, with focus on Open Create, and the draft and the selected output stayed as they were. Dialogs and pages measured no horizontal overflow. Evidence: `01-fixture-output-in-view.png` to `09-after-Open-Create.png`, `03-after-Send-to-edit,-one-candidate.png` to `18-image-input-cleared-on-the-Assets-tab.png` and `02-choice-offered.png` to `13-keep:-Send-to-edit-on-the-edit's-output.png`. |
+| Input pane width | PASS at 1440×900 with the pane at 340 and 280 pixels, at 1024×600 and at 390×844, with the long lineage ids, workflow file name and model file names of the 2026-10-30 row. No element or text of the pane passed its edge on Inputs, All inputs, Assets, LoRAs or Layout, for Krea 2 and for LTX 2.5, and the pane and its scroll box measured a scroll width equal to their width. Copy beside the 152-character id wrote it exactly and said "Copied the whole id.", and Clear lineage stayed in the pane and took the pointer at every size. The tab row keeps its own sideways scroll at 280 and 300 pixels, by design. Evidence: `10-Inputs-340-top.png` to `11-Layout-280-end.png` at 1440×900, `10-Inputs-layout-top.png` to `10-Layout-layout-end.png` at the other sizes, and `30-ltx-Inputs.png` and `30-ltx-All-inputs.png`. |
+| Prompt fields | PASS at 1440×900, 1024×600 and 390×844. The Krea 2 template's Inputs tab showed Prompt and an Add negative prompt button, with `aria-expanded` false and the box's id in `aria-controls`, and no raw type on any field. The folded field rendered no label, and its box computed `display: none`. The prompt box opened at its ceiling for the template's prompt, 270, 180 and 253 pixels, and kept that height and scrolled as more lines were typed. Add negative prompt opened the empty box with the focus in it. All inputs showed Prompt and Negative prompt with the raw types, and pointing at a name showed its node, such as `CLIPTextEncode · text · node 5`. Evidence: `01-krea2-inputs.png`, `02-krea2-all-inputs.png` and `03-prompt-grown.png`. |
+| Short window and Show field | PASS at 1440×900, 1024×600 and 390×844. Field list and prompt box measured 280 and 270 pixels at 1440×900, 240 and 180 at 1024×600 and 480 and 253 at 390×844, the bundle readings of 2026-10-30, and the pane's footer stayed within a pixel of the pane's foot. With a missing model file the footer read "Fix unet_name: Choose an available value.", one row at 1440×900 and 390×844 and two at 1024×600. The Job category line took one row at all three sizes, where the 2026-10-30 run took two at 1024×600, because this Firefox draws Noto Sans, which is narrower than the DejaVu Sans of that run. From the Assets tab, Show field focused the model field inside the list, clear of the footer and under the pointer, at all three sizes. Tab to the last field left it clear of the footer on Inputs at all three sizes and on All inputs at 1440×900 and 390×844; at 1024×600 the last All inputs box ended 8 pixels under the footer's top edge, the gap the 2026-10-30 row records at 7 pixels. Evidence: `01-loaded.png`, `02-issue.png` and `03-show-field.png` for each size. |
+| Wheel zoom | PASS at 1440×900, 1024×600, 768×1024 and 390×844 and in a reduced-motion profile at 1024×600. The 1600×1000 test pattern opened in Fit at 15.8% at 1440×900 and 1024×600, 16.7% at 768×1024 and 21.4% at 390×844. One wheel step up over it zoomed to 1.19 times that scale, and the pixel under the pointer moved at most 0.18 pixels along the axis the image then filled. Ten more steps in and out, with the image filling the frame, moved that pixel at most 0.46 pixels. The zoom stopped at 800%, and below Fit the image sat in the middle of the frame within 0.01 pixels. Over the toolbar, over the frame beside the image and over a video, a step down zoomed nothing and scrolled what holds the pointer. A drag of 80 by 50 pixels panned the zoomed image by exactly that, and Down, Down and Right scrolled the focused frame by 108 and 40 pixels, 120 and 40 at 390×844. Fit, 1:1, Zoom in and Zoom out read 100%, 100%, 125%, then 100% and 75%. Evidence: `qa01-1-fit.png`, `qa01-2-zoomed.png` and `qa01-3-below-fit.png`. |
+| Telemetry details | PASS at the same four viewports and with reduced motion. A new profile opened the panel with Detailed telemetry closed. The panel showed the job rows, "Readiness ! active" with "Attached mesh, Render session" 163 to 217 pixels below its top, and both placeholder host cards with all five readings, while the readiness rows, the chart, Inspect sample and Export history stayed hidden. Its content measured 831 pixels at 1440×900, in a panel 792 pixels tall, and 397 at 1024×600, as on 2026-10-30. A click on Detailed telemetry showed the rest, and the stored layout gained `"telemetryDetails": true`. A reload kept it open, and after a click closed it a reload kept it closed, with the other three keys intact. Evidence: `qa06-1-collapsed.png` and `qa06-2-open.png`. |
+| Video tiles | PASS at the same four viewports and with reduced motion. In Recent Outputs, the Gallery and Queue, the H.264 and VP9 clips showed 128×96 posters marked "▶ 0:02", and the 640×360 clip a 320×180 poster marked "▶ 0:04". Each poster's centre pixel read 236, 230, 110. The audio-only file said "No thumbnail · 0:02", and the header-only file "Cannot play in this browser". Image tiles kept the companion's thumbnails, and tiles beyond the near-viewport margin stayed unloaded, by design. Evidence: `qa07-1-recent-outputs.png`, `qa07-2-gallery.png`, `qa07-2-gallery-end.png` and `qa07-3-queue.png`. |
+
+**NOT RUN:** the dev bundle readings, which the 2026-10-30 rows hold and this
+re-check did not repeat; a refresh the companion fails or answers late; a field
+issue inside a subgraph instance; arrow keys on a select; and Chromium, Safari,
+physical phones and assistive technology.
 
 ## Remaining acceptance
 
