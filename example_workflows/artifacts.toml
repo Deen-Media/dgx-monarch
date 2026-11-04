@@ -449,6 +449,13 @@ size = 28577095592
 sha256 = "431d1613ffa809ae1f735b661a01788c6d74991f51efd01f45d5aee955ccd224"
 
 [[artifact]]
+file = "wan2.2_ti2v_5B_fp16.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/ee6f4a40737a995bf5818954cfce6d59443b0f04/split_files/diffusion_models/wan2.2_ti2v_5B_fp16.safetensors"
+size = 9999658848
+sha256 = "456f901338bd9eadbded3828b819109a9b68e8a525ca5cf8d0049a69fcfeca1e"
+
+[[artifact]]
 file = "wan21_1.3b_flow_rvs_bf16.safetensors"
 dest = "diffusion_models"
 url = "https://huggingface.co/Kijai/WanVideo_comfy/resolve/8260d429d19fd7a72304cad059160b95d843913f/FlowRVS/wan21_1.3b_flow_rvs_bf16.safetensors"
@@ -860,6 +867,13 @@ size = 253806246
 sha256 = "a70580f0213e67967ee9c95f05bb400e8fb08307e017a924bf3441223e023d1f"
 
 [[artifact]]
+file = "wan2.2_vae.safetensors"
+dest = "vae"
+url = "https://huggingface.co/Comfy-Org/Wan_2.2_ComfyUI_Repackaged/resolve/ee6f4a40737a995bf5818954cfce6d59443b0f04/split_files/vae/wan2.2_vae.safetensors"
+size = 1409400960
+sha256 = "e40321bd36b9709991dae2530eb4ac303dd168276980d3e9bc4b6e2b75fed156"
+
+[[artifact]]
 file = "wan21_flow_rvs_mask_vae_bf16.safetensors"
 dest = "vae"
 url = "https://huggingface.co/Kijai/WanVideo_comfy/resolve/8260d429d19fd7a72304cad059160b95d843913f/FlowRVS/wan21_flow_rvs_mask_vae_bf16.safetensors"
@@ -1252,6 +1266,11 @@ sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
     "diffusion_models/wan2.2_t2v_low_noise_14B_fp16.safetensors",
     "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
     "vae/wan_2.1_vae.safetensors",
+]
+"dgx-monarch-wan22-ti2v" = [
+    "diffusion_models/wan2.2_ti2v_5B_fp16.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan2.2_vae.safetensors",
 ]
 "dgx-monarch-wandancer" = [
     "clip_vision/clip_vision_h.safetensors",

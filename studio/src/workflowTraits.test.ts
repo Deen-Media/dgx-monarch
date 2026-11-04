@@ -37,6 +37,7 @@ const PNG = 'PNG image';
 const FRAMES = 'PNG frames';
 const FRAMES_AUDIO = 'PNG frames plus separate FLAC audio';
 const MP4 = 'one MP4 video with sound';
+const MP4_SILENT = 'one MP4 video without sound';
 // The reviewed operations and output of each bundled workflow, by file stem without its prefix.
 // A graph that loads an image, a video or a mask offers Edit; Upscale also needs an upscale
 // node; a graph with a clip frame count, a video input or a video output makes video.
@@ -109,6 +110,7 @@ const EXPECTED: Record<string, [string, string]> = {
   'wan21-i2v': [CLIP_EDIT, FRAMES],
   'wan22-i2v': [CLIP_EDIT, FRAMES],
   'wan22-t2v': [CLIP, FRAMES],
+  'wan22-ti2v': [CLIP, MP4_SILENT],
   wandancer: [CLIP_EDIT, FRAMES],
   'zimage-dct-t2i': [STILL, PNG],
   'zimage-t2i': [STILL, PNG],

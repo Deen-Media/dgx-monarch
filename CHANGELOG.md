@@ -226,6 +226,18 @@
   now gets 200 minutes; other families keep the larger of the floor and 120 s
   per step. Each render logs its deadline and the terms behind it at INFO
   ([TROUBLESHOOTING #139](docs/TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
+- MiniMax H3 Context Windows (DGX Monarch) carries ComfyUI 0.44.0's MiniMax
+  H3 context windows (#17425) to the Workers. It takes the stock node's
+  widgets, and each Worker applies ComfyUI's own node to its render clone, so
+  each window is one model call on a shorter clip, which Ulysses splits as it
+  splits a whole clip. The sample deadline counts every window's rows. It
+  refuses class P on a Worker whose ComfyUI predates 0.44.0, on another
+  family and on a two-checkpoint guider's negative model. The activation
+  preflight still prices the whole clip. A comfy canary seam holds the stock
+  contract, and no windowed render has run on hardware
+  ([MODELS](docs/MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av),
+  [VALIDATION](docs/VALIDATION.md#minimax-h3-context-windows),
+  [TROUBLESHOOTING #142](docs/TROUBLESHOOTING.md#142-a-render-with-minimax-h3-context-windows-dgx-monarch-refuses)).
 - A capacity-rescue consent now keeps slab residency when stock residency
   cannot load the checkpoint. The identity gate records INCONCLUSIVE with
   `cross_mode=CAPACITY`, takes no lever, and the render proceeds under slab;
@@ -256,6 +268,16 @@
   ([Models](docs/MODELS.md#worker-assisted-vae-decode),
   [VALIDATION](docs/VALIDATION.md#worker-assisted-vae-decode),
   [TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+- A Wan 2.2 TI2V 5B template, `dgx-monarch-wan22-ti2v.json`, runs the one
+  FP16 checkpoint with the Wan 2.2 VAE at the settings of ComfyUI's own TI2V
+  template: 1280x704, 121 frames at 24 fps, 20 uni_pc steps at cfg 5 and
+  shift 8. auto runs it on uly2. A Load Image wired to `start_image` makes it
+  image to video, and the Wan adapter shards the per-frame timesteps that
+  image brings. Its VAE splits under Worker-assisted VAE decode through VAE
+  Decode (Tiled), and on CPU the real file splits byte-identical to the stock
+  tiled decode. No hardware comparison has run, so the row is impl
+  ([MODELS](docs/MODELS.md#model-wan-2-2-ti2v-5b),
+  [VALIDATION](docs/VALIDATION.md#evidence-wan-2-2-ti2v-5b)).
 - Worker-assisted VAE decode keeps three ComfyUI 0.44.0 decodes on the
   driver, with one line each: the Sol-H3-VAE decoder, which decodes the whole
   clip in one pass, the p-h3-image VAE, which decodes one frame, and a VAE

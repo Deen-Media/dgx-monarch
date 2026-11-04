@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 from .. import family_select, h3_rows, latent_scale, mesh_safety, sample_deadline
 from ..adapters.detect import CheckpointSniffError, sniff_checkpoint
 from ..h3_activation import H3_FAMILY
+from ..h3_context_windows import normalize_context_windows, windowed_rows
 from ..log import get_logger
 from ..sampling_contract import latent_size_tags
 
@@ -56,7 +57,10 @@ def packed_rows_for_request(model: Any, request: dict, latent: dict) -> tuple[in
     ``render_preflight.activation_footprint_preflight_for_request``, without
     its warnings. Every other family, and any input this cannot read, returns
     None, so the deadline keeps the rule it had before rows were counted.
-    Never raises: a broken count must not block a render.
+    Under MiniMax H3 context windows a step runs every window, each carrying
+    the text, keyframe and reference rows again, so the count is their sum
+    (``h3_context_windows.windowed_rows``). Never raises: a broken count must
+    not block a render.
     """
     try:
         unet_name = getattr(model, "unet_name", None)
@@ -83,6 +87,11 @@ def packed_rows_for_request(model: Any, request: dict, latent: dict) -> tuple[in
         if family == H3_FAMILY:
             rows = h3_rows.rows_from_request(request, latent, video_shape=video_shape)
             total = rows.total if rows.resolved else 0
+            windows = normalize_context_windows(getattr(model, "context_windows", None))
+            if windows is not None and rows.resolved:
+                total = windowed_rows(latent_t=rows.latent_t, frame_rows=rows.frame_rows,
+                                      audio_t=rows.audio // 2,
+                                      fixed_rows=rows.text + rows.cond + rows.ref, wire=windows)
         else:
             ref_shapes, pose_shape = ref_pose_shapes(request)
             total = sum(mesh_safety.ref_pose_token_counts(

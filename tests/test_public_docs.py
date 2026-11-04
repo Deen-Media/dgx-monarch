@@ -46,6 +46,7 @@ EVIDENCE_ANCHORS = {
     "evidence-wan-2-1-t2v",
     "evidence-wan-2-2-t2v-high-low",
     "evidence-wan-2-2-i2v",
+    "evidence-wan-2-2-ti2v-5b",
     "evidence-wan-2-1-i2v",
     "evidence-wan-flowrvs",
     "evidence-wan-bernini-r",

@@ -89,6 +89,7 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("video", "Wan 2.1 (t2v)"): ("wan", "HW"),
     ("video", "Wan 2.2 (t2v, high/low)"): ("wan", "HW"),
     ("video", "Wan 2.2 (i2v)"): ("wan", "HW"),
+    ("video", "Wan 2.2 TI2V 5B"): ("wan", "impl"),
     ("video", "Wan 2.1 (i2v)"): ("wan", "HW"),
     ("video", "Wan FlowRVS"): ("wan", "HW"),
     ("video", "Wan Bernini-R"): ("wan", "HW"),
@@ -660,7 +661,8 @@ def test_hw_warning_exempt_families_are_explicitly_reviewed() -> None:
         f"review code and this contract together, got {sorted(code)}"
     )
     statuses = _doc_family_statuses()
-    assert statuses["wan"] == {"HW"} and "wan" not in code
+    # Wan 2.2 TI2V 5B has a template and no hardware comparison yet.
+    assert statuses["wan"] == {"HW", "impl"} and "wan" not in code
     assert statuses["wan_scail"] == {"HW"} and "wan_scail" not in code
     assert statuses["wan_dancer"] == {"HW"} and "wan_dancer" not in code
     assert statuses["ideogram4"] == {"HW"} and "ideogram4" not in code

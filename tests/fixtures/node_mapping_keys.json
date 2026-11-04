@@ -13,6 +13,7 @@
     "DGXMonarchKSamplerAdvanced",
     "DGXMonarchKSamplerPipeline",
     "DGXMonarchLoraLoader",
+    "DGXMonarchMiniMaxH3ContextWindows",
     "DGXMonarchModelSamplingSD3",
     "DGXMonarchQwenImage21Cache",
     "DGXMonarchSamplerCustom",

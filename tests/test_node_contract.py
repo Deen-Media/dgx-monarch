@@ -22,6 +22,7 @@ EXPECTED_NODE_KEYS = {
     "DGXMonarchModelSamplingSD3",
     "DGXMonarchQwenImage21Cache",
     "DGXMonarchSkipLayerGuidance",
+    "DGXMonarchMiniMaxH3ContextWindows",
     "DGXMonarchKSampler",
     "DGXMonarchKSamplerAdvanced",
     "DGXMonarchKSamplerPipeline",

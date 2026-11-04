@@ -452,7 +452,13 @@ def test_h3_still_and_a_failing_rank_keep_the_stock_bytes(comfy, ranks):
     assert route.record.units == 0 and not route.record.split
 
 
-def test_a_real_vae_file_splits_through_the_stock_decode_and_the_worker_body(comfy, ranks):
+# The Wan 2.1 VAE, and the Wan 2.2 VAE the TI2V 5B template loads: 48 latent
+# channels and a 16x spatial ratio, still one tile per call of the stock decode.
+REAL_VAE_FILES = [("wan_2.1_vae.safetensors", 16), ("wan2.2_vae.safetensors", 48)]
+
+
+@pytest.mark.parametrize("name, channels", REAL_VAE_FILES)
+def test_a_real_vae_file_splits_through_the_stock_decode_and_the_worker_body(comfy, ranks, name, channels):
     """End to end on CPU: Load VAE's object, the installed wrappers, and a rank running the real ``run()``.
 
     The rank builds its own VAE from the same file by name, checks its
@@ -463,11 +469,12 @@ def test_a_real_vae_file_splits_through_the_stock_decode_and_the_worker_body(com
 
     from dgx_monarch.actor import vae_decode
 
-    name = "wan_2.1_vae.safetensors"
     if folder_paths.get_full_path("vae", name) is None:
         pytest.skip(f"no models/vae/{name} in this ComfyUI checkout")
     loader = __import__("nodes").VAELoader()
     vae = loader.load_vae(name)[0]
+    family, why = classify(vae)
+    assert family is not None and family.kind == MULTIDIM, why
     worker = SimpleNamespace(rank=1, _setup_key=("topology",), _active_worker_args={}, uma_reserve_gb=0.0)
     gpu = threading.Lock()  # the actor's GPU lock: one unit at a time
 
@@ -485,7 +492,7 @@ def test_a_real_vae_file_splits_through_the_stock_decode_and_the_worker_body(com
     ranks(_WorkerRanks(compute=None))
     vae_decode_route.install()
     torch.manual_seed(13)
-    latent = torch.randn(1, 16, 3, 12, 12)
+    latent = torch.randn(1, channels, 3, 12, 12)
     tiled = {"tile_x": 8, "tile_y": 8, "overlap": 2, "tile_t": 2, "overlap_t": 1}
     with torch.inference_mode():
         stock = vae.decode_tiled(latent, **tiled)
