@@ -147,6 +147,12 @@
       "waivable": false
     },
     {
+      "site": "actor/model_sampling_render.py::_refuse::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "actor/partial_load_guard.py::check::PartialLoadDivergenceError#0",
       "class": "C",
       "guard": "partial_load_divergence",
@@ -1162,6 +1168,12 @@
     },
     {
       "site": "nodes/model_patch_preflight.py::preflight_context_windows::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/model_patch_preflight.py::preflight_h3_sigma_shift::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
       "waivable": false

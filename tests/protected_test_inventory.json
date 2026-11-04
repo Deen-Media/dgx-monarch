@@ -1232,6 +1232,25 @@
       "test_the_worker_belt_refuses_windows_on_a_guiders_negative_model": "8d38013367da53f4",
       "test_the_worker_belt_sits_inside_the_load_guard": "aee5373df238b97d"
     },
+    "tests/test_h3_sigma_shift.py": {
+      "test_a_one_frame_h3_latent_without_the_shift_refuses_with_the_node_named": "62fb2e9d3389bf70",
+      "test_an_sd3_shift_on_the_image_latent_says_why_it_does_not_count": "73c2c71018cf8173",
+      "test_no_wire_returns_the_clone_untouched": "36339a49ee11deda",
+      "test_the_belt_and_the_apply_refuse_a_comfy_without_the_stock_node": "e5ad607383165a28",
+      "test_the_belt_passes_h3_and_any_render_without_the_kind": "5d39d03c393737f2",
+      "test_the_belt_refuses_another_family": "6ad7d78b2f38b49a",
+      "test_the_h3_shift_at_any_value_passes_the_image_latent": "677825b3d82ea231",
+      "test_the_h3_wire_accepts_stock_range": "d8db7d8d7ed48d4c",
+      "test_the_h3_wire_refuses_malformed_values": "02419fb188279752",
+      "test_the_image_latent_arm_needs_the_h3_family": "e7ae960492a4a9dd",
+      "test_the_node_is_registered_and_mirrors_the_stock_constants": "b082388cccd64eac",
+      "test_the_node_on_another_family_refuses_on_the_model_and_the_negative": "7b780c4f7bf3cf7d",
+      "test_the_node_on_h3_or_an_unreadable_header_passes": "7e63123cc23e60e5",
+      "test_the_node_puts_both_shifts_on_the_model_request": "ed0e1d1c03eec676",
+      "test_the_sd3_multiplier_guard_skips_the_h3_kind": "d24a5232bd24d42a",
+      "test_the_sd3_wire_is_unchanged": "e972a3bb0af22bc0",
+      "test_video_and_plain_latents_pass_without_the_shift": "777e2ba1841d8264"
+    },
     "tests/test_ideogram4_heads_refusal.py": {
       "test_a_model_without_a_readable_head_count_skips_the_guard": "4d0f7d994b23e025",
       "test_injection_passes_the_guard_at_a_dividing_degree": "2c164357fcb8dc65",

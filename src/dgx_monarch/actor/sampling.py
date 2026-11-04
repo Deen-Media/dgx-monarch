@@ -436,20 +436,16 @@ def model_sampling_render_clone(model_patcher: Any, value: object | None) -> Any
     sampling object until another patcher is loaded. Always patch a fresh clone
     with the resident patcher's stock object, even when this request asks for no
     override, so an unshifted render cannot inherit the prior render's shift.
+    The patch is stock's node for the wire's kind (actor/model_sampling_render.py).
     """
     from ..model_sampling import normalize_model_sampling
+    from .model_sampling_render import apply_model_sampling
 
     model_sampling = normalize_model_sampling(value)
     stock_sampling = model_patcher.get_model_object("model_sampling")
     render_patcher = model_patcher.clone()
     render_patcher.add_object_patch("model_sampling", stock_sampling)
-    if model_sampling is None:
-        return render_patcher
-
-    from comfy_extras.nodes_model_advanced import ModelSamplingSD3
-
-    shifted, = ModelSamplingSD3().patch(render_patcher, model_sampling["shift"])
-    return shifted
+    return apply_model_sampling(render_patcher, model_sampling)
 
 
 def run_ksampler(

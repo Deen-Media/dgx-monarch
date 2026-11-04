@@ -1574,6 +1574,50 @@ on uly2 against stock at the first release and refuses class P (#129) from
 `9caa6aae660b`; stock ComfyUI with DynamicVRAM off renders that pair 0.9977
 from its own default.
 
+<a id="evidence-p-h3-image"></a>
+
+### p-h3-image
+
+No hardware comparison has run, so the row stays impl. p-h3-image is a
+MiniMax H3 DiT on the H3 adapter. The CPU tests, against ComfyUI 0.44.0, hold
+three things. ModelSamplingMiniMaxH3 (DGX Monarch) gives each Worker's clone
+the sampling object and the two shift keys a stock graph gets
+(`tests/test_h3_sigma_shift_comfy.py`). The one-frame latent of
+`PH3ImageConditioning` is the one the driver's shift check reads, and no H3
+video latent is. And the H3 sharded forward at world 1 returns the stock
+forward's bits on the image graph: text to image, an odd latent, and edits
+with one and two references, at shifts 1.0 and 1.0 and at 12.0 and 3.0
+(`tests/test_p_h3_image_comfy_exactness.py`). The three DiT files read as
+`minimax_h3`, and as `bf16`, `int8` and `w4a8`
+(`tests/test_p_h3_image_support.py`). None of it runs a GPU.
+
+The maintainer's cells, all NOT RUN. Each renders at 2912 square, seed 42,
+the head capped at 2100 MHz. `bf16` is `dgx-monarch-p-h3-image.json` with
+the If/Else switch set to false, so the request reaches the model as it is
+and no cell depends on the upsampler. `int8` is
+`dgx-monarch-test-p-h3-image-int8.json` and `w4a8`
+`dgx-monarch-test-p-h3-image-w4a8.json`, each with the matching text
+encoder and VAE. One step means Manual Sigmas `1.0, 0.0`.
+
+| cell | settings | a pass shows | status |
+|---|---|---|---|
+| detection, each file | topology `auto` on the pair | the driver logs `auto: uly2; minimax_h3 bf16 at 8.48 MP, world 2, table row 53`, with `int8` or `w4a8` for the other files, and `minimax_h3: one-frame image latent (p-h3-image) at shifts 1.0 and 1.0` | NOT RUN |
+| one rank against stock, each file | Init `mode=local`, `gpus_per_host=1`, one step, against the vendor's `p-h3-image_text_to_image` workflow at the same seed and files, its upsampler switch false and the template's request in its request box | the decoded image is pixel-identical to stock's, and the actor log shows the stock forward (no `minimax_h3 USP injected` line) | NOT RUN |
+| uly2 against one rank, each file | topology `auto` on the pair, one step, then 8 | the actor log shows `minimax_h3 USP injected: 50 blocks, sp=2`, both ranks report identical latents, and the image matches the one-rank cell at one step; the 8-step image is recorded beside it | NOT RUN |
+| ring2 | topology `ring2`, one step, `bf16` | an odd packed total refuses class K with the H3 ring-pad text (#49) before any block runs; an even one completes with identical latents on both ranks | NOT RUN |
+| cfg2 and dp2 | topologies `cfg2` and `dp2`, `bf16` | both refuse class P before dispatch with the H3 batch-one text | NOT RUN |
+| uly2+fsdp | topology `uly2+fsdp`, one step, `bf16`, then `w4a8` | `bf16` completes with identical latents and its image recorded against resident uly2; `w4a8` refuses class P at launch with the grouped 4-bit layout text | NOT RUN |
+| W4A8 kernels | `w4a8` on one rank, then with `[worker_args] int8_gemm = "cutlass"` | the render completes on GB10 and the two kernels give the same image; a missing kernel shows here as a load or first-step error, which MODELS then records | NOT RUN |
+| no shift node | `bf16` with ModelSamplingMiniMaxH3 (DGX Monarch) removed | the driver refuses class P with the one-frame text (#144) before any Worker call | NOT RUN |
+| an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#144) and no rank waits out the group timeout | NOT RUN |
+| upsampler | `bf16` as shipped, switch on, one rank | Generate Text runs on the driver and Preview as Text shows the expanded prompt; the render completes beside the 37.7 GiB DiT | NOT RUN |
+| edit | `bf16`, a Load Image wired to `image_1`, uly2 and one rank, one step | the reference rows reach the packed stream on both ranks, both report identical latents, and the image matches the one-rank cell | NOT RUN |
+| LoRA route | `dgx-monarch-test-p-h3-image-lora.json`, the slot mapped to `p-h3-image_lora_bf16.safetensors` at 1.0, one rank, one step, against ComfyUI's own `image_p_h3_t2i` template with its upsampler bypassed | the NRMS against stock, recorded; a gap like MOSS-Image INT8's (#129) asks for the same refusal on H3 | NOT RUN |
+
+A fail is any other outcome in a cell: a refusal where the table expects a
+render, a render where it expects a refusal, latents that differ across
+ranks, or a uly2 image that differs from one rank at one step.
+
 <a id="evidence-longcat-image"></a>
 
 ### LongCat-Image
@@ -2816,6 +2860,8 @@ below.
 | The FP8 fast loader dtype on a BF16 file | #16941: under dynamic VRAM, ComfyUI's FP8 linear reads the dtype a weight is cast to, not its file dtype, so `fp8_e4m3fn_fast` computes in FP8 there instead of falling back to BF16 | the `kB_1_castfast` cell of [FP8 compute paths](#fp8-compute-paths) on ComfyUI 0.44.0, in the actors and in a dynamic-VRAM driver, against its release figures (18 percent faster, NRMS 0.191 against BF16) | NOT RUN |
 | The VAE Compute Dtype node under Worker-assisted VAE decode | #17450: the node clones the VAE and computes in another dtype over the loader's weights | the decode logs `not split` with the VAE Compute Dtype reason and gives the one-host frames; with the node at `default` the decode splits as in [Worker-assisted VAE decode](#worker-assisted-vae-decode) | NOT RUN |
 | MiniMax H3 context windows under sequence parallelism | #17425: a MiniMax H3 Context Windows node that patches a stock MODEL | the cells of [MiniMax H3 context windows](#minimax-h3-context-windows), which MiniMax H3 Context Windows (DGX Monarch) carries to the Workers | NOT RUN |
+| p-h3-image on the MiniMax H3 path | #17506: the p-h3-image text encoder, VAE and conditioning node; the DiT loads as MiniMax H3 | the cells of [p-h3-image](#evidence-p-h3-image), with ModelSamplingMiniMaxH3 (DGX Monarch) carrying the shifts to the Workers | NOT RUN |
+| The Sol-H3-VAE decoder on an H3 template | #17411: a decoder that decodes the whole clip in one pass | `dgx-monarch-minimax-h3-t2va.json` at its shipped size with `sol_h3_vae.safetensors`, then `minimax_h3_sol_vae_fp16.safetensors`, on VAE Decode, with `minimax_h3_video_vae_fp16.safetensors` kept on the conditioning node, and `worker_vae_decode = "auto"`: the driver logs `not split` with the whole-clip reason, and the decode time, the driver's peak memory and the frames against the H3 video VAE's are recorded | NOT RUN |
 | The Create Video templates on ComfyUI 0.43 | #17463: `chroma_subsampling` between `color_space` and `codec` | `dgx-monarch-minimax-h3-mp4.json` loaded in a ComfyUI 0.43 frontend shows `codec` at `none`, and its MP4 matches one rendered on 0.44.0 frame for frame | NOT RUN in a browser; the restore is checked under node (`tests/test_stock_widget_drift.py`) |
 
 <a id="minimax-h3-context-windows"></a>

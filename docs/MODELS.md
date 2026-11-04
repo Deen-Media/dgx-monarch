@@ -27,6 +27,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly. Since the fused-norm parity change, edits and text to image at 704 square or below on uly2 are bit-identical to one GPU too, confirmed on hardware on 2026-10-16. See the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
 | [MOSS-Image SFT and Base](#model-moss-image-sft) | Text-to-image, and a JSON layout prompt on SFT | Needs ComfyUI 0.42.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Keep the template's 50 Euler steps at CFG 3 on the `normal` scheduler and its Skip Layer Guidance (DGX Monarch) node, which skips layer 22 on the negative pass; cfg2 refuses while that skip is on. BF16 Ulysses matched one GPU exactly, up to 2048 square on SFT; see the [tested configurations](VALIDATION.md#evidence-moss-image-sft). |
 | [Kromoss](#model-kromoss) | Text-to-image at 50 steps, and at 8 steps with a DMD LoRA | A MOSS-Image Base fine-tune on the same files and adapter. Pin the manifest's revision: the vendor replaces the files under the same names. Use the DMD LoRAs with the BF16 file: a LoRA on the INT8 file refuses. BF16 Ulysses at 1024 and 1536 square matched one GPU exactly; see the [tested configurations](VALIDATION.md#evidence-kromoss). |
+| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.44.0 or newer. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. No hardware has run it yet. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -100,6 +101,7 @@ that match the tested configurations in its model details. See
 | MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. BF16 uly2 is bit-identical to one GPU from 1024 to 2048 square, one step and full schedule, and at one step to stock from 512 to 2048 square. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin; since the INT8 dispatch fix, confirmed on hardware on 2026-10-21, INT8 uly2 is bit-identical to a pin-stripped one-GPU render, where it read one-step NRMS 0.027 to 0.036 earlier that day. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 bit-identical to one GPU, and an equal-length pair is measured, one-step NRMS 0.023 to 0.026, so auto never picks cfg2. ring2 is measured, one-step NRMS 0.0025 to 0.031 without a LoRA, so use uly2; padded ring needs a waiver, and ring2 with a LoRA is not supported. `uly2+fsdp` is bit-identical to resident uly2. NVFP4 and an fp8 `weight_dtype` cast refuse on uly2, ring and cfg2. A LoRA on the INT8 files refuses class P on every topology ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)); BF16 with a LoRA renders. Reference-image edits for edit LoRAs run on one GPU only and refuse class P on every cluster topology ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)). An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch, as a hardware run observed on uly2 and ring2 on 2026-10-27; on single, cfg2 and dp2 row 0 it was bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). The driver preflight does not price the 19.31 GB BF16 encoder. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
 | MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with the same layer-22 skip. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule; its FSDP reading comes from the scoped sweep. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
 | Kromoss | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler on the `normal` scheduler, with the layer-22 skip, or 8 Euler steps on `simple` at CFG 1 with a DMD LoRA, where cfg2 has nothing to split and refuses. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule. The DMD LoRAs bake to stock ComfyUI's merge on every key and render the same on uly2 and one GPU; against stock they read one-step NRMS 0.0365 to 0.0635 at strengths 0.8 and 1.0, because stock applies them at cast time. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
+| p-h3-image | 🔒 | ✗ | ★⏳ | 🔒 | 🔒 | impl | A MiniMax H3 DiT with one video latent frame, on the H3 adapter: batch one, cfg2 and dp2 refuse, padded ring needs a waiver, and the W4A8 file refuses FSDP. Needs ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0; without any H3 shift the image latent refuses class P ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)). No hardware comparison yet. [Details](#model-p-h3-image) · [Workflow](../example_workflows/dgx-monarch-p-h3-image.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
 | Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
@@ -875,6 +877,137 @@ The weights, both LoRAs and the bundled pipeline code are under the Apache
 License 2.0, which the repository's metadata, model card and LICENSE file
 carry.
 
+<a id="model-p-h3-image"></a>
+
+### p-h3-image
+
+Detail status (`p-h3-image`): impl.
+
+p-h3-image is PrunaAI's image model on MiniMax H3: text to image at 8 MP in 8
+steps without CFG, and edits with up to 8 input images. ComfyUI supports it
+in 0.44.0 or newer (#17506), with its own text encoder (a Qwen3-VL-4B fine-tune that reads five
+hidden layers through a text connector), its own VAE (the H3 encoder with a
+one-frame decoder) and the conditioning node `PH3ImageConditioning`. The DiT
+adds no class: ComfyUI builds it as `MiniMaxH3` from H3's keys, so this project
+reads it as `minimax_h3` and runs it on the [MiniMax H3](#model-minimax-h3-t2va-fl2va-ref2va-av)
+adapter, with the H3 rules for batch, cfg2, dp2, padded ring and FSDP. No
+second adapter exists, because ComfyUI hands both checkpoints to one model
+class and one forward.
+
+**Workflow.** [Text to image](../example_workflows/dgx-monarch-p-h3-image.json)
+follows the vendor's own text-to-image workflow on the BF16 DiT, text encoder
+and VAE: ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0, the vendor's
+8-step grid typed into Manual Sigmas, `euler` through Basic Guider (DGX
+Monarch) at CFG 1, and 2912 square. The request box feeds the prompt
+upsampler, which runs on the driver through ComfyUI's Generate Text with
+greedy decoding, and Preview as Text shows the prompt the model gets. The
+vendor says the model renders full, specific prompts much better than short
+ones, so keep the upsampler on; the If/Else switch set to false sends the
+request as it is. Keep the `Aspect ratio:` line equal to the canvas. Other
+8 MP sizes are 3360x2496 (4:3), 3552x2368 (3:2) and 3872x2176 (16:9), with the
+sides swapped for portrait. For an edit, wire images to p-h3-image
+Conditioning: `image_1` is the image to edit, the rest are references, and the
+VAE encodes each on the driver. Edits have no testing graph and no hardware
+record yet.
+
+**The shift.** The vendor's workflows and ComfyUI's own set both MiniMax H3
+flow shifts to 1.0 through ComfyUI's ModelSamplingMiniMaxH3 node, which
+patches a stock MODEL and cannot connect to DGXM_MODEL.
+ModelSamplingMiniMaxH3 (DGX Monarch) carries its two widgets, and every Worker
+applies ComfyUI's own node to its render clone, so the paired video and audio
+sampling and the two shift keys the H3 forward reads are stock's. Without it
+the Workers would sample at H3's defaults, 12.0 and 3.0. The image latent is
+one video latent frame beside two audio latent frames, and an H3 video latent
+never has one frame, so the driver refuses that latent, class P, when no H3
+shift reaches the model, and logs `minimax_h3: one-frame image latent
+(p-h3-image) at shifts 1.0 and 1.0` when one does
+([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)).
+
+**Sharding.** At 2912 square the image is 8,281 video rows, two audio rows
+per audio frame and the prompt's text rows in one packed stream, which
+Ulysses splits as it splits an H3 clip; an odd total pads one row that the
+exact pad exclusion drops, and padded ring refuses class K. At world 1 the
+Worker keeps the stock forward. On CPU, the H3 sharded forward at world 1
+returned the stock forward's bits on the image graph: text to image, an odd
+latent, and edits with one and two references, at shifts 1.0 and 1.0 and at
+12.0 and 3.0 (`tests/test_p_h3_image_comfy_exactness.py`). That is not a
+uly2 record; the hardware ladder in [VALIDATION](VALIDATION.md#evidence-p-h3-image)
+is.
+
+| File | ComfyUI directory | Purpose |
+|---|---|---|
+| `p-h3-image_bf16.safetensors` | `models/diffusion_models` | BF16 DiT, 40.5 GB, the template's default |
+| `p-h3-image_int8_convrot.safetensors` | `models/diffusion_models` | INT8 ConvRot DiT, 21.2 GB |
+| `p-h3-image_w4a8.safetensors` | `models/diffusion_models` | W4A8 DiT, 13.4 GB |
+| `p-h3-image_text_encoder_bf16.safetensors` | `models/text_encoders` | BF16 text encoder, 9.1 GB; CLIPLoader type `minimax` |
+| `p-h3-image_text_encoder_int8_convrot.safetensors` | `models/text_encoders` | INT8 ConvRot text encoder, 5.1 GB |
+| `p-h3-image_text_encoder_w4a8.safetensors` | `models/text_encoders` | W4A8 text encoder, 3.6 GB |
+| `p-h3-image_vae_bf16.safetensors` | `models/vae` | BF16 VAE, 5.6 GB, the template's default |
+| `p-h3-image_vae_int8_convrot.safetensors` | `models/vae` | INT8 ConvRot VAE, 3.1 GB |
+| `p-h3-image_prompt_upsampler_bf16.safetensors` | `models/text_encoders` | BF16 prompt upsampler, 19.3 GB, the template's default; CLIPLoader type `minimax` |
+| `p-h3-image_prompt_upsampler_int8_convrot.safetensors` | `models/text_encoders` | INT8 ConvRot prompt upsampler, 9.7 GB |
+| `p-h3-image_prompt_upsampler_w4a8.safetensors` | `models/text_encoders` | W4A8 prompt upsampler, 6.7 GB |
+| `p-h3-image_lora_bf16.safetensors` | `models/loras` | The LoRA that turns MiniMax H3 FL2VA into p-h3-image, 2.0 GB |
+
+Every file comes from `PrunaAI/P-H3-Image-Comfy`, which is not gated; the
+[vendor files](#p-h3-image-vendor-files) section names the commit, the paths
+and the checksums. The vendor says files of different precisions mix freely.
+
+**Quantizations.** The INT8 ConvRot DiT reads as `int8` and stores
+`int8_tensorwise` ConvRot layers, as the H3 INT8 files do. The W4A8 DiT
+stores 4-bit weights with an FP8 scale per 16 inputs in 168 `asym_w4a8_int8`
+layers and keeps 40 sensitive layers, the token refiner's among them,
+`int8_tensorwise`; it reads as `w4a8`, both from its header and once loaded.
+No p-h3-image file pins an attention kernel. The Worker venv's comfy-kitchen
+0.2.40 carries the W4A8 layout and its CUDA kernels; whether they run on GB10
+is the hardware leg's to say. Where a W4A8 linear dequantizes to INT8 it
+reaches the same INT8 GEMM call as an INT8 ConvRot file, which the
+[INT8 GEMM kernel](#int8-gemm-kernel) replaces with the Triton kernel. FSDP
+refuses the W4A8 file at launch, class P, because its grouped layers have no
+shard layout. The prompt upsampler and the text encoder run on the driver in
+stock ComfyUI, so their quantizations change no Worker path.
+
+**Residency.** MiniMax H3 is outside the families automatic slab residency
+vouches for, so under `auto` every p-h3-image file loads through the stock
+path, as H3 does. A LoRA change on the BF16 or INT8 ConvRot DiT un-bakes
+lazily; the W4A8 file's grouped layers are outside the formats the lazy
+un-bake restores, so a LoRA change there reloads the file.
+
+**LoRA.** `p-h3-image_lora_bf16.safetensors` holds rank 128 on the 50 blocks'
+`out_proj`, `fc1` and `fc2` and rank 384 on their fused `qkv_proj`, and the
+same on the token refiner's two blocks, for MiniMax H3's FL2VA DiT. ComfyUI's own p-h3-image templates load it at strength 1.0 on
+`minimax_h3_fl2va_pruned_int8_convrot.safetensors` with the INT8 ConvRot text
+encoder and VAE and the W4A8 upsampler, and the vendor's LoRA workflows load
+it on the BF16 FL2VA file. Its shapes are the DiT's own, so the LoRA shape
+guard admits it. Load LoRA (DGX Monarch) bakes it with ComfyUI's classic
+merge, where ComfyUI's template applies it at cast time; on MOSS-Image's INT8
+files those two were far apart
+([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
+No record covers the LoRA on an H3 INT8 file, so the testing graph
+`dgx-monarch-test-p-h3-image-lora` measures it. Do not put the LoRA on a
+p-h3-image DiT: the release already carries it.
+
+**Decode.** The p-h3-image VAE decodes one frame, so Worker-assisted VAE
+decode leaves it on the driver with one line saying why
+([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+
+**Memory.** The driver holds the text encoder, the upsampler and the VAE,
+about 34 GB in BF16, beside the DiT on the head; ComfyUI moves the upsampler
+out when the encode needs the room. If the driver footprint check refuses a
+DiT load, its advice is H3's, and its note names H3's pruned files, which are
+not this model: the smaller p-h3-image choices are the INT8 ConvRot and W4A8
+sets.
+
+**Known limitations.** No hardware record. Edits and the LoRA route have no
+comparison. ComfyUI's MiniMax H3 Context Windows gain nothing on one frame.
+
+**Test results.** [Comparisons and limits](VALIDATION.md#evidence-p-h3-image).
+
+**Upstream and license.** [P-H3-Image-Comfy](https://huggingface.co/PrunaAI/P-H3-Image-Comfy).
+The weights are under the MiniMax H3 Community License, the same terms as the
+H3 files. The Qwen3-VL-4B parts of the text encoder and the prompt upsampler,
+based on Qwen3.5-9B, are under the Apache License 2.0.
+
 <a id="model-longcat-image"></a>
 
 ### LongCat-Image
@@ -1536,17 +1669,28 @@ extension restores the node by name, and Studio and the sweep converter skip
 the missing slot, so `codec` stays `none` on every ComfyUI this project
 supports (`src/dgx_monarch/stock_widget_drift.py`).
 
-**ComfyUI 0.44.0 additions.** This project does not yet support the
-p-h3-image model (ComfyUI #17506) or the Sol-H3-VAE decoder: no template
-loads them, and Worker-assisted VAE decode leaves both decodes on the driver
-with one line saying why, since the Sol-H3-VAE decoder decodes the whole clip
-in one pass and p-h3-image decodes one frame
+**ComfyUI 0.44.0 additions.** p-h3-image (ComfyUI #17506) is a MiniMax H3
+DiT and runs on this adapter; [its own section](#model-p-h3-image) covers its
+files, its template and ModelSamplingMiniMaxH3 (DGX Monarch), which sets the
+two H3 shifts on every Worker.
+
+**Sol-H3-VAE decoder.** Sol-H3-VAE (`Efficient-Large-Model/Sol-H3-VAE`, file
+`sol_h3_vae.safetensors`) is H3's video decoder pruned to 24 layers and
+distilled to decode the whole clip in one pass, with attention over local
+windows, so it has no spatial tiles and no temporal overlap to recompute.
+ComfyUI 0.44.0 loads it through Load VAE (#17411), and it can take the place
+of `minimax_h3_video_vae_fp16.safetensors` on an H3 template's VAE Decode.
+The vendor file is F32 and holds only the decoder, so it cannot encode: keep
+the H3 video VAE on the conditioning node, which encodes keyframes and
+references. Comfy-Org's repacks in `Comfy-Org/MiniMax-H3`,
+`vae/minimax_h3_sol_vae_fp16.safetensors` and
+`vae/minimax_h3_sol_vae_int8_convrot.safetensors`, add the H3 encoder, so one
+file does both. Worker-assisted VAE decode leaves this decoder on the driver
+with one line saying why: it decodes the whole clip in one pass and has no
+chunks to split
 ([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
-Do not load the p-h3-image DiT through the DGX Monarch loader: it carries
-MiniMax H3's keys, so ComfyUI and this project both read it as MiniMax H3, but
-it needs ComfyUI's ModelSamplingMiniMaxH3 node at 1.0 and 1.0, a stock MODEL
-patch that cannot connect to DGXM_MODEL, so the Workers would sample it at
-H3's default shifts, 12.0 and 3.0.
+No template names it, and its time and memory against the H3 video VAE have
+no record yet ([VALIDATION](VALIDATION.md#comfyui-0440-additions)).
 ComfyUI's MiniMax H3 Context Windows node (#17425) patches a stock MODEL, so it
 cannot connect to a DGX Monarch loader's DGXM_MODEL. Use MiniMax H3 Context
 Windows (DGX Monarch) instead: it takes the stock node's five widgets, and
@@ -2015,6 +2159,45 @@ repositories, and the VAE is the same bytes as
 at `a3efc24f613e`. Comfy-Org's `vae/flux2-vae.safetensors` (`868fe7b343cc`) is
 the full Flux 2 VAE in Black Forest Labs' layout, not the file the manifest
 pins for the Flux 2 and FLUX.3 templates, and no MOSS-Image graph names it.
+
+<a id="p-h3-image-vendor-files"></a>
+
+### p-h3-image vendor files
+
+PrunaAI publishes p-h3-image in ComfyUI layout at
+`PrunaAI/P-H3-Image-Comfy@44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543`, which
+is not gated; every file sits in the folder of its ComfyUI directory. These
+are vendor files, not local conversions. The repository also ships four
+workflows under `workflows/`: text to image and edit on the merged DiT, and
+both again with the LoRA on MiniMax H3's FL2VA DiT.
+
+<details>
+<summary>p-h3-image files, layouts and checksums</summary>
+
+
+| File | Bytes | SHA-256 (first 12) | Header kind | Layout |
+|---|--:|---|---|---|
+| `p-h3-image_bf16.safetensors` | 40,468,411,160 | `822f43d454a6` | bf16 | MiniMax H3 keys, 50 blocks, `adaln_t_table` [4097, 16]; BF16 linears, F32 projections and modulation |
+| `p-h3-image_int8_convrot.safetensors` | 21,213,068,840 | `b156fd4fe9d1` | int8 | as above, `int8_tensorwise` ConvRot linears |
+| `p-h3-image_w4a8.safetensors` | 13,362,068,864 | `12ea30d6fde7` | w4a8 | as above, 168 `asym_w4a8_int8` linears (group 16) and 40 `int8_tensorwise` |
+| `p-h3-image_text_encoder_bf16.safetensors` | 9,138,027,824 | `ae0c83cb3520` | | Qwen3-VL-4B fine-tune and a six-tensor `text_connector` |
+| `p-h3-image_text_encoder_int8_convrot.safetensors` | 5,120,870,504 | `fb42c9ff0597` | | as above, INT8 ConvRot |
+| `p-h3-image_text_encoder_w4a8.safetensors` | 3,575,536,021 | `d4ae62d48e1d` | | as above, W4A8 |
+| `p-h3-image_vae_bf16.safetensors` | 5,559,036,680 | `a1f2a7a98d0f` | | H3 encoder, one-frame decoder (`decoder.proj_out.weight` [768, 2048]) |
+| `p-h3-image_vae_int8_convrot.safetensors` | 3,146,996,440 | `583e0d43354b` | | as above, INT8 ConvRot |
+| `p-h3-image_prompt_upsampler_bf16.safetensors` | 19,306,305,552 | `122b4a8cc63a` | | Qwen3.5-9B prompt upsampler |
+| `p-h3-image_prompt_upsampler_int8_convrot.safetensors` | 9,748,117,724 | `281f9c90230c` | | as above, INT8 ConvRot |
+| `p-h3-image_prompt_upsampler_w4a8.safetensors` | 6,724,096,116 | `74b206c0e313` | | as above, W4A8 |
+| `p-h3-image_lora_bf16.safetensors` | 1,956,195,360 | `0e9013ae2873` | | rank 128, 384 on the fused `qkv_proj`, on every block's and the token refiner's four linears |
+
+</details>
+
+The merged DiT's header differs from MiniMax H3's pruned files only in the
+curve basis, 4097 by 16 where they hold 1025 by 8, and the full H3 BF16 file
+holds none. That is too thin to build a family on, so nothing keys on it; the
+one-frame latent is what the runtime reads. The text encoder shares 357 of its
+713 tensors' bytes with `qwen3vl_4b_bf16.safetensors` and differs in 356, so
+that file cannot stand in for it.
 
 ## Shared topology and memory guidance
 

@@ -1,12 +1,12 @@
 """Driver preflights for the per-render model patches (Skip Layer Guidance, MiniMax H3
-context windows, the SD3 shift, LoRA) and for MOSS-Image reference images and
-text attention bias.
+context windows, the SD3 and MiniMax H3 shifts, LoRA) and for MOSS-Image reference
+images and text attention bias.
 
-All six run once per render in nodes/render_submit.py, after the topology
+All seven run once per render in nodes/render_submit.py, after the topology
 resolves and before any Worker call, so a refusal costs no dispatch. Each fails
 open where it cannot read its facts: the Worker belts (actor/guidance_render.py,
-actor/context_windows_render.py) still guard Skip Layer Guidance and the
-context windows, the shift guard refuses only a config that
+actor/context_windows_render.py, actor/model_sampling_render.py) still guard
+Skip Layer Guidance, the context windows and the H3 shift, the shift guard refuses only a config that
 says multiplier 1.0 outright, the model store refuses a LoRA on a refused
 quantized file on every Worker (lora_quant_guard.py), the MOSS-Image sharded
 forward refuses reference images on every rank, and every Worker rank scans the
@@ -17,13 +17,17 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
-from .. import family_select, lora_quant_guard
+from .. import family_select, h3_sigma_shift, lora_quant_guard
+from ..log import get_logger
+from ..model_sampling import normalize_model_sampling, sampling_kind
 from ..refusal import RefusalClass, refusal
 from ..skip_layer_guidance import (
     normalize_skip_layer_guidance,
     skip_layer_guidance_active,
     skip_layer_guidance_refusal_reason,
 )
+
+log = get_logger(__name__)
 
 
 def preflight_model_patches(model: Any, topo: Any, request: Mapping[str, Any]) -> None:
@@ -207,8 +211,8 @@ def preflight_context_windows(model: Any, request: Mapping[str, Any]) -> None:
         troubleshooting=142))
 
 
-def refuse_shift_after_skip(model: Any) -> None:
-    """Refuse the SD3 shift node wired after a skip whose window the shift would move (#126).
+def refuse_shift_after_skip(model: Any, node: str = "Model Sampling SD3 (DGX Monarch)") -> None:
+    """Refuse a shift node wired after a skip whose window the shift would move (#126).
 
     Stock ComfyUI turns the skip's step window into sigmas when its node runs, from
     the sampling the model has at that point. Every Worker applies the shift first
@@ -227,7 +231,7 @@ def refuse_shift_after_skip(model: Any) -> None:
 
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
-        "Model Sampling SD3 (DGX Monarch) follows Skip Layer Guidance (DGX Monarch) in this "
+        f"{node} follows Skip Layer Guidance (DGX Monarch) in this "
         f"graph, and the skip's step window runs from {wire['start_percent']:g} to "
         f"{wire['end_percent']:g}. Stock ComfyUI turns that window into sigmas when the skip "
         "node runs, from the sampling the model has at that point, while every Worker applies "
@@ -251,7 +255,7 @@ def preflight_shift_node(model: Any) -> None:
     renders today changes outcome unless its own config says 1.0.
     """
     unet_name, sampling = _shift_target(model)
-    if sampling is None or not unet_name:
+    if sampling is None or not unet_name or sampling_kind(sampling) != "sd3":
         return
     try:
         import folder_paths
@@ -278,3 +282,53 @@ def preflight_shift_node(model: Any) -> None:
         "for MOSS-Image). Remove the node and render with the checkpoint's own sampling "
         "instead; for MOSS-Image that already applies the vendor's shift of 5.",
         troubleshooting=128))
+
+
+def preflight_h3_sigma_shift(model: Any, request: Mapping[str, Any], latent: Any) -> None:
+    """Refuse a MiniMax H3 shift the Workers cannot apply as stock does (#144).
+
+    Two arms. ModelSamplingMiniMaxH3 (DGX Monarch) on a checkpoint that reads as
+    another family, on the model or a guider's negative; an unreadable header
+    passes, and every Worker reads the loaded model's family instead. Then a
+    one-frame H3 audio-video latent, p-h3-image's image latent, that no H3 shift
+    reaches: the Workers would sample it at H3's defaults. That arm reads the
+    family too, so a latent that only looks like it on another family passes.
+    """
+    uncond = request.get("uncond_model")
+    reason = None
+    for target in (model, uncond):
+        if target is None:
+            continue
+        _name, sampling = _shift_target(target)
+        if sampling_kind(sampling) != "minimax_h3":
+            continue
+        family = (_sniffed_family(target) if not isinstance(target, Mapping)
+                  else _sniffed_family_of_request(target))
+        reason = h3_sigma_shift.family_refusal_reason(family)
+        if reason is not None:
+            break
+    if reason is None and h3_sigma_shift.is_image_latent(latent):
+        sampling = _shift_target(model)[1]
+        reason = h3_sigma_shift.missing_shift_reason(sampling_kind(sampling))
+        if _sniffed_family(model) != h3_sigma_shift.FAMILY:
+            reason = None
+        elif reason is None:
+            wire: Mapping[str, Any] = normalize_model_sampling(sampling) or {}
+            log.info("minimax_h3: one-frame image latent (p-h3-image) at shifts %s and %s",
+                     wire.get("shift_video"), wire.get("shift_audio"))
+    if reason is None:
+        return
+    from ..adapters.base import UnsupportedModelError
+
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS, f"{reason} Use the shifts the model's own workflow names "
+        "(docs/MODELS.md).", troubleshooting=h3_sigma_shift.TROUBLESHOOTING))
+
+
+def _sniffed_family_of_request(model: Mapping[str, Any]) -> str | None:
+    """The family of a model request dict's checkpoint, or None when it cannot be read."""
+    try:
+        sniffed = _sniffed_checkpoint(model.get("unet_name"), None)
+    except Exception:
+        return None
+    return None if sniffed is None else sniffed[0]

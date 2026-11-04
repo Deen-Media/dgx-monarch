@@ -149,7 +149,7 @@ WAIVED_BAR = "waived-nrms"
 # part of a longer one.
 QUANT_TOKENS = ("convrot_int8mixed", "convrot_int8", "int8_convrot", "fp8_e4m3fn",
                 "fp8_scaled", "nvfp4_mixed", "int8mixed", "fp8mixed", "mxfp8",
-                "nvfp4", "bf16", "fp16", "fp32", "int8", "fp8")
+                "nvfp4", "w4a8", "bf16", "fp16", "fp32", "int8", "fp8")
 # A block-scaled file under FSDP refuses at one of two sites, by whether the
 # file is uniform, and both answer class P. Every one of these headers sniffs
 # fp8 at launch, so the live detector decides: it reports the kind of the first

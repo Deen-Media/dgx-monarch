@@ -294,6 +294,22 @@
   tiled decode. No hardware comparison has run, so the row is impl
   ([MODELS](docs/MODELS.md#model-wan-2-2-ti2v-5b),
   [VALIDATION](docs/VALIDATION.md#evidence-wan-2-2-ti2v-5b)).
+- p-h3-image, PrunaAI's 8 MP image model on MiniMax H3 (ComfyUI #17506),
+  runs on the MiniMax H3 adapter: ComfyUI builds its DiT as MiniMax H3. The
+  `dgx-monarch-p-h3-image.json` template follows the vendor's text-to-image
+  workflow on the BF16 DiT, text encoder and VAE, with the prompt upsampler,
+  the 8-step grid and both shifts at 1.0. ModelSamplingMiniMaxH3 (DGX
+  Monarch) carries ComfyUI's ModelSamplingMiniMaxH3 to the Workers, which
+  apply the stock node to the render clone; it refuses class P on another
+  family, and a one-frame image latent that no H3 shift reaches refuses
+  rather than sample at 12.0 and 3.0. The W4A8 file reads as `w4a8`, not
+  `fp8`, and FSDP refuses it. On CPU the H3 sharded forward returns stock's
+  bits on the image graph; no hardware has run it, so the row is impl. Studio
+  names the text that reaches a Basic Guider the prompt. MODELS also
+  documents the Sol-H3-VAE decoder, which decodes on the driver
+  ([MODELS](docs/MODELS.md#model-p-h3-image),
+  [VALIDATION](docs/VALIDATION.md#evidence-p-h3-image),
+  [TROUBLESHOOTING #144](docs/TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)).
 - Worker-assisted VAE decode keeps three ComfyUI 0.44.0 decodes on the
   driver, with one line each: the Sol-H3-VAE decoder, which decodes the whole
   clip in one pass, the p-h3-image VAE, which decodes one frame, and a VAE

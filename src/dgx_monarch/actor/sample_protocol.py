@@ -17,6 +17,7 @@ from . import (
     dm_cfg2_residency,
     guidance_render,
     latent_outputs,
+    model_sampling_render,
     rank_readiness,
     store_fsdp,
     worker_env,
@@ -306,6 +307,7 @@ def run_sample(
             pinned_by=request["uncond_model"]["unet_name"] if dm2_slot == "uncond" else None)
         # Class P, inside the guard: whether this ComfyUI has the stock node is a host fact.
         context_windows_render.assert_supported(request, getattr(resident, "family", None))
+        model_sampling_render.assert_supported(request, getattr(resident, "family", None))
         if worker.topology.get("ring", 1) > 1:
             # cuDNN Ring prepares here, inside the load guard, before the exchange.
             worker._attn.prepare_native_attention()

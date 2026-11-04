@@ -10,7 +10,7 @@ from .guiders import DGXMonarchBasicGuider, DGXMonarchCFGGuider, DGXMonarchDualM
 from .h3_context_windows import DGXMonarchMiniMaxH3ContextWindows
 from .init import DGXMonarchInit
 from .loaders import DGXMonarchLoraLoader, DGXMonarchUncondUNETLoader, DGXMonarchUNETLoader
-from .model_sampling import DGXMonarchModelSamplingSD3
+from .model_sampling import DGXMonarchModelSamplingMiniMaxH3, DGXMonarchModelSamplingSD3
 from .ops import DGXMonarchClearVRAM, DGXMonarchStatus
 from .qwen_image21_cache import DGXMonarchQwenImage21Cache
 from .samplers import (
@@ -29,6 +29,7 @@ NODE_CLASS_MAPPINGS = {
     "DGXMonarchUncondUNETLoader": DGXMonarchUncondUNETLoader,
     "DGXMonarchLoraLoader": DGXMonarchLoraLoader,
     "DGXMonarchModelSamplingSD3": DGXMonarchModelSamplingSD3,
+    "DGXMonarchModelSamplingMiniMaxH3": DGXMonarchModelSamplingMiniMaxH3,
     "DGXMonarchQwenImage21Cache": DGXMonarchQwenImage21Cache,
     "DGXMonarchSkipLayerGuidance": DGXMonarchSkipLayerGuidance,
     "DGXMonarchMiniMaxH3ContextWindows": DGXMonarchMiniMaxH3ContextWindows,
@@ -53,6 +54,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DGXMonarchUncondUNETLoader": "Load Unconditional Diffusion Model (DGX Monarch)",
     "DGXMonarchLoraLoader": "Load LoRA (DGX Monarch)",
     "DGXMonarchModelSamplingSD3": "Model Sampling SD3 (DGX Monarch)",
+    "DGXMonarchModelSamplingMiniMaxH3": "ModelSamplingMiniMaxH3 (DGX Monarch)",
     "DGXMonarchQwenImage21Cache": "Qwen Image 2.1 Cache (DGX Monarch)",
     "DGXMonarchSkipLayerGuidance": "Skip Layer Guidance (DGX Monarch)",
     "DGXMonarchMiniMaxH3ContextWindows": "MiniMax H3 Context Windows (DGX Monarch)",

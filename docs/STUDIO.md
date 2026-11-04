@@ -806,8 +806,9 @@ allow selecting the same file again after a success or error.
 
 The prompt boxes read Prompt and Negative prompt. The inputs chosen under
 Ordered prompt styles take those roles; otherwise the graph decides: the text
-that reaches a sampler's `positive` input is the prompt, and the text that
-reaches its `negative` input is the negative prompt. A node that encodes both
+that reaches a sampler's `positive` input, or the one `conditioning` input of
+a Basic Guider, is the prompt, and the text that reaches its `negative` input
+is the negative prompt. A node that encodes both
 texts, such as Qwen Image 2.1's, gives each the role its input name says. When
 several boxes share a role, each adds its input name or its node. Any other
 multi-line text box, and a text box whose input name another one repeats, reads
