@@ -16,6 +16,7 @@ import dgx_monarch.nodes.fleet as fleet_mod
 import dgx_monarch.nodes.gate as gate_mod
 from dgx_monarch import accuracy_waiver, telemetry_fleet
 from dgx_monarch.actor import model_store as model_store_mod
+from dgx_monarch.gate_runtime import runtime_build_identity
 from dgx_monarch.mesh import MeshHandle
 from dgx_monarch.nodes.common import MeshSpec, ModelSpec
 from dgx_monarch.nodes.fleet import (
@@ -817,6 +818,7 @@ def test_fleet_preserves_requested_policy_only_for_exact_context_pass(monkeypatc
         "physical_world": 4,
         "hosts": 2,
         "gpus_per_host": 2,
+        "runtime": runtime_build_identity(),
     }
 
 

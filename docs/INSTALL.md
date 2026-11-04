@@ -52,6 +52,28 @@ global torch, or another application's environment. Do not copy packages from
 a donor environment. `scripts/setup_env.sh` is a developer-lab helper with
 fixed environment and torch choices, not this onboarding procedure.
 
+The guide's NVIDIA command does not pin torch. On 2026-11-03, on Linux ARM64,
+it installed torch 2.15.0, a CUDA 13.2 build from the Python Package Index,
+with torchaudio 2.11.1. torch 2.15 maps the `nccl` backend name to a new
+implementation that ends an actor at its first process group under ComfyUI's
+cudaMallocAsync allocator
+([TROUBLESHOOTING #143](TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group)).
+This release starts every actor with `TORCH_DIST_USE_NCCL2=0`, which keeps
+torch's legacy NCCL backend, the one torch 2.12 ships. Its hardware checks ran
+on torch 2.12.0+cu132; the checks on torch 2.15 go in
+[VALIDATION](VALIDATION.md#torch-2-15) when they run. The steps below complete
+with either build.
+
+To match another Spark, install its torch and torchvision builds by exact
+version from the same PyTorch index. On 2026-11-03 neither the cu132 index nor
+the Python Package Index offered a torchaudio that loads against torch
+2.12.0+cu132: the cu132 index no longer serves 2.11.0+cu132, its 2.11.1+cu132
+installs but fails to load with an undefined symbol, and the Python Package
+Index's 2.11.0 is a CUDA 13.0 build that torchaudio refuses. Transformers'
+audio utilities import torchaudio when it is installed, so a torchaudio that
+does not load fails the import check below. ComfyUI's `requirements.txt` does
+not list torchaudio.
+
 When reviewing a prerequisite's dependency report, check each artifact's URL
 and hash. An official Torch index can link to dependencies hosted by NVIDIA or
 the Python Package Index as well as PyTorch. Verify those sources against the
@@ -96,7 +118,9 @@ work. Stop ComfyUI and any services using that environment only within the
 approved maintenance window. Keep model files, credentials,
 other custom nodes and unrelated work intact.
 
-Set these paths explicitly. `COMFY_PYTHON` must be the interpreter that starts
+Set these paths explicitly, and run this block and every block up to the
+`DGXM` export in one shell, since later blocks read these exports and
+`$XFUSER_WHEELS`. `COMFY_PYTHON` must be the interpreter that starts
 this ComfyUI checkout. If the intended node-pack path is absent, clone
 `https://github.com/Deen-Media/dgx-monarch.git` there and select the same reviewed
 commit on both hosts. An existing checkout or symlink must pass the inspection
@@ -126,10 +150,12 @@ XFUSER_WHEELS="$(mktemp -d)"
     --constraint "$XFUSER_WHEELS/torch-constraint.txt"
 ```
 
-Pip resolves the installed distribution metadata. A working build can report
-`torch.__version__ == "2.12.0+cu130"` while its distribution version is
-`2.12.0`; use the latter for the constraint. Record both versions and the CUDA
-version and import location. A matching metadata version alone does not prove
+Pip resolves the installed distribution metadata. A build from the Python
+Package Index can report `torch.__version__ == "2.15.0+cu132"` while its
+distribution version is `2.15.0`; a build from the PyTorch index reports
+`2.12.0+cu132` for both. The constraint needs the distribution version, which
+the block above reads. Record both versions and the CUDA version and import
+location. A matching metadata version alone does not prove
 that the existing CUDA Torch files stayed unchanged.
 
 Review the report privately before applying it. Refuse a plan that installs,
@@ -174,15 +200,31 @@ checker with this interpreter:
 "$COMFY_PYTHON" "$REPO_DIR/tools/check_dependencies.py"
 ```
 
-Then check imports for Monarch, xFuser and ComfyUI. Record the
-resolved package versions and node-pack commit. Preserve the install report
-with the private test record; remove only the temporary directory created
-above when it is no longer needed. This procedure pins Monarch and xFuser;
-it does not lock every transitive dependency.
-
 The checker verifies the [known cuSPARSELt platform-tag failure](TROUBLESHOOTING.md#109-pip-check-reports-cusparselt-is-not-supported-on-this-platform)
-before accepting it on Linux ARM64. Save any printed exception with the
-installation record. A failed check must be resolved before continuing.
+before accepting it on Linux ARM64. Pip 24.0, which a new Ubuntu 24.04 venv
+starts with, does not check platform tags, so there the checker passes and
+prints nothing. Pip 24.2 and later report the tag, and the checker prints one
+`Known upstream platform-tag failure` line once it has verified the wheel.
+Save any printed exception with the installation record. A failed check must
+be resolved before continuing.
+
+Then check imports for Monarch's native bindings, xFuser and ComfyUI, and
+record the resolved package versions and node-pack commit. Public
+`monarch.rdma` classes import even when the native bindings do not, so the
+first line imports the bindings themselves. The ComfyUI line runs on the CPU
+and starts no server:
+
+```bash
+"$COMFY_PYTHON" -c 'import monarch._rust_bindings.rdma, xfuser.core.long_ctx_attention, dgx_monarch; print("dgx_monarch", dgx_monarch.__version__, "imports")'
+(cd "$COMFY_DIR" && CUDA_VISIBLE_DEVICES= "$COMFY_PYTHON" -c 'import comfy.cli_args; comfy.cli_args.args.cpu = True; import nodes, comfyui_version; print("ComfyUI", comfyui_version.__version__, "imports")')
+"$COMFY_PYTHON" -m pip freeze --all
+git -C "$REPO_DIR" rev-parse HEAD
+```
+
+Copy `$XFUSER_WHEELS/install-plan.json` into the private test record, then
+remove only the temporary directory created above when it is no longer
+needed. This procedure pins Monarch and xFuser; it does not lock every
+transitive dependency.
 
 The INT8 GEMM kernel, on by default for INT8 ConvRot checkpoints, needs the
 Python development headers for `$COMFY_PYTHON` on the driver and on every

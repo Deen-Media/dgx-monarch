@@ -162,6 +162,7 @@ def gate_capability_context(
         "world": physical["physical_world"],
         "hosts": physical["hosts"],
         "gpus_per_host": physical["gpus_per_host"],
+        "runtime": physical["runtime"],
         "topology_preset": str(getattr(model.mesh, "topology_preset", "unknown")),
         "attention": str(getattr(model.mesh, "attention", "unknown")),
         "sync_ulysses": bool(getattr(model.mesh, "sync_ulysses", True)),

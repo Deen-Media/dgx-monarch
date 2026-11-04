@@ -129,6 +129,22 @@
   template step, red against ComfyUI master since 2026-11-01, passes again,
   and it now checks Save Video's format and codec against the options the
   running ComfyUI offers ([MODELS](docs/MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av)).
+- Every actor starts with `TORCH_DIST_USE_NCCL2=0`, so torch 2.15 keeps its
+  legacy NCCL backend, the one torch 2.12 ships. torch 2.15's new `nccl`
+  backend takes an allocator snapshot that ComfyUI's cudaMallocAsync allocator
+  refuses, which ended each actor at its first process group; torch 2.12
+  ignores the setting. `dgxm doctor` gains an `actor NCCL backend` row that
+  names the torch the actors import and checks the setting. Each Gate PASS now
+  also names the driver's torch and CUDA build, so a torch change runs the gate
+  again on each gated combination's first render, and the notice names both
+  builds when only the build moved. A row written before this change carries
+  no build and reads stale. INSTALL now says what the ComfyUI guide's torch
+  2.15.0 changes, gives the import check its commands and notes the torchaudio
+  builds that no longer load against torch 2.12.0+cu132. No render has run on
+  torch 2.15 with the setting
+  ([TROUBLESHOOTING #143](docs/TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group),
+  [VALIDATION](docs/VALIDATION.md#torch-2-15),
+  [INSTALL](docs/INSTALL.md#install-from-source)).
 
 ### Rendering
 
