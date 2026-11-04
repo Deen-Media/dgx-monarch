@@ -41,7 +41,7 @@ log = get_logger(__name__)
 
 GUARD = "cross_rank_capacity"
 # The rescue arm raises under the worker stock guard, whose consent is wired.
-# GUARD has no card: no consent makes a refusing rank fit, and one refusing rank refuses the whole fleet.
+# GUARD has no consent card: no consent makes a refusing rank fit. Its one card is a reset (old_model.py).
 RESCUE_GUARD = "stock_load_preflight"
 TROUBLESHOOTING = 93
 

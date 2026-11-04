@@ -1642,8 +1642,11 @@ the baked hot-swap residency keeps ComfyUI's sample-time load, and the
 `partial_load_divergence` guard still refuses a render whose ranks load
 partially.
 
-**Slab capacity refusals offer no consent card.** Slab is the final residency
-option; consent cannot resolve its memory shortfall.
+**Slab capacity refusals offer no slab consent card.** Slab is the final
+residency option; consent cannot resolve its memory shortfall. A model an
+earlier render left in the way is another matter: when a clear would make
+room, the slab refusal offers the Old model in the way card below, because the
+fix is a reset, not a consent.
 
 **The driver frees what ComfyUI can reload before it refuses.** The render-site
 checks (`nodes/render_preflight`) read MemAvailable on the driver host, where
