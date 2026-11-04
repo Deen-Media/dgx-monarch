@@ -19,13 +19,13 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, NoReturn
 
+from . import old_model
 from .actor import store_slab_admit
 from .actor.capacity_quote import (
     RUNG_COMFY_MANAGED,
     VERDICT_REFUSE,
     VERDICT_RESCUE,
     WOULD_LOAD_REUSE,
-    WOULD_LOAD_SWAP,
     RankPrice,
 )
 from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib
@@ -59,13 +59,6 @@ _NOTHING_LOADED = (
     "did not answer, click Reset attached mesh in the DGX Monarch panel. Then "
     "queue again. This refusal is capacity-protective (class C)."
 )
-# Price existing residency without assuming an unload frees it: a stock
-# load retains its arena, while dropping a slab barely changes MemAvailable.
-_AS_HELD = (
-    "This price was taken against what each box already holds: {named}. The "
-    "quote prices the slot as it stands and does not model the drop, so a load "
-    "that would replace a resident is priced with that resident still held."
-)
 
 
 class FleetCapacityError(StockLoadCapacityError):
@@ -82,7 +75,7 @@ class FleetQuoteUnavailableError(RuntimeError):
 
 # What the driver calls its own box when no cluster config names one: a local
 # fleet runs every rank in the driver's process tree, so this is not a guess.
-LOCAL_HOST_NAME = "this box"
+LOCAL_HOST_NAME = old_model.LOCAL_BOX
 
 
 @dataclass(frozen=True, slots=True)
@@ -231,21 +224,6 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> st
     )
 
 
-def _held_clause(refusing: list[tuple[RankAnswer, RankPrice]]) -> str:
-    """Name the residents the prices were taken over, or say nothing."""
-    named = []
-    for answer, quote in refusing:
-        if quote.would_load not in (WOULD_LOAD_SWAP, WOULD_LOAD_REUSE):
-            continue
-        word = quote.holds_resident.get(quote.slot)
-        if not word:
-            continue
-        named.append(f"{answer.where} holds a {word} resident in the "
-                     f"{quote.slot} slot and this load reads as a "
-                     f"{quote.would_load}")
-    return _AS_HELD.format(named="; ".join(named)) if named else ""
-
-
 def _log_fleet(answers: list[RankAnswer], outcome: str) -> None:
     # A price logged only on a refusal leaves a fitting fleet
     # indistinguishable from a host where the price made no claim at all.
@@ -293,13 +271,20 @@ def decide(answers: list[RankAnswer], world: int, *,
         _refuse_unavailable(_unavailable_text(
             answers, silent, world, ranks, disagree, deadline_s))
     refusing = _pairs(answers, VERDICT_REFUSE)
+    rescuing = _pairs(answers, VERDICT_RESCUE)
+    # Priced with the residents still held: a clear may make room on every short box.
+    short = refusing + rescuing
+    offer = old_model.fleet_offer(short, answers, unet_name)
+    if offer is not None and offer.helps:
+        _log_fleet(answers, "refused, old model in the way")
+        priced = " ".join(_priced_sentence(*pair, unet_name) for pair in short)
+        old_model.raise_fleet_refusal(offer, len({a.rank for a, _q in short}), world, priced)
     if refusing:
         _log_fleet(answers, "refused")
-        _refuse_shortfall(refusing, answers, world, unet_name)
-    rescuing = _pairs(answers, VERDICT_RESCUE)
+        _refuse_shortfall(refusing, answers, world, unet_name, offer)
     if rescuing:
         _log_fleet(answers, "rescue offered")
-        _offer_rescue(*rescuing[0])
+        _offer_rescue(*rescuing[0], offer)
     _log_fleet(answers, "admitted")
 
 
@@ -331,8 +316,8 @@ def _unavailable_text(answers: list[RankAnswer], silent: list[RankAnswer],
 
 
 def _refuse_shortfall(refusing: list[tuple[RankAnswer, RankPrice]],
-                      answers: list[RankAnswer], world: int,
-                      unet_name: str) -> NoReturn:
+                      answers: list[RankAnswer], world: int, unet_name: str,
+                      offer: old_model.ClearOffer | None = None) -> NoReturn:
     """At least one rank priced the load and cannot hold it."""
     short = {answer.rank for answer, _quote in refusing}
     blocker = next((quote.blocker[1] for _answer, quote in refusing
@@ -344,7 +329,7 @@ def _refuse_shortfall(refusing: list[tuple[RankAnswer, RankPrice]],
         blocker = next((store_slab_admit.rescue_blocker(fit)[1]
                         for fit in (_slab_fit(quote) for _answer, quote in refusing)
                         if fit is not None and fit.applies and not fit.fits), "")
-    held = _held_clause(refusing)
+    held = old_model.held_clause(refusing, offer)
     fitting = [f"{answer.where} took the {quote.rung} rung" if quote.rung
                else f"{answer.where} made no claim"
                for answer in answers for quote in answer.quotes
@@ -364,7 +349,8 @@ def _refuse_shortfall(refusing: list[tuple[RankAnswer, RankPrice]],
         guard=GUARD, waivable=False, troubleshooting=TROUBLESHOOTING))
 
 
-def _offer_rescue(answer: RankAnswer, quote: RankPrice) -> NoReturn:
+def _offer_rescue(answer: RankAnswer, quote: RankPrice,
+                  offer: old_model.ClearOffer | None = None) -> NoReturn:
     """Raise the existing offer earlier, with the leanest rank's numbers.
 
     Ranks agree on the rank-invariant half of a descriptor and never on the
@@ -383,7 +369,7 @@ def _offer_rescue(answer: RankAnswer, quote: RankPrice) -> NoReturn:
             f"read, so the offer cannot be registered. {_NOTHING_LOADED}")
     spec = KIND_SPECS[consent_descriptor.KIND_RESCUE_SLAB]
     # The rescue arm prices against the same residents the refusal arm does.
-    held = _held_clause([(answer, quote)])
+    held = old_model.held_clause([(answer, quote)], offer)
     tail = []
     for build, note in ((lambda: measured_tag(descriptor.measured), "measured numbers"),
                         (lambda: consent_descriptor.encode(descriptor), "descriptor")):

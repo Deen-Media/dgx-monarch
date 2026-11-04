@@ -598,7 +598,7 @@ copied from historical evidence.
     Authorization, setup binding, driver validation, and
     worker revalidation are
     [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"),
-    [`render_submit.py:241-478`](../src/dgx_monarch/nodes/render_submit.py#L241-L478 "anchor:_submit_render_guarded"),
+    [`render_submit.py:249-486`](../src/dgx_monarch/nodes/render_submit.py#L249-L486 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:90-153`](../src/dgx_monarch/mesh_residency.py#L90-L153 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:240-372`](../src/dgx_monarch/mesh_residency.py#L240-L372 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"), and
@@ -735,7 +735,7 @@ copied from historical evidence.
     Pending/active API rows are projected against one such ledger scan, and
     a card whose first read is ambiguous is asked again under the load scope
     the refusal that raised it read, as `quarantine_decision_for_load` asks
-    ([`consent_quarantine.py:350-363`](../src/dgx_monarch/nodes/consent_quarantine.py#L350-L363 "anchor:offer_decisions"),
+    ([`consent_quarantine.py:354-367`](../src/dgx_monarch/nodes/consent_quarantine.py#L354-L367 "anchor:offer_decisions"),
     covered by
     [`test_consent_rescue_keeps_slab.py:518-541`](../tests/test_consent_rescue_keeps_slab.py#L518-L541 "anchor:test_the_card_is_offered_listed_and_accepted_after_a_capacity_verdict") and
     [`test_consent_rescue_keeps_slab.py:595-619`](../tests/test_consent_rescue_keeps_slab.py#L595-L619 "anchor:test_an_actor_offer_where_the_driver_holds_no_rank_becomes_a_card_to_accept")). GET
@@ -747,17 +747,17 @@ copied from historical evidence.
     A later current-source PASS permits a fresh consent, and the older FAIL
     then stays in the ledger only as audit history. These rules are implemented in
     [`consent_quarantine.py:256-329`](../src/dgx_monarch/nodes/consent_quarantine.py#L256-L329 "anchor:quarantine_decisions") and
-    [`consent_routes.py:143-171`](../src/dgx_monarch/nodes/consent_routes.py#L143-L171 "anchor:_live_rows"), and covered by
-    [`test_consent_endpoints.py:459-477`](../tests/test_consent_endpoints.py#L459-L477 "anchor:test_accept_refuses_a_card_after_persisted_gate_fail"),
-    [`test_consent_endpoints.py:480-501`](../tests/test_consent_endpoints.py#L480-L501 "anchor:test_consent_state_omits_quarantined_rows_without_mutating_them"),
-    [`test_consent_endpoints.py:504-528`](../tests/test_consent_endpoints.py#L504-L528 "anchor:test_consent_state_uses_one_memo_snapshot_for_rows_and_quarantine"),
-    [`test_consent_endpoints.py:531-549`](../tests/test_consent_endpoints.py#L531-L549 "anchor:test_fail_then_pass_allows_the_fresh_consent"),
-    [`test_consent_endpoints.py:552-567`](../tests/test_consent_endpoints.py#L552-L567 "anchor:test_pass_in_another_capability_context_does_not_clear_fail"),
-    [`test_consent_endpoints.py:570-601`](../tests/test_consent_endpoints.py#L570-L601 "anchor:test_unscoped_pass_cannot_clear_unscoped_fail_for_contextual_consent"),
-    [`test_consent_endpoints.py:604-632`](../tests/test_consent_endpoints.py#L604-L632 "anchor:test_stale_contextual_pass_cannot_clear_compatible_historical_fail"),
-    [`test_consent_endpoints.py:639-652`](../tests/test_consent_endpoints.py#L639-L652 "anchor:test_retesting_after_fail_preserves_quarantine_and_consumes_card"),
-    [`test_consent_endpoints.py:655-676`](../tests/test_consent_endpoints.py#L655-L676 "anchor:test_inconclusive_after_fail_preserves_quarantine_and_revokes"),
-    [`test_consent_endpoints.py:679-709`](../tests/test_consent_endpoints.py#L679-L709 "anchor:test_foreign_source_terminal_cannot_mask_older_fail"),
+    [`consent_routes.py:144-172`](../src/dgx_monarch/nodes/consent_routes.py#L144-L172 "anchor:_live_rows"), and covered by
+    [`test_consent_endpoints.py:479-497`](../tests/test_consent_endpoints.py#L479-L497 "anchor:test_accept_refuses_a_card_after_persisted_gate_fail"),
+    [`test_consent_endpoints.py:500-521`](../tests/test_consent_endpoints.py#L500-L521 "anchor:test_consent_state_omits_quarantined_rows_without_mutating_them"),
+    [`test_consent_endpoints.py:524-548`](../tests/test_consent_endpoints.py#L524-L548 "anchor:test_consent_state_uses_one_memo_snapshot_for_rows_and_quarantine"),
+    [`test_consent_endpoints.py:551-569`](../tests/test_consent_endpoints.py#L551-L569 "anchor:test_fail_then_pass_allows_the_fresh_consent"),
+    [`test_consent_endpoints.py:572-587`](../tests/test_consent_endpoints.py#L572-L587 "anchor:test_pass_in_another_capability_context_does_not_clear_fail"),
+    [`test_consent_endpoints.py:590-621`](../tests/test_consent_endpoints.py#L590-L621 "anchor:test_unscoped_pass_cannot_clear_unscoped_fail_for_contextual_consent"),
+    [`test_consent_endpoints.py:624-652`](../tests/test_consent_endpoints.py#L624-L652 "anchor:test_stale_contextual_pass_cannot_clear_compatible_historical_fail"),
+    [`test_consent_endpoints.py:659-672`](../tests/test_consent_endpoints.py#L659-L672 "anchor:test_retesting_after_fail_preserves_quarantine_and_consumes_card"),
+    [`test_consent_endpoints.py:675-696`](../tests/test_consent_endpoints.py#L675-L696 "anchor:test_inconclusive_after_fail_preserves_quarantine_and_revokes"),
+    [`test_consent_endpoints.py:699-729`](../tests/test_consent_endpoints.py#L699-L729 "anchor:test_foreign_source_terminal_cannot_mask_older_fail"),
     [`test_consent_wiring.py:399-421`](../tests/test_consent_wiring.py#L399-L421 "anchor:test_unscoped_pass_cannot_clear_unscoped_fail_for_live_projection"),
     [`test_consent_wiring.py:424-449`](../tests/test_consent_wiring.py#L424-L449 "anchor:test_stale_contextual_pass_cannot_clear_fail_for_live_projection"), and
     [`test_consent_wiring.py:453-475`](../tests/test_consent_wiring.py#L453-L475 "anchor:test_foreign_source_terminal_cannot_mask_fail_for_live_projection").
@@ -773,8 +773,8 @@ copied from historical evidence.
     reporting durable success; cancellation keeps its exact identity. A revoke
     therefore never reports durable success while the old grant might return
     after a crash. The publication boundary is
-    [`consent_store.py:272-293`](../src/dgx_monarch/consent_store.py#L272-L293 "anchor:_write_atomic") and
-    [`consent_store.py:296-310`](../src/dgx_monarch/consent_store.py#L296-L310 "anchor:_fsync_parent_directory"), covered by
+    [`consent_store.py:273-294`](../src/dgx_monarch/consent_store.py#L273-L294 "anchor:_write_atomic") and
+    [`consent_store.py:297-311`](../src/dgx_monarch/consent_store.py#L297-L311 "anchor:_fsync_parent_directory"), covered by
     [`test_consent_store.py:122-140`](../tests/test_consent_store.py#L122-L140 "anchor:test_directory_fsync_failure_after_replace_is_loud") and
     [`test_consent_store.py:143-165`](../tests/test_consent_store.py#L143-L165 "anchor:test_directory_fsync_cancellation_is_not_recast_as_success").
     A ceremony FAIL that quarantines a lever also revokes the class C memo that
@@ -812,7 +812,7 @@ copied from historical evidence.
   boundaries are
   [`gate_identity.py:280-290`](../src/dgx_monarch/nodes/gate_identity.py#L280-L290 "anchor:model_for_request"),
   [`gate_identity.py:332-480`](../src/dgx_monarch/nodes/gate_identity.py#L332-L480 "anchor:authorize_normal_render"),
-  [`render_submit.py:241-478`](../src/dgx_monarch/nodes/render_submit.py#L241-L478 "anchor:_submit_render_guarded"),
+  [`render_submit.py:249-486`](../src/dgx_monarch/nodes/render_submit.py#L249-L486 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:240-355`](../src/dgx_monarch/mesh_rpc.py#L240-L355 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"), with source-skew coverage in

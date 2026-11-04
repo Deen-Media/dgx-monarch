@@ -25,9 +25,10 @@ from ..loader_options import SUPPORTED_WEIGHT_DTYPES, validate_weight_dtype
 from ..log import get_logger
 from ..mesh import ensure_live
 from ..mesh_safety import ArtifactBindingError
+from ..old_model import OldModelRefusal
 from ..safetensors_header import SafetensorsFileIdentity
 from ..topology import Topology, topology_from_preset
-from . import consent_projection, loader_graph, loader_preflight, render_validation
+from . import consent_projection, loader_graph, loader_preflight, old_model_clear, render_validation
 from .common import MeshSpec, ModelSpec
 
 log = get_logger(__name__)
@@ -215,7 +216,14 @@ class DGXMonarchUNETLoader:
         # every rank. Inside that session it would still be typed and caught,
         # but only after a full bring-up. run_render and the pipeline keep the
         # same placement.
-        rescue_load = price_load()
+        try:
+            rescue_load = price_load()
+        except OldModelRefusal as exc:
+            # Always clear and retry: clear once, then price again on the
+            # emptied box; a second refusal is not caught.
+            if not old_model_clear.clear_for_retry(mesh.handle, exc):
+                raise
+            rescue_load = price_load()
         handle = ensure_live(mesh.handle, mesh_preflight=mesh_preflight)
         if mesh.topology_preset != "auto":
             from .abandoned_heal import heal_before_eager_setup
@@ -287,6 +295,14 @@ class DGXMonarchUNETLoader:
                     handle, exc, respawn=respawn_after_restart).handle
                 topo = topology_from_preset(mesh.topology_preset, handle.world)
                 render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
+                results = eager_load(handle, topo)
+            except OldModelRefusal as exc:
+                # Always clear and retry, outside the session: clear once,
+                # attach a fresh fleet, price and load once more.
+                if not old_model_clear.clear_for_retry(handle, exc):
+                    raise
+                handle = reprice_then_respawn(handle)
+                topo = topology_from_preset(mesh.topology_preset, handle.world)
                 results = eager_load(handle, topo)
             for r in results:
                 log.info("%s: %s -> %s", self.ENDPOINT, r.get("host"), r.get("transition"))

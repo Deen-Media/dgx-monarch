@@ -1,5 +1,5 @@
 """Drain the driver-side state a recycle invalidates: residency estimates,
-the grant-audit set, and the telemetry caches."""
+the grant-audit set, and the telemetry caches; and the one operator reset."""
 from __future__ import annotations
 
 from typing import Any
@@ -19,6 +19,42 @@ def drop_residency_memos() -> None:
     render_preflight.note_submitted_render(None)
     render_preflight.note_driver_charged_render(None)
     routes.invalidate_telemetry_caches()
+
+
+def recycle_and_drain(handle: Any) -> Any:
+    """Reset one attached mesh and drain what its exit invalidates.
+
+    The one teardown every operator-chosen clear runs: the panel's Reset
+    attached mesh, the "Old model in the way" card's accept and its Always
+    flow (nodes/old_model_clear.py). It issues no clear_vram RPC first:
+    ``recycle_detailed`` takes the lifecycle lock and refuses active render or
+    result leases before any destructive step, and actor exit returns both
+    loaded models and the retained allocator pool to the OS. Proc exit
+    invalidates the residency credits, so they drain before a new fleet can
+    inherit them. Returns the ``mesh_recycle.RecycleOutcome``.
+    """
+    outcome = handle.recycle_detailed()
+    if outcome.ok:
+        drop_residency_memos()
+    return outcome
+
+
+def recycle_attached_mesh() -> tuple[dict[str, Any], int]:
+    """Reset the attached mesh, as POST /dgxm/recycle does; (payload, HTTP status)."""
+    from ..mesh import _MESH_LOCK, _MESHES
+
+    with _MESH_LOCK:  # snapshot under lock; recycle is idempotent anyway
+        handle = next(iter(_MESHES.values()), None)
+    if handle is None:
+        return ({
+            "ok": False,
+            "status": "no_live_mesh",
+            "retryable": False,
+            "detail": "no attached mesh to reset; worker services are unchanged",
+        }, 200)
+    outcome = recycle_and_drain(handle)
+    status = 200 if outcome.ok else (409 if outcome.retryable else 503)
+    return outcome.as_dict(), status
 
 
 def evict_render_fleet(handle: Any, exc: Exception, *,

@@ -14,6 +14,10 @@ const CAPACITY = "#facc15";
 const ACCURACY = "#f87171";
 const GRANTED = "#4ade80";
 const AUTO_KEY = "#auto_rescue";
+const AUTO_CLEAR_KEY = "#auto_clear";
+// A card whose accept runs a server action (card.runs) waits as long as that
+// action may take: the attached-mesh reset is bounded at 260 s server-side.
+const ACTION_POST_TIMEOUT_MS = 270000;
 
 let consentState = { payload: null, error: null };
 let consentInFlight = false;
@@ -33,6 +37,8 @@ let accuracyOpened = false;
 // property names such as "__proto__" inert even against a malformed server.
 const justAccepted = Object.create(null);
 const busyState = Object.create(null);
+// An action card's "always" checkbox, kept across re-renders of the card.
+const alwaysChecked = Object.create(null);
 const announced = new Set();
 
 function short(error) {
@@ -70,12 +76,12 @@ function localState(key) {
     return busyState[key];
 }
 
-async function postConsent(body) {
+async function postConsent(body, timeoutMs = POST_TIMEOUT_MS) {
     const response = await api.fetchApi("/dgxm/consent", {
         method: "POST",
         headers: { "Content-Type": "application/json", "X-DGXM-Action": "consent" },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(POST_TIMEOUT_MS),
+        signal: AbortSignal.timeout(timeoutMs),
     });
     const payload = await response.json().catch(() => ({}));
     if (!response.ok || !payload.ok) throw new Error(payload.detail || `HTTP ${response.status}`);
@@ -87,21 +93,24 @@ const VERBS = {
     dismiss: ["dismissing…", "dismiss"],
     revoke: ["revoking…", "revoke"],
     auto_rescue: ["saving…", "save the setting"],
+    auto_clear: ["saving...", "save the setting"],
+    runs: ["clearing...", "clear"],
 };
 
-async function answer(key, body, onDone) {
+async function answer(key, body, onDone, verbsKey) {
     const state = localState(key);
     if (state.busy) return;
-    const verbs = VERBS[body.action] || VERBS.accept;
+    const verbs = VERBS[verbsKey || body.action] || VERBS.accept;
     state.busy = true;
     state.label = verbs[0];
     state.error = null;
     consentBusy += 1;
     renderZones(true);
     try {
-        await postConsent(body);
+        const payload = await postConsent(
+            body, verbsKey === "runs" ? ACTION_POST_TIMEOUT_MS : POST_TIMEOUT_MS);
         state.label = null;
-        if (onDone) onDone();
+        if (onDone) onDone(payload);
     } catch (error) {
         state.label = null;
         state.error = `Could not ${verbs[1]}: ${detail(error)}`;
@@ -128,7 +137,10 @@ function cardNode(row) {
     box.appendChild(el("div", "font-weight:600;", String(card.title || "")));
     box.appendChild(el("div", "font-size:11px;opacity:.75;",
         `${card.artifact || ""}${card.numbers ? ` · ${card.numbers}` : ""}`));
-    box.appendChild(el("div", "margin-top:4px;", String(card.risk || "")));
+    // A card's own sentence (card.detail) leads; the kind's risk text explains it.
+    if (card.detail) box.appendChild(el("div", "margin-top:4px;", String(card.detail)));
+    box.appendChild(el("div", card.detail ? "font-size:11px;opacity:.75;margin-top:2px;"
+        : "margin-top:4px;", String(card.risk || "")));
     if (card.evidence) {
         box.appendChild(el("div", "font-size:11px;opacity:.75;margin-top:2px;", String(card.evidence)));
     }
@@ -136,16 +148,39 @@ function cardNode(row) {
         box.appendChild(el("div", `font-size:11px;color:${ACCURACY};margin-top:2px;`, String(card.measured)));
     }
     const controls = el("div", "margin-top:6px;display:flex;gap:8px;align-items:center;");
+    // An action card (card.runs) may carry a checkbox that makes its action
+    // standing; the server names both, so no kind is named here.
+    let always = null;
+    if (card.runs && card.always) {
+        always = document.createElement("input");
+        always.type = "checkbox";
+        always.checked = Boolean(alwaysChecked[card.key]);
+        always.disabled = row.busy;
+        always.onchange = () => { alwaysChecked[card.key] = always.checked; };
+    }
     const primary = button(row.label || card.primary.label, accent);
     primary.disabled = row.busy;
-    primary.onclick = () => answer(card.key, { action: "accept", key: card.key, id: card.id }, () => {
-        const message = card.style === "accuracy"
-            ? `Accuracy waiver recorded: ${card.title}`
-            : `Allowed: ${card.title}`;
-        justAccepted[card.key] = { card, at: Date.now(), message };
-        announced.delete(card.id);
-    });
+    primary.onclick = () => {
+        const body = { action: "accept", key: card.key, id: card.id };
+        if (always) body.always = always.checked;
+        answer(card.key, body, (payload) => {
+            const message = card.runs
+                ? String((payload && payload.detail) || "Done; then queue again.")
+                : card.style === "accuracy"
+                    ? `Accuracy waiver recorded: ${card.title}`
+                    : `Allowed: ${card.title}`;
+            justAccepted[card.key] = { card, at: Date.now(), message };
+            delete alwaysChecked[card.key];
+            announced.delete(card.id);
+        }, card.runs ? "runs" : undefined);
+    };
     controls.appendChild(primary);
+    if (always) {
+        const label = el("label", "display:flex;align-items:center;gap:4px;font-size:11px;");
+        label.appendChild(always);
+        label.appendChild(el("span", "", String(card.always)));
+        controls.appendChild(label);
+    }
     if (card.dismissible) {
         const dismiss = button("Dismiss", null);
         dismiss.disabled = row.busy;
@@ -228,29 +263,48 @@ function activeRowNode(row) {
     return wrap;
 }
 
-function toggleNode(model) {
+function standingToggle(key, action, toggle) {
     const wrap = el("div", "margin-top:6px;");
     const label = el("label", "display:flex;align-items:center;gap:6px;font-size:12px;");
-    label.title = "When stock residency cannot fit a checkpoint, load it with slab residency "
-        + "without asking. Every rescue is still byte-verified, and the ledger records each "
-        + "checkpoint it rescues. Accuracy waivers are never automatic.";
+    label.title = toggle.title;
     const box = document.createElement("input");
     box.type = "checkbox";
-    box.checked = model.autoRescue;
-    box.disabled = model.autoRescueBusy || model.autoRescueEnv;
-    box.onchange = () => answer(AUTO_KEY, { action: "auto_rescue", value: box.checked });
+    box.checked = toggle.checked;
+    box.disabled = toggle.busy || toggle.env;
+    box.onchange = () => answer(key, { action, value: box.checked });
     label.appendChild(box);
-    label.appendChild(el("span", "", "Auto-allow capacity rescue (slab residency)"));
+    label.appendChild(el("span", "", toggle.text));
     wrap.appendChild(label);
-    if (model.autoRescueEnv) {
-        wrap.appendChild(el("div", "font-size:11px;opacity:.6;",
-            "DGXM_AUTO_RESCUE turns this on for the driver process; the panel cannot turn it off"));
+    if (toggle.env) {
+        wrap.appendChild(el("div", "font-size:11px;opacity:.6;", toggle.envNote));
     }
-    const state = busyState[AUTO_KEY];
+    const state = busyState[key];
     const note = state && !state.busy && (state.error || state.label);
     if (note) {
         wrap.appendChild(el("div", `font-size:11px;color:${ACCURACY};`, note));
     }
+    return wrap;
+}
+
+function toggleNode(model) {
+    const wrap = el("div", "");
+    wrap.appendChild(standingToggle(AUTO_KEY, "auto_rescue", {
+        checked: model.autoRescue, busy: model.autoRescueBusy, env: model.autoRescueEnv,
+        title: "When stock residency cannot fit a checkpoint, load it with slab residency "
+            + "without asking. Every rescue is still byte-verified, and the ledger records each "
+            + "checkpoint it rescues. Accuracy waivers are never automatic.",
+        text: "Auto-allow capacity rescue (slab residency)",
+        envNote: "DGXM_AUTO_RESCUE turns this on for the driver process; the panel cannot turn it off",
+    }));
+    wrap.appendChild(standingToggle(AUTO_CLEAR_KEY, "auto_clear", {
+        checked: model.autoClear, busy: model.autoClearBusy, env: model.autoClearEnv,
+        title: "When a model an earlier render loaded is in the way of the next one, reset the "
+            + "attached mesh and run again without asking, once per load. The load is priced "
+            + "again on the fresh Workers and still refuses if it does not fit.",
+        text: "Always clear and retry (old model in the way)",
+        envNote: "DGXM_ALLOW_CLEAR_RETRY turns this on for the driver process; the panel cannot "
+            + "turn it off",
+    }));
     return wrap;
 }
 
@@ -264,6 +318,9 @@ function signature(model) {
         model.autoRescue, model.autoRescueBusy, model.autoRescueEnv,
         (busyState[AUTO_KEY] && busyState[AUTO_KEY].label) || "",
         (busyState[AUTO_KEY] && busyState[AUTO_KEY].error) || "",
+        model.autoClear, model.autoClearBusy, model.autoClearEnv,
+        (busyState[AUTO_CLEAR_KEY] && busyState[AUTO_CLEAR_KEY].label) || "",
+        (busyState[AUTO_CLEAR_KEY] && busyState[AUTO_CLEAR_KEY].error) || "",
     ]);
 }
 

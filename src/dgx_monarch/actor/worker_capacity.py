@@ -17,7 +17,7 @@ from typing import Any
 
 from ..log import get_logger
 from ..transfer_utils import failure_summary
-from . import capacity_quote, store_fsdp
+from . import actor_footprint, capacity_quote, store_fsdp
 from .capacity_quote import RankPrice
 
 log = get_logger(__name__)
@@ -75,6 +75,26 @@ def _spec_bytes(spec: Any) -> int:
         return os.path.getsize(path) if os.path.exists(path) else 0
     except Exception:
         return 0
+
+
+def _resident_facts(store: Any) -> dict[str, Any]:
+    """What a clear of this actor would return, for the old-model card.
+
+    The name comes from the store itself, never parsed back out of the
+    snapshot's repr; the size is the file on disk, as ``_spec_bytes`` reads
+    it. The driver decides which residency's bytes a clear returns
+    (``old_model.rank_gain``), so every held slot is reported.
+    """
+    names: dict[str, str | None] = {}
+    sizes: dict[str, int] = {}
+    for slot, stored in ((capacity_quote.SLOT_COND, getattr(store, "current", None)),
+                         (capacity_quote.SLOT_UNCOND, getattr(store, "uncond", None))):
+        base_key = getattr(stored, "base_key", ()) or ()
+        name = str(base_key[0]) if base_key else None
+        names[slot] = name
+        sizes[slot] = _spec_bytes({"unet_name": name}) if name else 0
+    return {"resident_names": names, "resident_bytes": sizes,
+            "arena_bytes": actor_footprint.arena_bytes()}
 
 
 def _request_key(snapshot: dict, slot: str, spec: dict, unet_name: str) -> str:
@@ -220,6 +240,7 @@ def quote(worker: Any, request: Any) -> dict:
         return envelope
     consent = request.get("rescue_consent") if isinstance(request, dict) else None
     snapshot = store.snapshot()
+    facts = _resident_facts(store)
     pinned = _pinned_staging()
     charged = 0
     for spec in _my_slots(worker, specs):
@@ -243,5 +264,6 @@ def quote(worker: Any, request: Any) -> dict:
                 snapshot.get("retained_failed_load_slabs", 0) or 0),
             failed_load_cleanup_pending=bool(
                 snapshot.get("failed_load_cleanup_pending", False)),
+            **facts,
         ).to_row())
     return envelope
