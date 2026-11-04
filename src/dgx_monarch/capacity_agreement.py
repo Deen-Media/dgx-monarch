@@ -382,6 +382,8 @@ def _offer_rescue(answer: RankAnswer, quote: RankPrice) -> NoReturn:
             f"{answer.where} offered a capacity rescue this driver could not "
             f"read, so the offer cannot be registered. {_NOTHING_LOADED}")
     spec = KIND_SPECS[consent_descriptor.KIND_RESCUE_SLAB]
+    # The rescue arm prices against the same residents the refusal arm does.
+    held = _held_clause([(answer, quote)])
     tail = []
     for build, note in ((lambda: measured_tag(descriptor.measured), "measured numbers"),
                         (lambda: consent_descriptor.encode(descriptor), "descriptor")):
@@ -394,8 +396,8 @@ def _offer_rescue(answer: RankAnswer, quote: RankPrice) -> NoReturn:
         RefusalClass.CAPACITY,
         f"capacity rescue available for {descriptor.unet_name}: "
         f"{descriptor.human_reason} Every rank must hold this checkpoint and "
-        f"{answer.where} is the leanest, so its price governs the fleet. "
-        "Nothing was loaded and nothing was quarantined.",
+        f"{answer.where} is the leanest, so its price governs the fleet."
+        + (f" {held}" if held else "") + " Nothing was loaded and nothing was quarantined.",
         guard=RESCUE_GUARD, waivable=True, troubleshooting=TROUBLESHOOTING,
         panel_action=PanelAction(label=spec.primary_label, env=spec.env_var),
     ) + (("\n" + "\n".join(tail)) if tail else ""))

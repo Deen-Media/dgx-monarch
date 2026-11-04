@@ -118,6 +118,10 @@
   names other text boxes by their node. The prompt box starts taller and grows
   with its text, an empty negative prompt waits behind Add negative prompt on
   Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
+- A slab rescue card offered by the cross-rank capacity agreement now says
+  when its price was taken with a model from an earlier render still held,
+  as the agreement's refusal already did
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 
 ### Compatibility and verification
 

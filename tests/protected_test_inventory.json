@@ -259,6 +259,7 @@
       "test_a_real_zero_headroom_still_prints_zero": "4f526de58d48e611",
       "test_a_refusal_outranks_a_rescue_on_another_rank": "78db4b0532caad13",
       "test_a_reply_cannot_answer_for_a_rank_the_driver_did_not_ask": "c33cb534346b167e",
+      "test_a_rescue_offer_priced_over_a_resident_says_so_too": "592a7fb6efdb2a8c",
       "test_a_reserve_this_rank_cannot_read_charges_nothing": "f4e1f0ec6226e678",
       "test_a_reuse_that_read_its_box_prints_that_reading": "8f1a4b7e79715349",
       "test_a_reuse_that_read_nothing_is_not_printed_as_zero_headroom": "e3c7dd9fd4e2ff3b",
