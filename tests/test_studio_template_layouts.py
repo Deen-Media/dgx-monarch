@@ -7,7 +7,9 @@ table. It works out from the nodes and wires which inputs the approved rule asks
 for, and the layout must list exactly those, in the approved order, apart from
 the reviewed exceptions below, each with its reason. Studio inspects every
 template against the recorded driver schema, so each entry must also name an
-editable input that exists.
+editable input that exists. A template that uses a node class the recording
+lacks skips with a reason naming the class, as the bundled-workflow tests do,
+until a new schema is recorded (tests/fixtures/studio/README.md).
 """
 from __future__ import annotations
 
@@ -23,6 +25,8 @@ from dgx_monarch.studio.workflows import binding_id, inspect_workflow
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATES = sorted((ROOT / "example_workflows").glob("*.json"))
 OBJECT_INFO = json.loads((ROOT / "tests/fixtures/studio/object_info_bundled.json").read_text())
+# UI-only nodes, which no recording declares.
+VIRTUAL = {"Note", "MarkdownNote", "PrimitiveNode", "Reroute"}
 
 # The approved order: the positive prompt, the negative prompt, the seed, the
 # image size, steps, cfg, sampler and scheduler, the denoise or strength of an
@@ -251,6 +255,15 @@ def _template(stem: str) -> dict:
     return json.loads((ROOT / "example_workflows" / f"{stem}.json").read_text())
 
 
+def _skip_unrecorded(stem: str, workflow: dict) -> None:
+    """Skip a template whose node classes the recorded schema lacks, naming them."""
+    missing = sorted({node["type"] for node in workflow["nodes"]} - set(OBJECT_INFO) - VIRTUAL)
+    if missing:
+        pytest.skip(f"{stem}: the recorded schema lacks node classes {', '.join(missing)}; record a "
+                    "new /object_info and rebuild the fixture as tests/fixtures/studio/README.md "
+                    "(Recording a new driver schema) says")
+
+
 def test_the_template_folder_is_not_empty():
     # The parametrized checks pass on an empty folder, so this one fails on it.
     assert TEMPLATES
@@ -258,7 +271,9 @@ def test_the_template_folder_is_not_empty():
 
 @pytest.mark.parametrize("path", TEMPLATES, ids=[path.stem for path in TEMPLATES])
 def test_template_opens_on_its_app_mode_layout(path: Path):
-    assert layout_problems(path.stem, json.loads(path.read_text())) == []
+    workflow = json.loads(path.read_text())
+    _skip_unrecorded(path.stem, workflow)
+    assert layout_problems(path.stem, workflow) == []
 
 
 @pytest.mark.parametrize("path", TEMPLATES, ids=[path.stem for path in TEMPLATES])
@@ -269,6 +284,7 @@ def test_dropping_any_entry_fails_the_check(path: Path):
     image but keeps its positive prompt.
     """
     workflow = json.loads(path.read_text())
+    _skip_unrecorded(path.stem, workflow)
     for index, (node_id, name) in enumerate(workflow["extra"]["linearData"]["inputs"]):
         mutated = copy.deepcopy(workflow)
         del mutated["extra"]["linearData"]["inputs"][index]

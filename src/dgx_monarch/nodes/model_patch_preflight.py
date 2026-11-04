@@ -1,10 +1,12 @@
-"""Driver preflights for the per-render model patches (Skip Layer Guidance, the SD3
-shift, LoRA) and for MOSS-Image reference images and text attention bias.
+"""Driver preflights for the per-render model patches (Skip Layer Guidance, MiniMax H3
+context windows, the SD3 shift, LoRA) and for MOSS-Image reference images and
+text attention bias.
 
-All five run once per render in nodes/render_submit.py, after the topology
+All six run once per render in nodes/render_submit.py, after the topology
 resolves and before any Worker call, so a refusal costs no dispatch. Each fails
-open where it cannot read its facts: the Worker belt (actor/guidance_render.py)
-still guards Skip Layer Guidance, the shift guard refuses only a config that
+open where it cannot read its facts: the Worker belts (actor/guidance_render.py,
+actor/context_windows_render.py) still guard Skip Layer Guidance and the
+context windows, the shift guard refuses only a config that
 says multiplier 1.0 outright, the model store refuses a LoRA on a refused
 quantized file on every Worker (lora_quant_guard.py), the MOSS-Image sharded
 forward refuses reference images on every rank, and every Worker rank scans the
@@ -27,6 +29,7 @@ from ..skip_layer_guidance import (
 def preflight_model_patches(model: Any, topo: Any, request: Mapping[str, Any]) -> None:
     """The one driver entry: the skip check, then the shift and LoRA checks on every model."""
     preflight_skip_layer_guidance(model, topo, request)
+    preflight_context_windows(model, request)
     preflight_shift_node(model)
     uncond = request.get("uncond_model")
     if uncond is not None:
@@ -179,6 +182,29 @@ def preflight_skip_layer_guidance(model: Any, topo: Any, request: Mapping[str, A
         f"{reason} To keep this topology and guider instead, clear both layer lists on "
         "the node; the render then runs without the skip.",
         troubleshooting=126))
+
+
+def preflight_context_windows(model: Any, request: Mapping[str, Any]) -> None:
+    """Refuse MiniMax H3 context windows on another family or a guider's negative (#142).
+
+    The guider arm needs no header. The family arm reads it, and an unreadable
+    header passes: every Worker reads the loaded model's family instead.
+    """
+    from ..h3_context_windows import DUAL_MODEL_REASON, FIELD, family_refusal_reason
+
+    uncond = request.get("uncond_model")
+    reason = None
+    if isinstance(uncond, Mapping) and uncond.get(FIELD) is not None:
+        reason = DUAL_MODEL_REASON
+    elif getattr(model, FIELD, None) is not None:
+        reason = family_refusal_reason(_sniffed_family(model))
+    if reason is None:
+        return
+    from ..adapters.base import UnsupportedModelError
+
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS, f"{reason} Without the node, the graph samples the clip whole instead.",
+        troubleshooting=142))
 
 
 def refuse_shift_after_skip(model: Any) -> None:

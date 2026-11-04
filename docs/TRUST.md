@@ -525,7 +525,7 @@ copied from historical evidence.
    [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
    [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"),
    with production call order at
-   [`sample_protocol.py:172-446`](../src/dgx_monarch/actor/sample_protocol.py#L172-L446 "anchor:run_sample").
+   [`sample_protocol.py:180-457`](../src/dgx_monarch/actor/sample_protocol.py#L180-L457 "anchor:run_sample").
    Driver and worker failures are covered by
    [`test_fleet.py:677-711`](../tests/test_fleet.py#L677-L711 "anchor:test_fleet_forces_stock_policy_until_exact_context_pass"),
    [`test_fleet.py:752-820`](../tests/test_fleet.py#L752-L820 "anchor:test_fleet_preserves_requested_policy_only_for_exact_context_pass"),
@@ -920,7 +920,7 @@ copied from historical evidence.
   same transaction get no skip
   ([`gate_inconclusive.py:265-265`](../src/dgx_monarch/nodes/gate_inconclusive.py#L265-L265 "anchor:remember_kind")).
   This is enforced at
-  [`common.py:308-386`](../src/dgx_monarch/nodes/common.py#L308-L386 "anchor:run_render"),
+  [`common.py:306-384`](../src/dgx_monarch/nodes/common.py#L306-L384 "anchor:run_render"),
   [`auto_gate.py:201-268`](../src/dgx_monarch/nodes/auto_gate.py#L201-L268 "anchor:auto_gate_required"),
   [`auto_gate.py:271-484`](../src/dgx_monarch/nodes/auto_gate.py#L271-L484 "anchor:maybe_auto_gate"), and
   [`pipeline.py:282-367`](../src/dgx_monarch/nodes/pipeline.py#L282-L367 "anchor:_push_bound"), with

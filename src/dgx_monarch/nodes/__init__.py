@@ -7,6 +7,7 @@ from . import routes as _routes
 from .fleet import DGXMonarchFleetKSampler
 from .gate import DGXMonarchIdentityGate
 from .guiders import DGXMonarchBasicGuider, DGXMonarchCFGGuider, DGXMonarchDualModelGuider
+from .h3_context_windows import DGXMonarchMiniMaxH3ContextWindows
 from .init import DGXMonarchInit
 from .loaders import DGXMonarchLoraLoader, DGXMonarchUncondUNETLoader, DGXMonarchUNETLoader
 from .model_sampling import DGXMonarchModelSamplingSD3
@@ -30,6 +31,7 @@ NODE_CLASS_MAPPINGS = {
     "DGXMonarchModelSamplingSD3": DGXMonarchModelSamplingSD3,
     "DGXMonarchQwenImage21Cache": DGXMonarchQwenImage21Cache,
     "DGXMonarchSkipLayerGuidance": DGXMonarchSkipLayerGuidance,
+    "DGXMonarchMiniMaxH3ContextWindows": DGXMonarchMiniMaxH3ContextWindows,
     "DGXMonarchKSampler": DGXMonarchKSampler,
     "DGXMonarchKSamplerAdvanced": DGXMonarchKSamplerAdvanced,
     "DGXMonarchKSamplerPipeline": DGXMonarchKSamplerPipeline,
@@ -53,6 +55,7 @@ NODE_DISPLAY_NAME_MAPPINGS = {
     "DGXMonarchModelSamplingSD3": "Model Sampling SD3 (DGX Monarch)",
     "DGXMonarchQwenImage21Cache": "Qwen Image 2.1 Cache (DGX Monarch)",
     "DGXMonarchSkipLayerGuidance": "Skip Layer Guidance (DGX Monarch)",
+    "DGXMonarchMiniMaxH3ContextWindows": "MiniMax H3 Context Windows (DGX Monarch)",
     "DGXMonarchKSampler": "KSampler (DGX Monarch)",
     "DGXMonarchKSamplerAdvanced": "KSampler Advanced (DGX Monarch)",
     "DGXMonarchKSamplerPipeline": "KSampler Pipeline (DGX Monarch)",

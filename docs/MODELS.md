@@ -125,6 +125,7 @@ that match the tested configurations in its model details. See
 | Wan 2.1 (t2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 Ulysses passed its output comparisons. [Details](#model-wan-2-1-t2v) · [Workflow](../example_workflows/dgx-monarch-wan-t2v.json) |
 | Wan 2.2 (t2v, high/low) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | BF16 and FP16 high/low were tested separately; FP8 T2V has not been compared. [Details](#model-wan-2-2-t2v-high-low) · [Workflow](../example_workflows/dgx-monarch-wan22-t2v.json) |
 | Wan 2.2 (i2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | The four-step LoRA test and no-LoRA FP8 test used different recipes. [Details](#model-wan-2-2-i2v) · [Workflow](../example_workflows/dgx-monarch-wan22-i2v.json) |
+| Wan 2.2 TI2V 5B | ✓ | n/a | ★⏳ | ✓ | ✓ | impl | One FP16 checkpoint, the only public file, has no comparison on hardware. A start image keeps the first latent frame at its own timestep. [Details](#model-wan-2-2-ti2v-5b) · [Workflow](../example_workflows/dgx-monarch-wan22-ti2v.json) |
 | Wan 2.1 (i2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 Ulysses passed; the BF16/FSDP capacity alternative has no reference comparison. [Details](#model-wan-2-1-i2v) · [Workflow](../example_workflows/dgx-monarch-wan21-i2v.json) |
 | Wan FlowRVS | ✓ | n/a | ★ | ✓ | ✓ | **HW** | Tested with synthetic clips. Use CFG 1 and no added noise for segmentation. [Details](#model-wan-flowrvs) · [Workflow](../example_workflows/dgx-monarch-wan-flowrvs.json) |
 | Wan Bernini-R | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 high/low T2V only; fresh solver history per stage. [Details](#model-wan-bernini-r) · [Workflow](../example_workflows/dgx-monarch-wan-bernini.json) |
@@ -1217,6 +1218,45 @@ Detail status (`Wan 2.2 (i2v)`): **HW**.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-wan-2-2-i2v).
 
+<a id="model-wan-2-2-ti2v-5b"></a>
+
+### Wan 2.2 TI2V 5B
+
+Detail status (`Wan 2.2 TI2V 5B`): impl.
+
+**Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-wan22-ti2v.json).
+It keeps the settings of ComfyUI's own TI2V template, so a stock render of
+that template is comparable: 1280x704, 121 frames at 24 fps, 20 uni_pc steps
+on the simple schedule at cfg 5 and sampling shift 8, text to video as
+shipped.
+
+**Tested configurations.** None on hardware. The CPU tests check the template
+against the stock node definitions, and the Wan adapter's exact-class match
+and per-frame timestep sharding.
+
+**Known limitations.** The model is one checkpoint, not a high/low pair, so
+one sampler stage runs the whole schedule. One public file exists,
+`wan2.2_ti2v_5B_fp16.safetensors`, so the rule to test every public
+quantization covers that one file. Ulysses needs a degree that divides the
+model's 24 heads; the shipped canvas is 27280 tokens, which halves at world 2
+with no pad. cfg2 splits the conditional and unconditional batch over the
+ranks, with each row's per-frame timesteps, as it does for the 14B files; no
+cfg2 render of this model has been measured, and auto never offers it. FSDP
+admits the uniform FP16 file and has not run; at 10.0 GB the file fits
+resident on one Spark.
+
+**Test results.** [Comparisons and limits](VALIDATION.md#evidence-wan-2-2-ti2v-5b).
+
+**Workflow guidance.**
+
+For image to video, add a Load Image node and wire it to `start_image` on
+Wan 2.2 Image To Video Latent. That node encodes the image into the first
+latent frame and adds a noise mask that keeps it, and the model runs that
+frame at its own timestep; the Wan adapter expands those per-frame timesteps
+to tokens before it shards them, the arithmetic stock uses. To split the
+decode over the Workers, swap VAE Decode for VAE Decode (Tiled), which gives
+different bytes from VAE Decode ([Worker-assisted VAE decode](#worker-assisted-vae-decode)).
+
 <a id="model-wan-2-1-i2v"></a>
 
 ### Wan 2.1 (i2v)
@@ -1508,10 +1548,21 @@ it needs ComfyUI's ModelSamplingMiniMaxH3 node at 1.0 and 1.0, a stock MODEL
 patch that cannot connect to DGXM_MODEL, so the Workers would sample it at
 H3's default shifts, 12.0 and 3.0.
 ComfyUI's MiniMax H3 Context Windows node (#17425) patches a stock MODEL, so it
-cannot connect to a DGX Monarch loader's DGXM_MODEL and no render on the
-Workers runs windowed. The activation preflight and the sample deadline price
-the whole clip, which is what the Workers sample. No windowed render has a
-hardware record ([VALIDATION](VALIDATION.md#comfyui-0440-additions)).
+cannot connect to a DGX Monarch loader's DGXM_MODEL. Use MiniMax H3 Context
+Windows (DGX Monarch) instead: it takes the stock node's five widgets, and
+every Worker applies ComfyUI's own node to its render clone, so the windows
+are stock's. Each window is one model call on a shorter clip, and sequence
+parallelism splits that call's packed sequence as it splits a whole clip: a
+window whose packed total does not divide the degree pads on Ulysses and
+refuses on padded ring, as a whole clip does. The node needs ComfyUI 0.44.0
+or newer on every host, and it refuses on any other family and on a
+two-checkpoint guider's negative model
+([TROUBLESHOOTING #142](TROUBLESHOOTING.md#142-a-render-with-minimax-h3-context-windows-dgx-monarch-refuses)).
+The sample deadline counts every window's rows. The activation preflight
+still prices the whole clip, which charges a windowed render more than it
+uses, so windows do not yet let through a clip that the preflight refuses
+whole. No windowed render has a hardware record
+([VALIDATION](VALIDATION.md#minimax-h3-context-windows)).
 
 **Tested configurations.** Ulysses/ring with audio and anchored guides at the sizes listed in the linked results. The FP8 xFuser compatibility test at 512x320x5 also reproduced both latent streams, five decoded frames and audio.
 
@@ -1737,7 +1788,7 @@ are unchecked
 |---|---|---|---|---|
 | MiniMax H3 video | `minimax_h3_video_vae_fp16.safetensors` | VAE Decode and VAE Decode (Tiled), which run the same decode on this VAE | one temporal chunk, which the VAE tiles inside | passed 2026-11-01: 124 of 124 frames at 1344x768, saved as PNG straight from the decoder |
 | Wan 2.1 (also Wan 2.2 14B, FlowRVS, SCAIL, WanDancer, Wan-Animate 2) | `wan_2.1_vae.safetensors`, `Wan2_1_VAE_bf16.safetensors`, `wan21_flow_rvs_mask_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | passed 2026-10-31 with `wan_2.1_vae.safetensors`, 33 of 33 frames. The other two files are unchecked. |
-| Wan 2.2 TI2V | `Wan2_2_VAE_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
+| Wan 2.2 TI2V 5B | `wan2.2_vae.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | NOT RUN on the pair; on CPU the real file splits byte-identical to the stock tiled decode |
 | HunyuanVideo 1.0 (also Kandinsky5 Video) | `hunyuan_video_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
 | HunyuanVideo 1.5 | `hunyuanvideo15_vae_fp16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
 | LTX 2.5, diffusion decoder | `ltx-2.5-video-vae-bf16.safetensors` | VAE Decode (Tiled) | one tile | passed 2026-10-31: 121 of 121 frames at 1280x704 |

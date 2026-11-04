@@ -7236,6 +7236,13 @@ the floor wins over the cap. Every other family, and any render whose rows the
 driver cannot read, keeps the old rule, the larger of the floor and 120 s per
 step, with no cap.
 
+Under MiniMax H3 Context Windows (DGX Monarch) each step runs every window,
+and each window carries the text, keyframe and reference rows again, so the
+driver counts the rows of all the windows. At the node's defaults the 15
+second clip runs four windows of 37 of its 107 latents: 150,838 rows plus
+four times the text rows per step, against 109,062 plus the text rows for
+the whole clip ([#142](#142-a-render-with-minimax-h3-context-windows-dgx-monarch-refuses)).
+
 Measured sampling against the deadline each render now gets (20 steps, CFG
 1, exact attention, pruned INT8 ConvRot, the head capped at 2100 MHz):
 
@@ -7398,3 +7405,44 @@ picked. On 2026-10-31 `fp8_ops` sampled plain FP8 24 to 30 percent faster than
 the dequantizing path and rendered noise, while the Krea2 Turbo fp8_scaled file
 sampled 11 percent faster than BF16 inside the fidelity floor
 ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
+
+## 142. A render with MiniMax H3 Context Windows (DGX Monarch) refuses
+
+**Symptom:** a MiniMax H3 render whose graph carries MiniMax H3 Context
+Windows (DGX Monarch) fails before it samples with a class P refusal that
+names the node, either at the driver before any Worker call or on every rank
+after the load:
+
+```
+[dgxm:P] MiniMax H3 Context Windows (DGX Monarch) needs ComfyUI's MiniMaxH3ContextWindows node, in ComfyUI 0.44.0 or newer, ...
+[dgxm:P] MiniMax H3 Context Windows (DGX Monarch) runs ComfyUI's MiniMax H3 context windows, ... this checkpoint reads as wan. ...
+[dgxm:P] MiniMax H3 Context Windows (DGX Monarch) feeds a two-checkpoint guider's negative model here, ...
+```
+
+**Cause:** the node carries ComfyUI's MiniMax H3 Context Windows (#17425) to
+the Workers, and each Worker applies ComfyUI's own node to its render clone.
+Each window is then one model call on a shorter clip, which sequence
+parallelism splits as it splits a whole clip. Three things stop it:
+
+- A Worker's ComfyUI predates 0.44.0 and has no such node. Rendering on would
+  sample the whole clip at once and report nothing, so the Worker refuses
+  inside its load step, where a peer that has the node refuses too instead of
+  waiting at the first collective.
+- The checkpoint is not MiniMax H3. The stock node cuts windows on H3's
+  17-frame chunks and splits its audio by H3's frame layout, and only the H3
+  forward here is shown to rebuild its packed sequence for each window.
+- The node feeds the negative model of a two-checkpoint guider. The Workers
+  carry windows on the primary model only.
+
+**Fix:**
+
+- Update ComfyUI to 0.44.0 or newer on every host, the driver's included, and
+  restart the Worker services so the actors load it.
+- Use the node with a MiniMax H3 checkpoint only; for another family, remove
+  it.
+- Wire the node on the model the sampler or the guider's positive input takes.
+- A padded window on ring refuses class K, as a padded whole clip does
+  ([#49](#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)); run Ulysses.
+- The activation preflight still prices the whole clip, so a clip the
+  preflight refuses whole is refused with the node too
+  ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)).

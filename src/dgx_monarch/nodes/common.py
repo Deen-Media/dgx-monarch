@@ -16,11 +16,7 @@ from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
 
 from .. import family_select, latent_scale
-from ..adapters.detect import (
-    CheckpointSniffError,
-    sniff_checkpoint_for_topology,
-    sniff_nearest_signatures,
-)
+from ..adapters.detect import CheckpointSniffError, sniff_checkpoint_for_topology, sniff_nearest_signatures
 from ..adoption_evidence import (
     claim_active_context as _claim_adoption_context,
 )
@@ -30,6 +26,7 @@ from ..adoption_evidence import (
 from ..adoption_evidence import (
     suspend_active_context as _suspend_adoption_context,
 )
+from ..h3_context_windows import ContextWindowsSpec, context_windows_field
 from ..log import get_logger
 from ..mesh import MeshHandle, ensure_live
 from ..model_sampling import ModelSamplingSpec, freeze_model_sampling, normalize_model_sampling
@@ -94,6 +91,7 @@ class ModelSpec:
     slot: str = "cond"
     model_sampling: ModelSamplingSpec | None = None
     skip_layer_guidance: SkipLayerGuidanceSpec | None = None
+    context_windows: ContextWindowsSpec | None = None
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "model_sampling", freeze_model_sampling(self.model_sampling))
@@ -129,7 +127,7 @@ class ModelSpec:
             "loras": [dict(entry) for entry in self.loras],
             "model_sampling": normalize_model_sampling(self.model_sampling),
             "skip_layer_guidance": normalize_skip_layer_guidance(self.skip_layer_guidance),
-        }
+        } | context_windows_field(self.context_windows)
 
 
 # A header sniff cannot tie checkpoint variant, graph shape, LoRA, quantization

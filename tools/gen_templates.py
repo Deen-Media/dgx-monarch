@@ -155,6 +155,9 @@ STOCK = {
     "BerniniConditioning": ["width", "height", "length", "batch_size",
                             "ref_max_size"],
     "EmptyHunyuanLatentVideo": ["width", "height", "length", "batch_size"],
+    # The Wan 2.2 TI2V latent node: a V3 schema whose optional start_image is a
+    # socket, so the widgets are the four integers in schema order.
+    "Wan22ImageToVideoLatent": ["width", "height", "length", "batch_size"],
     "EmptyHunyuanVideo15Latent": ["width", "height", "length", "batch_size"],
     "EmptyHunyuanImageLatent": ["width", "height", "batch_size"],
     # noise_augmentation is required, and marked advanced, so the frontend
@@ -268,6 +271,7 @@ STOCK_OUTPUTS = {
     "BerniniConditioning": [("positive", "CONDITIONING"), ("negative", "CONDITIONING"),
                             ("latent", "LATENT")],
     "EmptyHunyuanLatentVideo": [("LATENT", "LATENT")],
+    "Wan22ImageToVideoLatent": [("LATENT", "LATENT")],
     "EmptyHunyuanVideo15Latent": [("LATENT", "LATENT")],
     "EmptyHunyuanImageLatent": [("LATENT", "LATENT")],
     "HunyuanRefinerLatent": [("positive", "CONDITIONING"),
@@ -470,6 +474,8 @@ def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
                                     ("vae", "VAE"),
                                     ("clip_vision_output", "CLIP_VISION_OUTPUT"),
                                     ("start_image", "IMAGE")],
+                # start_image is optional and keeps its slot.
+                "Wan22ImageToVideoLatent": [("vae", "VAE"), ("start_image", "IMAGE")],
                 "WanAnimate2ToVideo": [
                     ("positive", "CONDITIONING"), ("negative", "CONDITIONING"),
                     ("vae", "VAE"), ("reference_image", "IMAGE"),
@@ -1700,6 +1706,84 @@ TEMPLATES = {
             {"key": "save", "type": "SaveImage", "pos": (5, 1),
              "widgets": {"filename_prefix": "dgx_monarch_wan22_i2v"},
              "wire": {"images": ("dec", 0)}},
+        ],
+    },
+    "dgx-monarch-wan22-ti2v": {
+        "title": "Wan 2.2 TI2V 5B text to video",
+        "nodes": [
+            {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
+             "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
+            {"key": "note", "type": "Note", "pos": (0, 1), "note":
+             "Wan 2.2 TI2V 5B at 1280x704, 121 frames (about 5 s at 24 fps), on the one "
+             "5B checkpoint: 20 steps at cfg 5.0 with uni_pc on the simple schedule and "
+             "sampling shift 8.0, the settings of ComfyUI's own TI2V template, so a stock "
+             "render of that template is comparable. As shipped it is text to video. For "
+             "image to video, add a Load Image node and wire it to start_image on Wan 2.2 "
+             "Image To Video Latent: that node encodes the image into the first latent "
+             "frame and adds a noise mask that keeps it, and the model then runs that "
+             "frame at its own timestep. The 5B model uses the Wan 2.2 VAE, which "
+             "compresses 16x in space and 4x in time; the 14B models use the Wan 2.1 VAE. "
+             "auto splits the token sequence, not the CFG batch, on this family "
+             "(docs/MODELS.md) and runs the same graph on one Spark when no cluster.toml "
+             "is configured; 121 frames at 1280x704 are 31 latent frames of 22x40 tokens, "
+             "27280 tokens, which halve at world 2 with no pad. VAE Decode runs the whole "
+             "clip at once on the driver; to split the decode over the Workers with "
+             "worker_vae_decode set to auto, swap it for VAE Decode (Tiled), which gives "
+             "different bytes from VAE Decode. Create Video and Save Video write an MP4 at "
+             "24 fps. " + GATE + " Expects wan2.2_ti2v_5B_fp16.safetensors in "
+             "models/diffusion_models, umt5_xxl_fp8_e4m3fn_scaled.safetensors in "
+             "models/text_encoders, and wan2.2_vae.safetensors in models/vae. " +
+             DERIVED},
+            # One checkpoint, not a high/low pair: the 5B model runs the whole
+            # schedule in one sampler stage.
+            {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
+             "widgets": {"unet_name": "wan2.2_ti2v_5B_fp16.safetensors"},
+             "wire": {"mesh": ("init", 0)}},
+            {"key": "shift", "type": "DGXMonarchModelSamplingSD3", "pos": (2, 0),
+             "widgets": {"shift": 8.0}, "wire": {"model": ("unet", 0)}},
+            {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
+             "widgets": {"clip_name": "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+                         "type": "wan"}},
+            # The official TI2V template's prompt and negative, verbatim.
+            {"key": "pos", "type": "CLIPTextEncode", "pos": (1, 2),
+             "widgets": {"text": "Low contrast. In a retro 1970s-style subway station, a "
+                                 "street musician plays in dim colors and rough textures. "
+                                 "He wears an old jacket, playing guitar with focus. "
+                                 "Commuters hurry by, and a small crowd gathers to listen. "
+                                 "The camera slowly moves right, capturing the blend of "
+                                 "music and city noise, with old subway signs and mottled "
+                                 "walls in the background."},
+             "wire": {"clip": ("clip", 0)}},
+            {"key": "neg", "type": "CLIPTextEncode", "pos": (1, 3),
+             "widgets": {"text":
+                         "色调艳丽，过曝，静态，细节模糊不清，字幕，风格，作品，画作，"  # noqa: RUF001
+                         "画面，静止，整体发灰，最差质量，低质量，JPEG压缩残留，丑陋的，"  # noqa: RUF001
+                         "残缺的，多余的手指，画得不好的手部，画得不好的脸部，畸形的，"  # noqa: RUF001
+                         "毁容的，形态畸形的肢体，手指融合，静止不动的画面，杂乱的背景，"  # noqa: RUF001
+                         "三条腿，背景人很多，倒着走"},  # noqa: RUF001
+             "wire": {"clip": ("clip", 0)}},
+            {"key": "vae", "type": "VAELoader", "pos": (0, 4),
+             "widgets": {"vae_name": "wan2.2_vae.safetensors"}},
+            # The official graph keeps its Load Image bypassed, so its stock render
+            # is text to video; start_image stays unwired here for the same render.
+            {"key": "latent", "type": "Wan22ImageToVideoLatent", "pos": (2, 3),
+             "widgets": {"width": 1280, "height": 704, "length": 121, "batch_size": 1},
+             "wire": {"vae": ("vae", 0)}},
+            {"key": "ks", "type": "DGXMonarchKSampler", "pos": (3, 1),
+             "widgets": {"steps": 20, "cfg": 5.0, "sampler_name": "uni_pc",
+                         "scheduler": "simple"},
+             "wire": {"model": ("shift", 0), "positive": ("pos", 0),
+                      "negative": ("neg", 0), "latent_image": ("latent", 0)}},
+            {"key": "dec", "type": "VAEDecode", "pos": (4, 1),
+             "wire": {"samples": ("ks", 0), "vae": ("vae", 0)}},
+            {"key": "video", "type": "CreateVideo", "pos": (5, 1),
+             "widgets": {"fps": 24.0, "bit_depth": 8, "color_space": "sRGB",
+                         "codec": "none"},
+             "wire": {"images": ("dec", 0)}},
+            {"key": "save", "type": "SaveVideo", "pos": (6, 1),
+             "widgets": {"filename_prefix": "video/dgx_monarch_wan22_ti2v",
+                         "format": "auto", "codec": "auto"},
+             "wire": {"video": ("video", 0)}},
         ],
     },
     "dgx-monarch-wan-flowrvs": {
@@ -5928,6 +6012,7 @@ APP_MODE = {
     "dgx-monarch-wan22-i2v": _layout(
         _PROMPT, _NEGATIVE, {"size": ("cond.width", "cond.height")}, *_EXPERTS,
         _IMAGE, {"model": ("unet_high.unet_name", "unet_low.unet_name")}),
+    "dgx-monarch-wan22-ti2v": _layout(*_T2I),
     # The scale sets the canvas the source frames are encoded at.
     "dgx-monarch-wan-flowrvs": _layout(_PROMPT, {"size": ("scale.width", "scale.height")},
                                        _KS, {"media": ("video.file",)}, _UNET),

@@ -1,0 +1,739 @@
+{
+ "id": "wan-2.2-ti2v-5b-text-to-video",
+ "revision": 0,
+ "last_node_id": 13,
+ "last_link_id": 13,
+ "nodes": [
+  {
+   "id": 1,
+   "type": "DGXMonarchInit",
+   "pos": [
+    80,
+    80
+   ],
+   "size": [
+    315,
+    448
+   ],
+   "flags": {},
+   "order": 0,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "slot_index": 0,
+     "links": [
+      1
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchInit"
+   },
+   "widgets_values": [
+    "auto",
+    "auto",
+    "TORCH_FLASH",
+    "",
+    0,
+    0.0,
+    true,
+    false,
+    1,
+    false,
+    "auto",
+    "auto",
+    "first_use",
+    false,
+    2,
+    0.0,
+    "off",
+    "auto"
+   ],
+   "dgxm_widgets": {
+    "topology": "auto",
+    "mode": "auto",
+    "attention": "TORCH_FLASH",
+    "config_path": "",
+    "gpus_per_host": 0,
+    "reserve_vram_gb": 0.0,
+    "sync_ulysses": true,
+    "compile_dit": false,
+    "pipeline_depth": 1,
+    "mmap_fallback": false,
+    "lora_low_rss": "auto",
+    "slab_weights": "auto",
+    "auto_gate": "first_use",
+    "load_profile": false,
+    "swap_verify": 2,
+    "uma_reserve_gb": 0.0,
+    "comfy_managed": "off",
+    "family_adapter": "auto"
+   }
+  },
+  {
+   "id": 2,
+   "type": "Note",
+   "pos": [
+    80,
+    270
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 1,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [],
+   "properties": {
+    "Node name for S&R": "Note"
+   },
+   "widgets_values": [
+    "Wan 2.2 TI2V 5B at 1280x704, 121 frames (about 5 s at 24 fps), on the one 5B checkpoint: 20 steps at cfg 5.0 with uni_pc on the simple schedule and sampling shift 8.0, the settings of ComfyUI's own TI2V template, so a stock render of that template is comparable. As shipped it is text to video. For image to video, add a Load Image node and wire it to start_image on Wan 2.2 Image To Video Latent: that node encodes the image into the first latent frame and adds a noise mask that keeps it, and the model then runs that frame at its own timestep. The 5B model uses the Wan 2.2 VAE, which compresses 16x in space and 4x in time; the 14B models use the Wan 2.1 VAE. auto splits the token sequence, not the CFG batch, on this family (docs/MODELS.md) and runs the same graph on one Spark when no cluster.toml is configured; 121 frames at 1280x704 are 31 latent frames of 22x40 tokens, 27280 tokens, which halve at world 2 with no pad. VAE Decode runs the whole clip at once on the driver; to split the decode over the Workers with worker_vae_decode set to auto, swap it for VAE Decode (Tiled), which gives different bytes from VAE Decode. Create Video and Save Video write an MP4 at 24 fps. The first render of a new model runs the identity gate, comparing the mesh with a stock single-GPU load before producing pixels. Allow a few minutes for proof renders. Later renders of the same combination skip the gate. Expects wan2.2_ti2v_5B_fp16.safetensors in models/diffusion_models, umt5_xxl_fp8_e4m3fn_scaled.safetensors in models/text_encoders, and wan2.2_vae.safetensors in models/vae. This graph is derived from the family adapter and stock node definitions, without a committed reference render. Check filenames and shapes against your artifacts before running it."
+   ],
+   "title": "DGX Monarch | Wan 2.2 TI2V 5B text to video"
+  },
+  {
+   "id": 3,
+   "type": "DGXMonarchUNETLoader",
+   "pos": [
+    420,
+    80
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 2,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "mesh",
+     "type": "DGXM_MESH",
+     "link": 1
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      2
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchUNETLoader"
+   },
+   "widgets_values": [
+    "wan2.2_ti2v_5B_fp16.safetensors",
+    "default"
+   ],
+   "dgxm_widgets": {
+    "unet_name": "wan2.2_ti2v_5B_fp16.safetensors",
+    "weight_dtype": "default"
+   }
+  },
+  {
+   "id": 4,
+   "type": "DGXMonarchModelSamplingSD3",
+   "pos": [
+    760,
+    80
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 3,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 2
+    }
+   ],
+   "outputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "slot_index": 0,
+     "links": [
+      6
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchModelSamplingSD3"
+   },
+   "widgets_values": [
+    8.0
+   ],
+   "dgxm_widgets": {
+    "shift": 8.0
+   }
+  },
+  {
+   "id": 5,
+   "type": "CLIPLoader",
+   "pos": [
+    80,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 4,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "CLIP",
+     "type": "CLIP",
+     "slot_index": 0,
+     "links": [
+      3,
+      4
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPLoader"
+   },
+   "widgets_values": [
+    "umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "wan",
+    "default"
+   ]
+  },
+  {
+   "id": 6,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    460
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 5,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 3
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      7
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "Low contrast. In a retro 1970s-style subway station, a street musician plays in dim colors and rough textures. He wears an old jacket, playing guitar with focus. Commuters hurry by, and a small crowd gathers to listen. The camera slowly moves right, capturing the blend of music and city noise, with old subway signs and mottled walls in the background."
+   ]
+  },
+  {
+   "id": 7,
+   "type": "CLIPTextEncode",
+   "pos": [
+    420,
+    650
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 6,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "clip",
+     "type": "CLIP",
+     "link": 4
+    }
+   ],
+   "outputs": [
+    {
+     "name": "CONDITIONING",
+     "type": "CONDITIONING",
+     "slot_index": 0,
+     "links": [
+      8
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CLIPTextEncode"
+   },
+   "widgets_values": [
+    "\u8272\u8c03\u8273\u4e3d\uff0c\u8fc7\u66dd\uff0c\u9759\u6001\uff0c\u7ec6\u8282\u6a21\u7cca\u4e0d\u6e05\uff0c\u5b57\u5e55\uff0c\u98ce\u683c\uff0c\u4f5c\u54c1\uff0c\u753b\u4f5c\uff0c\u753b\u9762\uff0c\u9759\u6b62\uff0c\u6574\u4f53\u53d1\u7070\uff0c\u6700\u5dee\u8d28\u91cf\uff0c\u4f4e\u8d28\u91cf\uff0cJPEG\u538b\u7f29\u6b8b\u7559\uff0c\u4e11\u964b\u7684\uff0c\u6b8b\u7f3a\u7684\uff0c\u591a\u4f59\u7684\u624b\u6307\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u624b\u90e8\uff0c\u753b\u5f97\u4e0d\u597d\u7684\u8138\u90e8\uff0c\u7578\u5f62\u7684\uff0c\u6bc1\u5bb9\u7684\uff0c\u5f62\u6001\u7578\u5f62\u7684\u80a2\u4f53\uff0c\u624b\u6307\u878d\u5408\uff0c\u9759\u6b62\u4e0d\u52a8\u7684\u753b\u9762\uff0c\u6742\u4e71\u7684\u80cc\u666f\uff0c\u4e09\u6761\u817f\uff0c\u80cc\u666f\u4eba\u5f88\u591a\uff0c\u5012\u7740\u8d70"
+   ]
+  },
+  {
+   "id": 8,
+   "type": "VAELoader",
+   "pos": [
+    80,
+    840
+   ],
+   "size": [
+    315,
+    80
+   ],
+   "flags": {},
+   "order": 7,
+   "mode": 0,
+   "inputs": [],
+   "outputs": [
+    {
+     "name": "VAE",
+     "type": "VAE",
+     "slot_index": 0,
+     "links": [
+      5,
+      11
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAELoader"
+   },
+   "widgets_values": [
+    "wan2.2_vae.safetensors"
+   ]
+  },
+  {
+   "id": 9,
+   "type": "Wan22ImageToVideoLatent",
+   "pos": [
+    760,
+    650
+   ],
+   "size": [
+    315,
+    184
+   ],
+   "flags": {},
+   "order": 8,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 5
+    },
+    {
+     "name": "start_image",
+     "type": "IMAGE",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      9
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "Wan22ImageToVideoLatent"
+   },
+   "widgets_values": [
+    1280,
+    704,
+    121,
+    1
+   ]
+  },
+  {
+   "id": 10,
+   "type": "DGXMonarchKSampler",
+   "pos": [
+    1100,
+    270
+   ],
+   "size": [
+    315,
+    294
+   ],
+   "flags": {},
+   "order": 9,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "model",
+     "type": "DGXM_MODEL",
+     "link": 6
+    },
+    {
+     "name": "positive",
+     "type": "CONDITIONING",
+     "link": 7
+    },
+    {
+     "name": "negative",
+     "type": "CONDITIONING",
+     "link": 8
+    },
+    {
+     "name": "latent_image",
+     "type": "LATENT",
+     "link": 9
+    }
+   ],
+   "outputs": [
+    {
+     "name": "LATENT",
+     "type": "LATENT",
+     "slot_index": 0,
+     "links": [
+      10
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "DGXMonarchKSampler"
+   },
+   "widgets_values": [
+    0,
+    "randomize",
+    20,
+    5.0,
+    "uni_pc",
+    "simple",
+    1.0
+   ],
+   "dgxm_widgets": {
+    "seed": 0,
+    "control_after_generate": "randomize",
+    "steps": 20,
+    "cfg": 5.0,
+    "sampler_name": "uni_pc",
+    "scheduler": "simple",
+    "denoise": 1.0
+   }
+  },
+  {
+   "id": 11,
+   "type": "VAEDecode",
+   "pos": [
+    1440,
+    270
+   ],
+   "size": [
+    315,
+    96
+   ],
+   "flags": {},
+   "order": 10,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "samples",
+     "type": "LATENT",
+     "link": 10
+    },
+    {
+     "name": "vae",
+     "type": "VAE",
+     "link": 11
+    }
+   ],
+   "outputs": [
+    {
+     "name": "IMAGE",
+     "type": "IMAGE",
+     "slot_index": 0,
+     "links": [
+      12
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "VAEDecode"
+   },
+   "widgets_values": []
+  },
+  {
+   "id": 12,
+   "type": "CreateVideo",
+   "pos": [
+    1780,
+    270
+   ],
+   "size": [
+    315,
+    228
+   ],
+   "flags": {},
+   "order": 11,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "images",
+     "type": "IMAGE",
+     "link": 12
+    },
+    {
+     "name": "fps",
+     "type": "FLOAT",
+     "link": null
+    },
+    {
+     "name": "audio",
+     "type": "AUDIO",
+     "link": null
+    }
+   ],
+   "outputs": [
+    {
+     "name": "VIDEO",
+     "type": "VIDEO",
+     "slot_index": 0,
+     "links": [
+      13
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "CreateVideo"
+   },
+   "widgets_values": [
+    24.0,
+    8,
+    "sRGB",
+    "auto",
+    "none"
+   ],
+   "dgxm_widgets": {
+    "fps": 24.0,
+    "bit_depth": 8,
+    "color_space": "sRGB",
+    "chroma_subsampling": "auto",
+    "codec": "none"
+   }
+  },
+  {
+   "id": 13,
+   "type": "SaveVideo",
+   "pos": [
+    2120,
+    270
+   ],
+   "size": [
+    315,
+    140
+   ],
+   "flags": {},
+   "order": 12,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "video",
+     "type": "VIDEO",
+     "link": 13
+    }
+   ],
+   "outputs": [
+    {
+     "name": "video",
+     "type": "VIDEO",
+     "slot_index": 0,
+     "links": []
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "SaveVideo"
+   },
+   "widgets_values": [
+    "video/dgx_monarch_wan22_ti2v",
+    "auto",
+    "auto"
+   ]
+  }
+ ],
+ "links": [
+  [
+   1,
+   1,
+   0,
+   3,
+   0,
+   "DGXM_MESH"
+  ],
+  [
+   2,
+   3,
+   0,
+   4,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   3,
+   5,
+   0,
+   6,
+   0,
+   "CLIP"
+  ],
+  [
+   4,
+   5,
+   0,
+   7,
+   0,
+   "CLIP"
+  ],
+  [
+   5,
+   8,
+   0,
+   9,
+   0,
+   "VAE"
+  ],
+  [
+   6,
+   4,
+   0,
+   10,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   7,
+   6,
+   0,
+   10,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   8,
+   7,
+   0,
+   10,
+   2,
+   "CONDITIONING"
+  ],
+  [
+   9,
+   9,
+   0,
+   10,
+   3,
+   "LATENT"
+  ],
+  [
+   10,
+   10,
+   0,
+   11,
+   0,
+   "LATENT"
+  ],
+  [
+   11,
+   8,
+   0,
+   11,
+   1,
+   "VAE"
+  ],
+  [
+   12,
+   11,
+   0,
+   12,
+   0,
+   "IMAGE"
+  ],
+  [
+   13,
+   12,
+   0,
+   13,
+   0,
+   "VIDEO"
+  ]
+ ],
+ "groups": [],
+ "config": {},
+ "extra": {
+  "linearData": {
+   "inputs": [
+    [
+     6,
+     "text"
+    ],
+    [
+     7,
+     "text"
+    ],
+    [
+     10,
+     "seed"
+    ],
+    [
+     9,
+     "width"
+    ],
+    [
+     9,
+     "height"
+    ],
+    [
+     10,
+     "steps"
+    ],
+    [
+     10,
+     "cfg"
+    ],
+    [
+     10,
+     "sampler_name"
+    ],
+    [
+     10,
+     "scheduler"
+    ],
+    [
+     3,
+     "unet_name"
+    ]
+   ],
+   "outputs": [
+    13
+   ]
+  }
+ },
+ "version": 0.4
+}

@@ -63,7 +63,8 @@ driver's check at execution.
 
 A template that adds a node class the recording lacks does not fail the
 suite. `tests/test_studio_bundled_workflows.py` skips that template, and the
-coverage test, with a reason that names each missing class. To cover it, record
+coverage test, with a reason that names each missing class, and so does
+`tests/test_studio_template_layouts.py` for its layout checks. To cover it, record
 a new schema on a driver that has those nodes installed:
 
 1. Start ComfyUI with the dgx-monarch custom node and every node pack the

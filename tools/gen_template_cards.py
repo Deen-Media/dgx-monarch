@@ -87,6 +87,7 @@ CARDS: dict[str, tuple[str, str]] = {
     "dgx-monarch-wan21-i2v": ("Wan 2.1 Image to Video", "Start a video from your own image"),
     "dgx-monarch-wan22-t2v": ("Wan 2.2", "Text to video"),
     "dgx-monarch-wan22-i2v": ("Wan 2.2 Image to Video", "Start a video from your own image"),
+    "dgx-monarch-wan22-ti2v": ("Wan 2.2 TI2V 5B", "Text to video on one 5B checkpoint"),
     "dgx-monarch-wan-animate2": ("Wan-Animate 2", "Transfer motion to a character"),
     "dgx-monarch-wan-animate2-bfloat16-warm": ("Wan-Animate 2 BF16", "Motion transfer with weights kept loaded"),
     "dgx-monarch-wan-animate2-memory-saver": ("Wan-Animate 2 Memory Saver", "Release model memory after each render"),

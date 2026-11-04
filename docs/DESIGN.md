@@ -1057,6 +1057,19 @@ Category **"DGX Monarch"**. The node surface is small by design:
   `sp_honours_block_replace` (MOSS-Image alone so far), and each Worker
   repeats the check from facts every rank holds
   ([TROUBLESHOOTING #126](TROUBLESHOOTING.md#126-skip-layer-guidance-dgx-monarch-refuses-on-cfg2-on-a-sequence-parallel-family-that-does-not-apply-block-replacement-or-with-a-two-checkpoint-guider)).
+- `DGXMonarchMiniMaxH3ContextWindows`: stock `MiniMaxH3ContextWindows`'s five
+  widgets in stock's order with stock's defaults, kept on the model spec and,
+  like the skip, outside model residency identity and outside the Gate
+  combination; the model request carries it only when the node is present.
+  Each Worker applies ComfyUI's own node to its render clone after the skip.
+  Windows are cut above the forward, so each is one model call on a shorter
+  clip, whose packed sequence the sharded forward splits and whose layout it
+  rebuilds. The driver refuses the node, class P, before dispatch on a family
+  other than MiniMax H3 and on a two-checkpoint guider's negative model, and
+  each Worker repeats both checks inside its load guard, where it also refuses
+  a ComfyUI without the stock node. The sample deadline counts every window's
+  rows; the activation preflight still prices the whole clip
+  ([TROUBLESHOOTING #142](TROUBLESHOOTING.md#142-a-render-with-minimax-h3-context-windows-dgx-monarch-refuses)).
 - `DGXMonarchQwenImage21Cache`: sets Qwen Image 2.1's replicated prefix KV
   cache on every worker, off by default. `default` storage is lossless; `int8`
   and `int4` use ComfyUI's compressed K/V cache and are approximate. The policy
@@ -1893,8 +1906,10 @@ dgx-monarch/
 │   │   ├── gate_verdict.py    # verdict derivation, lever quarantine, publication
 │   │   ├── metrics_route.py   # bounded finite Prometheus projection
 │   │   ├── model_patch_preflight.py # driver refusals for the per-render skip,
-│   │   │                      #   shift and LoRA patches and MOSS-Image
-│   │   │                      #   reference images and text attention bias
+│   │   │                      #   context-window, shift and LoRA patches and
+│   │   │                      #   MOSS-Image reference images and text bias
+│   │   ├── h3_context_windows.py # the node that carries ComfyUI's MiniMax H3
+│   │   │                      #   context windows to the Workers
 │   │   ├── pending.py         # terminal sample-result ownership and cleanup
 │   │   ├── pipeline.py        # bounded FIFO submission/abort orchestration
 │   │   ├── recycle_guard.py   # reset single-flight/rate ownership past HTTP timeout
@@ -1928,6 +1943,8 @@ dgx-monarch/
 │   │   ├── worker_compile.py  # opt-in DiT block compilation boundary
 │   │   ├── guidance_render.py # Skip Layer Guidance on the render clone, and
 │   │   │                      #   its Worker refusal
+│   │   ├── context_windows_render.py # MiniMax H3 context windows on the render
+│   │   │                      #   clone, and the Worker refusals in the load guard
 │   │   ├── lora_shape_guard.py # the refusal of a LoRA patch that changes a
 │   │   │                      #   weight's shape, before any bake
 │   │   ├── vae_decode.py      # the vae_decode endpoint and the one resident
@@ -1969,6 +1986,8 @@ dgx-monarch/
 │   ├── topology_cfg_evidence.py # dated evidence each cfg row needs
 │   ├── skip_layer_guidance.py # Skip Layer Guidance wire, activity test and
 │   │                          #   refusal reasons (stdlib leaf)
+│   ├── h3_context_windows.py  # MiniMax H3 context-window wire, refusal reasons,
+│   │                          #   window schedule and row count (stdlib leaf)
 │   ├── error_utils.py         # total diagnostics + cancellation-first composition
 │   ├── retry_policy.py        # bounded retry outcomes without stale diagnostics
 │   ├── actor_lifetime.py      # actor-side reaper (stdlib leaf; watcher installed

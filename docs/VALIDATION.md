@@ -1861,6 +1861,23 @@ or FSDP claim follows. A separate no-LoRA FP8-scaled high/low
 graph completed cold/warm renders and matched a local reference on all
 81 decoded one-step frames. It does not extend the four-step LoRA settings.
 
+<a id="evidence-wan-2-2-ti2v-5b"></a>
+
+### Wan 2.2 TI2V 5B
+
+No hardware comparison has run, so the row stays impl. The CPU tests check
+the template against the stock node definitions, the Wan adapter's exact
+class match and its per-frame timestep expansion, and split a real
+`wan2.2_vae.safetensors` decode byte-identical to the stock tiled decode. The
+maintainer's cells, each on `dgx-monarch-wan22-ti2v.json` at seed 1031 with
+the head capped at 2100 MHz, all NOT RUN:
+
+| cell | settings | a pass shows | status |
+|---|---|---|---|
+| one GPU against stock | Init `mode=local`, `gpus_per_host=1`, steps 1; against ComfyUI's own `video_wan2_2_5B_ti2v` template at the same seed, steps 1, Load Image left bypassed | the decoded 121 frames pixel-identical to stock's | NOT RUN |
+| uly2 against one GPU | topology `auto` on the pair, steps 1, then 20 | the driver logs `auto: uly2` with table row 50, both ranks report identical latents, and the decoded frames at steps 1 match the one-GPU cell | NOT RUN |
+| image to video on uly2 | a Load Image wired to `start_image`, steps 1, on `uly2` and on one GPU | the first decoded frame follows the image and the two renders' frames match | NOT RUN |
+
 <a id="evidence-wan-2-1-i2v"></a>
 
 ### Wan 2.1 I2V
@@ -2705,7 +2722,10 @@ replays ComfyUI's own `tiled_scale_multidim` and MiniMax H3's chunked decode
 against real ComfyUI with simulated ranks and compares bytes for 1-D, 2-D and
 3-D tiles, odd sizes and overlaps, the Wan and MiniMax H3 index formulas, a
 batch of two, a single tile, more ranks than tiles, more tiles than ranks, and
-ranks that raise, decline, time out or answer in the wrong dtype. On the pair,
+ranks that raise, decline, time out or answer in the wrong dtype. Where the
+files are on disk, the same file splits a real `wan_2.1_vae.safetensors` and
+`wan2.2_vae.safetensors` decode through a Worker's own decode body,
+byte-identical to the stock tiled decode. On the pair,
 the byte compare passed for Wan 2.1 and LTX 2.5 on 2026-10-31 and for MiniMax
 H3 on 2026-11-01. The other families are unchecked, and the option stays off
 by default.
@@ -2737,7 +2757,7 @@ its session, so the sibling built its decode VAE inside it.
 | MiniMax H3 video, saved streams; `dgx-monarch-minimax-h3-mp4.json` as shipped, VAE Decode | dev `746a229`, 2026-10-31 10:25 to 10:49 | saved streams: 124 of 124 H.264 frames identical by framemd5, and the AAC audio sample-identical | `7 units, 3 here, 4 on rank 1, 39.3 s` | 570.1 s / 530.1 s |
 | Wan 2.1 T2V 14B fp8_scaled, 832x480x33; `dgx-monarch-wan-t2v.json`, VAE Decode (Tiled) swapped in for VAE Decode | dev `4b71822`, 2026-10-31 22:10 to 22:20 | 33 of 33 pixel-identical | `2 units, 1 here, 1 on rank 1, 3.7 s` | 260.1 s / 210.2 s |
 | LTX 2.5 22B distilled INT8 ConvRot t2v, 1280x704x121; `dgx-monarch-ltx25-t2v.json`, VAE Decode (Tiled) as shipped | dev `4b71822`, 2026-10-31 22:21 to 22:27 | 121 of 121 pixel-identical | `18 units, 7 here, 11 on rank 1, 18.8 s` | 120.1 s / 110.1 s |
-| Wan 2.2 TI2V; no template ships, a Wan 2.2 TI2V graph with VAE Decode (Tiled) | not run | NOT RUN | not run | not run |
+| Wan 2.2 TI2V 5B FP16, 1280x704x121; `dgx-monarch-wan22-ti2v.json`, VAE Decode (Tiled) swapped in for VAE Decode, and a SaveImage node on its output | not run | NOT RUN: 121 of 121 PNG frames must be pixel-identical | not run | not run |
 | HunyuanVideo 1.0, also Kandinsky5 Video; `dgx-monarch-kandinsky5-video-lite.json`, node swapped | not run | NOT RUN | not run | not run |
 | HunyuanVideo 1.5; `dgx-monarch-hunyuan-video.json`, node swapped | not run | NOT RUN | not run | not run |
 | LTX 2.3; `dgx-monarch-ltx-i2v-av.json`, VAE Decode (Tiled) as shipped | not run | NOT RUN | not run | not run |
@@ -2795,8 +2815,38 @@ below.
 |---|---|---|---|
 | The FP8 fast loader dtype on a BF16 file | #16941: under dynamic VRAM, ComfyUI's FP8 linear reads the dtype a weight is cast to, not its file dtype, so `fp8_e4m3fn_fast` computes in FP8 there instead of falling back to BF16 | the `kB_1_castfast` cell of [FP8 compute paths](#fp8-compute-paths) on ComfyUI 0.44.0, in the actors and in a dynamic-VRAM driver, against its release figures (18 percent faster, NRMS 0.191 against BF16) | NOT RUN |
 | The VAE Compute Dtype node under Worker-assisted VAE decode | #17450: the node clones the VAE and computes in another dtype over the loader's weights | the decode logs `not split` with the VAE Compute Dtype reason and gives the one-host frames; with the node at `default` the decode splits as in [Worker-assisted VAE decode](#worker-assisted-vae-decode) | NOT RUN |
-| MiniMax H3 context windows under sequence parallelism | #17425: a MiniMax H3 Context Windows node that patches a stock MODEL | none yet: the node cannot connect to a DGX Monarch loader's DGXM_MODEL, so no render on the Workers runs windowed, and the activation preflight and the sample deadline price the whole clip. Supporting it needs the patch carried to the Workers and a windowed render checked against stock | NOT RUN |
+| MiniMax H3 context windows under sequence parallelism | #17425: a MiniMax H3 Context Windows node that patches a stock MODEL | the cells of [MiniMax H3 context windows](#minimax-h3-context-windows), which MiniMax H3 Context Windows (DGX Monarch) carries to the Workers | NOT RUN |
 | The Create Video templates on ComfyUI 0.43 | #17463: `chroma_subsampling` between `color_space` and `codec` | `dgx-monarch-minimax-h3-mp4.json` loaded in a ComfyUI 0.43 frontend shows `codec` at `none`, and its MP4 matches one rendered on 0.44.0 frame for frame | NOT RUN in a browser; the restore is checked under node (`tests/test_stock_widget_drift.py`) |
+
+<a id="minimax-h3-context-windows"></a>
+
+### MiniMax H3 context windows
+
+MiniMax H3 Context Windows (DGX Monarch) carries the stock node's widgets to
+the Workers, and each applies ComfyUI's own node to its render clone. Windows
+are cut above the forward and sequence parallelism splits inside it: each
+window reaches the sharded forward as one call on a shorter clip, whose
+payload holds no layout for it, so the forward rebuilds the packed sequence
+per window. The CPU checks hold that contract against ComfyUI 0.44.0
+(`tests/test_h3_context_windows_comfy.py` and the context-window seam of
+`tests/canary/comfy_seam_contracts.py`): the widgets, the handler the stock
+node installs, its static schedule, the audio split, and one recorded model
+call per window. They run no H3 forward under sequence parallelism; the
+hardware cells below do, all NOT RUN.
+
+Each cell renders `dgx-monarch-minimax-h3-t2va.json` at 1344x768 with both
+length widgets at 362 frames, seed 1031 and the shipped settings otherwise,
+with MiniMax H3 Context Windows (DGX Monarch) between the loader and the
+sampler at its defaults, 124 frames with 39 of overlap. That gives four
+windows of 37 of the clip's 107 latents. Save the frames as PNG straight from
+VAE Decode, as the decode check does.
+
+| cell | settings | a pass shows | status |
+|---|---|---|---|
+| one rank | Init `mode=local`, `gpus_per_host=1`, beside the driver on the head | the actor log shows `Using context windows: Context length 37 with overlap 12 for 107 frames.` and `Context window 1/4` to `4/4` on each step; the driver's deadline line counts 150,838 rows plus four times the prompt's text rows, against 109,062 plus one times them unwindowed; the render completes | NOT RUN |
+| the pair | topology `uly2` | the same actor lines on both ranks, both ranks report identical latents, and all 362 PNG frames and the decoded audio are identical to the one-rank cell | NOT RUN |
+| ring | topology `ring2` | a window whose packed total is odd refuses class K with the H3 ring-pad text before any block runs; otherwise the render completes with identical latents on both ranks | NOT RUN |
+| an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#142) and no rank waits out the group timeout | NOT RUN |
 
 ## Memory calibration
 
