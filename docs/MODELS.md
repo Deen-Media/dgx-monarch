@@ -1789,12 +1789,19 @@ with either value, changes the identity-gate context of every render, as any
 - The first INT8 calls in each process compile the kernel, which takes
   seconds. Triton keeps the compiled kernel in its cache, so later processes
   load it.
-- The validated comfy-kitchen releases are 0.2.37 and 0.2.40. On any other
-  release the kernel stays off, and the process runs stock CUTLASS and logs
-  one WARNING. A release joins the set only after the GPU check in
-  `tests/test_int8_gemm_triton_equality.py` and a render comparison like the
-  recorded one pass on it. `tests/test_int8_gemm_kitchen_version.py` fails
-  when ComfyUI's requirements or the installed package move past the set.
+- The validated comfy-kitchen releases are 0.2.37, 0.2.40 and 0.2.41. On any
+  other release the kernel stays off, and the process runs stock CUTLASS and
+  logs one WARNING. A release joins the set once the GPU check in
+  `tests/test_int8_gemm_triton_equality.py` passes on it. A release that
+  changes the INT8 path, meaning the quantizers that feed the GEMM, the CUTLASS
+  kernel the Triton kernel stands in for or the Python that calls them, must
+  also pass a render comparison like the recorded one. 0.2.41 changes none of
+  them, and its INT8 and W4A8 machine code is byte-identical to that of 0.2.40.
+  On 2026-11-05 the GPU check matched 240 of 240 cases on it, on the head under
+  its 2100 MHz cap, and the render comparison was not rerun
+  ([VALIDATION](VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
+  `tests/test_int8_gemm_kitchen_version.py` fails when ComfyUI's requirements
+  or the installed package move past the set.
 - Triton builds a small C launcher against `Python.h`, so each process needs
   the Python development headers for its interpreter
   ([INSTALL](INSTALL.md#install-the-node-pack)). Without them, or without

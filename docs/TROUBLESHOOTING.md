@@ -7223,7 +7223,7 @@ is on by default and steps aside for comfy-kitchen's stock CUTLASS kernel, for
 the whole process, when it cannot run. The WARNING names the reason, once per
 process:
 
-- `comfy-kitchen X is not in the validated set (0.2.37, 0.2.40)`: the
+- `comfy-kitchen X is not in the validated set (0.2.37, 0.2.40, 0.2.41)`: the
   installed comfy-kitchen is a release the kernel was not proven exact on.
 - `Python.h is missing for this interpreter (...)`: Triton compiles a small C
   launcher against the headers of the Python that runs ComfyUI or the Worker.

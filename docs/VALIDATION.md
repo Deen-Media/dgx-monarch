@@ -2574,6 +2574,35 @@ after the previous driver exited, while the head's MemAvailable was still
 class C message; the leg reran on uly2 after a memory wait. The walls are
 whole renders of a 29-frame, 4-step cell and compare with nothing above.
 
+**comfy-kitchen 0.2.41 (2026-11-05).** ComfyUI master moved its pin to
+comfy-kitchen 0.2.41. The release adds a memmove kernel, a ray hit test on
+meshes, window attention and a fused RMS-RoPE kernel, and rewrites the NVFP4
+and MXFP8 quantizers; it changes no INT8 or W4A8 source file. In the aarch64
+wheels every sm_120 kernel the two releases share is byte-identical, the INT8,
+W4A8 and ConvRot kernels among them, and so is the host code that launches the
+CUTLASS INT8 GEMM. The host code that launches the INT8 quantizers and the W4A8
+kernels differs only in the addresses of static data, which moved because the
+library grew. `cutlass_int8_dequant`, the call the kernel takes over, keeps its
+name, its arguments and its callers.
+
+`tests/test_int8_gemm_triton_equality.py` then ran on the head with the 0.2.41
+wheel on the import path ahead of the venv's 0.2.40 (torch 2.12.0+cu132, CUDA
+13.2, Triton 3.7.0, GPU idle). The head ran its 2100 MHz clock cap, applied
+once that morning with its service off, and the SM clock peaked at 2093 MHz.
+All 240 cases over the same 20 shapes were `torch.equal` called directly and
+through the proxy. The proxy ran the Triton kernel on the 228 cases at 128 rows
+or more and left the 12 at 127 rows on CUTLASS, and the decline check passed. A control
+run on 0.2.40 that morning gave the same result case for case. 0.2.41 joined
+the validated set on this check.
+
+The render sweep above was not rerun on 0.2.41. It compared stock against the
+kernel on one build, so its identical frames rest on two facts: the kernel
+matches that build's CUTLASS, which the check above proves for 0.2.41, and
+nothing else differs between the two passes. The second still holds, because
+the quantizers that feed the GEMM, the CUTLASS kernel and the Python that
+calls them are the same code in both releases. What 0.2.41 does change, such
+as the NVFP4 quantizers, runs the same in a stock and a kernel pass.
+
 ## FP8 compute paths
 
 **Status: the core subset ran on 2026-10-31. The other cells are NOT RUN.**
