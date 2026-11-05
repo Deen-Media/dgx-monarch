@@ -2,7 +2,10 @@
 
 Both capacity prices that see a Worker's resident take it as still held
 (docs/DESIGN.md section 5.9): the cross-rank agreement's quote and the loader
-preflight on the driver host, where the head's actor shares the box. A clear of
+preflight on the driver host, where the head's actor shares the box. The one
+exception is the slot's own stock resident a swap replaces, which the store
+drops before the load and the quote credits; a clear is then weighed against
+the uncredited price, because a cleared box holds no copy to drop. A clear of
 the attached mesh, the same teardown as Reset attached mesh, returns all of it.
 This module decides whether a clear would make room and writes the plain
 sentences such a refusal carries. ``nodes/old_model_clear.py`` owns the card,
@@ -11,7 +14,8 @@ the clear and the Always flow.
 A clear would make room on a short box when its shortfall is smaller than what
 the clear gives back there: the file bytes of every stock resident, whose GPU
 copy an in-process drop was measured to return (2026-11-04), or for a load cast
-to another weight dtype the copy the cast built (not yet measured on its own),
+to another weight dtype the copy the cast built (a 26.6 GiB bf16-cast DiT's drop
+raised the head from 58.7 to 88.5 GiB on 2026-11-05),
 plus the actor's arena above a fresh actor's floor
 (``actor/actor_footprint.py``). A slab or comfy-managed resident and an FSDP
 shard are credited the arena only. Pure: no ComfyUI, no mesh call and no file
@@ -26,7 +30,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
-from .capacity_fit import gib
+from .capacity_fit import gib, hot_swap_sentence, stock_second_term
 from .driver_footprint import DriverFootprintCapacityError
 from .mesh_safety import StockLoadCapacityError
 from .refusal import RefusalClass, refusal
@@ -208,13 +212,39 @@ def rank_gain(quote: RankPrice, kept: frozenset[str] = frozenset()) -> int:
     return held + max(int(quote.arena_bytes or 0), 0)
 
 
-def _numbers(quote: RankPrice) -> tuple[int, int] | None:
-    block = quote.slab_measured if quote.use_slab else quote.measured
+def _numbers(quote: RankPrice, kept: frozenset[str] = frozenset()) -> tuple[int, int] | None:
+    """The row's price and availability, uncredited where the gain counts the credit.
+
+    A swap credit is the slot's own stock resident, and ``rank_gain`` counts that
+    resident too unless the slot is kept, so a clear is weighed against the price
+    a cleared box pays: the row's figure plus its credit.
+    """
+    block = (quote.slab_measured if quote.use_slab else quote.measured) or {}
     try:
-        return (int((block or {})["required_bytes"]),
-                int((block or {})["mem_available_bytes"]))
+        required, available = int(block["required_bytes"]), int(block["mem_available_bytes"])
     except (KeyError, TypeError, ValueError):
         return None
+    if quote.slot not in kept and quote.holds_resident.get(quote.slot) == CREDITED_RESIDENCY:
+        required += max(int(block.get("credit_bytes") or 0), 0)
+    return required, available
+
+
+def credited_sentence(where_: str, unet_name: str, quote: RankPrice, needed: float,
+                      weights: float, avail: float, short: float) -> str:
+    """The fleet card's sentence for a credited price that still falls short.
+
+    A LoRA change on the held file keeps its own words; a swap over another
+    model names the copy the Worker drops before it loads.
+    """
+    block = quote.measured or {}
+    held = quote.resident_names.get(quote.slot)
+    if not held or held == unet_name:
+        return hot_swap_sentence(where_, unet_name, needed, block.get("cast_gib") or weights, avail, short)
+    return (f"{where_} priced a stock load of {unet_name} after the Worker drops "
+            f"{display_name(held)}, the {gib(int(block.get('credit_bytes') or 0))} GiB copy "
+            f"its slot holds. Beyond that copy the load needs {needed} GiB, a {weights} GiB "
+            f"file {stock_second_term(block)}, and {avail} GiB of unified memory is "
+            f"available, {short} GiB short.")
 
 
 def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
@@ -230,10 +260,10 @@ def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
     """
     ranks: dict[int, tuple[str, tuple[str, ...], int, int, int]] = {}
     for answer, quote in short:
-        numbers = _numbers(quote)
+        kept = kept_slots(answer.quotes or (quote,), keep)
+        numbers = _numbers(quote, kept)
         if numbers is None:
             return None
-        kept = kept_slots(answer.quotes or (quote,), keep)
         seen = ranks.get(answer.rank)
         if seen is None or numbers[0] - numbers[1] > seen[2] - seen[3]:
             ranks[answer.rank] = (box_name(answer), old_models(quote, kept), *numbers,
@@ -359,8 +389,9 @@ def held_clause(pairs: Sequence[tuple[RankAnswer, RankPrice]],
         return " ".join(part for part in (held_sentence(offer), no_room(offer)) if part)
     named = []
     for answer, quote in pairs:
-        if quote.would_load not in ("swap", "reuse"):
-            continue
+        block = (quote.slab_measured if quote.use_slab else quote.measured) or {}
+        if quote.would_load not in ("swap", "reuse") or block.get("credit_bytes"):
+            continue    # a credited row was priced after the drop it names
         word = quote.holds_resident.get(quote.slot)
         if word:
             named.append(f"{answer.where} holds a {word} resident in the "

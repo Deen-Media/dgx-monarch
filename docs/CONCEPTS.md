@@ -199,9 +199,11 @@ spawn fresh ones on the next render. `recycle` is the graph and internal term;
 the sidebar says **Reset attached mesh** to distinguish it from restarting a
 Worker service. A reset reclaims the retained arena; slab mode normally avoids
 it. When you move from one large model to another on the same attached mesh,
-the next load is priced with the last one still held, so a refusal may say "the
-old model (<name>) is still loaded" and offer **Clear and retry**, which runs
-this reset; **Always clear and retry** lets the driver run it for you.
+the Worker drops the last one before it loads the next, and the price counts
+that, but the retained arena and any model in the other slot stay. So a
+refusal may still say "the old model (<name>) is still loaded" and offer
+**Clear and retry**, which runs this reset; **Always clear and retry** lets
+the driver run it for you.
 
 ## Trust words
 

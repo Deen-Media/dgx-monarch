@@ -459,9 +459,11 @@ quarantine, or insufficient memory even for slab. A session quarantine from an
 identity gate that could not complete names that ceremony; restart ComfyUI to
 clear it. Comfy-managed residency forces slab off and cannot offer this rescue
 ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)).
-A loader `weight_dtype` cast is priced and refused without a card, because a
-slab load under a cast keeps the cast copy beside the file and saves nothing;
-the refusal says so and names what would fit. Quarantine overrides consent; only a fresh
+A loader `weight_dtype` cast is priced and refused without a rescue card,
+because a slab load under a cast keeps the cast copy beside the file and saves
+nothing; the refusal says so and names what would fit, and an explicit
+`slab_weights=on` refuses a cast outright. An old model in the way can still
+raise its own card. Quarantine overrides consent; only a fresh
 Identity Gate retest can clear it
 ([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)).
 After a rescue whose gate returned an unproven INCONCLUSIVE, because stock
@@ -2401,9 +2403,10 @@ once per render and only when ComfyUI holds a model. It never runs while a
 render is live in this driver: a pipelined submission behind a render in
 flight, a held or abandoned result lease, or a Worker call in flight keeps the
 models, and the refusal says which. It never touches the Workers' residents or
-ComfyUI's cached node outputs, and the cross-rank agreement
+ComfyUI's cached node outputs. The cross-rank agreement
 ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
-still prices a load that replaces a Worker resident with that resident held.
+prices a load that replaces a Worker's stock resident after the drop that
+resident's slot takes first, and any other resident as held.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the step off, and the guard
 then refuses on the first reading.
 
@@ -4764,9 +4767,12 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
 * **World 1 is a no op.** The one box prices its own load.
 
 Read the numbers with two limits in mind. Each rank prices against what it
-holds at that moment, so a card can quote a figure taken with the previous
-model still resident, and it says so by name: "the old model (flux1-dev) is
-still loaded on head". The quote does not price shared memory
+holds at that moment. A load that replaces the stock model in its own slot is
+priced after the Worker drops that model, which the Worker does before every
+such load, and the refusal says so: "after the Worker drops flux1-dev, the 22.2
+GiB copy its slot holds". Any other model is counted as still held, so a card
+can quote a figure taken with it resident, and it says so by name: "the old
+model (flux1-dev) is still loaded on head". The quote does not price shared memory
 either: a rank holding a weight slab in the other slot, or a slab retained by a
 load that failed, reads as having more available than it has. The rank's row
 records both (`shmem_bytes`, each slot's resident and the retained-slab count)

@@ -138,6 +138,19 @@ def _resident_facts(worker: Any, store: Any) -> dict[str, Any]:
             "arena_bytes": actor_footprint.arena_bytes()}
 
 
+def _with_resident_bytes(snapshot: Any, sizes: dict[str, int]) -> dict:
+    """The store snapshot with each held slot's GPU copy beside its residency.
+
+    The swap credit reads it (``capacity_lora_bake.credit_stock_swap``): a load
+    that replaces a stock resident is priced after the store drops that copy.
+    """
+    out = dict(snapshot) if isinstance(snapshot, dict) else {}
+    for slot in capacity_quote.SLOTS:
+        if isinstance(out.get(slot), dict):
+            out[slot] = {**out[slot], "resident_bytes": int(sizes.get(slot) or 0)}
+    return out
+
+
 def _request_key(snapshot: dict, slot: str, spec: dict, unet_name: str) -> str:
     """The key ``ModelStore.ensure`` would build for this request.
 
@@ -280,8 +293,8 @@ def quote(worker: Any, request: Any) -> dict:
                     for spec in specs or [{}])
         return envelope
     consent = request.get("rescue_consent") if isinstance(request, dict) else None
-    snapshot = store.snapshot()
     facts = _resident_facts(worker, store)
+    snapshot = _with_resident_bytes(store.snapshot(), facts["resident_bytes"])
     pinned = _pinned_staging()
     charged = 0
     for spec in _my_slots(worker, specs):

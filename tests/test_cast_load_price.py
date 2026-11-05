@@ -284,3 +284,139 @@ def test_a_hot_swap_on_a_cast_resident_credits_the_cast_copy_it_holds():
     credited = capacity_lora_bake.credit_hot_swap(fit, held, key, {"would_load": "swap"}, "auto")
     assert credited is not fit and credited.credit_bytes == cast
     assert credited.required_bytes == capacity_fit.stock_required_bytes(size, cast) - cast
+
+
+# Round two: a swap over the slot's own stock resident is priced after its drop.
+# dgx-monarch-wan22-t2v loads both DiTs into the cond slot, one after the other,
+# and the store drops the first before it loads the second (actor/store_load.py).
+# The 91fd15f records: B4c, the release-test cell on a fresh fleet, ran stage 2's
+# agreement with the head at 58.7 GiB and the sibling at 70.5, and the head rose
+# to 88.5 GiB at the drop; B4b q2 and q3, warm re-queues, loaded each stage at its
+# sampler with the head at 57.9 and 57.8 GiB. All of them rendered.
+
+WAN22_HIGH = "wan2.2_t2v_high_noise_14B_fp16.safetensors"
+CAST = {"weight_dtype": "bf16"}
+
+
+def _endpoint_row(monkeypatch, tmp_path, *, want: str, held: str, available: float,
+                  slab_weights: object = "auto", rung: str = "stock_fits") -> RankPrice:
+    """One rank's row from the Worker's own quote endpoint, its store holding ``held``."""
+    import types
+
+    from dgx_monarch.actor import actor_footprint, model_store, worker_capacity
+    from dgx_monarch.actor.store_detect import _to_comfy_model_options
+
+    paths = {name: (str(tmp_path / name) if (tmp_path / name).exists()
+                    else _write(tmp_path / name, {"w": ("F16", [WAN22_ELEMENTS])}))
+             for name in (want, held)}
+    monkeypatch.setattr(model_store, "resolve_model_path", lambda _kind, name: paths[name])
+    monkeypatch.setattr(model_store, "_slab_capable_path", lambda _path: True)
+    monkeypatch.setattr(worker_capacity, "_pinned_staging", lambda: False)
+    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: 0)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(available * _GIB))
+    held_options = model_store.normalize_options(CAST)
+    snapshot = {"cond": {"residency": "stock", "residency_rung": rung, "quant": "fp16",
+                         "request_key": repr((held, held_options, (), "fp16"))},
+                "uncond": None, "cleanup_failed_slots": []}
+    store = types.SimpleNamespace(
+        slab_weights=slab_weights, lora_low_rss=True, slab_blocked_reason="",
+        family_override=None, uncond=None, snapshot=lambda: dict(snapshot),
+        current=types.SimpleNamespace(base_key=(held, held_options), fsdp_checkpoint_pin=None,
+                                      slab_auto_retry=False))
+    worker = types.SimpleNamespace(rank=0, world=2, topology={}, _setup_key=("ready",),
+                                   store=store, uma_reserve_gb=0.0)
+    assert _to_comfy_model_options(CAST)["dtype"] is torch.bfloat16
+    envelope = worker_capacity.quote(worker, {"specs": [
+        {"unet_name": want, "options": CAST, "loras": [], "slot": "cond"}], "rescue_consent": None})
+    (row,) = envelope["quotes"]
+    return RankPrice.from_row(row)
+
+
+def _fleet(head: RankPrice, sibling: RankPrice) -> list[RankAnswer]:
+    return [RankAnswer(0, "the-head", (head,), elapsed_s=0.01),
+            RankAnswer(1, "the-sibling", (sibling,), elapsed_s=0.01)]
+
+
+def test_the_release_cell_swap_is_priced_after_the_drop_and_admitted(tmp_path, monkeypatch, caplog):
+    """B4c stage 2: 60.9 GiB priced whole against 58.7 refused 2.2 GiB short. The
+    store drops stage 1's 26.6 GiB cast copy first, so the price credits it."""
+    head = _endpoint_row(monkeypatch, tmp_path, want=WAN22_NAME, held=WAN22_HIGH, available=58.7)
+    sibling = _endpoint_row(monkeypatch, tmp_path, want=WAN22_NAME, held=WAN22_HIGH, available=70.5)
+    assert (head.would_load, head.rung, head.verdict) == ("swap", "stock_fits", "fits")
+    assert head.measured is not None
+    assert head.measured["credit_bytes"] == WAN22_ELEMENTS * 2 == head.resident_bytes["cond"]
+    assert head.measured["required_gib"] == 34.3 and head.measured["headroom_gib"] == 24.4
+    with caplog.at_level("INFO"):
+        decide(_fleet(head, sibling), 2, unet_name=WAN22_NAME,
+               keep=frozenset({WAN22_NAME, WAN22_HIGH}))
+    assert "cross-rank capacity admitted: rank 0=cond:fits/stock_fits@24.4GiB" in caplog.text
+
+
+def test_the_held_head_still_refuses_after_the_credit(tmp_path, monkeypatch):
+    """B4: at 12.2 GiB the head is short even with stage 1's copy dropped."""
+    head = _endpoint_row(monkeypatch, tmp_path, want=WAN22_NAME, held=WAN22_HIGH, available=12.2)
+    sibling = _endpoint_row(monkeypatch, tmp_path, want=WAN22_NAME, held=WAN22_HIGH, available=68.5)
+    assert (head.verdict, head.blocker is not None) == ("refuse", True)
+    with pytest.raises(FleetCapacityError) as raised:
+        decide(_fleet(head, sibling), 2, unet_name=WAN22_NAME,
+               keep=frozenset({WAN22_NAME, WAN22_HIGH}))
+    text = str(raised.value)
+    assert (f"rank 0 (host the-head) priced a stock load of {WAN22_NAME} after the Worker drops "
+            "wan2.2_t2v_high_noise_14B_fp16, the 26.6 GiB copy its slot holds. Beyond that copy "
+            "the load needs 34.3 GiB, a 26.6 GiB file cast to a 26.6 GiB copy, plus the host copy "
+            "it is placed from, and 12.2 GiB of unified memory is available, 22.1 GiB short.") in text
+    assert "What would fit: set the loader's weight_dtype to default" in text
+    assert "does not model the drop" not in text
+
+
+@pytest.mark.parametrize(("label", "want", "held", "available", "slab_weights", "rung", "keep"), [
+    ("q2 stage 1 at the sampler", WAN22_HIGH, WAN22_NAME, 57.9, False, "explicit_stock",
+     {WAN22_HIGH}),
+    ("the same swap at the loader's eager agreement", WAN22_HIGH, WAN22_NAME, 57.9, False,
+     "explicit_stock", {WAN22_HIGH, WAN22_NAME}),
+    ("q2 stage 1 on slab_weights auto", WAN22_HIGH, WAN22_NAME, 57.9, "auto", "stock_fits",
+     {WAN22_HIGH}),
+    ("stage 2 of the same render at its sampler", WAN22_NAME, WAN22_HIGH, 57.8, False,
+     "explicit_stock", {WAN22_NAME}),
+])
+def test_a_warm_requeue_admits_each_stage_without_a_clear(
+        tmp_path, monkeypatch, label, want, held, available, slab_weights, rung, keep):
+    """B4b q2 and q3: each stage at its sampler swaps over the other stage's DiT.
+    Priced as held, every stage asked for a clear (reviewer's probe_warm_requeue)."""
+    head = _endpoint_row(monkeypatch, tmp_path, want=want, held=held, available=available,
+                         slab_weights=slab_weights, rung=rung)
+    sibling = _endpoint_row(monkeypatch, tmp_path, want=want, held=held, available=70.8,
+                            slab_weights=slab_weights, rung=rung)
+    assert head.verdict == "fits", label
+    decide(_fleet(head, sibling), 2, unet_name=want, keep=frozenset(keep))
+
+
+def test_a_cast_refused_on_explicit_stock_never_names_the_slab_lever(tmp_path, unified):
+    """explicit_stock is what a gated render takes; slab_weights=on would not help a cast."""
+    unified["bytes"] = B4_AVAILABLE
+    path = _wan22(tmp_path)
+    row = _quote(path, slab_weights=False)
+    assert row.verdict == "refuse" and row.blocker is not None
+    why, options = row.blocker
+    assert "a slab load under a cast keeps the cast copy beside the file" in why
+    assert "slab_weights=on" not in options
+    assert options.startswith("set the loader's weight_dtype to default")
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
+        store_residency.resolve(**_ladder(path, {"dtype": torch.bfloat16}, slab_weights=False))
+    assert "set slab_weights=on" not in str(raised.value)
+
+
+def test_explicit_slab_refuses_a_cast_rather_than_admitting_it_unpriced(tmp_path, unified):
+    unified["bytes"] = B4_AVAILABLE
+    path = _wan22(tmp_path)
+    row = _quote(path, slab_weights=True)
+    assert (row.verdict, row.rung, row.use_slab) == ("refuse", "explicit", True)
+    with pytest.raises(FleetCapacityError) as raised:
+        decide([_answer(0, row), _answer(1, row)], 2, unet_name=WAN22_NAME)
+    assert "slab_weights=on cannot load a checkpoint the loader casts" in str(raised.value)
+    assert "What would fit: set slab_weights to auto or off" in str(raised.value)
+    unified["bytes"] = 100 * _GIB      # roomy or not: the price cannot be taken
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as ladder:
+        store_residency.resolve(**_ladder(path, {"dtype": torch.bfloat16}, slab_weights=True))
+    assert "slab_weights=on cannot load a checkpoint the loader casts" in str(ladder.value)

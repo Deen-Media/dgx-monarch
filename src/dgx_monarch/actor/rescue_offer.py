@@ -30,6 +30,20 @@ _GENERIC_OPTIONS = (
     "use a pruned or quantized artifact, or free unified memory on this host"
 )
 
+# A cast under slab: the cast copy sits beside the file in the slab's annex, so
+# slab saves nothing, and the slab probe does not price that copy. The stock
+# rungs name it as a blocker; explicit slab refuses with the sentence below,
+# which the fleet card prints whole (under capacity_agreement's 320 characters).
+_CAST_WHY = ("a slab load under a cast keeps the cast copy beside the file, so slab "
+             "residency would not save memory")
+_CAST_OPTIONS = ("set the loader's weight_dtype to default where the cast makes the copy "
+                 "larger than the file, or " + _GENERIC_OPTIONS)
+CAST_SLAB_REFUSAL = (
+    "slab_weights=on cannot load a checkpoint the loader casts to another weight dtype: "
+    "the cast copy sits beside the file in a second arena the slab price does not "
+    "measure, so the load cannot be priced and saves nothing. What would fit: set "
+    "slab_weights to auto or off, or the loader's weight_dtype to default")
+
 # The clause a cold box's rescue card carries, set only where the memo was
 # read and came back empty. It goes in ``reason`` rather than a seventeenth
 # wire field, which every reader of a quote row would have to learn.
@@ -85,23 +99,22 @@ def rescue_blocker(
     every policy answer: a rescue no policy allows is refused for that reason
     and not for a price nobody would have paid.
     """
+    cast = slab_fit is not None and slab_fit.skipped_reason == capacity_fit.SKIP_SLAB_DTYPE_CAST
     if explicit_stock:
-        return (blocked_reason or
-                "slab residency is off for this render: the Init node's slab_weights=off "
-                "or an identity-gate quarantine turned it off",
-                "clear the quarantine with an identity ceremony, or set slab_weights=on when "
+        why = (blocked_reason or
+               "slab residency is off for this render: the Init node's slab_weights=off "
+               "or an identity-gate quarantine turned it off")
+        if cast:
+            # Never name slab_weights=on for a cast: the slab would not help.
+            return (f"{why}, and {_CAST_WHY}", _CAST_OPTIONS)
+        return (why, "clear the quarantine with an identity ceremony, or set slab_weights=on when "
                 "the combination is not quarantined, or " + _GENERIC_OPTIONS)
     if not slab_capable_path:
         return ("the checkpoint is not a .safetensors or .sft file, which the zero-copy "
                 "slab loader requires",
                 "convert or re-stage the checkpoint as safetensors, or " + _GENERIC_OPTIONS)
-    if slab_fit is not None and slab_fit.skipped_reason == capacity_fit.SKIP_SLAB_DTYPE_CAST:
-        # A cast slab load keeps the cast copy in an annex beside the file, so
-        # it saves nothing over stock, and the slab probe does not price it.
-        return ("the loader casts this checkpoint's weight dtype, and a slab load under a cast "
-                "keeps the cast copy beside the file, so slab residency would not save memory",
-                "set the loader's weight_dtype to default where the cast makes the copy larger "
-                "than the file, or " + _GENERIC_OPTIONS)
+    if cast:
+        return (f"the loader casts this checkpoint's weight dtype, and {_CAST_WHY}", _CAST_OPTIONS)
     if fsdp_launch:
         return ("FSDP is active and reshards weights into DTensors, so a slab would be "
                 "an unused extra copy",

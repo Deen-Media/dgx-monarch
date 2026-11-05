@@ -146,6 +146,41 @@ def test_a_cast_load_short_beside_an_old_model_still_offers_the_card():
     assert '"Clear and retry"' in text
 
 
+def _credited_swap(avail_gib: float, arena_gib: float) -> RankPrice:
+    """qwen-image over flux1-dev in one slot, priced after the store drops flux1-dev."""
+    credit = int(22.2 * _GIB)
+    fit = StockFit(False, True, int(19.0 * _GIB), int(avail_gib * _GIB), credit_bytes=credit)
+    fit = replace(fit, fits=fit.required_bytes <= fit.avail_bytes)
+    return replace(_stock("refuse", size_gib=19.0, avail_gib=avail_gib, arena_gib=arena_gib),
+                   measured=dict(fit.measured()))
+
+
+def test_a_credited_swap_weighs_a_clear_against_the_uncredited_price():
+    """A swap over the slot's own stock resident is credited that copy (2026-11-05);
+    a cleared box holds no copy to drop, so the card compares the whole price."""
+    short = _credited_swap(avail_gib=10.0, arena_gib=30.0)
+    assert short.measured["required_gib"] == 22.7          # 44.9 less flux1-dev's 22.2
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+    text = str(raised.value)
+    assert ("priced a stock load of qwen_image_2512_bf16.safetensors after the Worker drops "
+            "flux1-dev, the 22.2 GiB copy its slot holds. Beyond that copy the load needs "
+            "22.7 GiB") in text
+    assert "does not model the drop" not in text
+    offer = old_model.offer_of(raised.value)
+    assert offer is not None and old_model.card_numbers(offer) == "needs 44.9 GiB, 10.0 GiB available on head"
+
+
+def test_a_credited_swap_with_no_arena_to_return_says_a_clear_would_not_make_room():
+    short = _credited_swap(avail_gib=10.0, arena_gib=0.0)
+    with pytest.raises(FleetCapacityError) as raised:
+        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+    assert not isinstance(raised.value, old_model.OldModelRefusal)
+    # 10.0 available plus flux1-dev's 22.2 back, less the 2 GiB margin, against 44.9.
+    assert ("A clear would not make room: qwen_image_2512_bf16 needs 44.9 GiB on head, and a "
+            "cleared box would have about 30.2 GiB.") in str(raised.value)
+
+
 def test_a_clear_that_would_not_make_room_keeps_the_ordinary_refusal_in_plain_words():
     """wan-animate2 BF16: 69.1 GiB against 25.8 is short more than flux1-dev holds."""
     short = _stock("refuse", size_gib=30.5, avail_gib=25.8)

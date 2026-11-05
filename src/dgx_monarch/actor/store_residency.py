@@ -155,9 +155,9 @@ def resolve(
                 RefusalClass.CAPACITY, _no_rescue_text(unet_name, fit, row.blocker),
                 guard=RESCUE_GUARD, waivable=False,
                 troubleshooting=_TROUBLESHOOTING) + _wire_tail(fit, None))
-        # The FSDP rung. Its own check built this sentence and this wrapper
-        # re-raises it under the same class and guard, so the operator meets one
-        # refusal with one boundary named, not an echo of another module's tag.
+        # The FSDP rung, or explicit slab under a cast. Its own check built this
+        # sentence and this wrapper re-raises it under the same class and guard, so
+        # the operator meets one refusal with one boundary named, not an echo.
         raise StockLoadCapacityError(refusal(
             RefusalClass.CAPACITY, untagged(row.reason) + actor_footprint.block_clause(row.measured),
             guard=RESCUE_GUARD, waivable=False))

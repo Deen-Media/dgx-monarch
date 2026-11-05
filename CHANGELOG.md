@@ -144,8 +144,16 @@
   For a cast that keeps the width, as wan22's fp16 to bf16 does, the figure is
   the one an uncast load gets (60.9 GiB for each wan22 DiT). A cast load offers
   no slab rescue, since a slab under a cast keeps the cast copy beside the
-  file, and an old model held in the way still raises its card, which now
-  credits a cast model the copy its cast built
+  file; `slab_weights=on` refuses a cast it cannot price, and the explicit
+  stock refusal no longer suggests it. An old model held in the way still
+  raises its card, which now credits a cast model the copy its cast built.
+- A load that replaces the stock model in its own slot is now priced after
+  the Worker drops that model, which it always does first. The agreement used
+  to count both copies; with its cast priced, wan22-t2v's stage 2, a swap over
+  stage 1's DiT, would then refuse at 58.7 GiB available on a fresh pair, and
+  each stage of a warm re-queue would ask for a clear. A LoRA change on the
+  same file is the same credit. A model in the other slot, a slab resident and
+  the arena a stock load keeps still count
   ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 
