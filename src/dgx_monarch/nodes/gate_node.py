@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from ..constants import MODEL_TYPE, NODE_CATEGORY
+from .refusal_lead import lead_with_refusal
 from .render_preflight import sampler_latent
 from .samplers import _sampler_names, _scheduler_names
 
@@ -71,6 +72,7 @@ class DGXMonarchIdentityGate:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
+    @lead_with_refusal
     def gate(
         self,
         model: Any,

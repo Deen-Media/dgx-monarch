@@ -118,6 +118,43 @@
   names other text boxes by their node. The prompt box starts taller and grows
   with its text, an empty negative prompt waits behind Add negative prompt on
   Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
+- The UNET loader now prices every model the graph loads on the driver. Under
+  `auto` the DiT loads at the first render, after the driver has loaded the
+  text encoders, VAEs and any prompt upsampler, and the loader's load window
+  used to charge the DiT alone: on 2026-11-05 the BF16 p-h3-image template
+  passed it on one Spark, ran its 18 GB upsampler, and refused at the sampler
+  2.0 GiB short. That window now charges those models too, so the template
+  refuses before anything loads, and the refusal opens with one plain sentence
+  ("p-h3-image_bf16.safetensors needs 119.8 GiB on this box and 110.8 GiB is
+  available, 9.0 GiB short") and names what would fit: the same model in
+  another precision on disk here (the INT8 ConvRot and W4A8 DiT and upsampler
+  files), a switch whose other setting skips a model, and a pair with the Init
+  node's topology set to `uly2+fsdp`, which `auto` never picks, after an
+  Identity Gate PASS on it. It never names a file the graph would then refuse:
+  no INT8 MOSS-Image file beside a LoRA, no W4A8 file on a `*+fsdp` preset, no
+  file that pins an attention kernel off Ulysses and ring, and no DiT file no
+  graph here names. It also offers the Load with slab residency card, whose
+  render of this graph has no hardware record yet. Models ComfyUI already
+  holds are credited up to their size, where any one held model used to credit
+  the whole stack, so a second graph's upsampler is priced too. On a fresh
+  driver the price errs high: LTX 2.3 text to video now needs 80.9 GiB where
+  it needed 65.8. A model only a fixed switch's other branch reaches, or no
+  output node, is no longer charged, so the template with the upsampler
+  switched off loads. MOSS-Image, MOSS-Image Base and Kromoss
+  get the loader's price too, their 19.31 GB encoder included. A loader
+  `weight_dtype` cast, which used to stand the loader's check down whole, is
+  priced there at the copy the cast builds, the figure the Worker's stock
+  price uses, where the load runs stock. A refusal a
+  Worker raises at the sampler, the loader or Identity Gate now opens the prompt error, card
+  sentence included, with the traceback in the log, where the error used to
+  begin "Actor call dgxm_worker.sample failed.". With `slab_weights=on` and no
+  Identity Gate PASS, after a failed authorization, for a second model or on
+  Fleet KSampler, the refusal says the driver ran stock and why, and names the
+  gate where a PASS would help, where it used to ask for `slab_weights=on`. The Old model in
+  the way card's loader text keeps the sentence that turns the preflight off,
+  and its no-room sentence quotes the same window and figure as the lead
+  ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
+  [#53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
 - A load that does not fit because a model loaded earlier is still
   held now says so: "the old model (<name>) is still loaded on <box>". When a
   clear of the attached mesh would make room on every short box, the panel

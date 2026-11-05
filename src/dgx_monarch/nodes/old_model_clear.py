@@ -278,13 +278,20 @@ def clear_for_retry(handle: Any, exc: BaseException, *, inherited: bool = False)
 
 
 def _worst(windows: Iterable[Any]) -> Any:
-    """The failing window short by the most, against its unclamped budget."""
-    short = [window for window in windows if not window.fits]
+    """The failing window short by the most, against its unclamped budget.
+
+    The loader's own test (``graph_load_price.fits_box``), so the card and the
+    refusal agree: a window with no DiT left to place is short when its driver
+    models are, and a clear that makes room there still raises the card.
+    """
+    from .graph_load_price import fits_box
+
+    short = [window for window in windows if not fits_box(window)]
     return max(short, key=lambda window: window.shortfall) if short else None
 
 
 def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[Any],
-                 keep: Iterable[str] = ()) -> old_model.ClearOffer | None:
+                 keep: Iterable[str] = (), window: str = "") -> old_model.ClearOffer | None:
     """Ask the Workers on the driver host what they hold, after the loader refused.
 
     Read-only and best effort: only a live, set-up fleet whose rank 0 shares
@@ -292,7 +299,8 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     means no card and the loader's own refusal. The box is short by the worst
     failing window's unclamped shortfall (``DriverFootprintEstimate.shortfall``):
     a clear must make room in both windows. Slots this load reuses, and models
-    this graph loads (``keep``), are not old models.
+    this graph loads (``keep``), are not old models. ``window`` names the
+    worst window, the one the loader's own refusal leads with.
     """
     from .. import capacity_agreement, driver_footprint
 
@@ -335,7 +343,7 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     required = int(worst.projected) + int(worst.reserve)
     return old_model.box_offer(
         unet_name, old_model.ShortBox(box, tuple(dict.fromkeys(names)), required,
-                                      int(worst.mem_available), gain),
+                                      int(worst.mem_available), gain, window=window),
         hosts=1 if local else len(hosts), local=local, fleet=handle)
 
 

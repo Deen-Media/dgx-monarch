@@ -1919,11 +1919,28 @@ must not be retried merely because the memory remains allocated.
 
 **Symptom:** `DriverFootprintCapacityError` (a `StockLoadCapacityError`)
 refuses before worker RPCs. Render-time messages start
-`driver-side footprint preflight:`; loader messages start
-`driver-side footprint preflight at the loader node:`. The latter carries
+`driver-side footprint preflight:`. Loader messages start with one plain
+sentence, then the budget detail from
+`driver-side footprint preflight at the loader node:` on. The latter carries
 `[dgxm:K]` if a Gate FAIL blocks rescue; ordinary capacity refusals are class C.
+For example, the p-h3-image template on one Spark:
 
-**What to do:** follow the reported shortfall and fitting options. For H3,
+```
+[dgxm:C guard=loader_footprint_preflight waivable=1] p-h3-image_bf16.safetensors needs 119.8 GiB on this box and 110.8 GiB is available, 9.0 GiB short. It loads at the first render, beside p-h3-image_text_encoder_bf16.safetensors, p-h3-image_prompt_upsampler_bf16.safetensors and p-h3-image_vae_bf16.safetensors, which this graph loads on the driver first. Nothing was loaded. On disk here, these would fit: p-h3-image_int8_convrot.safetensors (19.8 GiB) or p-h3-image_w4a8.safetensors (12.4 GiB) in place of p-h3-image_bf16.safetensors; ...
+```
+
+**What to do:** follow the reported shortfall and fitting options. A loader
+refusal names what would fit first, each one priced in both windows: files on
+disk here that hold the same model in another precision, in place of the DiT or
+of a driver model; a lazy switch whose other setting skips a model; and on a
+pair, the Init node's topology set to `uly2+fsdp`, which `auto` never picks,
+where the head holds half the DiT, after an Identity Gate PASS on that preset.
+It never names a file this graph would then refuse: a DiT file is named only
+when a graph here names it (the artifact manifest lists it) and none of the
+refusals the driver can read from its header applies, so no INT8 MOSS-Image
+file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file that
+pins an attention kernel off Ulysses and ring (#117). The pair is not offered
+beside a LoRA. For H3,
 try a smaller text encoder, a pruned/quantized DiT, fewer or smaller references,
 a smaller canvas/clip, or more free host memory. Pruned int8/fp8 reference-video
 files are 19.5 GiB versus bf16's 61.7 GiB. For LTX, start with a smaller canvas
@@ -1946,7 +1963,7 @@ admitted DiT load; see [VALIDATION.md](VALIDATION.md).
 
 | Window | Charge and remedy |
 |---|---|
-| `load` | Stock placement peaks near 2.1x checkpoint size, before the driver stack exists. Slab avoids the host copy and may offer rescue. |
+| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists. Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
 | `resident` | Weights plus the graph's future text encoder, VAEs, reference/guide encodes, and declared render activations. If this does not fit, use smaller artifacts or inputs; changing residency cannot remove the stack. |
 
 Rescue is offered only if slab fits both windows
@@ -1957,7 +1974,21 @@ copy; other families include it. H3 activations are described in
 [#56](#56-minimax-h3-render-refused-activation-footprint-preflight).
 
 The loader checks before liveness, topology, or rank effects. It prices the
-pending stack from the prompt graph. An unreadable graph leaves that stack
+pending stack from the prompt graph: text encoders, CLIP Vision, VAEs, and any
+checkpoint or stock UNET the driver loads itself. A model that only the
+unselected branch of an If/Else or Soft Switch with a fixed value reaches, or
+that no output node reaches, never loads and is not charged. When ComfyUI
+already holds models, the price credits only the bytes ComfyUI holds against
+the graph's models, never more, since it cannot tell which files they came
+from; until 2026-11-05 any one held model credited the whole stack. On a fresh
+driver the price errs high by the 1.15 encoder ratio and a VAE ComfyUI has not
+yet moved into memory: p-h3-image prices 9.0 GiB short where the hardware ran
+2.0 GiB short, and LTX 2.3 text to video now needs 80.9 GiB where it needed
+65.8. A loader `weight_dtype` cast is priced at the copy
+the cast builds, read from the file's header, beside a host copy at the file's
+own width, where the load runs stock, with no slab card; under slab,
+comfy-managed residency or a `*+fsdp` preset the loader makes no claim on a
+cast. An unreadable graph leaves that stack
 unpriced and warns once per family; other estimator failures also admit the
 load. A cleared charge is cached per checkpoint and world for the session.
 Direct headless calls need their own budget
@@ -2073,13 +2104,19 @@ accepting. Tags distinguish capacity (`C`), unproven correctness (`U`), known
 incorrect output (`K`), and physical constraints with no bypass (`P`);
 see DESIGN.md section 5.9.
 
+**The sentence leads the error.** A refusal a Worker raises at the sampler, the
+loader or Identity Gate shows in the prompt error tag first, then its sentence and the card
+it names; the remote traceback is in the ComfyUI log. Before 2026-11-05 the
+error began "Actor call dgxm_worker.sample failed." and the reason sat at the
+end of that traceback.
+
 **No button means no panel remedy.** Class C messages can link here without
 offering consent. Follow their "What would fit" clause; all cases below are
 `waivable=0`, and `DGXM_ALLOW_SLAB_RESCUE=1` grants nothing:
 
 | Guard/path | Why no rescue is offered |
 |---|---|
-| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. |
+| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. |
 | `slab_load_preflight` | Slab itself does not fit. The message includes the larger stock estimate, so disabling slab cannot help. |
 | Comfy-managed `stock_load_preflight` | That residency cannot fit and has forced slab off. Turn off `comfy_managed` and follow its reset requirements in [#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) before using slab. |
 
@@ -2129,7 +2166,8 @@ replaces, the card says instead "The head still holds about N GiB that
 earlier loads left behind" (or the sibling, or this box), since a clear gives
 that back. When a clear would
 not make room, the refusal says so, with the whole price a cleared box would
-need, and offers no card. A model this graph loads, or one the request reuses, is never
+need, and offers no card; at the loader it names the window its first sentence
+priced, with the same figure. A model this graph loads, or one the request reuses, is never
 the old model. A card resets only the attached mesh that refused: if that mesh
 is gone, the click answers the card and resets nothing, and any reset answers
 every open card. A one-GPU fleet or a Fleet job, whose Worker prices its own
