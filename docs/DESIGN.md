@@ -1402,6 +1402,22 @@ One helper appends the panel action and headless fallback to every tagged
 message. Waivable refusals must offer the action; non-waivable refusals must
 not. `refusal()` raises on an inconsistent declaration.
 
+**The sentence leads the error.** Monarch prints its wrapper as "Actor call
+... failed." and the remote traceback, with the tagged sentence at the end, and
+ComfyUI shows that as the prompt error. The node methods that meet a Worker's
+refusal (the samplers, Fleet KSampler, the UNET loaders, Identity Gate) raise the inner
+refusal itself, chained from the wrapper, so the error starts with the tag, the
+sentence and the card it names, and ComfyUI's log keeps the remote traceback
+(`nodes/refusal_lead.py`). Only a text that leads with a tag is lifted out, so
+a crash keeps its wrapper, and every decision that reads the wrapper (the
+sample lease, eviction, the card) runs below the node method. When the driver
+sends a render on stock although `slab_weights=on`, for want of an Identity
+Gate PASS, after a failed authorization, for a second model, or from Fleet,
+the Worker sees only the setting arrive off; the same seam replaces its
+"slab_weights is off" clause and its "set slab_weights=on" option with that
+cause, and with the Identity Gate run where its stock reference fits as the
+remedy where a PASS would help.
+
 `refusal.GUARDS` is the frozen guard vocabulary shared by the refusal sites,
 the consent subsystem and the WAIVER row's `target_guard` field. A guard
 carries `waivable_now`, the current truth: a guard whose waiver is designed but
@@ -1655,6 +1671,36 @@ coexist. The settled window covers weights at 1.0x plus the driver models and
 other memory the graph still needs to allocate. Slab removes the host copy
 and its transient peak; it does not reduce the settled graph requirement.
 
+**A deferred load meets the driver's models.** An explicit preset loads at the
+loader node, before ComfyUI builds the text encoders, the VAEs and the encodes,
+so its load window charges the DiT alone. Under `auto` the loader defers the
+load to the first render, and by then the driver has loaded every model the
+graph loads, so that load window charges those models too: the text encoders
+at their resident ratio, the VAEs, and any checkpoint or stock UNET the driver
+loads itself. Encodes and activations come after the load and stay in the
+settled window. Until 2026-11-05 the deferred window charged the DiT alone,
+and the p-h3-image template, a 37.7 GiB DiT beside an 18.0 GiB prompt
+upsampler, passed the loader and refused at the sampler 2.0 GiB short after
+the upsampler had run; this price refuses it before anything loads, about
+7 GiB on the refusing side. A model only a lazy switch's other branch reaches
+never loads, and neither does one no output node reaches (`nodes/graph_live.py`).
+Held models credit what ComfyUI holds and no more: it cannot say which files
+they came from, so a held encoder stands in for this graph's, never for its
+upsampler too. The stack counts against MemAvailable even when no DiT is left
+to place. The refusal leads with one plain sentence, the figures inside its
+first 200 characters, and then names what would fit, each tried in both
+windows: same-stem files on disk here in place of the DiT or a driver model, a
+switch whose other setting skips a model, and a pair with the Init node's
+topology set to `uly2+fsdp`, with its Identity Gate step. **A remedy is never
+one the graph would refuse.** A DiT file is named only when a graph here names
+it (the artifact manifest lists it), its kind is one every topology here runs,
+and none of the refusals the driver can read before a load applies: the LoRA
+route, the FSDP launch, the upstream gate, a pinned kernel off sequence
+parallelism. The pair is not offered beside a LoRA. What the driver cannot
+prove, it does not name. On the pair `auto` resolves to Ulysses or ring, which
+hold the whole DiT on the head, so the pair alone changes nothing there; only
+a shard build halves it, and `auto` never picks one (`nodes/graph_load_price.py`).
+
 **A declared shard build is priced as a shard.** Both windows charge the whole
 file, which is what a stock load places, and under a `*+fsdp` preset no rank
 ever places it: each holds `file/world`, and the streaming build assigns
@@ -1711,10 +1757,15 @@ size would understate a bf16 cast of an fp8 file by half. A cast load that
 does not fit offers no slab rescue: a slab load under a cast keeps the cast
 copy in an annex beside the file, so it saves nothing, and for the same reason
 an explicit `slab_weights=on` refuses a cast, which its price cannot measure,
-and the explicit-stock refusal never names that lever for one. A vouched slab,
-comfy-managed or FSDP load under a cast, and the driver's own loader windows,
-still make no claim, because the staging those paths do under a cast is
-unmeasured.
+and the explicit-stock refusal never names that lever for one. The driver's
+own loader windows take the same figure where the load runs stock: the cast
+copy in place of the file in both windows and the host copy at the file's width
+in the load window, with no slab rescue, and no file twin or shard build named,
+since each would price another copy. Before this rule a cast stood the
+loader's check down whole, its driver stack included. A vouched slab,
+comfy-managed or FSDP load under a cast still makes no claim, at
+the Worker or at the loader, because the staging those paths do under a cast
+is unmeasured.
 
 **One absolute host floor.** The stock price, the slab price, the
 comfy-managed capacity check and the driver's own two windows all charge
@@ -1755,7 +1806,7 @@ bound or its floor.
 | `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. Under a loader dtype cast the copy the cast builds replaces the file, and the host copy stays the file's. A swap over the slot's own stock resident is charged that price less the resident's GPU copy at the fleet agreement, because the store drops it before the load; a LoRA change on a stock copy of the same file is the same credit, 1.1 times the file plus the floor, whether the store re-applies the stack in place or, when that would first copy the model off the GPU, drops the copy and loads fresh; the Worker's own ladder prices after its drop, with no store snapshot, and never applies a credit | `capacity_fit.stock_load_fit` over `stock_required_bytes` and, for a cast, `capacity_fit.cast_resident_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credits are `capacity_lora_bake.credit_stock_swap` over `actor/worker_capacity._resident_bytes` and `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place`, whose in-place or fresh choice is `actor/store_bake.copies_off_the_gpu` |
 | an FSDP launch | bf16/fp16: this rank's shards plus one block; fp8/int8 or an unreadable kind: the conservative full-file bound; every case includes the floor | `actor/capacity_quote_fsdp.fsdp_rung`, `adapters/fsdp.fsdp_load_capacity_check`, and `actor/store_residency.preload_capacity_check`, all over `capacity_fit.fsdp_required_bytes` |
 | the gate ceremony's clean reload | the same kind-aware FSDP figure, against each rank's MemAvailable plus its resident shard pool (torch reserved, capped at one share) | `fsdp_reload_price.price_fsdp_clean_reload`, crediting `fsdp_reload_price._rank_credit_bytes` |
-| the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
+| the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared; under `auto` the transient window carries the driver models the graph loads | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
 | every rank at once | the leanest rank's row, before any rank allocates | `capacity_agreement.collect` and `capacity_agreement.decide` |
 | a model in the way | nothing: it prices no load, it decides whether a refusal offers a clear, from what a clear would give back on each short box | `old_model.rank_gain`, `old_model.fleet_offer` and `actor/actor_footprint.arena_bytes` |
 

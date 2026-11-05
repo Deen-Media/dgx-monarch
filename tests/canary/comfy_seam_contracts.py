@@ -167,6 +167,9 @@ The seams, in run order:
                               one the window's guides build, so the sharded
                               forward never keeps a stale one; before ComfyUI
                               0.44.0 the node is absent and the seam says so
+ 49. lazy switch              the If/Else and Soft Switch inputs and the branch
+                              check_lazy_status evaluates for a fixed choice,
+                              which the loader-side wall prices and no other
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -2020,6 +2023,38 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
         f"bytes for a {width}x{height} guide where the measured probe prices "
         f"{want}"
     )
+
+
+def _assert_lazy_switch_seam() -> None:
+    """The branch the loader-side wall prices behind a switch is the one comfy runs.
+
+    p-h3-image's template feeds its prompt upsampler, an 18 GiB driver model,
+    through If/Else Switch, and with the switch false comfy never loads it
+    (2026-11-05). The wall skips the branch a literal switch does not select
+    (``nodes/graph_live.py``); this seam holds that choice against each
+    switch's own schema and its ``check_lazy_status``.
+    """
+    from comfy_extras import nodes_logic
+
+    from dgx_monarch.nodes import graph_live
+
+    for cls in (nodes_logic.SwitchNode, nodes_logic.SoftSwitchNode):
+        schema = cls.define_schema()
+        assert schema.node_id in graph_live.SWITCH_CLASSES, (
+            f"lazy switch seam: {schema.node_id!r} is not a switch the wall reads")
+        inputs = {item.id: item for item in schema.inputs}
+        assert {"switch", "on_false", "on_true"} <= set(inputs), (
+            f"lazy switch seam: {schema.node_id} inputs are {sorted(inputs)}")
+        assert inputs["on_false"].lazy and inputs["on_true"].lazy, (
+            f"lazy switch seam: {schema.node_id} evaluates both branches")
+        for choice in (True, False):
+            node = {"class_type": schema.node_id,
+                    "inputs": {"switch": choice, "on_false": ["1", 0], "on_true": ["2", 0]}}
+            skipped = graph_live.skipped_branch(node)
+            wanted = cls.check_lazy_status(switch=choice, on_false=None, on_true=None)
+            assert wanted and skipped not in wanted and skipped in ("on_false", "on_true"), (
+                f"lazy switch seam: at switch={choice} comfy evaluates {wanted} and "
+                f"the wall skips {skipped}")
 
 
 class _H3Nested:
@@ -5823,6 +5858,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("dynamic prompt asymmetry", _assert_dynamic_prompt_asymmetry_seam),
     ("weight-only linear dispatch", _assert_weight_only_linear_dispatch_seam),
     ("minimax h3 context windows", _assert_minimax_h3_context_windows_seam),
+    ("lazy switch", _assert_lazy_switch_seam),
 )
 
 

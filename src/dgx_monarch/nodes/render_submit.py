@@ -46,7 +46,7 @@ from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
 from ..old_model import OldModelRefusal
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
-from . import consent_waiver, model_patch_preflight, old_model_clear, render_preflight, render_rows
+from . import consent_waiver, model_patch_preflight, old_model_clear, refusal_lead, render_preflight, render_rows
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_identity import (
     authorize_normal_render,
@@ -342,6 +342,8 @@ def _submit_render_guarded(
             resolved_topology=topo,
             resolved_attention=sample_attention,
         )
+        refusal_lead.note_if_slab_dropped(model.mesh.worker_args, authorization.worker_args,
+                                          dual=request.get("uncond_model") is not None)
 
         # A dual-model request is stamped stock whatever any ceremony did,
         # and auto_gate off does not change that, so a blocked ceremony is

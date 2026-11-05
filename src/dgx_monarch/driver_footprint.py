@@ -121,9 +121,10 @@ class DriverStackProfile:
 
 DRIVER_STACK_FAMILIES: dict[str, DriverStackProfile] = {
     # H3 options omit multi-host splitting: Ulysses and Ring replicate the
-    # weights. FSDP, which does not, has admitted the bf16 release through the
-    # fp32-islands profile since 2026-08-26, but its one render (2026-09-09,
-    # docs/VALIDATION.md) had no reference comparison, so it is not offered here.
+    # weights. FSDP does not, and the loader refusal names a pair's uly2+fsdp
+    # preset, with its Identity Gate step, wherever that price fits
+    # (nodes/graph_load_price); p-h3-image's BF16 uly2+fsdp render matched
+    # resident uly2 pixel for pixel on 2026-11-05.
     "minimax_h3": DriverStackProfile(
         family="minimax_h3",
         ref_extras_keys=("minimax_refs", "minimax_keyframes"),
@@ -146,6 +147,15 @@ DRIVER_STACK_FAMILIES: dict[str, DriverStackProfile] = {
         dit_note="the int8-convrot 22B artifact is 20.0 GiB against bf16's "
                  "39.1, and its gemma4 text encoder is 14.3 GiB at int8 "
                  "against 24.5 at bf16",
+    ),
+    # MOSS-Image, its Base and Kromoss: no reference or activation rows, but the
+    # 18.0 GiB encoder is the largest file their graphs load on the driver.
+    "moss_image": DriverStackProfile(
+        family="moss_image",
+        ref_extras_keys=(),
+        fitting_options=(SMALLER_TE, PRUNED_DIT, FREE_MEMORY),
+        dit_note="the int8_convrot DiT is 5.0 GiB against bf16's 9.5, and the "
+                 "Qwen3.5-9B encoder is 9.1 GiB at int8_convrot against 18.0 at bf16",
     ),
 }
 

@@ -30,6 +30,7 @@ from ..safetensors_header import SafetensorsFileIdentity
 from ..topology import Topology, topology_from_preset
 from . import consent_projection, loader_graph, loader_preflight, old_model_clear, render_validation
 from .common import MeshSpec, ModelSpec
+from .refusal_lead import lead_with_refusal
 
 log = get_logger(__name__)
 
@@ -166,6 +167,7 @@ class DGXMonarchUNETLoader:
         except Exception:
             return False
 
+    @lead_with_refusal
     def load(self, mesh: MeshSpec, unet_name: str, weight_dtype: str = "default",
              unique_id=None, prompt=None):
         weight_dtype = validate_weight_dtype(weight_dtype)

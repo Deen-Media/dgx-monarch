@@ -21,6 +21,7 @@ from .common import (
 )
 from .consent_waiver import validate_inherited_stamps
 from .latent_outputs import clone_latent_samples, is_direct_nested_tensor
+from .refusal_lead import lead_with_refusal
 from .render_preflight import krea2_ref_preflight_summary, sampler_latent
 from .sampler_wire import (  # noqa: F401  # Public samplers API.
     _aggregate_render_outputs,
@@ -87,6 +88,7 @@ class DGXMonarchKSampler:
     FUNCTION = "sample"
     CATEGORY = NODE_CATEGORY
 
+    @lead_with_refusal
     def sample(self, model: ModelSpec, seed, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, denoise=1.0, unique_id=None):
         request = {
@@ -170,6 +172,7 @@ class DGXMonarchKSamplerPipeline:
                 "DGXMonarchKSamplerPipeline: seeds must be integers in 0..2^64-1")
         return parsed
 
+    @lead_with_refusal
     def sample(self, model: ModelSpec, seeds, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, denoise=1.0, unique_id=None):
         validate_inherited_stamps(latent_image)
@@ -283,6 +286,7 @@ class DGXMonarchKSamplerAdvanced:
     FUNCTION = "sample"
     CATEGORY = NODE_CATEGORY
 
+    @lead_with_refusal
     def sample(self, model: ModelSpec, add_noise, noise_seed, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, start_at_step, end_at_step,
                return_with_leftover_noise, unique_id=None):
@@ -393,6 +397,7 @@ class DGXMonarchSamplerCustom:
     FUNCTION = "sample"
     CATEGORY = NODE_CATEGORY
 
+    @lead_with_refusal
     def sample(self, noise, guider, sampler, sigmas, latent_image, unique_id=None):
         model: ModelSpec = guider["model"]
         # A SAMPLER object carries no name, so the render stays untagged and
