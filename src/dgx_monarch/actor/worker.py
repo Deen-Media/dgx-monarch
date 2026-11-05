@@ -186,7 +186,7 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
             quant_kind,
             lora_stack,
         )
-        partial_load_guard.install(base_patcher, getattr(self, "world", None))
+        partial_load_guard.install(base_patcher, getattr(self, "world", None), self.topology)
         cfg_degree = int(self.topology.get("cfg", 1))
         adapter = adapter_for(base_patcher.model, override_for_worker(self))
         getattr(adapter, "prepare_base_model", lambda _model: None)(base_patcher.model)

@@ -28,7 +28,7 @@ from .actor.capacity_quote import (
     WOULD_LOAD_REUSE,
     RankPrice,
 )
-from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib
+from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib, hot_swap_sentence
 from .consent_descriptor import ConsentDescriptor, SlabResidencyRescueOffer
 from .delivery_faults import WorkerDeliveryError
 from .gate_audit_evidence import measured_tag
@@ -217,6 +217,8 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str,
         second_term = f"plus a {floor} GiB floor for the rest of the box"
         if lora:
             second_term += f" and {lora} GiB for the LoRA stack's bake"
+    elif measured.get("credit_bytes"):
+        return hot_swap_sentence(where, unet_name, needed, weights, avail, abs(headroom))
     else:
         kind, second_term = "stock", "plus the host copy it is placed from"
     return (

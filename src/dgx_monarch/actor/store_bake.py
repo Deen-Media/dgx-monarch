@@ -375,6 +375,23 @@ def lazy_swap_transition(
     return None
 
 
+def swaps_in_place(stored, lora_low_rss: bool) -> bool:
+    """Whether a LoRA change on this resident keeps its base where it is.
+
+    Mirrors the two branches ``ModelStore.ensure`` takes before a fresh load:
+    the low-RSS lazy swap restores and re-bakes in place, and the classic hot
+    swap clones the pristine base and re-applies the stack. Neither places a
+    second copy of the base. A pending slab retry reloads, and so does a base
+    the low-RSS bake consumed with no un-bake record. The fleet's capacity
+    quote reads this from the store snapshot (``capacity_lora_bake``).
+    """
+    if stored is None or getattr(stored, "slab_auto_retry", False):
+        return False
+    if lora_low_rss:
+        return stored.unbake is not None or not stored.lora_sig
+    return not stored.base_baked
+
+
 def hot_swap_transition(
     store,
     stored,

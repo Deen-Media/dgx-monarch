@@ -351,6 +351,17 @@
 - Before a render-site capacity check refuses, the driver unloads the models
   ComfyUI holds on its host, such as the last render's text encoder and VAE,
   and checks again; set `DGXM_DISABLE_DRIVER_UNLOAD=1` to turn this off ([TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+- Three fixes from the 2026-11-04 release test. The identity gate's stock
+  comparison frees what the driver host can reload before it gives up, so the
+  Flux 2 template renders on a fresh pair instead of refusing with its 33 GiB
+  text encoder on the head ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+  A LoRA change on a base a Worker already holds is priced as the in-place
+  swap the store makes, without a second copy of the file, so the Wan-Animate 2
+  memory-saver template no longer refuses under an explicit topology. And
+  where a model call is sharded, every rank batches cond and uncond the way
+  the leanest rank does, so two boxes with different free memory no longer
+  stall on mismatched collectives
+  ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
 
 ## [1.4.0] - 2026-10-28
 

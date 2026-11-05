@@ -484,6 +484,7 @@ class ModelStore:
                 "quant": stored.quant_kind,
                 **stored.precision_evidence.public(),
                 "loras": list(stored.lora_sig),
+                "swaps_in_place": store_bake.swaps_in_place(stored, self.lora_low_rss),
                 **store_residency.describe(stored),
             }
 
