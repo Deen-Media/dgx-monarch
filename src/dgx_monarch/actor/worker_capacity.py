@@ -78,17 +78,16 @@ def _spec_bytes(spec: Any) -> int:
 
 
 def _cast_bytes(spec: Any) -> int:
-    """The copy a load cast to another weight dtype holds, or nothing.
+    """The least a load cast to another weight dtype holds, or nothing.
 
-    The same header estimate the stock price charged the load
-    (``capacity_fit.cast_resident_bytes``), so the credit and the price read
-    one number. A header that cannot be read gives nothing: the price's worst
-    case there (the file times the target width) is an upper bound, and a
-    credit taken from it would admit at the agreement what the rank's own
-    ladder then refuses after its drop.
+    A credit and a clear's gain must not exceed what the drop returns, so this
+    takes the cast estimate's lower bound (``cast_resident_bytes(lower=True)``):
+    every float tensor at the smaller of its stored and cast size, which never
+    exceeds the file or the copy, and nothing where the header cannot be read.
+    The price's own figure is the upper bound, which ComfyUI can undercut: it
+    builds fp32 auxiliaries at the cast's width on a copying load.
     """
     from .. import capacity_fit
-    from ..safetensors_header import read_safetensors_header
     from .model_store import _to_comfy_model_options, resolve_model_path
 
     try:
@@ -96,8 +95,7 @@ def _cast_bytes(spec: Any) -> int:
         if dtype is None:
             return _spec_bytes(spec)
         path = str(resolve_model_path("diffusion_models", str(spec["unet_name"])))
-        read_safetensors_header(path)       # raises where the header cannot be read
-        return capacity_fit.cast_resident_bytes(path, dtype)
+        return capacity_fit.cast_resident_bytes(path, dtype, lower=True)
     except Exception:
         return 0
 
@@ -123,18 +121,24 @@ def _resident_bytes(worker: Any, stored: Any, name: str) -> int:
     return _cast_bytes(spec) if options.get("weight_dtype") else _spec_bytes(spec)
 
 
-def _resident_facts(worker: Any, store: Any) -> dict[str, Any]:
+def _resident_facts(worker: Any, store: Any,
+                    keys: dict[str, str | None] | None = None) -> dict[str, Any]:
     """What a clear of this actor would return, for the old-model card.
 
     The name comes from the store itself, never parsed back out of the
     snapshot's repr; the size is the GPU copy the resident holds
     (``_resident_bytes``). The driver decides which residency's bytes a clear
-    returns (``old_model.rank_gain``), so every held slot is reported.
+    returns (``old_model.rank_gain``), so every held slot is reported. ``keys``
+    receives the request key of each resident read, in the snapshot's form, so
+    the caller can bind these figures to the snapshot it prices against.
     """
     names: dict[str, str | None] = {}
     sizes: dict[str, int] = {}
     for slot, stored in ((capacity_quote.SLOT_COND, getattr(store, "current", None)),
                          (capacity_quote.SLOT_UNCOND, getattr(store, "uncond", None))):
+        if keys is not None:
+            key = getattr(stored, "request_key", None)
+            keys[slot] = None if key is None else repr(key)
         base_key = getattr(stored, "base_key", ()) or ()
         name = str(base_key[0]) if base_key else None
         names[slot] = name
@@ -143,18 +147,26 @@ def _resident_facts(worker: Any, store: Any) -> dict[str, Any]:
             "arena_bytes": actor_footprint.arena_bytes()}
 
 
-def _with_resident_bytes(snapshot: Any, facts: dict[str, Any]) -> dict:
+def _with_resident_bytes(snapshot: Any, facts: dict[str, Any],
+                         keys: dict[str, str | None]) -> dict:
     """The store snapshot with each held slot's GPU copy and name beside its residency.
 
     The swap credit reads them (``capacity_lora_bake.credit_stock_swap``): a load
     that replaces a stock resident is priced after the store drops that copy,
-    and its refusal names the model dropped.
+    and its refusal names the model dropped. This endpoint runs outside the GPU
+    lock, so a slot can change between the facts and the snapshot. A slot whose
+    snapshot entry does not carry the request key the facts were read from gets
+    neither, and its facts are cleared too: no credit and no old-model figures
+    for a model the snapshot does not describe.
     """
     out = dict(snapshot) if isinstance(snapshot, dict) else {}
     for slot in capacity_quote.SLOTS:
-        if isinstance(out.get(slot), dict):
-            out[slot] = {**out[slot], "resident_bytes": int(facts["resident_bytes"].get(slot) or 0),
-                         "resident_name": facts["resident_names"].get(slot) or ""}
+        entry = out.get(slot)
+        if not isinstance(entry, dict) or keys.get(slot) is None or keys[slot] != entry.get("request_key"):
+            facts["resident_bytes"][slot], facts["resident_names"][slot] = 0, None
+            continue
+        out[slot] = {**entry, "resident_bytes": int(facts["resident_bytes"].get(slot) or 0),
+                     "resident_name": facts["resident_names"].get(slot) or ""}
     return out
 
 
@@ -300,8 +312,9 @@ def quote(worker: Any, request: Any) -> dict:
                     for spec in specs or [{}])
         return envelope
     consent = request.get("rescue_consent") if isinstance(request, dict) else None
-    facts = _resident_facts(worker, store)
-    snapshot = _with_resident_bytes(store.snapshot(), facts)
+    keys: dict[str, str | None] = {}
+    facts = _resident_facts(worker, store, keys)
+    snapshot = _with_resident_bytes(store.snapshot(), facts, keys)
     pinned = _pinned_staging()
     charged = 0
     for spec in _my_slots(worker, specs):

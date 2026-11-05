@@ -1761,15 +1761,16 @@ attached mesh, the same teardown as Reset attached mesh, gives back on each
 short box: the file bytes of each stock resident, whose GPU copy an in-process
 drop returned on 2026-11-04, plus the actor's anonymous memory above what it
 held at its first load (`actor/actor_footprint.py`). A load cast to another
-weight dtype is credited the copy its cast built, the figure its price charged:
+weight dtype is credited a lower bound of the copy its cast built (below):
 on 2026-11-05 the store's drop of a 26.6 GiB bf16-cast Wan 2.2 DiT raised the
 head from 58.7 to 88.5 GiB, and from 57.9 to 88.5 GiB on a warm re-queue. Where
 the price already credited the slot's own resident (the swap credit below), a
 clear is weighed against the uncredited price, the row's figure plus its
 credit, because a cleared box holds no copy to drop, and the refusal says that
 figure is the whole price. When that resident is the only old model on a short
-box, the card names the memory its load left behind rather than the model,
-which the price already dropped. A slab or comfy-managed resident
+box, the card gives the memory earlier loads left behind there ("still holds
+about 12.0 GiB that earlier loads left behind") rather than the model, which
+the price already dropped; a refusal no clear can fix leaves that sentence out. A slab or comfy-managed resident
 and an FSDP shard are credited the arena only. A slot the request reuses, and a model this graph's loader
 nodes load, are neither old nor counted in what a clear gives back: a fresh fleet would only load them
 again. A model an earlier sampler of the same graph loaded is still old, since
@@ -1818,13 +1819,19 @@ re-applies a stack in place (the LoRA case below), or it drops the slot before
 it loads (`actor/store_load.fresh_load`), and an in-process drop of a stock
 resident returns its GPU copy (2026-11-04, and the readings in the paragraph
 on a model in the way). So the stock price at the agreement credits that copy,
-the file or the copy a cast built, which the Worker reports beside the slot's
-residency (`capacity_lora_bake.credit_stock_swap`, fed by
+which the Worker reports beside the slot's residency
+(`capacity_lora_bake.credit_stock_swap`, fed by
 `actor/worker_capacity._resident_bytes`), and still charges the new load's host
-copy and the floor. A credit takes the header's own figure: a cast resident
-whose header cannot be read is credited nothing, because the price's worst case
-there is an upper bound, and crediting it would admit at the agreement what the
-rank's own ladder refuses after its drop. The arena a stock load retains is not credited, nor is a
+copy and the floor. A credit is never more than the drop returns, or the fleet
+admits what a rank's own ladder refuses after its drop: an uncast resident is
+credited its file, a cast one each float tensor at the smaller of its stored
+and its cast size (ComfyUI builds fp32 auxiliaries at the cast's width on a
+copying load, and a widening cast is unmeasured), and a cast one whose header
+cannot be read nothing. The price's own cast figure is an upper bound and is
+never a credit, and the sentences say the drop "frees at least" the credit. The
+quote endpoint runs outside the GPU lock, so its figures are bound to the
+request key the snapshot publishes for each slot: a slot whose resident changed
+between the two reads gets no credit and no old-model figures. The arena a stock load retains is not credited, nor is a
 slab, comfy-managed or FSDP resident, a slab rung's own price, or a slot whose
 load or cleanup is in flight: those still price as held. Until 2026-11-05 every
 swap priced as held, charging a same-slot swap its old resident twice; once a

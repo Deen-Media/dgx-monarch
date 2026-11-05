@@ -321,39 +321,40 @@ def cast_width(dtype: object) -> int:
     return _CAST_WIDTHS.get(name, _WIDEST_CAST)
 
 
-def cast_resident_bytes(path: str, dtype: object) -> int:
+def cast_resident_bytes(path: str, dtype: object, *, lower: bool = False) -> int:
     """The device copy a load cast to ``dtype`` builds, read from the header.
 
-    Every float tensor of 16 or 8 bits is charged at the target width, F32 and
-    F64 at no less than their stored size, and everything else, a quantized
-    layer whole, at its stored size. A header this parser cannot read (not
-    safetensors, a dtype it does not know, a damaged file) prices the worst
-    case: no castable element is narrower than a byte, so the file times the
-    target width. The file's own size is the worst case only for a cast that
-    narrows; it would understate a bf16 cast of an fp8 file by half.
+    The price's upper bound: every float tensor of 16 or 8 bits at the target
+    width, F32 and F64 at no less than their stored size, everything else, a
+    quantized layer whole, as stored. An unreadable header (not safetensors, an
+    unknown dtype, a damaged file) prices the file times the target width, since
+    no castable element is narrower than a byte. ``lower`` gives the bound a
+    swap credit takes instead: every float at the smaller of its stored and cast
+    size, so it never exceeds the file or the copy, and nothing for a header it
+    cannot read, because the credit must not exceed what the drop returns.
     """
     width = cast_width(dtype)
     size = os.path.getsize(path) if os.path.exists(path) else 0
     try:
         tensors = read_safetensors_header(path).tensors
     except (OSError, SafetensorsHeaderError) as exc:
-        log.warning("the cast price could not read the header of %s (%s); charging the "
-                    "widest copy the cast could build, %.1f GiB",
-                    os.path.basename(path), type(exc).__name__, size * width / (1 << 30))
-        return size * width
+        log.warning("the cast price could not read the header of %s (%s); %s",
+                    os.path.basename(path), type(exc).__name__, "crediting nothing" if lower
+                    else f"charging the widest copy the cast could build, {gib(size * width)} GiB")
+        return 0 if lower else size * width
     quantized = {name[: -len(marker)] for name in tensors for marker in _QUANT_MARKERS
                  if name.endswith(marker)}
     total = 0
     for name, tensor in tensors.items():
         cast = math.prod(tensor.shape) * width
-        if name.rpartition(".")[0] in quantized:
+        if tensor.dtype not in _CASTABLE | _WIDE_FLOATS:
             total += tensor.nbytes
-        elif tensor.dtype in _CASTABLE:
-            total += cast
-        elif tensor.dtype in _WIDE_FLOATS:
-            total += max(tensor.nbytes, cast)
+        elif lower:
+            total += min(tensor.nbytes, cast)
+        elif name.rpartition(".")[0] in quantized:
+            total += tensor.nbytes
         else:
-            total += tensor.nbytes
+            total += cast if tensor.dtype in _CASTABLE else max(tensor.nbytes, cast)
     return total
 
 

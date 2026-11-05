@@ -278,9 +278,10 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     A drop of a stock resident returns its GPU copy in-process: on 2026-11-05
     the head rose from 58.7 to 88.5 GiB, and from 57.9 to 88.5, as the store
     dropped a 26.6 GiB bf16-cast Wan 2.2 DiT. So that copy is credited, the file
-    or a cast's own, as the quote endpoint reports it in the slot's snapshot
-    entry (``actor/worker_capacity._resident_bytes``); the arena a stock load
-    retains is not. A slab, comfy-managed or FSDP resident, and a slot whose
+    or a lower bound of a cast's own, as the quote endpoint reports it in the
+    slot's snapshot entry (``actor/worker_capacity._resident_bytes``) when the
+    entry still describes the resident those figures were read from; the arena
+    a stock load retains is not. A slab, comfy-managed or FSDP resident, and a slot whose
     load or cleanup is in flight, are priced as held.
     """
     from dataclasses import replace

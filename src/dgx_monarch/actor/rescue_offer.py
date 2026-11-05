@@ -138,8 +138,8 @@ def _stock_words(fit: StockFit) -> str:
     Worker drops first; an in-place LoRA change keeps the hot-swap words."""
     if fit.dropped and fit.credit_bytes > 0:
         return (f"{capacity_fit.stock_terms(fit.size_gib)}, after the Worker drops "
-                f"{display_name(fit.dropped)}, whose {capacity_fit.gib(fit.credit_bytes)} GiB "
-                "copy its slot holds,")
+                f"{display_name(fit.dropped)}, which frees at least "
+                f"{capacity_fit.gib(fit.credit_bytes)} GiB,")
     return capacity_fit.stock_terms(fit.size_gib, fit.credit_bytes)
 
 

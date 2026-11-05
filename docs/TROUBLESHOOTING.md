@@ -2123,8 +2123,8 @@ ledger row; then queue again, and the load is priced again on fresh Workers.
 Tick Always clear and retry on the card, or the toggle of that name under
 "Consents and waivers", and the driver clears and retries by itself, at most
 once per load. When the price already counted the drop of the model the load
-replaces, the card says instead that the box "still holds memory that loading
-<name> earlier left behind", since a clear gives that back. When a clear would
+replaces, the card says instead that the box "still holds about N GiB that
+earlier loads left behind", since a clear gives that back. When a clear would
 not make room, the refusal says so, with the whole price a cleared box would
 need, and offers no card. A model this graph loads, or one the request reuses, is never
 the old model. A card resets only the attached mesh that refused: if that mesh
@@ -4772,8 +4772,8 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
 Read the numbers with two limits in mind. Each rank prices against what it
 holds at that moment. A load that replaces the stock model in its own slot is
 priced after the Worker drops that model, which the Worker does before every
-such load, and the refusal says so: "after the Worker drops flux1-dev, the 22.2
-GiB copy its slot holds". Any other model is counted as still held, so a card
+such load, and the refusal says so: "after the Worker drops flux1-dev, which
+frees at least 22.2 GiB". Any other model is counted as still held, so a card
 can quote a figure taken with it resident, and it says so by name: "the old
 model (flux1-dev) is still loaded on head". The quote does not price shared memory
 either: a rank holding a weight slab in the other slot, or a slab retained by a

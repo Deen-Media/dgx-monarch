@@ -165,7 +165,7 @@ def test_a_credited_swap_weighs_a_clear_against_the_uncredited_price():
         decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
     text = str(raised.value)
     assert ("priced a stock load of qwen_image_2512_bf16.safetensors after the Worker drops "
-            "flux1-dev, the 22.2 GiB copy its slot holds. Beyond that copy the load needs "
+            "flux1-dev, which frees at least 22.2 GiB. Beyond that the load needs "
             "22.7 GiB") in text
     assert "does not model the drop" not in text
     offer = old_model.offer_of(raised.value)
@@ -319,6 +319,7 @@ def test_the_names_the_card_uses_are_the_ones_the_driver_and_the_loader_use():
 class _Stored:
     def __init__(self, name):
         self.base_key = (name, ())
+        self.request_key = ("x",)      # the key the test snapshot publishes for it
 
 
 def test_the_worker_reports_each_residents_name_size_and_the_arena(monkeypatch):

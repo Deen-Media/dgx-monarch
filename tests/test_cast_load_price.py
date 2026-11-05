@@ -338,7 +338,8 @@ def _endpoint_row(monkeypatch, tmp_path, *, want: str, held: str, available: flo
         slab_weights=slab_weights, lora_low_rss=True, slab_blocked_reason="",
         family_override=None, uncond=None, snapshot=lambda: dict(snapshot),
         current=types.SimpleNamespace(base_key=(held, held_key), fsdp_checkpoint_pin=None,
-                                      slab_auto_retry=False))
+                                      slab_auto_retry=False,
+                                      request_key=(held, held_key, (), "fp16")))
     worker = types.SimpleNamespace(rank=0, world=2, topology={}, _setup_key=("ready",),
                                    store=store, uma_reserve_gb=0.0)
     assert _to_comfy_model_options(CAST)["dtype"] is torch.bfloat16
@@ -379,7 +380,7 @@ def test_the_held_head_still_refuses_after_the_credit(tmp_path, monkeypatch):
                keep=frozenset({WAN22_NAME, WAN22_HIGH}))
     text = str(raised.value)
     assert (f"rank 0 (host the-head) priced a stock load of {WAN22_NAME} after the Worker drops "
-            "wan2.2_t2v_high_noise_14B_fp16, the 26.6 GiB copy its slot holds. Beyond that copy "
+            "wan2.2_t2v_high_noise_14B_fp16, which frees at least 26.6 GiB. Beyond that "
             "the load needs 34.3 GiB, a 26.6 GiB file cast to a 26.6 GiB copy, plus the host copy "
             "it is placed from, and 12.2 GiB of unified memory is available, 22.1 GiB short.") in text
     assert "What would fit: set the loader's weight_dtype to default" in text
@@ -461,8 +462,8 @@ def test_a_rescue_card_on_a_credited_swap_names_the_model_the_worker_drops(tmp_p
     assert row.measured["dropped"] == FLUX1
     reason = row.descriptor["human_reason"]
     assert ("needs 46.9 GiB of unified memory under stock residency (a 30.5 GiB file plus "
-            "the host copy it is placed from), after the Worker drops flux1-dev, whose 22.2 GiB "
-            "copy its slot holds, and only 44.0 GiB is available.") in reason
+            "the host copy it is placed from), after the Worker drops flux1-dev, which frees "
+            "at least 22.2 GiB, and only 44.0 GiB is available.") in reason
     assert "LoRA" not in reason and "copy of this file" not in reason
 
 
@@ -476,8 +477,8 @@ def test_a_dtype_change_on_the_held_file_is_a_swap_not_a_lora_change(tmp_path, m
     with pytest.raises(FleetCapacityError) as raised:
         decide(_fleet(head, sibling), 2, unet_name=PLAIN_FP8, keep=frozenset({PLAIN_FP8}))
     text = str(raised.value)
-    assert ("priced a stock load of plain_fp8.safetensors after the Worker drops plain_fp8, the "
-            "13.3 GiB copy its slot holds. Beyond that copy the load needs 32.9 GiB, a 13.3 GiB "
+    assert ("priced a stock load of plain_fp8.safetensors after the Worker drops plain_fp8, "
+            "which frees at least 13.3 GiB. Beyond that the load needs 32.9 GiB, a 13.3 GiB "
             "file cast to a 26.6 GiB copy, plus the host copy it is placed from, and 20.0 GiB") in text
     assert "LoRA" not in text
 
@@ -492,11 +493,12 @@ def test_a_card_on_a_credited_swap_names_what_the_dropped_model_left_behind(tmp_
     with pytest.raises(old_model.OldModelRefusal) as raised:
         decide(_fleet(head, sibling), 2, unet_name=ANIMATE, keep=frozenset({ANIMATE}))
     text = str(raised.value)
-    assert ("the-head still holds memory that loading flux1-dev earlier left behind, and "
+    assert ("the-head still holds about 12.0 GiB that earlier loads left behind, and "
             "wan_animate_2_bf16 does not fit beside it.") in text
     assert "The old model (flux1-dev) is still loaded" not in text
     offer = old_model.offer_of(raised.value)
-    assert offer is not None and old_model.card_body(offer).startswith("the-head still holds memory")
+    assert offer is not None and old_model.card_body(offer).startswith(
+        "the-head still holds about 12.0 GiB that earlier loads left behind")
 
 
 def test_a_credited_swap_a_clear_cannot_fix_says_its_figure_is_the_whole_price(tmp_path, monkeypatch):
@@ -506,10 +508,23 @@ def test_a_credited_swap_a_clear_cannot_fix_says_its_figure_is_the_whole_price(t
     with pytest.raises(FleetCapacityError) as raised:
         decide(_fleet(head, sibling), 2, unet_name=ANIMATE, keep=frozenset({ANIMATE}))
     text = str(raised.value)
-    assert "Beyond that copy the load needs 46.9 GiB" in text
+    assert "Beyond that the load needs 46.9 GiB" in text
     assert ("A clear would not make room: wan_animate_2_bf16 needs 69.1 GiB on the-head, and a "
             "cleared box would have about 52.2 GiB. That is the whole price, because a cleared "
             "box holds no copy for the Worker to drop.") in text
+
+
+@pytest.mark.parametrize("arena", [0.0, 2.0])
+def test_a_refusal_no_clear_can_fix_never_claims_memory_was_left_behind(tmp_path, monkeypatch, arena):
+    """R3-1: with nothing (or too little) left behind, the plain refusal names no
+    left-behind memory; the no-room sentence gives the whole price instead."""
+    head = _swap(monkeypatch, tmp_path, 30.0, want=ANIMATE, held=FLUX1, slab_weights=False, arena=arena)
+    sibling = _swap(monkeypatch, tmp_path, 90.0, want=ANIMATE, held=FLUX1, slab_weights=False)
+    with pytest.raises(FleetCapacityError) as raised:
+        decide(_fleet(head, sibling), 2, unet_name=ANIMATE, keep=frozenset({ANIMATE}))
+    text = str(raised.value)
+    assert "left behind" not in text and "still holds" not in text
+    assert "That is the whole price, because a cleared box holds no copy" in text
 
 
 def test_an_unreadable_header_credits_nothing_and_the_fleet_refuses_together(tmp_path, monkeypatch):
@@ -533,3 +548,68 @@ def test_explicit_slab_over_a_held_model_does_not_claim_a_price_it_never_took(tm
         decide(_fleet(head, head), 2, unet_name=WAN22_NAME, keep=frozenset({WAN22_NAME}))
     assert "does not model the drop" not in str(raised.value)
     assert "slab_weights=on cannot load a checkpoint the loader casts" in str(raised.value)
+
+
+# Round four: the two bot findings on e37b6fe.
+
+def test_a_cast_resident_is_credited_no_more_than_its_drop_can_return(tmp_path, monkeypatch):
+    """A credit must be a lower bound. ComfyUI builds fp32 auxiliaries at the cast's
+    width on a copying load, and a widening cast is unmeasured, so each float tensor
+    is credited at the smaller of its stored and its cast size."""
+    held = "mixed_fp16_fp32.safetensors"
+    elements = 1 << 30
+    files = {PLAIN_FP8: SWAP_FILES[PLAIN_FP8], ANIMATE: SWAP_FILES[ANIMATE]}
+    _write(tmp_path / held, {"blocks.0.w": ("F16", [elements]), "blocks.0.norm": ("F32", [elements])})
+    mixed = _endpoint_row(monkeypatch, tmp_path, want=ANIMATE, held=held, available=40.0,
+                          want_options=None, held_options=CAST, slab_weights=False, files=files)
+    assert mixed.measured is not None
+    assert mixed.measured["credit_bytes"] == 2 * elements + 2 * elements     # fp32 at bf16 width
+    assert capacity_fit.cast_resident_bytes(str(tmp_path / held), torch.bfloat16) == 6 * elements
+    widened = _endpoint_row(monkeypatch, tmp_path, want=ANIMATE, held=PLAIN_FP8, available=40.0,
+                            want_options=None, held_options=CAST, slab_weights=False, files=files)
+    assert widened.measured is not None
+    assert widened.measured["credit_bytes"] == WAN22_ELEMENTS        # the stored fp8 bytes, not 2x
+    assert capacity_fit.cast_resident_bytes(str(tmp_path / PLAIN_FP8), torch.bfloat16,
+                                            lower=True) == WAN22_ELEMENTS
+
+
+def test_a_resident_that_changes_under_the_quote_gets_no_credit(tmp_path, monkeypatch):
+    """The endpoint runs outside the GPU lock. If the slot's resident changes between
+    the facts and the snapshot, the snapshot's model must not inherit the old one's
+    credit or its old-model figures."""
+    import types
+
+    from dgx_monarch.actor import actor_footprint, model_store, worker_capacity
+
+    paths = {name: _write(tmp_path / name, {"blocks.0.w": (SWAP_FILES[name][0], [SWAP_FILES[name][1]])})
+             for name in (FLUX1, ANIMATE)}
+    small = _write(tmp_path / "small.safetensors", {"blocks.0.w": ("BF16", [1 << 28])})
+    paths["small.safetensors"] = small
+    monkeypatch.setattr(model_store, "resolve_model_path", lambda _kind, name: paths[name])
+    monkeypatch.setattr(model_store, "_slab_capable_path", lambda _path: True)
+    monkeypatch.setattr(worker_capacity, "_pinned_staging", lambda: False)
+    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: 0)
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 40 * _GIB)
+
+    def resident(name):
+        return types.SimpleNamespace(base_key=(name, ()), fsdp_checkpoint_pin=None,
+                                     slab_auto_retry=False, request_key=(name, (), (), "bf16"))
+
+    store = types.SimpleNamespace(slab_weights=False, lora_low_rss=True, slab_blocked_reason="",
+                                  family_override=None, uncond=None, current=resident(FLUX1))
+
+    def snapshot():
+        store.current = resident("small.safetensors")       # a pipelined load lands here
+        return {"cond": {"residency": "stock", "residency_rung": "explicit_stock", "quant": "bf16",
+                         "request_key": repr(store.current.request_key)},
+                "uncond": None, "cleanup_failed_slots": []}
+
+    store.snapshot = snapshot
+    worker = types.SimpleNamespace(rank=0, world=2, topology={}, _setup_key=("ready",),
+                                   store=store, uma_reserve_gb=0.0)
+    (row,) = worker_capacity.quote(worker, {"specs": [
+        {"unet_name": ANIMATE, "options": {}, "loras": [], "slot": "cond"}],
+        "rescue_consent": None})["quotes"]
+    assert row["would_load"] == "swap" and "credit_bytes" not in (row["measured"] or {})
+    assert row["resident_bytes"]["cond"] == 0 and row["resident_names"]["cond"] is None
