@@ -471,6 +471,19 @@ families that call comfy-kitchen's `adaln` or `rms_adaln` on sharded rows
 are unchecked
 ([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
 
+Ranks must also agree on each model call's batch. ComfyUI's
+`_calc_cond_batch` runs cond and uncond as one call only when its estimate of
+that call, times 1.5, is under the free memory the model's patcher reports, and
+on unified memory each rank reports its own box (`actor/comfy_bridge.py`). A
+short head could split a pair the sibling batched, and every sharded collective
+of the call then differs in size and count: on 2026-11-04 a Wan 2.2
+text-to-video proof render stalled for 600 s with rank 1's collectives carrying
+twice rank 0's elements. So above world 1 a `CALC_COND_BATCH` wrapper takes the
+minimum of every rank's figure over the default process group once per call and
+lets ComfyUI's rule run against it (`actor/cond_batch_agreement.py`), installed
+beside the partial-load guard on every base either slot loads. Every rank takes
+the leanest rank's batch, for one 8-byte all-reduce per model call.
+
 Adapter acceptance requires identical cross-rank latent statistics and
 fidelity against a single-GPU reference within the measured noise floor.
 
@@ -1519,6 +1532,19 @@ handler, which otherwise allows execution when estimation fails.
 checkpoint, the Gate has no stock reference and returns INCONCLUSIVE. This is
 unproven correctness, class U, rather than measured error, class K.
 
+Before the leg counts as unable to load, it frees what the driver host can get
+back, with the two steps the render-site checks take ("The driver frees what
+ComfyUI can reload before it refuses", below): it unloads the models ComfyUI
+holds there, then asks the actors to release their allocator caches, and runs
+the leg once more after each (`nodes/gate_cross_mode.py`). The ceremony's
+conditioning is already encoded, and ComfyUI reloads its models when the graph
+next needs them. The driver's text encoder counts against the head's stock
+price: on 2026-11-04 Flux 2 fp8mixed priced 74.3 GiB against 63.0 GiB there,
+with its 33 GiB encoder loaded, on a fresh pair whose head read 97.5 GiB
+before the graph ran. Only the last answer counts. Without a LoRA stack this
+leg is the whole proof, so its refusal, not the swap cycle, is the reason the
+verdict gives.
+
 With active capacity-rescue consent and no LoRA stack, this outcome keeps
 `slab_weights` and its required `lora_low_rss` enabled. The consent is the
 panel click, the standing auto-rescue toggle or `DGXM_AUTO_RESCUE`, or
@@ -1656,7 +1682,8 @@ decode VAE, §5.6) and runs the checks
 once more from the one that refused. Only the last answer refuses, and it says
 what was unloaded and released and the readings around each step, which keeps
 the class C rule of offering the fitting strategy first. Each step runs at most
-once per render, only after a check refused, never while a render, a result
+once per render, and once more in the identity gate's stock reference leg
+("Where the ceremony cannot help"), only after a check refused, never while a render, a result
 lease or a Worker call is live in the driver, and never reaches a Worker
 resident or ComfyUI's node output cache. The loader windows take neither,
 because the graph still needs its text encoder and VAEs before sampling. Nor
@@ -1681,6 +1708,22 @@ stock-load rescue before any allocation. Ranks must agree on the descriptor's
 identity and other rank-invariant fields; their memory measurements may differ.
 The offer uses the ordinary consent-registration path. World 1 needs no
 agreement.
+
+**A LoRA change on a held base is no replacement.** The quote reads a request
+whose key differs from the slot's resident as a swap and prices it with that
+resident held. When the resident is a stock copy of the same file and the store
+would keep it and re-apply the new stack in place (`actor/store_bake.swaps_in_place`,
+published in the store snapshot), the load places no second copy of the file.
+So the stock price credits the file's own copy and still charges the host copy
+of the weights the stack patches and the floor
+(`capacity_lora_bake.credit_hot_swap`). Explicit `slab_weights=on` drops the
+stock resident first, and a base the low-RSS bake consumed with no un-bake
+record reloads, so neither is credited. On 2026-11-04 an explicit-preset
+Wan-Animate 2 graph loaded its bare BF16 base at the UNET Loader and then asked
+for the base and its LoRA: priced whole, the change needed 69.1 GiB against
+61.8 GiB on the head, and credited it needs 38.6 GiB. The INT8 file took the
+same path and grew the actor's host memory by 20.4 GiB against 22.1 GiB priced
+this way.
 
 **The agreement does not correct a price.** It enforces the lowest-headroom
 rank's estimate before allocation; an underestimated load can still exhaust

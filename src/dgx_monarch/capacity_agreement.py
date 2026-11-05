@@ -28,7 +28,7 @@ from .actor.capacity_quote import (
     WOULD_LOAD_SWAP,
     RankPrice,
 )
-from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib
+from .capacity_fit import PROBE_PREFLIGHT_WALL, SlabFit, gib, stock_terms
 from .consent_descriptor import ConsentDescriptor, SlabResidencyRescueOffer
 from .delivery_faults import WorkerDeliveryError
 from .gate_audit_evidence import measured_tag
@@ -223,7 +223,7 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> st
         if lora:
             second_term += f" and {lora} GiB for the LoRA stack's bake"
     else:
-        kind, second_term = "stock", "plus the host copy it is placed from"
+        kind, second_term = "stock", stock_terms(int(measured.get("credit_bytes") or 0))
     return (
         f"{answer.where} priced a {kind} load of {unet_name}: the load needs "
         f"{needed} GiB, a {weights} GiB file {second_term}, and {avail} GiB of "

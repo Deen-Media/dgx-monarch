@@ -1202,6 +1202,12 @@
       "test_garbage_lines_cannot_mint_a_pass_verdict": "ef205763e976cf17",
       "test_intact_fail_stays_sticky_through_damage_and_duplicate_rows": "0a12118794c9707d"
     },
+    "tests/test_gate_stock_reference_unload.py": {
+      "test_a_busy_driver_keeps_its_models_and_the_leg_refuses_once": "25fef1e5dec4c123",
+      "test_a_reference_that_still_cannot_load_names_itself_as_the_reason": "c8637e63f5221155",
+      "test_the_off_switch_keeps_one_stock_attempt": "f31b49aba2c8d355",
+      "test_the_stock_reference_loads_after_the_driver_frees_its_encoder": "19cfbce3a22a508a"
+    },
     "tests/test_h3_context_windows.py": {
       "test_a_clip_no_longer_than_one_window_is_one_call_over_the_whole_clip": "8d6075347b2a315f",
       "test_a_graph_without_the_node_keeps_its_request_byte_for_byte": "81fb9d3a40941e44",

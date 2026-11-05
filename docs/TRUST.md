@@ -343,7 +343,7 @@ copied from historical evidence.
    revoked, and gain no denial. The first explicit-`on` or Fleet render of the
    combination then runs its own ceremony instead of taking a quarantine from a
    ceremony that never ran slab residency (see
-   [`gate_inconclusive.py:269-283`](../src/dgx_monarch/nodes/gate_inconclusive.py#L269-L283 "anchor:session_denial_tokens")). A sibling `FAIL` row written before the cross-leg rule
+   [`gate_inconclusive.py:274-288`](../src/dgx_monarch/nodes/gate_inconclusive.py#L274-L288 "anchor:session_denial_tokens")). A sibling `FAIL` row written before the cross-leg rule
    retires with the protocol and package binding above;
    [docs/TROUBLESHOOTING.md #81](TROUBLESHOOTING.md#81-explicit-slab-residency-still-reads-quarantined-after-a-lora-only-gate-fail) carries the operator recovery. Coverage for the
    cross-leg boundary is
@@ -1064,7 +1064,7 @@ copied from historical evidence.
   [`model_store.py:407-450`](../src/dgx_monarch/actor/model_store.py#L407-L450 "anchor:_drop"),
   [`model_store.py:464-464`](../src/dgx_monarch/actor/model_store.py#L464-L464 "anchor:unload_all"),
   [`model_store.py:472-475`](../src/dgx_monarch/actor/model_store.py#L472-L475 "anchor:release_retained_cleanup"), and
-  [`model_store.py:483-497`](../src/dgx_monarch/actor/model_store.py#L483-L497 "anchor:snapshot").
+  [`model_store.py:483-498`](../src/dgx_monarch/actor/model_store.py#L483-L498 "anchor:snapshot").
   Retention, refusal, and recovery are covered by
   [`test_slab.py:256-279`](../tests/test_slab.py#L256-L279 "anchor:test_close_attempts_annex_after_primary_arena_failure"),
   [`test_slab.py:670-681`](../tests/test_slab.py#L670-L681 "anchor:test_close_retains_live_export_until_retry"),

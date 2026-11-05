@@ -68,6 +68,10 @@ class StockFit:
     size_bytes: int
     avail_bytes: int | None
     skipped_reason: str = ""
+    # The copy of this file the slot already holds when a LoRA change keeps the
+    # base in place (capacity_lora_bake.credit_hot_swap); appended last so every
+    # positional construction keeps its meaning.
+    credit_bytes: int = 0
 
     @property
     def size_gib(self) -> float:
@@ -82,7 +86,7 @@ class StockFit:
         """The load-path transient the verdict compares against."""
         if not self.applies:
             return int(self.size_bytes)
-        return stock_required_bytes(self.size_bytes)
+        return stock_required_bytes(self.size_bytes) - max(int(self.credit_bytes), 0)
 
     @property
     def required_gib(self) -> float:
@@ -95,7 +99,12 @@ class StockFit:
         return round((self.avail_bytes - self.required_bytes) / (1 << 30), 1)
 
     def measured(self) -> dict[str, object]:
-        """The consent card's and the v9 ledger's block: bytes for the schema, GiB to read."""
+        """The consent card's and the v9 ledger's block: bytes for the schema, GiB to read.
+
+        ``credit_bytes`` appears only on a credited price, so every other block
+        keeps the keys the ledger and the cards already read.
+        """
+        credit = {"credit_bytes": int(self.credit_bytes)} if self.credit_bytes > 0 else {}
         return {
             "probe": PROBE_STOCK_LOAD_FIT,
             "checkpoint_bytes": int(self.size_bytes),
@@ -110,7 +119,15 @@ class StockFit:
             "headroom_gib": self.headroom_gib,
             "fits": bool(self.fits),
             "applies": bool(self.applies),
+            **credit,
         }
+
+
+def stock_terms(credit_bytes: int = 0) -> str:
+    """What a stock price charges beside the file, as the cards print it after "a N GiB file"."""
+    if credit_bytes:
+        return "this slot already holds, plus the host copy of the weights its LoRA stack patches"
+    return "plus the host copy it is placed from"
 
 
 @dataclass(frozen=True, slots=True)

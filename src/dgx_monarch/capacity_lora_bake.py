@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from .safetensors_header import DTYPE_BITS, TensorDescriptor, read_safetensors_header
 
@@ -214,21 +215,53 @@ def swap_credit_bytes(held: object, request_key: str, size_bytes: int, context: 
     the quote still priced it as a swap. Explicit slab_weights=on and a pending
     slab retry reload, so they get none. Evidence: docs/VALIDATION.md, the LoRA bake section.
     """
-    import ast
-
     if (context or {}).get("would_load") != "swap" or slab_weights != "auto":  # WOULD_LOAD_SWAP
         return 0
-    if not isinstance(held, dict) or held.get("residency") != "stock":
-        return 0
-    try:
-        mine, theirs = ast.literal_eval(request_key), ast.literal_eval(held.get("request_key") or "")
-    except (ValueError, SyntaxError):
-        return 0
-    # (*base_key, lora_signature, quant): the same base checkpoint, any stack.
-    if not (isinstance(mine, tuple) and isinstance(theirs, tuple) and len(mine) > 2
-            and mine[:-2] == theirs[:-2] and mine[-1] == theirs[-1]):
+    if not _same_base_stock_resident(held, request_key):
         return 0
     return max(int(size_bytes), 0)
 
 
-__all__ = ["lora_bake_bytes", "patched_base_keys", "swap_credit_bytes"]
+def _same_base_stock_resident(held: object, request_key: str) -> bool:
+    """Whether the slot holds a stock copy of this request's base, whatever its stack."""
+    import ast
+
+    if not isinstance(held, dict) or held.get("residency") != "stock":
+        return False
+    try:
+        mine, theirs = ast.literal_eval(request_key), ast.literal_eval(held.get("request_key") or "")
+    except (ValueError, SyntaxError):
+        return False
+    # (*base_key, lora_signature, quant): the same base checkpoint, any stack.
+    return (isinstance(mine, tuple) and isinstance(theirs, tuple) and len(mine) > 2
+            and mine[:-2] == theirs[:-2] and mine[-1] == theirs[-1])
+
+
+def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | None,
+                    slab_weights: object) -> Any:
+    """The stock price of a LoRA change the store makes in place, with the held copy credited.
+
+    The quote reads such a change as a swap and would price a whole stock load
+    beside the base the slot already holds. The store does not load it again:
+    ``store_bake.swaps_in_place`` says it keeps the base and re-applies the
+    stack, which places at most the host copy of the weights the stack patches.
+    So the file's own copy is credited and the host copy and the floor stay
+    charged. Measured on 2026-11-04, the INT8 Wan-Animate 2 hot swap on a
+    freshly loaded base grew the actor's host memory by 20.4 GiB against 22.1
+    GiB priced this way; the BF16 file was refused at 69.1 GiB against 61.8 GiB
+    available, where this price is 38.6 GiB. An explicit ``slab_weights=on`` drops a stock
+    resident before it loads, so it gets no credit, and neither does a resident
+    the store would reload.
+    """
+    from dataclasses import replace
+
+    if ((context or {}).get("would_load") != "swap" or slab_weights is True  # WOULD_LOAD_SWAP
+            or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None
+            or not isinstance(held, dict) or held.get("swaps_in_place") is not True
+            or not _same_base_stock_resident(held, request_key)):
+        return fit
+    credited = replace(fit, credit_bytes=max(int(fit.size_bytes), 0))
+    return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
+
+
+__all__ = ["credit_hot_swap", "lora_bake_bytes", "patched_base_keys", "swap_credit_bytes"]

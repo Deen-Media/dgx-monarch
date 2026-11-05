@@ -13,7 +13,7 @@ from __future__ import annotations
 import socket
 from collections.abc import Callable
 
-from .. import consent_descriptor
+from .. import capacity_fit, consent_descriptor
 from ..capacity_fit import SlabFit, StockFit
 from ..consent_descriptor import ConsentDescriptor
 from ..consent_kinds import KIND_SPECS
@@ -160,7 +160,7 @@ def build_descriptor(
         measured=measured,
         human_reason=(
             f"{name} needs {fit.required_gib} GiB of unified memory under stock residency "
-            f"(a {fit.size_gib} GiB file plus the host copy it is placed from) and only "
+            f"(a {fit.size_gib} GiB file {capacity_fit.stock_terms(fit.credit_bytes)}) and only "
             f"{fit.avail_gib} GiB is available. Zero-copy slab residency fits it. Image "
             "identity on the slab path is not proven for this family yet, so this load is "
             "availability-only evidence, never an accuracy verdict."

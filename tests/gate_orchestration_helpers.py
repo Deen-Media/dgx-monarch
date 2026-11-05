@@ -51,8 +51,14 @@ def _cross_mode_rig(
     cleanup_unload_error=None,
     cleanup_unload_response=None,
     cleanup_latch_errors=(),
+    driver_unload=False,
 ):
     events = []
+    if not driver_unload:
+        # The stock reference retries once the driver has freed what it can
+        # (nodes/gate_cross_mode.py). Suites written before that retry script
+        # one stock attempt, so they run with the documented off switch.
+        monkeypatch.setenv("DGXM_DISABLE_DRIVER_UNLOAD", "1")
 
     class Handle:
         setup_generation = 4

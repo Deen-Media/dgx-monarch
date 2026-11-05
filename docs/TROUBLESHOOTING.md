@@ -3136,6 +3136,25 @@ or `slab_weights` into the graph: each render of the failed combination turns
 both settings off for itself
 ([#67](#67-what-auto_gateoff-costs-and-what-it-does-not), item 2).
 
+**A slab check whose stock comparison cannot load.** With no LoRA stack and
+slab residency engaged, as for Flux 2 and Krea 2 under `slab_weights` auto, the
+check compares a slab render with a stock one, and the stock load needs the
+file, the host copy it is placed from and a floor. On the head the driver's own
+models count against that price: the Flux 2 text encoder alone is 33 GiB.
+Before the comparison gives up, the driver unloads the models ComfyUI holds on
+its host, then asks the actors to release their allocator caches, and loads the
+stock reference once more after each. ComfyUI reloads its models when the graph
+next needs them, and the check's conditioning is already encoded. A check that
+then compares reaches its own verdict. One that still cannot load says so:
+
+    WARNING identity gate INCONCLUSIVE (auto_first_use, <model>): the stock
+    reference cannot load here (capacity refusal), so the slab render has
+    nothing to be compared with
+
+and disables both settings for that combination, like any other unfinished
+check, so your render is priced as a stock load. `DGXM_DISABLE_DRIVER_UNLOAD=1`
+turns the unload and the release off here too.
+
 **A check that a class-K guard stopped disables no residency setting.** A check
 renders without accuracy waivers deliberately, so a measured guard such as
 `shard_quant_scale:chroma` or `sol_attn` refuses inside it whether or not you
@@ -3719,6 +3738,17 @@ reduce the resolution or use a smaller or lower-precision checkpoint.
 Before it refuses, the driver unloads the models ComfyUI holds on the driver
 host and prices again ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)).
 `DGXM_DISABLE_ACTIVATION_PREFLIGHT=1` on the driver is its only bypass.
+
+**ComfyUI also picks each model call's batch per box.** It runs cond and
+uncond as one call only when its estimate of that call, times 1.5, is under the
+box's free memory, so a short box could run them as two calls while the other
+ran one. Under Ulysses, ring, FSDP or cfg-parallel the ranks then wait on
+collectives of different sizes until the sample deadline: no refusal, only a
+stall, with one rank's collectives carrying twice the other's elements. Every
+rank now reads the leanest rank's free memory for that choice, one 8-byte
+exchange per model call, and each box's worker journal says so once per
+process: `cond batch agreement: ComfyUI's cond batch rule reads the leanest
+rank's free memory on every rank`.
 
 **When the short rank holds a slab or an FSDP shard,** read the load lines
 first. Both builds put every weight on the compute device without ComfyUI's own

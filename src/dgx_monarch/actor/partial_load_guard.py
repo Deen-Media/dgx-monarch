@@ -163,11 +163,17 @@ def install(base_patcher: Any, world: int | None) -> None:
     """Register the guard on a freshly loaded base patcher, once, above world 1.
 
     Read the key before writing it: comfy appends on a second add under one
-    key, so a second install would run the exchange twice per sample.
+    key, so a second install would run the exchange twice per sample. The
+    cond batch agreement rides the same install: it answers the same fault,
+    ranks that decide from their own box's free memory, one call later.
     """
     if not world or int(world) <= 1:
         return
     import comfy.patcher_extension as pe
+
+    from . import cond_batch_agreement
+
+    cond_batch_agreement.install(base_patcher, world)
 
     options = base_patcher.model_options
     if pe.get_wrappers_with_key(

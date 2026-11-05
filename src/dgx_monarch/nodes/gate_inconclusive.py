@@ -131,6 +131,11 @@ def record_inconclusive(
                  "INCONCLUSIVE recorded, residency levers unchanged", origin, model)
         return kind
     reasons = "; ".join(result.get("inconclusive_reasons") or ())
+    if result.get("proof_kind") == "slab_cross_residency":
+        # No swap ran: the slab-against-stock comparison is the proof here.
+        log.warning("identity gate INCONCLUSIVE (%s, %s): %s", origin, model,
+                    reasons or "see cross_mode")
+        return kind
     log.warning("identity gate INCONCLUSIVE (%s, %s): %s; the swaps did not take "
                 "the lazy path, so there is nothing to compare",
                 origin, model, reasons or "see swap_transitions")

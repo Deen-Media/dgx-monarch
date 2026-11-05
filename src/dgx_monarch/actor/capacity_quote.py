@@ -475,7 +475,8 @@ def price(
     if fsdp_launch:
         return _fsdp_rung(path, unet_name, model_options, world, size, charged, context)
 
-    fit = _charge(fit_probe(path, model_options), charged)
+    fit = capacity_lora_bake.credit_hot_swap(_charge(fit_probe(path, model_options), charged),
+                                             snapshot.get(slot), request_key, context, slab_weights)
     explicit_stock = slab_weights is False or compile_blocks_slab
     if not fit.applies or fit.fits:
         rung = RUNG_EXPLICIT_STOCK if explicit_stock else RUNG_STOCK_FITS
