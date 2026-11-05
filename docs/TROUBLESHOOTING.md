@@ -6719,12 +6719,13 @@ families needs stock ComfyUI on one GPU.
 Kromoss) with a LoRA in its stack refuses class P before dispatch, or on
 every Worker while the model loads, with a message that opens "moss_image:
 an INT8 file with a LoRA", names the LoRA, and goes on "rendered far from
-stock ComfyUI on the cluster on 2026-10-21. dgx-monarch bakes the LoRA into
+stock ComfyUI on the cluster on 2026-10-21. dgx-monarch baked the LoRA into
 the quantized weights as stock's classic loader does, and stock with
 DynamicVRAM off rendered the Kromoss INT8 file with its DMD2 LoRA as far from
-its own default, so this release refuses the pair on every topology before
-any weight moves: each one bakes the LoRA the same way, mode=local on one GPU
-included. Render this graph in stock ComfyUI on one GPU instead, with its
+its own default. The Workers now bake stock's cast-time weight instead (#145),
+which no hardware run has measured on this file yet, so this release still
+refuses the pair on every topology before any weight moves, mode=local on one
+GPU included. Render this graph in stock ComfyUI on one GPU instead, with its
 default DynamicVRAM loader, or remove the LoRA; a BF16 file with a LoRA is
 not refused. See docs/TROUBLESHOOTING.md #129."
 
@@ -6738,10 +6739,10 @@ DynamicVRAM loader, stock applies a LoRA at cast time. With DynamicVRAM off
 file in full, bakes the LoRA into the INT8 weights, and renders the same
 graph 0.998 NRMS from its own default at one step and 0.989 at 8 steps;
 without the LoRA the two loaders agree exactly.
-dgx-monarch's store bakes the LoRA the way that classic loader does, and the
-cluster render sits with stock's classic render: both move the latent about
-2.8 NRMS from the render without the LoRA, where every other LoRA path moves
-it about 1.5. Every patched key bakes to within rounding of its exact sum, in
+At the time dgx-monarch's store baked the LoRA the way that classic loader
+does, and the cluster render sat with stock's classic render: both moved the
+latent about 2.8 NRMS from the render without the LoRA, where every other
+LoRA path moved it about 1.5. Every patched key bakes to within rounding of its exact sum, in
 the store and in stock's own bake, so the mechanism inside the classic INT8
 render is still open; the LoRA's delta is 13 to 29 times smaller than the
 noise each INT8 requantization adds. dgx-monarch bakes a LoRA into an INT8
@@ -6758,7 +6759,10 @@ dispatch fix of the same release made INT8 uly2 without a LoRA bit-identical
 to a one-GPU render of the pin-stripped copy and does not change the bake.
 Other families' INT8 ConvRot files share the bake. On 2026-10-21, with
 comfy-kitchen 0.2.39, none of them had a measured INT8 render with a LoRA, and
-they are not refused.
+they are not refused. Since #145 every Worker bakes stock's cast-time weight,
+which a probe found bit-identical to stock's own cast on H3's INT8 ConvRot
+layers; MOSS-Image's INT8 files keep this refusal until a hardware run
+measures a LoRA on them with the new bake.
 
 **Fix:** render the graph in stock ComfyUI on one GPU with its default
 DynamicVRAM loader; with DynamicVRAM off, stock fails the same way. Or remove
@@ -7658,3 +7662,56 @@ stop a render:
   services so the actors load it. If a newer ComfyUI moved or renamed it, this
   release cannot carry the shift on that ComfyUI yet. p-h3-image itself, its
   conditioning node, text encoder and VAE, needs ComfyUI 0.44.0 or newer.
+
+## 145. A LoRA render on a Worker differs from stock ComfyUI
+
+**Symptom:** on a release before this fix, a render with a LoRA on the
+Workers, on any topology and `mode=local` included, does not match stock
+ComfyUI with the same files, LoRA, seed and sampler, while the same graph
+without the LoRA does. On 2026-11-05 the pruned INT8 MiniMax H3 file
+`minimax_h3_fl2va_pruned_int8_convrot` with `p-h3-image_lora_bf16` at 1.0, on
+one rank, read NRMS 0.077 against stock at one step (largest pixel difference
+94 of 255) and 0.257 at 8 steps (249 of 255); without the LoRA the file was
+pixel-identical to stock. BF16 files show it as well: Kromoss with a DMD LoRA
+read one-step NRMS 0.0365 to 0.0635 against stock, and 0.36 to 0.44 at 8
+steps.
+
+**Cause:** stock ComfyUI's default loader, DynamicVRAM, does not merge a LoRA
+when it loads a model. It applies the LoRA when a layer casts its weight for a
+forward: it dequantizes the weight to the forward's compute dtype (BF16 for
+these files), adds the LoRA's change in that dtype, and requantizes a
+quantized weight with stochastic rounding seeded by the module's name. It keeps
+that weight from the first forward on. The Workers loaded through ComfyUI's
+classic patcher, whose bake is the one stock runs only with DynamicVRAM off:
+it converts the weight to ComfyUI's LoRA compute dtype (FP16 on GB10),
+computes the change in FP32, and seeds the rounding from the key with its
+`.weight` suffix. On an INT8 ConvRot weight each requantization adds noise
+five to nine times larger than this LoRA's own change, so the two bakes are
+two draws of that noise. On 2026-11-05 a probe on the head found them apart on
+10 to 15 percent of the INT8 values of each layer, a layer's output 0.011 to
+0.012 NRMS apart, and over the 200 patched INT8 layers that is the image gap.
+On a BF16 weight they round apart on 3 to 4 percent of the values. Neither
+bake loses the LoRA; they differ, and stock's default is the reference. The
+ConvRot rotation is not a cause: both bakes add the LoRA to the unrotated
+weight and rotate again when they requantize.
+
+**Fix:** update. This release bakes the weight stock's cast computes, once,
+on every path that bakes a LoRA: the load at the first sample, the
+`lora_low_rss` merge, both hot swaps and the FSDP shard bake. A Worker logs
+`LoRA bake: stock ComfyUI's cast-time math (its DynamicVRAM default) for
+patched weights on this worker` once when it starts, and the first patched
+key of each kind logs the dtype it used. On 2026-11-05 the probe loaded three
+INT8 ConvRot layers and two BF16 layers of the pruned H3 file with the LoRA
+into ComfyUI's own layer class: the new bake was bit-identical to stock's cast
+on all five, in the INT8 values, the scales and the layer's output, and
+stock's cast gave the same bits in three separate processes. A whole render on
+the new bake has not run on hardware yet.
+
+A key stock bakes at load itself keeps ComfyUI's classic bake, as it does in
+stock: a module of 16 KiB or less, a LoRA that resizes the weight, or a
+parameter other than a weight or bias. So does a key where stock's first
+forward uses another weight than the later ones, a weight stored in another
+dtype than the forward or a quantized layer on a full-precision matmul; the
+log names the first such key and why. Comfy-managed residency runs ComfyUI's
+own patcher and was always stock. MOSS-Image's INT8 files keep the #129
+refusal until a hardware run measures a LoRA on them with this bake.

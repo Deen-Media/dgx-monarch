@@ -221,12 +221,13 @@ def verify_key(store, active, key: str) -> None:
 def bake_key(active, key: str) -> None:
     """Bake one key without invoking ComfyUI's load or backup manager.
 
-    The caller supplies a pristine weight. This path uses one compute tensor,
-    follows the patcher's public conversion and set functions, calculates in
-    its LoRA compute dtype, and applies key-seeded rounding. Plain weights update
-    in place to preserve tensor identity; quantized setters replace their wrapper
-    parameter. Ambient verification (verify_key) checks a sample of keys per
-    swap, two by default, against the reference bake.
+    The caller supplies a pristine weight. A key stock patches at cast time
+    takes stock's cast-time weight (actor/lora_cast_time.py, #145); any other
+    key takes ComfyUI's classic bake: the patcher's public conversion and set
+    functions, its LoRA compute dtype, and key-seeded rounding. Plain weights
+    update in place to preserve tensor identity; quantized weights replace
+    their wrapper parameter. Ambient verification (verify_key) checks a sample
+    of keys per swap, two by default, against the reference bake.
     """
     import comfy.float
     import comfy.lora
@@ -234,11 +235,17 @@ def bake_key(active, key: str) -> None:
     import comfy.model_patcher as comfy_mp
     import comfy.utils
 
+    from . import lora_cast_time
+
     patches = active.patches[key]
     weight, set_func, convert_func = comfy_mp.get_key_weight(active.model, key)
     # Pin bake math to ``load_device``. Using a temporarily offloaded weight's
     # device changes the compute dtype and caused deterministic image drift.
     bake_device = getattr(active, "load_device", None) or weight.device
+    cast = lora_cast_time.cast_time_weight(active, key, bake_device)
+    if cast is not None:
+        lora_cast_time.store(active.model, key, cast, in_place=True)
+        return
     temp = mm.cast_to_device(
         weight, bake_device, mm.lora_compute_dtype(bake_device), copy=True)
     if convert_func is not None:

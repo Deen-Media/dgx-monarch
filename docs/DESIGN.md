@@ -803,8 +803,8 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   reuse.
 - `base_key = (unet_name, options)`: a match with a different LoRA stack is a
   **hot-swap**. The store clones the pristine base patcher (its weights stay on
-  the GPU) and applies the new stack with ComfyUI's own merge math (fp32
-  intermediates and stochastic rounding), so the result matches stock ComfyUI.
+  the GPU) and applies the new stack with stock's cast-time math (below), so the
+  result matches stock ComfyUI.
   Under `lora_low_rss` the swap instead restores the LoRA-covered weights from
   the checkpoint in place and bakes the new stack (lazy un-bake); a swap that
   fails recoverably drops the slot for a fresh load.
@@ -829,6 +829,29 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   workaround (`store_detect._is_quantized_kind`).
 - A miss is a full load. Every transition logs its class (`reuse`, `hot-swap`
   or `load`), so the log line names the source of a slowdown.
+
+**A LoRA bakes to stock's cast-time weight.** Stock ComfyUI's default loader,
+DynamicVRAM, never merges a LoRA at load: it applies the LoRA when a layer
+casts its weight for a forward, in the forward's compute dtype, requantizes a
+quantized weight with stochastic rounding seeded by the module's name, and
+keeps that one weight from the first forward on. Every bake on a Worker, the
+sample-time load, the merge of `lora_low_rss`, both hot swaps and the FSDP
+shard bake, computes that same weight once (`actor/lora_cast_time.py`).
+ComfyUI's classic bake, the one stock runs only with DynamicVRAM off, works in
+the LoRA compute dtype (fp16 on GB10) with fp32 intermediates and seeds from
+the key: on a BF16 file that is another rounding, and on an INT8 ConvRot file
+another draw of requantization noise larger than many LoRAs' own change
+([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)).
+A key stock bakes at load itself (a module of 16 KiB or less, a LoRA that
+resizes the weight, a parameter other than a weight or bias) keeps the classic
+bake, and so does a key whose cast does not settle on one weight: a weight
+stored in another dtype than the forward, or a quantized layer on a
+full-precision matmul, where stock's first forward uses another weight than
+the later ones. Comfy-managed residency runs ComfyUI's own patcher and is not
+touched. The bake-equivalence canary compares the bake with comfy.ops' own
+cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with
+the keys stock's own `ModelPatcherDynamic.load` chooses on both sides of the
+16 KiB cut-off, against ComfyUI master every day.
 
 With automatic slab residency, a first stock load that identifies a family validated for slab permits exactly one in-memory retry, even if the best-effort family memo is unavailable. Slab-capable `.safetensors` and `.sft`
 suffixes are case-insensitive. Unsupported paths and dtype fallback remain
@@ -1950,7 +1973,7 @@ Seven seams are held outside the behavioral suite:
 
 | seam | where the pack rides it | held by |
 |---|---|---|
-| LoRA bake | `actor/model_store` per-key bake | `bake_equivalence_canary.py` |
+| LoRA bake | `actor/lora_cast_time`, `actor/model_store` per-key bake | `bake_equivalence_canary.py` |
 | legacy quant conversion | `actor/unbake` | `slab_hook_canary.py` |
 | node-pack entrypoint, routes | `__init__.py`, PromptServer registration | `comfy_entrypoint_canary.py` |
 | object-patch model sampling | `nodes/model_sampling.py` | `comfy_entrypoint_canary.py` |
