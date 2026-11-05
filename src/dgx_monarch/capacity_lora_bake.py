@@ -253,8 +253,9 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
     The Worker's own ladder never applies the credit (``store_residency.resolve``
     passes no snapshot), so a change that falls back to a fresh load is priced
     whole there. An explicit ``slab_weights=on`` drops a stock
-    resident before it loads, so it gets no credit, and neither does a resident
-    the store would reload.
+    resident before it loads, so it gets no credit. A change the store makes by
+    dropping this copy and loading fresh (``store_bake.copies_off_the_gpu``)
+    keeps it: the drop returns the copy, and its wall prices the load whole.
     """
     from dataclasses import replace
 
@@ -263,9 +264,21 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
             or not isinstance(held, dict) or held.get("swaps_in_place") is not True
             or not _same_base_stock_resident(held, request_key)):
         return fit
-    # The copy the slot holds: the file's size, or a cast's own (StockFit.resident_bytes).
-    held_bytes = getattr(fit, "resident_bytes", fit.size_bytes)
-    credited = replace(fit, credit_bytes=max(int(held_bytes), 0))
+    # The copy the slot holds: the file's size, or a cast's own. The store may drop
+    # it and load fresh (store_bake.copies_off_the_gpu), so a cast is credited no
+    # more than the lower bound the Worker reports for it (credit_stock_swap's
+    # figure), and nothing when it reports none; the price's cast figure is an
+    # upper bound.
+    held_bytes = int(getattr(fit, "resident_bytes", fit.size_bytes))
+    if int(getattr(fit, "cast_bytes", 0) or 0) > 0:
+        reported = held.get("resident_bytes")
+        if isinstance(reported, int) and not isinstance(reported, bool) and reported > 0:
+            held_bytes = min(held_bytes, reported)
+        else:
+            held_bytes = 0
+    if held_bytes <= 0:
+        return fit
+    credited = replace(fit, credit_bytes=held_bytes)
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 

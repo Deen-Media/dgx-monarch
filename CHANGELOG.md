@@ -171,16 +171,16 @@
   own refusal still names its host ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
   [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
 - A LoRA change on a BF16 model the Workers already hold, with `lora_low_rss`
-  off as the Wan-Animate 2 BF16 templates set it, no longer stalls or strands
-  you. Adding a LoRA to a bare base loads base and LoRA fresh instead of
-  copying the whole model off the GPU first, at the same price: on the
-  memory-saver template that copy took 230 s, and a fresh load of base and
-  LoRA 17 s.
-  And a change refused because the host copy the held LoRA keeps holds the
+  off as the Wan-Animate 2 BF16 templates set it, no longer stalls, and no
+  longer ends in a refusal with nothing to click. Adding a LoRA to a bare base
+  loads base and LoRA fresh instead of copying the whole model off the GPU
+  first, at the same price: on the memory-saver template that copy took 230 s,
+  and a fresh load of base and LoRA 17 s. And a change refused because the host copy the held LoRA keeps holds the
   memory now offers the Old model in the way card, "The model loaded earlier
   (wan_animate_2_bf16) holds about 29.6 GiB on the head that this change needs.
-  Clear the Sparks and run again?", when a cleared box would hold a fresh load. This is
-  the LoRA case of the same-slot swap credit above
+  Clear the Sparks and run again?", when a cleared box would hold a fresh load.
+  This is the LoRA case of the credit for a load that replaces the stock model
+  in its own slot
   ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
 

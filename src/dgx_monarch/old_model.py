@@ -255,9 +255,14 @@ def changes_in_place(quote: RankPrice, unet_name: str) -> bool:
     """Whether this row changes the file its own slot holds, so that slot is not kept.
 
     The copy is not reused as it is, and the host copy its stack keeps holds the
-    memory. Only for the file the agreement names: other graph models stay kept.
+    memory. Only a row the price credited the slot's own stock copy (a slab,
+    comfy-managed or FSDP resident keeps the plain rule), and only for the file
+    the agreement names: other graph models stay kept.
     """
-    return (quote.would_load == "swap" and bool(unet_name)
+    block = quote.measured or {}
+    return (quote.would_load == "swap" and bool(unet_name) and not quote.use_slab
+            and bool(block.get("credit_bytes"))
+            and quote.holds_resident.get(quote.slot) == CREDITED_RESIDENCY
             and quote.resident_names.get(quote.slot) == unet_name)
 
 
@@ -425,7 +430,9 @@ def log_line(offer: ClearOffer) -> str:
     if offer.same_file:
         return (f"cleared {scope_words(offer, cleared=True)} so {offer.new_model} loads "
                 "fresh; the copy loaded earlier held memory this change needed")
-    olds = list(dict.fromkeys(name for box in offer.boxes for name in box.old_models))
+    # The model asked for is no old model, even where its earlier copy was in the way.
+    olds = list(dict.fromkeys(name for box in offer.boxes for name in box.old_models
+                              if name != offer.new_model or name not in box.dropped))
     were = "was loaded earlier" if len(olds) == 1 else "were loaded earlier"
     return (f"cleared {scope_words(offer, cleared=True)} to make room for {offer.new_model}; "
             f"{_join(olds) if olds else 'the old model'} {were}")

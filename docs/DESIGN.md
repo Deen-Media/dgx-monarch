@@ -819,9 +819,16 @@ uncertain-arena rules live in `actor/slab_arena.py`,
   swap's price already charges (section 5.9), and the result is the stock
   path's own.
   A strength change, a reorder or a removal of a held LoRA keeps the in-place
-  swap, because the backup covers it, and so does a store whose other slot
-  holds a model, because the drop's global unload would push that model off
-  the GPU the same slow way.
+  swap, because the backup holds every weight it patches, and so does a store
+  whose other slot holds a model, because the drop's global unload would push
+  that model off the GPU the same slow way. The test counts the weights the new
+  stack patches, while ComfyUI's cost is every placed weight its backup lacks,
+  so it matches that cost only for a LoRA that patches nearly every weight, as
+  the Wan distill LoRA does. A strength change on a narrow LoRA stays in place
+  and still copies the rest of the model off the GPU, as before; a new LoRA
+  that patches a few weights beyond a full-coverage one reloads, and the drop
+  first moves the held backup back onto the GPU. Both are speed, not memory, and
+  a test by bytes waits for a measured change from one LoRA to another.
 - Quantized models (every detected kind except bf16, fp16 and fp32): a
   hot-swap outside `lora_low_rss` (the clone path) also unloads every model, so
   the patched GPU weights rebuild from the CPU state dict and the other slot
@@ -1819,8 +1826,10 @@ base and LoRA, and a strength change was refused 14.3 GiB short, while a fresh
 head reads about 95 GiB against the 69.1 GiB a fresh load needs. That slot is
 weighed like any credited one, and the card names the model asked for: "The
 model loaded earlier (wan_animate_2_bf16) holds about 29.6 GiB on the head that
-this change needs." The agreement names only the cond model, so an uncond slot
-keeps the plain rule. A model an earlier sampler of the same graph loaded is
+this change needs." Only a row the price credited the slot's own stock copy
+counts: a slab, comfy-managed or FSDP resident of the same file keeps the plain
+rule. The rule reads the file the agreement names, which at the sampler is the
+cond model's, so an uncond row counts only when it holds that same file. A model an earlier sampler of the same graph loaded is
 still old, since
 the later sampler fits on a fresh fleet, so the card and the log say "loaded
 earlier", not "an earlier render". Only when
@@ -1916,8 +1925,10 @@ credits the file's own copy and still charges the host copy of the weights the
 stack patches and the floor (`capacity_lora_bake.credit_hot_swap`). When the
 in-place swap would first copy the model off the GPU, the store drops the copy
 and loads base and stack fresh instead (section 5.5). That reload is the swap
-above, so the credit is the slot's own copy either way, and a rank whose drop
-returned less refuses at its own wall before it reads a byte
+above, so the credit is the slot's own copy either way: over a cast resident
+it is the lower bound the Worker reports, never the price's cast figure, and
+nothing when the Worker reports none. A rank whose drop returned less refuses
+at its own wall before it reads a byte
 ([TROUBLESHOOTING #94](TROUBLESHOOTING.md#94-a-multi-rank-render-refuses-saying-a-peer-rank-could-not-load)).
 The host copy a held stack keeps (ComfyUI's backup) is not credited: an
 in-place swap runs unpriced on the Worker, so that credit waits for a measured

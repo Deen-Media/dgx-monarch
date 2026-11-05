@@ -24,7 +24,7 @@ from dataclasses import replace
 
 import pytest
 
-from dgx_monarch import box_names, capacity_agreement, mesh_safety, old_model
+from dgx_monarch import box_names, capacity_agreement, capacity_fit, capacity_lora_bake, mesh_safety, old_model
 from dgx_monarch.actor import actor_footprint, store_bake, worker_capacity
 from dgx_monarch.actor import capacity_quote as cq
 from dgx_monarch.actor import model_store as ms
@@ -279,7 +279,8 @@ def _gate_case(**changes):
     ({"base__backup": {"w1": object(), "w2": object()}}, (0, 2), "the host copy covers it"),
     ({"model__model_loaded_weight_memory": 0}, (0, 2), "never placed: nothing to copy back"),
     ({"model__model_loaded_weight_memory": True}, (0, 2), "a flag is not a byte count"),
-    ({"model__model_loaded_weight_memory": object()}, (0, 2), "a double reads as not placed"),
+    ({"model__model_loaded_weight_memory": object()}, (0, 2), "a non-number reads as not placed"),
+    ({"model__model_loaded_weight_memory": float(BF16_BYTES)}, (2, 2), "a float byte count is placed"),
     ({"store___stored": lambda slot: object()}, (0, 2), "the other slot holds a model"),
     ({"stored__slab": object()}, (0, 2), "a slab resident keeps its own path"),
     ({"stored__residency_rung": cq.RUNG_COMFY_MANAGED}, (0, 2), "comfy-managed keeps no backup"),
@@ -290,3 +291,105 @@ def _gate_case(**changes):
 def test_every_gate_keeps_the_swap_in_place(changes, expected, why):
     store, stored, active = _gate_case(**changes)
     assert store_bake.copies_off_the_gpu(store, stored, "cond", active) == expected, why
+
+
+# Round two of the review of #146.
+
+def _held_row(word: str, arena: int) -> cq.RankPrice:
+    """A short swap of the held file on a resident whose price carries no stock credit."""
+    if word == "slab":
+        slab = capacity_fit.SlabFit(False, True, BF16_BYTES, HEAD_AVAILABLE, floor_bytes=int(6 * _GIB))
+        priced = {"use_slab": True, "slab_measured": dict(slab.measured()), "rung": cq.RUNG_EXPLICIT}
+    else:
+        required = int(69.1 * _GIB)
+        block = capacity_fit.preflight_wall_measured(BF16_BYTES, HEAD_AVAILABLE, required, False)
+        rung = cq.RUNG_COMFY_MANAGED if word == "comfy_managed" else cq.RUNG_EXPLICIT_STOCK
+        priced = {"measured": block, "rung": rung}
+    return cq.RankPrice(
+        verdict="refuse", priced=True, would_load=cq.WOULD_LOAD_SWAP, checkpoint_bytes=BF16_BYTES,
+        slot="cond", holds_resident={"cond": word, "uncond": None},
+        resident_names={"cond": BASE, "uncond": None},
+        # An FSDP shard reports no GPU copy; a slab or managed copy is the file.
+        resident_bytes={"cond": 0 if word == "stock" else BF16_BYTES}, arena_bytes=arena,
+        reason="short", **priced)
+
+
+@pytest.mark.parametrize("arena_gib", [20.0, 1.0])
+@pytest.mark.parametrize("word", ["slab", "comfy_managed", "stock"], ids=["slab", "comfy-managed", "fsdp"])
+def test_a_same_file_row_with_no_stock_credit_keeps_the_plain_rule(word, arena_gib):
+    """Finding 1: only the LoRA case of the stock credit leaves the kept set; the rest
+    keep dev's sentence, with no card that names the model asked for as in its own way."""
+    row = _held_row(word, int(arena_gib * _GIB))
+    assert old_model.changes_in_place(row, BASE) is False
+    answers = [RankAnswer(0, "host0", (row,), box=box_names.HEAD),
+               RankAnswer(1, "host1", (_row(SIBLING_AVAILABLE, "fits"),), box=box_names.SIBLING)]
+    with pytest.raises(capacity_agreement.FleetCapacityError) as raised:
+        decide(answers, 2, unet_name=BASE, keep=frozenset({BASE}))
+    assert not isinstance(raised.value, old_model.OldModelRefusal)
+    text = str(raised.value)
+    assert (f"This price was taken against what each box already holds: the head holds a {word} "
+            "resident in the cond slot and this load reads as a swap.") in text
+    assert "The old model (wan_animate_2_bf16)" not in text
+    assert "The model loaded earlier" not in text
+
+
+def _fp8_header(path, blocks: int = 4) -> None:
+    """A header-only fp8 file: four 5120 x 5120 weights and an fp32 norm per block."""
+    import json
+    import struct
+
+    header, offset = {}, 0
+    for block in range(blocks):
+        for name, dtype, shape, width in (
+                *((f"blocks.{block}.attn.{w}.weight", "F8_E4M3", [5120, 5120], 1) for w in "qkvo"),
+                (f"blocks.{block}.norm.weight", "F32", [5120], 4)):
+            size = width * (shape[0] * (shape[1] if len(shape) > 1 else 1))
+            header[name] = {"dtype": dtype, "shape": shape, "data_offsets": [offset, offset + size]}
+            offset += size
+    blob = json.dumps(header).encode()
+    with open(path, "wb") as handle:
+        handle.write(struct.pack("<Q", len(blob)) + blob)
+        handle.truncate(8 + len(blob) + offset)
+
+
+def test_the_lora_credit_over_a_cast_resident_takes_the_lower_bound(tmp_path):
+    """Finding 2: the store may drop the cast copy and load fresh, so the LoRA credit is
+    the lower bound the Worker reports, the same figure the same-slot swap credits."""
+    path = tmp_path / "fp8_dit.safetensors"
+    _fp8_header(path)
+    size = path.stat().st_size
+    upper = capacity_fit.cast_resident_bytes(str(path), "bf16")
+    lower = capacity_fit.cast_resident_bytes(str(path), "bf16", lower=True)
+    assert lower < upper
+    fit = capacity_fit.StockFit(True, True, size, int(40 * _GIB), cast_bytes=upper)
+    options = (("weight_dtype", "bf16"),)
+    key = repr(("fp8_dit.safetensors", options, (("l.safetensors", 0.8),), "fp8"))
+    held = {"residency": "stock", "swaps_in_place": True, "resident_bytes": lower,
+            "resident_name": "fp8_dit.safetensors",
+            "request_key": repr(("fp8_dit.safetensors", options, (("l.safetensors", 1.0),), "fp8"))}
+    context = {"would_load": cq.WOULD_LOAD_SWAP}
+    hot = capacity_lora_bake.credit_hot_swap(fit, held, key, context, "auto")
+    stock = capacity_lora_bake.credit_stock_swap(fit, dict(held, swaps_in_place=False), context)
+    assert hot.credit_bytes == lower == stock.credit_bytes
+    assert hot.required_bytes == stock.required_bytes
+    # No reported figure: a cast is credited nothing, as the stock swap credit does.
+    unreported = {k: v for k, v in held.items() if k != "resident_bytes"}
+    assert capacity_lora_bake.credit_hot_swap(fit, unreported, key, context, "auto").credit_bytes == 0
+    # An uncast resident keeps its file, reported or not.
+    plain = capacity_fit.StockFit(True, True, size, int(40 * _GIB))
+    assert capacity_lora_bake.credit_hot_swap(plain, unreported, key, context, "auto").credit_bytes == size
+
+
+def test_the_log_line_never_calls_the_model_asked_for_old():
+    """Finding 4: a same-file credited slot beside another old model."""
+    row = replace(_row(HEAD_AVAILABLE, "refuse"),
+                  holds_resident={"cond": "stock", "uncond": "stock"},
+                  resident_names={"cond": BASE, "uncond": "flux1-dev.safetensors"},
+                  resident_bytes={"cond": BF16_BYTES, "uncond": int(22.2 * _GIB)})
+    answers = [RankAnswer(0, "host0", (row,), box=box_names.HEAD),
+               RankAnswer(1, "host1", (_row(SIBLING_AVAILABLE, "fits"),), box=box_names.SIBLING)]
+    offer = old_model.fleet_offer([(answers[0], row)], answers, BASE, frozenset({BASE}))
+    assert offer is not None and not offer.same_file
+    assert old_model.held_sentence(offer).startswith("The old model (flux1-dev) is still loaded on the head")
+    assert old_model.log_line(offer) == (
+        "cleared both Sparks to make room for wan_animate_2_bf16; flux1-dev was loaded earlier")

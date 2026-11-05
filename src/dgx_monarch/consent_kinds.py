@@ -85,7 +85,7 @@ _SPECS: tuple[KindSpec, ...] = (
         kind="clear-retry",
         style="capacity",
         title="Old model in the way",
-        risk="A model loaded earlier is still in memory, so this one does not fit beside it.",
+        risk="A model loaded earlier still holds memory this load needs.",
         evidence=("Clear and retry gives back all the memory the Sparks hold for models, "
                   "the same as Reset attached mesh, and changes no setting."),
         primary_label="Clear and retry",
