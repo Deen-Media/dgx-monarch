@@ -335,7 +335,8 @@ def maybe_auto_gate(
             claimed_token = token
             _state._AUTO_GATE_RUNNING.add(token)
         from ..first_render import gate_finished, gate_started
-        from .gate import run_identity_ceremony
+        from ..gate_runtime import torch_change
+        from .gate import _ledger_dir, run_identity_ceremony
 
         light = dict(request)
         light["steps"] = min(2, int(request.get("steps") or 2))
@@ -350,7 +351,8 @@ def maybe_auto_gate(
         ceremony_result: dict | None = None
         fsdp_return_guard: dict[str, Any] = {}
         try:
-            gate_started(state)  # inside the try whose finally closes it
+            note = torch_change(_ledger_dir, token) if state == "stale" else None
+            gate_started(state, note)  # inside the try whose finally closes it
             _state._AUTO_GATE_ACTIVE.on = True
             result = run_identity_ceremony(
                 model,

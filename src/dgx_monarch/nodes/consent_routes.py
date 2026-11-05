@@ -1,7 +1,8 @@
 """Driver endpoints for consent cards and standing rescue.
 
 ``GET /dgxm/consents`` returns pending and active consent state.
-``POST /dgxm/consent`` accepts, dismisses, revokes, or changes auto-rescue.
+``POST /dgxm/consent`` accepts, dismisses, revokes, or changes auto-rescue or
+auto-clear; accepting an Old model in the way card clears the attached mesh.
 POST uses the same CSRF controls as recycle; ComfyUI authentication remains a
 separate boundary. GET exposes only basenames and opaque keys and performs no
 mesh RPC or durable writes. It rechecks quarantine before projecting live rows.
@@ -18,7 +19,7 @@ from typing import Any
 
 from .. import consent_pending, consent_store
 from ..log import get_logger
-from . import routes
+from . import old_model_clear, routes
 
 log = get_logger(__name__)
 
@@ -181,6 +182,7 @@ def consent_state() -> dict[str, Any]:
         "schema": consent_store.SCHEMA,
         "auto_rescue": memo["auto_rescue"] is True,
         "auto_rescue_env": consent_pending.auto_rescue_env(),
+        "auto_clear": memo["auto_clear"] is True, "auto_clear_env": old_model_clear.always_env(),
         "pending": pending,
         "active": active,
         "kinds": {
@@ -422,6 +424,8 @@ def handle_action(body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return 400, {"ok": False, "detail": "consent source must be panel or studio"}
     if action == "auto_rescue":
         return _auto_rescue(body.get("value"), source)
+    if action == "auto_clear":
+        return old_model_clear.set_always(body.get("value"), source)
     key, pending_id = body.get("key"), body.get("id")
     if not isinstance(key, str) or not key:
         return 400, {"ok": False, "detail": "consent action needs a key"}
@@ -429,6 +433,8 @@ def handle_action(body: dict[str, Any]) -> tuple[int, dict[str, Any]]:
         return _revoke(key)
     if not isinstance(pending_id, str) or not pending_id:
         return 400, {"ok": False, "detail": "consent action needs the pending id"}
+    if action == "accept" and old_model_clear.is_clear_card(key, pending_id):
+        return old_model_clear.accept(key, pending_id, body, source)
     if action == "accept":
         return _accept(key, pending_id, source)
     if action == "dismiss":
@@ -478,9 +484,13 @@ def register(app: Any, web: Any) -> None:
         if not isinstance(body, dict):
             return web.json_response(
                 {"ok": False, "detail": "consent request body is not an object"}, status=400)
+        # Clear and retry runs the recycle route's teardown, so it gets its deadline.
+        clears = body.get("action") == "accept" and old_model_clear.is_clear_card(
+            body.get("key"), body.get("id"))
         try:
             status, payload = await routes._await_bounded(
-                lambda: handle_action(body), _ACTION_TIMEOUT_S)
+                lambda: handle_action(body),
+                routes._RECYCLE_TIMEOUT_S if clears else _ACTION_TIMEOUT_S)
         except TimeoutError:
             return web.json_response(
                 {"ok": False, "detail": "consent action timed out server-side; see driver log"},

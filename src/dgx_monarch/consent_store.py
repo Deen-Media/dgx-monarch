@@ -212,7 +212,7 @@ def _as_optional_str(value: object) -> str | None:
 
 
 def _empty() -> dict[str, Any]:
-    return {"schema": SCHEMA, "auto_rescue": False, "consents": {}}
+    return {"schema": SCHEMA, "auto_rescue": False, "auto_clear": False, "consents": {}}
 
 
 def _decode(raw: object) -> dict[str, Any]:
@@ -234,6 +234,7 @@ def _decode(raw: object) -> dict[str, Any]:
     return {
         "schema": SCHEMA,
         "auto_rescue": raw.get("auto_rescue") is True,
+        "auto_clear": raw.get("auto_clear") is True,  # newer than schema 2: absent is off
         "consents": dict(consents) if isinstance(consents, dict) else {},
     }
 
@@ -474,19 +475,26 @@ def forget_headless() -> None:
         _HEADLESS.clear()
 
 
-def auto_rescue() -> bool:
-    """The persisted standing-authorization toggle."""
-    return read()["auto_rescue"] is True
+def standing(flag: str) -> bool:
+    """``auto_rescue``, or ``auto_clear``, Always clear and retry (old_model.py)."""
+    return read()[flag] is True
 
 
-def set_auto_rescue(value: bool) -> None:
-    """Write the standing toggle. Raises ConsentStoreError when it did not land."""
+def set_standing(flag: str, value: bool) -> None:
+    """Write one standing toggle. Raises ConsentStoreError when it did not land."""
     wanted = bool(value)
 
     def apply(memo: dict[str, Any]) -> bool:
-        if memo["auto_rescue"] is wanted:
-            return False
-        memo["auto_rescue"] = wanted
-        return True
+        changed = memo[flag] is not wanted
+        memo[flag] = wanted
+        return changed
 
     _mutate(apply)
+
+
+def auto_rescue() -> bool:
+    return standing("auto_rescue")
+
+
+def set_auto_rescue(value: bool) -> None:
+    set_standing("auto_rescue", value)

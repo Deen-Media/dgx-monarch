@@ -1220,7 +1220,12 @@ The classes are those of
 [DESIGN.md section 5.9](DESIGN.md#59-refusal-taxonomy-what-a-typed-refusal-is-allowed-to-do):
 P physics, C capacity-protective, U unproven correctness and K known-wrong math.
 Any other message shows its error code and its first sentence. When the message
-names the driver's panel and headless remedy, the status line shows it. Expand
+names the driver's panel and headless remedy, the status line shows it. When a
+model loaded earlier is in the way, the message says which old model
+is still loaded on which box, and its remedy names the ComfyUI panel's Old
+model in the way card and its Clear and retry button, or Reset attached mesh,
+then queue again. Studio has no control for either, so clear the attached mesh
+in the ComfyUI panel, then retry the job. Expand
 the Queue row for the full text, the guard, the error code and a link to the
 docs/TROUBLESHOOTING.md entry the message cites. The link opens that page, so
 find the entry by its number. When the companion shortens a long message it

@@ -109,10 +109,12 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         RefusalClass.CAPACITY,
         False,
         "rescue-slab",
-        "cross-rank capacity agreement, read before any rank allocates: no card, "
-        "because no consent makes a refusing rank fit and one refusing rank refuses "
-        "the whole fleet; when no rank refuses, the rescue offer goes out under the "
-        "waivable stock guard, priced at the leanest rank that slab would fit",
+        "cross-rank capacity agreement, read before any rank allocates: no consent "
+        "card, because no consent makes a refusing rank fit and one refusing rank "
+        "refuses the whole fleet; when no rank refuses, the rescue offer goes out under "
+        "the waivable stock guard, priced at the leanest rank that slab would fit. When "
+        "a clear would make room for an old model in the way, its card goes out under "
+        "this guard unwaived, since a reset passes no guard (old_model.py)",
     ),
     "slab_lora_bake_preflight": GuardSpec(
         RefusalClass.CAPACITY,

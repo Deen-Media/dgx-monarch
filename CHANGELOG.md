@@ -118,6 +118,21 @@
   names other text boxes by their node. The prompt box starts taller and grows
   with its text, an empty negative prompt waits behind Add negative prompt on
   Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
+- A load that does not fit because a model loaded earlier is still
+  held now says so: "the old model (<name>) is still loaded on <box>". When a
+  clear of the attached mesh would make room on every short box, the panel
+  raises an Old model in the way card whose Clear and retry runs the same reset
+  as Reset attached mesh, then you queue again. Its Always clear and retry
+  checkbox, the toggle of that name under Consents and waivers, or
+  `DGXM_ALLOW_CLEAR_RETRY=1` on the driver lets the driver clear and retry by
+  itself, once per load. The card writes no consent and no ledger row, and the
+  load is priced again on the fresh Workers. Both the cross-rank agreement and
+  the loader's own check raise it, and the agreement's slab rescue card now
+  names a held model too. A one-GPU fleet or a Fleet job, whose Worker prices
+  its own load, names the memory a model loaded earlier left behind and Reset
+  attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
+  case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 
 ### Compatibility and verification
 
@@ -129,6 +144,22 @@
   template step, red against ComfyUI master since 2026-11-01, passes again,
   and it now checks Save Video's format and codec against the options the
   running ComfyUI offers ([MODELS](docs/MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av)).
+- Every actor starts with `TORCH_DIST_USE_NCCL2=0`, so torch 2.15 keeps its
+  legacy NCCL backend, the one torch 2.12 ships. torch 2.15's new `nccl`
+  backend takes an allocator snapshot that ComfyUI's cudaMallocAsync allocator
+  refuses, which ended each actor at its first process group; torch 2.12
+  ignores the setting. `dgxm doctor` gains an `actor NCCL backend` row that
+  names the torch the actors import and checks the setting. Each Gate PASS now
+  also names the driver's torch and CUDA build, so a torch change runs the gate
+  again on each gated combination's first render, and the notice names both
+  builds when only the build moved. A row written before this change carries
+  no build and reads stale. INSTALL now says what the ComfyUI guide's torch
+  2.15.0 changes, gives the import check its commands and notes the torchaudio
+  builds that no longer load against torch 2.12.0+cu132. No render has run on
+  torch 2.15 with the setting
+  ([TROUBLESHOOTING #143](docs/TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group),
+  [VALIDATION](docs/VALIDATION.md#torch-2-15),
+  [INSTALL](docs/INSTALL.md#install-from-source)).
 
 ### Rendering
 

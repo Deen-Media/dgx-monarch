@@ -178,3 +178,18 @@ def test_the_worker_quote_credits_the_base_its_own_store_holds(monkeypatch, tmp_
         {"unet_name": BASE, "options": {}, "loras": LORA_STACK, "slot": "cond"}],
         "rescue_consent": None})["quotes"][0]
     assert refused["verdict"] == "refuse" and "credit_bytes" not in refused["measured"]
+
+
+def test_a_credited_sentence_names_its_box_the_way_the_caller_asks():
+    """The old-model card passes its own name for the box; every branch of the
+    sentence, the credited one included, must use it."""
+    fit = StockFit(False, True, BF16_BYTES, int(30.0 * _GIB), credit_bytes=BF16_BYTES)
+    quote = cq.RankPrice(
+        verdict=cq.VERDICT_REFUSE, rung=cq.RUNG_EXPLICIT_STOCK, priced=True,
+        measured=dict(fit.measured()), would_load=cq.WOULD_LOAD_SWAP,
+        holds_resident={"cond": "stock", "uncond": None},
+        checkpoint_bytes=BF16_BYTES, slot="cond")
+    text = capacity_agreement._priced_sentence(
+        RankAnswer(0, "box0", (quote,)), quote, BASE, "rank 0 on the head")
+    assert text.startswith(f"rank 0 on the head priced a LoRA change on {BASE}:")
+    assert "box0" not in text

@@ -9,6 +9,7 @@ check it against ``store_residency.resolve`` and the wall that runs after it.
 import ast
 import inspect
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -29,6 +30,8 @@ DESIGNED_FIELDS = {
     "blocker", "descriptor", "would_load", "holds_resident", "checkpoint_bytes",
     "slot", "shmem_bytes", "retained_failed_load_slabs",
     "failed_load_cleanup_pending", "reason",
+    # Advisory: the Old model in the way card's facts (actor/actor_footprint.py).
+    "resident_names", "resident_bytes", "arena_bytes",
 }
 
 # The five the quote adds to the ladder's own arguments, in order.
@@ -125,7 +128,7 @@ def test_a_row_that_does_not_parse_raises_rather_than_admits():
     turns into a price that admits.
     """
     row = _fitting_price().to_row()
-    for key in sorted(cq.ROW_KEYS):
+    for key in sorted(cq.ROW_KEYS - cq.ADVISORY_ROW_KEYS):
         short = {k: v for k, v in row.items() if k != key}
         with pytest.raises(ValueError):
             cq.RankPrice.from_row(short)
@@ -135,6 +138,29 @@ def test_a_row_that_does_not_parse_raises_rather_than_admits():
         cq.RankPrice.from_row(dict(row, blocker=["one thing"]))
     with pytest.raises(ValueError):
         cq.RankPrice.from_row("a traceback the worker returned")
+
+
+def test_an_older_workers_row_without_the_advisory_keys_still_reads():
+    """The advisory keys only ever withhold the Old model in the way card.
+
+    A Worker from before them answers without them. Its row reads, and reads as
+    holding no named model and no measured arena, so the driver offers no card
+    and the verdict is the one the row states.
+    """
+    assert cq.ADVISORY_ROW_KEYS == {"resident_names", "resident_bytes", "arena_bytes"}
+    assert cq.ADVISORY_ROW_KEYS < cq.ROW_KEYS
+    price = replace(_fitting_price(), resident_names={"cond": "old.safetensors", "uncond": None},
+                    resident_bytes={"cond": 22 << 30}, arena_bytes=30 << 30)
+    row = price.to_row()
+    assert cq.RankPrice.from_row(row) == price
+    old = {k: v for k, v in row.items() if k not in cq.ADVISORY_ROW_KEYS}
+    back = cq.RankPrice.from_row(old)
+    assert back.resident_names == {"cond": None, "uncond": None}
+    assert back.resident_bytes == {} and back.arena_bytes == 0
+    assert back.verdict == price.verdict and back.measured == price.measured
+    # A malformed advisory value reads as unknown too, never as a gain.
+    odd = cq.RankPrice.from_row(dict(row, arena_bytes=-5, resident_bytes={"cond": "big"}))
+    assert odd.arena_bytes == 0 and odd.resident_bytes == {}
 
 
 def test_price_takes_the_ladder_arguments_plus_exactly_five():

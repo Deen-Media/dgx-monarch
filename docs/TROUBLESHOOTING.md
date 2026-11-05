@@ -14,8 +14,8 @@ the error text or symptom; report failures not covered here.
 > by a fresh process also invalidates earlier results for that configuration.
 > Each combination is checked again on first use after an upgrade or source change.
 > A change to the artifact bytes, the ComfyUI commit, the gate protocol, the
-> canonical package-source manifest, or the effective worker, fleet or topology
-> context also needs a fresh proof. Each process reads the source manifest once,
+> canonical package-source manifest, the driver's torch or CUDA build, or the
+> effective worker, fleet or topology context also needs a fresh proof. Each process reads the source manifest once,
 > on first use, and does not watch it: restart the driver and the workers after
 > changing an editable checkout.
 > The check uses two short test renders and compares slab against stock when
@@ -2097,6 +2097,35 @@ checkpoint the process loads. Slab is currently the only eligible kind, so
 `DGXM_ALLOW_SLAB_RESCUE=1` has the same scope. The panel shows an environment-
 enabled toggle checked and disabled; unset the variable and restart the driver
 to change it. Automatic rescue never grants an accuracy waiver.
+
+**Old model in the way:** when a model loaded earlier still holds the
+memory a load needs, and a clear of the attached mesh would make room on every
+short box, the refusal says "the old model (<name>) is still loaded on <box>"
+and the card is titled Old model in the way. Its Clear and retry button resets
+the attached mesh, the same as Reset attached mesh, and writes no memo and no
+ledger row; then queue again, and the load is priced again on fresh Workers.
+Tick Always clear and retry on the card, or the toggle of that name under
+"Consents and waivers", and the driver clears and retries by itself, at most
+once per load. When a clear would not make room, the refusal says so and
+offers no card. A model this graph loads, or one the request reuses, is never
+the old model. A card resets only the attached mesh that refused: if that mesh
+is gone, the click answers the card and resets nothing, and any reset answers
+every open card. A one-GPU fleet or a Fleet job, whose Worker prices its own
+load after unloading the old model, says instead that the Worker still holds
+memory a model loaded earlier left behind, and names Reset attached
+mesh. Headless, set `DGXM_ALLOW_CLEAR_RETRY=1` on the driver before
+ComfyUI starts for the Always behavior, or accept the pending card:
+
+```
+curl -s localhost:8191/dgxm/consents            # read `pending`, kind clear-retry
+curl -s -X POST localhost:8191/dgxm/consent \
+  -H 'X-DGXM-Action: consent' -H 'Content-Type: application/json' \
+  -H 'Origin: http://localhost:8191' \
+  -d '{"action":"accept","key":"<key>","id":"<id>"}'
+```
+
+Add `"always":true` to the body to save Always clear and retry with the same
+click. The answer waits for the reset, up to 260 s.
 
 **Quarantine always takes precedence.** FAIL applies before residency
 selection, and an explicit stock request remains stock regardless of consent.
@@ -4686,7 +4715,7 @@ asks each rank one bounded question on a read-only endpoint that takes no GPU
 lock and mutates nothing, collects the rows, and decides once. The leanest
 answer governs, because the load runs everywhere: a rank that cannot hold the
 model refuses the render for the fleet rather than letting its peers load first
-and meet the refusal sixty seconds in. Five shapes reach the operator:
+and meet the refusal sixty seconds in. Six shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.
@@ -4711,17 +4740,26 @@ and meet the refusal sixty seconds in. Five shapes reach the operator:
 * **A rescue is on offer.** One rank needs slab residency and no rank refuses,
   so the ordinary consent card is raised before any rank loads, carrying the
   leanest rescuing rank's numbers.
+* **An old model is in the way.** A short rank still holds a model an earlier
+  render loaded, and a clear of the attached mesh would make room on every
+  short box. The refusal names the old model and its box, and the Old model in
+  the way card offers Clear and retry in place of a slab rescue
+  ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
 * **World 1 is a no op.** The one box prices its own load.
 
 Read the numbers with two limits in mind. Each rank prices against what it
 holds at that moment, so a card can quote a figure taken with the previous
-model still resident, and it says so. The quote does not price shared memory
+model still resident, and it says so by name: "the old model (flux1-dev) is
+still loaded on head". The quote does not price shared memory
 either: a rank holding a weight slab in the other slot, or a slab retained by a
 load that failed, reads as having more available than it has. The rank's row
 records both (`shmem_bytes`, each slot's resident and the retained-slab count)
 and draws no conclusion from them.
 
-**Fix:** when the message names what would fit, start there. For a shortfall,
+**Fix:** when the message names what would fit, start there. When it says an
+old model is still loaded and offers Old model in the way, click Clear and
+retry on that card, or Reset attached mesh, then queue again; moving between
+large models on one attached mesh meets this. For another shortfall,
 run the checkpoint slab-resident on every rank, use a pruned or quantized
 artifact, or free unified memory on the short box. For a silent rank, recycle
 the fleet from the DGX Monarch panel, or check that box, then queue again. For
@@ -7482,3 +7520,46 @@ parallelism splits as it splits a whole clip. Three things stop it:
 - The activation preflight still prices the whole clip, so a clip the
   preflight refuses whole is refused with the node too
   ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)).
+
+## 143. Under torch 2.15 an actor dies when it builds its first process group
+
+**Symptom:** under torch 2.15 a render on a mesh fails at Worker setup with
+`Endpoint call dgxm_worker.setup() failed ... proc_agent and all its
+descendants have failed`. The actor's log, in the driver log for a local actor
+or in the Worker journal on a Worker host, ends with:
+
+```
+terminate called after throwing an instance of 'c10::Error'
+  what():  Calling snapshot with backend:cudaMallocAsync is not meaningful. ...
+Exception raised from snapshot at c10/cuda/CUDAMallocAsyncAllocator.cpp:872
+frame #6: c10d::nccl2::ProcessGroupNCCL::detachMemoryHook()
+frame #7: c10d::nccl2::ProcessGroupNCCL::~ProcessGroupNCCL()
+```
+
+**Cause:** torch 2.15 maps the `nccl` backend name to a new implementation,
+`c10d::nccl2`. When it builds a process group, its allocator hook takes a
+snapshot of the CUDA caching allocator without checking which allocator runs.
+ComfyUI's launch settings select cudaMallocAsync, whose snapshot throws by
+design, so the first process group throws before any collective. The throw
+unwinds the half-built group, whose destructor throws again, and the process
+terminates. torch 2.12 ships only the legacy ProcessGroupNCCL, which has no
+such hook, and `TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK=0` does not
+reach this path.
+
+**Fix:**
+
+- Update dgx-monarch on the driver and on every Worker host, then restart the
+  Worker services. From this release every actor starts with
+  `TORCH_DIST_USE_NCCL2=0`, which torch 2.15 reads when it is imported and
+  which maps `nccl` back to the legacy ProcessGroupNCCL. torch 2.12 ignores it.
+- Check `dgxm doctor`: its `actor NCCL backend` row reads ok and names the
+  torch the actors import.
+- Do not set the variable by hand. The Worker service clears its environment,
+  the Worker loop drops variables it does not know, and `[fabric.*]` tables in
+  cluster.toml take only `NCCL_`, `GLOO_` and `UCX_` keys, so the launcher is
+  the one place it can come from. On an older release, run torch 2.12 on every
+  host instead.
+- After any torch change, each gated combination runs the identity gate again
+  on its first render, because a PASS names the torch and CUDA build it ran
+  under. When the ledger holds a PASS that differs only in that build, the
+  notice names both builds.

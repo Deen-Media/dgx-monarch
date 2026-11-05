@@ -33,7 +33,7 @@ from .. import (
 from ..adapters.base import UnsupportedModelError
 from ..log import get_logger
 from ..refusal import PanelAction, RefusalClass, refusal
-from . import consent_projection, consent_rescue
+from . import consent_projection, consent_rescue, old_model_clear
 from .loader_graph import (
     DriverStackTerms,
     activation_sp_degree,
@@ -43,6 +43,7 @@ from .loader_graph import (
     note_stack_charged,
     remember,
     reset_charged_artifacts,
+    unet_names,
 )
 
 log = get_logger(__name__)
@@ -532,9 +533,18 @@ def preflight_loader_footprint(
                     "headroom_bytes": int(rescue_settled.usable - rescue_settled.projected),
                 })
 
+        # The head's Worker shares this box: an old model it holds may be in the way.
+        clear = old_model_clear.loader_offer(mesh, unet_name, options, windows=(transient, settled),
+                                             keep=unet_names(prompt))
+        if clear is not None and clear.helps:
+            old_model_clear.refuse_at_loader(clear, loader_refusal(
+                binding, terms, unet_name=unet_name, profile=profile, floor_reserve=floor_reserve,
+                rescue=None, window=window, bypass=False))
         message = loader_refusal(
             binding, terms, unet_name=unet_name, profile=profile,
             floor_reserve=floor_reserve, rescue=rescue, window=window)
+        if clear is not None:
+            message = f"{message} {old_model_clear.held_text(clear)}"
         if blocked:
             # Report the existing residency constraint without offering override.
             # The merged copy above cannot name a session quarantine; the graph's

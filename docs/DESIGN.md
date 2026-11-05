@@ -319,13 +319,18 @@ transaction.
 Risky single-model normal-render residency is separately authorized for every
 immutable dispatch snapshot. A Gate PASS is only the source of authority: the
 request grant binds the primary model and detailed checkpoint/LoRA artifact
-set, the complete effective worker policy, physical config identity, resolved
-topology and attention, and the selected READY setup generation/key. The
+set, the complete effective worker policy, physical config identity, the
+driver's torch and CUDA build, resolved topology and attention, and the
+selected READY setup generation/key. The
 physical config identity hashes only the `cluster.toml` settings that can
 change math, residency or transport, leaving out `auto_heal`, `ssh_key`,
 `monarch.startup_timeout_s`, `[monarch.diagnostics]` and the driver-only
 `[worker_args]` keys (`config_schema.DRIVER_ONLY_KEYS`)
-(`monarch_policy_io.trust_config_fingerprint`). A Gate
+(`monarch_policy_io.trust_config_fingerprint`). Every capability context also
+names the driver's torch and CUDA build (`gate_runtime.runtime_build_identity`),
+because a PASS proven under one torch says nothing about another; `dgxm doctor`
+holds every Worker host to the driver's torch (section 6.3), so that build is
+the one every rank ran. A Gate
 ceremony proves exactly one model, so dual-model requests are forced onto
 complete stock residency while driver and worker artifact preflight still bind
 both model slots. Driver preflight, worker preflight, and post-adoption checks
@@ -956,7 +961,10 @@ sampling-spec drift fails closed.
   fail collection and abandon/block the setup generation. Multi-DP collection
   still drains every unique leader token before raising the strongest failure:
   an operational cancellation outranks ordinary failures, with the first error
-  retained within the same class. Production does not recycle automatically:
+  retained within the same class. Production does not recycle automatically,
+  unless the user has ticked Always clear and retry or set
+  `DGXM_ALLOW_CLEAR_RETRY` and a model loaded earlier is in the way
+  of a load (section 5.9, "A model in the way offers a clear"). Otherwise,
   after work retirement the client/operator must explicitly recycle the
   ProcMesh.
 - **Cross-render pipelining**: the `KSampler Pipeline` node
@@ -1665,6 +1673,7 @@ bound or its floor.
 | the gate ceremony's clean reload | the same kind-aware FSDP figure, against each rank's MemAvailable plus its resident shard pool (torch reserved, capped at one share) | `fsdp_reload_price.price_fsdp_clean_reload`, crediting `fsdp_reload_price._rank_credit_bytes` |
 | the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
 | every rank at once | the leanest rank's row, before any rank allocates | `capacity_agreement.collect` and `capacity_agreement.decide` |
+| a model in the way | nothing: it prices no load, it decides whether a refusal offers a clear, from what a clear would give back on each short box | `old_model.rank_gain`, `old_model.fleet_offer` and `actor/actor_footprint.arena_bytes` |
 
 CPU tests require `actor/capacity_quote.UNPRICED_RUNGS` to stay empty. They also compare this table's internal residency names and function names with the source, rejecting missing rows and stale function references. ComfyUI's sample-time memory accounting is separate from these residency choices. A slab or an FSDP shard runs ComfyUI's full load once its weights are
 resident (`actor/resident_ledger.declare`), and a
@@ -1674,8 +1683,11 @@ the baked hot-swap residency keeps ComfyUI's sample-time load, and the
 `partial_load_divergence` guard still refuses a render whose ranks load
 partially.
 
-**Slab capacity refusals offer no consent card.** Slab is the final residency
-option; consent cannot resolve its memory shortfall.
+**Slab capacity refusals offer no slab consent card.** Slab is the final
+residency option; consent cannot resolve its memory shortfall. A model
+loaded earlier and still in the way is another matter: when a clear would make
+room, the slab refusal offers the Old model in the way card below, because the
+fix is a reset, not a consent.
 
 **The driver frees what ComfyUI can reload before it refuses.** The render-site
 checks (`nodes/render_preflight`) read MemAvailable on the driver host, where
@@ -1701,6 +1713,38 @@ does the agreement below credit a Worker resident that a load would replace: a
 stock resident's arena is not returned by an in-process unload and a slab
 resident barely moves MemAvailable, so such a credit waits for a measured drop
 per residency, as the FSDP clean reload's credit did.
+
+**A model in the way offers a clear, not a credit.** A refusal priced over a
+Worker resident names the old model and its box: "the old model (flux1-dev)
+is still loaded on head". The driver then works out what a clear of the
+attached mesh, the same teardown as Reset attached mesh, gives back on each
+short box: the file bytes of each stock resident, whose GPU copy an in-process
+drop returned on 2026-11-04, plus the actor's anonymous memory above what it
+held at its first load (`actor/actor_footprint.py`). A slab or comfy-managed
+resident, an FSDP shard and a load cast to another weight dtype are credited
+the arena only. A slot the request reuses, and a model this graph's loader
+nodes load, are neither old nor credited: a fresh fleet would only load them
+again. A model an earlier sampler of the same graph loaded is still old, since
+the later sampler fits on a fresh fleet, so the card and the log say "loaded
+earlier", not "an earlier render". Only when
+every short box is short by less than that, with 2 GiB to spare for what a
+fresh Worker takes back, does the refusal become "Old model in the way"
+(`old_model.py`), at the agreement and at the loader windows. The loader asks
+the Workers on the driver host for the same facts after its own estimate
+refused, and a clear must make room in both of its windows, against their
+unclamped budgets. The card's Clear and retry grants nothing: it writes no
+memo and no ledger row and lifts no guard, so its kind stays outside the frozen
+audit vocabulary. A card resets only the fleet that refused, and every reset,
+from any door, answers every open card. With Always clear and retry ticked
+(`auto_clear` in the consent memo) or `DGXM_ALLOW_CLEAR_RETRY` set on the
+driver, the driver clears by itself, at most once per load attempt, under the
+reset route's single-flight gate and never under a Pipeline or Gate session
+pinned to its mesh, waits for the driver host's MemAvailable to settle,
+attaches a fresh fleet and prices again. That price decides: a load that still
+does not fit refuses in the plain words above, and the credit still waits for
+its measurement. The Worker's own wall prices after its in-process drop, so it
+names no old model; when the arena it still holds would cover its shortfall,
+its refusal says so and names Reset attached mesh.
 
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate

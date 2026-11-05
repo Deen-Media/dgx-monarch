@@ -1,4 +1,4 @@
-"""Turn worker refusal descriptors into panel cards.
+"""Turn worker refusal descriptors, and the Old model in the way refusal, into panel cards.
 
 Pending collection, bound RPC calls and the cross-rank capacity agreement all
 route here. A refusal with no consent descriptor raises no card. The
@@ -81,6 +81,14 @@ def observe_refusal(exc: object, worker_args: object = None) -> dict[str, Any] |
     ``active_worker_args``); the card's scope is its slab-resident load.
     """
     try:
+        from .old_model import OldModelRefusal
+
+        if isinstance(exc, OldModelRefusal):
+            # The driver's own Old model in the way refusal carries no worker
+            # descriptor; its card is the driver's (nodes/old_model_clear.py).
+            from .nodes import old_model_clear
+
+            return old_model_clear.observe(exc)
         text = refusal_text(exc)
         if consent_descriptor.DESCRIPTOR_BEGIN not in text:
             return None

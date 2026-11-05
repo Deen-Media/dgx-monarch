@@ -309,6 +309,7 @@ def verify_request_artifacts(
             "world": physical["physical_world"],
             "hosts": physical["hosts"],
             "gpus_per_host": physical["gpus_per_host"],
+            "runtime": physical["runtime"],
             "topology_preset": policy.get("topology_preset"),
             "attention": policy.get("attention"),
             "sync_ulysses": policy.get("sync_ulysses"),
