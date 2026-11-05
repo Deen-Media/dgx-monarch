@@ -297,7 +297,8 @@ def stock_load_preflight(path: str, unet_name: str, model_options: dict) -> None
     Stock weights consume roughly file size in the shared UMA pool; exceeding
     MemAvailable can invoke the OS OOM killer before Python can classify an
     exception. Discrete devices and dtype casts are excluded because file size
-    does not bound their resident allocation.
+    does not bound their resident allocation. The ladder calls this only where
+    ``capacity_fit.stock_load_fit`` made no claim, and that probe prices a cast.
     """
     import os
 

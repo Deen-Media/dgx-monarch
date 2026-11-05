@@ -173,11 +173,14 @@ def test_the_worker_quote_credits_the_base_its_own_store_holds(monkeypatch, tmp_
     row = envelope["quotes"][0]
     assert (row["would_load"], row["verdict"]) == ("swap", "fits")
     assert row["measured"]["credit_bytes"] == BF16_BYTES
+    # A base the low-RSS bake consumed reloads instead: the store drops the slot
+    # first, so the stock swap credit (2026-11-05) credits the same copy.
     store.current.base_baked = True
-    refused = worker_capacity.quote(worker, {"specs": [
+    assert store.snapshot()["cond"]["swaps_in_place"] is False
+    reloaded = worker_capacity.quote(worker, {"specs": [
         {"unet_name": BASE, "options": {}, "loras": LORA_STACK, "slot": "cond"}],
         "rescue_consent": None})["quotes"][0]
-    assert refused["verdict"] == "refuse" and "credit_bytes" not in refused["measured"]
+    assert reloaded["verdict"] == "fits" and reloaded["measured"]["credit_bytes"] == BF16_BYTES
 
 
 def test_a_credited_sentence_names_its_box_the_way_the_caller_asks():

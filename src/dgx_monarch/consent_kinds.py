@@ -270,9 +270,9 @@ def numbers_from_measured(measured: Mapping[str, Any] | None) -> str | None:
 
     ``headroom_bytes`` is what is available minus the refusing site's price,
     so ``needs`` comes back as that price, not the file size. For a stock load
-    the price is ``capacity_fit.stock_required_bytes``: the file, the host copy
-    it is placed from, and the host floor. A block that carries no headroom
-    falls back to the file size.
+    the price is ``capacity_fit.stock_required_bytes``: the file, or the copy a
+    loader dtype cast builds, the host copy it is placed from, and the host
+    floor. A block that carries no headroom falls back to the file size.
     """
     if not isinstance(measured, Mapping):
         return None

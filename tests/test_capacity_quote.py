@@ -252,7 +252,7 @@ def test_the_fsdp_rung_still_resolves_on_the_quote_module():
 
 FITS = StockFit(True, True, 20 * 2 ** 30, 90 * 2 ** 30)
 DOES_NOT_FIT = StockFit(False, True, 62 * 2 ** 30, 47 * 2 ** 30)
-SKIPPED = StockFit(True, False, 0, None, "a loader dtype cast changes the resident size")
+SKIPPED = StockFit(True, False, 0, None, "the CUDA device is not integrated (host memory does not bound capacity)")
 SLAB_FITS = SlabFit(True, True, 20 * 2 ** 30, 90 * 2 ** 30, 4 * 2 ** 30)
 SLAB_SHORT = SlabFit(False, True, 62 * 2 ** 30, 47 * 2 ** 30, 4 * 2 ** 30)
 
