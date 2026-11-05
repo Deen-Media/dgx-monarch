@@ -401,3 +401,51 @@ def test_the_docs_this_pr_adds_name_no_box_by_rank():
     for passage in passages:
         assert not _RANK.search(passage), passage
         assert "rank 0" not in passage
+
+
+# --- the Greptile review of 1b7a560 ----------------------------------------
+
+def _holding(monkeypatch, held: int) -> None:
+    loaded = types.SimpleNamespace(model=object(), model_memory=lambda: held)
+    management = types.ModuleType("comfy.model_management")
+    management.current_loaded_models = [loaded]  # type: ignore[attr-defined]
+    comfy = types.ModuleType("comfy")
+    comfy.model_management = management  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "comfy", comfy)
+    monkeypatch.setitem(sys.modules, "comfy.model_management", management)
+
+
+def test_a_driver_twin_takes_the_held_credit_once(monkeypatch):
+    """ComfyUI holds 33 GiB, so 2.6 GiB of the graph's 35.6 GiB of models stays
+    charged. A W4A8 upsampler saves at most that much, not its 13.5 GiB file
+    saving on top of the credit, so at 80 GiB it does not make the load fit;
+    1b7a560 subtracted the saving from the credited stack and named it."""
+    _holding(monkeypatch, 33 * _GIB)
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 80 * _GIB)
+    text = _refuse(_Mesh(), _template())
+    assert "p-h3-image_prompt_upsampler_w4a8.safetensors" not in text
+    assert "p-h3-image_int8_convrot.safetensors (19.8 GiB)" in text
+
+
+def test_a_driver_twin_is_looked_for_beside_the_file_in_its_subfolder():
+    """The graph loads sub/<upsampler>; only its INT8 copy sits beside it. 1b7a560
+    looked at the folder root, named the root's W4A8 copy as well, and named
+    each file without the subfolder the loader widget shows."""
+    graph = _template()
+    loader = next(key for key, node in graph.items()
+                  if node["inputs"].get("clip_name") == UPSAMPLER)
+    graph[loader]["inputs"]["clip_name"] = f"sub/{UPSAMPLER}"
+    text = _refuse(_Mesh(), graph)
+    assert (f"sub/p-h3-image_prompt_upsampler_int8_convrot.safetensors (9.1 GiB) in place "
+            f"of sub/{UPSAMPLER}") in text
+    assert "p-h3-image_prompt_upsampler_w4a8.safetensors" not in text
+
+
+
+@pytest.mark.parametrize("projected,available,reserve", [
+    (0.0, 10.0, 18.0), (45.9, 47.3, 5.0), (20.0, 30.0, 5.0), (0.0, 30.0, 18.0)])
+def test_the_card_and_the_refusal_read_a_window_alike(projected, available, reserve):
+    window = driver_footprint.DriverFootprintEstimate(
+        weight_bytes=int(projected * _GIB), mem_available=int(available * _GIB),
+        reserve=int(reserve * _GIB))
+    assert (old_model_clear._worst((window,)) is None) == graph_load_price.fits_box(window)

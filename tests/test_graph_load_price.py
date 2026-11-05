@@ -74,6 +74,9 @@ SIZES = {
     ("diffusion_models", "kromoss_int8_convrot.safetensors"): 5_413_698_958,
     ("text_encoders", "qwen3.5_9b_bf16.safetensors"): 19_306_312_328,
     ("vae", "flux2-vae_small.safetensors"): 249_521_340,
+    # An upsampler kept in a subfolder, beside only its INT8 copy.
+    ("text_encoders", "sub/p-h3-image_prompt_upsampler_bf16.safetensors"): 19_306_305_552,
+    ("text_encoders", "sub/p-h3-image_prompt_upsampler_int8_convrot.safetensors"): 9_748_117_724,
 }
 KINDS = {DIT: "bf16", DIT_INT8: "int8", DIT_W4A8: "w4a8", "p-h3-image_fp8.safetensors": "fp8",
          "kromoss_bf16.safetensors": "bf16", "kromoss_int8_convrot.safetensors": "int8"}

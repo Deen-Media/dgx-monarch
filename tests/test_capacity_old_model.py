@@ -411,6 +411,29 @@ def _window(projected_gib: float, available_gib: float, reserve_gib: float):
         reserve=int(reserve_gib * _GIB))
 
 
+def test_the_loader_asks_about_old_models_when_only_its_driver_models_are_short(monkeypatch):
+    """A window with no DiT left to place is short when its driver models are
+    (graph_load_price.fits_box), so a clear that would make room still raises the
+    card. With the budget clamped at zero the loader asked no Worker and raised
+    none (PR #145 review, 2026-11-05)."""
+    held = _stock("fits", size_gib=1.0, avail_gib=200.0, resident="longcat_image_bf16.safetensors",
+                  resident_gib=12.0)
+    asked: list[float] = []
+
+    def collect(handle, request, world, *, deadline_s):
+        asked.append(deadline_s)
+        return [_answer(0, held, box=box_names.LOCAL)]
+
+    monkeypatch.setattr(capacity_agreement, "collect", collect)
+    mesh = types.SimpleNamespace(handle=_LiveHandle())
+    offer = old_model_clear.loader_offer(mesh, NEW, {}, windows=(_window(0.0, 10.0, 18.0),),
+                                         window="resident")
+    assert asked == [old_model_clear.LOADER_QUOTE_DEADLINE_S]
+    assert offer is not None and offer.helps
+    (box,) = offer.boxes
+    assert box.required_bytes == 18 * _GIB and box.window == "resident"
+
+
 def test_the_loader_asks_only_a_live_fleet_on_its_own_host(monkeypatch):
     held = _stock("fits", size_gib=1.0, avail_gib=200.0, resident="longcat_image_bf16.safetensors",
                   resident_gib=12.0)

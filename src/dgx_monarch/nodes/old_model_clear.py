@@ -278,8 +278,15 @@ def clear_for_retry(handle: Any, exc: BaseException, *, inherited: bool = False)
 
 
 def _worst(windows: Iterable[Any]) -> Any:
-    """The failing window short by the most, against its unclamped budget."""
-    short = [window for window in windows if not window.fits]
+    """The failing window short by the most, against its unclamped budget.
+
+    The loader's own test (``graph_load_price.fits_box``), so the card and the
+    refusal agree: a window with no DiT left to place is short when its driver
+    models are, and a clear that makes room there still raises the card.
+    """
+    from .graph_load_price import fits_box
+
+    short = [window for window in windows if not fits_box(window)]
     return max(short, key=lambda window: window.shortfall) if short else None
 
 
