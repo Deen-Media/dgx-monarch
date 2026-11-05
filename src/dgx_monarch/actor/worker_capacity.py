@@ -82,9 +82,13 @@ def _cast_bytes(spec: Any) -> int:
 
     The same header estimate the stock price charged the load
     (``capacity_fit.cast_resident_bytes``), so the credit and the price read
-    one number.
+    one number. A header that cannot be read gives nothing: the price's worst
+    case there (the file times the target width) is an upper bound, and a
+    credit taken from it would admit at the agreement what the rank's own
+    ladder then refuses after its drop.
     """
     from .. import capacity_fit
+    from ..safetensors_header import read_safetensors_header
     from .model_store import _to_comfy_model_options, resolve_model_path
 
     try:
@@ -92,7 +96,8 @@ def _cast_bytes(spec: Any) -> int:
         if dtype is None:
             return _spec_bytes(spec)
         path = str(resolve_model_path("diffusion_models", str(spec["unet_name"])))
-        return capacity_fit.cast_resident_bytes(path, dtype) if os.path.exists(path) else 0
+        read_safetensors_header(path)       # raises where the header cannot be read
+        return capacity_fit.cast_resident_bytes(path, dtype)
     except Exception:
         return 0
 
@@ -138,16 +143,18 @@ def _resident_facts(worker: Any, store: Any) -> dict[str, Any]:
             "arena_bytes": actor_footprint.arena_bytes()}
 
 
-def _with_resident_bytes(snapshot: Any, sizes: dict[str, int]) -> dict:
-    """The store snapshot with each held slot's GPU copy beside its residency.
+def _with_resident_bytes(snapshot: Any, facts: dict[str, Any]) -> dict:
+    """The store snapshot with each held slot's GPU copy and name beside its residency.
 
-    The swap credit reads it (``capacity_lora_bake.credit_stock_swap``): a load
-    that replaces a stock resident is priced after the store drops that copy.
+    The swap credit reads them (``capacity_lora_bake.credit_stock_swap``): a load
+    that replaces a stock resident is priced after the store drops that copy,
+    and its refusal names the model dropped.
     """
     out = dict(snapshot) if isinstance(snapshot, dict) else {}
     for slot in capacity_quote.SLOTS:
         if isinstance(out.get(slot), dict):
-            out[slot] = {**out[slot], "resident_bytes": int(sizes.get(slot) or 0)}
+            out[slot] = {**out[slot], "resident_bytes": int(facts["resident_bytes"].get(slot) or 0),
+                         "resident_name": facts["resident_names"].get(slot) or ""}
     return out
 
 
@@ -294,7 +301,7 @@ def quote(worker: Any, request: Any) -> dict:
         return envelope
     consent = request.get("rescue_consent") if isinstance(request, dict) else None
     facts = _resident_facts(worker, store)
-    snapshot = _with_resident_bytes(store.snapshot(), facts["resident_bytes"])
+    snapshot = _with_resident_bytes(store.snapshot(), facts)
     pinned = _pinned_staging()
     charged = 0
     for spec in _my_slots(worker, specs):

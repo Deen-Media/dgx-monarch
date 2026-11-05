@@ -299,36 +299,52 @@ CAST = {"weight_dtype": "bf16"}
 
 
 def _endpoint_row(monkeypatch, tmp_path, *, want: str, held: str, available: float,
-                  slab_weights: object = "auto", rung: str = "stock_fits") -> RankPrice:
-    """One rank's row from the Worker's own quote endpoint, its store holding ``held``."""
+                  slab_weights: object = "auto", rung: str = "stock_fits",
+                  want_options: dict | None = CAST, held_options: dict | None = CAST,
+                  arena: float = 0.0, files: dict | None = None) -> RankPrice:
+    """One rank's row from the Worker's own quote endpoint, its store holding ``held``.
+
+    ``files`` maps a name to its (dtype, elements), or to None for a file with no
+    header; every other name is a wan2.2 fp16 DiT.
+    """
     import types
 
     from dgx_monarch.actor import actor_footprint, model_store, worker_capacity
     from dgx_monarch.actor.store_detect import _to_comfy_model_options
 
-    paths = {name: (str(tmp_path / name) if (tmp_path / name).exists()
-                    else _write(tmp_path / name, {"w": ("F16", [WAN22_ELEMENTS])}))
-             for name in (want, held)}
+    def staged(name: str) -> str:
+        path = tmp_path / name
+        dtype, elements = (files or {}).get(name, ("F16", WAN22_ELEMENTS)) or (None, 0)
+        if not path.exists():
+            if dtype is None:
+                path.write_bytes(b"")
+                os.truncate(path, 10 * _GIB)      # a file the header parser cannot read
+            else:
+                _write(path, {"blocks.0.w": (dtype, [elements])})
+        return str(path)
+
+    paths = {name: staged(name) for name in (want, held)}
     monkeypatch.setattr(model_store, "resolve_model_path", lambda _kind, name: paths[name])
     monkeypatch.setattr(model_store, "_slab_capable_path", lambda _path: True)
     monkeypatch.setattr(worker_capacity, "_pinned_staging", lambda: False)
-    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: 0)
+    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: int(arena * _GIB))
     monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(available * _GIB))
-    held_options = model_store.normalize_options(CAST)
+    held_key = model_store.normalize_options(held_options or {})
     snapshot = {"cond": {"residency": "stock", "residency_rung": rung, "quant": "fp16",
-                         "request_key": repr((held, held_options, (), "fp16"))},
+                         "request_key": repr((held, held_key, (), "fp16"))},
                 "uncond": None, "cleanup_failed_slots": []}
     store = types.SimpleNamespace(
         slab_weights=slab_weights, lora_low_rss=True, slab_blocked_reason="",
         family_override=None, uncond=None, snapshot=lambda: dict(snapshot),
-        current=types.SimpleNamespace(base_key=(held, held_options), fsdp_checkpoint_pin=None,
+        current=types.SimpleNamespace(base_key=(held, held_key), fsdp_checkpoint_pin=None,
                                       slab_auto_retry=False))
     worker = types.SimpleNamespace(rank=0, world=2, topology={}, _setup_key=("ready",),
                                    store=store, uma_reserve_gb=0.0)
     assert _to_comfy_model_options(CAST)["dtype"] is torch.bfloat16
     envelope = worker_capacity.quote(worker, {"specs": [
-        {"unet_name": want, "options": CAST, "loras": [], "slot": "cond"}], "rescue_consent": None})
+        {"unet_name": want, "options": want_options or {}, "loras": [], "slot": "cond"}],
+        "rescue_consent": None})
     (row,) = envelope["quotes"]
     return RankPrice.from_row(row)
 
@@ -415,8 +431,105 @@ def test_explicit_slab_refuses_a_cast_rather_than_admitting_it_unpriced(tmp_path
     with pytest.raises(FleetCapacityError) as raised:
         decide([_answer(0, row), _answer(1, row)], 2, unet_name=WAN22_NAME)
     assert "slab_weights=on cannot load a checkpoint the loader casts" in str(raised.value)
-    assert "What would fit: set slab_weights to auto or off" in str(raised.value)
+    assert "What would fit: set slab_weights to off, or" in str(raised.value)
+    assert "slab_weights to auto" not in str(raised.value)    # auto admits a vouched family's cast
     unified["bytes"] = 100 * _GIB      # roomy or not: the price cannot be taken
     with pytest.raises(mesh_safety.StockLoadCapacityError) as ladder:
         store_residency.resolve(**_ladder(path, {"dtype": torch.bfloat16}, slab_weights=True))
     assert "slab_weights=on cannot load a checkpoint the loader casts" in str(ladder.value)
+
+
+# Round three: the words on a credited row, and two narrow routes (review of 54403be).
+FLUX1 = "flux1-dev.safetensors"                 # 22.2 GiB bf16, the model in the way
+ANIMATE = "wan_animate_2_bf16.safetensors"      # 30.5 GiB bf16, the load that replaces it
+PLAIN_FP8 = "plain_fp8.safetensors"             # 13.3 GiB plain fp8
+SWAP_FILES = {FLUX1: ("BF16", int(22.2 * _GIB) // 2), ANIMATE: ("BF16", int(30.5 * _GIB) // 2),
+              PLAIN_FP8: ("F8_E4M3", WAN22_ELEMENTS)}
+
+
+def _swap(monkeypatch, tmp_path, available: float, **kwargs) -> RankPrice:
+    kwargs.setdefault("want_options", None)
+    kwargs.setdefault("held_options", None)
+    return _endpoint_row(monkeypatch, tmp_path, available=available, files=SWAP_FILES, **kwargs)
+
+
+def test_a_rescue_card_on_a_credited_swap_names_the_model_the_worker_drops(tmp_path, monkeypatch):
+    """R2-1: the consent text read "beside the 22.2 GiB copy of this file ... its LoRA
+    stack changes" for a load that replaces flux1-dev and has no LoRA."""
+    row = _swap(monkeypatch, tmp_path, 44.0, want=ANIMATE, held=FLUX1)
+    assert row.verdict == "rescue" and row.measured is not None
+    assert row.measured["dropped"] == FLUX1
+    reason = row.descriptor["human_reason"]
+    assert ("needs 46.9 GiB of unified memory under stock residency (a 30.5 GiB file plus "
+            "the host copy it is placed from), after the Worker drops flux1-dev, whose 22.2 GiB "
+            "copy its slot holds, and only 44.0 GiB is available.") in reason
+    assert "LoRA" not in reason and "copy of this file" not in reason
+
+
+def test_a_dtype_change_on_the_held_file_is_a_swap_not_a_lora_change(tmp_path, monkeypatch):
+    """R2-2: the held 13.3 GiB plain fp8 file, asked again cast to bf16."""
+    head = _swap(monkeypatch, tmp_path, 20.0, want=PLAIN_FP8, held=PLAIN_FP8,
+                 want_options=CAST, slab_weights=False)
+    sibling = _swap(monkeypatch, tmp_path, 90.0, want=PLAIN_FP8, held=PLAIN_FP8,
+                    want_options=CAST, slab_weights=False)
+    assert head.verdict == "refuse"
+    with pytest.raises(FleetCapacityError) as raised:
+        decide(_fleet(head, sibling), 2, unet_name=PLAIN_FP8, keep=frozenset({PLAIN_FP8}))
+    text = str(raised.value)
+    assert ("priced a stock load of plain_fp8.safetensors after the Worker drops plain_fp8, the "
+            "13.3 GiB copy its slot holds. Beyond that copy the load needs 32.9 GiB, a 13.3 GiB "
+            "file cast to a 26.6 GiB copy, plus the host copy it is placed from, and 20.0 GiB") in text
+    assert "LoRA" not in text
+
+
+def test_a_card_on_a_credited_swap_names_what_the_dropped_model_left_behind(tmp_path, monkeypatch):
+    """R2-3: the price already took flux1-dev out, so what a clear returns beyond the
+    drop is the memory its load left behind (a 12 GiB arena here)."""
+    from dgx_monarch import old_model
+
+    head = _swap(monkeypatch, tmp_path, 40.0, want=ANIMATE, held=FLUX1, slab_weights=False, arena=12.0)
+    sibling = _swap(monkeypatch, tmp_path, 90.0, want=ANIMATE, held=FLUX1, slab_weights=False)
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        decide(_fleet(head, sibling), 2, unet_name=ANIMATE, keep=frozenset({ANIMATE}))
+    text = str(raised.value)
+    assert ("the-head still holds memory that loading flux1-dev earlier left behind, and "
+            "wan_animate_2_bf16 does not fit beside it.") in text
+    assert "The old model (flux1-dev) is still loaded" not in text
+    offer = old_model.offer_of(raised.value)
+    assert offer is not None and old_model.card_body(offer).startswith("the-head still holds memory")
+
+
+def test_a_credited_swap_a_clear_cannot_fix_says_its_figure_is_the_whole_price(tmp_path, monkeypatch):
+    """R2-3, the plain refusal: 46.9 GiB short of the drop's credit, 69.1 on a cleared box."""
+    head = _swap(monkeypatch, tmp_path, 30.0, want=ANIMATE, held=FLUX1, slab_weights=False, arena=2.0)
+    sibling = _swap(monkeypatch, tmp_path, 90.0, want=ANIMATE, held=FLUX1, slab_weights=False)
+    with pytest.raises(FleetCapacityError) as raised:
+        decide(_fleet(head, sibling), 2, unet_name=ANIMATE, keep=frozenset({ANIMATE}))
+    text = str(raised.value)
+    assert "Beyond that copy the load needs 46.9 GiB" in text
+    assert ("A clear would not make room: wan_animate_2_bf16 needs 69.1 GiB on the-head, and a "
+            "cleared box would have about 52.2 GiB. That is the whole price, because a cleared "
+            "box holds no copy for the Worker to drop.") in text
+
+
+def test_an_unreadable_header_credits_nothing_and_the_fleet_refuses_together(tmp_path, monkeypatch):
+    """R2-4: two 10 GiB files with no header, both cast to bf16, head at 17 GiB. The price
+    takes the worst case (the file times two); the credit takes nothing, so the agreement
+    refuses instead of admitting what the head's own ladder refuses after its drop."""
+    unreadable = {"a_fp16.ckpt": None, "b_fp16.ckpt": None}
+    head = _endpoint_row(monkeypatch, tmp_path, want="b_fp16.ckpt", held="a_fp16.ckpt",
+                         available=17.0, slab_weights=False, files=unreadable)
+    assert head.resident_bytes["cond"] == 0
+    assert head.verdict == "refuse" and "credit_bytes" not in (head.measured or {})
+    assert head.measured is not None and head.measured["required_gib"] == 36.0
+
+
+def test_explicit_slab_over_a_held_model_does_not_claim_a_price_it_never_took(tmp_path, monkeypatch):
+    """R2-7: the explicit-slab cast refusal has no figures, so no as-held sentence."""
+    head = _endpoint_row(monkeypatch, tmp_path, want=WAN22_NAME, held=WAN22_HIGH,
+                         available=12.2, slab_weights=True)
+    assert (head.verdict, head.rung, head.measured) == ("refuse", "explicit", None)
+    with pytest.raises(FleetCapacityError) as raised:
+        decide(_fleet(head, head), 2, unet_name=WAN22_NAME, keep=frozenset({WAN22_NAME}))
+    assert "does not model the drop" not in str(raised.value)
+    assert "slab_weights=on cannot load a checkpoint the loader casts" in str(raised.value)

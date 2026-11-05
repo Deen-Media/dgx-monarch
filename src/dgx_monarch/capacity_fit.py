@@ -78,6 +78,8 @@ class StockFit:
     credit_bytes: int = 0
     # The copy a loader dtype cast builds (``cast_resident_bytes``); 0 is no cast.
     cast_bytes: int = 0
+    # The slot's resident a swap credit drops first (credit_stock_swap); "" is in place.
+    dropped: str = ""
 
     @property
     def size_gib(self) -> float:
@@ -128,6 +130,8 @@ class StockFit:
             {"credit_bytes": int(self.credit_bytes)} if self.credit_bytes > 0 else {})
         if self.cast_bytes > 0:
             credit.update(cast_bytes=int(self.cast_bytes), cast_gib=gib(self.cast_bytes))
+        if self.dropped and self.credit_bytes > 0:
+            credit["dropped"] = self.dropped
         return {
             "probe": PROBE_STOCK_LOAD_FIT,
             "checkpoint_bytes": int(self.size_bytes),

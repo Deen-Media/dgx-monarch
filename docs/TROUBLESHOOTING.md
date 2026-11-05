@@ -2122,8 +2122,11 @@ the attached mesh, the same as Reset attached mesh, and writes no memo and no
 ledger row; then queue again, and the load is priced again on fresh Workers.
 Tick Always clear and retry on the card, or the toggle of that name under
 "Consents and waivers", and the driver clears and retries by itself, at most
-once per load. When a clear would not make room, the refusal says so and
-offers no card. A model this graph loads, or one the request reuses, is never
+once per load. When the price already counted the drop of the model the load
+replaces, the card says instead that the box "still holds memory that loading
+<name> earlier left behind", since a clear gives that back. When a clear would
+not make room, the refusal says so, with the whole price a cleared box would
+need, and offers no card. A model this graph loads, or one the request reuses, is never
 the old model. A card resets only the attached mesh that refused: if that mesh
 is gone, the click answers the card and resets nothing, and any reset answers
 every open card. A one-GPU fleet or a Fleet job, whose Worker prices its own

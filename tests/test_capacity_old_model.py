@@ -149,7 +149,8 @@ def test_a_cast_load_short_beside_an_old_model_still_offers_the_card():
 def _credited_swap(avail_gib: float, arena_gib: float) -> RankPrice:
     """qwen-image over flux1-dev in one slot, priced after the store drops flux1-dev."""
     credit = int(22.2 * _GIB)
-    fit = StockFit(False, True, int(19.0 * _GIB), int(avail_gib * _GIB), credit_bytes=credit)
+    fit = StockFit(False, True, int(19.0 * _GIB), int(avail_gib * _GIB), credit_bytes=credit,
+                   dropped=OLD)
     fit = replace(fit, fits=fit.required_bytes <= fit.avail_bytes)
     return replace(_stock("refuse", size_gib=19.0, avail_gib=avail_gib, arena_gib=arena_gib),
                    measured=dict(fit.measured()))

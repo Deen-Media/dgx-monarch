@@ -18,6 +18,7 @@ from ..capacity_fit import SlabFit, StockFit
 from ..consent_descriptor import ConsentDescriptor
 from ..consent_kinds import KIND_SPECS
 from ..log import get_logger
+from ..old_model import display_name
 from ..transfer_utils import failure_summary, safe_call
 from . import store_slab_admit
 
@@ -42,7 +43,7 @@ CAST_SLAB_REFUSAL = (
     "slab_weights=on cannot load a checkpoint the loader casts to another weight dtype: "
     "the cast copy sits beside the file in a second arena the slab price does not "
     "measure, so the load cannot be priced and saves nothing. What would fit: set "
-    "slab_weights to auto or off, or the loader's weight_dtype to default")
+    "slab_weights to off, or the loader's weight_dtype to default")
 
 # The clause a cold box's rescue card carries, set only where the memo was
 # read and came back empty. It goes in ``reason`` rather than a seventeenth
@@ -132,6 +133,16 @@ def rescue_blocker(
     return None
 
 
+def _stock_words(fit: StockFit) -> str:
+    """What the card's stock price charges. A swap credit names the model the
+    Worker drops first; an in-place LoRA change keeps the hot-swap words."""
+    if fit.dropped and fit.credit_bytes > 0:
+        return (f"{capacity_fit.stock_terms(fit.size_gib)}, after the Worker drops "
+                f"{display_name(fit.dropped)}, whose {capacity_fit.gib(fit.credit_bytes)} GiB "
+                "copy its slot holds,")
+    return capacity_fit.stock_terms(fit.size_gib, fit.credit_bytes)
+
+
 def build_descriptor(
     *,
     unet_name: str,
@@ -180,7 +191,7 @@ def build_descriptor(
         measured=measured,
         human_reason=(
             f"{name} needs {fit.required_gib} GiB of unified memory under stock residency "
-            f"{capacity_fit.stock_terms(fit.size_gib, fit.credit_bytes)} and only "
+            f"{_stock_words(fit)} and only "
             f"{fit.avail_gib} GiB is available. Zero-copy slab residency fits it. Image "
             "identity on the slab path is not proven for this family yet, so this load is "
             "availability-only evidence, never an accuracy verdict."

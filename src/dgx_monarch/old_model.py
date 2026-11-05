@@ -74,6 +74,9 @@ class ShortBox:
     required_bytes: int
     available_bytes: int
     gain_bytes: int
+    # Old models the price already credited, because the Worker drops them
+    # before this load: what keeps the box short is what they left behind.
+    dropped: tuple[str, ...] = ()
 
     @property
     def shortfall_bytes(self) -> int:
@@ -224,24 +227,38 @@ def _numbers(quote: RankPrice, kept: frozenset[str] = frozenset()) -> tuple[int,
         required, available = int(block["required_bytes"]), int(block["mem_available_bytes"])
     except (KeyError, TypeError, ValueError):
         return None
-    if quote.slot not in kept and quote.holds_resident.get(quote.slot) == CREDITED_RESIDENCY:
+    if _counts_credit(quote, kept):
         required += max(int(block.get("credit_bytes") or 0), 0)
     return required, available
+
+
+def _counts_credit(quote: RankPrice, kept: frozenset[str]) -> bool:
+    """Whether ``rank_gain`` counts the stock resident this row's price credited."""
+    return quote.slot not in kept and quote.holds_resident.get(quote.slot) == CREDITED_RESIDENCY
+
+
+def _dropped(quote: RankPrice, kept: frozenset[str]) -> tuple[str, ...]:
+    """The old model this row's swap credit already took out of its price."""
+    block = quote.measured or {}
+    name = block.get("dropped") if block.get("credit_bytes") and not quote.use_slab else None
+    return (display_name(str(name)),) if name and _counts_credit(quote, kept) else ()
 
 
 def credited_sentence(where_: str, unet_name: str, quote: RankPrice, needed: float,
                       weights: float, avail: float, short: float) -> str:
     """The fleet card's sentence for a credited price that still falls short.
 
-    A LoRA change on the held file keeps its own words; a swap over another
-    model names the copy the Worker drops before it loads.
+    A LoRA change the store makes in place on the held base keeps its own words;
+    a swap credit (``dropped`` in the block) names the copy the Worker drops
+    before it loads, a change of dtype on the same file included. The held size
+    is the credit itself, never the new load's copy.
     """
     block = quote.measured or {}
-    held = quote.resident_names.get(quote.slot)
-    if not held or held == unet_name:
-        return hot_swap_sentence(where_, unet_name, needed, block.get("cast_gib") or weights, avail, short)
+    held = gib(int(block.get("credit_bytes") or 0))
+    if not block.get("dropped"):
+        return hot_swap_sentence(where_, unet_name, needed, held, avail, short)
     return (f"{where_} priced a stock load of {unet_name} after the Worker drops "
-            f"{display_name(held)}, the {gib(int(block.get('credit_bytes') or 0))} GiB copy "
+            f"{display_name(str(block['dropped']))}, the {held} GiB copy "
             f"its slot holds. Beyond that copy the load needs {needed} GiB, a {weights} GiB "
             f"file {stock_second_term(block)}, and {avail} GiB of unified memory is "
             f"available, {short} GiB short.")
@@ -258,7 +275,7 @@ def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
     and keeps its worst row; ranks that share a box add their gains. ``keep``
     names the models this request and graph load (``kept_slots``).
     """
-    ranks: dict[int, tuple[str, tuple[str, ...], int, int, int]] = {}
+    ranks: dict[int, tuple[str, tuple[str, ...], int, int, int, tuple[str, ...]]] = {}
     for answer, quote in short:
         kept = kept_slots(answer.quotes or (quote,), keep)
         numbers = _numbers(quote, kept)
@@ -267,16 +284,17 @@ def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
         seen = ranks.get(answer.rank)
         if seen is None or numbers[0] - numbers[1] > seen[2] - seen[3]:
             ranks[answer.rank] = (box_name(answer), old_models(quote, kept), *numbers,
-                                  rank_gain(quote, kept))
+                                  rank_gain(quote, kept), _dropped(quote, kept))
     boxes: dict[str, ShortBox] = {}
-    for _rank, (name, olds, required, available, gain) in sorted(ranks.items()):
+    for _rank, (name, olds, required, available, gain, dropped) in sorted(ranks.items()):
         seen_box = boxes.get(name)
         if seen_box is not None:
             gain += seen_box.gain_bytes
             olds = tuple(dict.fromkeys((*seen_box.old_models, *olds)))
+            dropped = tuple(dict.fromkeys((*seen_box.dropped, *dropped)))
             if seen_box.shortfall_bytes > max(required - available, 0):
                 required, available = seen_box.required_bytes, seen_box.available_bytes
-        boxes[name] = ShortBox(name, olds, required, available, gain)
+        boxes[name] = ShortBox(name, olds, required, available, gain, dropped)
     if not any(box.old_models for box in boxes.values()):
         return None
     local = bool(answers) and all(
@@ -302,8 +320,17 @@ def held_sentence(offer: ClearOffer) -> str:
     """'The old model (<name>) is still loaded on <box> and <new> does not fit beside it.'"""
     groups: dict[tuple[str, ...], list[str]] = {}
     for box in offer.boxes:
-        if box.old_models:
-            groups.setdefault(box.old_models, []).append(box.box)
+        named = tuple(name for name in box.old_models if name not in box.dropped)
+        if named:
+            groups.setdefault(named, []).append(box.box)
+    if not groups:
+        # Every old model is one the price already dropped: what is left in the
+        # way is the memory those loads left behind, which a clear returns.
+        left = list(dict.fromkeys(name for box in offer.boxes for name in box.old_models))
+        where_ = [box.box for box in offer.boxes if box.old_models]
+        return (f"{_join(where_)} still {'holds' if len(where_) == 1 else 'hold'} memory that "
+                f"loading {_join(left)} earlier left behind, and {offer.new_model} does not "
+                "fit beside it.")
     parts = [f"({_join(names)}) is still loaded on {_join(where)}"
              if not index else f"the old model ({_join(names)}) on {_join(where)}"
              for index, (names, where) in enumerate(groups.items())]
@@ -350,9 +377,11 @@ def no_room(offer: ClearOffer) -> str:
     """Why the ordinary refusal stands although an old model is still loaded."""
     for box in offer.boxes:
         if not box.clear_makes_room:
+            whole = (" That is the whole price, because a cleared box holds no copy for "
+                     "the Worker to drop." if box.dropped else "")
             return (f"A clear would not make room: {offer.new_model} needs "
                     f"{gib(box.required_bytes)} GiB on {box.box}, and a cleared box "
-                    f"would have about {gib(box.cleared_bytes)} GiB. Choose a smaller or "
+                    f"would have about {gib(box.cleared_bytes)} GiB.{whole} Choose a smaller or "
                     "quantized artifact, free memory on that box, or use slab residency "
                     "where a card offers it.")
     return ""
@@ -390,8 +419,8 @@ def held_clause(pairs: Sequence[tuple[RankAnswer, RankPrice]],
     named = []
     for answer, quote in pairs:
         block = (quote.slab_measured if quote.use_slab else quote.measured) or {}
-        if quote.would_load not in ("swap", "reuse") or block.get("credit_bytes"):
-            continue    # a credited row was priced after the drop it names
+        if quote.would_load not in ("swap", "reuse") or not block or block.get("credit_bytes"):
+            continue    # a row with no price, or one taken after the drop it names
         word = quote.holds_resident.get(quote.slot)
         if word:
             named.append(f"{answer.where} holds a {word} resident in the "

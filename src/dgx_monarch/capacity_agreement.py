@@ -277,7 +277,7 @@ def decide(answers: list[RankAnswer], world: int, *,
             answers, silent, world, ranks, disagree, deadline_s))
     refusing = _pairs(answers, VERDICT_REFUSE)
     rescuing = _pairs(answers, VERDICT_RESCUE)
-    # Priced with the residents still held: a clear may make room on every short box.
+    # Priced with what a load does not replace still held: a clear may make room.
     short = refusing + rescuing
     # ``keep``: the models this request and graph load are never in the way.
     offer = old_model.fleet_offer(short, answers, unet_name, keep)

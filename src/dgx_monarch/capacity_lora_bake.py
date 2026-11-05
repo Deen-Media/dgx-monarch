@@ -291,7 +291,7 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
             or not isinstance(held, dict) or held.get("residency") != "stock"
             or not isinstance(held_bytes, int) or isinstance(held_bytes, bool) or held_bytes <= 0):
         return fit
-    credited = replace(fit, credit_bytes=held_bytes)
+    credited = replace(fit, credit_bytes=held_bytes, dropped=str(held.get("resident_name") or "a model"))
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 
