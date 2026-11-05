@@ -25,9 +25,10 @@ from ..loader_options import SUPPORTED_WEIGHT_DTYPES, validate_weight_dtype
 from ..log import get_logger
 from ..mesh import ensure_live
 from ..mesh_safety import ArtifactBindingError
+from ..old_model import OldModelRefusal, graph_loads
 from ..safetensors_header import SafetensorsFileIdentity
 from ..topology import Topology, topology_from_preset
-from . import consent_projection, loader_graph, loader_preflight, render_validation
+from . import consent_projection, loader_graph, loader_preflight, old_model_clear, render_validation
 from .common import MeshSpec, ModelSpec
 
 log = get_logger(__name__)
@@ -215,7 +216,18 @@ class DGXMonarchUNETLoader:
         # every rank. Inside that session it would still be typed and caught,
         # but only after a full bring-up. run_render and the pipeline keep the
         # same placement.
-        rescue_load = price_load()
+        from .render_session import active_render_session
+
+        try:
+            rescue_load = price_load()
+        except OldModelRefusal as exc:
+            # Always clear and retry: clear once, then price again on the
+            # emptied box; a second refusal is not caught. Never under a
+            # session pinned to its mesh.
+            if not old_model_clear.clear_for_retry(
+                    mesh.handle, exc, inherited=active_render_session() is not None):
+                raise
+            rescue_load = price_load()
         handle = ensure_live(mesh.handle, mesh_preflight=mesh_preflight)
         if mesh.topology_preset != "auto":
             from .abandoned_heal import heal_before_eager_setup
@@ -238,17 +250,22 @@ class DGXMonarchUNETLoader:
             from . import render_preflight
             from .render_session import mutation_render_session
 
-            render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
-            if self._defers_for_dual_model_cfg2(mesh, unet_name, topo):
-                # Setup stays eager (topology is known), but the load defers to
-                # the first render so the sample path loads one checkpoint per
-                # rank. record_rescue_row is skipped with the load, mirroring the
-                # auto path (no call_all results to certify).
+            def defers(handle, topo) -> bool:
+                # Setup stays eager (topology is known), but a dm-cfg2 load
+                # defers to the first render so the sample path loads one
+                # checkpoint per rank. record_rescue_row is skipped with the
+                # load, mirroring the auto path (no call_all results to certify).
+                render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
+                if not self._defers_for_dual_model_cfg2(mesh, unet_name, topo):
+                    return False
                 with mutation_render_session(handle):
                     mesh_setup.ensure_request_setup(
                         handle, topo, mesh.attention, mesh.sync_ulysses,
                         mesh.worker_args)
                 first_render.load_deferred(self.ENDPOINT, reason="explicit cfg2 dm-cfg2")
+                return True
+
+            if defers(handle, topo):
                 return (spec,)
 
             def eager_load(handle, topo):
@@ -264,8 +281,10 @@ class DGXMonarchUNETLoader:
                     # the request because the uncond loader inherits this
                     # method, so a slotless quote would price an uncond load
                     # against the cond slot.
-                    capacity_agreement.agree_load(
-                        handle, unet_name, options, [], self.SLOT)
+                    # The graph's own checkpoints are never the old model.
+                    with graph_loads(loader_graph.unet_names(prompt)):
+                        capacity_agreement.agree_load(
+                            handle, unet_name, options, [], self.SLOT)
                     return handle.call_all(
                         self.ENDPOINT, unet_name, options, [], timeout_s=1800,
                         **mesh_setup.token_kwargs(setup_token))
@@ -287,6 +306,18 @@ class DGXMonarchUNETLoader:
                     handle, exc, respawn=respawn_after_restart).handle
                 topo = topology_from_preset(mesh.topology_preset, handle.world)
                 render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
+                results = eager_load(handle, topo)
+            except OldModelRefusal as exc:
+                # Always clear and retry, outside the session: clear once,
+                # attach a fresh fleet, run the same preflights on its
+                # topology, then price and load once more.
+                if not old_model_clear.clear_for_retry(
+                        handle, exc, inherited=active_render_session() is not None):
+                    raise
+                handle = reprice_then_respawn(handle)
+                topo = topology_from_preset(mesh.topology_preset, handle.world)
+                if defers(handle, topo):
+                    return (spec,)
                 results = eager_load(handle, topo)
             for r in results:
                 log.info("%s: %s -> %s", self.ENDPOINT, r.get("host"), r.get("transition"))

@@ -381,6 +381,25 @@ def test_rescue_descriptors_agree_across_ranks(checkpoint):
     assert tag is not None and tag.guard == "stock_load_preflight" and tag.waivable
 
 
+def test_a_rescue_offer_priced_over_a_resident_says_so_too(checkpoint):
+    """The rescue arm prices against the residents the refusal arm does.
+
+    Ten of the 2026-11-04 rescue offers were priced with flux1-dev still held
+    and never said so, because only the refusal arm named the resident.
+    """
+    head = _rescue_answer(0, checkpoint, 75.2)
+    held = replace(head.quotes[0], would_load="swap",
+                   holds_resident={"cond": "stock", "uncond": None})
+    from dgx_monarch.consent_descriptor import SlabResidencyRescueOffer
+
+    with pytest.raises(SlabResidencyRescueOffer) as raised:
+        decide([replace(head, quotes=(held,)), _rescue_answer(1, checkpoint, 107.0)], 2)
+    text = str(raised.value)
+    assert "rank 0 (host box0) holds a stock resident in the cond slot" in text
+    assert "does not model the drop" in text
+    assert text.index("does not model the drop") < text.index("Nothing was loaded")
+
+
 def test_the_driver_raised_rescue_reaches_the_panel(checkpoint, monkeypatch):
     handle = _FakeHandle(2, {})
     monkeypatch.setattr(

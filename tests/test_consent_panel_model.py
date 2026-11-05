@@ -224,3 +224,20 @@ def test_a_live_accuracy_waiver_is_counted_so_the_panel_can_stop_whispering():
     assert none["accuracyActive"] == 0
     assert one["accuracyActive"] == 1
     assert gone["accuracyActive"] == 0
+
+
+def test_always_clear_and_retry_reports_its_effective_state():
+    stored, forced, busy = _run_model([
+        {"state": {"payload": {"pending": [], "active": [], "auto_clear": True}},
+         "ui": {"now": 1000}},
+        {"state": {"payload": {"pending": [], "active": [], "auto_clear": False,
+                               "auto_clear_env": True}},
+         "ui": {"now": 1000}},
+        {"state": {"payload": {"pending": [], "active": []}},
+         "ui": {"now": 1000, "busy": {"#auto_clear": {"busy": True}}}},
+    ])
+    assert stored["autoClear"] is True and stored["autoClearEnv"] is False
+    assert forced["autoClear"] is True and forced["autoClearEnv"] is True
+    assert busy["autoClear"] is False and busy["autoClearBusy"] is True
+    assert stored["autoRescue"] is False
+

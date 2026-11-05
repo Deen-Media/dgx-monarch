@@ -383,8 +383,6 @@ def register() -> None:
         Persistent worker services keep running; blocking work stays off-loop.
         The checks below are CSRF controls, not user authentication.
         """
-        from ..mesh import _MESH_LOCK, _MESHES
-
         allowed, detail = _recycle_request_allowed(request.headers, request.scheme)
         if not allowed:
             raise web.HTTPForbidden(text=detail)
@@ -401,29 +399,10 @@ def register() -> None:
             )
 
         def _do():
-            with _MESH_LOCK:  # snapshot under lock; recycle is idempotent anyway
-                handle = next(iter(_MESHES.values()), None)
-            if handle is None:
-                return ({
-                    "ok": False,
-                    "status": "no_live_mesh",
-                    "retryable": False,
-                    "detail": "no attached mesh to reset; worker services are unchanged",
-                }, 200)
+            # The teardown the card's Clear and retry shares (recycle_drain.py).
+            from . import recycle_drain
 
-            # Do not issue a clear_vram RPC first. recycle_detailed() takes the
-            # lifecycle lock and rejects active render/result leases before any
-            # destructive mesh action. Actor exit itself returns both loaded
-            # models and the retained allocator pool to the OS.
-            outcome = handle.recycle_detailed()
-            if outcome.ok:
-                # Proc exit invalidates worker-residency credits. Drain loader and render
-                # memos together before a new fleet can inherit them.
-                from . import recycle_drain
-
-                recycle_drain.drop_residency_memos()
-            status = 200 if outcome.ok else (409 if outcome.retryable else 503)
-            return outcome.as_dict(), status
+            return recycle_drain.recycle_attached_mesh()
 
         try:
             result, status = await _await_recycle_bounded(_do, _RECYCLE_TIMEOUT_S)

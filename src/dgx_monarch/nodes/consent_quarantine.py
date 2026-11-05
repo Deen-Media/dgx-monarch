@@ -332,12 +332,16 @@ def quarantine_decisions(
 def capacity_query(kind: object, combo_key: object, artifacts: object,
                    artifacts_legacy: object, legacy_complete: object,
                    capability_context: object) -> QuarantineQuery | None:
-    """The query one class C card or memo is read under; None for another class."""
+    """The query one class C card or memo is read under; None for another class.
+
+    None for an action kind too: its accept bypasses no guard, so no
+    quarantine can stand in its way (consent_kinds.KindSpec.action).
+    """
     from .. import consent_pending
     from ..gate_ledger import ArtifactSetSignature
 
     spec = consent_pending.KIND_SPECS.get(str(kind or ""))
-    if spec is None or spec.refusal_class != "C":
+    if spec is None or spec.refusal_class != "C" or spec.action:
         return None
     if (not isinstance(artifacts, str) or not artifacts
             or not isinstance(artifacts_legacy, str) or not artifacts_legacy

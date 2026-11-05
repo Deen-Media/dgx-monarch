@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, fields
 from typing import Any
 
 from . import accuracy_waiver, consent_store
-from .consent_kinds import KIND_SPECS, KindSpec, consent_context
+from .consent_kinds import KIND_SPECS, KindSpec, consent_context, numbers_from_measured
 from .gate_audit_vocab import check_guard, new_consent_id
 from .log import get_logger
 
@@ -83,6 +83,8 @@ class ConsentDescriptor:
     numbers: str | None = None
     consent_id: str = ""
     scope: dict[str, Any] | None = None
+    # This card's own sentence, beside the kind's fixed risk text.
+    detail: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -116,6 +118,9 @@ class PendingConsent:
     occurrences: int = 1
     first_seen: float = field(default_factory=time.time)
     seen_at: float = field(default_factory=time.time)
+    # What an action kind's card acts on (nodes/old_model_clear.py). It lives on
+    # the entry, so dismissal, expiry and the card limit drop it with the card.
+    binding: Any = None
 
 
 _PENDING: OrderedDict[str, PendingConsent] = OrderedDict()
@@ -159,14 +164,17 @@ def describe(source: object) -> ConsentDescriptor:
             loras=int(get("loras", 0) or 0),
             numbers=get("numbers", None),
             consent_id=str(get("consent_id", "") or ""),
-            scope=get("scope", None),
+            scope=get("scope", None), detail=_optional_str(get("detail", None)),
         )
     spec = KIND_SPECS.get(descriptor.kind)
     if spec is None:
         raise ValueError(f"unknown consent kind {descriptor.kind!r}")
-    # Cards and permanent rows validate against the same guard vocabulary.
-    guard = check_guard(spec.kind, descriptor.target_guard or spec.default_guard) or ""
-    if not descriptor.path or not descriptor.combo_key or not descriptor.artifacts:
+    # Cards and permanent rows validate against the same guard vocabulary. An
+    # action kind writes no row and authorizes no memo (KindSpec.action).
+    guard = (descriptor.target_guard or spec.default_guard if spec.action
+             else check_guard(spec.kind, descriptor.target_guard or spec.default_guard) or "")
+    unjoinable = not spec.action and (not descriptor.combo_key or not descriptor.artifacts)
+    if not descriptor.path or unjoinable:
         # A card without joinable audit identity cannot authorize a memo.
         raise ValueError("a consent descriptor needs path, combo_key and artifacts")
     artifact = descriptor.artifact or os.path.basename(descriptor.path)
@@ -188,6 +196,7 @@ def describe(source: object) -> ConsentDescriptor:
         numbers=descriptor.numbers,
         consent_id=descriptor.consent_id,
         scope=dict(descriptor.scope) if isinstance(descriptor.scope, dict) else None,
+        detail=descriptor.detail,
     )
 
 
@@ -205,34 +214,6 @@ def load_scope(worker_args: Mapping[str, Any] | None) -> dict[str, Any] | None:
     except (TypeError, ValueError, RecursionError):
         return None
     return scope
-
-
-def numbers_from_measured(measured: Mapping[str, Any] | None) -> str | None:
-    """Format the card's figures from structured refusal evidence.
-
-    A class-K refusal can carry a ``detail`` line instead (the pinned kernel
-    and its module count, ``accuracy_waiver.card_tail``), shown in the same place.
-
-    ``headroom_bytes`` is what is available minus the refusing site's price,
-    so ``needs`` comes back as that price, not the file size. For a stock load
-    the price is ``capacity_fit.stock_required_bytes``: the file, the host copy
-    it is placed from, and the host floor. A block that carries no headroom
-    falls back to the file size.
-    """
-    if not isinstance(measured, Mapping):
-        return None
-    detail = measured.get("detail")
-    if isinstance(detail, str) and detail:
-        return detail  # a class-K card's one line about this refusal
-    needs = measured.get("checkpoint_bytes")
-    available = measured.get("mem_available_bytes")
-    if not isinstance(needs, int) or not isinstance(available, int):
-        return None
-    headroom = measured.get("headroom_bytes")
-    if isinstance(headroom, int) and not isinstance(headroom, bool):
-        needs = available - headroom
-    gib = float(1 << 30)
-    return f"needs {needs / gib:.1f} GiB, {available / gib:.1f} GiB available"
 
 
 def descriptor_from_refusal(
@@ -300,8 +281,10 @@ def _card(entry: PendingConsent) -> dict[str, Any]:
         "style": spec.style,
         "title": spec.title.format(artifact=entry.descriptor.artifact),
         "artifact": entry.descriptor.artifact,
-        "risk": spec.risk,
+        "risk": spec.risk, "detail": entry.descriptor.detail,
         "evidence": spec.evidence,
+        # An action kind's accept runs its action; its checkbox makes that standing.
+        **({"runs": spec.action, "always": spec.always_label} if spec.action else {}),
         "numbers": entry.descriptor.numbers,
         "measured": spec.measured_for(entry.descriptor.target_guard),
         "primary": {"label": spec.primary_label, "action": "accept"},
