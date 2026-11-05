@@ -170,6 +170,9 @@ _EVERY_ID = [str(path.relative_to(REPO)) for path in EVERY_TEMPLATE]
 _LORA_VARIANT_SUFFIX = "-lora.json"
 _TEST_LORA_NAME = "test_lora_placeholder.safetensors"
 _TEST_LORA_STRENGTH = 0.8
+# A LoRA variant that compares at another strength holds that one, and the
+# sweep keeps it (benchmark/sweep/matrix.py GRAPH_LORA_STRENGTH_TEMPLATES).
+_LORA_STRENGTH_EXCEPTIONS = {"dgx-monarch-test-p-h3-image-lora.json": 1.0}
 
 
 def _load(path: Path) -> dict:
@@ -775,9 +778,9 @@ def test_a_lora_variant_chains_its_loader_between_unet_and_sampler(path: Path):
             f"{where}: lora_name is {named['lora_name']!r}; the testing set ships "
             f"the placeholder {_TEST_LORA_NAME}"
         )
-        assert named["strength_model"] == _TEST_LORA_STRENGTH, (
-            f"{where}: strength_model is {named['strength_model']!r}, not "
-            f"{_TEST_LORA_STRENGTH}"
+        strength = _LORA_STRENGTH_EXCEPTIONS.get(path.name, _TEST_LORA_STRENGTH)
+        assert named["strength_model"] == strength, (
+            f"{where}: strength_model is {named['strength_model']!r}, not {strength}"
         )
         source = origin.get(loader["inputs"][0]["link"])
         assert source is not None and source["type"] in (

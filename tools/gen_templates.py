@@ -6378,14 +6378,17 @@ def _testing_spec(base: str, title: str, purpose: str, *,
                   widgets: dict[str, dict] | None = None,
                   rewire: dict[str, dict] | None = None,
                   add: tuple[dict, ...] = (),
-                  lora_after: tuple[str, ...] = ()) -> dict:
+                  lora_after: tuple[str, ...] = (),
+                  lora_strength: float = TEST_LORA_STRENGTH) -> dict:
     """The shipped spec of `base` with five edits: its note replaced, widget
     values overridden per node key, wires replaced per node key, nodes appended
     after the base graph, and a LoRA loader spliced into the model edge of each
     named UNET loader. The splice keeps the chain rule: the loader takes the
     model from the UNET loader, and every node that read that model, appended
-    or not, reads the loader instead. An appended node is an ordinary spec node
-    and names the base keys it reads."""
+    or not, reads the loader instead. A spliced loader holds the placeholder
+    strength unless `lora_strength` names the one the test compares at, which
+    the sweep then keeps (benchmark/sweep/matrix.py GRAPH_LORA_STRENGTH_TEMPLATES).
+    An appended node is an ordinary spec node and names the base keys it reads."""
     base_nodes = TEMPLATES[base]["nodes"]
     overrides = widgets or {}
     rewires = rewire or {}
@@ -6418,7 +6421,7 @@ def _testing_spec(base: str, title: str, purpose: str, *,
         nodes.append({"key": lora_key[unet], "type": "DGXMonarchLoraLoader",
                       "pos": (column, lane + offset),
                       "widgets": {"lora_name": TEST_LORA_NAME,
-                                  "strength_model": TEST_LORA_STRENGTH},
+                                  "strength_model": lora_strength},
                       "wire": {"model": (unet, 0)}})
     return {"title": title, "nodes": nodes}
 
@@ -6669,13 +6672,13 @@ TESTING_TEMPLATES = {
         "encoder and VAE, and the upsampler switched off. Load LoRA (DGX Monarch) "
         "bakes the LoRA into the weights, where ComfyUI's template applies it at "
         "cast time, so this cell is the one that says how far apart the two are. "
-        "Map the slot to p-h3-image_lora_bf16.safetensors and set it to 1.0, the "
-        "strength ComfyUI's template uses.",
+        "Map the slot to p-h3-image_lora_bf16.safetensors. The slot holds 1.0, the "
+        "strength ComfyUI's template uses, and the sweep keeps it.",
         widgets={"unet": {"unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors"},
                  "clip": {"clip_name": P_H3_ENCODER["int8"]},
                  "vae": {"vae_name": P_H3_VAE["int8"]},
                  "switch": {"switch": False}},
-        lora_after=("unet",)),
+        lora_after=("unet",), lora_strength=1.0),
     # FLUX.3 Klein: the vendor's quantized files, an odd grid, and a
     # two-reference edit whose streams pad in both phases.
     "dgx-monarch-test-flux3-klein-int8": _testing_spec(

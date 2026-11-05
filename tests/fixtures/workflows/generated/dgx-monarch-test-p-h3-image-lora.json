@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-p-h3-image, with only the changes needed for this test. ComfyUI's own p-h3-image route: the vendor's LoRA at strength 1.0 on MiniMax H3's pruned INT8 ConvRot FL2VA DiT, with the INT8 ConvRot text encoder and VAE, and the upsampler switched off. Load LoRA (DGX Monarch) bakes the LoRA into the weights, where ComfyUI's template applies it at cast time, so this cell is the one that says how far apart the two are. Map the slot to p-h3-image_lora_bf16.safetensors and set it to 1.0, the strength ComfyUI's template uses."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-p-h3-image, with only the changes needed for this test. ComfyUI's own p-h3-image route: the vendor's LoRA at strength 1.0 on MiniMax H3's pruned INT8 ConvRot FL2VA DiT, with the INT8 ConvRot text encoder and VAE, and the upsampler switched off. Load LoRA (DGX Monarch) bakes the LoRA into the weights, where ComfyUI's template applies it at cast time, so this cell is the one that says how far apart the two are. Map the slot to p-h3-image_lora_bf16.safetensors. The slot holds 1.0, the strength ComfyUI's template uses, and the sweep keeps it."
    ],
    "title": "DGX Monarch | p-h3-image as a LoRA on MiniMax H3"
   },
@@ -833,11 +833,11 @@
    },
    "widgets_values": [
     "test_lora_placeholder.safetensors",
-    0.8
+    1.0
    ],
    "dgxm_widgets": {
     "lora_name": "test_lora_placeholder.safetensors",
-    "strength_model": 0.8
+    "strength_model": 1.0
    }
   }
  ],

@@ -1612,7 +1612,7 @@ encoder and VAE. One step means Manual Sigmas `1.0, 0.0`.
 | an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#144) and no rank waits out the group timeout | NOT RUN |
 | upsampler | `bf16` as shipped, switch on, one rank | Generate Text runs on the driver and Preview as Text shows the expanded prompt; the render completes beside the 37.7 GiB DiT | NOT RUN |
 | edit | `bf16`, a Load Image wired to `image_1`, uly2 and one rank, one step | the reference rows reach the packed stream on both ranks, both report identical latents, and the image matches the one-rank cell | NOT RUN |
-| LoRA route | `dgx-monarch-test-p-h3-image-lora.json`, the slot mapped to `p-h3-image_lora_bf16.safetensors` at 1.0, one rank, one step, against ComfyUI's own `image_p_h3_t2i` template with its upsampler bypassed | the NRMS against stock, recorded; a gap like MOSS-Image INT8's (#129) asks for the same refusal on H3 | NOT RUN |
+| LoRA route | `dgx-monarch-test-p-h3-image-lora.json`, its slot mapped to `p-h3-image_lora_bf16.safetensors` at the 1.0 the graph holds and the sweep keeps, one rank, one step, against ComfyUI's own `image_p_h3_t2i` template with its upsampler bypassed | the NRMS against stock, recorded; a gap like MOSS-Image INT8's (#129) asks for the same refusal on H3 | NOT RUN |
 
 A fail is any other outcome in a cell: a refusal where the table expects a
 render, a render where it expects a refusal, latents that differ across

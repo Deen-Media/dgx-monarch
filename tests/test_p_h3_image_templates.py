@@ -22,7 +22,12 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from benchmark.sweep import convert  # noqa: E402
-from benchmark.sweep.matrix import graph_facts  # noqa: E402
+from benchmark.sweep.matrix import (  # noqa: E402
+    GRAPH_LORA_STRENGTH_TEMPLATES,
+    LORA_CELL_STRENGTH,
+    graph_facts,
+    lora_stack,
+)
 
 NAME = "dgx-monarch-p-h3-image"
 GENERATED = ROOT / "tests" / "fixtures" / "workflows" / "generated"
@@ -135,3 +140,20 @@ def test_the_manifest_lists_the_four_files_the_template_loads():
                       "text_encoders/p-h3-image_prompt_upsampler_bf16.safetensors",
                       "vae/" + FILES["bf16"][2]}
     assert "PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543" in manifest
+
+
+def test_the_lora_route_runs_at_comfys_strength_in_the_graph_and_the_sweep():
+    """ComfyUI's own p-h3-image template loads the LoRA at 1.0, so this cell must too."""
+    graph = _graph("lora")
+    (lora_id, lora), = [(key, node["inputs"]) for key, node in graph.items()
+                        if node["class_type"] == "DGXMonarchLoraLoader"]
+    assert lora["strength_model"] == 1.0
+    name = "dgx-monarch-test-p-h3-image-lora"
+    assert name in GRAPH_LORA_STRENGTH_TEMPLATES
+    facts = graph_facts(graph)
+    assert lora_stack(name, facts, ["p-h3-image_lora_bf16.safetensors"]) == [
+        {"node": lora_id, "name": "p-h3-image_lora_bf16.safetensors", "strength": 1.0}]
+    # Every other template keeps the placeholder strength, whatever its loader holds.
+    assert lora_stack("dgx-monarch-test-minimax-h3-lora", facts, ["any.safetensors"]) == [
+        {"node": lora_id, "name": "any.safetensors", "strength": LORA_CELL_STRENGTH}]
+    assert lora_stack(name, facts, []) == []
