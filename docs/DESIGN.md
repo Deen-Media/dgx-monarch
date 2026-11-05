@@ -1761,17 +1761,22 @@ its refusal says so and names Reset attached mesh.
 
 **A refusal names a box the way the user does.** The box the driver runs on is
 "the head". With one other box, that box is "the sibling"; with more, each is
-"the sibling at <host name>", so no two read alike. A local fleet is "this
-box", and a box that runs more than one rank names its GPU too ("GPU 1 on the
-head"). The head is the `[[hosts]]` entry that resolves to the driver's own
-machine, the check rank 0's co-residency already makes, never the first entry
-by position. One module words it (`box_names.py`); the agreement stamps the
-name on every rank's answer, and the capacity refusals, the Old model in the
-way card, the agreement's log line and the FSDP clean-reload refusal read that
-stamp. So none names a box by its rank number or by the address cluster.toml
-gives it. Machine fields keep the host name and the rank number for operators
-and parsers, and so does a Worker's own refusal: a Worker words no sentence
-about a peer and does not know which box the driver runs on.
+"the sibling at <host name>", so no two read alike. A fleet on the driver's box
+alone, a local fleet or a cluster.toml that lists only that box, is "this box",
+and a box that runs more than one rank names its GPU too ("GPU 1 on the head").
+The head is the `[[hosts]]` entry that resolves to the driver's own machine, the
+check rank 0's co-residency already makes, never the first entry by position;
+when that check cannot resolve the driver's entry, every box reads "the sibling
+at <host name>". One module words it (`box_names.py`). The agreement stamps the
+name on every rank's answer, and the refusals under its guard (its own, and the
+undeliverable-actor refusals that end its wait, `restart_reattach.py`), the Old
+model in the way card, the agreement's log line and the FSDP clean-reload
+refusal take their words from it. So none of those names a box by its rank
+number or by the address cluster.toml gives it. Machine fields keep the host
+name, the address and the rank number for operators and parsers: the attach
+trace, ledger rows, and the warning a reply that names another rank leaves in
+the log. So does a Worker's own refusal: a Worker words no sentence about a
+peer and does not know which box the driver runs on.
 
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate

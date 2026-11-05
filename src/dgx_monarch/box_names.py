@@ -2,20 +2,25 @@
 
 The box the driver runs on is "the head". With one other box, that box is "the
 sibling"; with more than one, each is "the sibling at <host name>", so no two
-read alike. A local fleet, every rank in the driver's own process tree, is "this
-box": it has no pair to tell apart. A box that holds more than one rank names
-the GPU too ("GPU 1 on the head"). The capacity refusals, the Old model in the
-way card and the agreement's log line take their words from here, so none names
-a box by its rank number or by the address cluster.toml gives it.
+read alike. A fleet on the driver's box alone (a local fleet, or a cluster.toml
+that lists only that box) is "this box": it has no pair to tell apart. A box
+that holds more than one rank names the GPU too ("GPU 1 on the head"). The
+capacity refusals (the agreement's, the FSDP clean-reload price's and the
+undeliverable-actor refusals of ``restart_reattach``), the Old model in the way
+card and the agreement's log line take their words from here, so none names a
+box by its rank number or by the address cluster.toml gives it.
 
 The head is the ``[[hosts]]`` entry that ``driver_footprint.host_is_local``
 resolves to this machine, the check ``rank0_co_resident`` makes; no rule assumes
-the first entry is the head. Machine fields (a quote row's ``host``, a ledger
-row's ``rank``) keep the host name and the rank number for operators and parsers.
+the first entry is the head. When that check cannot resolve the driver's entry,
+every box is another box and reads "the sibling at <host name>", the same miss
+that leaves ``rank0_co_resident`` false. Machine fields (a quote row's ``host``,
+a ledger row's ``rank``, the attach trace) keep the host name, the address and
+the rank number for operators and parsers.
 """
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any
 
 HEAD = "the head"
@@ -29,9 +34,12 @@ def host_words(hosts: Sequence[str], is_head: Callable[[str], bool]) -> list[str
     """The plain name of each configured host, in config order.
 
     When no entry is the head (a driver box with no Worker), every box is
-    another box, so two of them are named by host.
+    another box, so two of them are named by host. When every entry is the
+    head, the fleet runs on the driver's box alone, which is "this box".
     """
     heads = [bool(name) and is_head(name) for name in hosts]
+    if heads and all(heads):
+        return [LOCAL] * len(hosts)
     others = len(hosts) - sum(heads)
     return [HEAD if head else SIBLING if others == 1 or not name else f"{SIBLING} at {name}"
             for name, head in zip(hosts, heads, strict=True)]
@@ -53,6 +61,12 @@ def rank_boxes(hosts: Sequence[str], world: int, gpus: int,
              rank % gpus if gpus > 1 else None) for rank in range(world)]
 
 
+def join(names: Iterable[str]) -> str:
+    """'the head', 'the head and the sibling', 'a, b and c'."""
+    items = list(names)
+    return ", ".join(items[:-1]) + " and " + items[-1] if len(items) > 1 else "".join(items)
+
+
 def label(box: str, gpu: int | None = None) -> str:
     """One rank in plain words: its box, or 'GPU <n> on <box>'."""
     return box if gpu is None else f"GPU {gpu} on {box}"
@@ -69,14 +83,37 @@ def fleet_boxes(handle: Any, world: int) -> list[tuple[str, int | None]]:
     A ``this_host()`` mesh (``owns_hosts`` False) is local whatever the config
     lists, the way ``driver_footprint.rank0_co_resident`` reads it.
     """
-    from . import driver_footprint
-
     hosts: tuple[Any, ...] = ()
     if getattr(handle, "owns_hosts", True) is not False:
-        hosts = tuple(getattr(getattr(handle, "config", None), "hosts", None) or ())
+        hosts = _hosts(getattr(handle, "config", None))
     gpus = int(getattr(handle, "gpus_per_host", 1) or 1)
-    return rank_boxes([str(getattr(host, "name", "") or "") for host in hosts],
-                      int(world), gpus, lambda name: driver_footprint.host_is_local(name))
+    return rank_boxes([_name(host) for host in hosts], int(world), gpus, _is_head)
+
+
+def address_words(config: Any) -> dict[str, str]:
+    """Each configured host's address mapped to its plain name.
+
+    For texts that start from a Worker loop's address rather than a rank: an
+    undeliverable actor, a loop's proc id, a liveness answer.
+    """
+    hosts = _hosts(config)
+    words = host_words([_name(host) for host in hosts], _is_head)
+    return {str(getattr(host, "address", "") or ""): word
+            for host, word in zip(hosts, words, strict=True)}
+
+
+def _hosts(config: Any) -> tuple[Any, ...]:
+    return tuple(getattr(config, "hosts", None) or ())
+
+
+def _name(host: Any) -> str:
+    return str(getattr(host, "name", "") or "")
+
+
+def _is_head(name: str) -> bool:
+    from . import driver_footprint
+
+    return driver_footprint.host_is_local(name)
 
 
 def fleet_labels(handle: Any, world: int) -> list[str]:

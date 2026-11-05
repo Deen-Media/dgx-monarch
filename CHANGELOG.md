@@ -141,9 +141,11 @@
   address. Now it reads "The old model (flux1-dev) is still loaded on the head
   and qwen_image_2512_fp8_e4m3fn does not fit beside it. Clear the Sparks and
   run again?". With more than two boxes each other box is "the sibling at" its
-  host name, a local fleet is "this box", and the FSDP clean-reload refusal
-  names its leanest box the same way. A Worker's own refusal still names its
-  host ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
+  host name, and a fleet on the driver's box alone is "this box". The FSDP
+  clean-reload refusal and the refusal for a Worker actor a restart left
+  undeliverable name their boxes the same way, and the loader's charge note
+  says "a Worker on this box" where it said "co-resident rank 0". A Worker's
+  own refusal still names its host ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
   [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
 
 ### Compatibility and verification

@@ -2101,7 +2101,8 @@ to change it. Automatic rescue never grants an accuracy waiver.
 **Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every
 short box, the refusal says "the old model (<name>) is still loaded on the
-head" (or on the sibling, or on this box for a local fleet) and the card is
+head" (or on the sibling, or on this box for a fleet on the driver's box
+alone) and the card is
 titled Old model in the way. Its Clear and retry button resets
 the attached mesh, the same as Reset attached mesh, and writes no memo and no
 ledger row; then queue again, and the load is priced again on fresh Workers.
@@ -4719,9 +4720,10 @@ model refuses the render for the fleet rather than letting its peers load first
 and meet the refusal sixty seconds in. The refusal names each box the way
 these docs do: the box the driver runs on is the head and the other is the
 sibling. With more than two boxes, each other box is the sibling at its host
-name, a local fleet is this box, and a box that runs more than one rank adds
-its GPU ("GPU 1 on the head"). It never names a box by rank number or by the
-address cluster.toml gives it. Six shapes reach the operator:
+name, a fleet on the driver's box alone is this box, and a box that runs more
+than one rank adds its GPU ("GPU 1 on the head"). None of the six shapes below
+names a box by rank number or by the address cluster.toml gives it, the
+undeliverable actor included. Six shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.

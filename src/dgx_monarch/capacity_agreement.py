@@ -391,7 +391,9 @@ def _answer_from(rank: int, reply: Any, elapsed: float) -> RankAnswer:
     reported = reply.get("rank")
     if isinstance(reported, int) and not isinstance(reported, bool) and reported != rank:
         # The driver knows which rank it sent to and keeps that name: a reply
-        # that renames itself makes one rank's answer stand for another's.
+        # that renames itself makes one rank's answer stand for another's. The
+        # numbers are the evidence of a slicing fault, so the log keeps them.
+        safe_call(log.warning, "cross-rank capacity: rank %d answered as rank %d", rank, reported)
         return RankAnswer(rank, host, elapsed_s=elapsed,
                           silent="answered as another rank")
     rows = reply.get("quotes")

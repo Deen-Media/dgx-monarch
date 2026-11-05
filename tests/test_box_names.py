@@ -33,6 +33,15 @@ def _head_is(name: str):
     return lambda host: host == name
 
 
+def test_a_fleet_on_the_driver_box_alone_is_this_box():
+    """A one-host cluster.toml on the driver's box reads as a local fleet does,
+    so one box keeps one name whatever the Init mode."""
+    assert box_names.host_words(("fabric-a",), _head_is("fabric-a")) == ["this box"]
+    assert box_names.host_words(("fabric-b",), _head_is("fabric-a")) == ["the sibling"]
+    assert [box_names.label(*pair) for pair in box_names.rank_boxes(
+        ("fabric-a",), 2, 2, _head_is("fabric-a"))] == ["GPU 0 on this box", "GPU 1 on this box"]
+
+
 def test_a_pair_is_the_head_and_the_sibling():
     assert box_names.host_words(CONFIGURED, _head_is("fabric-a")) == ["the head", "the sibling"]
     # The head need not be the first entry: the driver's own box is the head.
@@ -141,20 +150,22 @@ def test_an_ordinary_refusal_names_both_boxes_plainly(monkeypatch):
     assert "The sibling took the stock_fits rung." in text
 
 
-def test_one_configured_box_is_cleared_by_name(monkeypatch):
-    """One host in cluster.toml: the card asks to clear that box, by its name."""
-    monkeypatch.setattr(driver_footprint, "host_is_local", _head_is("fabric-a"))
-    box = old_model.ShortBox(box_names.HEAD, ("flux1-dev",), 45 * _GIB, 39 * _GIB, 22 * _GIB)
-    offer = old_model.ClearOffer(NEW, (box,), 1, False)
-    assert old_model.card_body(offer).endswith("Clear the head and run again?")
-    assert old_model.log_line(offer).startswith("cleared the head to make room for")
+def test_one_configured_box_is_cleared_by_name():
+    """One host in cluster.toml: the card asks to clear that box by the rule's name,
+    "this box" on the driver's box, "the sibling" on the other one."""
+    for head, word in (("fabric-a", "this box"), ("elsewhere", "the sibling")):
+        (name,) = box_names.host_words(("fabric-a",), _head_is(head))
+        box = old_model.ShortBox(name, ("flux1-dev",), 45 * _GIB, 39 * _GIB, 22 * _GIB)
+        offer = old_model.ClearOffer(NEW, (box,), 1, False)
+        assert old_model.card_body(offer).endswith(f"Clear {word} and run again?")
+        assert old_model.log_line(offer).startswith(f"cleared {word} to make room for")
 
 
 def test_no_capacity_sentence_names_a_rank_by_number():
-    """The modules that word these texts build no "rank <n>" or host sentence."""
-    banned = re.compile(r"rank \{|\(host |host \{")
+    """The modules that word these texts build no "rank <n>", host or address sentence."""
+    banned = re.compile(r"rank \{|\(host |host \{|\{[\w.]*address\}|\{[\w.]*\.name\}")
     for name in ("capacity_agreement.py", "old_model.py", "nodes/old_model_clear.py",
-                 "fsdp_reload_price.py"):
+                 "fsdp_reload_price.py", "restart_reattach.py", "driver_footprint.py"):
         tree = ast.parse((SRC / name).read_text())
         for node in ast.walk(tree):
             if isinstance(node, ast.JoinedStr):
@@ -167,3 +178,106 @@ def test_the_agreement_imports_the_rule_rather_than_its_own_names():
     assert "LOCAL_HOST_NAME" not in source and "configured_host" not in source
     assert "box_names." in source
     assert capacity_agreement.RankAnswer(0).where == box_names.UNLISTED
+
+
+# Round two: the texts the review of PR #143 found still naming a box.
+
+_ADDRESSES = tuple(f"tcp://{name}:26600" for name in CONFIGURED)
+
+
+def _fleet_config(monkeypatch) -> types.SimpleNamespace:
+    """A pair whose cluster.toml names and addresses must never reach a sentence."""
+    monkeypatch.setattr(driver_footprint, "host_is_local", _head_is(CONFIGURED[0]))
+    return types.SimpleNamespace(config=types.SimpleNamespace(hosts=tuple(
+        types.SimpleNamespace(name=name, address=address)
+        for name, address in zip(CONFIGURED, _ADDRESSES, strict=True))))
+
+
+def _plain_of_addresses(text: str) -> None:
+    _plain(text)
+    assert "tcp://" not in text and ":26600" not in text, text
+
+
+def test_the_undeliverable_actor_refusal_names_the_box(monkeypatch):
+    """Raised from inside the agreement's wait, under its guard (restart_reattach.py)."""
+    from dgx_monarch import restart_reattach
+    from dgx_monarch.delivery_faults import WorkerDeliveryError
+
+    handle = _fleet_config(monkeypatch)
+    with pytest.raises(WorkerDeliveryError) as raised:
+        restart_reattach.refuse_undelivered(handle, [_ADDRESSES[1]], 1.2, 30.0)
+    text = str(raised.value)
+    _plain_of_addresses(text)
+    assert "this fleet's Worker actor on the sibling undeliverable" in text
+    assert "the Worker loop on that box restarted" in text
+
+
+def test_the_move_refusals_name_the_boxes(monkeypatch):
+    from dgx_monarch import restart_reattach
+    from dgx_monarch.delivery_faults import WorkerDeliveryError
+
+    handle = _fleet_config(monkeypatch)
+    cases = (
+        (restart_reattach.Moves(moved=_ADDRESSES[:1], kept=_ADDRESSES[1:]),
+         "the Worker loops on the head serve new proc ids while those on the sibling "
+         "still serve the id this mesh dialed"),
+        (restart_reattach.Moves(kept=_ADDRESSES),
+         "the actor on that box is gone or unreachable"),
+        (restart_reattach.Moves(unknown=("the sibling (no id published)",)),
+         "the id reading found none for the sibling (no id published)"),
+    )
+    for moves, words in cases:
+        with pytest.raises(WorkerDeliveryError) as raised:
+            restart_reattach._refuse_moves(handle, moves, RuntimeError("x"))
+        _plain_of_addresses(str(raised.value))
+        assert words in str(raised.value)
+
+
+def test_the_retire_refusal_and_its_death_report_name_the_boxes(monkeypatch):
+    from dgx_monarch import mesh_helpers, mesh_liveness, mesh_teardown, restart_reattach
+    from dgx_monarch.delivery_faults import WorkerDeliveryError
+
+    handle = _fleet_config(monkeypatch)
+    handle._liveness_evidence = mesh_liveness.LivenessEvidence(
+        mesh_liveness.ALIVE, ((_ADDRESSES[0], "alive"), (_ADDRESSES[1], "gone")), 0.0)
+    monkeypatch.setattr(mesh_teardown, "block_cause_sentence", lambda _handle: "")
+    moves = restart_reattach.Moves(moved=_ADDRESSES)
+    with pytest.raises(WorkerDeliveryError) as raised:
+        restart_reattach._refuse_retire(handle, moves, None)
+    text = str(raised.value)
+    _plain_of_addresses(text)
+    assert "(on the head and the sibling)" in text
+    assert "(the head: alive, the sibling: gone)" in text
+    reports: list[str] = []
+
+    def publish(_handle, _refused, report):
+        reports.append(report)
+        return object(), False, True, False
+
+    monkeypatch.setattr(mesh_helpers, "publish_supervision_failure_state", publish)
+    handle.teardown_complete = True
+    assert restart_reattach._retire(handle, moves, RuntimeError("x")) == "stop_confirmed"
+    assert reports == ["worker restart: the Worker loops on the head and the sibling serve "
+                       "new proc ids, and messages to this fleet's actors were undeliverable"]
+
+
+def test_the_loader_charge_notes_name_no_rank():
+    """The loader refusal that carries the Old model card read "co-resident rank 0"."""
+    profile = next(iter(driver_footprint.DRIVER_STACK_FAMILIES.values()))
+    notes = [driver_footprint.estimate_driver_footprint(
+        profile=profile, mem_available=100 * _GIB, weight_bytes=20 * _GIB,
+        co_resident=co_resident, fsdp_world=world).notes["weights"]
+        for co_resident, world in ((True, 0), (False, 0), (True, 2))]
+    assert notes[0] == "a Worker on this box, not yet loaded"
+    assert notes[1] == "the first Worker is on another box, not charged"
+    assert notes[2].startswith("a Worker on this box, FSDP shard build: it holds ")
+    assert not any("rank" in note for note in notes)
+
+
+def test_a_reply_that_names_another_rank_keeps_both_numbers_in_the_log(caplog):
+    """The user reads 'answered as another rank'; the numbers are the slicing evidence."""
+    with caplog.at_level("WARNING"):
+        answer = capacity_agreement._answer_from(1, {"host": REPORTED[1], "rank": 0,
+                                                     "quotes": []}, 0.1)
+    assert answer.silent == "answered as another rank"
+    assert "cross-rank capacity: rank 1 answered as rank 0" in caplog.text
