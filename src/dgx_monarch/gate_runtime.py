@@ -54,6 +54,8 @@ def torch_change(ledger_dir: str | Callable[[], str], token: tuple[str, ...]) ->
     PASS row equal to it in key, artifact digest, ComfyUI commit, package
     source, protocol, package version and every context field but ``runtime``
     qualifies, so the notice never blames torch for a change it did not cause.
+    The row's own context must still read ``pass`` to the ledger reader, so a
+    later FAIL, RETESTING or other row for it revokes the PASS here as well.
     An unknown ComfyUI commit, an unreadable row or ledger, and any other case
     return None, and the notice keeps its general list of causes. The caller
     asks only when the lookup reads stale.
@@ -66,20 +68,27 @@ def torch_change(ledger_dir: str | Callable[[], str], token: tuple[str, ...]) ->
         directory = ledger_dir() if callable(ledger_dir) else ledger_dir
         from .gate_ledger import GateLedger
 
-        for entry in reversed(GateLedger(directory).entries()):
+        ledger, revoked = GateLedger(directory), set()
+        for entry in reversed(ledger.entries()):
+            context = entry.get("capability_context")
             if (entry.get("verdict") != "PASS" or entry.get("key") != key
                     or entry.get("artifacts") != digest or entry.get("comfy") != commit
                     or entry.get("dgx_source") != source or entry.get("dgx_monarch") != version
-                    or str(entry.get("gate_protocol")) != protocol):
+                    or str(entry.get("gate_protocol")) != protocol or context in revoked):
                 continue
             try:
-                recorded = json.loads(entry.get("capability_context") or "null")
+                recorded = json.loads(context or "null")
             except ValueError:
                 continue
-            if (_without_runtime(recorded) == _without_runtime(current)
-                    and recorded.get(RUNTIME_FIELD) != current.get(RUNTIME_FIELD)):
-                return (f"proven under {_label(recorded.get(RUNTIME_FIELD))}, not under "
-                        f"this driver's {_label(current.get(RUNTIME_FIELD))}")
+            if (_without_runtime(recorded) != _without_runtime(current)
+                    or recorded.get(RUNTIME_FIELD) == current.get(RUNTIME_FIELD)):
+                continue
+            # The reader's own verdict for that context, with its precedence.
+            if ledger.lookup_with_integrity(key, digest, commit, context).state != "pass":
+                revoked.add(context)
+                continue
+            return (f"proven under {_label(recorded.get(RUNTIME_FIELD))}, not under "
+                    f"this driver's {_label(current.get(RUNTIME_FIELD))}")
     except Exception:
         return None
     return None

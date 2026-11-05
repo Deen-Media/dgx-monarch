@@ -129,6 +129,35 @@ def test_the_notice_stays_general_when_more_than_torch_moved(tmp_path, monkeypat
     assert gate_runtime.torch_change(str(tmp_path), _token(same)) is None
 
 
+
+def test_a_pass_the_earlier_build_later_failed_is_never_named(tmp_path, monkeypatch):
+    led = GateLedger(str(tmp_path))
+    proven = _context(monkeypatch, PROVEN)
+    led.record("k", "artifact", "commit", "PASS", context=proven)
+    led.record("k", "artifact", "commit", "FAIL", context=proven)
+    assert led.lookup("k", "artifact", "commit", proven) == "fail"
+    assert gate_runtime.torch_change(str(tmp_path), _token(_context(monkeypatch, MOVED))) is None
+
+
+def test_a_pass_the_earlier_build_is_retesting_is_never_named(tmp_path, monkeypatch):
+    led = GateLedger(str(tmp_path))
+    proven = _context(monkeypatch, PROVEN)
+    led.record("k", "artifact", "commit", "PASS", context=proven)
+    led.begin_retest_required("k", "artifact", "commit", [proven])
+    assert led.lookup("k", "artifact", "commit", proven) == "inconclusive"
+    assert gate_runtime.torch_change(str(tmp_path), _token(_context(monkeypatch, MOVED))) is None
+
+
+def test_a_revoked_build_falls_back_to_a_build_whose_pass_stands(tmp_path, monkeypatch):
+    led = GateLedger(str(tmp_path))
+    third = {"torch": "0.0.3+third", "cuda": "1.1"}
+    led.record("k", "artifact", "commit", "PASS", context=_context(monkeypatch, third))
+    led.record("k", "artifact", "commit", "PASS", context=_context(monkeypatch, PROVEN))
+    led.record("k", "artifact", "commit", "FAIL", context=_context(monkeypatch, PROVEN))
+    assert gate_runtime.torch_change(str(tmp_path), _token(_context(monkeypatch, MOVED))) == (
+        "proven under torch 0.0.3+third with CUDA 1.1, not under this driver's torch "
+        "0.0.2+moved with CUDA 1.1")
+
 def test_the_notice_never_raises(tmp_path, monkeypatch):
     def unreadable():
         raise OSError("no output directory")
