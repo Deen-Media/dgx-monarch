@@ -36,10 +36,11 @@ SLAB_OFF_BLOCKER = ("Slab rescue is unavailable here because slab_weights is off
                     "the effective worker args.")
 EXPLICIT_STOCK_OPTIONS = ("clear the quarantine with an identity ceremony, or set "
                           "slab_weights=on when the combination is not quarantined, or ")
-# The gate's stock reference must load on this box, so the remedy says how to
-# make it fit: the same model in a lighter graph.
+# The gate's stock reference must load where this one refused, so the remedy
+# says how to make it fit: the same model in a lighter graph. No box is named
+# here (box_names.py); the Worker's own sentence before it names the load.
 GATE_REMEDY = ("run Identity Gate (DGX Monarch) on this model with slab_weights=on in a "
-               "graph whose stock reference fits this box, for example with an optional "
+               "graph whose stock reference fits the box that refused, for example with an optional "
                "driver model such as a prompt upsampler switched off, then queue the render "
                "again, or ")
 # The state a dual-model render notes: the gate proves one model, so no PASS

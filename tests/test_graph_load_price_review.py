@@ -13,6 +13,7 @@ CPU only, over the rig in tests/test_graph_load_price.py.
 from __future__ import annotations
 
 import inspect
+import re
 import sys
 import types
 from pathlib import Path
@@ -209,7 +210,7 @@ def test_a_dual_model_refusal_names_its_cause_and_no_gate(monkeypatch):
 
 def test_the_gate_remedy_says_how_to_make_the_stock_reference_fit(monkeypatch):
     text = refusal_lead.forced_stock_text(_worker_stock_refusal(monkeypatch), "stale")
-    assert "in a graph whose stock reference fits this box" in text
+    assert "in a graph whose stock reference fits the box that refused" in text
     assert "a prompt upsampler switched off" in text
 
 
@@ -313,3 +314,90 @@ def test_a_loader_no_output_node_reaches_is_not_priced(monkeypatch):
 def test_the_identity_gate_node_leads_with_a_worker_refusal():
     lead = refusal_lead.lead_with_refusal(lambda: None).__code__
     assert gate_node.DGXMonarchIdentityGate.gate.__code__ is lead
+
+
+# --- #143's naming rule over every sentence this PR adds --------------------
+
+_HEAD_NAME, _SIBLING_NAME = "spark-a.invalid", "spark-b.invalid"
+_ADDRESSES = ("10.11.12.1", "10.11.12.2")
+_RANK = re.compile(r"\brank \d")
+
+
+def _named_pair(preset: str = "auto") -> _Mesh:
+    """A pair whose cluster.toml names its hosts and gives their addresses."""
+    hosts = tuple(types.SimpleNamespace(name=name, address=address)
+                  for name, address in zip((_HEAD_NAME, _SIBLING_NAME), _ADDRESSES, strict=True))
+    return _Mesh(preset, world=2, hosts=hosts)
+
+
+def _no_box_by_number_name_or_address(text: str) -> None:
+    assert not _RANK.search(text), text
+    for word in (_HEAD_NAME, _SIBLING_NAME, *_ADDRESSES):
+        assert word not in text, (word, text)
+
+
+@pytest.fixture
+def _head_is_spark_a(monkeypatch):
+    monkeypatch.setattr(driver_footprint, "host_is_local", lambda name: name == _HEAD_NAME)
+
+
+def test_the_loader_refusal_names_the_head_on_a_pair_and_this_box_alone(_head_is_spark_a):
+    text = _refuse(_named_pair(), _template())
+    assert "p-h3-image_bf16.safetensors needs 119.8 GiB on the head and 110.8 GiB" in text
+    _no_box_by_number_name_or_address(text)
+    (card,) = consent_pending.pending_cards()
+    assert card["numbers"] == "needs 119.8 GiB, 110.8 GiB available on the head"
+    loader_preflight.reset_memos()
+    consent_pending.clear_all()
+    local = _refuse(_Mesh(), _template())
+    assert "needs 119.8 GiB on this box and 110.8 GiB" in local
+    assert "On a pair of Sparks with the Init node's topology set to uly2+fsdp" in local
+    assert "the head would hold 20.0 GiB of the DiT" in local
+    _no_box_by_number_name_or_address(local)
+
+
+def test_a_pair_whose_config_lists_only_the_driver_box_reads_this_box(_head_is_spark_a):
+    hosts = (types.SimpleNamespace(name=_HEAD_NAME, address=_ADDRESSES[0]),)
+    assert graph_load_price.driver_box(_Mesh("auto", world=1, hosts=hosts)) == "this box"
+    assert graph_load_price.driver_box(_named_pair()) == "the head"
+    assert graph_load_price.driver_box(types.SimpleNamespace(handle=None)) == "this box"
+
+
+def test_the_words_this_pr_adds_to_a_worker_refusal_name_no_box(monkeypatch):
+    """The forced-stock cause and remedy, and the dual-model cause, name no rank,
+    host or address; the Worker's own sentence keeps its own words."""
+    worker = _worker_stock_refusal(monkeypatch)
+    for state in ("stale", refusal_lead.DUAL_MODEL):
+        added = refusal_lead.forced_stock_text(worker, state).replace(
+            worker.split(" Slab rescue is unavailable here")[0], "")
+        _no_box_by_number_name_or_address(added)
+    _no_box_by_number_name_or_address(refusal_lead.GATE_REMEDY)
+
+
+def test_the_loader_no_room_sentence_names_the_box_not_its_rank(_head_is_spark_a):
+    box = old_model.ShortBox("the head", ("old",), 50 * _GIB, 40 * _GIB, 1 * _GIB,
+                             window="load")
+    text = old_model.no_room(old_model.ClearOffer("new.safetensors", (box,), 2, False))
+    assert "needs 50.0 GiB on the head" in text
+    _no_box_by_number_name_or_address(text)
+
+
+def test_the_docs_this_pr_adds_name_no_box_by_rank():
+    """TROUBLESHOOTING #52, MODELS' p-h3-image memory paragraph and CONCEPTS'
+    driver models entry, as a user reads them."""
+    docs = ROOT / "docs"
+    entry = (docs / "TROUBLESHOOTING.md").read_text().split(
+        "## 52. Driver-side footprint preflight refused a render")[1].split("\n## 53.")[0]
+    added = [paragraph for paragraph in entry.split("\n\n") if any(marker in paragraph for marker in (
+        "For example, the p-h3-image template", "**What to do:**", "uly2+fsdp",
+        "credits only the bytes ComfyUI holds"))]
+    assert len(added) >= 3
+    passages = [
+        *added,
+        (docs / "MODELS.md").read_text().split('<a id="model-p-h3-image">')[1].split(
+            "**Memory.**")[1].split("**Known limitations.**")[0],
+        (docs / "CONCEPTS.md").read_text().split("**Driver models.**")[1].split("\n\n")[0],
+    ]
+    for passage in passages:
+        assert not _RANK.search(passage), passage
+        assert "rank 0" not in passage

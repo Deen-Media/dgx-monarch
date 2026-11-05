@@ -20,7 +20,7 @@ from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
-from .. import consent_pending, driver_footprint
+from .. import box_names, consent_pending, driver_footprint
 from ..log import get_logger
 from .graph_live import SWITCH_TITLES, is_link, live_nodes
 from .loader_graph import TE_RESIDENT_RATIO, DriverStackTerms
@@ -75,6 +75,20 @@ def _join(items: Iterable[str], word: str = "and") -> str:
     if len(items) < 2:
         return "".join(items)
     return ", ".join(items[:-1]) + f" {word} " + items[-1]
+
+
+def driver_box(mesh: Any) -> str:
+    """The driver's box in ``box_names``'s words: the head, or this box when the
+    fleet runs on the driver's box alone (a local fleet, or a cluster.toml that
+    lists only this box). The loader's own sentences name no rank, host or address.
+    """
+    handle = getattr(mesh, "handle", None)
+    if handle is None or getattr(handle, "owns_hosts", True) is False:
+        return box_names.LOCAL
+    hosts = [str(getattr(host, "name", "") or "")
+             for host in getattr(getattr(handle, "config", None), "hosts", None) or ()]
+    words = box_names.host_words(hosts, driver_footprint.host_is_local) if hosts else []
+    return box_names.LOCAL if not words or set(words) == {box_names.LOCAL} else box_names.HEAD
 
 
 def load_is_deferred(mesh: Any) -> bool:
@@ -238,7 +252,8 @@ def what_would_fit(windows: tuple[driver_footprint.DriverFootprintEstimate, ...]
 
 
 def plain_lead(estimate: driver_footprint.DriverFootprintEstimate, *, window: str,
-               unet_name: str, models: tuple[str, ...], deferred: bool) -> str:
+               unet_name: str, models: tuple[str, ...], deferred: bool,
+               box: str = box_names.LOCAL) -> str:
     """One plain sentence: what does not fit, by how much, and why at this window."""
     name = os.path.basename(unet_name)
     subject = (f"{name} needs" if estimate.weight_bytes
@@ -253,7 +268,7 @@ def plain_lead(estimate: driver_footprint.DriverFootprintEstimate, *, window: st
                "placed from." if estimate.arena_bytes else "That is the peak of its load.")
     else:
         why = "That is the DiT in memory beside what this graph still needs on the driver."
-    return (f"{subject} {_gib(estimate.projected + estimate.reserve)} GiB on this box and "
+    return (f"{subject} {_gib(estimate.projected + estimate.reserve)} GiB on {box} and "
             f"{_gib(estimate.mem_available)} GiB is available, {_gib(estimate.shortfall)} "
             f"GiB short. {why} Nothing was loaded.")
 
@@ -446,7 +461,7 @@ def _pair_clause(shape: Any, fits: Callable[[Any], bool], quant_kind: str,
         return ""
     share = driver_footprint.fsdp_shard_build_bytes(shape.weight_bytes, 2)
     return (f"On a pair of Sparks with the Init node's topology set to {PAIR_PRESET} "
-            f"(auto never picks it), this box would hold {_gib(share)} GiB of the DiT and "
+            f"(auto never picks it), {box_names.HEAD} would hold {_gib(share)} GiB of the DiT and "
             f"the load fits; Ulysses and ring hold all of it. An FSDP render needs an "
             f"Identity Gate PASS on {PAIR_PRESET} first.")
 

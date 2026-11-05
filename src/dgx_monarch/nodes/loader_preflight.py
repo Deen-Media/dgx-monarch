@@ -331,7 +331,8 @@ def _lead(binding: driver_footprint.DriverFootprintEstimate, window: str, shape:
 
     lead = graph_load_price.plain_lead(
         binding, window=window, unet_name=unet_name, deferred=deferred,
-        models=terms.models if shape.load_stack_bytes else ())
+        models=terms.models if shape.load_stack_bytes else (),
+        box=graph_load_price.driver_box(mesh))
     return {"lead": lead, "fits": graph_load_price.alternatives(
         shape, fits=fits, unet_name=unet_name, family=family, quant_kind=quant_kind,
         terms=terms, deferred=deferred, prompt=prompt, stack_for=stack_for,
@@ -555,7 +556,8 @@ def preflight_loader_footprint(
                 "target_guard": LOADER_GUARD, "loras": 0, "scope": scope,
                 # The lead's gross figures, as the Old model in the way card prints them.
                 "numbers": (f"needs {_gib(binding.projected + binding.reserve)} GiB, "
-                            f"{_gib(binding.mem_available)} GiB available on this box"),
+                            f"{_gib(binding.mem_available)} GiB available on "
+                            f"{graph_load_price.driver_box(mesh)}"),
             })
         except Exception as exc:  # the card is best effort, the refusal is not
             log.warning("consent card not built for %s (%r)", unet_name, exc)

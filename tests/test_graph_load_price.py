@@ -180,7 +180,7 @@ def test_one_rank_with_the_upsampler_on_refuses_before_any_load_and_names_what_f
     assert (f"If/Else Switch (node {_switch_id(graph)}) set to false would fit too: the "
             f"graph then does not load {UPSAMPLER}.") in text
     assert ("On a pair of Sparks with the Init node's topology set to uly2+fsdp (auto never "
-            "picks it), this box would hold 20.0 GiB of the DiT and the load fits") in text
+            "picks it), the head would hold 20.0 GiB of the DiT and the load fits") in text
     assert "Identity Gate PASS on uly2+fsdp first" in text
     assert "Refuses p-h3-image_bf16.safetensors at the load window" in text
     assert "35.6 GiB for the driver models this graph loads before its first render" in text
@@ -252,7 +252,7 @@ def test_a_cast_dit_is_priced_at_its_copy_beside_the_graph(monkeypatch):
 
 def test_on_the_pair_auto_holds_the_whole_dit_here_and_refuses_the_same():
     text = _refuse(_pair(), _template())
-    assert "needs 119.8 GiB on this box and 110.8 GiB is available, 9.0 GiB short" in text
+    assert "needs 119.8 GiB on the head and 110.8 GiB is available, 9.0 GiB short" in text
     assert "topology set to uly2+fsdp (auto never picks it)" in text
 
 
@@ -407,7 +407,8 @@ def test_a_forced_stock_refusal_names_the_gate_not_the_setting(monkeypatch):
             "combination has no Identity Gate PASS for its current state (stale), so the "
             "driver ran this render on stock residency.") in text
     assert ("What would fit: run Identity Gate (DGX Monarch) on this model with "
-            "slab_weights=on in a graph whose stock reference fits this box, for example with "
+            "slab_weights=on in a graph whose stock reference fits the box that refused, for "
+            "example with "
             "an optional driver model such as a prompt upsampler switched off") in text
     assert "set slab_weights=on" not in text and "effective worker args" not in text
     assert parse_refusal_tag(text) is not None

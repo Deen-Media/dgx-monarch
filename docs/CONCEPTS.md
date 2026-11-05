@@ -22,6 +22,14 @@ those actors and their models; it does not stop the persistent Worker
 services. When a render is split across GPUs, the mesh actors do the work and
 the driver orchestrates them.
 
+**The head and the sibling.** On a pair of boxes, the head is the box the
+driver runs on and the sibling is the other one. The capacity refusals, the Old
+model in the way card and the capacity agreement's log line name a box this
+way, never by rank number or by its address in cluster.toml. With more than two
+boxes, each other box is "the sibling at" its host name; a fleet on the
+driver's box alone is "this box". Other messages, such as a Worker's own
+refusal, may still name a host.
+
 **Render session.** One logical unit of active render work holding the
 Attached mesh, including pending results and identity-gate proof renders. A
 Render session can block a reset or update even between visible denoising
@@ -130,7 +138,7 @@ targets throughput rather than single-render latency.
 for LoRA backups and the retained arena described below.
 
 **Driver models.** The text encoders, VAEs and prompt upsampler a graph loads
-on the driver share the head with rank 0's DiT. Under `auto` the DiT loads at
+on the driver share the head with the DiT its Worker holds. Under `auto` the DiT loads at
 the first render, after the driver has loaded them, so the UNET loader prices
 the DiT's load beside every model the graph loads, and a model behind a
 switch's unused branch is not counted. Models ComfyUI already holds are

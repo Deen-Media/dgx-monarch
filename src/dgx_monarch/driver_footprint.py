@@ -250,14 +250,14 @@ def estimate_driver_footprint(
     sharded = co_resident and not weights_resident and int(fsdp_world) >= 2
     share = fsdp_shard_build_share(fsdp_world) if sharded else 1.0
     if not co_resident:
-        notes["weights"] = "rank 0 is not on the driver host, not charged"
+        notes["weights"] = "the first Worker is on another box, not charged"
     elif weights_resident:
         notes["weights"] = "already loaded, inside this MemAvailable reading"
     elif sharded:
         charged_weights = fsdp_shard_build_bytes(
             file_bytes, fsdp_world)
         notes["weights"] = (
-            f"co-resident rank 0, FSDP shard build: this rank holds "
+            f"a Worker on this box, FSDP shard build: it holds "
             f"{fsdp_shard_fraction(fsdp_world):.2f} of the "
             f"{_gib(file_bytes)} GiB file at world {int(fsdp_world)}, charged "
             f"at {FSDP_SHARD_BUILD_FACTOR:.2f}x that shard plus a "
@@ -268,7 +268,7 @@ def estimate_driver_footprint(
         # cost of 0.87x (docs/VALIDATION.md, 2026-08-04): one leg is too few to
         # apply that ratio, and with no catchable OOM the high side is safer.
         charged_weights = file_bytes
-        notes["weights"] = "co-resident rank 0, not yet loaded"
+        notes["weights"] = "a Worker on this box, not yet loaded"
     arena = 0
     if charged_weights and sharded:
         notes["arena"] = residency_mode.arena_omitted_note(

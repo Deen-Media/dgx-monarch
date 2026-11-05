@@ -668,7 +668,7 @@ def test_an_auto_preset_is_never_priced_as_a_shard_build():
     reading is the one that charges more."""
     message = _refuse(_Mesh(topology_preset="auto"), REF2VA_BF16,
                       prompt=_graph(dit=REF2VA_BF16, refs="video"))
-    assert "DiT weights 61.7 GiB (co-resident rank 0, not yet loaded)" in message
+    assert "DiT weights 61.7 GiB (a Worker on this box, not yet loaded)" in message
     assert "at world" not in message
 
 
@@ -1062,7 +1062,7 @@ def test_a_weight_dtype_cast_is_priced_at_the_copy_it_builds(monkeypatch):
     message = _refuse(_Mesh(), REF2VA_BF16, {"weight_dtype": "fp8_e4m3fn"},
                       prompt=_graph(dit=REF2VA_BF16, refs="video"))
     assert seen == [(REF2VA_BF16, "fp8_e4m3fn", False)]
-    assert ("DiT weights 30.9 GiB (co-resident rank 0, not yet loaded, cast to a 30.9 GiB "
+    assert ("DiT weights 30.9 GiB (a Worker on this box, not yet loaded, cast to a 30.9 GiB "
             "copy of the 61.7 GiB file)") in message
     shape = loader_preflight._Shape(
         profile=driver_footprint.DRIVER_STACK_FAMILIES["minimax_h3"], mem_available=100 * _GIB,
