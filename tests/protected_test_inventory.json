@@ -1097,6 +1097,7 @@
       "test_a_replicated_key_captures_bakes_verifies_and_restores_whole": "662d22e0264e71bc",
       "test_rank_one_of_two_writes_its_rows_and_the_replicated_key_whole": "aa5e6638849b6277",
       "test_the_census_names_the_token_refiner_and_not_the_block": "2dc14224a71d15ca",
+      "test_the_fsdp_bake_of_a_comfy_cast_layer_equals_stocks_cast_time_weight": "631a5596134ac6ce",
       "test_the_replicated_bake_equals_comfys_own_merge": "ca21fd243e03588a"
     },
     "tests/test_fsdp_presets_and_dials.py": {
@@ -1578,7 +1579,7 @@
       "test_the_driver_lets_a_bf16_file_another_family_and_an_unreadable_header_through": "6d64cc749fa05184",
       "test_the_driver_reads_no_header_without_a_lora": "dc69f4a29cd45f9b",
       "test_the_driver_refuses_before_dispatch_on_every_topology": "51d70a0322ad777f",
-      "test_the_refusal_names_the_classic_bake_and_the_entry_quotes_it_word_for_word": "b9a79b40caa47eec",
+      "test_the_refusal_names_the_classic_bake_and_the_entry_quotes_it_word_for_word": "f36c3cc5ddc35584",
       "test_the_refusal_names_the_lora_the_measurement_date_and_the_remedy": "78de42c39a8a6335"
     },
     "tests/test_lora_shape_guard.py": {

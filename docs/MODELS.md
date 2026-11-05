@@ -100,7 +100,7 @@ that match the tested configurations in its model details. See
 | FLUX.3 Klein Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3.5, 25 steps, euler. cfg2 is measured, not the same math: bit-identical when the prompt encodes past one 80-row block; on a shorter prompt it stays within the one-step floor but full renders diverge, and auto never picks it. ring2 is measured, one-step NRMS 0.011 to 0.057, and padded ring needs a waiver. Edits use uly2 or single in BF16 and NVFP4: the NVFP4 edit read one-step NRMS 0.019 on uly2 before the fused-norm parity change, and uly2 edits are bit-identical to one GPU after it, confirmed on hardware on 2026-10-16. Same uly2, INT8, FSDP and LoRA notes as FLUX.3 Klein. [Details](#model-flux-3-klein-base) · [Workflow](../example_workflows/dgx-monarch-flux3-klein-base-t2i.json) |
 | MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. BF16 uly2 is bit-identical to one GPU from 1024 to 2048 square, one step and full schedule, and at one step to stock from 512 to 2048 square. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin; since the INT8 dispatch fix, confirmed on hardware on 2026-10-21, INT8 uly2 is bit-identical to a pin-stripped one-GPU render, where it read one-step NRMS 0.027 to 0.036 earlier that day. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 bit-identical to one GPU, and an equal-length pair is measured, one-step NRMS 0.023 to 0.026, so auto never picks cfg2. ring2 is measured, one-step NRMS 0.0025 to 0.031 without a LoRA, so use uly2; padded ring needs a waiver, and ring2 with a LoRA is not supported. `uly2+fsdp` is bit-identical to resident uly2. NVFP4 and an fp8 `weight_dtype` cast refuse on uly2, ring and cfg2. A LoRA on the INT8 files refuses class P on every topology ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)); BF16 with a LoRA renders. Reference-image edits for edit LoRAs run on one GPU only and refuse class P on every cluster topology ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)). An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch, as a hardware run observed on uly2 and ring2 on 2026-10-27; on single, cfg2 and dp2 row 0 it was bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). The loader preflight prices the 19.31 GB BF16 encoder beside the DiT. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
 | MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with the same layer-22 skip. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule; its FSDP reading comes from the scoped sweep. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
-| Kromoss | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler on the `normal` scheduler, with the layer-22 skip, or 8 Euler steps on `simple` at CFG 1 with a DMD LoRA, where cfg2 has nothing to split and refuses. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule. The DMD LoRAs bake to stock ComfyUI's merge on every key and render the same on uly2 and one GPU; against stock they read one-step NRMS 0.0365 to 0.0635 at strengths 0.8 and 1.0, because stock applies them at cast time. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
+| Kromoss | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler on the `normal` scheduler, with the layer-22 skip, or 8 Euler steps on `simple` at CFG 1 with a DMD LoRA, where cfg2 has nothing to split and refuses. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule. The DMD LoRAs render the same on uly2 and one GPU; with the classic bake of earlier releases they read one-step NRMS 0.0365 to 0.0635 against stock at strengths 0.8 and 1.0, because stock applies them at cast time, and this release bakes the weight that cast computes, not yet measured on this file ([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)). Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
 | p-h3-image | 🔒 | ✗ | ★⏳ | 🔒 | 🔒 | impl | A MiniMax H3 DiT with one video latent frame, on the H3 adapter: batch one, cfg2 and dp2 refuse, padded ring needs a waiver, and the W4A8 file refuses FSDP. Needs ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0; without any H3 shift the image latent refuses class P ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)). On one Spark the BF16 DiT beside the BF16 prompt upsampler refuses at the loader, before any load, and the refusal names the INT8 ConvRot and W4A8 files ([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)). No hardware comparison yet. [Details](#model-p-h3-image) · [Workflow](../example_workflows/dgx-monarch-p-h3-image.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
@@ -677,15 +677,18 @@ gives each rank one, bit-identical to one GPU on hardware; a pair of equal
 length batches into one call on one GPU, and cfg2 read one-step NRMS 0.023
 to 0.026 against it, so cfg2 earns no automatic row
 ([DESIGN 5.4](DESIGN.md#54-topology--auto-mode)). On the Kromoss BF16 file,
-each Kromoss DMD LoRA baked to stock ComfyUI's merge on every key, and
-against stock with the same LoRA a render read one-step NRMS 0.0365 to 0.0635
-at strengths 0.8 and 1.0, because stock's default DynamicVRAM loader applies
-the LoRA at cast time; SFT and Base with a LoRA rendered the same on uly2 and
-one GPU. An INT8 file with a LoRA refuses class P on every topology, before
-any weight moves: stock ComfyUI's own classic loader, with DynamicVRAM off,
-bakes the LoRA into the INT8 weights and rendered the Kromoss INT8 file with
-its DMD2 LoRA about 1.0 NRMS from its default, and dgx-monarch bakes the
-same way
+with the classic bake of earlier releases, each Kromoss DMD LoRA baked to stock
+ComfyUI's classic merge on every key, and against stock with the same LoRA a
+render read one-step NRMS 0.0365 to 0.0635 at strengths 0.8 and 1.0, because
+stock's default DynamicVRAM loader applies the LoRA at cast time. This release
+bakes the weight that cast computes, not yet measured on this family
+([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)).
+SFT and Base with a LoRA rendered the same on uly2 and one GPU. An INT8 file
+with a LoRA refuses class P on every topology, before any weight moves: stock
+ComfyUI's own classic loader, with DynamicVRAM off, bakes the LoRA into the
+INT8 weights and rendered the Kromoss INT8 file with its DMD2 LoRA about 1.0
+NRMS from its default, the bake dgx-monarch ran until this release, and the
+refusal stays until a hardware run measures the new one
 ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
 The slab rung with a LoRA has not run on hardware.
 On 2026-10-20 ComfyUI's RoPE scaling options for MOSS-Image
@@ -837,17 +840,19 @@ bytes as lodestones' `MOSS-Image-Base-8-steps-dmd` release. Each is rank 128
 in FP32 on every block's q, k, v, o and feed-forward projections, with
 separate q, k and v keys that ComfyUI maps onto the fused `qkv` weight. The
 vendor's diffusers recipe applies a LoRA unmerged and warns that merging it
-into BF16 weights loses part of the delta to rounding. ComfyUI merges it into
-the weights, and dgx-monarch bakes it with ComfyUI's own math, so a render on
-the pair is compared with stock ComfyUI, not with the unmerged pipeline. On
-2026-10-21 dgx-monarch's bake of either LoRA on the BF16 file equaled stock
-ComfyUI's merge on every patched key, the FSDP bake and the hot swap between
-them each gave the resident bake's render, and the un-bake gave the render
-without the LoRA. The vendor's card says the INT8 file works with them, and
-stock ComfyUI on one GPU runs that pair with its default DynamicVRAM loader.
-With DynamicVRAM off, stock's classic bake rendered the INT8 file with DMD2
-about 1.0 NRMS from that default, and dgx-monarch's bake is the classic one,
-so dgx-monarch refuses a LoRA on the INT8 file on every topology
+into BF16 weights loses part of the delta to rounding. Stock ComfyUI applies
+it to each weight when the layer casts it, and dgx-monarch bakes the weight
+that cast computes ([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)), so a render on the pair is compared with stock
+ComfyUI, not with the unmerged pipeline. On 2026-10-21 dgx-monarch's bake of
+either LoRA on the BF16 file, then ComfyUI's classic merge, equaled stock
+ComfyUI's classic merge on every patched key, the FSDP bake and the hot swap
+between them each gave the resident bake's render, and the un-bake gave the
+render without the LoRA. The vendor's card says the INT8 file works with them,
+and stock ComfyUI on one GPU runs that pair with its default DynamicVRAM
+loader. With DynamicVRAM off, stock's classic bake rendered the INT8 file with
+DMD2 about 1.0 NRMS from that default. dgx-monarch's bake was the classic one
+then; no hardware run has measured the new bake on this file, so dgx-monarch
+still refuses a LoRA on the INT8 file on every topology
 ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
 LoRA on FSDP keeps the [shared FSDP rules](#fsdp-precision-and-residency).
 
@@ -989,13 +994,16 @@ same on the token refiner's two blocks, for MiniMax H3's FL2VA DiT. ComfyUI's ow
 `minimax_h3_fl2va_pruned_int8_convrot.safetensors` with the INT8 ConvRot text
 encoder and VAE and the W4A8 upsampler, and the vendor's LoRA workflows load
 it on the BF16 FL2VA file. Its shapes are the DiT's own, so the LoRA shape
-guard admits it. Load LoRA (DGX Monarch) bakes it with ComfyUI's classic
-merge, where ComfyUI's template applies it at cast time; on MOSS-Image's INT8
-files those two were far apart
-([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)).
-No record covers the LoRA on an H3 INT8 file, so the testing graph
-`dgx-monarch-test-p-h3-image-lora` measures it. Do not put the LoRA on a
-p-h3-image DiT: the release already carries it.
+guard admits it. Load LoRA (DGX Monarch) bakes each weight to the one
+ComfyUI's template computes when it applies the LoRA at cast time
+([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)).
+Before that fix the Workers baked it with ComfyUI's classic merge, and on
+2026-11-05 the testing graph `dgx-monarch-test-p-h3-image-lora` on one rank
+read NRMS 0.077 against ComfyUI's own `image_p_h3_t2i` recipe at one step and
+0.257 at 8 steps. A probe of three INT8 ConvRot and two BF16 layers of the
+pruned file found the new bake bit-identical to stock's cast; the render
+itself has not run on the new bake yet. Do not put the LoRA on a p-h3-image
+DiT: the release already carries it.
 
 **Decode.** The p-h3-image VAE decodes one frame, so Worker-assisted VAE
 decode leaves it on the driver with one line saying why

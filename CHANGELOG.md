@@ -231,6 +231,17 @@
 
 ### Rendering
 
+- A LoRA renders as it does in stock ComfyUI. The Workers baked a LoRA with
+  ComfyUI's classic merge, the math stock runs only with DynamicVRAM off,
+  while stock's default applies a LoRA when a layer casts its weight, in the
+  forward's dtype and with requantization seeded by the module's name. The
+  pruned INT8 MiniMax H3 file with the p-h3-image LoRA read NRMS 0.077 against
+  stock at one step and 0.257 at 8 steps, and Kromoss BF16 with a DMD LoRA
+  read 0.0365 to 0.0635 at one step. Every bake now computes the weight stock's cast
+  computes; a probe found it bit-identical to stock on the file's INT8 ConvRot
+  and BF16 layers. MOSS-Image INT8 with a LoRA still refuses (#129) until a
+  hardware run measures it
+  ([TROUBLESHOOTING #145](docs/TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)).
 - `[worker_args] fp8_matrix_mult` (`"auto"`, `"on"` or `"off"`) chooses whether
   the models the actors build take ComfyUI's FP8 matmul path. ComfyUI's
   `--fast fp8_matrix_mult` reaches only the driver's own loads, because the
