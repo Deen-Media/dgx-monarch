@@ -202,10 +202,8 @@ OPTIONAL_TOUCHPOINTS: tuple[str, ...] = (
     # The loader-site footprint preflight (nodes/loader_graph.py) and the
     # render-site unload (driver_unload.py) read what comfy holds. Absence means
     # "nothing loaded": the first over-charges, the second refuses unchanged.
-    "comfy.model_management.current_loaded_models",
-    "comfy.model_management.LoadedModel.model",
-    "comfy.memory_management.aimdo_enabled",
-    "comfy.utils.DISABLE_MMAP",
+    "comfy.model_management.current_loaded_models", "comfy.model_management.LoadedModel.model",
+    "comfy.memory_management.aimdo_enabled", "comfy.utils.DISABLE_MMAP",
     "comfy.model_patcher.ModelPatcher.model.model_loaded_weight_memory",
     "comfy.model_patcher.ModelPatcher.model.model_lowvram",
     "comfy.model_patcher.ModelPatcher.load_device",
@@ -214,6 +212,8 @@ OPTIONAL_TOUCHPOINTS: tuple[str, ...] = (
     # hook writes it for one forward at a time (adapters/quant_activation_scale.py),
     # so its absence is normal.
     "comfy.ops.mixed_precision_ops.Linear.input_scale",
+    # ModelSamplingMiniMaxH3 (DGX Monarch): absent, an H3 shift render refuses class P.
+    "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
 )
 
 

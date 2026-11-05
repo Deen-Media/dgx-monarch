@@ -44,19 +44,25 @@ IMAGE_AUDIO_T: Final = 2
 def family_refusal_reason(family: str | None) -> str | None:
     """Why this checkpoint cannot take the node, or None when it can.
 
-    An unreadable family is None: the Worker belt reads the loaded model instead.
+    An unreadable header (None) and one no signature matches ("unknown") pass:
+    the Worker belt reads the loaded model's class instead. The text names the
+    cause; each refusal site adds its own remedy.
     """
-    if family is None or family == FAMILY:
+    if family is None or family in (FAMILY, "unknown"):
         return None
     return (f"{NODE_NAME} applies ComfyUI's {STOCK_DISPLAY} node, which replaces the model's "
             "sampling with MiniMax H3's paired video and audio schedule, and this checkpoint "
-            f"reads as {family}. Remove the node, or load a MiniMax H3 or p-h3-image checkpoint.")
+            f"reads as {family}.")
 
 
+# The stock node has shipped with MiniMax H3 since ComfyUI 0.30.0 (#15224), so
+# its absence means a ComfyUI without MiniMax H3, or one that moved the node.
+STOCK_NODE_PATH: Final = f"comfy_extras.nodes_minimax_h3.{STOCK_NODE}"
 STOCK_NODE_MISSING: Final = (
-    f"{NODE_NAME} needs ComfyUI's {STOCK_DISPLAY} node ({STOCK_NODE}), and this Worker's "
-    "ComfyUI has none, so it would sample at the checkpoint's own shifts instead of the ones "
-    "the graph asks for. Update ComfyUI to 0.44.0 or newer on every host.")
+    f"{NODE_NAME} runs ComfyUI's {STOCK_DISPLAY} node, {STOCK_NODE_PATH}, which has shipped "
+    "with MiniMax H3 since ComfyUI 0.30.0, and this Worker's ComfyUI has none: it has no "
+    "MiniMax H3 support, or a later release moved or renamed the node. Without it the Worker "
+    "would sample at the checkpoint's own shifts.")
 
 
 def _dims(value: Any) -> tuple[int, ...] | None:

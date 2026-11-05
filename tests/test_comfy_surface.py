@@ -782,6 +782,7 @@ def test_manifest_paths_are_unique_and_non_vacuous():
         "comfy.model_patcher.ModelPatcher.model.model_lowvram",
         "comfy.model_patcher.ModelPatcher.load_device",
         "comfy.ops.mixed_precision_ops.Linear.input_scale",
+        "comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift.execute",
     }
     assert set(QUANT_ALGORITHM_FORMATS) == RESTORABLE_QUANT_FORMATS
     modules, patcher, detection, quantized = _fake_surface()

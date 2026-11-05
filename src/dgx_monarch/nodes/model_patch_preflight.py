@@ -289,13 +289,17 @@ def preflight_h3_sigma_shift(model: Any, request: Mapping[str, Any], latent: Any
 
     Two arms. ModelSamplingMiniMaxH3 (DGX Monarch) on a checkpoint that reads as
     another family, on the model or a guider's negative; an unreadable header
-    passes, and every Worker reads the loaded model's family instead. Then a
-    one-frame H3 audio-video latent, p-h3-image's image latent, that no H3 shift
-    reaches: the Workers would sample it at H3's defaults. That arm reads the
-    family too, so a latent that only looks like it on another family passes.
+    or one no signature matches passes. Then a one-frame H3 audio-video latent,
+    p-h3-image's image latent, that no H3 shift reaches: the Workers would
+    sample it at H3's defaults. That arm reads the family too, so a latent that
+    only looks like it on another family passes. Every Worker repeats both
+    arms from the loaded model (actor/model_sampling_render.py), so a header
+    this side cannot read still refuses there.
     """
+    from ..adapters.base import UnsupportedModelError
+
     uncond = request.get("uncond_model")
-    reason = None
+    override = family_select.override_for_model(model)
     for target in (model, uncond):
         if target is None:
             continue
@@ -303,32 +307,31 @@ def preflight_h3_sigma_shift(model: Any, request: Mapping[str, Any], latent: Any
         if sampling_kind(sampling) != "minimax_h3":
             continue
         family = (_sniffed_family(target) if not isinstance(target, Mapping)
-                  else _sniffed_family_of_request(target))
+                  else _sniffed_family_of_request(target, override))
         reason = h3_sigma_shift.family_refusal_reason(family)
         if reason is not None:
-            break
-    if reason is None and h3_sigma_shift.is_image_latent(latent):
-        sampling = _shift_target(model)[1]
-        reason = h3_sigma_shift.missing_shift_reason(sampling_kind(sampling))
-        if _sniffed_family(model) != h3_sigma_shift.FAMILY:
-            reason = None
-        elif reason is None:
-            wire: Mapping[str, Any] = normalize_model_sampling(sampling) or {}
-            log.info("minimax_h3: one-frame image latent (p-h3-image) at shifts %s and %s",
-                     wire.get("shift_video"), wire.get("shift_audio"))
-    if reason is None:
+            raise UnsupportedModelError(refusal(
+                RefusalClass.PHYSICS, f"{reason} Remove the node and render with the "
+                "checkpoint's own sampling instead, or load a MiniMax H3 or p-h3-image "
+                "checkpoint.", troubleshooting=h3_sigma_shift.TROUBLESHOOTING))
+    if not h3_sigma_shift.is_image_latent(latent) or _sniffed_family(model) != h3_sigma_shift.FAMILY:
         return
-    from ..adapters.base import UnsupportedModelError
+    sampling = _shift_target(model)[1]
+    reason = h3_sigma_shift.missing_shift_reason(sampling_kind(sampling))
+    if reason is not None:
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS, f"{reason} Use the shifts the model's own workflow names "
+            "(docs/MODELS.md).", troubleshooting=h3_sigma_shift.TROUBLESHOOTING))
+    wire: Mapping[str, Any] = normalize_model_sampling(sampling) or {}
+    log.info("minimax_h3: one-frame image latent (p-h3-image) at shifts %s and %s",
+             wire.get("shift_video"), wire.get("shift_audio"))
 
-    raise UnsupportedModelError(refusal(
-        RefusalClass.PHYSICS, f"{reason} Use the shifts the model's own workflow names "
-        "(docs/MODELS.md).", troubleshooting=h3_sigma_shift.TROUBLESHOOTING))
 
-
-def _sniffed_family_of_request(model: Mapping[str, Any]) -> str | None:
-    """The family of a model request dict's checkpoint, or None when it cannot be read."""
+def _sniffed_family_of_request(model: Mapping[str, Any], override: str | None) -> str | None:
+    """The family of a model request dict's checkpoint under the primary's override,
+    or None when it cannot be read."""
     try:
-        sniffed = _sniffed_checkpoint(model.get("unet_name"), None)
+        sniffed = _sniffed_checkpoint(model.get("unet_name"), override)
     except Exception:
         return None
     return None if sniffed is None else sniffed[0]

@@ -1058,9 +1058,10 @@ Category **"DGX Monarch"**. The node surface is small by design:
   sets the paired video and audio sampling and the two shift keys the H3
   forward reads. p-h3-image needs it at 1.0 and 1.0. The driver refuses it,
   class P, on a checkpoint that is not MiniMax H3, and refuses a one-frame H3
-  audio-video latent, the p-h3-image image latent, that no H3 shift reaches;
-  each Worker repeats the family check inside its load guard, where it also
-  refuses a ComfyUI without the stock node
+  audio-video latent, the p-h3-image image latent, that no H3 shift reaches,
+  for Fleet KSampler too; each Worker repeats both checks inside its load
+  guard, from the loaded model, where it also refuses a ComfyUI without the
+  stock node
   ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)).
 - `DGXMonarchSkipLayerGuidance`: stock `SkipLayerGuidanceDiTSimple`'s four
   widgets in stock's order with stock's defaults, kept on the model spec and,

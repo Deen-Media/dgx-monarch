@@ -128,8 +128,12 @@ DRIVER_STACK_FAMILIES: dict[str, DriverStackProfile] = {
         family="minimax_h3",
         ref_extras_keys=("minimax_refs", "minimax_keyframes"),
         fitting_options=(SMALLER_TE, PRUNED_DIT, FEWER_REFS, FREE_MEMORY),
-        dit_note="the pruned int8 and fp8 reference-to-video artifacts are "
-                 "19.5 GiB each against bf16's 61.7",
+        # One row for both models ComfyUI builds as MiniMaxH3: H3 video and
+        # p-h3-image (docs/MODELS.md), so the note names each one's files.
+        dit_note="for MiniMax H3 video, the pruned int8 and fp8 reference-to-video "
+                 "artifacts are 19.5 GiB each against bf16's 61.7; for p-h3-image, "
+                 "the int8_convrot DiT is 19.8 GiB and the w4a8 DiT 12.4 GiB against "
+                 "bf16's 37.7",
     ),
     # LTX prices two token streams rather than reference blocks, so it declares
     # no ref_extras_keys: the row charge arrives from ltx25_activation through

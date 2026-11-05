@@ -1593,8 +1593,11 @@ with one and two references, at shifts 1.0 and 1.0 and at 12.0 and 3.0
 
 The maintainer's cells, all NOT RUN. Each renders at 2912 square, seed 42,
 the head capped at 2100 MHz. `bf16` is `dgx-monarch-p-h3-image.json` with
-the If/Else switch set to false, so the request reaches the model as it is
-and no cell depends on the upsampler. `int8` is
+the If/Else switch set to false, so the box's text reaches the model as it
+is and no cell depends on the upsampler. Set every graph's seed control to
+`fixed` before any comparison cell, the vendor's and ComfyUI's included: the
+templates ship `randomize`, so only the first queue renders at the shipped
+seed. `int8` is
 `dgx-monarch-test-p-h3-image-int8.json` and `w4a8`
 `dgx-monarch-test-p-h3-image-w4a8.json`, each with the matching text
 encoder and VAE. One step means Manual Sigmas `1.0, 0.0`.
@@ -1607,9 +1610,8 @@ encoder and VAE. One step means Manual Sigmas `1.0, 0.0`.
 | ring2 | topology `ring2`, one step, `bf16` | an odd packed total refuses class K with the H3 ring-pad text (#49) before any block runs; an even one completes with identical latents on both ranks | NOT RUN |
 | cfg2 and dp2 | topologies `cfg2` and `dp2`, `bf16` | both refuse class P before dispatch with the H3 batch-one text | NOT RUN |
 | uly2+fsdp | topology `uly2+fsdp`, one step, `bf16`, then `w4a8` | `bf16` completes with identical latents and its image recorded against resident uly2; `w4a8` refuses class P at launch with the grouped 4-bit layout text | NOT RUN |
-| W4A8 kernels | `w4a8` on one rank, then with `[worker_args] int8_gemm = "cutlass"` | the render completes on GB10 and the two kernels give the same image; a missing kernel shows here as a load or first-step error, which MODELS then records | NOT RUN |
-| no shift node | `bf16` with ModelSamplingMiniMaxH3 (DGX Monarch) removed | the driver refuses class P with the one-frame text (#144) before any Worker call | NOT RUN |
-| an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#144) and no rank waits out the group timeout | NOT RUN |
+| W4A8 kernels | `w4a8` on one rank, with a one-line probe or a profiler trace that records which W4A8 path ran (comfy-kitchen's `_W4A8_CHUNKED` and the chunked kernels' `used` flag, or the kernel names), then again with `[worker_args] int8_gemm = "cutlass"` | the render completes on GB10 on comfy-kitchen's own W4A8 kernels, and the record names the path; the `int8_gemm` toggle changes only the 40 `int8_tensorwise` layers and any fallback calls, so the two images match; a missing kernel shows here as a load or first-step error, which MODELS then records | NOT RUN |
+| no shift node | `bf16` with ModelSamplingMiniMaxH3 (DGX Monarch) removed, then the same through Fleet KSampler (DGX Monarch) | the driver refuses class P with the one-frame text (#144) before any Worker call, on both | NOT RUN |
 | upsampler | `bf16` as shipped, switch on, one rank | Generate Text runs on the driver and Preview as Text shows the expanded prompt; the render completes beside the 37.7 GiB DiT | NOT RUN |
 | edit | `bf16`, a Load Image wired to `image_1`, uly2 and one rank, one step | the reference rows reach the packed stream on both ranks, both report identical latents, and the image matches the one-rank cell | NOT RUN |
 | LoRA route | `dgx-monarch-test-p-h3-image-lora.json`, its slot mapped to `p-h3-image_lora_bf16.safetensors` at the 1.0 the graph holds and the sweep keeps, one rank, one step, against ComfyUI's own `image_p_h3_t2i` template with its upsampler bypassed | the NRMS against stock, recorded; a gap like MOSS-Image INT8's (#129) asks for the same refusal on H3 | NOT RUN |

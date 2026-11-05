@@ -18,13 +18,20 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..h3_sigma_shift import STOCK_NODE_MISSING, TROUBLESHOOTING, family_refusal_reason
+from ..h3_sigma_shift import (
+    FAMILY,
+    STOCK_NODE_MISSING,
+    TROUBLESHOOTING,
+    family_refusal_reason,
+    is_image_latent,
+    missing_shift_reason,
+)
 from ..model_sampling import MINIMAX_H3, AnyModelSamplingWire, normalize_model_sampling
 from ..refusal import RefusalClass, refusal
 
 
 def h3_stock_node() -> Any:
-    """ComfyUI's MiniMax H3 shift node, or None on a ComfyUI without MiniMax H3."""
+    """ComfyUI's MiniMax H3 shift node, or None on a ComfyUI without it."""
     try:
         from comfy_extras.nodes_minimax_h3 import MiniMaxH3SigmaShift
     except ImportError:
@@ -32,25 +39,47 @@ def h3_stock_node() -> Any:
     return MiniMaxH3SigmaShift
 
 
-def _refuse(reason: str) -> None:
+def _error(text: str) -> Exception:
     from ..adapters.base import UnsupportedModelError
 
-    raise UnsupportedModelError(refusal(
-        RefusalClass.PHYSICS, f"{reason} Use the shifts the model's own workflow names "
-        "(docs/MODELS.md).", troubleshooting=TROUBLESHOOTING))
+    return UnsupportedModelError(text)
+
+
+def _refuse_stock_node_missing() -> None:
+    raise _error(refusal(
+        RefusalClass.PHYSICS, f"{STOCK_NODE_MISSING} Run every host on a ComfyUI that has the "
+        "node instead.", troubleshooting=TROUBLESHOOTING))
 
 
 def assert_supported(request: dict, family: str | None) -> None:
-    """Refuse, class P, an H3 shift this Worker cannot apply as stock does."""
+    """Refuse, class P, an H3 shift this Worker cannot apply as stock does.
+
+    Three arms, each read from facts every rank holds alike except the host's
+    ComfyUI: the node on another family, a ComfyUI without the stock node, and
+    p-h3-image's one-frame image latent on a MiniMax H3 model that no H3 shift
+    reaches. The last repeats the driver's check (nodes/model_patch_preflight.py)
+    for every path that misses it, such as a header the driver could not read;
+    the family here is the loaded model's.
+    """
     wires = [normalize_model_sampling((request.get(slot) or {}).get("model_sampling"))
              for slot in ("model", "uncond_model")]
-    if not any(wire is not None and wire["kind"] == MINIMAX_H3 for wire in wires):
+    if any(wire is not None and wire["kind"] == MINIMAX_H3 for wire in wires):
+        reason = family_refusal_reason(family)
+        if reason is not None:
+            raise _error(refusal(
+                RefusalClass.PHYSICS, f"{reason} Remove the node and render with the "
+                "checkpoint's own sampling instead, or load a MiniMax H3 or p-h3-image "
+                "checkpoint.", troubleshooting=TROUBLESHOOTING))
+        if h3_stock_node() is None:
+            _refuse_stock_node_missing()
+    if family != FAMILY or not is_image_latent(request.get("latent")):
         return
-    reason = family_refusal_reason(family)
-    if reason is None and h3_stock_node() is None:
-        reason = STOCK_NODE_MISSING
+    primary = wires[0]
+    reason = missing_shift_reason(None if primary is None else primary["kind"])
     if reason is not None:
-        _refuse(reason)
+        raise _error(refusal(
+            RefusalClass.PHYSICS, f"{reason} Use the shifts the model's own workflow names "
+            "(docs/MODELS.md).", troubleshooting=TROUBLESHOOTING))
 
 
 def apply_model_sampling(render_patcher: Any, wire: AnyModelSamplingWire | None) -> Any:
@@ -60,7 +89,7 @@ def apply_model_sampling(render_patcher: Any, wire: AnyModelSamplingWire | None)
     if wire["kind"] == MINIMAX_H3:
         node = h3_stock_node()
         if node is None:  # assert_supported refused this render inside the load guard
-            _refuse(STOCK_NODE_MISSING)
+            _refuse_stock_node_missing()
         return node.execute(render_patcher, wire["shift_video"], wire["shift_audio"])[0]
     from comfy_extras.nodes_model_advanced import ModelSamplingSD3
 

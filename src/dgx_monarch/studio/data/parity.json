@@ -19707,7 +19707,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "1fd4d4c211ed2e8f556d8a7fc925a24f952f4b895c00bc5b0693c0bf3c363e74",
+      "digest": "e07f3d76f92603f79f19ee96ee197e67e05848bfc65bb2d93199b4be6494fa2d",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-p-h3-image",
       "interfaces": {

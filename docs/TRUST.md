@@ -606,7 +606,7 @@ copied from historical evidence.
     Authorization, setup binding, driver validation, and
     worker revalidation are
     [`gate_identity.py:333-481`](../src/dgx_monarch/nodes/gate_identity.py#L333-L481 "anchor:authorize_normal_render"),
-    [`render_submit.py:241-478`](../src/dgx_monarch/nodes/render_submit.py#L241-L478 "anchor:_submit_render_guarded"),
+    [`render_submit.py:241-479`](../src/dgx_monarch/nodes/render_submit.py#L241-L479 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:92-155`](../src/dgx_monarch/mesh_residency.py#L92-L155 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:242-374`](../src/dgx_monarch/mesh_residency.py#L242-L374 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:240-356`](../src/dgx_monarch/mesh_rpc.py#L240-L356 "anchor:verify_request_artifacts"), and
@@ -820,7 +820,7 @@ copied from historical evidence.
   boundaries are
   [`gate_identity.py:281-291`](../src/dgx_monarch/nodes/gate_identity.py#L281-L291 "anchor:model_for_request"),
   [`gate_identity.py:333-481`](../src/dgx_monarch/nodes/gate_identity.py#L333-L481 "anchor:authorize_normal_render"),
-  [`render_submit.py:241-478`](../src/dgx_monarch/nodes/render_submit.py#L241-L478 "anchor:_submit_render_guarded"),
+  [`render_submit.py:241-479`](../src/dgx_monarch/nodes/render_submit.py#L241-L479 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:240-356`](../src/dgx_monarch/mesh_rpc.py#L240-L356 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:5-52`](../src/dgx_monarch/actor/worker_authorization.py#L5-L52 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:96-106`](../src/dgx_monarch/actor/worker_authorization.py#L96-L106 "anchor:assert_resident_artifact_identity"), with source-skew coverage in

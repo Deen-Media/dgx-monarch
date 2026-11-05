@@ -902,8 +902,14 @@ Monarch) at CFG 1, and 2912 square. The request box feeds the prompt
 upsampler, which runs on the driver through ComfyUI's Generate Text with
 greedy decoding, and Preview as Text shows the prompt the model gets. The
 vendor says the model renders full, specific prompts much better than short
-ones, so keep the upsampler on; the If/Else switch set to false sends the
-request as it is. Keep the `Aspect ratio:` line equal to the canvas. Other
+ones, so keep the upsampler on. Keep the `Aspect ratio:` line equal to the
+canvas. The box holds the upsampler's two-line input, as in ComfyUI's own
+template, so the If/Else switch set to false sends both lines to the model.
+The vendor's workflow sends only the request there: it keeps the box plain
+and adds the `Aspect ratio:` line in a Format Text node on the upsampler's
+branch. This template has no Format Text node, because Studio would read its
+text as a second prompt, so with the switch false, delete the two labels and
+keep only the request text in the box. Other
 8 MP sizes are 3360x2496 (4:3), 3552x2368 (3:2) and 3872x2176 (16:9), with the
 sides swapped for portrait. For an edit, wire images to p-h3-image
 Conditioning: `image_1` is the image to edit, the rest are references, and the
@@ -919,9 +925,10 @@ sampling and the two shift keys the H3 forward reads are stock's. Without it
 the Workers would sample at H3's defaults, 12.0 and 3.0. The image latent is
 one video latent frame beside two audio latent frames, and an H3 video latent
 never has one frame, so the driver refuses that latent, class P, when no H3
-shift reaches the model, and logs `minimax_h3: one-frame image latent
-(p-h3-image) at shifts 1.0 and 1.0` when one does
-([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)).
+shift reaches the model, Fleet KSampler (DGX Monarch) included, and every
+Worker repeats the check from the loaded model. The driver logs
+`minimax_h3: one-frame image latent (p-h3-image) at shifts 1.0 and 1.0` when
+the shift is there ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)).
 
 **Sharding.** At 2912 square the image is 8,281 video rows, two audio rows
 per audio frame and the prompt's text rows in one packed stream, which
@@ -960,9 +967,12 @@ layers and keeps 40 sensitive layers, the token refiner's among them,
 `int8_tensorwise`; it reads as `w4a8`, both from its header and once loaded.
 No p-h3-image file pins an attention kernel. The Worker venv's comfy-kitchen
 0.2.40 carries the W4A8 layout and its CUDA kernels; whether they run on GB10
-is the hardware leg's to say. Where a W4A8 linear dequantizes to INT8 it
-reaches the same INT8 GEMM call as an INT8 ConvRot file, which the
-[INT8 GEMM kernel](#int8-gemm-kernel) replaces with the Triton kernel. FSDP
+is the hardware leg's to say. The 168 `asym_w4a8_int8` layers run
+comfy-kitchen's own W4A8 kernels, its codebook GEMV for a few rows and its
+chunked GEMM otherwise, and reach the INT8 GEMM call only on the fallback
+where a chunked kernel declines, which dequantizes the weights to INT8 first.
+The [INT8 GEMM kernel](#int8-gemm-kernel) option therefore covers the 40
+`int8_tensorwise` layers, and the W4A8 layers only on that fallback. FSDP
 refuses the W4A8 file at launch, class P, because its grouped layers have no
 shard layout. The prompt upsampler and the text encoder run on the driver in
 stock ComfyUI, so their quantizations change no Worker path.
@@ -993,10 +1003,7 @@ decode leaves it on the driver with one line saying why
 
 **Memory.** The driver holds the text encoder, the upsampler and the VAE,
 about 34 GB in BF16, beside the DiT on the head; ComfyUI moves the upsampler
-out when the encode needs the room. If the driver footprint check refuses a
-DiT load, its advice is H3's, and its note names H3's pruned files, which are
-not this model: the smaller p-h3-image choices are the INT8 ConvRot and W4A8
-sets.
+out when the encode needs the room.
 
 **Known limitations.** No hardware record. Edits and the LoRA route have no
 comparison. ComfyUI's MiniMax H3 Context Windows gain nothing on one frame.

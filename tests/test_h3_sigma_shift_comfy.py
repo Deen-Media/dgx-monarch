@@ -98,6 +98,8 @@ def _sampling_facts(patcher):
 def test_the_carrier_node_copies_the_stock_widgets(comfy):
     schema = comfy.nodes.MiniMaxH3SigmaShift.define_schema()
     assert schema.node_id == h3_sigma_shift.STOCK_NODE
+    # The refusal names this path when the node is missing.
+    assert h3_sigma_shift.STOCK_NODE_PATH == f"{comfy.nodes.__name__}.MiniMaxH3SigmaShift"
     assert schema.display_name == h3_sigma_shift.STOCK_DISPLAY
     stock = {item.id: item for item in schema.inputs}
     ours = DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES()["required"]

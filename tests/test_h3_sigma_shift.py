@@ -164,16 +164,35 @@ def test_the_image_latent_arm_needs_the_h3_family(family, other):
 def test_the_node_on_another_family_refuses_on_the_model_and_the_negative(family):
     family["family"] = "wan"
     model, = DGXMonarchModelSamplingMiniMaxH3().patch(_model(), 1.0, 1.0)
-    assert "reads as wan" in _refusal(model, _latent(21))
+    message = _refusal(model, _latent(21))
+    assert "reads as wan" in message and "Remove the node" in message
+    assert "workflow names" not in message  # the shift advice is the missing-shift arm's alone
     uncond = {"unet_name": "neg.safetensors", "model_sampling": H3_WIRE}
     assert "reads as wan" in _refusal(_model(), None, {"uncond_model": uncond})
 
 
-def test_the_node_on_h3_or_an_unreadable_header_passes(family):
+def test_the_negative_model_reads_its_family_under_the_primary_override(family, monkeypatch):
+    seen = []
+
+    def sniff(name, override):
+        seen.append((name, override))
+        return ("minimax_h3", "bf16")
+
+    monkeypatch.setattr(model_patch_preflight, "_sniffed_checkpoint", sniff)
+    monkeypatch.setattr(model_patch_preflight.family_select, "override_for_model",
+                        lambda model: "minimax_h3")
+    uncond = {"unet_name": "neg.safetensors", "model_sampling": H3_WIRE}
+    model_patch_preflight.preflight_h3_sigma_shift(_model(), {"uncond_model": uncond}, None)
+    assert ("neg.safetensors", "minimax_h3") in seen
+
+
+@pytest.mark.parametrize("sniffed", ["minimax_h3", None, "unknown"])
+def test_the_node_on_h3_or_an_unread_header_passes(family, sniffed):
+    """An unreadable header, or one no signature matches, leaves it to the Worker belt."""
+    family["family"] = sniffed
     model, = DGXMonarchModelSamplingMiniMaxH3().patch(_model(), 1.0, 1.0)
     model_patch_preflight.preflight_h3_sigma_shift(model, {}, _latent(21))
-    family["family"] = None
-    model_patch_preflight.preflight_h3_sigma_shift(model, {}, _latent(21))
+    assert h3_sigma_shift.family_refusal_reason(sniffed) is None
 
 
 def test_the_sd3_multiplier_guard_skips_the_h3_kind(monkeypatch):
@@ -215,10 +234,64 @@ def test_the_belt_refuses_another_family(monkeypatch, request_):
 
 def test_the_belt_and_the_apply_refuse_a_comfy_without_the_stock_node(monkeypatch):
     monkeypatch.setattr(model_sampling_render, "h3_stock_node", lambda: None)
-    with pytest.raises(UnsupportedModelError, match=r"0\.44\.0"):
-        model_sampling_render.assert_supported(_request(), "minimax_h3")
-    with pytest.raises(UnsupportedModelError, match=r"0\.44\.0"):
-        model_sampling_render.apply_model_sampling(object(), H3_WIRE)
+    for call in (lambda: model_sampling_render.assert_supported(_request(), "minimax_h3"),
+                 lambda: model_sampling_render.apply_model_sampling(object(), H3_WIRE)):
+        with pytest.raises(UnsupportedModelError) as caught:
+            call()
+        message = str(caught.value)
+        # The node has shipped with MiniMax H3 since ComfyUI 0.30.0, so no version is the fix.
+        assert h3_sigma_shift.STOCK_NODE_PATH in message and "0.30.0" in message
+        assert "0.44.0" not in message and "workflow names" not in message
+        tag = parse_refusal_tag(message)
+        assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+
+
+def _image_request(sampling=None, latent_t=1) -> dict:
+    request = _request(sampling)
+    request["latent"] = _latent(latent_t)
+    return request
+
+
+def test_the_belt_refuses_the_image_latent_without_an_h3_shift_on_h3(monkeypatch):
+    """Every Worker repeats the driver's missing-shift check from the loaded model's family."""
+    monkeypatch.setattr(model_sampling_render, "h3_stock_node", lambda: object())
+    for sampling, extra in ((None, ""), ({"kind": "sd3", "shift": 3.0}, "SD3 shift")):
+        with pytest.raises(UnsupportedModelError) as caught:
+            model_sampling_render.assert_supported(_image_request(sampling), "minimax_h3")
+        message = str(caught.value)
+        assert h3_sigma_shift.NODE_NAME in message and "1.0 and 1.0" in message
+        assert extra in message and "workflow names" in message and "#144" in message
+        tag = parse_refusal_tag(message)
+        assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
+
+
+def test_the_belt_passes_the_image_latent_with_the_shift_or_off_h3(monkeypatch):
+    monkeypatch.setattr(model_sampling_render, "h3_stock_node", lambda: object())
+    model_sampling_render.assert_supported(_image_request(H3_WIRE), "minimax_h3")
+    model_sampling_render.assert_supported(_image_request(None), "ltx")
+    model_sampling_render.assert_supported(_image_request(None, latent_t=2), "minimax_h3")
+    model_sampling_render.assert_supported(_request(None), "minimax_h3")
+
+
+def test_fleet_runs_the_shift_preflight_before_any_dispatch(monkeypatch):
+    from dgx_monarch.nodes import fleet
+
+    calls = []
+
+    def stop(model, request, latent):
+        calls.append((model, dict(request), latent))
+        raise RuntimeError("stopped at the H3 shift preflight")
+
+    monkeypatch.setattr(fleet.model_patch_preflight, "preflight_h3_sigma_shift", stop)
+    monkeypatch.setattr(fleet, "ensure_live", lambda handle: pytest.fail("dispatched"))
+    spec = _model()
+    with pytest.raises(RuntimeError, match="H3 shift preflight"):
+        fleet.DGXMonarchFleetKSampler().fleet(
+            [spec], [object()], [[]], [_latent(1)], ["a kite"], [42], [8], [1.0],
+            ["euler"], ["simple"])
+    (model, request, latent), = calls
+    assert model is spec and request == {}
+    assert h3_sigma_shift.is_image_latent(latent)
 
 
 def test_no_wire_returns_the_clone_untouched():
