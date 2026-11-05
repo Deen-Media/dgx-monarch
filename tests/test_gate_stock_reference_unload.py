@@ -131,28 +131,39 @@ def test_the_off_switch_keeps_one_stock_attempt(monkeypatch, tmp_path):
     assert result["cross_mode"]["verdict"] == "CAPACITY"
 
 
-class _ActorError(Exception):
-    """A Worker's refusal as the driver receives it: remote text in ``args``, and
-    a ``__str__`` that later changes to ``args`` do not reach, so an amended
-    sentence written there would vanish."""
+def _wrapped_refusal():
+    """A Worker's own ladder refusal as the driver receives it: Monarch's real
+    ``ActorError`` after a pickle round trip. Its text is "A remote actor call
+    has failed." and the remote traceback; the refusal's tag and figures sit in
+    the inner exception and at the end of that traceback, never on its first
+    line."""
+    import pickle
 
-    TEXT = ("ActorError: StockLoadCapacityError: [dgxm:C guard=stock_load_preflight "
-            "waivable=1] stock residency cannot load flux2_dev_fp8mixed.safetensors: "
-            "the load needs 74.3 GiB and 63.0 GiB is available\nTraceback (remote)")
+    from monarch.actor import ActorError
 
-    def __init__(self):
-        super().__init__(self.TEXT)
-        self._text = self.TEXT
+    from dgx_monarch.actor import store_residency
+    from dgx_monarch.capacity_fit import StockFit
+    from dgx_monarch.gate_audit_evidence import measured_tag
+    from dgx_monarch.refusal import RefusalClass, refusal
 
-    def __str__(self):
-        return self._text
+    gib = 2 ** 30
+    fit = StockFit(False, True, int(33.0 * gib), int(63.0 * gib))
+    text = refusal(
+        RefusalClass.CAPACITY, "stock residency cannot load flux2_dev_fp8mixed.safetensors: "
+        "the load needs 74.3 GiB and 63.0 GiB is available",
+        guard=store_residency.RESCUE_GUARD, waivable=False,
+        troubleshooting=store_residency._TROUBLESHOOTING) + "\n" + measured_tag(fit.measured())
+    try:
+        raise StockLoadCapacityError(text)
+    except StockLoadCapacityError as inner:
+        return pickle.loads(pickle.dumps(ActorError(inner)))  # noqa: S301 - trusted round-trip
 
 
 def test_a_worker_refusal_wrapped_as_remote_text_also_gets_the_unload(monkeypatch, tmp_path):
     """One Spark: no fleet agreement runs, so the Worker's own ladder refuses."""
     handle, _ledger, model, comfy = _rig(
         monkeypatch, tmp_path,
-        [torch.zeros(1), torch.zeros(1), _ActorError(), torch.zeros(1)])
+        [torch.zeros(1), torch.zeros(1), _wrapped_refusal(), torch.zeros(1)])
     result = _run(model)
     assert comfy.unloads == 1
     assert len(_renders(handle)) == 4
@@ -167,7 +178,7 @@ def test_a_wrapped_refusal_that_stands_keeps_its_text_and_says_what_was_tried(mo
     monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: comfy)
     monkeypatch.setattr(driver_unload.time, "sleep", lambda _s: None)
     monkeypatch.setattr(driver_unload, "busy_reason", lambda _handle: "")
-    original = _ActorError()
+    original = _wrapped_refusal()
 
     def refuse():
         raise original
@@ -177,23 +188,49 @@ def test_a_wrapped_refusal_that_stands_keeps_its_text_and_says_what_was_tried(mo
             [refuse], subject="the identity gate's stock reference render",
             is_refusal=mesh_safety.is_stock_load_capacity_error)
     text = str(raised.value)
-    assert text.startswith("ActorError: StockLoadCapacityError: [dgxm:C guard=stock_load_preflight")
-    first_line = text.partition("\n")[0]
+    first_line, _newline, rest = text.partition("\n")
+    assert first_line.startswith("[dgxm:C guard=stock_load_preflight")
+    assert "the load needs 74.3 GiB and 63.0 GiB is available" in first_line
     assert "Before refusing, the driver unloaded the 1 model (Flux2TEModel_)" in first_line
-    assert text.endswith("Traceback (remote)")
+    assert rest.startswith("[dgxm:measured ")
+    # The wrapper's header and the remote traceback, with its file paths, stay
+    # on the chained original, not in the refusal the operator reads.
+    assert "remote actor call" not in text and "Traceback" not in text
     assert raised.value.__cause__ is original
     assert comfy.unloads == 1
     assert mesh_safety.is_stock_load_capacity_error(raised.value)
 
 
+def test_a_standing_wrapped_refusal_keeps_its_tag_and_figures_in_the_gate_detail(
+        monkeypatch, tmp_path):
+    """The leg keeps 200 characters of the refusal for the gate report row and
+    the log; they must open with the refusal's tag and figures."""
+    from dgx_monarch.fsdp_reload_price import classification_class
+
+    handle, _ledger, model, comfy = _rig(
+        monkeypatch, tmp_path,
+        [torch.zeros(1), torch.zeros(1)] + [_wrapped_refusal() for _ in range(3)])
+    result = _run(model)
+    cross = result["cross_mode"]
+    assert comfy.unloads == 1 and len(_renders(handle)) == 5
+    assert cross["verdict"] == "CAPACITY"
+    assert classification_class(cross["capacity_detail"]) == "C"
+    assert cross["measured"] is not None
+    detail = cross["detail"]
+    assert "[dgxm:C guard=stock_load_preflight" in detail and "74.3 GiB" in detail
+    assert "remote actor call" not in detail
+
+
 def test_the_default_test_still_takes_only_typed_refusals(monkeypatch):
+    from monarch.actor import ActorError
+
     comfy = _ComfyModels()
     monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: comfy)
-    original = _ActorError()
+    original = _wrapped_refusal()
 
     def refuse():
         raise original
 
-    with pytest.raises(_ActorError) as raised:
+    with pytest.raises(ActorError) as raised:
         driver_unload.check_with_unload([refuse])
     assert raised.value is original and comfy.unloads == 0

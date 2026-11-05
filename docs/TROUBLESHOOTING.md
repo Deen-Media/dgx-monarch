@@ -4338,8 +4338,8 @@ the real defect; the stall and refusal report its consequences.
 
 **A stall where no rank died.** If both journals show their rank alive and
 waiting, and one rank's collective carries twice the other's elements, the two
-boxes picked different cond batches from their own free memory; this release
-makes every rank take the leanest rank's batch
+boxes picked different cond batches from their own free memory; where a model
+call is sharded, this release makes every rank take the leanest rank's batch
 ([#79](#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
 
 ## 87. A log line says the abandoned-lease wedge healed and the render paid a respawn

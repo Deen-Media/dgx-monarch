@@ -272,17 +272,23 @@ def _amended(exc: Exception, sentence: str) -> Exception:
 
     The tag and the budget figures stay at the front, where a reader that
     keeps 200 characters finds them; the type and traceback stay too. A
-    refusal that arrived wrapped, a Worker's own refusal as remote actor text,
-    builds its text elsewhere and would lose the sentence, so it comes back as
-    a typed ``StockLoadCapacityError`` that carries the same text and the
-    sentence; ``_raise_amended`` chains it from the original.
+    refusal that arrived wrapped, a Worker's own refusal inside Monarch's
+    ``ActorError``, does not take its text from ``args``, and the wrapper's
+    text is "A remote actor call has failed." and the remote traceback, with
+    the refusal's tag and figures at its end. So the sentence is added to the
+    refusal itself (``consent_observe.refusal_text`` reads the inner
+    exception), and it comes back as a typed ``StockLoadCapacityError``
+    carrying that text and no traceback; ``_raise_amended`` chains it from
+    the wrapper.
     """
-    head, newline, tail = str(exc).partition("\n")
-    text = f"{head.rstrip()} {sentence}{newline}{tail}"
     if isinstance(exc, CAPACITY_REFUSALS):
-        exc.args = (text,)
+        head, newline, tail = str(exc).partition("\n")
+        exc.args = (f"{head.rstrip()} {sentence}{newline}{tail}",)
         return exc
-    return mesh_safety.StockLoadCapacityError(text)
+    from .consent_observe import refusal_text
+
+    head, newline, tail = refusal_text(exc).partition("\n")
+    return mesh_safety.StockLoadCapacityError(f"{head.rstrip()} {sentence}{newline}{tail}")
 
 
 def _raise_amended(exc: Exception, sentence: str) -> NoReturn:
