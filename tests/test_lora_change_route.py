@@ -43,8 +43,8 @@ SIBLING_AVAILABLE = int(42.2 * _GIB)
 # The head actor's anonymous memory above its fresh floor after the first
 # queue: 34.1 GiB held, a few GiB of it the floor.
 HEAD_ARENA = int(29.6 * _GIB)
-CARD_BODY = ("The model loaded earlier (wan_animate_2_bf16) holds memory on head that this "
-             "change needs. Clear the Sparks and run again?")
+CARD_BODY = ("The model loaded earlier (wan_animate_2_bf16) holds about 29.6 GiB on head that "
+             "this change needs. Clear the Sparks and run again?")
 
 
 def _row(available: int, verdict: str, *, arena: int = HEAD_ARENA, resident: str = BASE,
@@ -87,16 +87,19 @@ def test_b3_a_credited_change_14_3_gib_short_offers_the_card():
     offer = old_model.offer_of(raised.value)
     assert offer is not None and offer.helps and offer.same_file
     (box,) = offer.boxes
-    assert (box.box, box.old_models) == ("head", ("wan_animate_2_bf16",))
-    # A fresh fleet holds no copy to credit: the clear must make room for 69.1 GiB.
-    assert round(box.fresh_bytes / _GIB, 1) == 69.1
-    assert box.gain_bytes == BF16_BYTES + HEAD_ARENA
+    assert (box.box, box.old_models, box.dropped) == ("head", ("wan_animate_2_bf16",),
+                                                      ("wan_animate_2_bf16",))
+    # A fresh fleet holds no copy to credit: the clear must make room for 69.1 GiB,
+    # one credit of the held copy and no second one (a stacked credit reads 8.1).
+    assert round(box.required_bytes / _GIB, 1) == 69.1
+    assert box.gain_bytes == BF16_BYTES + HEAD_ARENA and box.left_bytes == HEAD_ARENA
     assert old_model.card_body(offer) == CARD_BODY
-    assert old_model.card_numbers(offer) == "needs 38.6 GiB, 24.3 GiB available on head"
+    assert old_model.card_numbers(offer) == "needs 69.1 GiB, 24.3 GiB available on head"
     text = str(raised.value)
     assert "rank 0 on head priced a LoRA change on wan_animate_2_bf16.safetensors" in text
     assert "14.3 GiB short" in text
-    assert "The model loaded earlier (wan_animate_2_bf16) holds memory on head" in text
+    assert ("The model loaded earlier (wan_animate_2_bf16) holds about 29.6 GiB on head that "
+            "this change needs.") in text
     assert '"Clear and retry" on the "Old model in the way" card' in text
     assert "Reset attached mesh" in text
     assert "does not fit beside it" not in text
@@ -131,9 +134,9 @@ def test_the_same_file_card_needs_room_for_the_price_a_fresh_fleet_pays():
         decide(_b3(arena=small), 2, unet_name=BASE, keep=frozenset({BASE}))
     assert not isinstance(raised.value, old_model.OldModelRefusal)
     text = str(raised.value)
-    assert "The model loaded earlier (wan_animate_2_bf16) holds memory on head" in text
+    assert "The model loaded earlier" not in text      # no clear helps, so nothing to name
     assert ("A clear would not make room: wan_animate_2_bf16 needs 69.1 GiB on head, and a "
-            "cleared box would have about 62.8 GiB.") in text
+            "cleared box would have about 62.8 GiB. That is the whole price") in text
 
 
 def test_b2_state_is_admitted_and_raises_nothing():

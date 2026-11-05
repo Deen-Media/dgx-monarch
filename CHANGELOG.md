@@ -133,16 +133,40 @@
   attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
   case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
+- A load whose UNET loader casts the weight dtype is now priced before it
+  loads. The capacity checks used to skip a cast, because file size does not
+  say how big the cast copy is, and admit the load with no figure; on
+  2026-11-05 `dgx-monarch-wan22-t2v`, which casts both DiTs to bf16, loaded its
+  second DiT on a head with 12.2 GiB free and only a test watchdog stopped
+  it. The price now reads the file's header for the size of the copy the cast
+  builds and charges it in place of the file, beside the host copy and the
+  floor, so a short box refuses before anything loads and says what would fit.
+  For a cast that keeps the width, as wan22's fp16 to bf16 does, the figure is
+  the one an uncast load gets (60.9 GiB for each wan22 DiT). A cast load offers
+  no slab rescue, since a slab under a cast keeps the cast copy beside the
+  file; `slab_weights=on` refuses a cast it cannot price, and the explicit
+  stock refusal no longer suggests it. An old model held in the way still
+  raises its card, which now credits a cast model the copy its cast built.
+- A load that replaces the stock model in its own slot is now priced after
+  the Worker drops that model, which it always does first. The agreement used
+  to count both copies; with its cast priced, wan22-t2v's stage 2, a swap over
+  stage 1's DiT, would then refuse at 58.7 GiB available on a fresh pair, and
+  each stage of a warm re-queue would ask for a clear. A LoRA change on the
+  same file is the same credit. A model in the other slot, a slab resident and
+  the arena a stock load keeps still count
+  ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 - A LoRA change on a BF16 model the Workers already hold, with `lora_low_rss`
   off as the Wan-Animate 2 BF16 templates set it, no longer stalls or strands
   you. Adding a LoRA to a bare base loads base and LoRA fresh instead of
   copying the whole model off the GPU first, at the same price: on the
   memory-saver template that copy took 230 s, and a fresh load of base and
   LoRA 17 s.
-  And a change refused because the copy loaded earlier holds the memory now
-  offers the Old model in the way card, "The model loaded earlier holds memory
-  this change needs. Clear the Sparks and run again?", when a cleared box would
-  hold a fresh load
+  And a change refused because the host copy the held LoRA keeps holds the
+  memory now offers the Old model in the way card, "The model loaded earlier
+  (<name>) holds about <N> GiB on <box> that this change needs. Clear the
+  Sparks and run again?", when a cleared box would hold a fresh load. This is
+  the LoRA case of the same-slot swap credit above
   ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 

@@ -416,6 +416,19 @@ uses the same placement charge. The previous 1.3x estimate admitted a load
 that killed a host; measurements and calibration are in
 [VALIDATION.md](VALIDATION.md).
 
+When the UNET loader casts the weight dtype (`weight_dtype` other than
+`default`), the copy the cast builds takes the file's place in that sum, and
+the host copy stays the file's own size. The Worker reads the size of the
+cast copy from the file's header: every 16- or 8-bit float at the new width,
+and a quantized layer's weights, fp32 tensors and integers as they are stored.
+A cast that keeps the width, such as an fp16 file loaded as bf16, costs what
+the uncast load costs: 60.9 GiB for each 26.6 GiB Wan 2.2 14B DiT. A cast
+that widens costs more: a 13.3 GiB fp8 file loaded as bf16 builds a 26.6 GiB
+copy and needs 46.3 GiB. The refusal names the cast copy ("a 13.3 GiB file
+cast to a 26.6 GiB copy"). A header the Worker cannot read is charged the
+file times the new width, the most the cast could build, and the Worker
+journal says so. Before 2026-11-05 a cast load was not priced at all.
+
 **If `capacity rescue available` appears:** open the DGX Monarch sidebar,
 click "Load with slab residency", then queue again. Nothing large has loaded
 at the refusal. [#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)
@@ -446,8 +459,11 @@ quarantine, or insufficient memory even for slab. A session quarantine from an
 identity gate that could not complete names that ceremony; restart ComfyUI to
 clear it. Comfy-managed residency forces slab off and cannot offer this rescue
 ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)).
-A loader `weight_dtype` cast disables this preflight because file size no
-longer predicts resident size. Quarantine overrides consent; only a fresh
+A loader `weight_dtype` cast is priced and refused without a rescue card,
+because a slab load under a cast keeps the cast copy beside the file and saves
+nothing; the refusal says so and names what would fit, and an explicit
+`slab_weights=on` refuses a cast outright. An old model in the way can still
+raise its own card. Quarantine overrides consent; only a fresh
 Identity Gate retest can clear it
 ([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)).
 After a rescue whose gate returned an unproven INCONCLUSIVE, because stock
@@ -2115,8 +2131,11 @@ the attached mesh, the same as Reset attached mesh, and writes no memo and no
 ledger row; then queue again, and the load is priced again on fresh Workers.
 Tick Always clear and retry on the card, or the toggle of that name under
 "Consents and waivers", and the driver clears and retries by itself, at most
-once per load. When a clear would not make room, the refusal says so and
-offers no card. A model this graph loads, or one the request reuses, is never
+once per load. When the price already counted the drop of the model the load
+replaces, the card says instead that the box "still holds about N GiB that
+earlier loads left behind", since a clear gives that back. When a clear would
+not make room, the refusal says so, with the whole price a cleared box would
+need, and offers no card. A model this graph loads, or one the request reuses, is never
 the old model. A card resets only the attached mesh that refused: if that mesh
 is gone, the click answers the card and resets nothing, and any reset answers
 every open card. A one-GPU fleet or a Fleet job, whose Worker prices its own
@@ -2396,9 +2415,10 @@ once per render and only when ComfyUI holds a model. It never runs while a
 render is live in this driver: a pipelined submission behind a render in
 flight, a held or abandoned result lease, or a Worker call in flight keeps the
 models, and the refusal says which. It never touches the Workers' residents or
-ComfyUI's cached node outputs, and the cross-rank agreement
+ComfyUI's cached node outputs. The cross-rank agreement
 ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
-still prices a load that replaces a Worker resident with that resident held.
+prices a load that replaces a Worker's stock resident after the drop that
+resident's slot takes first, and any other resident as held.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the step off, and the guard
 then refuses on the first reading.
 
@@ -4728,6 +4748,8 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.
+  A load the loader casts to another weight dtype is priced at the copy the cast
+  builds, and its sentence names that copy beside the file.
   A rank that answered on slab residency is named as such. When the hosts selected
   different residencies, one cause is one host having verified the family for slab residency
   while the other has not.
@@ -4756,25 +4778,29 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
   ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)). The
   model in the way can be the one you asked for: a LoRA change (a new LoRA or
   a new strength) on a large model loaded earlier with its LoRA, with
-  `lora_low_rss` off, is priced beside that copy, and the copy keeps a host
-  copy of every weight its LoRA patches. Then the card reads "The model loaded
-  earlier (<name>) holds memory on <box> that this change needs. Clear the
-  Sparks and run again?", and it appears only when a cleared box would hold a
-  fresh load of the model and its LoRA, which costs more than the change.
+  `lora_low_rss` off. The price credits the copy the Worker holds, but that
+  copy keeps a host copy of every weight its LoRA patches. Then the card reads
+  "The model loaded earlier (<name>) holds about <N> GiB on <box> that this
+  change needs. Clear the Sparks and run again?", and it appears only when a
+  cleared box would hold a fresh load of the model and its LoRA, which costs
+  more than the change.
 * **World 1 is a no op.** The one box prices its own load.
 
 Read the numbers with two limits in mind. Each rank prices against what it
-holds at that moment, so a card can quote a figure taken with the previous
-model still resident, and it says so by name: "the old model (flux1-dev) is
-still loaded on head". The quote does not price shared memory
+holds at that moment. A load that replaces the stock model in its own slot is
+priced after the Worker drops that model, which the Worker does before every
+such load, and the refusal says so: "after the Worker drops flux1-dev, which
+frees at least 22.2 GiB". Any other model is counted as still held, so a card
+can quote a figure taken with it resident, and it says so by name: "the old
+model (flux1-dev) is still loaded on head". The quote does not price shared memory
 either: a rank holding a weight slab in the other slot, or a slab retained by a
 load that failed, reads as having more available than it has. The rank's row
 records both (`shmem_bytes`, each slot's resident and the retained-slab count)
 and draws no conclusion from them.
 
 **Fix:** when the message names what would fit, start there. When it says an
-old model is still loaded, or that the model loaded earlier holds memory this
-change needs, and offers Old model in the way, click Clear and retry on that
+old model is still loaded, or that the model loaded earlier holds memory that
+this change needs, and offers Old model in the way, click Clear and retry on that
 card, or Reset attached mesh, then queue again; moving between large models on
 one attached mesh meets this, and so does changing a LoRA on a BF16 model the
 Workers already hold with its LoRA. For another shortfall,

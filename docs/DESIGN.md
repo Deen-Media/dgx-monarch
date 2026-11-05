@@ -1659,6 +1659,33 @@ plus a host-memory floor, capped by the arena a stock load would retain. The
 slab estimate therefore never exceeds the stock estimate. Every slab selection checks this estimate before returning; `preload_capacity_check` checks it
 again immediately before entering ComfyUI.
 
+**A loader dtype cast is priced.** File size does not bound the copy a
+`weight_dtype` cast builds (an fp8 file cast to bf16 doubles), and until
+2026-11-05 the stock probe therefore made no claim on a cast, so every price
+that read it admitted the load with no figure: a cast DiT was admitted on a
+head with 12.2 GiB available against the 60.9 GiB this rule now charges it.
+The header does bound it. `capacity_fit.cast_resident_bytes` charges every
+16- and 8-bit float tensor at the cast's width, fp32 and fp64 at no less than
+their stored size (ComfyUI keeps some fp32 islands live through a cast), and
+every tensor of a quantized layer, one with a `weight_scale`, `scale_weight`
+or `comfy_quant` beside it, at its stored size, since ComfyUI's quantized
+operations keep that payload. The stock price charges that copy in place of
+the file, beside the host copy at the file's own width and the floor, so a
+cast that keeps the width charges what an uncast load charges. That host copy
+is unmeasured for a widening cast: ComfyUI builds the model at the cast's dtype
+before it copies the weights in, so a cast that widens may place more than
+this charges. A header the
+parser cannot read is charged the file times the target width, the most a cast
+can build, since no castable element is narrower than a byte; the file's own
+size would understate a bf16 cast of an fp8 file by half. A cast load that
+does not fit offers no slab rescue: a slab load under a cast keeps the cast
+copy in an annex beside the file, so it saves nothing, and for the same reason
+an explicit `slab_weights=on` refuses a cast, which its price cannot measure,
+and the explicit-stock refusal never names that lever for one. A vouched slab,
+comfy-managed or FSDP load under a cast, and the driver's own loader windows,
+still make no claim, because the staging those paths do under a cast is
+unmeasured.
+
 **One absolute host floor.** The stock price, the slab price, the
 comfy-managed capacity check and the driver's own two windows all charge
 `capacity_floor.ABSOLUTE_HOST_FLOOR_BYTES`, 5 GiB, sized from ComfyUI's own
@@ -1693,9 +1720,9 @@ bound or its floor.
 | rung | what it charges | file and function |
 |---|---|---|
 | `comfy_managed` | one resident copy, or 2.3 times the file where ComfyUI stages through a pinned host buffer (measured on the tested Spark pair), plus the floor | `actor/capacity_quote._managed`, then `capacity_fit.managed_required_bytes` at `actor/store_residency.preload_capacity_check` |
-| `explicit`, `vouched_auto` | the file plus a capped floor, plus the LoRA bake's stray transient where `lora_low_rss` and a stack are both set; a target the header estimate cannot map prices the whole file | `actor/capacity_quote._slab_rung` over `capacity_fit.slab_load_fit`, itself over `capacity_lora_bake.lora_bake_bytes`, taken again by `actor/store_slab_admit.admit`, then by the exact backstop `actor/store_slab_admit.admit_bake` once the real patch set is built |
+| `explicit`, `vouched_auto` | the file plus a capped floor, plus the LoRA bake's stray transient where `lora_low_rss` and a stack are both set; a target the header estimate cannot map prices the whole file; `explicit` refuses a loader dtype cast, which this price cannot measure | `actor/capacity_quote._slab_rung` over `capacity_fit.slab_load_fit`, itself over `capacity_lora_bake.lora_bake_bytes`, taken again by `actor/store_slab_admit.admit`, then by the exact backstop `actor/store_slab_admit.admit_bake` once the real patch set is built |
 | `consented_rescue` | the same, after both probes ran | the consent branch of `actor/capacity_quote.price`, over the same `capacity_fit.slab_load_fit`, taken again by `actor/store_slab_admit.admit` |
-| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. A LoRA change on a stock copy of the same file charges 1.1 times the file plus the floor at the fleet agreement, the held copy credited, whether the store re-applies the stack in place or drops that copy and loads fresh; the Worker's own ladder prices with no store snapshot and never applies the credit, so it prices that fresh load whole after its drop | `capacity_fit.stock_load_fit` over `stock_required_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credit is `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place`, and the choice is `actor/store_bake.copies_off_the_gpu` |
+| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. Under a loader dtype cast the copy the cast builds replaces the file, and the host copy stays the file's. A swap over the slot's own stock resident is charged that price less the resident's GPU copy at the fleet agreement, because the store drops it before the load; a LoRA change on a stock copy of the same file is the same credit, 1.1 times the file plus the floor, whether the store re-applies the stack in place or, when that would first copy the model off the GPU, drops the copy and loads fresh; the Worker's own ladder prices after its drop, with no store snapshot, and never applies a credit | `capacity_fit.stock_load_fit` over `stock_required_bytes` and, for a cast, `capacity_fit.cast_resident_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credits are `capacity_lora_bake.credit_stock_swap` over `actor/worker_capacity._resident_bytes` and `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place`, whose in-place or fresh choice is `actor/store_bake.copies_off_the_gpu` |
 | an FSDP launch | bf16/fp16: this rank's shards plus one block; fp8/int8 or an unreadable kind: the conservative full-file bound; every case includes the floor | `actor/capacity_quote_fsdp.fsdp_rung`, `adapters/fsdp.fsdp_load_capacity_check`, and `actor/store_residency.preload_capacity_check`, all over `capacity_fit.fsdp_required_bytes` |
 | the gate ceremony's clean reload | the same kind-aware FSDP figure, against each rank's MemAvailable plus its resident shard pool (torch reserved, capped at one share) | `fsdp_reload_price.price_fsdp_clean_reload`, crediting `fsdp_reload_price._rank_credit_bytes` |
 | the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
@@ -1735,14 +1762,11 @@ once per render, and once more in the identity gate's stock reference leg
 ("Where the ceremony cannot help"), only after a check refused, never while a render, a result
 lease or a Worker call is live in the driver, and never reaches a Worker
 resident or ComfyUI's node output cache. The loader windows take neither,
-because the graph still needs its text encoder and VAEs before sampling. Nor
-does the agreement below credit a Worker resident that a load would replace: a
-stock resident's arena is not returned by an in-process unload and a slab
-resident barely moves MemAvailable, so such a credit waits for a measured drop
-per residency, as the FSDP clean reload's credit did. A LoRA change the store
-makes by reloading the same stock file keeps its credit, and that credit is
-only the slot's own stock copy, which the store drops before it loads and the
-drop was measured to return (below).
+because the graph still needs its text encoder and VAEs before sampling. The
+agreement below credits a Worker resident that a load would replace only where
+the drop was measured: the GPU copy of the slot's own stock resident, never
+the arena a stock load retains, which an in-process unload does not return,
+and never a slab resident, which barely moves MemAvailable.
 
 **A model in the way offers a clear, not a credit.** A refusal priced over a
 Worker resident names the old model and its box: "the old model (flux1-dev)
@@ -1750,22 +1774,31 @@ is still loaded on head". The driver then works out what a clear of the
 attached mesh, the same teardown as Reset attached mesh, gives back on each
 short box: the file bytes of each stock resident, whose GPU copy an in-process
 drop returned on 2026-11-04, plus the actor's anonymous memory above what it
-held at its first load (`actor/actor_footprint.py`). A slab or comfy-managed
-resident, an FSDP shard and a load cast to another weight dtype are credited
-the arena only. A slot the request reuses, and a model this graph's loader
-nodes load, are neither old nor credited: a fresh fleet would only load them
-again. One slot is the exception: the slot a change prices as a swap when its
-resident is the very file the change asks for (`old_model.changes_in_place`).
-That copy is not reused as it is, and it is what holds the memory: on
-2026-11-05 a BF16 Wan-Animate 2 actor kept about 34 GiB of anonymous memory
-after loading base and LoRA, ComfyUI's host copy of every patched weight, and a
-strength change was refused 14.3 GiB short with a fresh head at about 95 GiB
-against the 69.1 GiB a fresh load needs. A clear must then make room for that
-fresh price, the change's own price plus its credit, because a fresh fleet
-holds no copy to credit, and the card says "The model loaded earlier
-(wan_animate_2_bf16) holds memory on head that this change needs." The
-agreement names only the cond model, so an uncond slot keeps the plain rule. A
-model an earlier sampler of the same graph loaded is still old, since
+held at its first load (`actor/actor_footprint.py`). A load cast to another
+weight dtype is credited a lower bound of the copy its cast built (below):
+on 2026-11-05 the store's drop of a 26.6 GiB bf16-cast Wan 2.2 DiT raised the
+head from 58.7 to 88.5 GiB, and from 57.9 to 88.5 GiB on a warm re-queue. Where
+the price already credited the slot's own resident (the swap credit below), a
+clear is weighed against the uncredited price, the row's figure plus its
+credit, because a cleared box holds no copy to drop, and the refusal says that
+figure is the whole price. When that resident is the only old model on a short
+box, the card gives the memory earlier loads left behind there ("still holds
+about 12.0 GiB that earlier loads left behind") rather than the model, which
+the price already dropped; a refusal no clear can fix leaves that sentence out. A slab or comfy-managed resident
+and an FSDP shard are credited the arena only. A slot the request reuses, and a model this graph's loader
+nodes load, are neither old nor counted in what a clear gives back: a fresh fleet would only load them
+again. One slot is the exception, the LoRA case of the swap credit: the slot a
+change prices as a swap when its resident is the very file the change asks for
+(`old_model.changes_in_place`). That copy is not reused as it is, and the host
+copy of the weights its stack patches is what holds the memory: on 2026-11-05 a
+BF16 Wan-Animate 2 actor kept about 34 GiB of anonymous memory after loading
+base and LoRA, and a strength change was refused 14.3 GiB short, while a fresh
+head reads about 95 GiB against the 69.1 GiB a fresh load needs. That slot is
+weighed like any credited one, and the card names the model asked for: "The
+model loaded earlier (wan_animate_2_bf16) holds about 29.6 GiB on head that
+this change needs." The agreement names only the cond model, so an uncond slot
+keeps the plain rule. A model an earlier sampler of the same graph loaded is
+still old, since
 the later sampler fits on a fresh fleet, so the card and the log say "loaded
 earlier", not "an earlier render". Only when
 every short box is short by less than that, with 2 GiB to spare for what a
@@ -1782,8 +1815,8 @@ driver, the driver clears by itself, at most once per load attempt, under the
 reset route's single-flight gate and never under a Pipeline or Gate session
 pinned to its mesh, waits for the driver host's MemAvailable to settle,
 attaches a fresh fleet and prices again. That price decides: a load that still
-does not fit refuses in the plain words above, and the credit still waits for
-its measurement. The Worker's own wall prices after its in-process drop, so it
+does not fit refuses in the plain words above. A model the load does not
+replace, in another slot, is never credited, because nothing drops it. The Worker's own wall prices after its in-process drop, so it
 names no old model; when the arena it still holds would cover its shortfall,
 its refusal says so and names Reset attached mesh.
 
@@ -1804,26 +1837,53 @@ identity and other rank-invariant fields; their memory measurements may differ.
 The offer uses the ordinary consent-registration path. World 1 needs no
 agreement.
 
-**A LoRA change on a held base is no replacement.** The quote reads a request
-whose key differs from the slot's resident as a swap and prices it with that
-resident held. When the resident is a stock copy of the same file and the store
-makes the change from it (`actor/store_bake.swaps_in_place`, published in the
-store snapshot), the load places no second copy of the file. So the stock price
+**A swap over a stock resident is priced after its drop.** The quote reads a
+request whose key differs from the slot's resident as a swap. When that
+resident is stock, the store never holds both copies: it keeps the resident and
+re-applies a stack in place (the LoRA case below), or it drops the slot before
+it loads (`actor/store_load.fresh_load`), and an in-process drop of a stock
+resident returns its GPU copy (2026-11-04, and the readings in the paragraph
+on a model in the way). So the stock price at the agreement credits that copy,
+which the Worker reports beside the slot's residency
+(`capacity_lora_bake.credit_stock_swap`, fed by
+`actor/worker_capacity._resident_bytes`), and still charges the new load's host
+copy and the floor. A credit is never more than the drop returns, or the fleet
+admits what a rank's own ladder refuses after its drop: an uncast resident is
+credited its file, a cast one each float tensor at the smaller of its stored
+and its cast size (ComfyUI builds fp32 auxiliaries at the cast's width on a
+copying load, and a widening cast is unmeasured), and a cast one whose header
+cannot be read nothing. The price's own cast figure is an upper bound and is
+never a credit, and the sentences say the drop "frees at least" the credit. The
+quote endpoint runs outside the GPU lock, so its figures are bound to the
+request key the snapshot publishes for each slot: a slot whose resident changed
+between the two reads gets no credit and no old-model figures. The arena a stock load retains is not credited, nor is a
+slab, comfy-managed or FSDP resident, a slab rung's own price, or a slot whose
+load or cleanup is in flight: those still price as held. Until 2026-11-05 every
+swap priced as held, charging a same-slot swap its old resident twice; once a
+cast was priced, `dgx-monarch-wan22-t2v`, whose two stages swap in the cond
+slot, refused its stage 2 at 58.7 GiB available against 60.9 GiB, where the
+hardware had rendered it with 39.9 GiB left at its lowest. Credited, stage 2
+needs 34.3 GiB. The Worker's own ladder prices after its drop, so it never
+needs the credit.
+
+**A LoRA change on a held base is the same credit.** When the resident is a
+stock copy of the same file and the store would keep it and re-apply the new
+stack in place (`actor/store_bake.swaps_in_place`, published in the store
+snapshot), the load places no second copy of the file. So the stock price
 credits the file's own copy and still charges the host copy of the weights the
-stack patches and the floor (`capacity_lora_bake.credit_hot_swap`). The store
-makes that change in place, or, when the in-place swap would first copy the
-model off the GPU, by dropping the copy and loading base and stack fresh
-(section 5.5). The credit holds for both, because it is the slot's own stock
-copy: the swap keeps it, and the reload drops it before it loads, which returns
-its GPU copy (measured on 2026-11-04, the figure the old-model card credits).
-The Worker's own wall prices that fresh load whole against the memory after the
-drop, so a rank whose drop returned less refuses before it reads a byte
+stack patches and the floor (`capacity_lora_bake.credit_hot_swap`). When the
+in-place swap would first copy the model off the GPU, the store drops the copy
+and loads base and stack fresh instead (section 5.5). That reload is the swap
+above, so the credit is the slot's own copy either way, and a rank whose drop
+returned less refuses at its own wall before it reads a byte
 ([TROUBLESHOOTING #94](TROUBLESHOOTING.md#94-a-multi-rank-render-refuses-saying-a-peer-rank-could-not-load)).
 The host copy a held stack keeps (ComfyUI's backup) is not credited: an
 in-place swap runs unpriced on the Worker, so that credit waits for a measured
-swap from a resident that holds one. Explicit `slab_weights=on` drops the
-stock resident first, and a base the low-RSS bake consumed with no un-bake
-record reloads, so neither is credited. On 2026-11-04 an explicit-preset
+swap from a resident that holds one. A base the
+low-RSS bake consumed with no un-bake record reloads after the store drops it,
+so the swap credit above covers it with the same figure; explicit
+`slab_weights=on` drops the stock resident and loads slab, whose price takes
+no credit. On 2026-11-04 an explicit-preset
 Wan-Animate 2 graph loaded its bare BF16 base at the UNET Loader and then asked
 for the base and its LoRA: priced whole, the change needed 69.1 GiB against
 61.8 GiB on the head, and credited it needs 38.6 GiB. The INT8 file took the
