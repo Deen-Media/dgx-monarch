@@ -12,8 +12,11 @@ A clear would make room on a short box when its shortfall is smaller than what
 the clear gives back there: the file bytes of every stock resident, whose GPU
 copy an in-process drop was measured to return (2026-11-04), plus the actor's
 arena above a fresh actor's floor (``actor/actor_footprint.py``). A slab or
-comfy-managed resident is credited the arena only. Pure: no ComfyUI, no mesh
-call and no file read.
+comfy-managed resident is credited the arena only. The model in the way can be
+the very file a change asks for: a LoRA change priced short beside the copy
+loaded earlier, whose host copy holds the memory. A clear makes room for it
+only when the box then fits the price a fresh fleet pays, with no credit for a
+copy it no longer holds. Pure: no ComfyUI, no mesh call and no file read.
 """
 from __future__ import annotations
 
@@ -68,15 +71,23 @@ class ShortBox:
     required_bytes: int
     available_bytes: int
     gain_bytes: int
+    # The copy the price credited (a LoRA change on a held base). A fresh fleet
+    # holds no copy, so after a clear the load needs this back on top.
+    credit_bytes: int = 0
 
     @property
     def shortfall_bytes(self) -> int:
         return max(self.required_bytes - self.available_bytes, 0)
 
     @property
+    def fresh_bytes(self) -> int:
+        """What the load needs on a cleared box: the price with no credit."""
+        return self.required_bytes + max(int(self.credit_bytes), 0)
+
+    @property
     def clear_makes_room(self) -> bool:
-        return (bool(self.old_models)
-                and self.shortfall_bytes + CLEAR_MARGIN_BYTES < self.gain_bytes)
+        short = max(self.fresh_bytes - self.available_bytes, 0)
+        return bool(self.old_models) and short + CLEAR_MARGIN_BYTES < self.gain_bytes
 
     @property
     def cleared_bytes(self) -> int:
@@ -104,6 +115,12 @@ class ClearOffer:
     def helps(self) -> bool:
         """Only when a clear would make room on every short box."""
         return bool(self.boxes) and all(box.clear_makes_room for box in self.boxes)
+
+    @property
+    def same_file(self) -> bool:
+        """Whether the only model in the way is the one asked for, loaded earlier."""
+        held = [box.old_models for box in self.boxes if box.old_models]
+        return bool(held) and all(names == (self.new_model,) for names in held)
 
 
 class OldModelRefusal(StockLoadCapacityError):
@@ -206,13 +223,27 @@ def rank_gain(quote: RankPrice, kept: frozenset[str] = frozenset()) -> int:
     return held + max(int(quote.arena_bytes or 0), 0)
 
 
-def _numbers(quote: RankPrice) -> tuple[int, int] | None:
+def _numbers(quote: RankPrice) -> tuple[int, int, int] | None:
+    """(required, available, credit) from the block the verdict was taken on."""
     block = quote.slab_measured if quote.use_slab else quote.measured
     try:
         return (int((block or {})["required_bytes"]),
-                int((block or {})["mem_available_bytes"]))
+                int((block or {})["mem_available_bytes"]),
+                int((block or {}).get("credit_bytes") or 0))
     except (KeyError, TypeError, ValueError):
         return None
+
+
+def changes_in_place(quote: RankPrice, unet_name: str) -> bool:
+    """Whether this row prices a change to the very file its slot already holds.
+
+    Such a slot is not kept: the change does not reuse the copy as it is, and
+    that copy is what holds the memory. Only the row's own slot, and only for
+    the file the agreement names, so a model this graph loads elsewhere stays
+    kept.
+    """
+    return (quote.would_load == "swap" and bool(unet_name)
+            and quote.resident_names.get(quote.slot) == unet_name)
 
 
 def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
@@ -224,27 +255,31 @@ def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
     figures: a price that cannot be read can never show that a clear makes
     room. One rank's rows share one snapshot, so a rank counts its gain once
     and keeps its worst row; ranks that share a box add their gains. ``keep``
-    names the models this request and graph load (``kept_slots``).
+    names the models this request and graph load (``kept_slots``), except the
+    slot a row changes in place (``changes_in_place``).
     """
-    ranks: dict[int, tuple[str, tuple[str, ...], int, int, int]] = {}
+    ranks: dict[int, tuple[str, tuple[str, ...], int, int, int, int]] = {}
     for answer, quote in short:
         numbers = _numbers(quote)
         if numbers is None:
             return None
         kept = kept_slots(answer.quotes or (quote,), keep)
+        if changes_in_place(quote, unet_name):
+            kept -= {quote.slot}
         seen = ranks.get(answer.rank)
         if seen is None or numbers[0] - numbers[1] > seen[2] - seen[3]:
-            ranks[answer.rank] = (box_name(answer), old_models(quote, kept), *numbers,
-                                  rank_gain(quote, kept))
+            ranks[answer.rank] = (box_name(answer), old_models(quote, kept), *numbers[:2],
+                                  rank_gain(quote, kept), numbers[2])
     boxes: dict[str, ShortBox] = {}
-    for _rank, (name, olds, required, available, gain) in sorted(ranks.items()):
+    for _rank, (name, olds, required, available, gain, credit) in sorted(ranks.items()):
         seen_box = boxes.get(name)
         if seen_box is not None:
             gain += seen_box.gain_bytes
             olds = tuple(dict.fromkeys((*seen_box.old_models, *olds)))
             if seen_box.shortfall_bytes > max(required - available, 0):
                 required, available = seen_box.required_bytes, seen_box.available_bytes
-        boxes[name] = ShortBox(name, olds, required, available, gain)
+                credit = seen_box.credit_bytes
+        boxes[name] = ShortBox(name, olds, required, available, gain, credit)
     if not any(box.old_models for box in boxes.values()):
         return None
     local = bool(answers) and all(
@@ -268,6 +303,10 @@ def _join(items: Sequence[str]) -> str:
 
 def held_sentence(offer: ClearOffer) -> str:
     """'The old model (<name>) is still loaded on <box> and <new> does not fit beside it.'"""
+    if offer.same_file:
+        where = _join([box.box for box in offer.boxes if box.old_models])
+        return (f"The model loaded earlier ({offer.new_model}) holds memory on {where} "
+                "that this change needs.")
     groups: dict[tuple[str, ...], list[str]] = {}
     for box in offer.boxes:
         if box.old_models:
@@ -319,7 +358,7 @@ def no_room(offer: ClearOffer) -> str:
     for box in offer.boxes:
         if not box.clear_makes_room:
             return (f"A clear would not make room: {offer.new_model} needs "
-                    f"{gib(box.required_bytes)} GiB on {box.box}, and a cleared box "
+                    f"{gib(box.fresh_bytes)} GiB on {box.box}, and a cleared box "
                     f"would have about {gib(box.cleared_bytes)} GiB. Choose a smaller or "
                     "quantized artifact, free memory on that box, or use slab residency "
                     "where a card offers it.")
@@ -332,6 +371,9 @@ def log_line(offer: ClearOffer) -> str:
     "Earlier", not "an earlier render": on the sample path the old model can be
     one an earlier sampler of the same graph loaded.
     """
+    if offer.same_file:
+        return (f"cleared {scope_words(offer, cleared=True)} so {offer.new_model} loads "
+                "fresh; the copy loaded earlier held memory this change needed")
     olds = list(dict.fromkeys(name for box in offer.boxes for name in box.old_models))
     were = "was loaded earlier" if len(olds) == 1 else "were loaded earlier"
     return (f"cleared {scope_words(offer, cleared=True)} to make room for {offer.new_model}; "

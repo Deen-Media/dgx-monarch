@@ -201,7 +201,10 @@ Worker service. A reset reclaims the retained arena; slab mode normally avoids
 it. When you move from one large model to another on the same attached mesh,
 the next load is priced with the last one still held, so a refusal may say "the
 old model (<name>) is still loaded" and offer **Clear and retry**, which runs
-this reset; **Always clear and retry** lets the driver run it for you.
+this reset; **Always clear and retry** lets the driver run it for you. A LoRA
+change on a large model can meet the same card when the copy loaded earlier is
+what holds the memory: "The model loaded earlier holds memory this change
+needs. Clear the Sparks and run again?"
 
 ## Trust words
 
@@ -262,7 +265,9 @@ that cannot run it uses CUTLASS and logs one warning
 
 **Bake / hot-swap.** Baking is merging LoRA math into the weights so renders
 run at full speed. A hot-swap changes the LoRA stack of a loaded model without
-reloading it from scratch.
+reloading it from scratch. When the swap would first have to copy the whole
+model off the GPU, as adding a LoRA to a bare base does with low-RSS off, the
+Worker loads base and LoRA fresh instead, which is faster at the same price.
 
 **Checkpoint.** The model file on disk (`.safetensors`).
 

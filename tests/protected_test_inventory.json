@@ -1489,6 +1489,18 @@
       "test_the_whole_one_click_arc_on_the_default_residency": "7112144dadb8756e",
       "test_worker_args_the_ledger_cannot_canonicalize_keep_the_blind_read": "044f3245126758ef"
     },
+    "tests/test_lora_change_route.py": {
+      "test_a_strength_change_whose_host_copy_is_held_swaps_in_place": "fc1cf8c50f58c133",
+      "test_a_two_slot_store_keeps_the_in_place_swap": "08099edfc8a391ea",
+      "test_b2_a_lora_added_to_a_placed_bare_base_loads_fresh": "bf41ad4f341fcbab",
+      "test_b2_state_is_admitted_and_raises_nothing": "812c33ac442c468b",
+      "test_b3_a_credited_change_14_3_gib_short_offers_the_card": "dd0d858780344197",
+      "test_b3_through_the_sample_agreement_where_the_request_names_the_held_file": "c5a0cb0afcf31eb8",
+      "test_every_gate_keeps_the_swap_in_place": "e0b0657b40906dcc",
+      "test_only_the_slot_a_row_changes_in_place_leaves_the_kept_set": "b8d2a221e0e0f7ad",
+      "test_the_same_file_card_needs_room_for_the_price_a_fresh_fleet_pays": "e58b3184f2f7a110",
+      "test_the_worker_quote_for_b3s_state_reaches_the_card": "c3a6fb13193c49d0"
+    },
     "tests/test_lora_quant_guard.py": {
       "test_a_fresh_load_refuses_before_the_lora_build_and_leaves_the_slot_empty": "9b8857d765a73145",
       "test_a_fresh_load_stays_open_without_the_refused_pair": "e30addb54751a7c5",

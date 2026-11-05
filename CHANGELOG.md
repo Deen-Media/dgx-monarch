@@ -133,6 +133,18 @@
   attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
   case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
+- A LoRA change on a BF16 model the Workers already hold, with `lora_low_rss`
+  off as the Wan-Animate 2 BF16 templates set it, no longer stalls or strands
+  you. Adding a LoRA to a bare base loads base and LoRA fresh instead of
+  copying the whole model off the GPU first, at the same price: on the
+  memory-saver template that copy took 230 s, and a fresh load of base and
+  LoRA 17 s.
+  And a change refused because the copy loaded earlier holds the memory now
+  offers the Old model in the way card, "The model loaded earlier holds memory
+  this change needs. Clear the Sparks and run again?", when a cleared box would
+  hold a fresh load
+  ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 
 ### Compatibility and verification
 

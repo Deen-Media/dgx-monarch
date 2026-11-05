@@ -376,12 +376,15 @@ def lazy_swap_transition(
 
 
 def swaps_in_place(stored, lora_low_rss: bool) -> bool:
-    """Whether a LoRA change on this resident keeps its base where it is.
+    """Whether a LoRA change on this resident is made from this stock copy of the base.
 
     Mirrors the two branches ``ModelStore.ensure`` takes before a fresh load:
     the low-RSS lazy swap restores and re-bakes in place, and the classic hot
     swap clones the pristine base and re-applies the stack. Neither places a
-    second copy of the base. A pending slab retry reloads, and so does a base
+    second copy of the base. A classic change that ``copies_off_the_gpu`` sends
+    to a fresh load instead drops this copy first, which returns its GPU copy,
+    and the Worker's own wall prices that load whole after the drop, so the
+    credit holds there too. A pending slab retry reloads, and so does a base
     the low-RSS bake consumed with no un-bake record. The fleet's capacity
     quote reads this from the store snapshot (``capacity_lora_bake``).
     """
@@ -390,6 +393,45 @@ def swaps_in_place(stored, lora_low_rss: bool) -> bool:
     if lora_low_rss:
         return stored.unbake is not None or not stored.lora_sig
     return not stored.base_baked
+
+
+def _placed_bytes(model) -> int:
+    """What ComfyUI's ledger says it placed of this model on the GPU; 0 when unknown."""
+    value = getattr(model, "model_loaded_weight_memory", 0)
+    return int(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else 0
+
+
+def copies_off_the_gpu(store, stored, slot: str, active) -> tuple[int, int]:
+    """Weights an in-place swap would first copy off the GPU, as (uncovered, patched).
+
+    ComfyUI applies a new stack to a placed model by unpatching it to the host
+    (``ModelPatcher.unpatch_model``): each weight its backup holds goes back
+    as is, and every other weight is copied from the GPU into fresh host memory
+    before the new patches apply. From a bare base that backup is empty, so
+    the whole model is copied. On the 2026-11-05 hardware leg the BF16
+    Wan-Animate 2 swap spent 230 s in that copy, while a fresh load of base
+    and LoRA took 13.1 s and its patch 4.0 s. A fresh load drops the slot
+    without a host copy (``resident_ledger.unload_without_offload``) and the
+    sampler patches from the file's own host copy, at the same price.
+
+    So ``uncovered`` counts the weights the new stack patches that the backup
+    the clones share does not hold, and the store reloads when it is not 0.
+    It stays 0, so the swap stays in place, unless every gate holds: classic
+    mode (the caller), a stock resident (slab, FSDP and comfy-managed keep their
+    own paths), a model ComfyUI placed on the GPU, and an empty other slot,
+    whose model a drop's global unload would push to the host the same slow way.
+    """
+    from . import store_residency
+
+    patches = getattr(active, "patches", None)
+    backup = getattr(stored.base_patcher, "backup", None)
+    other = store._stored("cond" if slot == "uncond" else "uncond")
+    if (not isinstance(patches, dict) or not isinstance(backup, dict) or other is not None
+            or store_residency.describe(stored)["residency"] != "stock"
+            or getattr(stored.base_patcher, "_dgxm_fsdp", False)
+            or _placed_bytes(getattr(stored.base_patcher, "model", None)) <= 0):
+        return 0, len(patches) if isinstance(patches, dict) else 0
+    return len(set(patches) - set(backup)), len(patches)
 
 
 def hot_swap_transition(
@@ -403,12 +445,23 @@ def hot_swap_transition(
     *,
     request_artifact_identity,
     logger,
-) -> tuple[Any, str]:
-    """Clone the pristine base, re-apply the lora stack, and adopt the result."""
+) -> tuple[Any, str] | None:
+    """Clone the pristine base, re-apply the lora stack, and adopt the result.
+
+    Returns ``None`` when the swap would first copy weights off the GPU
+    (``copies_off_the_gpu``): the caller then loads base and stack fresh.
+    """
     from .model_store import _is_quantized_kind, lora_signature
 
     t0 = time.perf_counter()
     active = store._build_active(stored.base_patcher, lora_stack)
+    uncovered, patched = copies_off_the_gpu(store, stored, slot, active)
+    if uncovered:
+        logger.info(
+            "model store [%s]: a LoRA change on %s would copy the model off the GPU first "
+            "(no host copy of %d of the %d weights the new stack patches), so the slot is "
+            "dropped and base and stack load fresh", slot, unet_name, uncovered, patched)
+        return None
     store_identity.assert_stable_identity(
         request_artifact_identity(unet_name, lora_stack), requested_identity,
         "applying a hot-swap")

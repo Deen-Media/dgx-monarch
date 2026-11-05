@@ -801,6 +801,15 @@ newest 20 reports are kept.
 A large `gpu_load` on *every* render indicates eviction instead. Check
 `uma_reserve_gb` pressure and co-resident workloads.
 
+A LoRA added to a bare base on an older build, with `lora_low_rss` off, could
+spend minutes there too, for a different reason: `sample 269.40s (hot-swap
+gpu_load 230.2s)` on the BF16 Wan-Animate 2 memory-saver template (2026-11-05).
+ComfyUI copied the whole model off the GPU before it applied the LoRA. The
+Worker now drops the bare base and loads base and LoRA fresh instead, at the
+same price, and its journal says so: `a LoRA change on <file> would copy the
+model off the GPU first ... so the slot is dropped and base and stack load
+fresh`, followed by an ordinary `load` line.
+
 ## 19. Blank ComfyUI canvas (grid renders, no menu/sidebar) after an update
 
 **Symptom:** ComfyUI serves, the litegraph grid and FPS counter render, but
@@ -4744,7 +4753,14 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
   render loaded, and a clear of the attached mesh would make room on every
   short box. The refusal names the old model and its box, and the Old model in
   the way card offers Clear and retry in place of a slab rescue
-  ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+  ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)). The
+  model in the way can be the one you asked for: a LoRA change (a new LoRA or
+  a new strength) on a large model loaded earlier with its LoRA, with
+  `lora_low_rss` off, is priced beside that copy, and the copy keeps a host
+  copy of every weight its LoRA patches. Then the card reads "The model loaded
+  earlier (<name>) holds memory on <box> that this change needs. Clear the
+  Sparks and run again?", and it appears only when a cleared box would hold a
+  fresh load of the model and its LoRA, which costs more than the change.
 * **World 1 is a no op.** The one box prices its own load.
 
 Read the numbers with two limits in mind. Each rank prices against what it
@@ -4757,9 +4773,11 @@ records both (`shmem_bytes`, each slot's resident and the retained-slab count)
 and draws no conclusion from them.
 
 **Fix:** when the message names what would fit, start there. When it says an
-old model is still loaded and offers Old model in the way, click Clear and
-retry on that card, or Reset attached mesh, then queue again; moving between
-large models on one attached mesh meets this. For another shortfall,
+old model is still loaded, or that the model loaded earlier holds memory this
+change needs, and offers Old model in the way, click Clear and retry on that
+card, or Reset attached mesh, then queue again; moving between large models on
+one attached mesh meets this, and so does changing a LoRA on a BF16 model the
+Workers already hold with its LoRA. For another shortfall,
 run the checkpoint slab-resident on every rank, use a pruned or quantized
 artifact, or free unified memory on the short box. For a silent rank, recycle
 the fleet from the DGX Monarch panel, or check that box, then queue again. For
