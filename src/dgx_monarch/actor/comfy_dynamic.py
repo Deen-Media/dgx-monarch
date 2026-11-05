@@ -17,6 +17,7 @@ from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from ..residency_mode import ComfyManagedResidencyError
 from ..transfer_utils import failure_summary, failure_text, safe_call
+from . import lora_cast_time
 
 log = get_logger(__name__)
 
@@ -190,11 +191,14 @@ def stage_b(enabled: bool, *, reserve_vram_gb: float | None = None) -> bool:
     """Install the hooks, claim the device, and rebind comfy's patcher.
 
     This stage requires libcuda and a live CUDA context, so it runs after
-    ComfyUI bootstrap.
+    ComfyUI bootstrap. With the rung off the classic patcher stays, and its
+    LoRA bake takes stock's cast-time math (``lora_cast_time.install``).
     """
     global _ACTIVE, _STAGE_B_DONE
     if not enabled:
         os.environ.pop(residency_mode.ENV_ACTIVE, None)
+        # The classic patcher stays: give its LoRA bake stock's cast-time math.
+        lora_cast_time.install()
         return False
 
     # Arm before any fallible work so every failure remains visible on re-entry.
