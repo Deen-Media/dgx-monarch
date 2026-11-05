@@ -68,6 +68,7 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "MOSS-Image SFT"): ("moss_image", "HW"),
     ("image", "MOSS-Image Base"): ("moss_image", "HW"),
     ("image", "Kromoss"): ("moss_image", "HW"),
+    ("image", "p-h3-image"): ("minimax_h3", "impl"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),
@@ -673,7 +674,8 @@ def test_hw_warning_exempt_families_are_explicitly_reviewed() -> None:
     # The 2026-08-04 campaign exercised the former time_shift_slope
     # contract; the carried-audio ODE change demoted the row on 2026-08-06,
     # and the 2026-08-07 re-gate ladder repromoted it (docs/VALIDATION.md).
-    assert statuses["minimax_h3"] == {"HW"} and "minimax_h3" not in code
+    # p-h3-image, a MiniMax H3 DiT, has a template and no hardware comparison yet.
+    assert statuses["minimax_h3"] == {"HW", "impl"} and "minimax_h3" not in code
 
 
 def test_auto_markers_and_refusals_match_runtime_contract() -> None:

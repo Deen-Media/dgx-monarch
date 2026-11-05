@@ -322,6 +322,7 @@ def _submit_render_guarded(
         model_patch_preflight.preflight_moss_image_attention_bias(model, request, topo)
         render_preflight.preflight_minimax_h3_topology(model, topo)
         model_patch_preflight.preflight_model_patches(model, topo, request)
+        model_patch_preflight.preflight_h3_sigma_shift(model, request, latent)
         sample_attention = resolve_sample_attention(spec.attention, sage)
         render_preflight.preflight_sol_attention(
             model, topo, sample_attention, handle)

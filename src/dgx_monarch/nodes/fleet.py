@@ -261,6 +261,7 @@ class DGXMonarchFleetKSampler:
         source_latent = dict(latent_image[0])
         consent_waiver.validate_inherited_stamps(source_latent)
         latent = _latent_without_topology_metadata(source_latent)
+        model_patch_preflight.preflight_h3_sigma_shift(spec, {}, latent)  # and the H3 shift (#144)
         prompts_text = prompts[0]
         base_seed, steps_n = int(noise_seed[0]), int(steps[0])
         cfg_v = float(cfg[0])

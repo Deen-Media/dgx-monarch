@@ -344,6 +344,27 @@ size = 7934384176
 sha256 = "60dbde45107762d164bac463e1cf365e074b377fa843dc90cb2985fb211cd4de"
 
 [[artifact]]
+file = "p-h3-image_bf16.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/diffusion_models/p-h3-image_bf16.safetensors"
+size = 40468411160
+sha256 = "822f43d454a6139b16c976ad8854ece1914f38800f28fbd117759ca973739026"
+
+[[artifact]]
+file = "p-h3-image_int8_convrot.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/diffusion_models/p-h3-image_int8_convrot.safetensors"
+size = 21213068840
+sha256 = "b156fd4fe9d169e58cb2b07f9594ec740ff8f0e052d62b009e6dd034de5865e7"
+
+[[artifact]]
+file = "p-h3-image_w4a8.safetensors"
+dest = "diffusion_models"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/diffusion_models/p-h3-image_w4a8.safetensors"
+size = 13362068864
+sha256 = "12ea30d6fde736dd69ef16658ce9438823a06e351ac3fa335cc4a3ce6bb17a43"
+
+[[artifact]]
 file = "pid_flux1_1024_to_4096_4step_bf16.safetensors"
 dest = "diffusion_models"
 url = "https://huggingface.co/Comfy-Org/PixelDiT/resolve/f1aa9118da0a0b53a4433e5de9a4de2e9aae2193/diffusion_models/pid_flux1_1024_to_4096_4step_bf16.safetensors"
@@ -641,6 +662,34 @@ size = 35584897447
 sha256 = "7d79902f60b1aeb3a6de2cfad02f4367b5e300a1387de3d03ac717cfa3df117c"
 
 [[artifact]]
+file = "p-h3-image_prompt_upsampler_bf16.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/text_encoders/p-h3-image_prompt_upsampler_bf16.safetensors"
+size = 19306305552
+sha256 = "122b4a8cc63ab4ef21d81e54e761dcc8613ef55b3ad7205ac3a9d47d2414c94f"
+
+[[artifact]]
+file = "p-h3-image_text_encoder_bf16.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/text_encoders/p-h3-image_text_encoder_bf16.safetensors"
+size = 9138027824
+sha256 = "ae0c83cb35207dcc0a81361768094a5d1e3f92d1a95b8ff75a0328dfefbbc3d8"
+
+[[artifact]]
+file = "p-h3-image_text_encoder_int8_convrot.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/text_encoders/p-h3-image_text_encoder_int8_convrot.safetensors"
+size = 5120870504
+sha256 = "fb42c9ff0597e61729475d0b48b69b591ffe06d0b442a79dde22b14fadbe1c0f"
+
+[[artifact]]
+file = "p-h3-image_text_encoder_w4a8.safetensors"
+dest = "text_encoders"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/text_encoders/p-h3-image_text_encoder_w4a8.safetensors"
+size = 3575536021
+sha256 = "d4ae62d48e1de846dd55fc975623434e9326df3449601c4e15bea8b3ccd67293"
+
+[[artifact]]
 file = "qwen3.5_9b_bf16.safetensors"
 dest = "text_encoders"
 url = "https://huggingface.co/Comfy-Org/MOSS-Image/resolve/3284a1dbb351e3396d70f39f2a71cbf6ed2ef1bb/text_encoders/qwen3.5_9b_bf16.safetensors"
@@ -851,6 +900,20 @@ dest = "vae"
 url = "https://huggingface.co/Comfy-Org/MiniMax-H3/resolve/e5eb578a89295337b8ff433a035929ce0279e0b6/vae/minimax_h3_video_vae_fp16.safetensors"
 size = 5207808496
 sha256 = "7c1f131492e7eddacaac9069a61b81bdd39de5cc96561e677c5eab1cdce5e522"
+
+[[artifact]]
+file = "p-h3-image_vae_bf16.safetensors"
+dest = "vae"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/vae/p-h3-image_vae_bf16.safetensors"
+size = 5559036680
+sha256 = "a1f2a7a98d0f2d1e761656fc5701dd43d7cf46d1bbdaa5d866a3e961e97487d7"
+
+[[artifact]]
+file = "p-h3-image_vae_int8_convrot.safetensors"
+dest = "vae"
+url = "https://huggingface.co/PrunaAI/P-H3-Image-Comfy/resolve/44a0fb73f299da1bb715bdb5ff59ce3fd3c6f543/vae/p-h3-image_vae_int8_convrot.safetensors"
+size = 3146996440
+sha256 = "583e0d43354b6b833aa9a0815a5fac831b1ef6d0c19a7eaa0616980a3dab5ffe"
 
 [[artifact]]
 file = "qwen_image_2.1_vae_bf16.safetensors"
@@ -1147,6 +1210,12 @@ sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
     "diffusion_models/omnigen2_fp16.safetensors",
     "text_encoders/qwen_2.5_vl_fp16.safetensors",
     "vae/ae.safetensors",
+]
+"dgx-monarch-p-h3-image" = [
+    "diffusion_models/p-h3-image_bf16.safetensors",
+    "text_encoders/p-h3-image_prompt_upsampler_bf16.safetensors",
+    "text_encoders/p-h3-image_text_encoder_bf16.safetensors",
+    "vae/p-h3-image_vae_bf16.safetensors",
 ]
 "dgx-monarch-pid-4k" = [
     "diffusion_models/pid_flux1_1024_to_4096_4step_bf16.safetensors",
@@ -1463,6 +1532,25 @@ sha256 = "2fc39d31359a4b0a64f55876d8ff7fa8d780956ae2cb13463b0223e15148976b"
     "diffusion_models/moss_image_sft_bf16.safetensors",
     "text_encoders/qwen3.5_9b_bf16.safetensors",
     "vae/flux2-vae_small.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-p-h3-image-int8" = [
+    "diffusion_models/p-h3-image_int8_convrot.safetensors",
+    "text_encoders/p-h3-image_prompt_upsampler_bf16.safetensors",
+    "text_encoders/p-h3-image_text_encoder_int8_convrot.safetensors",
+    "vae/p-h3-image_vae_int8_convrot.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-p-h3-image-lora" = [
+    "diffusion_models/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+    "loras/test_lora_placeholder.safetensors",
+    "text_encoders/p-h3-image_prompt_upsampler_bf16.safetensors",
+    "text_encoders/p-h3-image_text_encoder_int8_convrot.safetensors",
+    "vae/p-h3-image_vae_int8_convrot.safetensors",
+]
+"tests/fixtures/workflows/generated/dgx-monarch-test-p-h3-image-w4a8" = [
+    "diffusion_models/p-h3-image_w4a8.safetensors",
+    "text_encoders/p-h3-image_prompt_upsampler_bf16.safetensors",
+    "text_encoders/p-h3-image_text_encoder_w4a8.safetensors",
+    "vae/p-h3-image_vae_int8_convrot.safetensors",
 ]
 "tests/fixtures/workflows/generated/dgx-monarch-test-qwen-image-lora" = [
     "diffusion_models/qwen_image_2512_fp8_e4m3fn.safetensors",

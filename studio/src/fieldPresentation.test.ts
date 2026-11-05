@@ -212,6 +212,16 @@ test('each output finds its own role, so a zeroed negative branch keeps Negative
   );
 });
 
+test('a Basic Guider takes one conditioning, so the text that reaches it is the prompt', () => {
+  // p-h3-image: the request feeds the prompt upsampler and an If/Else switch, then the
+  // conditioning node, then Basic Guider (DGX Monarch), whose one input is `conditioning`.
+  const workflow = graph('p-h3-image');
+  const bindings = textBindings(workflow);
+  const names = presentFields({ workflow }, bindings, recorded);
+  const request = bindings.find((b) => b.input_name === 'value')!;
+  assert.deepEqual([names.get(request.id)?.label, names.get(request.id)?.role], ['Prompt', 'prompt']);
+});
+
 test('no packaged template shows two text boxes with one name, and each names its prompt', () => {
   for (const row of bundled) {
     const bindings = textBindings(row.workflow);

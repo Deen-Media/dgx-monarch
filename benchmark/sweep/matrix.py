@@ -149,7 +149,7 @@ WAIVED_BAR = "waived-nrms"
 # part of a longer one.
 QUANT_TOKENS = ("convrot_int8mixed", "convrot_int8", "int8_convrot", "fp8_e4m3fn",
                 "fp8_scaled", "nvfp4_mixed", "int8mixed", "fp8mixed", "mxfp8",
-                "nvfp4", "bf16", "fp16", "fp32", "int8", "fp8")
+                "nvfp4", "w4a8", "bf16", "fp16", "fp32", "int8", "fp8")
 # A block-scaled file under FSDP refuses at one of two sites, by whether the
 # file is uniform, and both answer class P. Every one of these headers sniffs
 # fp8 at launch, so the live detector decides: it reports the kind of the first
@@ -160,6 +160,13 @@ QUANT_TOKENS = ("convrot_int8mixed", "convrot_int8", "int8_convrot", "fp8_e4m3fn
 # The test is a substring, so nvfp4_mixed stays ahead of nvfp4: the two meet
 # different refusal sites.
 BLOCK_SCALED = {"nvfp4_mixed": "refuse:P", "nvfp4": "refuse:P", "mxfp8": "refuse:P"}
+# The strength a LoRA-on cell runs each loader at; the templates' placeholder
+# loaders read the same. A template listed below keeps its own loader's
+# strength instead, because its purpose is a comparison at that strength:
+# dgx-monarch-test-p-h3-image-lora measures the vendor LoRA against ComfyUI's
+# own p-h3-image template, which loads it at 1.0.
+LORA_CELL_STRENGTH = 0.8
+GRAPH_LORA_STRENGTH_TEMPLATES = frozenset({"dgx-monarch-test-p-h3-image-lora"})
 # Words that name neither the model nor its precision; a stem keeping one
 # lands in its own base and never meets its sibling quants.
 RESIDUE_TOKENS = ("transformer_only", "defaultloader", "hybrid_large",
@@ -642,6 +649,27 @@ def artifact_sets(unets: dict[str, str], files: list[Path],
 
 class ConfigError(Exception):
     """The sweep TOML says something this harness cannot read."""
+
+
+def lora_stack(template: str, facts: dict, lora_names: list[str]) -> list[dict]:
+    """The LoRA-on arm's stack: one entry per loader, in node-id order.
+
+    Every loader runs at LORA_CELL_STRENGTH, whatever its graph says, except in
+    a template of GRAPH_LORA_STRENGTH_TEMPLATES, which keeps the strength its
+    loader names because that strength is what the template compares.
+    """
+    if not (facts["loras"] and lora_names):
+        return []
+
+    def strength(node_id: str) -> float:
+        if template in GRAPH_LORA_STRENGTH_TEMPLATES:
+            value = facts["graph"][node_id]["inputs"].get("strength_model")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                return float(value)
+        return LORA_CELL_STRENGTH
+
+    return [{"node": nid, "name": name, "strength": strength(nid)}
+            for nid, name in zip(facts["loras"], lora_names, strict=True)]
 
 
 def template_extras(config: dict, template: str, facts: dict) -> dict[str, list[str]]:
@@ -1514,9 +1542,7 @@ def build_cells(config: dict, count_tokens=None) -> tuple[list[dict], list[str],
                           "through comfy_attention config keys, which the matrix does "
                           "not model, so the lora-on arm is dropped")
             lora_names = []
-        stack = [{"node": nid, "name": name, "strength": 0.8}
-                 for nid, name in zip(facts["loras"], lora_names, strict=True)] \
-            if facts["loras"] and lora_names else []
+        stack = lora_stack(template, facts, lora_names)
         # A "-lora" template is its family's shipped graph plus LoRA loaders, so
         # its lora-off arm renders what the shipped graph's row already renders.
         # dgx-monarch-test-chroma-lora sets the 44-token prompt pair instead, so

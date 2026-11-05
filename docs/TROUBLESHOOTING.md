@@ -7563,3 +7563,54 @@ reach this path.
   on its first render, because a PASS names the torch and CUDA build it ran
   under. When the ledger holds a PASS that differs only in that build, the
   notice names both builds.
+
+## 144. A p-h3-image render or ModelSamplingMiniMaxH3 (DGX Monarch) refuses
+
+**Symptom:** a render fails before it samples with a class P refusal that
+names ModelSamplingMiniMaxH3 (DGX Monarch), either at the driver before any
+Worker call or on every rank after the load:
+
+```
+[dgxm:P] this render samples a MiniMax H3 audio-video latent with one video frame, the image latent PH3ImageConditioning makes for p-h3-image, and nothing in the graph sets the MiniMax H3 shifts. ...
+[dgxm:P] ModelSamplingMiniMaxH3 (DGX Monarch) applies ComfyUI's ModelSamplingMiniMaxH3 node, ... this checkpoint reads as wan. ...
+[dgxm:P] ModelSamplingMiniMaxH3 (DGX Monarch) runs ComfyUI's ModelSamplingMiniMaxH3 node, comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift, which has shipped with MiniMax H3 since ComfyUI 0.30.0, and this Worker's ComfyUI has none: ...
+```
+
+**Cause:** p-h3-image is a MiniMax H3 DiT. Its workflows set both MiniMax H3
+flow shifts to 1.0 through ComfyUI's ModelSamplingMiniMaxH3 node, which
+patches a stock MODEL and cannot connect to a DGX Monarch loader.
+ModelSamplingMiniMaxH3 (DGX Monarch) carries the two widgets to the Workers,
+and each Worker applies ComfyUI's own node to its render clone. Three things
+stop a render:
+
+- The graph samples p-h3-image's image latent, one video frame beside two
+  audio frames, and no MiniMax H3 shift reaches the model. The Workers would
+  sample it at H3's defaults, 12.0 for video and 3.0 for audio, and the image
+  would come out wrong. A MiniMax H3 video latent never has one frame, so this
+  check does not touch an H3 video render. Model Sampling SD3 (DGX Monarch)
+  does not count: the H3 forward reads neither of its values. The driver
+  checks before dispatch, Fleet KSampler (DGX Monarch) included, and every
+  Worker checks again from the loaded model, so a header the driver cannot
+  read still refuses.
+- The node feeds a checkpoint that is not MiniMax H3. The stock node replaces
+  the model's sampling with H3's paired video and audio schedule.
+- A Worker's ComfyUI has no `comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift`.
+  The node has shipped with MiniMax H3 since ComfyUI 0.30.0, so this means a
+  ComfyUI without MiniMax H3 support, or a later release that moved or renamed
+  the node. Rendering on would sample at the checkpoint's own shifts, so the
+  Worker refuses inside its load step, where a peer that has the node refuses
+  too instead of waiting at the first collective.
+
+**Fix:**
+
+- Put ModelSamplingMiniMaxH3 (DGX Monarch) between the loader and the guider
+  or sampler, at 1.0 and 1.0 for p-h3-image, as the bundled
+  `dgx-monarch-p-h3-image` template does. A stock graph that queues with
+  ComfyUI's ModelSamplingMiniMaxH3 gets the graph advisor's swap notice
+  ([#63](#63-a-toast-at-queue-time-says-the-workflow-is-missing-dgx-monarch-nodes)).
+- Use the node with a MiniMax H3 or p-h3-image checkpoint only; for another
+  family, remove it.
+- Run every host on a ComfyUI that has the node and restart the Worker
+  services so the actors load it. If a newer ComfyUI moved or renamed it, this
+  release cannot carry the shift on that ComfyUI yet. p-h3-image itself, its
+  conditioning node, text encoder and VAE, needs ComfyUI 0.44.0 or newer.

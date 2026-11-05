@@ -20,6 +20,7 @@ EXPECTED_NODE_KEYS = {
     "DGXMonarchUncondUNETLoader",
     "DGXMonarchLoraLoader",
     "DGXMonarchModelSamplingSD3",
+    "DGXMonarchModelSamplingMiniMaxH3",
     "DGXMonarchQwenImage21Cache",
     "DGXMonarchSkipLayerGuidance",
     "DGXMonarchMiniMaxH3ContextWindows",

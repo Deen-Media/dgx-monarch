@@ -79,6 +79,11 @@ def _draws_a_widget(spec) -> bool:
     """
     kind = spec[0] if isinstance(spec, (list, tuple)) else spec
     options = spec[1] if isinstance(spec, (list, tuple)) and len(spec) > 1 else None
+    if isinstance(options, dict) and options.get("forceInput"):
+        # A forced input is a socket, never a widget, and holds no
+        # widgets_values slot: TextGenerateV2's system_prompt (Studio's
+        # widget_values._is_widget reads it the same way).
+        return False
     widget_type = options.get("widgetType") if isinstance(options, dict) else None
     return _is_widget_kind(kind) or _is_widget_kind(widget_type)
 

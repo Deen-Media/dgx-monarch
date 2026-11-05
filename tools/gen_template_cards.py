@@ -43,6 +43,7 @@ CARDS: dict[str, tuple[str, str]] = {
     "dgx-monarch-moss-image-base-t2i": ("MOSS-Image Base", "Text to image"),
     "dgx-monarch-moss-image-layout-t2i": ("MOSS-Image Layout", "Place text and objects with a JSON layout"),
     "dgx-monarch-kromoss-t2i": ("Kromoss", "Text to image"),
+    "dgx-monarch-p-h3-image": ("p-h3-image", "Text to image at 8 MP in 8 steps"),
     "dgx-monarch-kromoss-t2i-turbo": ("Kromoss Turbo", "Text to image in 8 steps with a LoRA"),
     "dgx-monarch-chroma-t2i": ("Chroma 1 HD", "Text to image"),
     "dgx-monarch-radiance-t2i": ("Chroma 1 Radiance", "Generate images directly in pixel space"),

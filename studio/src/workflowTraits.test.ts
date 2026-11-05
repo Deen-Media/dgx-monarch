@@ -89,6 +89,7 @@ const EXPECTED: Record<string, [string, string]> = {
   'moss-image-layout-t2i': [STILL, PNG],
   'moss-image-t2i': [STILL, PNG],
   'omnigen2-t2i': [STILL, PNG],
+  'p-h3-image': [STILL, PNG],
   'pid-4k': ['image,edit,upscale,workflow', PNG],
   'pixeldit-t2i': [STILL, PNG],
   quickstart: [STILL, PNG],
