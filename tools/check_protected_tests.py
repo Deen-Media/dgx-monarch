@@ -64,6 +64,7 @@ CAPACITY_MODULES = (
     "tests/test_capacity_lora_bake.py",
     "tests/test_capacity_memory.py",
     "tests/test_capacity_quote.py",
+    "tests/test_cast_load_price.py",
     "tests/test_comfy_managed_pricing.py",
     "tests/test_design_capacity_table.py",
     "tests/test_driver_footprint_preflight.py",

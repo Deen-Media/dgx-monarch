@@ -26,7 +26,7 @@ from ..capacity_fit import (
 )
 from ..log import get_logger
 from . import actor_footprint, store_family
-from .rescue_offer import COLD_MEMO_CLAUSE, build_descriptor, rescue_blocker
+from .rescue_offer import CAST_SLAB_REFUSAL, COLD_MEMO_CLAUSE, build_descriptor, rescue_blocker
 
 log = get_logger(__name__)
 
@@ -41,10 +41,10 @@ VERDICTS = frozenset({
     VERDICT_FITS, VERDICT_REFUSE, VERDICT_RESCUE, VERDICT_UNPRICED, VERDICT_NO_CLAIM,
 })
 
-# What the load would do to the slot. A reuse places nothing and admits; swap
-# and unknown are charged the file, because the quote prices as held and never
-# models the drop: a stock resident's arena is not returned by an in-process
-# unload and a slab resident barely moves MemAvailable. ``unknown`` reads as
+# What the load would do to the slot. A reuse places nothing and admits. A swap
+# over a stock resident is credited the GPU copy the store drops before it loads
+# (capacity_lora_bake.credit_stock_swap); other swaps and unknown price as held,
+# since a slab resident barely moves MemAvailable. ``unknown`` reads as
 # ``fresh``: a quote can land between a slot's drop and its repopulation.
 WOULD_LOAD_FRESH = "fresh"
 WOULD_LOAD_REUSE = "reuse"
@@ -332,6 +332,8 @@ def _slab_rung(rung: str, reason: str, slab_fit: SlabFit, size: int,
                context: dict[str, Any]) -> RankPrice:
     """One of the three rungs that return slab, priced by ``slab_load_fit``."""
     if not slab_fit.applies:
+        if rung == RUNG_EXPLICIT and slab_fit.skipped_reason == capacity_fit.SKIP_SLAB_DTYPE_CAST:
+            return RankPrice(VERDICT_REFUSE, rung, use_slab=True, checkpoint_bytes=size, reason=CAST_SLAB_REFUSAL, **context)
         # The rung's sentence is the row's reason on every rung; a probe that
         # made no claim says so in ``priced`` and reports why to the journal,
         # rather than rewriting the ladder's decision text.
@@ -485,8 +487,9 @@ def price(
     if fsdp_launch:
         return _fsdp_rung(path, unet_name, model_options, world, size, charged, context)
 
-    fit = capacity_lora_bake.credit_hot_swap(_charge(fit_probe(path, model_options), charged),
-                                             snapshot.get(slot), request_key, context, slab_weights)
+    fit = capacity_lora_bake.credit_stock_swap(capacity_lora_bake.credit_hot_swap(
+        _charge(fit_probe(path, model_options), charged), snapshot.get(slot), request_key, context,
+        slab_weights), snapshot.get(slot), context)
     explicit_stock = slab_weights is False or compile_blocks_slab
     if not fit.applies or fit.fits:
         rung = RUNG_EXPLICIT_STOCK if explicit_stock else RUNG_STOCK_FITS

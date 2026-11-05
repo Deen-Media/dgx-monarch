@@ -281,3 +281,67 @@ def test_a_reply_that_names_another_rank_keeps_both_numbers_in_the_log(caplog):
                                                      "quotes": []}, 0.1)
     assert answer.silent == "answered as another rank"
     assert "cross-rank capacity: rank 1 answered as rank 0" in caplog.text
+
+
+# After PR #142: the credited-swap and cast sentences name boxes by the same rule.
+
+def _credited(avail_gib: float, arena_gib: float) -> RankPrice:
+    """qwen over flux1-dev in one slot, priced after the Worker drops flux1-dev."""
+    from dataclasses import replace
+
+    fit = StockFit(False, True, 19 * _GIB, int(avail_gib * _GIB), credit_bytes=22 * _GIB,
+                   dropped=OLD)
+    fit = replace(fit, fits=fit.required_bytes <= fit.avail_bytes)
+    return replace(_short(avail_gib), measured=dict(fit.measured()),
+                   arena_bytes=int(arena_gib * _GIB))
+
+
+def test_the_credited_swap_and_its_card_name_the_head(monkeypatch):
+    answers = _pair(monkeypatch, _credited(10.0, 30.0), _fits())
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        decide(answers, 2, unet_name=NEW)
+    text = str(raised.value)
+    _plain(text)
+    assert (f"The head priced a stock load of {NEW} after the Worker drops flux1-dev, "
+            "which frees at least 22.0 GiB.") in text
+    offer = old_model.offer_of(raised.value)
+    assert offer is not None
+    assert old_model.card_body(offer) == (
+        "The head still holds about 30.0 GiB that earlier loads left behind, and "
+        "qwen_image_2512_fp8_e4m3fn does not fit beside it. Clear the Sparks and run again?")
+    assert old_model.card_numbers(offer).endswith(" GiB available on the head")
+
+
+def test_both_boxes_left_behind_read_as_one_sentence(monkeypatch):
+    answers = _pair(monkeypatch, _credited(10.0, 30.0), _credited(12.0, 40.0))
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        decide(answers, 2, unet_name=NEW)
+    _plain(str(raised.value))
+    assert ("The head still holds about 30.0 GiB and the sibling about 40.0 GiB that "
+            "earlier loads left behind") in str(raised.value)
+
+
+def test_a_credited_swap_no_clear_can_fix_names_the_box_and_the_whole_price(monkeypatch):
+    answers = _pair(monkeypatch, _credited(10.0, 0.0), _fits())
+    with pytest.raises(FleetCapacityError) as raised:
+        decide(answers, 2, unet_name=NEW)
+    text = str(raised.value)
+    _plain(text)
+    assert not isinstance(raised.value, old_model.OldModelRefusal)
+    assert " GiB on the head, and a cleared box would have about " in text
+    assert "That is the whole price, because a cleared box holds no copy" in text
+
+
+def test_a_cast_load_names_the_box_that_priced_it(monkeypatch):
+    from dataclasses import replace
+
+    fit = StockFit(False, True, int(13.3 * _GIB), int(20.0 * _GIB), cast_bytes=int(26.6 * _GIB))
+    cast = replace(_short(20.0, resident=None), measured=dict(fit.measured()))
+    answers = _pair(monkeypatch, _fits(), cast)
+    with pytest.raises(FleetCapacityError) as raised:
+        decide(answers, 2, unet_name=NEW)
+    text = str(raised.value)
+    _plain(text)
+    assert ("The sibling priced a stock load of " + NEW + ": the load needs ") in text
+    assert "a 13.3 GiB file cast to a 26.6 GiB copy, plus the host copy" in text
+    assert "The head took the stock_fits rung." in text
