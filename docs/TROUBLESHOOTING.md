@@ -416,6 +416,19 @@ uses the same placement charge. The previous 1.3x estimate admitted a load
 that killed a host; measurements and calibration are in
 [VALIDATION.md](VALIDATION.md).
 
+When the UNET loader casts the weight dtype (`weight_dtype` other than
+`default`), the copy the cast builds takes the file's place in that sum, and
+the host copy stays the file's own size. The Worker reads the size of the
+cast copy from the file's header: every 16- or 8-bit float at the new width,
+and a quantized layer's weights, fp32 tensors and integers as they are stored.
+A cast that keeps the width, such as an fp16 file loaded as bf16, costs what
+the uncast load costs: 60.9 GiB for each 26.6 GiB Wan 2.2 14B DiT. A cast
+that widens costs more: a 13.3 GiB fp8 file loaded as bf16 builds a 26.6 GiB
+copy and needs 46.3 GiB. The refusal names the cast copy ("a 13.3 GiB file
+cast to a 26.6 GiB copy"). A header the Worker cannot read is charged the
+file times the new width, the most the cast could build, and the Worker
+journal says so. Before 2026-11-05 a cast load was not priced at all.
+
 **If `capacity rescue available` appears:** open the DGX Monarch sidebar,
 click "Load with slab residency", then queue again. Nothing large has loaded
 at the refusal. [#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)
@@ -446,8 +459,9 @@ quarantine, or insufficient memory even for slab. A session quarantine from an
 identity gate that could not complete names that ceremony; restart ComfyUI to
 clear it. Comfy-managed residency forces slab off and cannot offer this rescue
 ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)).
-A loader `weight_dtype` cast disables this preflight because file size no
-longer predicts resident size. Quarantine overrides consent; only a fresh
+A loader `weight_dtype` cast is priced and refused without a card, because a
+slab load under a cast keeps the cast copy beside the file and saves nothing;
+the refusal says so and names what would fit. Quarantine overrides consent; only a fresh
 Identity Gate retest can clear it
 ([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)).
 After a rescue whose gate returned an unproven INCONCLUSIVE, because stock
@@ -4719,6 +4733,8 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.
+  A load the loader casts to another weight dtype is priced at the copy the cast
+  builds, and its sentence names that copy beside the file.
   A rank that answered on slab residency is named as such. When the hosts selected
   different residencies, one cause is one host having verified the family for slab residency
   while the other has not.

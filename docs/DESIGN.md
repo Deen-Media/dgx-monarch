@@ -1645,6 +1645,27 @@ plus a host-memory floor, capped by the arena a stock load would retain. The
 slab estimate therefore never exceeds the stock estimate. Every slab selection checks this estimate before returning; `preload_capacity_check` checks it
 again immediately before entering ComfyUI.
 
+**A loader dtype cast is priced.** File size does not bound the copy a
+`weight_dtype` cast builds (an fp8 file cast to bf16 doubles), and until
+2026-11-05 the stock probe therefore made no claim on a cast, so every price
+that read it admitted the load with no figure: a cast DiT was admitted on a
+head with 12.2 GiB available against the 60.9 GiB this rule now charges it.
+The header does bound it. `capacity_fit.cast_resident_bytes` charges every
+16- and 8-bit float tensor at the cast's width, fp32 and fp64 at no less than
+their stored size (ComfyUI keeps some fp32 islands live through a cast), and
+every tensor of a quantized layer, one with a `weight_scale`, `scale_weight`
+or `comfy_quant` beside it, at its stored size, since ComfyUI's quantized
+operations keep that payload. The stock price charges that copy in place of
+the file, beside the host copy at the file's own width and the floor, so a
+cast that keeps the width charges what an uncast load charges. A header the
+parser cannot read is charged the file times the target width, the most a cast
+can build, since no castable element is narrower than a byte; the file's own
+size would understate a bf16 cast of an fp8 file by half. A cast load that
+does not fit offers no slab rescue: a slab load under a cast keeps the cast
+copy in an annex beside the file, so it saves nothing. A cast under slab,
+comfy-managed or FSDP residency, and the driver's own loader windows, still
+make no claim, because the staging those paths do under a cast is unmeasured.
+
 **One absolute host floor.** The stock price, the slab price, the
 comfy-managed capacity check and the driver's own two windows all charge
 `capacity_floor.ABSOLUTE_HOST_FLOOR_BYTES`, 5 GiB, sized from ComfyUI's own
@@ -1681,7 +1702,7 @@ bound or its floor.
 | `comfy_managed` | one resident copy, or 2.3 times the file where ComfyUI stages through a pinned host buffer (measured on the tested Spark pair), plus the floor | `actor/capacity_quote._managed`, then `capacity_fit.managed_required_bytes` at `actor/store_residency.preload_capacity_check` |
 | `explicit`, `vouched_auto` | the file plus a capped floor, plus the LoRA bake's stray transient where `lora_low_rss` and a stack are both set; a target the header estimate cannot map prices the whole file | `actor/capacity_quote._slab_rung` over `capacity_fit.slab_load_fit`, itself over `capacity_lora_bake.lora_bake_bytes`, taken again by `actor/store_slab_admit.admit`, then by the exact backstop `actor/store_slab_admit.admit_bake` once the real patch set is built |
 | `consented_rescue` | the same, after both probes ran | the consent branch of `actor/capacity_quote.price`, over the same `capacity_fit.slab_load_fit`, taken again by `actor/store_slab_admit.admit` |
-| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. A LoRA change on a stock copy of the same file that the store keeps and re-applies the stack to in place charges 1.1 times the file plus the floor at the fleet agreement, the held copy credited; the Worker's own ladder prices with no store snapshot and never applies the credit | `capacity_fit.stock_load_fit` over `stock_required_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credit is `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place` |
+| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. Under a loader dtype cast the copy the cast builds replaces the file, and the host copy stays the file's. A LoRA change on a stock copy of the same file that the store keeps and re-applies the stack to in place charges 1.1 times the file plus the floor at the fleet agreement, the held copy credited; the Worker's own ladder prices with no store snapshot and never applies the credit | `capacity_fit.stock_load_fit` over `stock_required_bytes` and, for a cast, `capacity_fit.cast_resident_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credit is `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place` |
 | an FSDP launch | bf16/fp16: this rank's shards plus one block; fp8/int8 or an unreadable kind: the conservative full-file bound; every case includes the floor | `actor/capacity_quote_fsdp.fsdp_rung`, `adapters/fsdp.fsdp_load_capacity_check`, and `actor/store_residency.preload_capacity_check`, all over `capacity_fit.fsdp_required_bytes` |
 | the gate ceremony's clean reload | the same kind-aware FSDP figure, against each rank's MemAvailable plus its resident shard pool (torch reserved, capped at one share) | `fsdp_reload_price.price_fsdp_clean_reload`, crediting `fsdp_reload_price._rank_credit_bytes` |
 | the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
@@ -1733,9 +1754,10 @@ is still loaded on head". The driver then works out what a clear of the
 attached mesh, the same teardown as Reset attached mesh, gives back on each
 short box: the file bytes of each stock resident, whose GPU copy an in-process
 drop returned on 2026-11-04, plus the actor's anonymous memory above what it
-held at its first load (`actor/actor_footprint.py`). A slab or comfy-managed
-resident, an FSDP shard and a load cast to another weight dtype are credited
-the arena only. A slot the request reuses, and a model this graph's loader
+held at its first load (`actor/actor_footprint.py`). A load cast to another
+weight dtype is credited the copy its cast built, the figure its price charged;
+no leg has yet measured that drop on its own. A slab or comfy-managed resident
+and an FSDP shard are credited the arena only. A slot the request reuses, and a model this graph's loader
 nodes load, are neither old nor credited: a fresh fleet would only load them
 again. A model an earlier sampler of the same graph loaded is still old, since
 the later sampler fits on a fresh fleet, so the card and the log say "loaded

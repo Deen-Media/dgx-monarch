@@ -251,6 +251,12 @@ is named separately because BF16 validation does not establish FP16 support
 fp16 core). Model loading uses stock ComfyUI; each memory feature is gated
 separately for every quantization it supports.
 
+**Weight dtype cast.** The UNET loader's `weight_dtype` widget can load a file
+in another dtype than it is stored in, for example an fp16 file as bf16 or a
+bf16 file as fp8. The loaded copy then takes the new dtype's width, so it can
+be larger or smaller than the file. The capacity checks read the file's header
+to size that copy and price the load with it in place of the file.
+
 **INT8 GEMM kernel.** INT8 ConvRot checkpoints multiply 8-bit integers through
 comfy-kitchen, which sends each linear to one CUTLASS kernel. DGX Monarch swaps
 that one kernel for a Triton kernel tuned for GB10, which gives identical

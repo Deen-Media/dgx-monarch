@@ -77,33 +77,54 @@ def _spec_bytes(spec: Any) -> int:
         return 0
 
 
-def _holds_whole_file(worker: Any, stored: Any) -> bool:
-    """Whether this resident's GPU copy is about its file's size.
+def _cast_bytes(spec: Any) -> int:
+    """The copy a load cast to another weight dtype holds, or nothing.
 
-    An FSDP shard holds one rank's share and a load cast to another weight
-    dtype holds the cast copy, so neither is credited its file: the card
-    then counts the arena alone, which only ever withholds a card.
+    The same header estimate the stock price charged the load
+    (``capacity_fit.cast_resident_bytes``), so the credit and the price read
+    one number.
+    """
+    from .. import capacity_fit
+    from .model_store import _to_comfy_model_options, resolve_model_path
+
+    try:
+        dtype = _to_comfy_model_options(spec.get("options")).get("dtype")
+        if dtype is None:
+            return _spec_bytes(spec)
+        path = str(resolve_model_path("diffusion_models", str(spec["unet_name"])))
+        return capacity_fit.cast_resident_bytes(path, dtype) if os.path.exists(path) else 0
+    except Exception:
+        return 0
+
+
+def _resident_bytes(worker: Any, stored: Any, name: str) -> int:
+    """What a clear returns for this resident's GPU copy.
+
+    An FSDP shard holds one rank's share, so it is credited nothing and the
+    card counts the arena alone, which only ever withholds a card. A load cast
+    to another weight dtype holds the copy its cast built (``_cast_bytes``);
+    any other stock resident holds about its file.
     """
     if getattr(stored, "fsdp_checkpoint_pin", None) is not None:
-        return False
+        return 0
     try:
         if store_fsdp.active(worker):
-            return False
+            return 0
         base_key: tuple[Any, ...] = tuple(getattr(stored, "base_key", ()) or ())
         options = dict(base_key[1]) if len(base_key) > 1 else {}
     except Exception:
-        return False
-    return not options.get("weight_dtype")
+        return 0
+    spec = {"unet_name": name, "options": options}
+    return _cast_bytes(spec) if options.get("weight_dtype") else _spec_bytes(spec)
 
 
 def _resident_facts(worker: Any, store: Any) -> dict[str, Any]:
     """What a clear of this actor would return, for the old-model card.
 
     The name comes from the store itself, never parsed back out of the
-    snapshot's repr; the size is the file on disk, as ``_spec_bytes`` reads
-    it, for a resident that holds about its file (``_holds_whole_file``). The
-    driver decides which residency's bytes a clear returns
-    (``old_model.rank_gain``), so every held slot is reported.
+    snapshot's repr; the size is the GPU copy the resident holds
+    (``_resident_bytes``). The driver decides which residency's bytes a clear
+    returns (``old_model.rank_gain``), so every held slot is reported.
     """
     names: dict[str, str | None] = {}
     sizes: dict[str, int] = {}
@@ -112,8 +133,7 @@ def _resident_facts(worker: Any, store: Any) -> dict[str, Any]:
         base_key = getattr(stored, "base_key", ()) or ()
         name = str(base_key[0]) if base_key else None
         names[slot] = name
-        whole = bool(name) and _holds_whole_file(worker, stored)
-        sizes[slot] = _spec_bytes({"unet_name": name}) if whole else 0
+        sizes[slot] = _resident_bytes(worker, stored, name) if name else 0
     return {"resident_names": names, "resident_bytes": sizes,
             "arena_bytes": actor_footprint.arena_bytes()}
 

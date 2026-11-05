@@ -263,7 +263,9 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
             or not isinstance(held, dict) or held.get("swaps_in_place") is not True
             or not _same_base_stock_resident(held, request_key)):
         return fit
-    credited = replace(fit, credit_bytes=max(int(fit.size_bytes), 0))
+    # The copy the slot holds: the file's size, or a cast's own (StockFit.resident_bytes).
+    held_bytes = getattr(fit, "resident_bytes", fit.size_bytes)
+    credited = replace(fit, credit_bytes=max(int(held_bytes), 0))
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 

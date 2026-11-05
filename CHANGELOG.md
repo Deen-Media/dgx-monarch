@@ -133,6 +133,21 @@
   attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
   case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
+- A load whose UNET loader casts the weight dtype is now priced before it
+  loads. The capacity checks used to skip a cast, because file size does not
+  say how big the cast copy is, and admit the load with no figure; on
+  2026-11-05 `dgx-monarch-wan22-t2v`, which casts both DiTs to bf16, loaded its
+  second DiT on a head with 12.2 GiB free and only a test watchdog stopped
+  it. The price now reads the file's header for the size of the copy the cast
+  builds and charges it in place of the file, beside the host copy and the
+  floor, so a short box refuses before anything loads and says what would fit.
+  For a cast that keeps the width, as wan22's fp16 to bf16 does, the figure is
+  the one an uncast load gets (60.9 GiB for each wan22 DiT). A cast load offers
+  no slab rescue, since a slab under a cast keeps the cast copy beside the
+  file, and an old model held in the way still raises its card, which now
+  credits a cast model the copy its cast built
+  ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 
 ### Compatibility and verification
 

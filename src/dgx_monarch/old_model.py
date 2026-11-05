@@ -10,10 +10,12 @@ the clear and the Always flow.
 
 A clear would make room on a short box when its shortfall is smaller than what
 the clear gives back there: the file bytes of every stock resident, whose GPU
-copy an in-process drop was measured to return (2026-11-04), plus the actor's
-arena above a fresh actor's floor (``actor/actor_footprint.py``). A slab or
-comfy-managed resident is credited the arena only. Pure: no ComfyUI, no mesh
-call and no file read.
+copy an in-process drop was measured to return (2026-11-04), or for a load cast
+to another weight dtype the copy the cast built (not yet measured on its own),
+plus the actor's arena above a fresh actor's floor
+(``actor/actor_footprint.py``). A slab or comfy-managed resident and an FSDP
+shard are credited the arena only. Pure: no ComfyUI, no mesh call and no file
+read.
 """
 from __future__ import annotations
 

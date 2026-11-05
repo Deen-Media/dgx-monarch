@@ -95,6 +95,13 @@ def rescue_blocker(
         return ("the checkpoint is not a .safetensors or .sft file, which the zero-copy "
                 "slab loader requires",
                 "convert or re-stage the checkpoint as safetensors, or " + _GENERIC_OPTIONS)
+    if slab_fit is not None and slab_fit.skipped_reason == capacity_fit.SKIP_SLAB_DTYPE_CAST:
+        # A cast slab load keeps the cast copy in an annex beside the file, so
+        # it saves nothing over stock, and the slab probe does not price it.
+        return ("the loader casts this checkpoint's weight dtype, and a slab load under a cast "
+                "keeps the cast copy beside the file, so slab residency would not save memory",
+                "set the loader's weight_dtype to default where the cast makes the copy larger "
+                "than the file, or " + _GENERIC_OPTIONS)
     if fsdp_launch:
         return ("FSDP is active and reshards weights into DTensors, so a slab would be "
                 "an unused extra copy",

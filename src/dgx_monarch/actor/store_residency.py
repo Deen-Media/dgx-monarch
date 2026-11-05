@@ -197,7 +197,8 @@ def _stock_fit(row: capacity_quote.RankPrice) -> StockFit | None:
         return None
     return StockFit(bool(block["fits"]), bool(block["applies"]),
                     int(block["checkpoint_bytes"]), block["mem_available_bytes"],
-                    "" if block["applies"] else row.reason)
+                    "" if block["applies"] else row.reason,
+                    cast_bytes=int(block.get("cast_bytes") or 0))
 
 
 def _slab_fit(row: capacity_quote.RankPrice) -> SlabFit | None:
@@ -216,9 +217,8 @@ def _no_rescue_text(unet_name: str, fit: StockFit, blocker: tuple[str, str]) -> 
     why, options = blocker
     return (
         f"stock residency cannot load {unet_name} on {_host()}: the load needs "
-        f"{fit.required_gib} GiB (a {fit.size_gib} GiB file, the host copy it is placed "
-        f"from and the host floor) and only {fit.avail_gib} GiB of unified memory is "
-        f"available, so it would be killed out of memory. Slab rescue is unavailable here "
+        f"{fit.required_gib} GiB ({fit.terms}) and only {fit.avail_gib} GiB of unified "
+        f"memory is available, so it would be killed out of memory. Slab rescue is unavailable here "
         f"because {why}. What would fit: {options}. This refusal is capacity-protective "
         "(class C, StockLoadCapacityError family); nothing was loaded and nothing was quarantined."
     ) + actor_footprint.ladder_clause(fit.required_bytes, fit.avail_bytes)
@@ -344,9 +344,7 @@ def preload_capacity_check(
                 raise StockLoadCapacityError(refusal(
                     RefusalClass.CAPACITY,
                     f"stock residency cannot load {unet_name}: the load needs "
-                    f"{fit.required_gib} GiB including the host copy it is placed from and the "
-                    f"{capacity_fit.ABSOLUTE_HOST_FLOOR_BYTES / 2**30:.1f} GiB host floor, "
-                    f"but only {fit.avail_gib} GiB is available.",
+                    f"{fit.required_gib} GiB ({fit.terms}), but only {fit.avail_gib} GiB is available.",
                     guard=RESCUE_GUARD, waivable=False) + _wire_tail(fit, None))
             return
         preflight(path, unet_name, model_options)
