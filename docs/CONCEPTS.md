@@ -133,11 +133,13 @@ for LoRA backups and the retained arena described below.
 on the driver share the head with rank 0's DiT. Under `auto` the DiT loads at
 the first render, after the driver has loaded them, so the UNET loader prices
 the DiT's load beside every model the graph loads, and a model behind a
-switch's unused branch is not counted. When the sum does not fit, the loader
-refuses before anything loads and names the smaller files on disk that would,
-and the pair's `uly2+fsdp` preset where half the DiT would. On the pair,
-Ulysses and ring hold the whole DiT on the head, so the pair alone does not
-help.
+switch's unused branch is not counted. Models ComfyUI already holds are
+credited up to their size, no more. When the sum does not fit, the loader
+refuses before anything loads and names the smaller files on disk that would
+and that this graph would run, and a pair with the Init node's topology set to
+`uly2+fsdp`, where half the DiT would. On the pair, Ulysses and ring hold the
+whole DiT on the head, so the pair alone does not help, and `auto` never picks
+`uly2+fsdp`.
 
 **The LoRA backup.** When ComfyUI applies ("bakes") a LoRA into a model, it
 keeps a backup of every original weight it touched so it can undo the edit
@@ -209,9 +211,11 @@ spawn fresh ones on the next render. `recycle` is the graph and internal term;
 the sidebar says **Reset attached mesh** to distinguish it from restarting a
 Worker service. A reset reclaims the retained arena; slab mode normally avoids
 it. When you move from one large model to another on the same attached mesh,
-the next load is priced with the last one still held, so a refusal may say "the
-old model (<name>) is still loaded" and offer **Clear and retry**, which runs
-this reset; **Always clear and retry** lets the driver run it for you.
+the Worker drops the last one before it loads the next, and the price counts
+that, but the retained arena and any model in the other slot stay. So a
+refusal may still say "the old model (<name>) is still loaded" and offer
+**Clear and retry**, which runs this reset; **Always clear and retry** lets
+the driver run it for you.
 
 ## Trust words
 
@@ -260,6 +264,12 @@ is named separately because BF16 validation does not establish FP16 support
 (FSDP, for example, admits fp32 islands inside a bf16 core but only a uniform
 fp16 core). Model loading uses stock ComfyUI; each memory feature is gated
 separately for every quantization it supports.
+
+**Weight dtype cast.** The UNET loader's `weight_dtype` widget can load a file
+in another dtype than it is stored in, for example an fp16 file as bf16 or a
+bf16 file as fp8. The loaded copy then takes the new dtype's width, so it can
+be larger or smaller than the file. The capacity checks read the file's header
+to size that copy and price the load with it in place of the file.
 
 **INT8 GEMM kernel.** INT8 ConvRot checkpoints multiply 8-bit integers through
 comfy-kitchen, which sends each linear to one CUTLASS kernel. DGX Monarch swaps

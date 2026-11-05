@@ -50,12 +50,29 @@ def skipped_branch(node: Mapping) -> str | None:
     return "on_false" if choice else "on_true"
 
 
-def live_nodes(prompt: Mapping) -> frozenset[str]:
-    """The nodes ComfyUI will run: those a sink reaches through links.
+def output_node(class_type: object) -> bool | None:
+    """ComfyUI's own answer to whether a class is an output node, or None unknown.
 
-    A sink is a node nothing consumes, an output node among them. The walk
-    follows links backwards and skips a lazy switch's unselected branch, so a
-    model loader that feeds only that branch never loads and is not priced.
+    The test is the one execution.py makes (``OUTPUT_NODE is True``), read from
+    the registry ComfyUI fills in the driver process; headless, nothing is known.
+    """
+    try:
+        import nodes as comfy_nodes
+
+        cls = comfy_nodes.NODE_CLASS_MAPPINGS.get(class_type)
+    except Exception:
+        return None
+    return None if cls is None else getattr(cls, "OUTPUT_NODE", False) is True
+
+
+def live_nodes(prompt: Mapping) -> frozenset[str]:
+    """The nodes ComfyUI will run: those an output node reaches through links.
+
+    ComfyUI runs the ancestors of its output nodes. A node whose class the
+    registry cannot place counts as one when nothing consumes it, so an
+    unknown class is charged rather than dropped. The walk follows links
+    backwards and skips a lazy switch's unselected branch, so a model loader
+    that feeds only that branch, or nothing that runs, is not priced.
     """
     nodes = {str(key): node for key, node in prompt.items() if isinstance(node, Mapping)}
     consumed: set[str] = set()
@@ -63,7 +80,9 @@ def live_nodes(prompt: Mapping) -> frozenset[str]:
         inputs = node.get("inputs")
         for value in inputs.values() if isinstance(inputs, Mapping) else ():
             consumed.update(str(link[0]) for link in links_in(value))
-    pending = [key for key in nodes if key not in consumed]
+    outputs = {key: output_node(node.get("class_type")) for key, node in nodes.items()}
+    pending = [key for key in nodes
+               if outputs[key] is True or (outputs[key] is None and key not in consumed)]
     live: set[str] = set()
     while pending:
         key = pending.pop()

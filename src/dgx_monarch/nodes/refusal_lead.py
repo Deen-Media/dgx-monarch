@@ -36,8 +36,15 @@ SLAB_OFF_BLOCKER = ("Slab rescue is unavailable here because slab_weights is off
                     "the effective worker args.")
 EXPLICIT_STOCK_OPTIONS = ("clear the quarantine with an identity ceremony, or set "
                           "slab_weights=on when the combination is not quarantined, or ")
-GATE_REMEDY = ("run Identity Gate (DGX Monarch) on this model with slab_weights=on where "
-               "its stock reference fits, then queue the render again, or ")
+# The gate's stock reference must load on this box, so the remedy says how to
+# make it fit: the same model in a lighter graph.
+GATE_REMEDY = ("run Identity Gate (DGX Monarch) on this model with slab_weights=on in a "
+               "graph whose stock reference fits this box, for example with an optional "
+               "driver model such as a prompt upsampler switched off, then queue the render "
+               "again, or ")
+# The state a dual-model render notes: the gate proves one model, so no PASS
+# can authorize slab for it and the remedy names none.
+DUAL_MODEL = "two models"
 
 # Render lifetime, one per ComfyUI executor thread: set while the render is
 # authorized, read by the node method's own wrapper, and cleared at its entry
@@ -48,8 +55,22 @@ _Method = TypeVar("_Method", bound=Callable[..., Any])
 
 
 def note_forced_stock(state: object) -> None:
-    """This node call's render runs stock: slab_weights=on, and no Gate PASS."""
-    _NOTE.state = str(state or "unknown")
+    """This node call's render runs stock although slab_weights=on: no Gate PASS
+    for ``state``, or ``DUAL_MODEL``. The first note of a node call stands."""
+    if forced_stock_state() is None:
+        _NOTE.state = str(state or "unknown")
+
+
+def note_if_slab_dropped(requested: Any, dispatched: Any, *, dual: bool) -> None:
+    """Note a dispatch that turned off the slab_weights=on the graph asked for.
+
+    Every stock fallback of a normal render comes here (a missing PASS, a
+    failed authorization, a second model); the no-PASS path has already noted
+    its ledger state, and the first note stands.
+    """
+    if dict(dispatched or {}).get("slab_weights") is False and dict(
+            requested or {}).get("slab_weights") is True:
+        note_forced_stock(DUAL_MODEL if dual else "unknown")
 
 
 def forced_stock_state() -> str | None:
@@ -61,12 +82,17 @@ def _clear() -> None:
 
 
 def forced_stock_text(text: str, state: str) -> str:
-    """The stock refusal with the gate's cause and remedy in place of the setting."""
-    cause = ("Slab residency was not used, although the Init node sets slab_weights=on: "
-             f"this combination has no Identity Gate PASS for its current state ({state}), "
-             "so the driver ran this render on stock residency.")
-    return text.replace(SLAB_OFF_BLOCKER, cause, 1).replace(EXPLICIT_STOCK_OPTIONS,
-                                                            GATE_REMEDY, 1)
+    """The stock refusal with the real cause and remedy in place of the setting."""
+    lead = "Slab residency was not used, although the Init node sets slab_weights=on: "
+    if state == DUAL_MODEL:
+        cause = (f"{lead}a render with two models runs on stock residency, because the "
+                 "Identity Gate proves one model at a time.")
+        remedy = ""
+    else:
+        cause = (f"{lead}this combination has no Identity Gate PASS for its current state "
+                 f"({state}), so the driver ran this render on stock residency.")
+        remedy = GATE_REMEDY
+    return text.replace(SLAB_OFF_BLOCKER, cause, 1).replace(EXPLICIT_STOCK_OPTIONS, remedy, 1)
 
 
 def surfaced(exc: BaseException, forced: str | None = None) -> BaseException | None:

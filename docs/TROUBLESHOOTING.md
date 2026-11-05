@@ -416,6 +416,19 @@ uses the same placement charge. The previous 1.3x estimate admitted a load
 that killed a host; measurements and calibration are in
 [VALIDATION.md](VALIDATION.md).
 
+When the UNET loader casts the weight dtype (`weight_dtype` other than
+`default`), the copy the cast builds takes the file's place in that sum, and
+the host copy stays the file's own size. The Worker reads the size of the
+cast copy from the file's header: every 16- or 8-bit float at the new width,
+and a quantized layer's weights, fp32 tensors and integers as they are stored.
+A cast that keeps the width, such as an fp16 file loaded as bf16, costs what
+the uncast load costs: 60.9 GiB for each 26.6 GiB Wan 2.2 14B DiT. A cast
+that widens costs more: a 13.3 GiB fp8 file loaded as bf16 builds a 26.6 GiB
+copy and needs 46.3 GiB. The refusal names the cast copy ("a 13.3 GiB file
+cast to a 26.6 GiB copy"). A header the Worker cannot read is charged the
+file times the new width, the most the cast could build, and the Worker
+journal says so. Before 2026-11-05 a cast load was not priced at all.
+
 **If `capacity rescue available` appears:** open the DGX Monarch sidebar,
 click "Load with slab residency", then queue again. Nothing large has loaded
 at the refusal. [#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)
@@ -446,8 +459,11 @@ quarantine, or insufficient memory even for slab. A session quarantine from an
 identity gate that could not complete names that ceremony; restart ComfyUI to
 clear it. Comfy-managed residency forces slab off and cannot offer this rescue
 ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)).
-A loader `weight_dtype` cast disables this preflight because file size no
-longer predicts resident size. Quarantine overrides consent; only a fresh
+A loader `weight_dtype` cast is priced and refused without a rescue card,
+because a slab load under a cast keeps the cast copy beside the file and saves
+nothing; the refusal says so and names what would fit, and an explicit
+`slab_weights=on` refuses a cast outright. An old model in the way can still
+raise its own card. Quarantine overrides consent; only a fresh
 Identity Gate retest can clear it
 ([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)).
 After a rescue whose gate returned an unproven INCONCLUSIVE, because stock
@@ -1917,8 +1933,14 @@ For example, the p-h3-image template on one Spark:
 refusal names what would fit first, each one priced in both windows: files on
 disk here that hold the same model in another precision, in place of the DiT or
 of a driver model; a lazy switch whose other setting skips a model; and on a
-pair, the `uly2+fsdp` preset, where the head holds half the DiT, after an
-Identity Gate PASS on that preset. For H3,
+pair, the Init node's topology set to `uly2+fsdp`, which `auto` never picks,
+where the head holds half the DiT, after an Identity Gate PASS on that preset.
+It never names a file this graph would then refuse: a DiT file is named only
+when a graph here names it (the artifact manifest lists it) and none of the
+refusals the driver can read from its header applies, so no INT8 MOSS-Image
+file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file that
+pins an attention kernel off Ulysses and ring (#117). The pair is not offered
+beside a LoRA. For H3,
 try a smaller text encoder, a pruned/quantized DiT, fewer or smaller references,
 a smaller canvas/clip, or more free host memory. Pruned int8/fp8 reference-video
 files are 19.5 GiB versus bf16's 61.7 GiB. For LTX, start with a smaller canvas
@@ -1954,8 +1976,19 @@ copy; other families include it. H3 activations are described in
 The loader checks before liveness, topology, or rank effects. It prices the
 pending stack from the prompt graph: text encoders, CLIP Vision, VAEs, and any
 checkpoint or stock UNET the driver loads itself. A model that only the
-unselected branch of an If/Else or Soft Switch with a fixed value reaches never
-loads and is not charged. An unreadable graph leaves that stack
+unselected branch of an If/Else or Soft Switch with a fixed value reaches, or
+that no output node reaches, never loads and is not charged. When ComfyUI
+already holds models, the price credits only the bytes ComfyUI holds against
+the graph's models, never more, since it cannot tell which files they came
+from; until 2026-11-05 any one held model credited the whole stack. On a fresh
+driver the price errs high by the 1.15 encoder ratio and a VAE ComfyUI has not
+yet moved into memory: p-h3-image prices 9.0 GiB short where the hardware ran
+2.0 GiB short, and LTX 2.3 text to video now needs 80.9 GiB where it needed
+65.8. A loader `weight_dtype` cast is priced at the copy
+the cast builds, read from the file's header, beside a host copy at the file's
+own width, where the load runs stock, with no slab card; under slab,
+comfy-managed residency or a `*+fsdp` preset the loader makes no claim on a
+cast. An unreadable graph leaves that stack
 unpriced and warns once per family; other estimator failures also admit the
 load. A cleared charge is cached per checkpoint and world for the session.
 Direct headless calls need their own budget
@@ -2071,8 +2104,8 @@ accepting. Tags distinguish capacity (`C`), unproven correctness (`U`), known
 incorrect output (`K`), and physical constraints with no bypass (`P`);
 see DESIGN.md section 5.9.
 
-**The sentence leads the error.** A refusal a Worker raises at the sampler or
-the loader shows in the prompt error tag first, then its sentence and the card
+**The sentence leads the error.** A refusal a Worker raises at the sampler, the
+loader or Identity Gate shows in the prompt error tag first, then its sentence and the card
 it names; the remote traceback is in the ComfyUI log. Before 2026-11-05 the
 error began "Actor call dgxm_worker.sample failed." and the reason sat at the
 end of that traceback.
@@ -2126,9 +2159,12 @@ the attached mesh, the same as Reset attached mesh, and writes no memo and no
 ledger row; then queue again, and the load is priced again on fresh Workers.
 Tick Always clear and retry on the card, or the toggle of that name under
 "Consents and waivers", and the driver clears and retries by itself, at most
-once per load. When a clear would not make room, the refusal says so and
-offers no card; at the loader it names the window its first sentence priced,
-with the same figure. A model this graph loads, or one the request reuses, is never
+once per load. When the price already counted the drop of the model the load
+replaces, the card says instead that the box "still holds about N GiB that
+earlier loads left behind", since a clear gives that back. When a clear would
+not make room, the refusal says so, with the whole price a cleared box would
+need, and offers no card; at the loader it names the window its first sentence
+priced, with the same figure. A model this graph loads, or one the request reuses, is never
 the old model. A card resets only the attached mesh that refused: if that mesh
 is gone, the click answers the card and resets nothing, and any reset answers
 every open card. A one-GPU fleet or a Fleet job, whose Worker prices its own
@@ -2408,9 +2444,10 @@ once per render and only when ComfyUI holds a model. It never runs while a
 render is live in this driver: a pipelined submission behind a render in
 flight, a held or abandoned result lease, or a Worker call in flight keeps the
 models, and the refusal says which. It never touches the Workers' residents or
-ComfyUI's cached node outputs, and the cross-rank agreement
+ComfyUI's cached node outputs. The cross-rank agreement
 ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
-still prices a load that replaces a Worker resident with that resident held.
+prices a load that replaces a Worker's stock resident after the drop that
+resident's slot takes first, and any other resident as held.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the step off, and the guard
 then refuses on the first reading.
 
@@ -4740,6 +4777,8 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.
+  A load the loader casts to another weight dtype is priced at the copy the cast
+  builds, and its sentence names that copy beside the file.
   A rank that answered on slab residency is named as such. When the hosts selected
   different residencies, one cause is one host having verified the family for slab residency
   while the other has not.
@@ -4769,9 +4808,12 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
 * **World 1 is a no op.** The one box prices its own load.
 
 Read the numbers with two limits in mind. Each rank prices against what it
-holds at that moment, so a card can quote a figure taken with the previous
-model still resident, and it says so by name: "the old model (flux1-dev) is
-still loaded on head". The quote does not price shared memory
+holds at that moment. A load that replaces the stock model in its own slot is
+priced after the Worker drops that model, which the Worker does before every
+such load, and the refusal says so: "after the Worker drops flux1-dev, which
+frees at least 22.2 GiB". Any other model is counted as still held, so a card
+can quote a figure taken with it resident, and it says so by name: "the old
+model (flux1-dev) is still loaded on head". The quote does not price shared memory
 either: a rank holding a weight slab in the other slot, or a slab retained by a
 load that failed, reads as having more available than it has. The rank's row
 records both (`shmem_bytes`, each slot's resident and the retained-slab count)

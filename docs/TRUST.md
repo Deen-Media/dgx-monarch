@@ -524,7 +524,7 @@ copied from historical evidence.
    an exact separately scoped world-1 `pass` carries a risky-residency grant;
    every other state, lookup error, and source-manifest failure forces `slab_weights=False` and
    `lora_low_rss=False` for that call. Driver authorization is
-   [`fleet_policy.py:25-149`](../src/dgx_monarch/nodes/fleet_policy.py#L25-L149 "anchor:_fleet_worker_policy"). The grant
+   [`fleet_policy.py:25-154`](../src/dgx_monarch/nodes/fleet_policy.py#L25-L154 "anchor:_fleet_worker_policy"). The grant
    carries the exact source-bound Gate token. It is validated against context,
    world, policy, full requests, artifacts, selected-worker parity, and finally
    recomputed from the worker's source identity before load and adoption at
@@ -638,7 +638,7 @@ copied from historical evidence.
     [`gate_process_verdicts.py:54-55`](../src/dgx_monarch/nodes/gate_process_verdicts.py#L54-L55 "anchor:process_gate_verdict_locked"),
     [`auto_gate.py:205-268`](../src/dgx_monarch/nodes/auto_gate.py#L205-L268 "anchor:auto_gate_required"),
     [`auto_gate.py:275-488`](../src/dgx_monarch/nodes/auto_gate.py#L275-L488 "anchor:maybe_auto_gate"), and
-    [`fleet_policy.py:25-149`](../src/dgx_monarch/nodes/fleet_policy.py#L25-L149 "anchor:_fleet_worker_policy").
+    [`fleet_policy.py:25-154`](../src/dgx_monarch/nodes/fleet_policy.py#L25-L154 "anchor:_fleet_worker_policy").
     Damage-triggered cache refusal/reproof, unconsumable-PASS denial, Fleet
     refusal, bounded positive-cache eviction, and non-evicting denial are covered by
     [`test_gate_orchestration.py:206-231`](../tests/test_gate_orchestration.py#L206-L231 "anchor:test_auto_gate_ignores_cached_pass_when_ledger_damage_is_unhealed"),
@@ -803,7 +803,7 @@ copied from historical evidence.
    the automatic path is
    [`auto_gate.py:138-143`](../src/dgx_monarch/nodes/auto_gate.py#L138-L143 "anchor:auto_gate_context"),
    and the node's NOT RUN branch is
-   [`gate_node.py:109-120`](../src/dgx_monarch/nodes/gate_node.py#L109-L120 "anchor:gate"),
+   [`gate_node.py:110-122`](../src/dgx_monarch/nodes/gate_node.py#L110-L122 "anchor:gate"),
    covered by `tests/test_accuracy_waivers.py` and `tests/test_sol_attention.py`.
 
 ## Grant paths
@@ -891,7 +891,7 @@ copied from historical evidence.
   [`gate_ledger.py:191-233`](../src/dgx_monarch/gate_ledger.py#L191-L233 "anchor:entries_with_integrity"),
   [`gate_ledger.py:259-342`](../src/dgx_monarch/gate_ledger.py#L259-L342 "anchor:lookup_with_integrity"),
   [`gate_identity.py:333-481`](../src/dgx_monarch/nodes/gate_identity.py#L333-L481 "anchor:authorize_normal_render"), and
-  [`fleet_policy.py:25-149`](../src/dgx_monarch/nodes/fleet_policy.py#L25-L149 "anchor:_fleet_worker_policy").
+  [`fleet_policy.py:25-154`](../src/dgx_monarch/nodes/fleet_policy.py#L25-L154 "anchor:_fleet_worker_policy").
 - Process-local FAIL, INCONCLUSIVE, and ERROR verdicts are retained separately
   from the bounded positive cache. They override an older durable PASS for
   normal and Fleet calls until a later successful exact ceremony atomically

@@ -263,8 +263,38 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
             or not isinstance(held, dict) or held.get("swaps_in_place") is not True
             or not _same_base_stock_resident(held, request_key)):
         return fit
-    credited = replace(fit, credit_bytes=max(int(fit.size_bytes), 0))
+    # The copy the slot holds: the file's size, or a cast's own (StockFit.resident_bytes).
+    held_bytes = getattr(fit, "resident_bytes", fit.size_bytes)
+    credited = replace(fit, credit_bytes=max(int(held_bytes), 0))
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 
-__all__ = ["credit_hot_swap", "lora_bake_bytes", "patched_base_keys", "swap_credit_bytes"]
+def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
+    """The stock price of a load that replaces the slot's own stock resident.
+
+    The store never holds both copies. A stack change on the same file keeps
+    the base (``credit_hot_swap``, the LoRA case of this credit), and every
+    other swap drops the slot before it loads (``actor/store_load.fresh_load``).
+    A drop of a stock resident returns its GPU copy in-process: on 2026-11-05
+    the head rose from 58.7 to 88.5 GiB, and from 57.9 to 88.5, as the store
+    dropped a 26.6 GiB bf16-cast Wan 2.2 DiT. So that copy is credited, the file
+    or a lower bound of a cast's own, as the quote endpoint reports it in the
+    slot's snapshot entry (``actor/worker_capacity._resident_bytes``) when the
+    entry still describes the resident those figures were read from; the arena
+    a stock load retains is not. A slab, comfy-managed or FSDP resident, and a slot whose
+    load or cleanup is in flight, are priced as held.
+    """
+    from dataclasses import replace
+
+    held_bytes = held.get("resident_bytes") if isinstance(held, dict) else None
+    if (getattr(fit, "credit_bytes", 0) > 0 or (context or {}).get("would_load") != "swap"
+            or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None
+            or not isinstance(held, dict) or held.get("residency") != "stock"
+            or not isinstance(held_bytes, int) or isinstance(held_bytes, bool) or held_bytes <= 0):
+        return fit
+    credited = replace(fit, credit_bytes=held_bytes, dropped=str(held.get("resident_name") or "a model"))
+    return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
+
+
+__all__ = ["credit_hot_swap", "credit_stock_swap", "lora_bake_bytes", "patched_base_keys",
+           "swap_credit_bytes"]

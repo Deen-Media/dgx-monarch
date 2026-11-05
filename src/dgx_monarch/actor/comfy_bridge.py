@@ -311,8 +311,8 @@ def load_diffusion_model_slab(path: str, model_options: dict, loader,
         if fit.applies and not fit.fits:
             raise StockLoadCapacityError(refusal(
                 RefusalClass.CAPACITY, f"stock residency cannot load {unet_name or os.path.basename(path)}: the load needs "
-                f"{fit.required_gib} GiB (a {fit.size_gib} GiB file, the host copy it is placed from and the "
-                f"host floor) and only {fit.avail_gib} GiB of unified memory is available. Slab residency cannot "
+                f"{fit.required_gib} GiB ({fit.terms}) and only {fit.avail_gib} GiB of unified memory is "
+                "available. Slab residency cannot "
                 "help: the slab loader cannot represent this checkpoint's dtype, so it fell back to a stock load, "
                 "and no capacity consent can change that. What would fit: more free unified memory on this host, "
                 "or a pruned or quantized artifact.", guard="stock_load_preflight", waivable=False)) from load_exc

@@ -77,45 +77,97 @@ def _spec_bytes(spec: Any) -> int:
         return 0
 
 
-def _holds_whole_file(worker: Any, stored: Any) -> bool:
-    """Whether this resident's GPU copy is about its file's size.
+def _cast_bytes(spec: Any) -> int:
+    """The least a load cast to another weight dtype holds, or nothing.
 
-    An FSDP shard holds one rank's share and a load cast to another weight
-    dtype holds the cast copy, so neither is credited its file: the card
-    then counts the arena alone, which only ever withholds a card.
+    A credit and a clear's gain must not exceed what the drop returns, so this
+    takes the cast estimate's lower bound (``cast_resident_bytes(lower=True)``):
+    every float tensor at the smaller of its stored and cast size, which never
+    exceeds the file or the copy, and nothing where the header cannot be read.
+    The price's own figure is the upper bound, which ComfyUI can undercut: it
+    builds fp32 auxiliaries at the cast's width on a copying load.
+    """
+    from .. import capacity_fit
+    from .model_store import _to_comfy_model_options, resolve_model_path
+
+    try:
+        dtype = _to_comfy_model_options(spec.get("options")).get("dtype")
+        if dtype is None:
+            return _spec_bytes(spec)
+        path = str(resolve_model_path("diffusion_models", str(spec["unet_name"])))
+        return capacity_fit.cast_resident_bytes(path, dtype, lower=True)
+    except Exception:
+        return 0
+
+
+def _resident_bytes(worker: Any, stored: Any, name: str) -> int:
+    """What a clear returns for this resident's GPU copy.
+
+    An FSDP shard holds one rank's share, so it is credited nothing and the
+    card counts the arena alone, which only ever withholds a card. A load cast
+    to another weight dtype holds the copy its cast built (``_cast_bytes``);
+    any other stock resident holds about its file.
     """
     if getattr(stored, "fsdp_checkpoint_pin", None) is not None:
-        return False
+        return 0
     try:
         if store_fsdp.active(worker):
-            return False
+            return 0
         base_key: tuple[Any, ...] = tuple(getattr(stored, "base_key", ()) or ())
         options = dict(base_key[1]) if len(base_key) > 1 else {}
     except Exception:
-        return False
-    return not options.get("weight_dtype")
+        return 0
+    spec = {"unet_name": name, "options": options}
+    return _cast_bytes(spec) if options.get("weight_dtype") else _spec_bytes(spec)
 
 
-def _resident_facts(worker: Any, store: Any) -> dict[str, Any]:
+def _resident_facts(worker: Any, store: Any,
+                    keys: dict[str, str | None] | None = None) -> dict[str, Any]:
     """What a clear of this actor would return, for the old-model card.
 
     The name comes from the store itself, never parsed back out of the
-    snapshot's repr; the size is the file on disk, as ``_spec_bytes`` reads
-    it, for a resident that holds about its file (``_holds_whole_file``). The
-    driver decides which residency's bytes a clear returns
-    (``old_model.rank_gain``), so every held slot is reported.
+    snapshot's repr; the size is the GPU copy the resident holds
+    (``_resident_bytes``). The driver decides which residency's bytes a clear
+    returns (``old_model.rank_gain``), so every held slot is reported. ``keys``
+    receives the request key of each resident read, in the snapshot's form, so
+    the caller can bind these figures to the snapshot it prices against.
     """
     names: dict[str, str | None] = {}
     sizes: dict[str, int] = {}
     for slot, stored in ((capacity_quote.SLOT_COND, getattr(store, "current", None)),
                          (capacity_quote.SLOT_UNCOND, getattr(store, "uncond", None))):
+        if keys is not None:
+            key = getattr(stored, "request_key", None)
+            keys[slot] = None if key is None else repr(key)
         base_key = getattr(stored, "base_key", ()) or ()
         name = str(base_key[0]) if base_key else None
         names[slot] = name
-        whole = bool(name) and _holds_whole_file(worker, stored)
-        sizes[slot] = _spec_bytes({"unet_name": name}) if whole else 0
+        sizes[slot] = _resident_bytes(worker, stored, name) if name else 0
     return {"resident_names": names, "resident_bytes": sizes,
             "arena_bytes": actor_footprint.arena_bytes()}
+
+
+def _with_resident_bytes(snapshot: Any, facts: dict[str, Any],
+                         keys: dict[str, str | None]) -> dict:
+    """The store snapshot with each held slot's GPU copy and name beside its residency.
+
+    The swap credit reads them (``capacity_lora_bake.credit_stock_swap``): a load
+    that replaces a stock resident is priced after the store drops that copy,
+    and its refusal names the model dropped. This endpoint runs outside the GPU
+    lock, so a slot can change between the facts and the snapshot. A slot whose
+    snapshot entry does not carry the request key the facts were read from gets
+    neither, and its facts are cleared too: no credit and no old-model figures
+    for a model the snapshot does not describe.
+    """
+    out = dict(snapshot) if isinstance(snapshot, dict) else {}
+    for slot in capacity_quote.SLOTS:
+        entry = out.get(slot)
+        if not isinstance(entry, dict) or keys.get(slot) is None or keys[slot] != entry.get("request_key"):
+            facts["resident_bytes"][slot], facts["resident_names"][slot] = 0, None
+            continue
+        out[slot] = {**entry, "resident_bytes": int(facts["resident_bytes"].get(slot) or 0),
+                     "resident_name": facts["resident_names"].get(slot) or ""}
+    return out
 
 
 def _request_key(snapshot: dict, slot: str, spec: dict, unet_name: str) -> str:
@@ -260,8 +312,9 @@ def quote(worker: Any, request: Any) -> dict:
                     for spec in specs or [{}])
         return envelope
     consent = request.get("rescue_consent") if isinstance(request, dict) else None
-    snapshot = store.snapshot()
-    facts = _resident_facts(worker, store)
+    keys: dict[str, str | None] = {}
+    facts = _resident_facts(worker, store, keys)
+    snapshot = _with_resident_bytes(store.snapshot(), facts, keys)
     pinned = _pinned_staging()
     charged = 0
     for spec in _my_slots(worker, specs):

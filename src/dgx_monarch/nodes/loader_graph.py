@@ -415,8 +415,8 @@ def _comfy_has_loaded_models() -> bool:
 
     Comfy execution order can run VAE or text loaders first. A model comfy is
     using already shows in the MemAvailable reading, so charging it again
-    would create a class C false refusal. Any one entry is enough, so
-    ``credited_terms`` assumes the reading already counts the whole stack.
+    would create a class C false refusal. ``credited_terms`` credits what
+    the entries hold, up to the whole stack (``_comfy_held_bytes``).
 
     A loaded but not yet used artifact is absent from that list and can be
     over-charged once. The artifact memo covers repeats; missing every charge
@@ -430,16 +430,53 @@ def _comfy_has_loaded_models() -> bool:
         return False
 
 
+def _comfy_held_bytes() -> int | None:
+    """The bytes of the models ComfyUI holds, or None when it cannot say.
+
+    It cannot say which files they came from, so the credit below never
+    exceeds this: a held encoder can stand in for this graph's, never for more.
+    """
+    try:
+        import comfy.model_management as mm
+
+        return sum(int(loaded.model_memory()) for loaded in mm.current_loaded_models
+                   if loaded.model is not None)
+    except Exception:  # an unreadable size credits as before, the whole stack
+        return None
+
+
+def _credit_held(terms: DriverStackTerms, held: int) -> DriverStackTerms:
+    """Credit ``held`` bytes against the graph's models; the rest stays charged.
+
+    The reference encode stays charged too: with models still to load, it has
+    not run either.
+    """
+    te = max(terms.te_bytes - held, 0)
+    left = max(held - terms.te_bytes, 0)
+    vae = max(terms.vae_bytes - left, 0)
+    left = max(left - terms.vae_bytes, 0)
+    return replace(terms, te_bytes=te, vae_bytes=vae,
+                   model_bytes=max(terms.model_bytes - left, 0), credited=True,
+                   credit_reason=(f"comfy already holds {_gib(held)} GiB of loaded models, "
+                                  f"credited against the {_gib(terms.models_bytes)} GiB of "
+                                  "models this graph loads"))
+
+
 def credited_terms(terms: DriverStackTerms) -> DriverStackTerms:
     """Apply the residency credits: comfy's loaded models, then earlier charges.
 
     A guide encode survives both credits, like render activations. The first
-    credit fires on any loaded model and assumes MemAvailable already counts
-    the stack; a loaded model does not show that Add Guide has run.
+    credit fires on any loaded model. It credits the whole stack only where
+    what ComfyUI holds covers it (MemAvailable already counts that much), and
+    otherwise only the bytes held; a loaded model does not show that Add Guide
+    has run.
     """
     if not terms.resolved:
         return terms
     if _comfy_has_loaded_models():
+        held = _comfy_held_bytes()
+        if held is not None and held < terms.models_bytes:
+            return _credit_held(terms, held)
         return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0, ref_bytes=0,
                        credited=True,
                        credit_reason="comfy already holds loaded models, so "

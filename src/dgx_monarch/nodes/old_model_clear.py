@@ -334,7 +334,7 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     required = int(worst.projected) + int(worst.reserve)
     return old_model.box_offer(
         unet_name, old_model.ShortBox(box, tuple(dict.fromkeys(names)), required,
-                                      int(worst.mem_available), gain, window),
+                                      int(worst.mem_available), gain, window=window),
         hosts=1 if local else len(hosts), local=local, fleet=handle)
 
 

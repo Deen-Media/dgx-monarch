@@ -27,7 +27,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly. Since the fused-norm parity change, edits and text to image at 704 square or below on uly2 are bit-identical to one GPU too, confirmed on hardware on 2026-10-16. See the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
 | [MOSS-Image SFT and Base](#model-moss-image-sft) | Text-to-image, and a JSON layout prompt on SFT | Needs ComfyUI 0.42.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Keep the template's 50 Euler steps at CFG 3 on the `normal` scheduler and its Skip Layer Guidance (DGX Monarch) node, which skips layer 22 on the negative pass; cfg2 refuses while that skip is on. BF16 Ulysses matched one GPU exactly, up to 2048 square on SFT; see the [tested configurations](VALIDATION.md#evidence-moss-image-sft). |
 | [Kromoss](#model-kromoss) | Text-to-image at 50 steps, and at 8 steps with a DMD LoRA | A MOSS-Image Base fine-tune on the same files and adapter. Pin the manifest's revision: the vendor replaces the files under the same names. Use the DMD LoRAs with the BF16 file: a LoRA on the INT8 file refuses. BF16 Ulysses at 1024 and 1536 square matched one GPU exactly; see the [tested configurations](VALIDATION.md#evidence-kromoss). |
-| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.44.0 or newer. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. The BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads and names the files that fit. No hardware has run it yet. |
+| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.44.0 or newer. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, whose render has no hardware record yet. No hardware has run it yet. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -1011,14 +1011,17 @@ The refusal names what would fit: `p-h3-image_int8_convrot.safetensors` or
 `p-h3-image_w4a8.safetensors` in the UNET loader,
 `p-h3-image_prompt_upsampler_int8_convrot.safetensors` or
 `p-h3-image_prompt_upsampler_w4a8.safetensors` in the upsampler's CLIPLoader,
-the If/Else switch set to false, or `uly2+fsdp` on a pair after an Identity
-Gate PASS on that preset, where the head holds half the DiT. On the pair under
-`auto` the head's Worker holds the whole DiT, as on one Spark, so the pair
-alone does not fit it. With the switch false the graph does not load the
-upsampler and the price does not charge it.
+the If/Else switch set to false, or a pair with the Init node's topology set
+to `uly2+fsdp`, which `auto` never picks, after an Identity Gate PASS on that
+preset, where the head holds half the DiT. On the pair under `auto` the head's
+Worker holds the whole DiT, as on one Spark, so the pair alone does not fit it.
+The refusal also offers the Load with slab residency card: slab places no host
+copy, so that load prices at 78.3 GiB and fits, but no hardware has run the
+slab render of this graph yet. With the switch false the graph does not load
+the upsampler and the price does not charge it.
 
 **Known limitations.** No hardware record. Edits and the LoRA route have no
-comparison. The BF16 DiT and the BF16 upsampler do not fit one Spark
+comparison. On stock residency the BF16 DiT and the BF16 upsampler do not fit one Spark
 together. ComfyUI's MiniMax H3 Context Windows gain nothing on one frame.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-p-h3-image).

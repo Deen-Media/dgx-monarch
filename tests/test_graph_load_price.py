@@ -15,6 +15,7 @@ CPU only: tiny files stand in for the models, and their sizes are stubbed.
 from __future__ import annotations
 
 import json
+import struct
 import sys
 import types
 from pathlib import Path
@@ -66,10 +67,25 @@ SIZES = {
     ("text_encoders", UPSAMPLER_INT8): 9_748_117_724,
     ("text_encoders", UPSAMPLER_W4A8): 6_724_096_116,
     ("vae", VAE): 5_559_036_680,
+    # A local fp8 copy no graph here names, so the manifest does not list it.
+    ("diffusion_models", "p-h3-image_fp8.safetensors"): 20_234_205_580,
+    # Kromoss, a MOSS-Image Base fine-tune, for the LoRA route.
+    ("diffusion_models", "kromoss_bf16.safetensors"): 10_164_655_808,
+    ("diffusion_models", "kromoss_int8_convrot.safetensors"): 5_413_698_958,
+    ("text_encoders", "qwen3.5_9b_bf16.safetensors"): 19_306_312_328,
+    ("vae", "flux2-vae_small.safetensors"): 249_521_340,
 }
-KINDS = {DIT: "bf16", DIT_INT8: "int8", DIT_W4A8: "w4a8"}
+KINDS = {DIT: "bf16", DIT_INT8: "int8", DIT_W4A8: "w4a8", "p-h3-image_fp8.safetensors": "fp8",
+         "kromoss_bf16.safetensors": "bf16", "kromoss_int8_convrot.safetensors": "int8"}
 # Head MemAvailable at the cell 9 submit, 2026-11-05.
 MEM_CELL9 = int(110.8 * _GIB)
+
+
+def _write_safetensors(path: Path, keys: tuple[str, ...] = ("blocks.0.weight",)) -> None:
+    """A real header over a few bytes: the twin checks read the names in it."""
+    header = json.dumps({key: {"dtype": "BF16", "shape": [1], "data_offsets": [i * 2, i * 2 + 2]}
+                         for i, key in enumerate(keys)}).encode()
+    path.write_bytes(struct.pack("<Q", len(header)) + header + b"\0" * (2 * len(keys)))
 
 
 def _template() -> dict:
@@ -119,7 +135,7 @@ def _rig(monkeypatch, tmp_path):
     for (folder, name), size in SIZES.items():
         target = tmp_path / folder / name
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(name.encode())
+        _write_safetensors(target)
         sizes[str(target)] = size
     monkeypatch.setattr(driver_footprint, "file_size_bytes", lambda path: sizes.get(str(path), 0))
     fp = types.ModuleType("folder_paths")
@@ -133,8 +149,9 @@ def _rig(monkeypatch, tmp_path):
     monkeypatch.setitem(sys.modules, "folder_paths", fp)
     from dgx_monarch.adapters import detect
 
-    monkeypatch.setattr(detect, "sniff_checkpoint",
-                        lambda path: ("minimax_h3", KINDS[Path(path).name]))
+    monkeypatch.setattr(detect, "sniff_checkpoint", lambda path: (
+        "moss_image" if Path(path).name.startswith("kromoss") else "minimax_h3",
+        KINDS[Path(path).name]))
     yield
     loader_preflight.reset_memos()
     consent_pending.clear_all()
@@ -162,8 +179,8 @@ def test_one_rank_with_the_upsampler_on_refuses_before_any_load_and_names_what_f
             f"{UPSAMPLER}") in text
     assert (f"If/Else Switch (node {_switch_id(graph)}) set to false would fit too: the "
             f"graph then does not load {UPSAMPLER}.") in text
-    assert ("On a pair of Sparks the uly2+fsdp preset would fit: this box would hold "
-            "20.0 GiB of the DiT") in text
+    assert ("On a pair of Sparks with the Init node's topology set to uly2+fsdp (auto never "
+            "picks it), this box would hold 20.0 GiB of the DiT and the load fits") in text
     assert "Identity Gate PASS on uly2+fsdp first" in text
     assert "Refuses p-h3-image_bf16.safetensors at the load window" in text
     assert "35.6 GiB for the driver models this graph loads before its first render" in text
@@ -208,12 +225,35 @@ def test_an_eager_preset_keeps_the_driver_models_out_of_the_load_window():
         _Mesh("single"), DIT, {}, _template()) is None
 
 
+def test_a_cast_dit_is_priced_at_its_copy_beside_the_graph(monkeypatch):
+    """A cast to fp8 builds a copy half the file; the Worker's stock rung prices
+    that copy beside the host copy at the file's own width (#142), and so do the
+    loader's windows. No twin or shard build is named for a cast, and no slab card."""
+    from dgx_monarch import capacity_fit
+
+    monkeypatch.setattr(capacity_fit, "cast_resident_bytes",
+                        lambda path, dtype, *, lower=False: SIZES[("diffusion_models", DIT)] // 2)
+    fp8 = {"weight_dtype": "fp8_e4m3fn"}
+    # 18.8 + 41.5 + 35.6 + 5.0 = 100.9 GiB fits the cell 9 box.
+    assert loader_preflight.preflight_loader_footprint(_Mesh(), DIT, fp8, _template()) is None
+    loader_preflight.reset_memos()
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 95 * _GIB)
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        loader_preflight.preflight_loader_footprint(_Mesh(), DIT, fp8, _template())
+    text = str(raised.value)
+    assert "needs 100.9 GiB on this box and 95.0 GiB is available, 5.9 GiB short" in text
+    assert "cast to a 18.8 GiB copy of the 37.7 GiB file" in text
+    assert DIT_INT8 not in text and "uly2+fsdp" not in text
+    assert f"{UPSAMPLER_W4A8} (6.3 GiB) in place of {UPSAMPLER}" in text
+    assert consent_pending.pending_cards() == []
+
+
 # --- the pair: Ulysses holds the whole DiT on this box, a shard build half --
 
 def test_on_the_pair_auto_holds_the_whole_dit_here_and_refuses_the_same():
     text = _refuse(_pair(), _template())
     assert "needs 119.8 GiB on this box and 110.8 GiB is available, 9.0 GiB short" in text
-    assert "the uly2+fsdp preset would fit" in text
+    assert "topology set to uly2+fsdp (auto never picks it)" in text
 
 
 def test_on_the_pair_a_declared_shard_build_fits_beside_the_upsampler():
@@ -367,10 +407,30 @@ def test_a_forced_stock_refusal_names_the_gate_not_the_setting(monkeypatch):
             "combination has no Identity Gate PASS for its current state (stale), so the "
             "driver ran this render on stock residency.") in text
     assert ("What would fit: run Identity Gate (DGX Monarch) on this model with "
-            "slab_weights=on where its stock reference fits") in text
+            "slab_weights=on in a graph whose stock reference fits this box, for example with "
+            "an optional driver model such as a prompt upsampler switched off") in text
     assert "set slab_weights=on" not in text and "effective worker args" not in text
     assert parse_refusal_tag(text) is not None
     assert refusal_lead.forced_stock_state() is None, "the note ends with the node call"
+
+
+def test_a_forced_stock_cast_never_names_the_gate(monkeypatch):
+    """Under a cast a slab saves nothing (#142), so the Worker names neither
+    slab_weights=on nor the gate, and the driver's rewording leaves it be."""
+    from dgx_monarch import capacity_fit
+    from dgx_monarch.actor import rescue_offer, store_residency, worker_env
+
+    monkeypatch.setattr(store_residency, "_host", lambda: "head")
+    skipped = capacity_fit.SlabFit(True, False, 0, None, 0, capacity_fit.SKIP_SLAB_DTYPE_CAST)
+    blocker = rescue_offer.rescue_blocker(
+        slab_capable_path=True, lora_low_rss=False, fsdp_launch=False, compile_dit=False,
+        explicit_stock=True, blocked_reason=worker_env.slab_mode_reason({}, {}),
+        slab_fit=skipped)
+    fit = capacity_fit.StockFit(False, True, SIZES[("diffusion_models", DIT)], int(82.1 * _GIB))
+    text = refusal(RefusalClass.CAPACITY, store_residency._no_rescue_text(DIT, fit, blocker),
+                   guard="stock_load_preflight", waivable=False, troubleshooting=53)
+    assert refusal_lead.forced_stock_text(text, "stale") == text
+    assert "Identity Gate" not in text and "set slab_weights=on" not in text
 
 
 def test_without_the_note_the_worker_sentence_is_only_unwrapped(monkeypatch):

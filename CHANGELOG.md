@@ -128,16 +128,29 @@
   ("p-h3-image_bf16.safetensors needs 119.8 GiB on this box and 110.8 GiB is
   available, 9.0 GiB short") and names what would fit: the same model in
   another precision on disk here (the INT8 ConvRot and W4A8 DiT and upsampler
-  files), a switch whose other setting skips a model, and a pair's
-  `uly2+fsdp` preset after an Identity Gate PASS on it. A model only a fixed
-  switch's other branch reaches is no longer charged, so the template with
-  the upsampler switched off loads. MOSS-Image, MOSS-Image Base and Kromoss
-  get the loader's price too, their 19.31 GB encoder included. A refusal a
-  Worker raises at the sampler or the loader now opens the prompt error, card
+  files), a switch whose other setting skips a model, and a pair with the Init
+  node's topology set to `uly2+fsdp`, which `auto` never picks, after an
+  Identity Gate PASS on it. It never names a file the graph would then refuse:
+  no INT8 MOSS-Image file beside a LoRA, no W4A8 file on a `*+fsdp` preset, no
+  file that pins an attention kernel off Ulysses and ring, and no DiT file no
+  graph here names. It also offers the Load with slab residency card, whose
+  render of this graph has no hardware record yet. Models ComfyUI already
+  holds are credited up to their size, where any one held model used to credit
+  the whole stack, so a second graph's upsampler is priced too. On a fresh
+  driver the price errs high: LTX 2.3 text to video now needs 80.9 GiB where
+  it needed 65.8. A model only a fixed switch's other branch reaches, or no
+  output node, is no longer charged, so the template with the upsampler
+  switched off loads. MOSS-Image, MOSS-Image Base and Kromoss
+  get the loader's price too, their 19.31 GB encoder included. A loader
+  `weight_dtype` cast, which used to stand the loader's check down whole, is
+  priced there at the copy the cast builds, the figure the Worker's stock
+  price uses, where the load runs stock. A refusal a
+  Worker raises at the sampler, the loader or Identity Gate now opens the prompt error, card
   sentence included, with the traceback in the log, where the error used to
   begin "Actor call dgxm_worker.sample failed.". With `slab_weights=on` and no
-  Identity Gate PASS the refusal says the driver ran stock for that reason and
-  names the gate, where it used to ask for `slab_weights=on`. The Old model in
+  Identity Gate PASS, after a failed authorization, for a second model or on
+  Fleet KSampler, the refusal says the driver ran stock and why, and names the
+  gate where a PASS would help, where it used to ask for `slab_weights=on`. The Old model in
   the way card's loader text keeps the sentence that turns the preflight off,
   and its no-room sentence quotes the same window and figure as the lead
   ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
@@ -156,6 +169,29 @@
   its own load, names the memory a model loaded earlier left behind and Reset
   attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
   case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
+- A load whose UNET loader casts the weight dtype is now priced before it
+  loads. The capacity checks used to skip a cast, because file size does not
+  say how big the cast copy is, and admit the load with no figure; on
+  2026-11-05 `dgx-monarch-wan22-t2v`, which casts both DiTs to bf16, loaded its
+  second DiT on a head with 12.2 GiB free and only a test watchdog stopped
+  it. The price now reads the file's header for the size of the copy the cast
+  builds and charges it in place of the file, beside the host copy and the
+  floor, so a short box refuses before anything loads and says what would fit.
+  For a cast that keeps the width, as wan22's fp16 to bf16 does, the figure is
+  the one an uncast load gets (60.9 GiB for each wan22 DiT). A cast load offers
+  no slab rescue, since a slab under a cast keeps the cast copy beside the
+  file; `slab_weights=on` refuses a cast it cannot price, and the explicit
+  stock refusal no longer suggests it. An old model held in the way still
+  raises its card, which now credits a cast model the copy its cast built.
+- A load that replaces the stock model in its own slot is now priced after
+  the Worker drops that model, which it always does first. The agreement used
+  to count both copies; with its cast priced, wan22-t2v's stage 2, a swap over
+  stage 1's DiT, would then refuse at 58.7 GiB available on a fresh pair, and
+  each stage of a warm re-queue would ask for a clear. A LoRA change on the
+  same file is the same credit. A model in the other slot, a slab resident and
+  the arena a stock load keeps still count
+  ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 
 ### Compatibility and verification
