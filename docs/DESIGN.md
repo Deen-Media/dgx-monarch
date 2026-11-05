@@ -845,7 +845,8 @@ checks the early return and the fields the load writes.
 
 Render-time model patches are outside both keys. `ModelSpec.model_sampling`
 carries either `None` or a validated canonical wire spec such as
-`{kind: "sd3", shift: 5.0}`. The worker applies that spec to a clone of the
+`{kind: "sd3", shift: 5.0}` or `{kind: "minimax_h3", shift_video: 1.0,
+shift_audio: 1.0}`, each kind with an exact key set. The worker applies that spec to a clone of the
 resident ComfyUI patcher immediately before sampling (and before sigma
 calculation where applicable), so changing a sampling shift neither mutates the
 stored patcher nor causes a checkpoint reload. The coarser gate combination key
@@ -1053,6 +1054,18 @@ Category **"DGX Monarch"**. The node surface is small by design:
   The driver refuses it, class P, on a checkpoint whose ComfyUI configuration
   samples at multiplier 1.0, where the node's multiplier 1000 renders noise
   ([TROUBLESHOOTING #128](TROUBLESHOOTING.md#128-model-sampling-sd3-dgx-monarch-refuses-on-a-family-whose-comfyui-sampling-multiplier-is-10)).
+- `DGXMonarchModelSamplingMiniMaxH3`: stock `MiniMaxH3SigmaShift`'s two
+  widgets (ModelSamplingMiniMaxH3) in stock's order with stock's defaults, on
+  the same wire as the SD3 shift and, like it, outside model residency
+  identity. Each Worker applies ComfyUI's own node to its render clone, which
+  sets the paired video and audio sampling and the two shift keys the H3
+  forward reads. p-h3-image needs it at 1.0 and 1.0. The driver refuses it,
+  class P, on a checkpoint that is not MiniMax H3, and refuses a one-frame H3
+  audio-video latent, the p-h3-image image latent, that no H3 shift reaches,
+  for Fleet KSampler too; each Worker repeats both checks inside its load
+  guard, from the loaded model, where it also refuses a ComfyUI without the
+  stock node
+  ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)).
 - `DGXMonarchSkipLayerGuidance`: stock `SkipLayerGuidanceDiTSimple`'s four
   widgets in stock's order with stock's defaults, kept on the model spec and,
   like the shift, outside model residency identity and outside the Gate
@@ -1950,7 +1963,8 @@ dgx-monarch/
 │   │   ├── gate_verdict.py    # verdict derivation, lever quarantine, publication
 │   │   ├── metrics_route.py   # bounded finite Prometheus projection
 │   │   ├── model_patch_preflight.py # driver refusals for the per-render skip,
-│   │   │                      #   context-window, shift and LoRA patches and
+│   │   │                      #   context-window, shift and LoRA patches,
+│   │   │                      #   the H3 image latent's shift, and
 │   │   │                      #   MOSS-Image reference images and text bias
 │   │   ├── h3_context_windows.py # the node that carries ComfyUI's MiniMax H3
 │   │   │                      #   context windows to the Workers
@@ -1989,6 +2003,8 @@ dgx-monarch/
 │   │   │                      #   its Worker refusal
 │   │   ├── context_windows_render.py # MiniMax H3 context windows on the render
 │   │   │                      #   clone, and the Worker refusals in the load guard
+│   │   ├── model_sampling_render.py # the SD3 or MiniMax H3 shift node on the
+│   │   │                      #   render clone, and the H3 shift's Worker refusals
 │   │   ├── lora_shape_guard.py # the refusal of a LoRA patch that changes a
 │   │   │                      #   weight's shape, before any bake
 │   │   ├── vae_decode.py      # the vae_decode endpoint and the one resident
@@ -2032,6 +2048,8 @@ dgx-monarch/
 │   │                          #   refusal reasons (stdlib leaf)
 │   ├── h3_context_windows.py  # MiniMax H3 context-window wire, refusal reasons,
 │   │                          #   window schedule and row count (stdlib leaf)
+│   ├── h3_sigma_shift.py      # the MiniMax H3 shift node's refusal reasons and
+│   │                          #   the one-frame image latent it guards (stdlib leaf)
 │   ├── error_utils.py         # total diagnostics + cancellation-first composition
 │   ├── retry_policy.py        # bounded retry outcomes without stale diagnostics
 │   ├── actor_lifetime.py      # actor-side reaper (stdlib leaf; watcher installed

@@ -56,6 +56,7 @@ SWAPS: dict[str, str] = {
     "ModelSamplingSD3": "DGXMonarchModelSamplingSD3",
     "SkipLayerGuidanceDiTSimple": "DGXMonarchSkipLayerGuidance",
     "MiniMaxH3ContextWindows": "DGXMonarchMiniMaxH3ContextWindows",
+    "MiniMaxH3SigmaShift": "DGXMonarchModelSamplingMiniMaxH3",
 }
 
 DISPLAY_NAMES: dict[str, str] = {
@@ -65,6 +66,7 @@ DISPLAY_NAMES: dict[str, str] = {
     "DGXMonarchModelSamplingSD3": "Model Sampling SD3 (DGX Monarch)",
     "DGXMonarchSkipLayerGuidance": "Skip Layer Guidance (DGX Monarch)",
     "DGXMonarchMiniMaxH3ContextWindows": "MiniMax H3 Context Windows (DGX Monarch)",
+    "DGXMonarchModelSamplingMiniMaxH3": "ModelSamplingMiniMaxH3 (DGX Monarch)",
     "DGXMonarchKSampler": "KSampler (DGX Monarch)",
     "DGXMonarchKSamplerAdvanced": "KSampler Advanced (DGX Monarch)",
     "DGXMonarchSamplerCustom": "Sampler Custom (DGX Monarch)",

@@ -36,6 +36,9 @@
   "DGXMonarchModelSamplingSD3": {
     "required": [["model", "DGXM_MODEL", null], ["shift", "FLOAT", 3.0]]
   },
+  "DGXMonarchModelSamplingMiniMaxH3": {
+    "required": [["model", "DGXM_MODEL", null], ["shift_video", "FLOAT", 12.0], ["shift_audio", "FLOAT", 3.0]]
+  },
   "DGXMonarchQwenImage21Cache": {
     "required": [["model", "DGXM_MODEL", null], ["device", "COMBO", "off"], ["dtype", "COMBO", "default"]]
   },

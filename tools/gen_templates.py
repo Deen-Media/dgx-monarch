@@ -114,6 +114,13 @@ STOCK = {
     # layout graph keeps its JSON here and wires it to CLIP Text Encode, whose
     # own text box the browser would rewrite on Queue (_moss_template says why).
     "PrimitiveStringMultiline": ["value"],
+    # The p-h3-image graph's V3 nodes. Their autogrow image sockets start
+    # empty, as BerniniConditioning's do, so none is declared below.
+    "PH3ImageConditioning": ["prompt", "width", "height"],
+    "TextGenerateV2": ["prompt", "max_length", "sampling_mode", "thinking",
+                       "use_default_template", "mtp"],
+    "ComfySwitchNode": ["switch"],
+    "PreviewAny": [],
     "TextEncodeMageFlowEdit": ["prompt", "negative_prompt", "width", "height", "batch_size"],
     # The native Qwen Image 2.1 node has two text widgets followed by the
     # reference-image target resolution. `vae` and its autogrowing images are
@@ -233,6 +240,11 @@ STOCK_OUTPUTS = {
     "CLIPLoader": [("CLIP", "CLIP")],
     "CLIPTextEncode": [("CONDITIONING", "CONDITIONING")],
     "PrimitiveStringMultiline": [("STRING", "STRING")],
+    "PH3ImageConditioning": [("positive", "CONDITIONING"), ("LATENT", "LATENT")],
+    "TextGenerateV2": [("generated_text", "STRING"), ("thinking", "STRING")],
+    # A match-type output takes its input's type; this graph switches strings.
+    "ComfySwitchNode": [("output", "STRING")],
+    "PreviewAny": [("STRING", "STRING")],
     "TextEncodeMageFlowEdit": [("positive", "CONDITIONING"),
                                ("negative", "CONDITIONING"), ("latent", "LATENT")],
     "TextEncodeQwenImage21": [("positive", "CONDITIONING"),
@@ -387,6 +399,11 @@ def _connection_inputs(node_type: str) -> list[tuple[str, str]]:
         # Optional slots count: they hold their position in the slot index,
         # so leaving them out would renumber every wire after them.
         return {"CLIPTextEncode": [("clip", "CLIP")],
+                "PH3ImageConditioning": [("clip", "CLIP"), ("vae", "VAE")],
+                # system_prompt is a forced input; the autogrow media sockets start empty.
+                "TextGenerateV2": [("clip", "CLIP"), ("system_prompt", "STRING")],
+                "ComfySwitchNode": [("on_false", "STRING"), ("on_true", "STRING")],
+                "PreviewAny": [("source", "*")],
                 "TextEncodeMageFlowEdit": [("clip", "CLIP"),
                                             ("images.image_1", "IMAGE"),
                                             ("images.image_2", "IMAGE"),
@@ -5641,6 +5658,117 @@ TEMPLATES["dgx-monarch-kromoss-t2i"] = _moss_template(checkpoint="kromoss")
 TEMPLATES["dgx-monarch-kromoss-t2i-turbo"] = _moss_template(checkpoint="kromoss", turbo=True)
 
 
+# p-h3-image (PrunaAI, on MiniMax H3; ComfyUI #17506). ComfyUI builds the DiT
+# as MiniMaxH3, so the H3 adapter runs it. The graph follows the vendor's own
+# text-to-image workflow (PrunaAI/P-H3-Image-Comfy, workflows/): the bf16 files,
+# ModelSamplingMiniMaxH3 at 1.0 and 1.0, the 8-step sigma grid on Manual Sigmas,
+# euler through a Basic Guider at CFG 1, and the prompt upsampler on Generate
+# Text behind an If/Else switch. The canvas is the vendor's 8 MP square.
+P_H3_DIT = {"bf16": "p-h3-image_bf16.safetensors",
+            "int8": "p-h3-image_int8_convrot.safetensors",
+            "w4a8": "p-h3-image_w4a8.safetensors"}
+P_H3_ENCODER = {"bf16": "p-h3-image_text_encoder_bf16.safetensors",
+                "int8": "p-h3-image_text_encoder_int8_convrot.safetensors",
+                "w4a8": "p-h3-image_text_encoder_w4a8.safetensors"}
+# The VAE ships in bf16 and INT8 ConvRot only.
+P_H3_VAE = {"bf16": "p-h3-image_vae_bf16.safetensors",
+            "int8": "p-h3-image_vae_int8_convrot.safetensors"}
+P_H3_UPSAMPLER = "p-h3-image_prompt_upsampler_bf16.safetensors"
+P_H3_SIGMAS = ("1.0, 0.984753, 0.967905, 0.951688, 0.925372, 0.881923, 0.810083, "
+               "0.528718, 0.0")
+# The upsampler reads two lines: the canvas shape, then a short request.
+P_H3_REQUEST = ("Aspect ratio: 1:1\nRequest: a weathered fishing boat pulled up on a "
+                "pebble beach at low tide, coiled ropes and lobster pots beside the hull, "
+                "morning mist over the water, soft overcast light, photographed on medium "
+                "format film")
+
+
+def _p_h3_image_note() -> str:
+    return (
+        "p-h3-image text to image at 2912x2912 (8 MP) in 8 steps on the bf16 DiT, text "
+        "encoder and VAE. ComfyUI builds this DiT as MiniMax H3, so it runs on the "
+        "MiniMax H3 adapter: auto asks for sequence-parallel on a configured pair and "
+        "single on one box, and at CFG 1 through Basic Guider (DGX Monarch) cfg-parallel "
+        "has nothing to split. Write a short request after Request: in the request box "
+        "and keep the Aspect ratio: line equal to the canvas. Generate Text runs the "
+        "prompt upsampler on the driver and turns the request into the full prompt that "
+        "Preview as Text shows. The vendor says the model renders full prompts much "
+        "better than short ones, so keep the upsampler on. The If/Else switch set to false "
+        "sends the box to the model as it is, both lines included, so then keep only the "
+        "request text in the box. ModelSamplingMiniMaxH3 (DGX Monarch) sets both "
+        "MiniMax H3 shifts to 1.0, as the vendor's workflows do; without it the Workers "
+        "would sample at H3's defaults, 12.0 and 3.0, so a one-frame latent with no "
+        "shift node refuses (docs/TROUBLESHOOTING.md #144). The sigmas are the vendor's "
+        "8-step grid, typed into Manual Sigmas; more steps do not help. Other 8 MP "
+        "sizes: 3360x2496 for 4:3, 3552x2368 for 3:2 and 3872x2176 for 16:9, sides "
+        "swapped for portrait, with the Aspect ratio: line to match. For an edit, wire "
+        "images to p-h3-image Conditioning: image_1 is the image to edit and the rest "
+        "are references; edits have no hardware record yet. The driver holds the text "
+        "encoder, the upsampler and the VAE beside a 37.7 GiB DiT. " + GATE + " "
+        "Expects " + P_H3_DIT["bf16"] + " in models/diffusion_models, "
+        + P_H3_ENCODER["bf16"] + " and " + P_H3_UPSAMPLER + " in models/text_encoders, "
+        "and " + P_H3_VAE["bf16"] + " in models/vae. " + DERIVED)
+
+
+def _p_h3_image_template() -> dict:
+    nodes = [
+        {"key": "init", "type": "DGXMonarchInit", "pos": (0, 0),
+         "widgets": {"topology": "auto", "mode": "auto", "auto_gate": "first_use"}},
+        {"key": "note", "type": "Note", "pos": (0, 1), "note": _p_h3_image_note()},
+        {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
+         "widgets": {"unet_name": P_H3_DIT["bf16"], "weight_dtype": "default"},
+         "wire": {"mesh": ("init", 0)}},
+        {"key": "shift", "type": "DGXMonarchModelSamplingMiniMaxH3", "pos": (2, 0),
+         "widgets": {"shift_video": 1.0, "shift_audio": 1.0}, "wire": {"model": ("unet", 0)}},
+        {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
+         "widgets": {"clip_name": P_H3_ENCODER["bf16"], "type": "minimax",
+                     "device": "default"}},
+        {"key": "upclip", "type": "CLIPLoader", "pos": (0, 3),
+         "widgets": {"clip_name": P_H3_UPSAMPLER, "type": "minimax", "device": "default"}},
+        {"key": "vae", "type": "VAELoader", "pos": (0, 4),
+         "widgets": {"vae_name": P_H3_VAE["bf16"]}},
+        {"key": "request", "type": "PrimitiveStringMultiline", "pos": (1, 2),
+         "widgets": {"value": P_H3_REQUEST}},
+        # Greedy decoding with thinking on, as the vendor's workflow runs it, so
+        # one request always gives the same prompt.
+        {"key": "upsample", "type": "TextGenerateV2", "pos": (1, 3),
+         "widgets": {"prompt": "", "max_length": 2048, "sampling_mode": "off",
+                     "thinking": True, "use_default_template": True, "mtp": "auto"},
+         "wire": {"clip": ("upclip", 0), "prompt": ("request", 0)}},
+        {"key": "switch", "type": "ComfySwitchNode", "pos": (2, 2),
+         "widgets": {"switch": True},
+         "wire": {"on_false": ("request", 0), "on_true": ("upsample", 0)}},
+        # Shows the prompt the model gets, beside the text path rather than on
+        # it: an any-typed socket would hide the text from Studio's prompt role.
+        {"key": "preview", "type": "PreviewAny", "pos": (2, 3),
+         "wire": {"source": ("switch", 0)}},
+        {"key": "cond", "type": "PH3ImageConditioning", "pos": (2, 4),
+         "widgets": {"prompt": "", "width": 2912, "height": 2912},
+         "wire": {"clip": ("clip", 0), "vae": ("vae", 0), "prompt": ("switch", 0)}},
+        {"key": "guider", "type": "DGXMonarchBasicGuider", "pos": (3, 0),
+         "wire": {"model": ("shift", 0), "conditioning": ("cond", 0)}},
+        {"key": "sampler", "type": "KSamplerSelect", "pos": (3, 2),
+         "widgets": {"sampler_name": "euler"}},
+        {"key": "noise", "type": "RandomNoise", "pos": (3, 3),
+         "widgets": {"noise_seed": 42}},
+        {"key": "sigmas", "type": "ManualSigmas", "pos": (3, 4),
+         "widgets": {"sigmas": P_H3_SIGMAS}},
+        {"key": "sc", "type": "DGXMonarchSamplerCustom", "pos": (4, 1),
+         "wire": {"noise": ("noise", 0), "guider": ("guider", 0),
+                  "sampler": ("sampler", 0), "sigmas": ("sigmas", 0),
+                  "latent_image": ("cond", 1)}},
+        {"key": "dec", "type": "VAEDecode", "pos": (5, 1),
+         "wire": {"samples": ("sc", 0), "vae": ("vae", 0)}},
+        {"key": "save", "type": "SaveImage", "pos": (6, 1),
+         "widgets": {"filename_prefix": "dgx_monarch_p_h3_image"},
+         "wire": {"images": ("dec", 0)}},
+    ]
+    return {"title": "p-h3-image text to image", "nodes": nodes}
+
+
+TEMPLATES["dgx-monarch-p-h3-image"] = _p_h3_image_template()
+
+
 # dual-spark-split shares FLUX_STACK, whose latent is 1024. Override it here to
 # 1536 so the split has enough tokens to be worth splitting.
 TEMPLATES["dgx-monarch-dual-spark-split"]["nodes"] = [
@@ -6111,6 +6239,12 @@ APP_MODE = {
     "dgx-monarch-moss-image-layout-t2i": _layout({"prompt": ("layout.value",)},
                                                  _NEGATIVE, _LATENT, _KS, _UNET),
     "dgx-monarch-kromoss-t2i": _layout(*_T2I),
+    # The request box feeds the upsampler, so it is the prompt; the size sits
+    # on the conditioning node, which also makes the latent.
+    "dgx-monarch-p-h3-image": _layout(
+        {"prompt": ("request.value",), "seed": ("noise.noise_seed",),
+         "size": ("cond.width", "cond.height"), "sampler": ("sampler.sampler_name",)},
+        _UNET),
     "dgx-monarch-kromoss-t2i-turbo": _layout(*_T2I_ZERO, _LORA),
 }
 if set(APP_MODE) != set(TEMPLATES):
@@ -6245,14 +6379,17 @@ def _testing_spec(base: str, title: str, purpose: str, *,
                   widgets: dict[str, dict] | None = None,
                   rewire: dict[str, dict] | None = None,
                   add: tuple[dict, ...] = (),
-                  lora_after: tuple[str, ...] = ()) -> dict:
+                  lora_after: tuple[str, ...] = (),
+                  lora_strength: float = TEST_LORA_STRENGTH) -> dict:
     """The shipped spec of `base` with five edits: its note replaced, widget
     values overridden per node key, wires replaced per node key, nodes appended
     after the base graph, and a LoRA loader spliced into the model edge of each
     named UNET loader. The splice keeps the chain rule: the loader takes the
     model from the UNET loader, and every node that read that model, appended
-    or not, reads the loader instead. An appended node is an ordinary spec node
-    and names the base keys it reads."""
+    or not, reads the loader instead. A spliced loader holds the placeholder
+    strength unless `lora_strength` names the one the test compares at, which
+    the sweep then keeps (benchmark/sweep/matrix.py GRAPH_LORA_STRENGTH_TEMPLATES).
+    An appended node is an ordinary spec node and names the base keys it reads."""
     base_nodes = TEMPLATES[base]["nodes"]
     overrides = widgets or {}
     rewires = rewire or {}
@@ -6285,7 +6422,7 @@ def _testing_spec(base: str, title: str, purpose: str, *,
         nodes.append({"key": lora_key[unet], "type": "DGXMonarchLoraLoader",
                       "pos": (column, lane + offset),
                       "widgets": {"lora_name": TEST_LORA_NAME,
-                                  "strength_model": TEST_LORA_STRENGTH},
+                                  "strength_model": lora_strength},
                       "wire": {"model": (unet, 0)}})
     return {"title": title, "nodes": nodes}
 
@@ -6508,6 +6645,41 @@ TESTING_TEMPLATES = {
              "wire": {"positive": ("guide", 0), "latent": ("latent", 0),
                       "vae": ("vvae", 0), "image": ("image2", 0)}},
         )),
+    # p-h3-image: the vendor's other two file sets, and ComfyUI's own route,
+    # its LoRA on MiniMax H3's pruned INT8 DiT. Each sends the request to the
+    # model as it is, so a cell measures the DiT and not the prompt upsampler.
+    "dgx-monarch-test-p-h3-image-int8": _testing_spec(
+        "dgx-monarch-p-h3-image", "p-h3-image INT8 ConvRot",
+        "The vendor's INT8 ConvRot DiT, text encoder and VAE, with the upsampler "
+        "switched off. The DiT pins no attention kernel.",
+        widgets={"unet": {"unet_name": P_H3_DIT["int8"]},
+                 "clip": {"clip_name": P_H3_ENCODER["int8"]},
+                 "vae": {"vae_name": P_H3_VAE["int8"]},
+                 "switch": {"switch": False}}),
+    "dgx-monarch-test-p-h3-image-w4a8": _testing_spec(
+        "dgx-monarch-p-h3-image", "p-h3-image W4A8",
+        "The vendor's W4A8 DiT and text encoder beside the INT8 ConvRot VAE, the "
+        "vendor's smallest set, with the upsampler switched off. The DiT stores "
+        "4-bit weights in grouped asym_w4a8_int8 layers and keeps its most "
+        "sensitive layers int8_tensorwise; it reads as w4a8, which FSDP refuses.",
+        widgets={"unet": {"unet_name": P_H3_DIT["w4a8"]},
+                 "clip": {"clip_name": P_H3_ENCODER["w4a8"]},
+                 "vae": {"vae_name": P_H3_VAE["int8"]},
+                 "switch": {"switch": False}}),
+    "dgx-monarch-test-p-h3-image-lora": _testing_spec(
+        "dgx-monarch-p-h3-image", "p-h3-image as a LoRA on MiniMax H3",
+        "ComfyUI's own p-h3-image route: the vendor's LoRA at strength 1.0 on "
+        "MiniMax H3's pruned INT8 ConvRot FL2VA DiT, with the INT8 ConvRot text "
+        "encoder and VAE, and the upsampler switched off. Load LoRA (DGX Monarch) "
+        "bakes the LoRA into the weights, where ComfyUI's template applies it at "
+        "cast time, so this cell is the one that says how far apart the two are. "
+        "Map the slot to p-h3-image_lora_bf16.safetensors. The slot holds 1.0, the "
+        "strength ComfyUI's template uses, and the sweep keeps it.",
+        widgets={"unet": {"unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors"},
+                 "clip": {"clip_name": P_H3_ENCODER["int8"]},
+                 "vae": {"vae_name": P_H3_VAE["int8"]},
+                 "switch": {"switch": False}},
+        lora_after=("unet",), lora_strength=1.0),
     # FLUX.3 Klein: the vendor's quantized files, an odd grid, and a
     # two-reference edit whose streams pad in both phases.
     "dgx-monarch-test-flux3-klein-int8": _testing_spec(

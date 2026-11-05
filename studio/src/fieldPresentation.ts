@@ -19,6 +19,11 @@ type Json = Record<string, any>;
 type Readers = Map<string, Array<{ node: GraphNode; input: string; slot: number }>>;
 const ROLE_NAMES: Record<PromptRole, string> = { prompt: 'Prompt', negative: 'Negative prompt' };
 const SOCKET_ROLES: Record<string, PromptRole> = { positive: 'prompt', negative: 'negative' };
+/** Guiders that sample one conditioning, on an input named `conditioning`: that is the prompt. */
+const ONE_CONDITIONING_GUIDERS = new Set(['BasicGuider', 'DGXMonarchBasicGuider']);
+const socketRole = (node: GraphNode, input: string): PromptRole | undefined =>
+  SOCKET_ROLES[input] ??
+  (input === 'conditioning' && ONE_CONDITIONING_GUIDERS.has(node.type) ? 'prompt' : undefined);
 /** Input names that say the role, for a node whose text reaches both sampler inputs, or neither. */
 const NAMED_ROLES: Record<string, PromptRole> = {
   prompt: 'prompt',
@@ -76,7 +81,8 @@ function reachedRoles(readers: Readers, start: GraphNode): Set<PromptRole> {
       const found = new Set<PromptRole>();
       const next: typeof frontier = [];
       for (const { node, input } of frontier) {
-        if (SOCKET_ROLES[input]) found.add(SOCKET_ROLES[input]);
+        const role = socketRole(node, input);
+        if (role) found.add(role);
         else if (!seen.has(node.key)) {
           seen.add(node.key);
           next.push(...(readers.get(node.key) ?? []));
