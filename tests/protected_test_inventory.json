@@ -880,7 +880,7 @@
       "test_fleet_forces_stock_policy_until_exact_context_pass": "d2084bc3a891e6df",
       "test_fleet_keeps_missing_batch_index_absent": "29d0ad7949f8c15a",
       "test_fleet_omitted_slab_default_and_lookup_error_both_fail_closed": "4ff304b015dba5d4",
-      "test_fleet_preserves_requested_policy_only_for_exact_context_pass": "9c6f8dbbd76744f9",
+      "test_fleet_preserves_requested_policy_only_for_exact_context_pass": "8c9add432eccce4b",
       "test_fleet_primary_survives_first_cleanup_helper_interruption": "6724228a273c4c22",
       "test_fleet_progress_close_preserves_exact_first_baseexception": "663d3054eeee8054",
       "test_fleet_public_entry_keeps_absent_provenance_absent": "39421b4b254dd2d3",

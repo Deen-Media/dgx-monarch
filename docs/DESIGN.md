@@ -319,13 +319,18 @@ transaction.
 Risky single-model normal-render residency is separately authorized for every
 immutable dispatch snapshot. A Gate PASS is only the source of authority: the
 request grant binds the primary model and detailed checkpoint/LoRA artifact
-set, the complete effective worker policy, physical config identity, resolved
-topology and attention, and the selected READY setup generation/key. The
+set, the complete effective worker policy, physical config identity, the
+driver's torch and CUDA build, resolved topology and attention, and the
+selected READY setup generation/key. The
 physical config identity hashes only the `cluster.toml` settings that can
 change math, residency or transport, leaving out `auto_heal`, `ssh_key`,
 `monarch.startup_timeout_s`, `[monarch.diagnostics]` and the driver-only
 `[worker_args]` keys (`config_schema.DRIVER_ONLY_KEYS`)
-(`monarch_policy_io.trust_config_fingerprint`). A Gate
+(`monarch_policy_io.trust_config_fingerprint`). Every capability context also
+names the driver's torch and CUDA build (`gate_runtime.runtime_build_identity`),
+because a PASS proven under one torch says nothing about another; `dgxm doctor`
+holds every Worker host to the driver's torch (section 6.3), so that build is
+the one every rank ran. A Gate
 ceremony proves exactly one model, so dual-model requests are forced onto
 complete stock residency while driver and worker artifact preflight still bind
 both model slots. Driver preflight, worker preflight, and post-adoption checks

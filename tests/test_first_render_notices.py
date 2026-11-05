@@ -160,10 +160,20 @@ def test_gate_start_sentence_carries_the_shape_and_the_escape(sent):
         first_render.reset()
         sent.clear()
         first_render.gate_started(state)
-        assert ("stale or not vouched (a model or LoRA file, the dgx-monarch release or source, or the "
-                "residency, worker, attention, cluster or topology settings changed; the ComfyUI commit "
-                "changed or cannot be read; or the gate ledger holds a damaged line or a non-PASS row "
-                "for this combination)") in sent[0][1]["message"]
+        assert ("stale or not vouched (a model or LoRA file, the dgx-monarch release or source, the "
+                "torch or CUDA build, or the residency, worker, attention, cluster or topology settings "
+                "changed; the ComfyUI commit changed or cannot be read; or the gate ledger holds a "
+                "damaged line or a non-PASS row for this combination)") in sent[0][1]["message"]
+
+
+def test_gate_start_names_a_torch_change_in_place_of_the_general_causes(sent):
+    first_render.gate_started("stale", "proven under torch 2.12.0+cu132 with CUDA 13.2, not under "
+                                       "this driver's torch 2.15.0+cu132 with CUDA 13.2")
+    message = sent[0][1]["message"]
+    assert message.startswith("auto-gate: this model+stack combination is proven under torch "
+                              "2.12.0+cu132 with CUDA 13.2, not under this driver's torch "
+                              "2.15.0+cu132 with CUDA 13.2, so the identity gate runs once now")
+    assert "stale or not vouched" not in message
 
 
 def test_proof_renders_are_counted_and_never_toast(ring, sent):
