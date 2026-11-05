@@ -269,8 +269,11 @@ that cannot run it uses CUTLASS and logs one warning
 ([MODELS.md](MODELS.md#int8-gemm-kernel)).
 
 **Bake / hot-swap.** Baking is merging LoRA math into the weights so renders
-run at full speed. A hot-swap changes the LoRA stack of a loaded model without
-reloading it from scratch.
+run at full speed. Stock ComfyUI's default loader applies a LoRA when a layer
+casts its weight instead, and the Workers bake each weight to the one that cast
+computes, so a LoRA renders as it does in stock ComfyUI, an INT8 file included
+([DESIGN 5.5](DESIGN.md#55-model-store-reuse--lora-hot-swap)). A hot-swap
+changes the LoRA stack of a loaded model without reloading it from scratch.
 
 **Checkpoint.** The model file on disk (`.safetensors`).
 

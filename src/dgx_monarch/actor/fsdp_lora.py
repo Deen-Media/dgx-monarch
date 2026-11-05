@@ -10,9 +10,10 @@ the full patched weight and slice it afterwards. Each rank therefore:
 
 1. reads the pristine full weight from the checkpoint file with one pread (a
    fresh CPU tensor, freed after the key),
-2. runs comfy's own math on it (``comfy.lora.calculate_weight`` in the LoRA
-   compute dtype on ``load_device``, then the key-seeded rounding to the
-   storage dtype, as ``store_bake.bake_key`` does),
+2. runs the bake ``store_bake.bake_key`` runs on it, on ``load_device``:
+   stock's cast-time math where stock has one weight for the key
+   (``actor/lora_cast_time.py``), else comfy's classic merge in the LoRA
+   compute dtype with the key-seeded rounding to the storage dtype,
 3. takes ``torch.chunk(out, world, dim=0)[rank]``, the chunking FSDP2 used at
    wrap time, and copies it into the local shard.
 
@@ -51,6 +52,7 @@ import torch
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
 from ..transfer_utils import failure_summary, safe_call
+from . import lora_cast_time
 from .unbake import UnbakeError, UnbakeRecord, _is_quantized, live_tensor
 from .unbake_file import (
     _ST_TO_TORCH,
@@ -274,13 +276,20 @@ def bake_key(
             "not admitted. Use a resident topology for this file, or a bf16, "
             "fp16, or plain-dtype fp8 checkpoint under FSDP."))
     bake_device = getattr(active, "load_device", None) or local_shard(weight, replicated).device
-    temp = mm.cast_to_device(
-        pristine_full, bake_device, mm.lora_compute_dtype(bake_device), copy=True)
-    out = comfy.lora.calculate_weight(patches, temp, key)
-    out = comfy.float.stochastic_rounding(
-        out, weight.dtype, seed=comfy.utils.string_to_seed(key))
+    # The resident weight is the file tensor cast to the live dtype, as a
+    # restore writes it; both bakes start there, and so does verify_key.
+    pristine = pristine_full.to(dtype=local_shard(weight, replicated).dtype)
+    # Stock's cast-time weight where it has one (#145), else the classic bake.
+    out = lora_cast_time.cast_time_weight(active, key, bake_device, source=pristine)
+    if out is None:
+        temp = mm.cast_to_device(
+            pristine, bake_device, mm.lora_compute_dtype(bake_device), copy=True)
+        out = comfy.lora.calculate_weight(patches, temp, key)
+        out = comfy.float.stochastic_rounding(
+            out, weight.dtype, seed=comfy.utils.string_to_seed(key))
+        del temp
     write_shard(weight, out, rank, world, replicated)
-    del temp, out
+    del out
 
 
 def verify_key(
@@ -296,8 +305,8 @@ def verify_key(
     if not isinstance(sharded, torch.nn.Parameter):
         raise UnbakeError(f"key {key} is not a parameter")
     device = getattr(active, "load_device", None) or local_shard(sharded, replicated).device
-    reference_param = torch.nn.Parameter(
-        pristine_full.to(device=device), requires_grad=False)
+    reference_param = torch.nn.Parameter(pristine_full.to(
+        device=device, dtype=local_shard(sharded, replicated).dtype), requires_grad=False)
     # Park the pristine full weight on the module for comfy's reference
     # computation; the identical DTensor Parameter object goes back afterwards.
     module._parameters[attr] = reference_param

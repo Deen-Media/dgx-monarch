@@ -362,8 +362,8 @@ class ModelStore:
     def _build_active(self, base_patcher, lora_stack: list[dict] | None):
         """Clone the pristine base and apply the lora stack.
 
-        Uses comfy's own lora merge math (fp32 intermediates + stochastic
-        rounding), matching stock semantics (DESIGN.md §5.5). In
+        Each bake of these patches takes stock's cast-time weight where it
+        has one (actor/lora_cast_time.py, DESIGN.md §5.5). In
         low-RSS mode the build is the same; the caller then bakes to GPU
         and frees the backup via _merge_and_free (the residency saving), so the
         rendered weights are identical whether low_rss is on or off.
