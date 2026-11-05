@@ -140,21 +140,25 @@ _GATE_REASON = {
     "inconclusive": "still inconclusive",
 }
 _GATE_STALE = ("stale or not vouched (a model or LoRA file, the dgx-monarch release or "
-               "source, or the residency, worker, attention, cluster or topology "
-               "settings changed; the ComfyUI commit changed or cannot be read; or "
-               "the gate ledger holds a damaged line or a non-PASS row for this "
-               "combination)")
+               "source, the torch or CUDA build, or the residency, worker, attention, "
+               "cluster or topology settings changed; the ComfyUI commit changed or "
+               "cannot be read; or the gate ledger holds a damaged line or a non-PASS "
+               "row for this combination)")
 
 
-def gate_started(state: str) -> None:
-    """Open the identity-check window and announce its additional render steps."""
+def gate_started(state: str, torch_change: str | None = None) -> None:
+    """Open the identity-check window and announce its additional render steps.
+
+    ``torch_change`` (gate_runtime.torch_change) replaces the general list of
+    causes when a PASS differs from this render only in its torch build.
+    """
     _CEREMONY.active = True
     _CEREMONY.proofs = 0
     _tell_tracker("open")
     notice(
         "gate",
         "auto-gate: this model+stack combination is "
-        f"{_GATE_REASON.get(state, _GATE_STALE)}, so the identity gate runs "
+        f"{torch_change or _GATE_REASON.get(state, _GATE_STALE)}, so the identity gate runs "
         "once now: 2-4 short proof renders (3 or 4 under slab residency), then "
         "your render. Later renders of this combination skip the gate. To turn "
         "the gate off, set auto_gate=off on the Init node",

@@ -11,6 +11,7 @@ _CHECKS = {
     "torchmonarch": "monarch_pin",
     "torch CUDA": "torch_cuda",
     "torch version match": "torch_version_match",
+    "actor NCCL backend": "actor_nccl_backend",
     "NCCL_PROTO": "nccl_protocol",
     "NCCL library": "nccl_library",
     "fabric NCCL_PROTO": "fabric_nccl_protocol",

@@ -2848,6 +2848,42 @@ VAE Decode, as the decode check does.
 | ring | topology `ring2` | a window whose packed total is odd refuses class K with the H3 ring-pad text before any block runs; otherwise the render completes with identical latents on both ranks | NOT RUN |
 | an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#142) and no rank waits out the group timeout | NOT RUN |
 
+<a id="torch-2-15"></a>
+
+## torch 2.15
+
+torch 2.15 maps the `nccl` backend name to a new implementation that ends an
+actor at its first process group under ComfyUI's cudaMallocAsync allocator
+([TROUBLESHOOTING #143](TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group)).
+On 2026-11-03 the pair's torch 2.15.0+cu132 ladder passed its first four steps
+and failed that way at the first render of step 5, and both Sparks went back to
+torch 2.12. A one-process check on the head, outside dgx-monarch, then showed
+`TORCH_DIST_USE_NCCL2=0` bringing back the legacy ProcessGroupNCCL under
+cudaMallocAsync: process group creation, an all-reduce, a subgroup, teardown
+and xFuser's model-parallel setup all passed. Every actor now starts with that
+setting, `dgxm doctor` reports it in its `actor NCCL backend` row, and each
+Gate PASS names the driver's torch and CUDA build, so a torch change proves
+each gated combination again on first use. The CPU checks
+(`tests/test_monarch_launch.py`, `tests/test_doctor_actor_nccl_row.py` and
+`tests/test_gate_runtime.py`) pass under torch 2.12.0+cu132 and 2.15.0+cu132.
+No render has run with the setting. The ladder below must run on the pair on
+torch 2.15.0+cu132 with this release on the driver and both Worker hosts, and
+every head row notes the state of the head's clock cap.
+
+| step | what a run must show | status |
+|---|---|---|
+| 1. Switch | both hosts import torch 2.15.0+cu132 from the ComfyUI environment, and both Worker services are active | NOT RUN |
+| 2. Doctor | exit 0 with no FAIL row and no row worse than the torch 2.12 baseline; `actor NCCL backend` ok, naming torch 2.15.0+cu132 and `TORCH_DIST_USE_NCCL2=0`; `torch CUDA`, `torch version match` and both host env rows at 2.15.0+cu132; `NCCL library` at 2.32.3 on both hosts; both `INT8 GEMM` rows ok with Triton | NOT RUN |
+| 3. torch on the GPU | on each host, capability (12, 1), the loaded NCCL at 2.32.3, and a bf16 GEMM and SDPA within NRMS 1e-2 and 2e-2 of fp32 references | NOT RUN |
+| 4. SageAttention | both kernels within NRMS 0.10 and cosine 0.99 of fp32 attention at head dims 128 and 64, all finite, and fp8 quantization with finite positive scales | NOT RUN |
+| 5. INT8 ConvRot | comfy-kitchen's cuda backend on both hosts, then three INT8 renders, by a local actor, by the driver and by both Worker actors on the pair, each logging `INT8 GEMM: Triton kernel on` and no CUTLASS warning; every actor builds its process groups and Worker setup completes | NOT RUN |
+| 6. One GPU on the head | Krea2 Turbo BF16 and fp8_scaled at seed 1031, on the plain and the sage launchers, each within the one-step latent NRMS floor of 0.10 against the torch 2.12 references | NOT RUN |
+| 7. NCCL across the pair | the bench with both rails and `NCCL_P2P_DISABLE` unset: every size reduced correctly, the 1 GiB all-reduce at 90 percent or more of the 2026-10-06 record, and channels on both rails | NOT RUN |
+| 8. Mesh renders on the pair | Krea2 cells on uly2, cfg2 and topology auto with SAGE_AUTO, each within the 0.10 floor against its reference. Each gated cell runs the identity gate once on its first render and writes a PASS whose capability context names torch 2.15.0+cu132; where this release wrote a torch 2.12 PASS for the same combination, the gate notice names both builds; a second render of the cell skips the gate | NOT RUN |
+| 9. MiniMax H3 speed and memory | step 5's pair render within the ladder's bands of the 2026-10-29 record: sampling time, wall time, each actor's GPU peak and each host's lowest available memory | NOT RUN |
+| 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | NOT RUN |
+| 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN |
+
 ## Memory calibration
 
 GB10 host and GPU allocations share one physical pool. A CUDA-allocated

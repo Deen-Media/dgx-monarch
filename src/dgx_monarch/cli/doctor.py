@@ -9,6 +9,7 @@ import socket
 from .. import TORCHMONARCH_PIN
 from ..config import ClusterConfig, format_tcp_address, tcp_endpoint
 from . import (
+    actor_nccl_row,
     doctor_nccl,
     doctor_permissions,
     doctor_probes,
@@ -310,6 +311,7 @@ def _doctor_rows(config: ClusterConfig | None) -> list[dict]:
                              "the venv that runs ComfyUI, run the install with ComfyUI's Python (docs/INSTALL.md)"))
     except Exception as exc:
         rows.append(_row(_FAIL, "torch CUDA", f"torch not importable: {exc!r}"))
+    rows.append(_row(*actor_nccl_row.doctor_row(config)))
 
     # These rows check NCCL_PROTO in the driver env (inherited by local-mode procs) and the
     # fabric profile (applied inside cluster actor procs); the per-host loop below checks the
