@@ -1793,7 +1793,7 @@ and never a slab resident, which barely moves MemAvailable.
 
 **A model in the way offers a clear, not a credit.** A refusal priced over a
 Worker resident names the old model and its box: "the old model (flux1-dev)
-is still loaded on head". The driver then works out what a clear of the
+is still loaded on the head". The driver then works out what a clear of the
 attached mesh, the same teardown as Reset attached mesh, gives back on each
 short box: the file bytes of each stock resident, whose GPU copy an in-process
 drop returned on 2026-11-04, plus the actor's anonymous memory above what it
@@ -1805,8 +1805,8 @@ the price already credited the slot's own resident (the swap credit below), a
 clear is weighed against the uncredited price, the row's figure plus its
 credit, because a cleared box holds no copy to drop, and the refusal says that
 figure is the whole price. When that resident is the only old model on a short
-box, the card gives the memory earlier loads left behind there ("still holds
-about 12.0 GiB that earlier loads left behind") rather than the model, which
+box, the card gives the memory earlier loads left behind there ("the head
+still holds about 12.0 GiB that earlier loads left behind") rather than the model, which
 the price already dropped; a refusal no clear can fix leaves that sentence out. A slab or comfy-managed resident
 and an FSDP shard are credited the arena only. A slot the request reuses, and a model this graph's loader
 nodes load, are neither old nor counted in what a clear gives back: a fresh fleet would only load them
@@ -1818,7 +1818,7 @@ BF16 Wan-Animate 2 actor kept about 34 GiB of anonymous memory after loading
 base and LoRA, and a strength change was refused 14.3 GiB short, while a fresh
 head reads about 95 GiB against the 69.1 GiB a fresh load needs. That slot is
 weighed like any credited one, and the card names the model asked for: "The
-model loaded earlier (wan_animate_2_bf16) holds about 29.6 GiB on head that
+model loaded earlier (wan_animate_2_bf16) holds about 29.6 GiB on the head that
 this change needs." The agreement names only the cond model, so an uncond slot
 keeps the plain rule. A model an earlier sampler of the same graph loaded is
 still old, since
@@ -1842,6 +1842,25 @@ does not fit refuses in the plain words above. A model the load does not
 replace, in another slot, is never credited, because nothing drops it. The Worker's own wall prices after its in-process drop, so it
 names no old model; when the arena it still holds would cover its shortfall,
 its refusal says so and names Reset attached mesh.
+
+**A refusal names a box the way the user does.** The box the driver runs on is
+"the head". With one other box, that box is "the sibling"; with more, each is
+"the sibling at <host name>", so no two read alike. A fleet on the driver's box
+alone, a local fleet or a cluster.toml that lists only that box, is "this box",
+and a box that runs more than one rank names its GPU too ("GPU 1 on the head").
+The head is the `[[hosts]]` entry that resolves to the driver's own machine, the
+check rank 0's co-residency already makes, never the first entry by position;
+when that check cannot resolve the driver's entry, every box reads "the sibling
+at <host name>". One module words it (`box_names.py`). The agreement stamps the
+name on every rank's answer, and the refusals under its guard (its own, and the
+undeliverable-actor refusals that end its wait, `restart_reattach.py`), the Old
+model in the way card, the agreement's log line and the FSDP clean-reload
+refusal take their words from it. So none of those names a box by its rank
+number or by the address cluster.toml gives it. Machine fields keep the host
+name, the address and the rank number for operators and parsers: the attach
+trace, ledger rows, and the warning a reply that names another rank leaves in
+the log. So does a Worker's own refusal: a Worker words no sentence about a
+peer and does not know which box the driver runs on.
 
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate

@@ -19,6 +19,7 @@ from pathlib import Path
 import pytest
 
 from dgx_monarch import (
+    box_names,
     capacity_agreement,
     consent_descriptor,
     consent_pending,
@@ -62,12 +63,12 @@ def _fits(rank: int, box: str) -> RankAnswer:
     row = RankPrice(verdict="fits", rung="stock_fits", priced=True,
                     measured=dict(fit.measured()), would_load="fresh",
                     checkpoint_bytes=0, slot="cond", reason="fits")
-    return RankAnswer(rank, f"host{rank}", (row,), configured_host=box)
+    return RankAnswer(rank, f"host{rank}", (row,), box=box)
 
 
 def _answer(rank: int, *rows: RankPrice, box: str = "") -> RankAnswer:
     return RankAnswer(rank, f"host{rank}", tuple(rows), elapsed_s=0.01,
-                      configured_host=box or ("head" if rank == 0 else "sibling"))
+                      box=box or (box_names.HEAD if rank == 0 else box_names.SIBLING))
 
 
 # Captured before the rig stubs it, so the real wait is tested once.
@@ -115,9 +116,9 @@ def test_a_clear_that_makes_room_raises_the_old_model_refusal():
     short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
     assert 0 < _shortfall_gib(short) < 22.2
     with pytest.raises(old_model.OldModelRefusal) as raised:
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     text = str(raised.value)
-    assert ("The old model (flux1-dev) is still loaded on head and qwen_image_2512_bf16 "
+    assert ("The old model (flux1-dev) is still loaded on the head and qwen_image_2512_bf16 "
             "does not fit beside it.") in text
     assert '"Clear and retry"' in text and '"Old model in the way"' in text
     assert "Reset attached mesh, then queue the render again" in text
@@ -139,9 +140,9 @@ def test_a_cast_load_short_beside_an_old_model_still_offers_the_card():
                     blocker=("the loader casts this checkpoint's weight dtype", "free memory"))
     assert 0 < _shortfall_gib(short) < 22.2 - 2
     with pytest.raises(old_model.OldModelRefusal) as raised:
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     text = str(raised.value)
-    assert "The old model (flux1-dev) is still loaded on head" in text
+    assert "The old model (flux1-dev) is still loaded on the head" in text
     assert "a 13.3 GiB file cast to a 26.6 GiB copy, plus the host copy" in text
     assert '"Clear and retry"' in text
 
@@ -162,23 +163,23 @@ def test_a_credited_swap_weighs_a_clear_against_the_uncredited_price():
     short = _credited_swap(avail_gib=10.0, arena_gib=30.0)
     assert short.measured["required_gib"] == 22.7          # 44.9 less flux1-dev's 22.2
     with pytest.raises(old_model.OldModelRefusal) as raised:
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     text = str(raised.value)
-    assert ("priced a stock load of qwen_image_2512_bf16.safetensors after the Worker drops "
+    assert ("The head priced a stock load of qwen_image_2512_bf16.safetensors after the Worker drops "
             "flux1-dev, which frees at least 22.2 GiB. Beyond that the load needs "
             "22.7 GiB") in text
     assert "does not model the drop" not in text
     offer = old_model.offer_of(raised.value)
-    assert offer is not None and old_model.card_numbers(offer) == "needs 44.9 GiB, 10.0 GiB available on head"
+    assert offer is not None and old_model.card_numbers(offer) == "needs 44.9 GiB, 10.0 GiB available on the head"
 
 
 def test_a_credited_swap_with_no_arena_to_return_says_a_clear_would_not_make_room():
     short = _credited_swap(avail_gib=10.0, arena_gib=0.0)
     with pytest.raises(FleetCapacityError) as raised:
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     assert not isinstance(raised.value, old_model.OldModelRefusal)
     # 10.0 available plus flux1-dev's 22.2 back, less the 2 GiB margin, against 44.9.
-    assert ("A clear would not make room: qwen_image_2512_bf16 needs 44.9 GiB on head, and a "
+    assert ("A clear would not make room: qwen_image_2512_bf16 needs 44.9 GiB on the head, and a "
             "cleared box would have about 30.2 GiB.") in str(raised.value)
 
 
@@ -187,11 +188,12 @@ def test_a_clear_that_would_not_make_room_keeps_the_ordinary_refusal_in_plain_wo
     short = _stock("refuse", size_gib=30.5, avail_gib=25.8)
     assert _shortfall_gib(short) > 22.2
     with pytest.raises(FleetCapacityError) as raised:
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     assert not isinstance(raised.value, old_model.OldModelRefusal)
     text = str(raised.value)
-    assert "The old model (flux1-dev) is still loaded on head" in text
-    assert "A clear would not make room" in text
+    assert "The old model (flux1-dev) is still loaded on the head" in text
+    assert "A clear would not make room: qwen_image_2512_bf16 needs " in text
+    assert " GiB on the head, and a cleared box would have about" in text
     # 25.8 available plus 22.2 back, less the 2 GiB a fresh Worker takes back.
     assert "a cleared box would have about 46.0 GiB" in text
     assert "Choose a smaller or quantized artifact" in text
@@ -202,7 +204,7 @@ def test_the_arena_an_actor_kept_counts_toward_what_a_clear_returns():
     """The head actor held 45.5 GiB RSS beside a 22.2 GiB flux1-dev at 05:08."""
     short = _stock("refuse", size_gib=30.5, avail_gib=25.8, arena_gib=30.0)
     with pytest.raises(old_model.OldModelRefusal):
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
 
 
 def test_a_slab_resident_is_credited_its_arena_only():
@@ -210,11 +212,11 @@ def test_a_slab_resident_is_credited_its_arena_only():
     slab = _stock("refuse", size_gib=9.5, avail_gib=20.6, word="slab", resident_gib=9.5)
     assert 0 < _shortfall_gib(slab) < 9.5
     with pytest.raises(FleetCapacityError) as raised:
-        decide([_answer(0, slab), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, slab), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     assert not isinstance(raised.value, old_model.OldModelRefusal)
     assert old_model.rank_gain(slab) == 0
     with pytest.raises(old_model.OldModelRefusal):
-        decide([_answer(0, replace(slab, arena_bytes=40 * _GIB)), _fits(1, "sibling")], 2)
+        decide([_answer(0, replace(slab, arena_bytes=40 * _GIB)), _fits(1, box_names.SIBLING)], 2)
 
 
 def test_every_short_box_must_gain_room_and_every_old_model_is_named():
@@ -226,13 +228,14 @@ def test_every_short_box_must_gain_room_and_every_old_model_is_named():
         decide([_answer(0, head), _answer(1, sibling)], 2, unet_name=NEW)
     assert not isinstance(raised.value, old_model.OldModelRefusal)
     text = str(raised.value)
-    assert ("The old model (flux1-dev) is still loaded on head, the old model "
-            "(ltx-2.5-22b) on sibling, and qwen_image_2512_bf16 does not fit beside them.") in text
-    assert "on sibling, and a cleared box would have about" in text
+    assert ("The old model (flux1-dev) is still loaded on the head, the old model "
+            "(ltx-2.5-22b) on the sibling, and qwen_image_2512_bf16 does not fit beside them.") in text
+    assert "on the sibling, and a cleared box would have about" in text
     with pytest.raises(old_model.OldModelRefusal) as both:
         decide([_answer(0, head), _answer(1, replace(head, resident_names={
             "cond": OLD, "uncond": None}))], 2, unet_name=NEW)
-    assert "The old model (flux1-dev) is still loaded on head and sibling, and" in str(both.value)
+    assert ("The old model (flux1-dev) is still loaded on the head and the sibling, and"
+            in str(both.value))
 
 
 def test_a_rescue_offer_with_an_old_model_in_the_way_raises_the_clear_card_instead(monkeypatch):
@@ -241,7 +244,7 @@ def test_a_rescue_offer_with_an_old_model_in_the_way_raises_the_clear_card_inste
                     descriptor={"kind": "rescue-slab"})
     handle = types.SimpleNamespace(world=2, workers=object(), active_worker_args={})
     monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: [
-        _answer(0, rescue), _fits(1, "sibling")])
+        _answer(0, rescue), _fits(1, box_names.SIBLING)])
     with pytest.raises(old_model.OldModelRefusal) as raised:
         capacity_agreement.agree_or_refuse(handle, {}, unet_name=NEW)
     assert not isinstance(raised.value, SlabResidencyRescueOffer)
@@ -252,19 +255,19 @@ def test_a_rescue_offer_with_an_old_model_in_the_way_raises_the_clear_card_inste
     assert card["primary"] == {"label": "Clear and retry", "action": "accept"}
     assert card["always"] == "Always clear and retry" and card["runs"] == "recycle"
     assert card["detail"] == (
-        "The old model (flux1-dev) is still loaded on head and qwen_image_2512_bf16 does "
+        "The old model (flux1-dev) is still loaded on the head and qwen_image_2512_bf16 does "
         "not fit beside it. Clear the Sparks and run again?")
-    assert "on head" in card["numbers"]
+    assert card["numbers"].endswith(" GiB available on the head")
 
 
 def test_a_row_from_an_older_worker_keeps_the_held_wording_and_offers_no_card():
     old = replace(_stock("refuse", size_gib=19.0, avail_gib=27.4),
                   resident_names={"cond": None, "uncond": None}, resident_bytes={})
     with pytest.raises(FleetCapacityError) as raised:
-        decide([_answer(0, old), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, old), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     text = str(raised.value)
     assert not isinstance(raised.value, old_model.OldModelRefusal)
-    assert "rank 0 (host host0) holds a stock resident in the cond slot" in text
+    assert "the head holds a stock resident in the cond slot" in text and "host0" not in text
     assert "does not model the drop" in text
 
 
@@ -284,7 +287,7 @@ def test_two_slots_on_one_rank_count_that_rank_once():
 
 def test_a_local_fleet_says_this_box_and_the_log_line_says_what_was_cleared():
     short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
-    local = _answer(0, short, box=capacity_agreement.LOCAL_HOST_NAME)
+    local = _answer(0, short, box=box_names.LOCAL)
     offer = old_model.fleet_offer([(local, short)], [local, replace(local, rank=1)], NEW)
     assert offer is not None and offer.local and offer.helps
     assert old_model.card_body(offer).endswith("on this box and qwen_image_2512_bf16 does "
@@ -293,13 +296,13 @@ def test_a_local_fleet_says_this_box_and_the_log_line_says_what_was_cleared():
         "cleared this box to make room for qwen_image_2512_bf16; flux1-dev was loaded "
         "earlier")
     pair = old_model.fleet_offer([(_answer(0, short), short)],
-                                 [_answer(0, short), _fits(1, "sibling")], NEW)
+                                 [_answer(0, short), _fits(1, box_names.SIBLING)], NEW)
     assert pair is not None
     assert old_model.log_line(pair).startswith("cleared both Sparks to make room for")
 
 
 def test_the_names_the_card_uses_are_the_ones_the_driver_and_the_loader_use():
-    assert old_model.LOCAL_BOX == capacity_agreement.LOCAL_HOST_NAME
+    assert box_names.LOCAL == "this box"
     from dgx_monarch.nodes import loader_preflight
 
     assert old_model.LOADER_GUARD == loader_preflight.LOADER_GUARD
@@ -415,7 +418,7 @@ def test_the_loader_asks_only_a_live_fleet_on_its_own_host(monkeypatch):
 
     def collect(handle, request, world, *, deadline_s):
         asked.append(deadline_s)
-        return [_answer(0, held, box="head"), _answer(1, held, box="sibling")]
+        return [_answer(0, held, box=box_names.HEAD), _answer(1, held, box=box_names.SIBLING)]
 
     monkeypatch.setattr(capacity_agreement, "collect", collect)
     from dgx_monarch import driver_footprint
@@ -427,7 +430,7 @@ def test_the_loader_asks_only_a_live_fleet_on_its_own_host(monkeypatch):
     assert asked == [old_model_clear.LOADER_QUOTE_DEADLINE_S]
     assert offer is not None and offer.helps and not offer.local and offer.hosts == 2
     (box,) = offer.boxes
-    assert box.box == "head" and box.old_models == ("longcat_image_bf16",)
+    assert box.box == "the head" and box.old_models == ("longcat_image_bf16",)
     assert box.gain_bytes == 12 * _GIB            # the sibling's resident is not on this host
     mesh.handle.defunct = True
     assert old_model_clear.loader_offer(mesh, NEW, {}, windows=(_window(45.9, 47.3, 5.0),)) is None
@@ -529,7 +532,7 @@ def test_the_env_var_turns_always_on_headless_and_a_store_fault_reads_off(monkey
 def _card(fleet: object = None) -> dict:
     """A pending card, bound to ``fleet``: an unbound card resets nothing."""
     offer = old_model.ClearOffer(NEW, (old_model.ShortBox(
-        "head", ("flux1-dev",), 45 * _GIB, 27 * _GIB, 22 * _GIB),), 2, False)
+        box_names.HEAD, ("flux1-dev",), 45 * _GIB, 27 * _GIB, 22 * _GIB),), 2, False)
     card = old_model_clear.register_card(offer, old_model.FLEET_GUARD, fleet)
     assert card is not None
     return card
@@ -683,7 +686,7 @@ def test_the_post_route_gives_a_clear_the_recycle_deadline(monkeypatch):
 def _refusal(offer_helps: bool = True) -> BaseException:
     gain = 22 if offer_helps else 1
     offer = old_model.ClearOffer(NEW, (old_model.ShortBox(
-        "head", ("flux1-dev",), 45 * _GIB, 27 * _GIB, gain * _GIB),), 2, False)
+        box_names.HEAD, ("flux1-dev",), 45 * _GIB, 27 * _GIB, gain * _GIB),), 2, False)
     try:
         old_model.raise_fleet_refusal(offer, 1, 2, "priced.")
     except old_model.OldModelRefusal as exc:
@@ -813,7 +816,7 @@ def test_the_loader_clears_once_then_prices_again(monkeypatch):
 
 def _loader_refusal() -> BaseException:
     offer = old_model.ClearOffer(NEW, (old_model.ShortBox(
-        "this box", ("flux1-dev",), 46 * _GIB, 42 * _GIB, 12 * _GIB),), 1, True)
+        box_names.LOCAL, ("flux1-dev",), 46 * _GIB, 42 * _GIB, 12 * _GIB),), 1, True)
     try:
         old_model.raise_loader_refusal(offer, "driver-side footprint preflight refused.")
     except old_model.LoaderOldModelError as exc:
@@ -855,7 +858,7 @@ def test_a_slot_the_request_reuses_is_neither_old_nor_credited():
                             resident_gib=20.0), slot="uncond", would_load="fresh")
     assert 0 < _shortfall_gib(uncond) < 18.0      # would read as room without the fix
     with pytest.raises(FleetCapacityError) as raised:
-        decide([_answer(0, cond, uncond), _fits(1, "sibling")], 2,
+        decide([_answer(0, cond, uncond), _fits(1, box_names.SIBLING)], 2,
                unet_name="ideogram4_unconditional_fp8_scaled.safetensors")
     assert not isinstance(raised.value, old_model.OldModelRefusal)
     assert "ideogram4_fp8_scaled) is still loaded" not in str(raised.value)
@@ -865,12 +868,12 @@ def test_a_model_this_graph_loads_is_never_the_old_model(monkeypatch):
     """Finding 2: names the request or the graph loads, at both agreement doors."""
     short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
     with pytest.raises(FleetCapacityError) as raised:
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW,
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=NEW,
                keep=frozenset({OLD}))
     assert not isinstance(raised.value, old_model.OldModelRefusal)
     handle = types.SimpleNamespace(world=2, workers=object(), active_worker_args={})
     monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: [
-        _answer(0, short), _fits(1, "sibling")])
+        _answer(0, short), _fits(1, box_names.SIBLING)])
     with pytest.raises(FleetCapacityError) as eager:          # the uncond loader
         capacity_agreement.agree_load(handle, NEW, {}, [], "uncond", keep={OLD, NEW})
     assert not isinstance(eager.value, old_model.OldModelRefusal)
@@ -906,7 +909,7 @@ def test_a_card_never_resets_a_fleet_that_came_later(monkeypatch):
 
     first, later = _LiveHandle(), _LiveHandle()
     offer = old_model.ClearOffer(NEW, (old_model.ShortBox(
-        "head", ("flux1-dev",), 45 * _GIB, 27 * _GIB, 22 * _GIB),), 2, False)
+        box_names.HEAD, ("flux1-dev",), 45 * _GIB, 27 * _GIB, 22 * _GIB),), 2, False)
     card = old_model_clear.register_card(offer, old_model.FLEET_GUARD, first)
     assert card is not None
     monkeypatch.setattr(mesh, "_MESHES", {"key": later})
@@ -929,7 +932,7 @@ def test_the_agreement_binds_its_card_to_the_fleet_that_refused(monkeypatch):
     handle = types.SimpleNamespace(world=2, workers=object(), active_worker_args={})
     short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
     monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: [
-        _answer(0, short), _fits(1, "sibling")])
+        _answer(0, short), _fits(1, box_names.SIBLING)])
     with pytest.raises(old_model.OldModelRefusal) as raised:
         capacity_agreement.agree_or_refuse(handle, {}, unet_name=NEW)
     assert raised.value.fleet is handle
@@ -967,8 +970,8 @@ def test_a_shard_is_credited_its_arena_only_and_a_cast_the_copy_it_built(monkeyp
 def test_a_clear_must_beat_the_shortfall_by_a_margin():
     """Finding 4: a fresh Worker takes some memory back on its first load."""
     assert old_model.CLEAR_MARGIN_BYTES == actor_footprint.RESET_MARGIN_BYTES == 2 * _GIB
-    tight = old_model.ShortBox("head", ("old",), 10 * _GIB, 0, 11 * _GIB)
-    roomy = old_model.ShortBox("head", ("old",), 10 * _GIB, 0, 13 * _GIB)
+    tight = old_model.ShortBox(box_names.HEAD, ("old",), 10 * _GIB, 0, 11 * _GIB)
+    roomy = old_model.ShortBox(box_names.HEAD, ("old",), 10 * _GIB, 0, 13 * _GIB)
     assert not tight.clear_makes_room and roomy.clear_makes_room
     assert tight.cleared_bytes == 9 * _GIB
 
@@ -1254,14 +1257,15 @@ def test_the_refusals_read_plainly():
     """Finding 9: whole sentences, one name per box, and a next step every time."""
     short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
     with pytest.raises(old_model.OldModelRefusal) as raised:
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     text = str(raised.value)
     assert "1 of 2 cannot hold it beside the model loaded there earlier" in text
     assert "earlier render" not in text
-    assert "rank 0 on head priced a stock load" in text and "(host host0)" not in text
+    assert "The head priced a stock load" in text
+    assert "host0" not in text and "rank 0" not in text
     with pytest.raises(FleetCapacityError) as plain:
         decide([_answer(0, replace(short, arena_bytes=0, resident_bytes={})),
-                _fits(1, "sibling")], 2, unet_name=NEW)
+                _fits(1, box_names.SIBLING)], 2, unet_name=NEW)
     assert "Choose a smaller or quantized artifact" in str(plain.value)
 
 
@@ -1270,12 +1274,12 @@ def test_no_card_means_the_remedy_names_only_the_reset(monkeypatch):
     missing = "not_on_this_driver.safetensors"
     short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
     with pytest.raises(old_model.OldModelRefusal) as raised:
-        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=missing)
+        decide([_answer(0, short), _fits(1, box_names.SIBLING)], 2, unet_name=missing)
     text = str(raised.value)
     assert "Open the DGX Monarch panel and click Reset attached mesh, then queue" in text
     assert '"Clear and retry"' not in text and "DGXM_ALLOW_CLEAR_RETRY=1" in text
     offer = old_model.ClearOffer(missing, (old_model.ShortBox(
-        "this box", ("flux1-dev",), 46 * _GIB, 42 * _GIB, 12 * _GIB),), 1, True)
+        box_names.LOCAL, ("flux1-dev",), 46 * _GIB, 42 * _GIB, 12 * _GIB),), 1, True)
     with pytest.raises(old_model.LoaderOldModelError) as loader:
         old_model_clear.refuse_at_loader(offer, "refused.")
     assert '"Clear and retry"' not in str(loader.value)

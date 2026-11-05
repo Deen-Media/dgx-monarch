@@ -9,8 +9,9 @@ the uncredited price, because a cleared box holds no copy to drop. A LoRA change
 on the held file is the same credit (``changes_in_place``). A clear of
 the attached mesh, the same teardown as Reset attached mesh, returns all of it.
 This module decides whether a clear would make room and writes the plain
-sentences such a refusal carries. ``nodes/old_model_clear.py`` owns the card,
-the clear and the Always flow.
+sentences such a refusal carries, naming each box by ``box_names.py``'s rule
+("the head", "the sibling"). ``nodes/old_model_clear.py`` owns the card, the
+clear and the Always flow.
 
 A clear would make room on a short box when its shortfall is smaller than what
 the clear gives back there: the file bytes of every stock resident, whose GPU
@@ -31,6 +32,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
+from . import box_names
 from .capacity_fit import gib, hot_swap_sentence, stock_second_term
 from .driver_footprint import DriverFootprintCapacityError
 from .mesh_safety import StockLoadCapacityError
@@ -44,8 +46,6 @@ CARD_TITLE = "Old model in the way"
 CLEAR_LABEL = "Clear and retry"
 ALWAYS_LABEL = "Always clear and retry"
 CLEAR_ENV = "DGXM_ALLOW_CLEAR_RETRY"
-# What the driver calls its own box when no cluster config names one.
-LOCAL_BOX = "this box"
 # The one residency whose drop was measured to return its file size in-process.
 CREDITED_RESIDENCY = "stock"
 _NOT_A_RESIDENT = frozenset({"in_flight"})
@@ -158,11 +158,8 @@ def display_name(unet_name: str) -> str:
 
 
 def box_name(answer: RankAnswer) -> str:
-    """The driver's own name for a rank's box, as its other refusals use it."""
-    configured = getattr(answer, "configured_host", "") or ""
-    if configured == LOCAL_BOX:
-        return LOCAL_BOX
-    return configured or getattr(answer, "host", "") or f"rank {answer.rank}"
+    """A rank's box in plain words, as the agreement stamped it (box_names.py)."""
+    return getattr(answer, "box", "") or box_names.UNLISTED
 
 
 def kept_slots(quotes: Sequence[RankPrice], keep: frozenset[str] = frozenset()) -> frozenset[str]:
@@ -327,8 +324,7 @@ def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
         boxes[name] = ShortBox(name, olds, required, available, gain, dropped, left)
     if not any(box.old_models for box in boxes.values()):
         return None
-    local = bool(answers) and all(
-        getattr(answer, "configured_host", "") == LOCAL_BOX for answer in answers)
+    local = bool(answers) and all(box_name(answer) == box_names.LOCAL for answer in answers)
     hosts = 1 if local else len({box_name(answer) for answer in answers}) or 1
     return ClearOffer(unet_name, tuple(boxes.values()), hosts, local)
 
@@ -364,8 +360,8 @@ def held_sentence(offer: ClearOffer) -> str:
                     "change needs.")
         held = [f"{box.box} {'still holds ' if not index else ''}about {gib(box.left_bytes)} GiB"
                 for index, box in enumerate(box for box in offer.boxes if box.old_models)]
-        return (f"{_join(held)} that earlier loads left behind, and {offer.new_model} does "
-                "not fit beside it.")
+        return (f"{box_names.opening(_join(held))} that earlier loads left behind, and "
+                f"{offer.new_model} does not fit beside it.")
     parts = [f"({_join(names)}) is still loaded on {_join(where)}"
              if not index else f"the old model ({_join(names)}) on {_join(where)}"
              for index, (names, where) in enumerate(groups.items())]
@@ -379,11 +375,9 @@ def held_sentence(offer: ClearOffer) -> str:
 
 
 def scope_words(offer: ClearOffer, *, cleared: bool) -> str:
-    """'this box', 'the Sparks', or after a clear 'both Sparks'."""
-    if offer.local:
-        return LOCAL_BOX
-    if offer.hosts == 1:
-        return "the Spark"
+    """The one box by name ('the head'), 'the Sparks', or after a clear 'both Sparks'."""
+    if offer.local or offer.hosts == 1:
+        return offer.boxes[0].box if offer.boxes else box_names.LOCAL
     if cleared:
         return "both Sparks" if offer.hosts == 2 else f"all {offer.hosts} Sparks"
     return "the Sparks"
@@ -442,11 +436,6 @@ def card_numbers(offer: ClearOffer) -> str:
     box = max(offer.boxes, key=lambda item: item.shortfall_bytes)
     return (f"needs {gib(box.required_bytes)} GiB, {gib(box.available_bytes)} GiB "
             f"available on {box.box}")
-
-
-def where(answer: RankAnswer) -> str:
-    """A rank by the box name the held sentence uses: 'rank 0 on head'."""
-    return f"rank {answer.rank} on {box_name(answer)}"
 
 
 def held_clause(pairs: Sequence[tuple[RankAnswer, RankPrice]],

@@ -22,6 +22,14 @@ those actors and their models; it does not stop the persistent Worker
 services. When a render is split across GPUs, the mesh actors do the work and
 the driver orchestrates them.
 
+**The head and the sibling.** On a pair of boxes, the head is the box the
+driver runs on and the sibling is the other one. The capacity refusals, the Old
+model in the way card and the capacity agreement's log line name a box this
+way, never by rank number or by its address in cluster.toml. With more than two
+boxes, each other box is "the sibling at" its host name; a fleet on the
+driver's box alone is "this box". Other messages, such as a Worker's own
+refusal, may still name a host.
+
 **Render session.** One logical unit of active render work holding the
 Attached mesh, including pending results and identity-gate proof renders. A
 Render session can block a reset or update even between visible denoising
@@ -205,7 +213,7 @@ refusal may still say "the old model (<name>) is still loaded" and offer
 **Clear and retry**, which runs this reset; **Always clear and retry** lets
 the driver run it for you. A LoRA change on a large model held with its LoRA
 can meet the same card when the host copy that LoRA keeps holds the memory:
-"The model loaded earlier (<name>) holds about <N> GiB on <box> that this
+"The model loaded earlier (<name>) holds about <N> GiB on the head that this
 change needs. Clear the Sparks and run again?"
 
 ## Trust words

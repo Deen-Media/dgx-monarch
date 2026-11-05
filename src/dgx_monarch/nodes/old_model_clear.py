@@ -329,7 +329,9 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
         kept = old_model.kept_slots(answer.quotes, kept_names)
         names.extend(old_model.old_models(answer.quotes[0], kept))
         gain += old_model.rank_gain(answer.quotes[0], kept)
-    box = old_model.LOCAL_BOX if local else old_model.box_name(mine[0])
+    # The agreement named the box (box_names.py): rank 0 shares the driver
+    # host here, so it is the head, or this box on a local fleet.
+    box = old_model.box_name(mine[0])
     required = int(worst.projected) + int(worst.reserve)
     return old_model.box_offer(
         unet_name, old_model.ShortBox(box, tuple(dict.fromkeys(names)), required,

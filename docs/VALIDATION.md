@@ -2025,7 +2025,7 @@ The ring2 cell with the LoRA rendered its cold and warm legs in both of two
 sessions and refused its probe leg class C both times: the cross-rank
 capacity agreement priced the one-step re-load while rank 0 on the driver host
 still held the resident it would replace
-([#93](TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)),
+([#93](TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)),
 so that cell carries no fidelity reading. On 2026-10-28 the four-Spark owner
 published their world-4 probe frames and per-frame NRMS in
 [issue #100](https://github.com/Deen-Media/dgx-monarch/issues/100): uly4

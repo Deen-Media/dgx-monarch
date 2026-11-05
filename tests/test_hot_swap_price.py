@@ -17,7 +17,7 @@ import types
 
 import pytest
 
-from dgx_monarch import capacity_agreement, capacity_fit, mesh_safety
+from dgx_monarch import box_names, capacity_agreement, capacity_fit, mesh_safety
 from dgx_monarch.actor import capacity_quote as cq
 from dgx_monarch.actor import store_bake, worker_capacity
 from dgx_monarch.capacity_agreement import RankAnswer
@@ -113,9 +113,9 @@ def test_a_credited_price_that_still_falls_short_says_what_it_charged():
         holds_resident={"cond": "stock", "uncond": None},
         checkpoint_bytes=BF16_BYTES, slot="cond")
     text = capacity_agreement._priced_sentence(
-        RankAnswer(0, "box0", (quote,)), quote, BASE)
+        RankAnswer(0, "box0", (quote,), box=box_names.HEAD), quote, BASE)
     assert text == (
-        f"rank 0 (host box0) priced a LoRA change on {BASE}: the change needs 38.6 GiB "
+        f"The head priced a LoRA change on {BASE}: the change needs 38.6 GiB "
         "beside the 30.5 GiB copy of this file the Worker already holds, room for a host "
         "copy of the weights its LoRA stack changes and the floor. Only 30.0 GiB of "
         "unified memory is available, 8.6 GiB short.")
@@ -183,9 +183,9 @@ def test_the_worker_quote_credits_the_base_its_own_store_holds(monkeypatch, tmp_
     assert reloaded["verdict"] == "fits" and reloaded["measured"]["credit_bytes"] == BF16_BYTES
 
 
-def test_a_credited_sentence_names_its_box_the_way_the_caller_asks():
-    """The old-model card passes its own name for the box; every branch of the
-    sentence, the credited one included, must use it."""
+def test_a_credited_sentence_names_its_box_in_plain_words():
+    """Every branch of the sentence, the credited one included, names the box
+    the way the rest of the refusal does (box_names.py), never by host."""
     fit = StockFit(False, True, BF16_BYTES, int(30.0 * _GIB), credit_bytes=BF16_BYTES)
     quote = cq.RankPrice(
         verdict=cq.VERDICT_REFUSE, rung=cq.RUNG_EXPLICIT_STOCK, priced=True,
@@ -193,6 +193,6 @@ def test_a_credited_sentence_names_its_box_the_way_the_caller_asks():
         holds_resident={"cond": "stock", "uncond": None},
         checkpoint_bytes=BF16_BYTES, slot="cond")
     text = capacity_agreement._priced_sentence(
-        RankAnswer(0, "box0", (quote,)), quote, BASE, "rank 0 on the head")
-    assert text.startswith(f"rank 0 on the head priced a LoRA change on {BASE}:")
-    assert "box0" not in text
+        RankAnswer(1, "box1", (quote,), box=box_names.SIBLING), quote, BASE)
+    assert text.startswith(f"The sibling priced a LoRA change on {BASE}:")
+    assert "box1" not in text and "rank" not in text
