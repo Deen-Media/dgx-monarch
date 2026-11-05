@@ -943,7 +943,7 @@ sampling-spec drift fails closed.
   an operational cancellation outranks ordinary failures, with the first error
   retained within the same class. Production does not recycle automatically,
   unless the user has ticked Always clear and retry or set
-  `DGXM_ALLOW_CLEAR_RETRY` and a model an earlier render loaded is in the way
+  `DGXM_ALLOW_CLEAR_RETRY` and a model loaded earlier is in the way
   of a load (section 5.9, "A model in the way offers a clear"). Otherwise,
   after work retirement the client/operator must explicitly recycle the
   ProcMesh.
@@ -1648,8 +1648,8 @@ the baked hot-swap residency keeps ComfyUI's sample-time load, and the
 partially.
 
 **Slab capacity refusals offer no slab consent card.** Slab is the final
-residency option; consent cannot resolve its memory shortfall. A model an
-earlier render left in the way is another matter: when a clear would make
+residency option; consent cannot resolve its memory shortfall. A model
+loaded earlier and still in the way is another matter: when a clear would make
 room, the slab refusal offers the Old model in the way card below, because the
 fix is a reset, not a consent.
 
@@ -1685,8 +1685,11 @@ short box: the file bytes of each stock resident, whose GPU copy an in-process
 drop returned on 2026-11-04, plus the actor's anonymous memory above what it
 held at its first load (`actor/actor_footprint.py`). A slab or comfy-managed
 resident, an FSDP shard and a load cast to another weight dtype are credited
-the arena only. A slot the request reuses, and a model this graph loads, are
-neither old nor credited: a fresh fleet would only load them again. Only when
+the arena only. A slot the request reuses, and a model this graph's loader
+nodes load, are neither old nor credited: a fresh fleet would only load them
+again. A model an earlier sampler of the same graph loaded is still old, since
+the later sampler fits on a fresh fleet, so the card and the log say "loaded
+earlier", not "an earlier render". Only when
 every short box is short by less than that, with 2 GiB to spare for what a
 fresh Worker takes back, does the refusal become "Old model in the way"
 (`old_model.py`), at the agreement and at the loader windows. The loader asks

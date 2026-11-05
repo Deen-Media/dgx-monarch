@@ -1,4 +1,4 @@
-"""The "Old model in the way" refusal: a model an earlier render loaded blocks this one.
+"""The "Old model in the way" refusal: a model loaded earlier blocks this one.
 
 Both capacity prices that see a Worker's resident take it as still held
 (docs/DESIGN.md section 5.9): the cross-rank agreement's quote and the loader
@@ -21,7 +21,7 @@ import os
 from collections.abc import Iterable, Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
 
 from .capacity_fit import gib
@@ -92,6 +92,9 @@ class ClearOffer:
     boxes: tuple[ShortBox, ...]
     hosts: int
     local: bool
+    # The attached mesh the facts came from, which a card and an Always clear
+    # reset and no other; the agreement binds its own after the raise.
+    fleet: Any = field(default=None, compare=False, repr=False)
 
     @property
     def new_model(self) -> str:
@@ -114,9 +117,9 @@ class OldModelRefusal(StockLoadCapacityError):
     def __init__(self, message: str, offer: ClearOffer | None = None) -> None:
         super().__init__(message)
         self.offer = offer
-        # The attached mesh that refused, bound by the raising site's caller,
-        # so a card never resets a fleet that came later (old_model_clear.py).
-        self.fleet: Any = None
+        # The attached mesh that refused: the offer's, or bound by the raising
+        # site's caller, so a card never resets a fleet that came later.
+        self.fleet: Any = getattr(offer, "fleet", None)
 
 
 class LoaderOldModelError(DriverFootprintCapacityError, OldModelRefusal):
@@ -250,11 +253,12 @@ def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
     return ClearOffer(unet_name, tuple(boxes.values()), hosts, local)
 
 
-def box_offer(unet_name: str, box: ShortBox, *, hosts: int, local: bool) -> ClearOffer | None:
+def box_offer(unet_name: str, box: ShortBox, *, hosts: int, local: bool,
+              fleet: Any = None) -> ClearOffer | None:
     """The one-box offer the loader preflight makes for the driver host."""
     if not box.old_models:
         return None
-    return ClearOffer(unet_name, (box,), max(int(hosts), 1), bool(local))
+    return ClearOffer(unet_name, (box,), max(int(hosts), 1), bool(local), fleet)
 
 
 def _join(items: Sequence[str]) -> str:
@@ -323,10 +327,13 @@ def no_room(offer: ClearOffer) -> str:
 
 
 def log_line(offer: ClearOffer) -> str:
-    """'cleared both Sparks to make room for <new>; <old> was loaded from an earlier render'."""
+    """'cleared both Sparks to make room for <new>; <old> was loaded earlier'.
+
+    "Earlier", not "an earlier render": on the sample path the old model can be
+    one an earlier sampler of the same graph loaded.
+    """
     olds = list(dict.fromkeys(name for box in offer.boxes for name in box.old_models))
-    were = ("was loaded from an earlier render" if len(olds) == 1
-            else "were loaded from earlier renders")
+    were = "was loaded earlier" if len(olds) == 1 else "were loaded earlier"
     return (f"cleared {scope_words(offer, cleared=True)} to make room for {offer.new_model}; "
             f"{_join(olds) if olds else 'the old model'} {were}")
 
@@ -365,7 +372,7 @@ def raise_fleet_refusal(offer: ClearOffer, short_ranks: int, world: int,
     raise OldModelRefusal(refusal(
         RefusalClass.CAPACITY,
         f"this render needs every rank to hold the model and {short_ranks} of {world} "
-        "cannot hold it beside the model an earlier render left there, so nothing was "
+        "cannot hold it beside the model loaded there earlier, so nothing was "
         f"loaded on any rank. {priced} {held_sentence(offer)} {remedy(offer, card=card)} "
         "This refusal is "
         "capacity-protective (class C), and nothing was quarantined.",

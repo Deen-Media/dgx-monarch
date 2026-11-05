@@ -148,19 +148,22 @@ def rescue_blocker(fit: SlabFit, *, fsdp_lever: bool = False) -> tuple[str, str]
 
 
 def admit(fit: SlabFit, unet_name: str, host: str, *,
-          reserve_bytes: int | None = None, fsdp_lever: bool = False) -> None:
+          reserve_bytes: int | None = None, fsdp_lever: bool = False,
+          tail: str = "") -> None:
     """Admit a fitting or skipped slab probe; otherwise raise its capacity refusal.
 
     A skipped probe has no evidence of insufficient capacity and follows the
     same admission rule as ``store_residency.preload_capacity_check``. Both slab
-    load checks share this function, guard, and error text.
+    load checks share this function, guard, and error text. ``tail`` is the
+    ladder's sentence about memory an earlier load left in this Worker
+    (``actor_footprint.ladder_clause``).
     """
     if not fit.applies or fit.fits:
         return
     raise StockLoadCapacityError(
         refusal(RefusalClass.CAPACITY,
                 card(fit, unet_name, host, reserve_bytes=reserve_bytes,
-                     fsdp_lever=fsdp_lever),
+                     fsdp_lever=fsdp_lever) + tail,
                 guard=GUARD, waivable=False, troubleshooting=_TROUBLESHOOTING)
         + _measured_tail(fit))
 

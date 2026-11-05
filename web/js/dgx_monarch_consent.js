@@ -298,7 +298,7 @@ function toggleNode(model) {
     }));
     wrap.appendChild(standingToggle(AUTO_CLEAR_KEY, "auto_clear", {
         checked: model.autoClear, busy: model.autoClearBusy, env: model.autoClearEnv,
-        title: "When a model an earlier render loaded is in the way of the next one, reset the "
+        title: "When a model loaded earlier is in the way of the next one, reset the "
             + "attached mesh and run again without asking, once per load. The load is priced "
             + "again on the fresh Workers and still refuses if it does not fit.",
         text: "Always clear and retry (old model in the way)",

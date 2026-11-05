@@ -539,7 +539,7 @@ def preflight_loader_footprint(
         if clear is not None and clear.helps:
             old_model_clear.refuse_at_loader(clear, loader_refusal(
                 binding, terms, unet_name=unet_name, profile=profile, floor_reserve=floor_reserve,
-                rescue=None, window=window, bypass=False), mesh.handle)
+                rescue=None, window=window, bypass=False))
         message = loader_refusal(
             binding, terms, unet_name=unet_name, profile=profile,
             floor_reserve=floor_reserve, rescue=rescue, window=window)

@@ -19,7 +19,6 @@ retry once; the retry sits outside the catch, so a second refusal is plain.
 from __future__ import annotations
 
 import os
-import threading
 import time
 from collections.abc import Callable, Iterable
 from typing import Any, NoReturn
@@ -46,11 +45,6 @@ LOADER_QUOTE_DEADLINE_S = 10.0
 NOTHING_TO_CLEAR = "Nothing was loaded any more; queue the render again."
 GONE = "The old model is no longer loaded; queue the render again."
 
-# Process lifetime, as long as the pending cards it describes: card key to
-# (the attached mesh that refused, the offer). A reset answers every card, so
-# drop_cards empties it; an entry with no live card is never read.
-_CARDS: dict[str, tuple[Any, old_model.ClearOffer]] = {}
-_CARDS_LOCK = threading.Lock()
 
 
 def cleared(offer: old_model.ClearOffer | None) -> str:
@@ -99,6 +93,7 @@ def register_card(offer: old_model.ClearOffer, guard: str,
             log.warning("no Old model in the way card for %s: this driver cannot "
                         "resolve it in its own model folders", offer.unet_name)
             return None
+        fleet = offer.fleet if fleet is None else fleet
         card = consent_pending.register_pending({
             "kind": KIND_CLEAR_RETRY, "path": path,
             "memo_context": {"unet_name": offer.unet_name},
@@ -106,9 +101,11 @@ def register_card(offer: old_model.ClearOffer, guard: str,
             "target_guard": guard, "numbers": old_model.card_numbers(offer),
             "detail": old_model.card_body(offer),
         })
-        if card is not None:
-            with _CARDS_LOCK:
-                _CARDS[str(card["key"])] = (fleet, offer)
+        entry = (consent_pending.peek_pending(str(card["key"]), str(card["id"]))
+                 if card is not None else None)
+        if entry is not None:
+            # On the pending entry, so the binding goes wherever the card goes.
+            entry.binding = (fleet, offer)
         return card
     except Exception as exc:
         log.warning("Old model in the way card not raised for %s (%r)", offer.unet_name, exc)
@@ -126,15 +123,32 @@ def observe(exc: BaseException) -> dict[str, Any] | None:
 
 
 def drop_cards() -> int:
-    """Take every open card of this kind: a reset just answered them."""
+    """Take every open card of this kind: a reset just answered them.
+
+    Each card's fleet binding lives on its pending entry and goes with it, as
+    it does on a dismissal, an expiry or the card limit.
+    """
     dropped = 0
     for card in consent_pending.pending_cards():
         if card.get("kind") == KIND_CLEAR_RETRY and consent_pending.take_pending(
                 str(card["key"]), str(card["id"])) is not None:
             dropped += 1
-    with _CARDS_LOCK:
-        _CARDS.clear()
     return dropped
+
+
+def _binding(key: str, pending_id: str) -> tuple[Any, old_model.ClearOffer | None]:
+    """The fleet and offer a pending card is bound to, read with the card itself."""
+    entry = consent_pending.peek_pending(key, pending_id)
+    binding = getattr(entry, "binding", None) if entry is not None else None
+    return binding if isinstance(binding, tuple) and len(binding) == 2 else (None, None)
+
+
+def bound_fleet(key: str) -> Any:
+    """The fleet the open card with this key would reset, or None."""
+    for card in consent_pending.pending_cards():
+        if str(card["key"]) == key:
+            return _binding(key, str(card["id"]))[0]
+    return None
 
 
 def is_clear_card(key: object, pending_id: object) -> bool:
@@ -164,27 +178,34 @@ def accept(key: str, pending_id: str, body: dict[str, Any],
            source: str = "panel") -> tuple[int, dict[str, Any]]:
     """Clear and retry: the recycle route's own teardown, under its single-flight gate.
 
-    Only the fleet that refused is reset. When the attached mesh changed since
-    the card was raised, the old model went with it, so the card is answered
-    and nothing is reset.
+    Only the fleet that refused is reset. When that fleet is no longer
+    attached, or the card carries no binding to one, the old model is not
+    known to be there, so the card is answered and nothing is reset.
     """
     from . import routes
 
     if not is_clear_card(key, pending_id):
         return 409, {"ok": False,
                      "detail": "no pending card for that request; queue the render again"}
-    with _CARDS_LOCK:
-        fleet, offer = _CARDS.get(key, (None, None))
+    fleet, offer = _binding(key, pending_id)
     always = body.get("always") is True
     if always:
         status, payload = set_always(True, source, answer_cards=False)
         if status != 200:
             return status, payload
+    if fleet is None:
+        consent_pending.take_pending(key, pending_id)
+        return 200, {"ok": True, "cleared": False, "always": always, "detail": GONE}
     if not routes._begin_recycle_request():
         return 429, {"ok": False, "detail": ("another reset of the Sparks is running or "
                                              "just finished; wait, then click again")}
     try:
-        result, status = recycle_drain.recycle_attached_mesh(only=fleet)
+        # Read again under the gate: a toggle or a reset may have answered the
+        # card meanwhile, and an answered card resets nothing.
+        if _binding(key, pending_id)[0] is not fleet:
+            result, status = {"ok": False, "status": "fleet_changed"}, 200
+        else:
+            result, status = recycle_drain.recycle_attached_mesh(only=fleet)
     finally:
         routes.invalidate_telemetry_caches()
         routes._finish_recycle_request()
@@ -193,8 +214,6 @@ def accept(key: str, pending_id: str, body: dict[str, Any],
         return status, {"ok": False, "recycle": result,
                         "detail": f"the Sparks were not cleared: {result.get('detail')}"}
     consent_pending.take_pending(key, pending_id)
-    with _CARDS_LOCK:
-        _CARDS.pop(key, None)
     detail = (cleared(offer) if result.get("ok") else
               GONE if outcome == "fleet_changed" else NOTHING_TO_CLEAR)
     log.info("Clear and retry from the %s: %s", source, result.get("detail"))
@@ -223,15 +242,19 @@ def clear_for_retry(handle: Any, exc: BaseException, *, inherited: bool = False)
     Never under a session pinned to its mesh (a Pipeline or Gate render owns
     it), never for a refusal a clear would not answer, and never when the
     reset route's single-flight gate is taken or the reset is refused: then
-    the caller re-raises the original refusal. The open cards go first, so no
-    click can start a second reset of this fleet or of the one that follows.
+    the caller re-raises the original refusal, and the card it names stays
+    open. A reset that runs answers every card through
+    ``recycle_drain.drop_residency_memos`` before the gate opens again, and a
+    click on a card after that meets its fleet binding and resets nothing.
     """
     from . import routes
 
     offer = old_model.offer_of(exc)
+    # The fleet the refusal came from: a cached MeshSpec may still hold a
+    # retired handle while a fresh fleet served this load.
+    handle = getattr(exc, "fleet", None) or handle
     if offer is None or inherited or handle is None or not always_on():
         return False
-    drop_cards()
     if not routes._begin_recycle_request():
         log.warning("Always clear and retry found another reset running; the refusal stands")
         return False
@@ -274,7 +297,9 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     from .. import capacity_agreement, driver_footprint
 
     worst = _worst(windows)
-    handle = getattr(mesh, "handle", None)
+    # The fleet attached now: after a clear, the MeshSpec the Init node cached
+    # still holds the retired handle while a fresh fleet serves the loads.
+    handle = recycle_drain.attached_fleet(getattr(mesh, "handle", None))
     if (worst is None or handle is None or getattr(handle, "defunct", False)
             or getattr(handle, "setup_key", None) is None
             or getattr(handle, "workers", None) is None
@@ -309,12 +334,15 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     return old_model.box_offer(
         unet_name, old_model.ShortBox(box, tuple(dict.fromkeys(names)), required,
                                       int(worst.mem_available), gain),
-        hosts=1 if local else len(hosts), local=local)
+        hosts=1 if local else len(hosts), local=local, fleet=handle)
 
 
-def refuse_at_loader(offer: old_model.ClearOffer, message: str, fleet: Any = None) -> NoReturn:
-    """Raise the card and the loader's refusal when a clear would make room."""
-    card = register_card(offer, old_model.LOADER_GUARD, fleet)
+def refuse_at_loader(offer: old_model.ClearOffer, message: str) -> NoReturn:
+    """Raise the card and the loader's refusal when a clear would make room.
+
+    Both are bound to the fleet the facts came from (``offer.fleet``).
+    """
+    card = register_card(offer, old_model.LOADER_GUARD)
     old_model.raise_loader_refusal(offer, message, card=card is not None)
 
 

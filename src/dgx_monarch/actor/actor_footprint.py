@@ -66,7 +66,7 @@ def arena_bytes(path: str = STATUS_PATH) -> int:
 
 
 def ladder_clause(required: int, available: int | None) -> str:
-    """The Worker ladder's sentence about memory an earlier render left here.
+    """The Worker ladder's sentence about memory an earlier load left here.
 
     The ladder prices after its own in-process drop, so the old model is gone
     by then and only its arena stays (a Fleet job and a one-GPU fleet meet
@@ -79,9 +79,17 @@ def ladder_clause(required: int, available: int | None) -> str:
     arena = arena_bytes()
     if short <= 0 or short + RESET_MARGIN_BYTES >= arena:
         return ""
-    return (f" This Worker still holds about {arena / (1 << 30):.1f} GiB that a model from "
-            "an earlier render left behind, and a reset gives it back: click Reset attached "
+    return (f" This Worker still holds about {arena / (1 << 30):.1f} GiB that a model "
+            "loaded earlier left behind, and a reset gives it back: click Reset attached "
             "mesh in the DGX Monarch panel, then queue the render again.")
+
+
+def block_clause(block: Any) -> str:
+    """``ladder_clause`` from a quote block's own figures, or nothing."""
+    try:
+        return ladder_clause(int(block["required_bytes"]), block.get("mem_available_bytes"))
+    except (KeyError, TypeError, ValueError, AttributeError):
+        return ""
 
 
 def forget() -> None:

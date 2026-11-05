@@ -44,30 +44,61 @@ def recycle_and_drain(handle: Any) -> Any:
     return outcome
 
 
+def _retired(handle: Any) -> bool:
+    return bool(getattr(handle, "defunct", False) or getattr(handle, "teardown_complete", False))
+
+
+def attached_fleet(handle: Any) -> Any:
+    """The live mesh attached now for this handle's config, or None; spawns nothing.
+
+    A MeshSpec the Init node cached keeps the handle it was built with, so
+    after a reset its handle is retired while a fresh fleet on the same config
+    serves the loads. The old-model card must ask, and bind to, that fleet.
+    """
+    if handle is None or not _retired(handle):
+        return handle
+    from ..mesh import _MESH_LOCK, _MESHES
+
+    config = getattr(handle, "config", None)
+    with _MESH_LOCK:
+        attached = list(_MESHES.values())
+    for each in attached:
+        other = getattr(each, "config", None)
+        if (not _retired(each) and getattr(other, "source", None) == getattr(config, "source", None)
+                and bool(getattr(other, "hosts", ())) == bool(getattr(config, "hosts", ()))):
+            return each
+    return None
+
+
 def recycle_attached_mesh(only: Any = None) -> tuple[dict[str, Any], int]:
     """Reset the attached mesh, as POST /dgxm/recycle does; (payload, HTTP status).
 
-    ``only`` is the fleet a card was raised against: when another fleet is
-    attached now, nothing is reset and the status says the fleet changed.
+    ``only`` is the fleet a card was raised against, found among every attached
+    mesh: when it is not attached any more, nothing is reset and the status
+    says the fleet changed.
     """
     from ..mesh import _MESH_LOCK, _MESHES
 
     with _MESH_LOCK:  # snapshot under lock; recycle is idempotent anyway
-        handle = next(iter(_MESHES.values()), None)
-    if handle is None:
+        attached = list(_MESHES.values())
+    if not attached:
         return ({
             "ok": False,
             "status": "no_live_mesh",
             "retryable": False,
             "detail": "no attached mesh to reset; worker services are unchanged",
         }, 200)
-    if only is not None and (handle is not only or getattr(handle, "defunct", False)):
-        return ({
-            "ok": False,
-            "status": "fleet_changed",
-            "retryable": False,
-            "detail": "the attached mesh changed since the card was raised; nothing was reset",
-        }, 200)
+    handle = attached[0]
+    if only is not None:
+        if not any(each is only for each in attached) or _retired(only):
+            return ({
+                "ok": False,
+                "status": "fleet_changed",
+                "retryable": False,
+                "detail": "the mesh the card was raised against is no longer attached; "
+                          "nothing was reset",
+            }, 200)
+        handle = only
     outcome = recycle_and_drain(handle)
     status = 200 if outcome.ok else (409 if outcome.retryable else 503)
     return outcome.as_dict(), status

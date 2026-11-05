@@ -2098,7 +2098,7 @@ checkpoint the process loads. Slab is currently the only eligible kind, so
 enabled toggle checked and disabled; unset the variable and restart the driver
 to change it. Automatic rescue never grants an accuracy waiver.
 
-**Old model in the way:** when a model an earlier render loaded still holds the
+**Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every
 short box, the refusal says "the old model (<name>) is still loaded on <box>"
 and the card is titled Old model in the way. Its Clear and retry button resets
@@ -2112,7 +2112,7 @@ the old model. A card resets only the attached mesh that refused: if that mesh
 is gone, the click answers the card and resets nothing, and any reset answers
 every open card. A one-GPU fleet or a Fleet job, whose Worker prices its own
 load after unloading the old model, says instead that the Worker still holds
-memory a model from an earlier render left behind, and names Reset attached
+memory a model loaded earlier left behind, and names Reset attached
 mesh. Headless, set `DGXM_ALLOW_CLEAR_RETRY=1` on the driver before
 ComfyUI starts for the Always behavior, or accept the pending card:
 

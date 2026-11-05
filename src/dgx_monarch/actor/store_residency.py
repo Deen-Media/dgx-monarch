@@ -148,8 +148,8 @@ def resolve(
         # card. A raise here would take the bare branch below, which drops the
         # managed card's staging cause, fixes and entry pointer.
         if row.use_slab and slab_fit is not None:
-            store_slab_admit.admit(slab_fit, unet_name, _host(),
-                                   reserve_bytes=reserve_bytes)
+            store_slab_admit.admit(slab_fit, unet_name, _host(), reserve_bytes=reserve_bytes,
+                                   tail=actor_footprint.block_clause(row.slab_measured))
         if row.blocker is not None and fit is not None:
             raise StockLoadCapacityError(refusal(
                 RefusalClass.CAPACITY, _no_rescue_text(unet_name, fit, row.blocker),
@@ -159,7 +159,7 @@ def resolve(
         # re-raises it under the same class and guard, so the operator meets one
         # refusal with one boundary named, not an echo of another module's tag.
         raise StockLoadCapacityError(refusal(
-            RefusalClass.CAPACITY, untagged(row.reason),
+            RefusalClass.CAPACITY, untagged(row.reason) + actor_footprint.block_clause(row.measured),
             guard=RESCUE_GUARD, waivable=False))
     if row.verdict == capacity_quote.VERDICT_RESCUE and fit is not None:
         raise SlabResidencyRescueOffer(refusal(

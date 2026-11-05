@@ -118,7 +118,7 @@
   names other text boxes by their node. The prompt box starts taller and grows
   with its text, an empty negative prompt waits behind Add negative prompt on
   Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
-- A load that does not fit because a model an earlier render loaded is still
+- A load that does not fit because a model loaded earlier is still
   held now says so: "the old model (<name>) is still loaded on <box>". When a
   clear of the attached mesh would make room on every short box, the panel
   raises an Old model in the way card whose Clear and retry runs the same reset
@@ -129,7 +129,7 @@
   load is priced again on the fresh Workers. Both the cross-rank agreement and
   the loader's own check raise it, and the agreement's slab rescue card now
   names a held model too. A one-GPU fleet or a Fleet job, whose Worker prices
-  its own load, names the memory an earlier render left behind and Reset
+  its own load, names the memory a model loaded earlier left behind and Reset
   attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
   case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).

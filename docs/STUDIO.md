@@ -1221,7 +1221,7 @@ The classes are those of
 P physics, C capacity-protective, U unproven correctness and K known-wrong math.
 Any other message shows its error code and its first sentence. When the message
 names the driver's panel and headless remedy, the status line shows it. When a
-model an earlier render loaded is in the way, the message says which old model
+model loaded earlier is in the way, the message says which old model
 is still loaded on which box, and its remedy names the ComfyUI panel's Old
 model in the way card and its Clear and retry button, or Reset attached mesh,
 then queue again. Studio has no control for either, so clear the attached mesh

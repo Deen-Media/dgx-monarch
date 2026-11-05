@@ -238,7 +238,7 @@ def test_a_local_fleet_says_this_box_and_the_log_line_says_what_was_cleared():
                                                "not fit beside it. Clear this box and run again?")
     assert old_model.log_line(offer) == (
         "cleared this box to make room for qwen_image_2512_bf16; flux1-dev was loaded "
-        "from an earlier render")
+        "earlier")
     pair = old_model.fleet_offer([(_answer(0, short), short)],
                                  [_answer(0, short), _fits(1, "sibling")], NEW)
     assert pair is not None
@@ -472,10 +472,11 @@ def test_the_env_var_turns_always_on_headless_and_a_store_fault_reads_off(monkey
 
 # The consent route.
 
-def _card() -> dict:
+def _card(fleet: object = None) -> dict:
+    """A pending card, bound to ``fleet``: an unbound card resets nothing."""
     offer = old_model.ClearOffer(NEW, (old_model.ShortBox(
         "head", ("flux1-dev",), 45 * _GIB, 27 * _GIB, 22 * _GIB),), 2, False)
-    card = old_model_clear.register_card(offer, old_model.FLEET_GUARD)
+    card = old_model_clear.register_card(offer, old_model.FLEET_GUARD, fleet)
     assert card is not None
     return card
 
@@ -512,7 +513,7 @@ def test_the_state_lists_the_card_and_the_toggle_without_a_quarantine_read(monke
 
 
 def test_accept_clears_the_attached_mesh_and_saves_nothing(attached):
-    card = _card()
+    card = _card(attached)
     status, payload = consent_routes.handle_action(
         {"action": "accept", "key": card["key"], "id": card["id"]})
     assert status == 200 and payload["ok"] and payload["cleared"]
@@ -526,7 +527,7 @@ def test_accept_clears_the_attached_mesh_and_saves_nothing(attached):
 
 
 def test_accept_with_always_saves_the_toggle_too(attached):
-    card = _card()
+    card = _card(attached)
     status, payload = consent_routes.handle_action(
         {"action": "accept", "key": card["key"], "id": card["id"], "always": True})
     assert status == 200 and payload["always"] is True
@@ -534,7 +535,7 @@ def test_accept_with_always_saves_the_toggle_too(attached):
 
 
 def test_a_refused_reset_keeps_the_card_open(attached):
-    card = _card()
+    card = _card(attached)
     attached.recycle_detailed = lambda: types.SimpleNamespace(
         ok=False, retryable=True, as_dict=lambda: {
             "ok": False, "status": "active_work", "retryable": True, "detail": "busy"})
@@ -551,7 +552,7 @@ def test_no_attached_mesh_means_nothing_to_clear(monkeypatch):
     monkeypatch.setattr(mesh, "_MESHES", {})
     monkeypatch.setattr(routes, "_RECYCLE_RATE", {"active": False,
                                                  "last_finished": float("-inf")})
-    card = _card()
+    card = _card(_LiveHandle())
     status, payload = consent_routes.handle_action(
         {"action": "accept", "key": card["key"], "id": card["id"]})
     assert status == 200 and payload["cleared"] is False
@@ -563,7 +564,7 @@ def test_a_reset_already_running_answers_429(attached, monkeypatch):
 
     monkeypatch.setattr(routes, "_RECYCLE_RATE", {"active": True,
                                                  "last_finished": float("-inf")})
-    card = _card()
+    card = _card(attached)
     status, _payload = consent_routes.handle_action(
         {"action": "accept", "key": card["key"], "id": card["id"]})
     assert status == 429 and attached.recycles == 0
@@ -638,17 +639,15 @@ def _refusal(offer_helps: bool = True) -> BaseException:
 
 def test_always_clears_once_and_says_so(monkeypatch, caplog):
     handle = _LiveHandle()
-    drained: list[int] = []
-    monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: drained.append(1))
     assert old_model_clear.clear_for_retry(handle, _refusal()) is False   # off
     consent_store.set_standing("auto_clear", True)
-    _card()
+    _card(handle)
     with caplog.at_level("INFO"):
         assert old_model_clear.clear_for_retry(handle, _refusal()) is True
-    assert handle.recycles == 1 and drained == [1]
-    assert consent_pending.pending_cards() == []
+    assert handle.recycles == 1
+    assert consent_pending.pending_cards() == []         # the reset's drain answered it
     assert ("cleared both Sparks to make room for qwen_image_2512_bf16; flux1-dev was "
-            "loaded from an earlier render") in caplog.text
+            "loaded earlier") in caplog.text
 
 
 def test_always_never_clears_a_pinned_session_a_refusal_it_cannot_answer_or_a_busy_mesh(
@@ -840,11 +839,11 @@ def test_a_model_this_graph_loads_is_never_the_old_model(monkeypatch):
 
 def test_every_reset_answers_the_open_cards(monkeypatch):
     """Finding 3: a manual reset, a heal or an eviction all drain through here."""
-    _card()
+    card_key = _card(_LiveHandle())["key"]
     assert consent_pending.pending_cards()
     recycle_drain.drop_residency_memos()
     assert consent_pending.pending_cards() == []
-    assert old_model_clear._CARDS == {}
+    assert old_model_clear.bound_fleet(card_key) is None
 
 
 def test_a_card_never_resets_a_fleet_that_came_later(monkeypatch):
@@ -881,7 +880,7 @@ def test_the_agreement_binds_its_card_to_the_fleet_that_refused(monkeypatch):
         capacity_agreement.agree_or_refuse(handle, {}, unet_name=NEW)
     assert raised.value.fleet is handle
     (card,) = consent_pending.pending_cards()
-    assert old_model_clear._CARDS[card["key"]][0] is handle
+    assert old_model_clear.bound_fleet(card["key"]) is handle
 
 
 def test_a_shard_or_a_cast_is_credited_its_arena_only(monkeypatch):
@@ -920,8 +919,8 @@ def test_the_worker_wall_names_the_arena_an_earlier_render_left(monkeypatch):
     fit = StockFit(False, True, 10 * _GIB, 20 * _GIB)
     assert 0 < fit.required_bytes - fit.avail_bytes < 20 * _GIB
     monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: 30 * _GIB)
-    expected = ("This Worker still holds about 30.0 GiB that a model from an earlier render "
-                "left behind, and a reset gives it back: click Reset attached mesh in the DGX "
+    expected = ("This Worker still holds about 30.0 GiB that a model loaded earlier left "
+                "behind, and a reset gives it back: click Reset attached mesh in the DGX "
                 "Monarch panel, then queue the render again.")
     assert expected in store_residency._no_rescue_text(OLD, fit, ("why", "a smaller file"))
     offer = types.SimpleNamespace(unet_name=OLD)
@@ -1018,13 +1017,13 @@ def test_the_loader_never_clears_under_a_pinned_session(monkeypatch):
     assert old.recycles == 0
 
 
-def test_always_answers_the_cards_then_takes_the_reset_gate(monkeypatch):
-    """Finding 8: no click can start a second reset beside the Always one."""
+def test_always_takes_the_reset_gate_and_its_drain_answers_the_cards(monkeypatch):
+    """Finding 8 and N1: the reset holds the gate, and its own drain takes the cards."""
     from dgx_monarch.nodes import routes
 
     consent_store.set_standing("auto_clear", True)
-    _card()
     handle = _LiveHandle()
+    _card(handle)
     seen: list[int] = []
     real = handle.recycle_detailed
 
@@ -1035,12 +1034,159 @@ def test_always_answers_the_cards_then_takes_the_reset_gate(monkeypatch):
 
     handle.recycle_detailed = recycle
     assert old_model_clear.clear_for_retry(handle, _refusal()) is True
-    assert seen == [0] and routes._RECYCLE_RATE["active"] is False
+    assert seen == [1]                    # open until the reset runs, then drained
+    assert consent_pending.pending_cards() == [] and routes._RECYCLE_RATE["active"] is False
+
+
+def test_a_gated_or_refused_always_clear_leaves_the_card_open(monkeypatch):
+    """N1: the refusal that is re-raised still points at the card, so it stays."""
+    from dgx_monarch.nodes import routes
+
+    consent_store.set_standing("auto_clear", True)
+    gated = _LiveHandle()
+    card = _card(gated)
     monkeypatch.setattr(routes, "_RECYCLE_RATE", {"active": True,
                                                  "last_finished": float("-inf")})
-    other = _LiveHandle()
-    assert old_model_clear.clear_for_retry(other, _refusal()) is False
-    assert other.recycles == 0
+    assert old_model_clear.clear_for_retry(gated, _refusal()) is False
+    assert gated.recycles == 0
+    assert [c["id"] for c in consent_pending.pending_cards()] == [card["id"]]
+    assert old_model_clear.bound_fleet(card["key"]) is gated     # binding kept too
+    monkeypatch.setattr(routes, "_RECYCLE_RATE", {"active": False,
+                                                 "last_finished": float("-inf")})
+    gated.recycle_detailed = lambda: types.SimpleNamespace(
+        ok=False, status=types.SimpleNamespace(value="lifecycle_busy"), detail="busy")
+    assert old_model_clear.clear_for_retry(gated, _refusal()) is False
+    assert [c["id"] for c in consent_pending.pending_cards()] == [card["id"]]
+
+
+def test_a_card_with_no_binding_resets_nothing(attached):
+    """Residual 3a: no known fleet means the old model is not known to be there."""
+    card = _card()
+    status, payload = consent_routes.handle_action(
+        {"action": "accept", "key": card["key"], "id": card["id"]})
+    assert status == 200 and payload["cleared"] is False
+    assert payload["detail"] == old_model_clear.GONE and attached.recycles == 0
+    assert consent_pending.pending_cards() == []
+
+
+def test_a_card_answered_after_its_binding_was_read_resets_nothing(attached, monkeypatch):
+    """Bot finding B2: the card and its binding are read again under the reset gate."""
+    from dgx_monarch.nodes import routes
+
+    card = _card(attached)
+    real_begin = routes._begin_recycle_request
+
+    def begin_after_a_toggle():
+        # Always clear and retry turned on between the first read and the gate.
+        consent_routes.handle_action({"action": "auto_clear", "value": True})
+        return real_begin()
+
+    monkeypatch.setattr(routes, "_begin_recycle_request", begin_after_a_toggle)
+    status, payload = consent_routes.handle_action(
+        {"action": "accept", "key": card["key"], "id": card["id"]})
+    assert status == 200 and payload["cleared"] is False
+    assert payload["detail"] == old_model_clear.GONE and attached.recycles == 0
+
+
+def test_a_removed_card_keeps_no_hold_on_its_fleet(monkeypatch):
+    """Bot finding B3: dismissal and expiry drop the binding with the card."""
+    import gc
+    import weakref
+
+    fleet = _LiveHandle()
+    alive = weakref.ref(fleet)
+    card = _card(fleet)
+    assert old_model_clear.bound_fleet(card["key"]) is fleet
+    status, _payload = consent_routes.handle_action(
+        {"action": "dismiss", "key": card["key"], "id": card["id"]})
+    assert status == 200 and old_model_clear.bound_fleet(card["key"]) is None
+    del fleet
+    gc.collect()
+    assert alive() is None                      # nothing else held the fleet
+    expiring = _LiveHandle()
+    alive = weakref.ref(expiring)
+    card = _card(expiring)
+    del expiring
+    monkeypatch.setattr(consent_pending, "PENDING_TTL_S", -1.0)
+    assert consent_pending.pending_cards() == []           # the read expires it
+    gc.collect()
+    assert alive() is None and old_model_clear.bound_fleet(card["key"]) is None
+
+
+def test_after_a_clear_a_later_loader_refusal_binds_the_fresh_fleet(monkeypatch, tmp_path):
+    """Bot finding B1: the cached MeshSpec holds the retired fleet; the fresh one answers."""
+    from dgx_monarch import mesh
+    from dgx_monarch.nodes import loader_preflight
+
+    cached = _loader_rig(monkeypatch, tmp_path, held_gib=12.0)
+    retired = cached.handle
+    retired.defunct = True                      # what a Clear and retry leaves behind
+    fresh = _LiveHandle()
+    asked: list[object] = []
+    held = _stock("fits", size_gib=1.0, avail_gib=200.0, resident_gib=12.0,
+                  resident="longcat_image_bf16.safetensors")
+
+    def collect(handle, *_args, **_kwargs):
+        asked.append(handle)
+        return [_answer(0, held, box="this box")]
+
+    monkeypatch.setattr(capacity_agreement, "collect", collect)
+    monkeypatch.setattr(mesh, "_MESHES", {"key": fresh})
+    with pytest.raises(old_model.LoaderOldModelError) as raised:
+        loader_preflight.preflight_loader_footprint(cached, NEW, {}, None)
+    assert asked == [fresh] and raised.value.fleet is fresh
+    (card,) = consent_pending.pending_cards()
+    assert old_model_clear.bound_fleet(card["key"]) is fresh
+    consent_store.set_standing("auto_clear", True)
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: None)
+    assert old_model_clear.clear_for_retry(cached.handle, raised.value) is True
+    assert fresh.recycles == 1 and retired.recycles == 0
+    monkeypatch.setattr(mesh, "_MESHES", {})            # nothing attached: no question asked
+    assert old_model_clear.loader_offer(cached, NEW, {},
+                                        windows=(_window(45.9, 47.3, 5.0),)) is None
+
+
+def test_a_card_for_the_second_attached_mesh_resets_that_mesh(monkeypatch):
+    """Residual 3b: the bound fleet is found among every attached mesh."""
+    from dgx_monarch import mesh
+
+    first, second = _LiveHandle(), _LiveHandle()
+    monkeypatch.setattr(mesh, "_MESHES", {"a": first, "b": second})
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: None)
+    card = _card(second)
+    status, payload = consent_routes.handle_action(
+        {"action": "accept", "key": card["key"], "id": card["id"]})
+    assert status == 200 and payload["cleared"] is True
+    assert second.recycles == 1 and first.recycles == 0
+
+
+def test_the_worker_walls_for_slab_and_shards_name_the_arena_too(monkeypatch):
+    """Residual 5: the ladder's slab refusal and its FSDP refusal carry the sentence."""
+    from dgx_monarch import capacity_fit
+    from dgx_monarch.actor import store_residency
+
+    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: 40 * _GIB)
+    slab = capacity_fit.SlabFit(False, True, 10 * _GIB, 5 * _GIB, 4 * _GIB)
+    shard = capacity_fit.preflight_wall_measured(10 * _GIB, 5 * _GIB, 20 * _GIB, False)
+    rows = [
+        RankPrice(verdict="refuse", rung="explicit", use_slab=True, priced=True,
+                  slab_measured=dict(slab.measured()), checkpoint_bytes=10 * _GIB,
+                  reason="slab_weights=on was requested"),
+        RankPrice(verdict="refuse", rung="stock_fits", priced=True, measured=shard,
+                  checkpoint_bytes=10 * _GIB, reason="the shard build does not fit here"),
+    ]
+    for row in rows:
+        monkeypatch.setattr(capacity_quote, "price", lambda _row=row, **_kw: _row)
+        with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
+            store_residency.resolve(
+                path="/m/x.safetensors", unet_name=OLD, model_options={},
+                slab_weights=True, slab_capable_path=True, lora_low_rss=False,
+                fsdp_launch=False, blocked_reason="", authoritative_slab_retry=False,
+                memoized_family=lambda _path: None, vouched_families=frozenset())
+        assert ("This Worker still holds about 40.0 GiB that a model loaded earlier left "
+                "behind") in str(raised.value)
+        assert "Reset attached mesh in the DGX Monarch panel" in str(raised.value)
+    assert actor_footprint.block_clause(None) == ""
 
 
 def test_the_refusals_read_plainly():
@@ -1049,7 +1195,8 @@ def test_the_refusals_read_plainly():
     with pytest.raises(old_model.OldModelRefusal) as raised:
         decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
     text = str(raised.value)
-    assert "1 of 2 cannot hold it beside the model an earlier render left there" in text
+    assert "1 of 2 cannot hold it beside the model loaded there earlier" in text
+    assert "earlier render" not in text
     assert "rank 0 on head priced a stock load" in text and "(host host0)" not in text
     with pytest.raises(FleetCapacityError) as plain:
         decide([_answer(0, replace(short, arena_bytes=0, resident_bytes={})),
@@ -1077,8 +1224,8 @@ def test_no_card_means_the_remedy_names_only_the_reset(monkeypatch):
 def test_the_card_copy_and_its_answers_are_plain():
     """Finding 9: no project terms on the card or in its answer."""
     spec = consent_pending.KIND_SPECS[consent_descriptor.KIND_CLEAR_RETRY]
-    assert spec.risk == ("A model an earlier render loaded is still in memory, so this "
-                         "one does not fit beside it.")
+    assert spec.risk == ("A model loaded earlier is still in memory, so this one does not "
+                         "fit beside it.")
     assert spec.evidence == ("Clear and retry gives back all the memory the Sparks hold "
                              "for models, the same as Reset attached mesh, and changes no "
                              "setting.")

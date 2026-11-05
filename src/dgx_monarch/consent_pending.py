@@ -118,6 +118,9 @@ class PendingConsent:
     occurrences: int = 1
     first_seen: float = field(default_factory=time.time)
     seen_at: float = field(default_factory=time.time)
+    # What an action kind's card acts on (nodes/old_model_clear.py). It lives on
+    # the entry, so dismissal, expiry and the card limit drop it with the card.
+    binding: Any = None
 
 
 _PENDING: OrderedDict[str, PendingConsent] = OrderedDict()
