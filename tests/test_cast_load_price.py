@@ -22,7 +22,7 @@ import struct
 import pytest
 import torch
 
-from dgx_monarch import capacity_agreement, capacity_fit, mesh_safety
+from dgx_monarch import box_names, capacity_agreement, capacity_fit, mesh_safety
 from dgx_monarch.actor import capacity_quote, store_residency
 from dgx_monarch.actor.capacity_quote import RankPrice
 from dgx_monarch.capacity_agreement import FleetCapacityError, RankAnswer, decide
@@ -231,7 +231,8 @@ def _quote(path: str, **overrides) -> RankPrice:
 
 
 def _answer(rank: int, row: RankPrice) -> RankAnswer:
-    return RankAnswer(rank, f"box{rank}", (row,), elapsed_s=0.01)
+    return RankAnswer(rank, f"box{rank}", (row,), elapsed_s=0.01,
+                      box=box_names.HEAD if rank == 0 else box_names.SIBLING)
 
 
 def test_the_agreement_no_longer_admits_a_cast_load_with_headroom_unstated(
@@ -242,7 +243,7 @@ def test_the_agreement_no_longer_admits_a_cast_load_with_headroom_unstated(
     assert row.measured is not None and row.measured["cast_bytes"] == WAN22_ELEMENTS * 2
     with caplog.at_level("INFO"):
         decide([_answer(0, row), _answer(1, row)], 2, unet_name=WAN22_NAME)
-    assert "rank 0=cond:fits/stock_fits@39.1GiB" in caplog.text
+    assert "the head=cond:fits/stock_fits@39.1GiB" in caplog.text
     assert "headroom unstated" not in caplog.text
     assert "no_claim" not in caplog.text
 
@@ -256,7 +257,7 @@ def test_a_short_rank_refuses_a_cast_load_for_the_whole_fleet(tmp_path, unified)
     with pytest.raises(FleetCapacityError) as raised:
         decide([_answer(0, short), _answer(1, roomy)], 2, unet_name=WAN22_NAME)
     text = str(raised.value)
-    assert (f"rank 0 (host box0) priced a stock load of {WAN22_NAME}: the load needs 60.9 GiB, "
+    assert (f"The head priced a stock load of {WAN22_NAME}: the load needs 60.9 GiB, "
             "a 26.6 GiB file cast to a 26.6 GiB copy, plus the host copy it is placed from, "
             "and 12.2 GiB of unified memory is available, 48.7 GiB short.") in text
     assert "What would fit: set the loader's weight_dtype to default" in text
@@ -351,8 +352,9 @@ def _endpoint_row(monkeypatch, tmp_path, *, want: str, held: str, available: flo
 
 
 def _fleet(head: RankPrice, sibling: RankPrice) -> list[RankAnswer]:
-    return [RankAnswer(0, "the-head", (head,), elapsed_s=0.01),
-            RankAnswer(1, "the-sibling", (sibling,), elapsed_s=0.01)]
+    """The pair as ``collect`` names it; the Workers report their own host names."""
+    return [RankAnswer(0, "the-head", (head,), elapsed_s=0.01, box=box_names.HEAD),
+            RankAnswer(1, "the-sibling", (sibling,), elapsed_s=0.01, box=box_names.SIBLING)]
 
 
 def test_the_release_cell_swap_is_priced_after_the_drop_and_admitted(tmp_path, monkeypatch, caplog):
@@ -367,7 +369,7 @@ def test_the_release_cell_swap_is_priced_after_the_drop_and_admitted(tmp_path, m
     with caplog.at_level("INFO"):
         decide(_fleet(head, sibling), 2, unet_name=WAN22_NAME,
                keep=frozenset({WAN22_NAME, WAN22_HIGH}))
-    assert "cross-rank capacity admitted: rank 0=cond:fits/stock_fits@24.4GiB" in caplog.text
+    assert "cross-rank capacity admitted: the head=cond:fits/stock_fits@24.4GiB" in caplog.text
 
 
 def test_the_held_head_still_refuses_after_the_credit(tmp_path, monkeypatch):
@@ -379,7 +381,8 @@ def test_the_held_head_still_refuses_after_the_credit(tmp_path, monkeypatch):
         decide(_fleet(head, sibling), 2, unet_name=WAN22_NAME,
                keep=frozenset({WAN22_NAME, WAN22_HIGH}))
     text = str(raised.value)
-    assert (f"rank 0 (host the-head) priced a stock load of {WAN22_NAME} after the Worker drops "
+    assert "the-head" not in text and "rank 0" not in text
+    assert (f"The head priced a stock load of {WAN22_NAME} after the Worker drops "
             "wan2.2_t2v_high_noise_14B_fp16, which frees at least 26.6 GiB. Beyond that "
             "the load needs 34.3 GiB, a 26.6 GiB file cast to a 26.6 GiB copy, plus the host copy "
             "it is placed from, and 12.2 GiB of unified memory is available, 22.1 GiB short.") in text
@@ -493,12 +496,13 @@ def test_a_card_on_a_credited_swap_names_what_the_dropped_model_left_behind(tmp_
     with pytest.raises(old_model.OldModelRefusal) as raised:
         decide(_fleet(head, sibling), 2, unet_name=ANIMATE, keep=frozenset({ANIMATE}))
     text = str(raised.value)
-    assert ("the-head still holds about 12.0 GiB that earlier loads left behind, and "
+    assert ("The head still holds about 12.0 GiB that earlier loads left behind, and "
             "wan_animate_2_bf16 does not fit beside it.") in text
+    assert "the-head" not in text
     assert "The old model (flux1-dev) is still loaded" not in text
     offer = old_model.offer_of(raised.value)
     assert offer is not None and old_model.card_body(offer).startswith(
-        "the-head still holds about 12.0 GiB that earlier loads left behind")
+        "The head still holds about 12.0 GiB that earlier loads left behind")
 
 
 def test_a_credited_swap_a_clear_cannot_fix_says_its_figure_is_the_whole_price(tmp_path, monkeypatch):
@@ -509,7 +513,7 @@ def test_a_credited_swap_a_clear_cannot_fix_says_its_figure_is_the_whole_price(t
         decide(_fleet(head, sibling), 2, unet_name=ANIMATE, keep=frozenset({ANIMATE}))
     text = str(raised.value)
     assert "Beyond that the load needs 46.9 GiB" in text
-    assert ("A clear would not make room: wan_animate_2_bf16 needs 69.1 GiB on the-head, and a "
+    assert ("A clear would not make room: wan_animate_2_bf16 needs 69.1 GiB on the head, and a "
             "cleared box would have about 52.2 GiB. That is the whole price, because a cleared "
             "box holds no copy for the Worker to drop.") in text
 

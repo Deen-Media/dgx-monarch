@@ -705,14 +705,15 @@ def test_the_leanest_rank_is_chosen_after_the_credit(monkeypatch):
 
 def test_the_refusal_names_the_credit_and_what_is_short():
     priced = price_mod.ReloadPrice(
-        True, False, 60 * GIB, 72 * GIB, int(31.7 * GIB), 0,
-        credit_bytes=int(30.0 * GIB))
+        True, False, 60 * GIB, 72 * GIB, int(31.7 * GIB), 1,
+        credit_bytes=int(30.0 * GIB), box="the sibling")
 
     for stage in ("preflight", "reprice"):
         sentence = price_mod.operator_sentence(
             priced, "flux2-dev.safetensors", stage=stage)
-        assert ("rank 0 reports only 31.7 GiB of unified memory available plus "
+        assert ("but the sibling reports only 31.7 GiB of unified memory available plus "
                 "30.0 GiB of resident shards the proof drops first") in sentence
+        assert "rank 1" not in sentence
         assert "already counts this render's own shards" in sentence
         assert "driver's text encoder" in sentence
         assert "auto_gate=off" in sentence and "fits:" in sentence
@@ -720,6 +721,25 @@ def test_the_refusal_names_the_credit_and_what_is_short():
     bare = price_mod.ReloadPrice(True, False, 60 * GIB, 72 * GIB, int(31.7 * GIB), 0)
     assert "already counts" not in price_mod.operator_sentence(
         bare, "flux2-dev.safetensors")
+    assert "but the leanest box reports only" in price_mod.operator_sentence(
+        bare, "flux2-dev.safetensors")
+
+
+def test_the_price_names_the_leanest_box_the_way_the_cards_do(monkeypatch):
+    """The refusal names the box by the one rule (box_names.py), never by rank."""
+    import types
+
+    from dgx_monarch import driver_footprint
+
+    _integrated(monkeypatch, size=FLUX2_BF16_BYTES)
+    monkeypatch.setattr(driver_footprint, "host_is_local", lambda name: name == "head")
+    handle = _Handle([_row(50.0, 0), _row(35.0, 1)])
+    handle.config = types.SimpleNamespace(hosts=(
+        types.SimpleNamespace(name="head"), types.SimpleNamespace(name="second")))
+    short = _price(handle)
+    assert (short.fits, short.rank, short.box) == (False, 1, "the sibling")
+    assert "but the sibling reports only 35.0 GiB" in price_mod.operator_sentence(
+        short, "flux2-dev.safetensors")
 
 
 def test_a_credited_capacity_row_survives_a_real_ledger_round_trip(tmp_path):
