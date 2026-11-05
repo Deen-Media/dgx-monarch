@@ -5,7 +5,8 @@ the host copy it is placed from, so it can need far more room than the slab
 legs before it. The driver's own models count against that price on the head,
 the Flux 2 text encoder alone 33 GiB, and ComfyUI reloads every one of them on
 demand; the ceremony's conditioning is already encoded. So when the reference
-leg meets a capacity refusal, the driver frees what it can get back
+leg meets a capacity refusal, typed or a Worker's own refusal wrapped as
+remote text, the driver frees what it can get back
 (``driver_unload.check_with_unload``: ComfyUI's models on this host, then the
 actors' allocator caches) and tries the leg once more. Only the last answer
 counts. Measured 2026-11-04: Flux 2 fp8mixed on a fresh pair priced 74.3 GiB
@@ -85,9 +86,14 @@ def run_cross_residency_reference(
                     steps_hint=steps_hint,
                 )]
 
+            # On one Spark, and after an admitted quote on two, the Worker's own
+            # ladder refuses inside the actor and the refusal arrives as remote
+            # text, so the leg counts it by the classifier the except below uses.
             driver_unload.check_with_unload(
                 [stock_reference], handle=handle,
-                subject="the identity gate's stock reference render")
+                subject="the identity gate's stock reference render",
+                is_refusal=lambda exc: (driver_unload.is_capacity_refusal(exc)
+                                        or runtime["is_stock_load_capacity_error"](exc)))
             candidate = rendered[0]
             cross_reference_latent = candidate
         samples = candidate["samples"]

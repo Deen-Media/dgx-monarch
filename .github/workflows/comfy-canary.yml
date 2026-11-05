@@ -63,6 +63,7 @@ on:
       - "tests/test_compile_surface.py"
       - "tests/test_int8_gemm_kitchen_version.py"
       - "tests/test_vae_decode_split_comfy.py"
+      - "tests/test_cond_batch_agreement.py"
       - "tests/test_fp8_paths_tool.py"
       # No step runs these files, but the files the steps run import them. The
       # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4, Lens and
@@ -354,6 +355,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_vae_decode_split_comfy.py
+      # Each rank picks its cond batch from its own box's free memory in
+      # ComfyUI's calc_cond_batch; two Gloo ranks with the agreement must take
+      # the leanest rank's batch. The regular CI job has no ComfyUI, so it skips.
+      - name: Cond batch agreement vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_cond_batch_agreement.py
       # The INT8 GEMM kernel runs only on the comfy-kitchen releases it was
       # proven exact against. Fail when ComfyUI's requirements or the installed
       # package move past that set, so it is re-validated (docs/MODELS.md)

@@ -15,6 +15,7 @@ from __future__ import annotations
 import logging
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from dgx_monarch import driver_unload
@@ -128,3 +129,71 @@ def test_the_off_switch_keeps_one_stock_attempt(monkeypatch, tmp_path):
     result = _run(model)
     assert comfy.unloads == 0 and len(_renders(handle)) == 3
     assert result["cross_mode"]["verdict"] == "CAPACITY"
+
+
+class _ActorError(Exception):
+    """A Worker's refusal as the driver receives it: remote text in ``args``, and
+    a ``__str__`` that later changes to ``args`` do not reach, so an amended
+    sentence written there would vanish."""
+
+    TEXT = ("ActorError: StockLoadCapacityError: [dgxm:C guard=stock_load_preflight "
+            "waivable=1] stock residency cannot load flux2_dev_fp8mixed.safetensors: "
+            "the load needs 74.3 GiB and 63.0 GiB is available\nTraceback (remote)")
+
+    def __init__(self):
+        super().__init__(self.TEXT)
+        self._text = self.TEXT
+
+    def __str__(self):
+        return self._text
+
+
+def test_a_worker_refusal_wrapped_as_remote_text_also_gets_the_unload(monkeypatch, tmp_path):
+    """One Spark: no fleet agreement runs, so the Worker's own ladder refuses."""
+    handle, _ledger, model, comfy = _rig(
+        monkeypatch, tmp_path,
+        [torch.zeros(1), torch.zeros(1), _ActorError(), torch.zeros(1)])
+    result = _run(model)
+    assert comfy.unloads == 1
+    assert len(_renders(handle)) == 4
+    assert result["cross_mode"]["verdict"] == "PASS"
+    assert result["verdict"] == "PASS"
+
+
+def test_a_wrapped_refusal_that_stands_keeps_its_text_and_says_what_was_tried(monkeypatch):
+    from dgx_monarch import mesh_safety
+
+    comfy = _ComfyModels()
+    monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: comfy)
+    monkeypatch.setattr(driver_unload.time, "sleep", lambda _s: None)
+    monkeypatch.setattr(driver_unload, "busy_reason", lambda _handle: "")
+    original = _ActorError()
+
+    def refuse():
+        raise original
+
+    with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
+        driver_unload.check_with_unload(
+            [refuse], subject="the identity gate's stock reference render",
+            is_refusal=mesh_safety.is_stock_load_capacity_error)
+    text = str(raised.value)
+    assert text.startswith("ActorError: StockLoadCapacityError: [dgxm:C guard=stock_load_preflight")
+    first_line = text.partition("\n")[0]
+    assert "Before refusing, the driver unloaded the 1 model (Flux2TEModel_)" in first_line
+    assert text.endswith("Traceback (remote)")
+    assert raised.value.__cause__ is original
+    assert comfy.unloads == 1
+    assert mesh_safety.is_stock_load_capacity_error(raised.value)
+
+
+def test_the_default_test_still_takes_only_typed_refusals(monkeypatch):
+    comfy = _ComfyModels()
+    monkeypatch.setattr(driver_unload, "comfy_model_management", lambda: comfy)
+    original = _ActorError()
+
+    def refuse():
+        raise original
+
+    with pytest.raises(_ActorError) as raised:
+        driver_unload.check_with_unload([refuse])
+    assert raised.value is original and comfy.unloads == 0

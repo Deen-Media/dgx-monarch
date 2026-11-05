@@ -3141,9 +3141,9 @@ slab residency engaged, as for Flux 2 and Krea 2 under `slab_weights` auto, the
 check compares a slab render with a stock one, and the stock load needs the
 file, the host copy it is placed from and a floor. On the head the driver's own
 models count against that price: the Flux 2 text encoder alone is 33 GiB.
-Before the comparison gives up, the driver unloads the models ComfyUI holds on
-its host, then asks the actors to release their allocator caches, and loads the
-stock reference once more after each. ComfyUI reloads its models when the graph
+Before the comparison gives up, on one Spark or two, the driver unloads the
+models ComfyUI holds on its host, then asks the actors to release their
+allocator caches, and loads the stock reference once more after each. ComfyUI reloads its models when the graph
 next needs them, and the check's conditioning is already encoded. A check that
 then compares reaches its own verdict. One that still cannot load says so:
 
@@ -4335,6 +4335,12 @@ mid-collective, so clearing it costs one Recycle (sidebar button, or
 
 **What to look at next.** The first failure in the poisoned worker's journal is
 the real defect; the stall and refusal report its consequences.
+
+**A stall where no rank died.** If both journals show their rank alive and
+waiting, and one rank's collective carries twice the other's elements, the two
+boxes picked different cond batches from their own free memory; this release
+makes every rank take the leanest rank's batch
+([#79](#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
 
 ## 87. A log line says the abandoned-lease wedge healed and the render paid a respawn
 

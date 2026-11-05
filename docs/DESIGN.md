@@ -478,11 +478,18 @@ on unified memory each rank reports its own box (`actor/comfy_bridge.py`). A
 short head could split a pair the sibling batched, and every sharded collective
 of the call then differs in size and count: on 2026-11-04 a Wan 2.2
 text-to-video proof render stalled for 600 s with rank 1's collectives carrying
-twice rank 0's elements. So above world 1 a `CALC_COND_BATCH` wrapper takes the
+twice rank 0's elements. So wherever a model call is sharded (Ulysses times
+ring above 1, cfg above 1, or FSDP), a `CALC_COND_BATCH` wrapper takes the
 minimum of every rank's figure over the default process group once per call and
 lets ComfyUI's rule run against it (`actor/cond_batch_agreement.py`), installed
 beside the partial-load guard on every base either slot loads. Every rank takes
-the leanest rank's batch, for one 8-byte all-reduce per model call.
+the leanest rank's batch, for one 8-byte all-reduce per model call. A pure
+data-parallel call runs no collective, so its ranks need not agree, and there
+the exchange would only leave a rank's peer waiting until the stall budget when
+it stops early; it is not installed there. The pinned figure lasts through the
+whole call, so code in the forward that reads the patcher's free memory, such
+as Qwen Image 2.1's prefix-cache placement, reads the leanest rank's figure
+from the start of the call.
 
 Adapter acceptance requires identical cross-rank latent statistics and
 fidelity against a single-GPU reference within the measured noise floor.
@@ -1536,7 +1543,10 @@ Before the leg counts as unable to load, it frees what the driver host can get
 back, with the two steps the render-site checks take ("The driver frees what
 ComfyUI can reload before it refuses", below): it unloads the models ComfyUI
 holds there, then asks the actors to release their allocator caches, and runs
-the leg once more after each (`nodes/gate_cross_mode.py`). The ceremony's
+the leg once more after each (`nodes/gate_cross_mode.py`). That holds whether
+the fleet agreement refused the leg or a Worker's own ladder did, as on one
+Spark, where the refusal reaches the driver as remote text and the leg counts it
+by `mesh_safety.is_stock_load_capacity_error`. The ceremony's
 conditioning is already encoded, and ComfyUI reloads its models when the graph
 next needs them. The driver's text encoder counts against the head's stock
 price: on 2026-11-04 Flux 2 fp8mixed priced 74.3 GiB against 63.0 GiB there,
@@ -1650,7 +1660,7 @@ bound or its floor.
 | `comfy_managed` | one resident copy, or 2.3 times the file where ComfyUI stages through a pinned host buffer (measured on the tested Spark pair), plus the floor | `actor/capacity_quote._managed`, then `capacity_fit.managed_required_bytes` at `actor/store_residency.preload_capacity_check` |
 | `explicit`, `vouched_auto` | the file plus a capped floor, plus the LoRA bake's stray transient where `lora_low_rss` and a stack are both set; a target the header estimate cannot map prices the whole file | `actor/capacity_quote._slab_rung` over `capacity_fit.slab_load_fit`, itself over `capacity_lora_bake.lora_bake_bytes`, taken again by `actor/store_slab_admit.admit`, then by the exact backstop `actor/store_slab_admit.admit_bake` once the real patch set is built |
 | `consented_rescue` | the same, after both probes ran | the consent branch of `actor/capacity_quote.price`, over the same `capacity_fit.slab_load_fit`, taken again by `actor/store_slab_admit.admit` |
-| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak | `capacity_fit.stock_load_fit` over `stock_required_bytes`, re-taken by `actor/store_residency.preload_capacity_check` |
+| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. A LoRA change on a stock copy of the same file that the store keeps and re-applies the stack to in place charges 1.1 times the file plus the floor at the fleet agreement, the held copy credited; the Worker's own ladder prices with no store snapshot and never applies the credit | `capacity_fit.stock_load_fit` over `stock_required_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credit is `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place` |
 | an FSDP launch | bf16/fp16: this rank's shards plus one block; fp8/int8 or an unreadable kind: the conservative full-file bound; every case includes the floor | `actor/capacity_quote_fsdp.fsdp_rung`, `adapters/fsdp.fsdp_load_capacity_check`, and `actor/store_residency.preload_capacity_check`, all over `capacity_fit.fsdp_required_bytes` |
 | the gate ceremony's clean reload | the same kind-aware FSDP figure, against each rank's MemAvailable plus its resident shard pool (torch reserved, capped at one share) | `fsdp_reload_price.price_fsdp_clean_reload`, crediting `fsdp_reload_price._rank_credit_bytes` |
 | the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
@@ -1722,8 +1732,11 @@ record reloads, so neither is credited. On 2026-11-04 an explicit-preset
 Wan-Animate 2 graph loaded its bare BF16 base at the UNET Loader and then asked
 for the base and its LoRA: priced whole, the change needed 69.1 GiB against
 61.8 GiB on the head, and credited it needs 38.6 GiB. The INT8 file took the
-same path and grew the actor's host memory by 20.4 GiB against 22.1 GiB priced
-this way.
+same path: the hot swap took about 16 GiB of the head's free memory against
+22.1 GiB priced this way, and the one-step sample about 10 GiB more. The
+Worker's own ladder never applies the credit, because `store_residency.resolve`
+prices with no store snapshot, so a change the store cannot make in place falls
+back to a fresh load that is priced whole there.
 
 **The agreement does not correct a price.** It enforces the lowest-headroom
 rank's estimate before allocation; an underestimated load can still exhaust

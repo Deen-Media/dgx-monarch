@@ -114,12 +114,16 @@ def test_a_credited_price_that_still_falls_short_says_what_it_charged():
         checkpoint_bytes=BF16_BYTES, slot="cond")
     text = capacity_agreement._priced_sentence(
         RankAnswer(0, "box0", (quote,)), quote, BASE)
-    assert ("the load needs 38.6 GiB, a 30.5 GiB file this slot already holds, plus "
-            "the host copy of the weights its LoRA stack patches, and 30.0 GiB") in text
-    assert "placed from" not in text
+    assert text == (
+        f"rank 0 (host box0) priced a LoRA change on {BASE}: the change needs 38.6 GiB "
+        "beside the 30.5 GiB copy of this file the Worker already holds, room for a host "
+        "copy of the weights its LoRA stack changes and the floor. Only 30.0 GiB of "
+        "unified memory is available, 8.6 GiB short.")
+    assert "placed from" not in text and "slot" not in text
     plain = StockFit(False, True, BF16_BYTES, int(30.0 * _GIB))
     assert "credit_bytes" not in plain.measured()
-    assert capacity_fit.stock_terms() == "plus the host copy it is placed from"
+    assert capacity_fit.stock_terms(30.5) == "(a 30.5 GiB file plus the host copy it is placed from)"
+    assert "this file the Worker already holds" in capacity_fit.stock_terms(30.5, BF16_BYTES)
 
 
 @pytest.mark.parametrize(("stored", "low_rss", "expected"), [

@@ -160,7 +160,7 @@ def build_descriptor(
         measured=measured,
         human_reason=(
             f"{name} needs {fit.required_gib} GiB of unified memory under stock residency "
-            f"(a {fit.size_gib} GiB file {capacity_fit.stock_terms(fit.credit_bytes)}) and only "
+            f"{capacity_fit.stock_terms(fit.size_gib, fit.credit_bytes)} and only "
             f"{fit.avail_gib} GiB is available. Zero-copy slab residency fits it. Image "
             "identity on the slab path is not proven for this family yet, so this load is "
             "availability-only evidence, never an accuracy verdict."

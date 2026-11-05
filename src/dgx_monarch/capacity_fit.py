@@ -123,11 +123,25 @@ class StockFit:
         }
 
 
-def stock_terms(credit_bytes: int = 0) -> str:
-    """What a stock price charges beside the file, as the cards print it after "a N GiB file"."""
+def stock_terms(size_gib: float, credit_bytes: int = 0) -> str:
+    """What a stock price charges, as the rescue card prints it after "under stock residency"."""
     if credit_bytes:
-        return "this slot already holds, plus the host copy of the weights its LoRA stack patches"
-    return "plus the host copy it is placed from"
+        return (f"beside the {size_gib} GiB copy of this file the Worker already holds, room "
+                "for a host copy of the weights its LoRA stack changes and the floor,")
+    return f"(a {size_gib} GiB file plus the host copy it is placed from)"
+
+
+def hot_swap_sentence(where: str, unet_name: str, needed: float, weights: float,
+                      avail: float, short: float) -> str:
+    """The fleet card's sentence for a credited price that still falls short.
+
+    The figure leaves out the held file, so the sentence says it is room beside
+    that copy rather than adding the file into the sum.
+    """
+    return (f"{where} priced a LoRA change on {unet_name}: the change needs {needed} GiB "
+            f"beside the {weights} GiB copy of this file the Worker already holds, room "
+            "for a host copy of the weights its LoRA stack changes and the floor. Only "
+            f"{avail} GiB of unified memory is available, {short} GiB short.")
 
 
 @dataclass(frozen=True, slots=True)

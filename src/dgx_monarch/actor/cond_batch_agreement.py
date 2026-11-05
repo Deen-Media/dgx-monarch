@@ -15,13 +15,26 @@ all-to-all and all-gather carrying exactly twice rank 0's elements.
 A ``CALC_COND_BATCH`` wrapper reads this rank's free memory once per call,
 takes the minimum over the default process group and lets ComfyUI's own rule
 run against that one figure, so every rank takes the leanest rank's batch.
-It costs one 8-byte all-reduce per model call. World 1, and every Fleet job
-(each a world-1 mesh), pass straight through. ``partial_load_guard.install``
+It costs one 8-byte all-reduce per model call. ``partial_load_guard.install``
 registers it beside the partial-load guard, on every base either slot loads,
-so every rank of a sample enters the exchange the same number of times.
+so every rank of a sample enters the exchange the same number of times, and
+only where the topology shards a model call (Ulysses times ring above 1, cfg
+above 1, or FSDP). A pure data-parallel model call runs no collective and its
+ranks need not agree, and there the exchange would only make a rank that
+stopped early leave its peer waiting until the stall budget. World 1, and
+every Fleet job (each a world-1 mesh), never install it.
+
+The figure stays pinned through the whole model call, the forward included, so
+code inside the forward that reads ``current_patcher.get_free_memory`` sees the
+leanest rank's figure from the start of the call, before the call's own
+activations. Qwen Image 2.1's prefix-cache placement reads it there
+(``comfy/ldm/qwen_image21/model.py``); ``adapters/qwen_image21.agree_prefix_cache``
+keeps the ranks' choices equal. The pin cannot be narrowed to the batching pass
+without losing agreement on the later batch decisions of the same call.
 """
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from ..log import get_logger
@@ -94,13 +107,25 @@ def make_wrapper():
     return wrapper
 
 
-def install(base_patcher: Any, world: int | None) -> None:
-    """Register the wrapper on a freshly loaded base patcher, once, above world 1.
+def shards_model_calls(topology: Any) -> bool:
+    """Whether a model call under ``topology`` runs collectives sized by its batch."""
+    if not isinstance(topology, Mapping):
+        return False
+    try:
+        sp = int(topology.get("ulysses", 1) or 1) * int(topology.get("ring", 1) or 1)
+        return sp > 1 or int(topology.get("cfg", 1) or 1) > 1 or bool(topology.get("fsdp"))
+    except (TypeError, ValueError):
+        return False
+
+
+def install(base_patcher: Any, world: int | None, topology: Any = None) -> None:
+    """Register the wrapper on a freshly loaded base patcher, once, where a
+    world above 1 shards its model calls.
 
     Read the key before writing it: comfy appends on a second add under one
     key, so a second install would run the exchange twice per call.
     """
-    if not world or int(world) <= 1:
+    if not world or int(world) <= 1 or not shards_model_calls(topology):
         return
     import comfy.patcher_extension as pe
 

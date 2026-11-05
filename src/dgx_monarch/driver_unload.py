@@ -33,7 +33,7 @@ import gc
 import time
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, NoReturn
 
 from . import client_lease, mesh_safety
 from .log import get_logger
@@ -271,26 +271,51 @@ def _amended(exc: Exception, sentence: str) -> Exception:
     """The same refusal with one more sentence at the end of its first line.
 
     The tag and the budget figures stay at the front, where a reader that
-    keeps 200 characters finds them; the type and traceback stay too.
+    keeps 200 characters finds them; the type and traceback stay too. A
+    refusal that arrived wrapped, a Worker's own refusal as remote actor text,
+    builds its text elsewhere and would lose the sentence, so it comes back as
+    a typed ``StockLoadCapacityError`` that carries the same text and the
+    sentence; ``_raise_amended`` chains it from the original.
     """
     head, newline, tail = str(exc).partition("\n")
-    exc.args = (f"{head.rstrip()} {sentence}{newline}{tail}",)
-    return exc
+    text = f"{head.rstrip()} {sentence}{newline}{tail}"
+    if isinstance(exc, CAPACITY_REFUSALS):
+        exc.args = (text,)
+        return exc
+    return mesh_safety.StockLoadCapacityError(text)
 
 
-def _first_refusal(steps: Sequence[Callable[[], object]],
-                   start: int) -> tuple[int, Exception] | None:
+def _raise_amended(exc: Exception, sentence: str) -> NoReturn:
+    """Raise ``exc`` with ``sentence`` added, chained only where it was rewrapped."""
+    amended = _amended(exc, sentence)
+    if amended is exc:
+        raise exc from None
+    raise amended from exc
+
+
+def is_capacity_refusal(exc: BaseException) -> bool:
+    """The default refusal test: a typed render-site capacity refusal."""
+    return isinstance(exc, CAPACITY_REFUSALS)
+
+
+def _first_refusal(steps: Sequence[Callable[[], object]], start: int,
+                   is_refusal: Callable[[BaseException], bool] = is_capacity_refusal,
+                   ) -> tuple[int, Exception] | None:
     """Run ``steps`` from ``start``; the index and refusal of the first that refuses."""
     for index in range(start, len(steps)):
         try:
             steps[index]()
-        except CAPACITY_REFUSALS as refused:
+        except Exception as refused:
+            if not is_refusal(refused):
+                raise
             return index, refused
     return None
 
 
 def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = None,
-                      subject: str = "this render") -> None:
+                      subject: str = "this render",
+                      is_refusal: Callable[[BaseException], bool] = is_capacity_refusal,
+                      ) -> None:
     """Run ``steps`` in order, freeing what the driver host can get back
     before one refuses.
 
@@ -300,16 +325,20 @@ def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = No
     If one still refuses and ``handle`` is a live mesh that completed setup,
     the actors release their allocator caches and the steps run once more
     from the one that refused then. Any other exception, and any refusal these
-    steps cannot answer, propagates as it was raised.
+    steps cannot answer, propagates as it was raised. ``is_refusal`` says which
+    exceptions count as a refusal; the default takes the typed render-site
+    ones, and the identity gate's stock reference also takes a Worker's own
+    stock refusal, which reaches the driver as remote actor text.
     """
     steps = list(steps)
-    first = _first_refusal(steps, 0)
+    first = _first_refusal(steps, 0, is_refusal)
     if first is not None:
-        _after_refusal(steps, *first, handle, subject)
+        _after_refusal(steps, *first, handle, subject, is_refusal)
 
 
 def _after_refusal(steps: Sequence[Callable[[], object]], index: int,
-                   refused: Exception, handle: Any, subject: str) -> None:
+                   refused: Exception, handle: Any, subject: str,
+                   is_refusal: Callable[[BaseException], bool] = is_capacity_refusal) -> None:
     """Unload, then trim, running ``steps`` again from ``index`` after each,
     or raise the refusal that stands, saying what was tried."""
     if mesh_safety.env_enabled(DRIVER_UNLOAD_DISABLE_ENV):
@@ -321,7 +350,7 @@ def _after_refusal(steps: Sequence[Callable[[], object]], index: int,
     if held:
         names = tuple(name for _entry, name in held)
         if busy:
-            raise _amended(refused, (
+            _raise_amended(refused, (
                 f"The driver did not unload the {_models(names)} ComfyUI holds on "
                 f"this host before refusing, because {busy}; queue again once that "
                 "work ends."))
@@ -329,13 +358,13 @@ def _after_refusal(steps: Sequence[Callable[[], object]], index: int,
             outcome = unload(mm, held)
         except Exception as exc:
             log.warning("driver unload failed before refusing %s: %r", subject, exc)
-            raise _amended(refused, (
+            _raise_amended(refused, (
                 f"The driver tried to unload the {_models(names)} ComfyUI holds on "
                 f"this host before refusing, and the unload failed "
                 f"({type(exc).__name__}), so the figures above are the reading "
-                "before it.")) from None
+                "before it."))
         if outcome.names:
-            again = _first_refusal(steps, index)
+            again = _first_refusal(steps, index, is_refusal)
             if again is None:
                 log.info(outcome.log_line(subject))
                 return
@@ -352,14 +381,14 @@ def _after_refusal(steps: Sequence[Callable[[], object]], index: int,
         raise refused
     if not trimmable(handle):
         if unloaded is not None:
-            raise _amended(refused, unloaded.refusal_sentence()) from None
+            _raise_amended(refused, unloaded.refusal_sentence())
         raise refused
     try:
         trimmed = trim_actors(handle)
     except Exception as exc:
         log.warning("actor trim failed before refusing %s: %r", subject, exc)
-        raise _amended(refused, _trim_failed_sentence(unloaded, exc)) from None
-    again = _first_refusal(steps, index)
+        _raise_amended(refused, _trim_failed_sentence(unloaded, exc))
+    again = _first_refusal(steps, index, is_refusal)
     log.info(trimmed.log_line(subject, unloaded, fits=again is None))
     if again is not None:
-        raise _amended(again[1], trimmed.refusal_sentence(unloaded)) from None
+        _raise_amended(again[1], trimmed.refusal_sentence(unloaded))

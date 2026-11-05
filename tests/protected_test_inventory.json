@@ -1205,6 +1205,9 @@
     "tests/test_gate_stock_reference_unload.py": {
       "test_a_busy_driver_keeps_its_models_and_the_leg_refuses_once": "25fef1e5dec4c123",
       "test_a_reference_that_still_cannot_load_names_itself_as_the_reason": "c8637e63f5221155",
+      "test_a_worker_refusal_wrapped_as_remote_text_also_gets_the_unload": "07f0a661d7d43f82",
+      "test_a_wrapped_refusal_that_stands_keeps_its_text_and_says_what_was_tried": "b7e7cd5d7964a054",
+      "test_the_default_test_still_takes_only_typed_refusals": "1b42b1e14fdd7413",
       "test_the_off_switch_keeps_one_stock_attempt": "f31b49aba2c8d355",
       "test_the_stock_reference_loads_after_the_driver_frees_its_encoder": "19cfbce3a22a508a"
     },

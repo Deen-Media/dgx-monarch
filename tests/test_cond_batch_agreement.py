@@ -5,12 +5,16 @@ all-to-all and all-gather carried exactly twice rank 0's elements. The cause
 these tests pin: ComfyUI's ``_calc_cond_batch`` runs cond and uncond as one
 call only when ``memory_required * 1.5`` is under the free memory its patcher
 reports, and on a pair of Sparks each rank reports its own box. The real
-ComfyUI tests run in subprocesses on CPU (``--cpu``, no CUDA device visible)
-and skip where ComfyUI is not importable; the two-rank one uses a Gloo group
-on the loopback device. ``actor/cond_batch_agreement.py`` is the fix.
+ComfyUI tests run in subprocesses on CPU (``--cpu``, no CUDA device visible);
+the two-rank one uses a Gloo group on the loopback device. The comfy-canary
+job runs this file with ``COMFYUI_DIR`` set, and there a missing checkout
+fails; plain CI names none and skips. ``actor/cond_batch_agreement.py`` is the
+fix. The in-process real-ComfyUI case comes last and restores ``sys.modules``
+and ``sys.path`` as tests/test_auto_latent_downscale.py does.
 """
 from __future__ import annotations
 
+import importlib
 import os
 import subprocess
 import sys
@@ -22,8 +26,12 @@ import pytest
 from dgx_monarch.actor import cond_batch_agreement as agreement
 
 SRC = Path(__file__).resolve().parents[1] / "src"
-COMFY_DIR = os.path.abspath(os.environ.get("COMFYUI_DIR", os.path.expanduser("~/ComfyUI")))
+# The comfy-canary job names its checkout; a named checkout must exist there,
+# since a skip would report the step green without running anything.
+_NAMED = os.environ.get("COMFYUI_DIR") or os.environ.get("COMFY_DIR")
+COMFY_DIR = os.path.abspath(_NAMED or os.path.expanduser("~/ComfyUI"))
 GIB = 2 ** 30
+_SKIP = "no ComfyUI checkout (set COMFYUI_DIR); the comfy-canary job runs this file"
 
 # One child per rank: ComfyUI's own calc_cond_batch over a stub model whose
 # memory_required is one GiB per batch row, with two conds that concatenate.
@@ -92,8 +100,11 @@ if world > 1:
 
 
 def _comfy_or_skip() -> None:
-    if not os.path.isdir(os.path.join(COMFY_DIR, "comfy")):
-        pytest.skip("no ComfyUI checkout (set COMFYUI_DIR); the comfy canary job covers it")
+    if os.path.isdir(os.path.join(COMFY_DIR, "comfy")):
+        return
+    if _NAMED:
+        pytest.fail(f"COMFYUI_DIR or COMFY_DIR names no ComfyUI checkout: {COMFY_DIR}")
+    pytest.skip(_SKIP)
 
 
 def _env() -> dict:
@@ -192,9 +203,62 @@ def test_world_one_reads_its_own_box_and_never_exchanges(monkeypatch):
     assert seen == [7 * GIB]
 
 
-def test_install_is_world_gated_idempotent_and_rides_the_partial_load_guard():
-    pe = pytest.importorskip(
-        "comfy.patcher_extension", reason="no ComfyUI on sys.path (canary job covers it)")
+@pytest.mark.parametrize(("topology", "sharded"), [
+    ({"ulysses": 2, "ring": 1, "cfg": 1, "dp": 1, "fsdp": False}, True),
+    ({"ulysses": 1, "ring": 2, "cfg": 1, "dp": 1, "fsdp": False}, True),
+    ({"ulysses": 1, "ring": 1, "cfg": 2, "dp": 1, "fsdp": False}, True),
+    ({"ulysses": 1, "ring": 1, "cfg": 1, "dp": 1, "fsdp": True}, True),
+    ({"ulysses": 1, "ring": 1, "cfg": 1, "dp": 2, "fsdp": False}, False),
+    ({}, False),
+    (None, False),
+])
+def test_only_a_topology_that_shards_a_model_call_takes_the_agreement(topology, sharded):
+    """Pure dp runs no collective in a model call, so its ranks need not agree,
+    and an exchange there would leave a rank's peer waiting when it stops early."""
+    assert agreement.shards_model_calls(topology) is sharded
+
+
+# Real comfy in process, CPU only. Keep it last in the file.
+def _is_comfy_module(name: str) -> bool:
+    return name in ("folder_paths", "comfy") or name.startswith(("comfy.", "comfy_"))
+
+
+def _import_comfy(name: str):
+    if _NAMED:
+        return importlib.import_module(name)
+    return pytest.importorskip(name, reason=_SKIP)
+
+
+@pytest.fixture(scope="module")
+def real_comfy():
+    """Import real comfy on its CPU path, then undo it, as
+    tests/test_auto_latent_downscale.py's fixture does."""
+    if _NAMED and not os.path.isdir(COMFY_DIR):
+        pytest.fail(f"COMFYUI_DIR or COMFY_DIR names no ComfyUI checkout: {COMFY_DIR}")
+    preserved = {name: module for name, module in sys.modules.items()
+                 if _is_comfy_module(name)}
+    for name in preserved:
+        sys.modules.pop(name, None)
+    original_path = list(sys.path)
+    if os.path.isdir(COMFY_DIR) and COMFY_DIR not in sys.path:
+        sys.path.insert(0, COMFY_DIR)
+    original_argv = sys.argv
+    try:
+        sys.argv = ["pytest-cond-batch-agreement", "--cpu"]
+        try:
+            patcher_extension = _import_comfy("comfy.patcher_extension")
+        finally:
+            sys.argv = original_argv
+        yield SimpleNamespace(patcher_extension=patcher_extension)
+    finally:
+        for name in [name for name in sys.modules if _is_comfy_module(name)]:
+            sys.modules.pop(name, None)
+        sys.modules.update(preserved)
+        sys.path[:] = original_path
+
+
+def test_install_is_gated_idempotent_and_rides_the_partial_load_guard(real_comfy):
+    pe = real_comfy.patcher_extension
     from dgx_monarch.actor import partial_load_guard
 
     def installed(patcher):
@@ -202,10 +266,14 @@ def test_install_is_world_gated_idempotent_and_rides_the_partial_load_guard():
             pe.WrappersMP.CALC_COND_BATCH, agreement.WRAPPER_KEY,
             patcher.model_options, is_model_options=True)
 
+    uly2 = {"ulysses": 2, "ring": 1, "cfg": 1, "dp": 1, "fsdp": False}
     solo = SimpleNamespace(model_options={})
-    partial_load_guard.install(solo, 1)
+    partial_load_guard.install(solo, 1, uly2)
     assert installed(solo) == []
+    dp_pair = SimpleNamespace(model_options={})
+    partial_load_guard.install(dp_pair, 2, {"ulysses": 1, "ring": 1, "cfg": 1, "dp": 2})
+    assert installed(dp_pair) == []
     pair = SimpleNamespace(model_options={})
-    partial_load_guard.install(pair, 2)
-    partial_load_guard.install(pair, 2)
+    partial_load_guard.install(pair, 2, uly2)
+    partial_load_guard.install(pair, 2, uly2)
     assert len(installed(pair)) == 1

@@ -311,8 +311,9 @@
   A LoRA change on a base a Worker already holds is priced as the in-place
   swap the store makes, without a second copy of the file, so the Wan-Animate 2
   memory-saver template no longer refuses under an explicit topology. And
-  every rank batches cond and uncond the way the leanest rank does, so two
-  boxes with different free memory no longer stall on mismatched collectives
+  where a model call is sharded, every rank batches cond and uncond the way
+  the leanest rank does, so two boxes with different free memory no longer
+  stall on mismatched collectives
   ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
 
 ## [1.4.0] - 2026-10-28

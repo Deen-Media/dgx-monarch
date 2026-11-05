@@ -246,10 +246,13 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
     ``store_bake.swaps_in_place`` says it keeps the base and re-applies the
     stack, which places at most the host copy of the weights the stack patches.
     So the file's own copy is credited and the host copy and the floor stay
-    charged. Measured on 2026-11-04, the INT8 Wan-Animate 2 hot swap on a
-    freshly loaded base grew the actor's host memory by 20.4 GiB against 22.1
-    GiB priced this way; the BF16 file was refused at 69.1 GiB against 61.8 GiB
-    available, where this price is 38.6 GiB. An explicit ``slab_weights=on`` drops a stock
+    charged. Measured on 2026-11-04 on the head, the INT8 Wan-Animate 2 hot swap
+    on a freshly loaded base took about 16 GiB of the box's free memory, 22.1 GiB
+    priced this way, and its one-step sample about 10 GiB more; the BF16 file was
+    refused at 69.1 GiB against 61.8 GiB available, where this price is 38.6 GiB.
+    The Worker's own ladder never applies the credit (``store_residency.resolve``
+    passes no snapshot), so a change that falls back to a fresh load is priced
+    whole there. An explicit ``slab_weights=on`` drops a stock
     resident before it loads, so it gets no credit, and neither does a resident
     the store would reload.
     """
