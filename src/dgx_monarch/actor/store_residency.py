@@ -37,7 +37,7 @@ from ..mesh_safety import StockLoadCapacityError
 from ..refusal import PanelAction, RefusalClass, refusal, untagged
 from ..residency_mode import PINNED_STAGING_FACTOR
 from ..transfer_utils import failure_summary, safe_call
-from . import capacity_quote, store_slab_admit
+from . import actor_footprint, capacity_quote, store_slab_admit
 
 # One home for the rung words and the shared price helpers; a caller that
 # spells them ``store_residency.X`` resolves the same object.
@@ -221,7 +221,7 @@ def _no_rescue_text(unet_name: str, fit: StockFit, blocker: tuple[str, str]) -> 
         f"available, so it would be killed out of memory. Slab rescue is unavailable here "
         f"because {why}. What would fit: {options}. This refusal is capacity-protective "
         "(class C, StockLoadCapacityError family); nothing was loaded and nothing was quarantined."
-    )
+    ) + actor_footprint.ladder_clause(fit.required_bytes, fit.avail_bytes)
 
 
 def _rescue_offer_text(descriptor: ConsentDescriptor, fit: StockFit,
@@ -240,7 +240,7 @@ def _rescue_offer_text(descriptor: ConsentDescriptor, fit: StockFit,
         f"{consent_descriptor.EVIDENCE_BYTE_VERIFIED}.{clause} This refusal is "
         "capacity-protective (StockLoadCapacityError family); nothing was loaded and "
         "nothing was quarantined."
-    )
+    ) + actor_footprint.ladder_clause(fit.required_bytes, fit.avail_bytes)
 
 
 def _wire_tail(fit: StockFit, descriptor: ConsentDescriptor | None) -> str:

@@ -21,6 +21,9 @@ from typing import Any
 
 STATUS_PATH = "/proc/self/status"
 _KIB = 1024
+# What a fresh actor takes back on its first load (lazy imports, kernel
+# caches); old_model.CLEAR_MARGIN_BYTES is the driver's copy of this figure.
+RESET_MARGIN_BYTES = 2 << 30
 
 ADVISORY_ROW_KEYS: frozenset[str] = frozenset({
     "resident_names", "resident_bytes", "arena_bytes",
@@ -60,6 +63,25 @@ def arena_bytes(path: str = STATUS_PATH) -> int:
         return 0
     now = anonymous_bytes(path)
     return 0 if now is None else max(now - floor, 0)
+
+
+def ladder_clause(required: int, available: int | None) -> str:
+    """The Worker ladder's sentence about memory an earlier render left here.
+
+    The ladder prices after its own in-process drop, so the old model is gone
+    by then and only its arena stays (a Fleet job and a one-GPU fleet meet
+    this; neither asks the cross-rank agreement). When a reset would give back
+    more than the shortfall, say so and name the reset; otherwise say nothing.
+    """
+    if available is None:
+        return ""
+    short = max(int(required) - int(available), 0)
+    arena = arena_bytes()
+    if short <= 0 or short + RESET_MARGIN_BYTES >= arena:
+        return ""
+    return (f" This Worker still holds about {arena / (1 << 30):.1f} GiB that a model from "
+            "an earlier render left behind, and a reset gives it back: click Reset attached "
+            "mesh in the DGX Monarch panel, then queue the render again.")
 
 
 def forget() -> None:

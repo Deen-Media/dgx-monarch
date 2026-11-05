@@ -10,9 +10,14 @@ log = get_logger(__name__)
 
 
 def drop_residency_memos() -> None:
-    """Forget every checkpoint the driver still credits to the fleet."""
-    from . import loader_preflight, render_preflight, routes
+    """Forget every checkpoint the driver still credits to the fleet.
 
+    Every door that stops the procs runs this, so it also answers every open
+    Old model in the way card: the model it names went with the procs.
+    """
+    from . import loader_preflight, old_model_clear, render_preflight, routes
+
+    old_model_clear.drop_cards()
     loader_preflight.reset_memos()
     # These are the only writers of the render memos; None drains each one.
     render_preflight.note_successful_render(None)
@@ -39,8 +44,12 @@ def recycle_and_drain(handle: Any) -> Any:
     return outcome
 
 
-def recycle_attached_mesh() -> tuple[dict[str, Any], int]:
-    """Reset the attached mesh, as POST /dgxm/recycle does; (payload, HTTP status)."""
+def recycle_attached_mesh(only: Any = None) -> tuple[dict[str, Any], int]:
+    """Reset the attached mesh, as POST /dgxm/recycle does; (payload, HTTP status).
+
+    ``only`` is the fleet a card was raised against: when another fleet is
+    attached now, nothing is reset and the status says the fleet changed.
+    """
     from ..mesh import _MESH_LOCK, _MESHES
 
     with _MESH_LOCK:  # snapshot under lock; recycle is idempotent anyway
@@ -51,6 +60,13 @@ def recycle_attached_mesh() -> tuple[dict[str, Any], int]:
             "status": "no_live_mesh",
             "retryable": False,
             "detail": "no attached mesh to reset; worker services are unchanged",
+        }, 200)
+    if only is not None and (handle is not only or getattr(handle, "defunct", False)):
+        return ({
+            "ok": False,
+            "status": "fleet_changed",
+            "retryable": False,
+            "detail": "the attached mesh changed since the card was raised; nothing was reset",
         }, 200)
     outcome = recycle_and_drain(handle)
     status = 200 if outcome.ok else (409 if outcome.retryable else 503)

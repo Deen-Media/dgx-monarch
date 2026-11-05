@@ -98,6 +98,11 @@ def _rig(monkeypatch, tmp_path):
     fake.get_output_directory = lambda: str(output)  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "folder_paths", fake)
     monkeypatch.setattr(old_model_clear, "wait_settled", lambda *a, **k: None)
+    from dgx_monarch.nodes import routes
+
+    # The reset route's single-flight gate is process-wide; each test starts open.
+    monkeypatch.setattr(routes, "_RECYCLE_RATE", {"active": False,
+                                                 "last_finished": float("-inf")})
     yield
     consent_pending.clear_all()
     actor_footprint.forget()
@@ -134,7 +139,9 @@ def test_a_clear_that_would_not_make_room_keeps_the_ordinary_refusal_in_plain_wo
     text = str(raised.value)
     assert "The old model (flux1-dev) is still loaded on head" in text
     assert "A clear would not make room" in text
-    assert "a cleared box would have about 48.0 GiB" in text
+    # 25.8 available plus 22.2 back, less the 2 GiB a fresh Worker takes back.
+    assert "a cleared box would have about 46.0 GiB" in text
+    assert "Choose a smaller or quantized artifact" in text
     assert "Clear and retry" not in text
 
 
@@ -172,7 +179,7 @@ def test_every_short_box_must_gain_room_and_every_old_model_is_named():
     with pytest.raises(old_model.OldModelRefusal) as both:
         decide([_answer(0, head), _answer(1, replace(head, resident_names={
             "cond": OLD, "uncond": None}))], 2, unet_name=NEW)
-    assert "The old model (flux1-dev) is still loaded on head and sibling and" in str(both.value)
+    assert "The old model (flux1-dev) is still loaded on head and sibling, and" in str(both.value)
 
 
 def test_a_rescue_offer_with_an_old_model_in_the_way_raises_the_clear_card_instead(monkeypatch):
@@ -338,6 +345,15 @@ class _LiveHandle:
         return RecycleOutcome(RecycleStatus.RECYCLED, "Attached mesh reset")
 
 
+def _window(projected_gib: float, available_gib: float, reserve_gib: float):
+    """One loader window: what it places, MemAvailable, and the reserve it keeps."""
+    from dgx_monarch import driver_footprint
+
+    return driver_footprint.DriverFootprintEstimate(
+        weight_bytes=int(projected_gib * _GIB), mem_available=int(available_gib * _GIB),
+        reserve=int(reserve_gib * _GIB))
+
+
 def test_the_loader_asks_only_a_live_fleet_on_its_own_host(monkeypatch):
     held = _stock("fits", size_gib=1.0, avail_gib=200.0, resident="longcat_image_bf16.safetensors",
                   resident_gib=12.0)
@@ -353,22 +369,21 @@ def test_the_loader_asks_only_a_live_fleet_on_its_own_host(monkeypatch):
     monkeypatch.setattr(driver_footprint, "host_is_local", lambda name: name == "head")
     hosts = (types.SimpleNamespace(name="head"), types.SimpleNamespace(name="sibling"))
     mesh = types.SimpleNamespace(handle=_LiveHandle(local=False, hosts=hosts))
-    offer = old_model_clear.loader_offer(mesh, NEW, {}, required=int(45.9 * _GIB),
-                                         available=int(42.3 * _GIB))
+    offer = old_model_clear.loader_offer(mesh, NEW, {}, windows=(_window(45.9, 47.3, 5.0),))
     assert asked == [old_model_clear.LOADER_QUOTE_DEADLINE_S]
     assert offer is not None and offer.helps and not offer.local and offer.hosts == 2
     (box,) = offer.boxes
     assert box.box == "head" and box.old_models == ("longcat_image_bf16",)
     assert box.gain_bytes == 12 * _GIB            # the sibling's resident is not on this host
     mesh.handle.defunct = True
-    assert old_model_clear.loader_offer(mesh, NEW, {}, required=1, available=0) is None
+    assert old_model_clear.loader_offer(mesh, NEW, {}, windows=(_window(45.9, 47.3, 5.0),)) is None
 
     def broken(*_a, **_k):
         raise RuntimeError("no answer")
 
     monkeypatch.setattr(capacity_agreement, "collect", broken)
     mesh.handle.defunct = False
-    assert old_model_clear.loader_offer(mesh, NEW, {}, required=1, available=0) is None
+    assert old_model_clear.loader_offer(mesh, NEW, {}, windows=(_window(45.9, 47.3, 5.0),)) is None
 
 
 def _loader_rig(monkeypatch, tmp_path, held_gib):
@@ -501,7 +516,7 @@ def test_accept_clears_the_attached_mesh_and_saves_nothing(attached):
     status, payload = consent_routes.handle_action(
         {"action": "accept", "key": card["key"], "id": card["id"]})
     assert status == 200 and payload["ok"] and payload["cleared"]
-    assert payload["detail"] == "Cleared the attached mesh; then queue again."
+    assert payload["detail"] == "Cleared both Sparks; queue the render again."
     assert attached.recycles == 1 and attached.drained == [1]
     assert consent_pending.pending_cards() == []
     memo = consent_store.read()
@@ -690,6 +705,10 @@ def test_the_sample_path_clears_once_then_retries_once(monkeypatch):
     assert handle.recycles == 1
 
     # Still short on the fresh fleet: the plain refusal, and no second clear.
+    from dgx_monarch.nodes import routes
+
+    monkeypatch.setattr(routes, "_RECYCLE_RATE", {"active": False,
+                                                 "last_finished": float("-inf")})
     handle = _LiveHandle()
     outcomes[:] = [_refusal(), FleetCapacityError("still short on a fresh fleet")]
     with pytest.raises(FleetCapacityError, match="still short"):
@@ -747,3 +766,323 @@ def _loader_refusal() -> BaseException:
     except old_model.LoaderOldModelError as exc:
         return exc
     raise AssertionError("unreachable")
+
+
+# Review round 1 (2026-11-04): one block per finding.
+
+def test_the_loader_card_needs_room_in_both_windows_against_unclamped_budgets(monkeypatch):
+    """Finding 1: the worst failing window decides, with the reserve unclamped."""
+    def offer_for(held_gib, *windows):
+        held = _stock("fits", size_gib=1.0, avail_gib=200.0, resident_gib=held_gib)
+        monkeypatch.setattr(capacity_agreement, "collect",
+                            lambda *_a, **_k: [_answer(0, held, box="this box")])
+        return old_model_clear.loader_offer(types.SimpleNamespace(handle=_LiveHandle()),
+                                            NEW, {}, windows=windows)
+
+    transient = _window(75.9, 45.0, 5.0)          # short by 35.9 GiB
+    settled = _window(46.6, 45.0, 15.0)           # short by 16.6 GiB
+    both = offer_for(27.0, transient, settled)
+    assert both is not None and not both.helps
+    assert both.boxes[0].shortfall_bytes == transient.shortfall
+    assert offer_for(27.0, _window(30.0, 45.0, 5.0), settled).helps   # settled alone short
+    clamped = _window(14.0, 12.5, 15.0)           # MemAvailable under the reserve
+    assert clamped.usable == 0 and clamped.shortfall == int(16.5 * _GIB)
+    offer = offer_for(17.0, clamped)
+    assert offer is not None and offer.boxes[0].shortfall_bytes == clamped.shortfall
+    assert not offer.helps                        # 16.5 short plus the margin is over 17
+    assert offer_for(27.0, _window(10.0, 45.0, 5.0)) is None             # nothing short
+
+
+def test_a_slot_the_request_reuses_is_neither_old_nor_credited():
+    """Finding 2: the cond model a two-slot request reuses is not in the way."""
+    cond_name = "ideogram4_fp8_scaled.safetensors"
+    cond = replace(_stock("fits", size_gib=20.0, avail_gib=200.0, resident=cond_name,
+                          resident_gib=20.0), would_load="reuse", checkpoint_bytes=0)
+    uncond = replace(_stock("refuse", size_gib=10.0, avail_gib=10.0, resident=cond_name,
+                            resident_gib=20.0), slot="uncond", would_load="fresh")
+    assert 0 < _shortfall_gib(uncond) < 18.0      # would read as room without the fix
+    with pytest.raises(FleetCapacityError) as raised:
+        decide([_answer(0, cond, uncond), _fits(1, "sibling")], 2,
+               unet_name="ideogram4_unconditional_fp8_scaled.safetensors")
+    assert not isinstance(raised.value, old_model.OldModelRefusal)
+    assert "ideogram4_fp8_scaled) is still loaded" not in str(raised.value)
+
+
+def test_a_model_this_graph_loads_is_never_the_old_model(monkeypatch):
+    """Finding 2: names the request or the graph loads, at both agreement doors."""
+    short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
+    with pytest.raises(FleetCapacityError) as raised:
+        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW,
+               keep=frozenset({OLD}))
+    assert not isinstance(raised.value, old_model.OldModelRefusal)
+    handle = types.SimpleNamespace(world=2, workers=object(), active_worker_args={})
+    monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: [
+        _answer(0, short), _fits(1, "sibling")])
+    with pytest.raises(FleetCapacityError) as eager:          # the uncond loader
+        capacity_agreement.agree_load(handle, NEW, {}, [], "uncond", keep={OLD, NEW})
+    assert not isinstance(eager.value, old_model.OldModelRefusal)
+    with old_model.graph_loads({OLD}), pytest.raises(FleetCapacityError) as named:
+        capacity_agreement.agree_load(handle, NEW, {}, [], "uncond")   # as loaders.py calls it
+    assert not isinstance(named.value, old_model.OldModelRefusal)
+    assert old_model.graph_names() == frozenset()
+    request = capacity_agreement.quote_request([
+        {"unet_name": OLD, "slot": "cond"}, {"unet_name": NEW, "slot": "uncond"}])
+    with pytest.raises(FleetCapacityError) as sample:         # the sample path
+        capacity_agreement.agree_or_refuse(handle, request, unet_name=NEW)
+    assert not isinstance(sample.value, old_model.OldModelRefusal)
+    held = _stock("fits", size_gib=1.0, avail_gib=200.0)
+    monkeypatch.setattr(capacity_agreement, "collect",
+                        lambda *_a, **_k: [_answer(0, held, box="this box")])
+    assert old_model_clear.loader_offer(types.SimpleNamespace(handle=_LiveHandle()), NEW, {},
+                                        windows=(_window(45.9, 47.3, 5.0),),
+                                        keep={OLD}) is None
+
+
+def test_every_reset_answers_the_open_cards(monkeypatch):
+    """Finding 3: a manual reset, a heal or an eviction all drain through here."""
+    _card()
+    assert consent_pending.pending_cards()
+    recycle_drain.drop_residency_memos()
+    assert consent_pending.pending_cards() == []
+    assert old_model_clear._CARDS == {}
+
+
+def test_a_card_never_resets_a_fleet_that_came_later(monkeypatch):
+    """Finding 3: the card resets the fleet that refused, or nothing."""
+    from dgx_monarch import mesh
+
+    first, later = _LiveHandle(), _LiveHandle()
+    offer = old_model.ClearOffer(NEW, (old_model.ShortBox(
+        "head", ("flux1-dev",), 45 * _GIB, 27 * _GIB, 22 * _GIB),), 2, False)
+    card = old_model_clear.register_card(offer, old_model.FLEET_GUARD, first)
+    assert card is not None
+    monkeypatch.setattr(mesh, "_MESHES", {"key": later})
+    status, payload = consent_routes.handle_action(
+        {"action": "accept", "key": card["key"], "id": card["id"]})
+    assert status == 200 and payload["cleared"] is False
+    assert payload["detail"] == old_model_clear.GONE
+    assert later.recycles == 0 and consent_pending.pending_cards() == []
+    from dgx_monarch.nodes import routes
+
+    monkeypatch.setattr(routes, "_RECYCLE_RATE", {"active": False,
+                                                 "last_finished": float("-inf")})
+    card = old_model_clear.register_card(offer, old_model.FLEET_GUARD, later)
+    status, payload = consent_routes.handle_action(
+        {"action": "accept", "key": card["key"], "id": card["id"]})
+    assert status == 200 and payload["cleared"] is True and later.recycles == 1
+
+
+def test_the_agreement_binds_its_card_to_the_fleet_that_refused(monkeypatch):
+    handle = types.SimpleNamespace(world=2, workers=object(), active_worker_args={})
+    short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
+    monkeypatch.setattr(capacity_agreement, "collect", lambda *_a, **_k: [
+        _answer(0, short), _fits(1, "sibling")])
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        capacity_agreement.agree_or_refuse(handle, {}, unet_name=NEW)
+    assert raised.value.fleet is handle
+    (card,) = consent_pending.pending_cards()
+    assert old_model_clear._CARDS[card["key"]][0] is handle
+
+
+def test_a_shard_or_a_cast_is_credited_its_arena_only(monkeypatch):
+    """Finding 4: neither an FSDP shard nor a dtype cast holds its whole file."""
+    monkeypatch.setattr(worker_capacity, "_spec_bytes", lambda spec: 20 * _GIB)
+    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: 0)
+
+    def facts(stored, topology=None):
+        store = types.SimpleNamespace(current=stored, uncond=None)
+        worker = types.SimpleNamespace(topology=topology or {})
+        return worker_capacity._resident_facts(worker, store)["resident_bytes"]["cond"]
+
+    plain = types.SimpleNamespace(base_key=(OLD, ()), fsdp_checkpoint_pin=None)
+    assert facts(plain) == 20 * _GIB
+    assert facts(plain, {"fsdp": True}) == 0
+    pinned = types.SimpleNamespace(base_key=(OLD, ()), fsdp_checkpoint_pin=object())
+    assert facts(pinned) == 0
+    cast = types.SimpleNamespace(base_key=(OLD, (("weight_dtype", "fp8_e4m3fn"),)),
+                                 fsdp_checkpoint_pin=None)
+    assert facts(cast) == 0
+
+
+def test_a_clear_must_beat_the_shortfall_by_a_margin():
+    """Finding 4: a fresh Worker takes some memory back on its first load."""
+    assert old_model.CLEAR_MARGIN_BYTES == actor_footprint.RESET_MARGIN_BYTES == 2 * _GIB
+    tight = old_model.ShortBox("head", ("old",), 10 * _GIB, 0, 11 * _GIB)
+    roomy = old_model.ShortBox("head", ("old",), 10 * _GIB, 0, 13 * _GIB)
+    assert not tight.clear_makes_room and roomy.clear_makes_room
+    assert tight.cleared_bytes == 9 * _GIB
+
+
+def test_the_worker_wall_names_the_arena_an_earlier_render_left(monkeypatch):
+    """Finding 5: the one-GPU and Fleet wall prices after its own drop."""
+    from dgx_monarch.actor import store_residency
+
+    fit = StockFit(False, True, 10 * _GIB, 20 * _GIB)
+    assert 0 < fit.required_bytes - fit.avail_bytes < 20 * _GIB
+    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: 30 * _GIB)
+    expected = ("This Worker still holds about 30.0 GiB that a model from an earlier render "
+                "left behind, and a reset gives it back: click Reset attached mesh in the DGX "
+                "Monarch panel, then queue the render again.")
+    assert expected in store_residency._no_rescue_text(OLD, fit, ("why", "a smaller file"))
+    offer = types.SimpleNamespace(unet_name=OLD)
+    assert expected in store_residency._rescue_offer_text(offer, fit)
+    monkeypatch.setattr(actor_footprint, "arena_bytes", lambda: 1 * _GIB)
+    assert "Reset attached mesh" not in store_residency._no_rescue_text(OLD, fit, ("w", "o"))
+    assert actor_footprint.ladder_clause(1, None) == ""
+
+
+def _loader_seams(monkeypatch, old, fresh, *, agree=None, prompt_seen=None):
+    """The eager loader with inert preflights, a cache and a recording agreement."""
+    import contextlib
+
+    from dgx_monarch import mesh_setup
+    from dgx_monarch.nodes import loader_preflight, loaders, render_preflight, render_session
+
+    monkeypatch.setattr(recycle_drain, "drop_residency_memos", lambda: None)
+    for handle in (old, fresh):
+        handle.call_all = lambda endpoint, *_a, _h=handle, **_k: (
+            _h.__dict__.setdefault("loaded", []).append(endpoint)
+            or [{"host": "h", "transition": "load"}])
+    fresh.world = 2
+    monkeypatch.setattr(loader_preflight, "record_rescue_row", lambda *_a, **_k: None)
+    monkeypatch.setattr(loaders, "ensure_live",
+                        lambda handle, **_k: fresh if old.defunct else old)
+    monkeypatch.setattr(capacity_agreement, "agree_load", agree or (lambda *_a, **_k: None))
+    monkeypatch.setattr(mesh_setup, "ensure_request_setup", lambda *_a, **_k: None)
+    monkeypatch.setattr(mesh_setup, "token_kwargs", lambda _token: {})
+    sols: list[object] = []
+    monkeypatch.setattr(render_preflight, "preflight_sol_sequence_parallel",
+                        lambda topo, _attention: sols.append(topo))
+    monkeypatch.setattr(render_session, "mutation_render_session",
+                        lambda _handle: contextlib.nullcontext())
+    return sols
+
+
+def test_the_eager_load_clears_once_and_runs_its_preflights_on_the_fresh_fleet(monkeypatch):
+    """Findings 7 and 2: the agreement's refusal at the eager site, and the graph's names."""
+    from dgx_monarch.nodes import loader_graph, loader_preflight, loaders
+    from dgx_monarch.nodes.common import MeshSpec
+
+    consent_store.set_standing("auto_clear", True)
+    old, fresh = _LiveHandle(), _LiveHandle()
+    old.world = 2
+    keeps: list[object] = []
+
+    def agree(handle, *_args, **_kwargs):
+        keeps.append(old_model.graph_names())     # what the loader names around its agreement
+        if handle is old:
+            raise _refusal()
+
+    sols = _loader_seams(monkeypatch, old, fresh, agree=agree)
+    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint",
+                        lambda *_a, **_k: object())
+    prompt = {"1": {"class_type": "DGXMonarchUNETLoader", "inputs": {"unet_name": NEW}},
+              "2": {"class_type": "DGXMonarchUncondUNETLoader", "inputs": {"unet_name": OLD}}}
+    mesh = MeshSpec(handle=old, topology_preset="uly2", attention="TORCH_FLASH",
+                    sync_ulysses=True)
+    loaders.DGXMonarchUNETLoader().load(mesh, NEW, prompt=prompt)
+    assert old.recycles == 1 and fresh.loaded == ["load_model"]
+    assert not getattr(old, "loaded", [])
+    assert len(sols) == 2                       # the preflight ran on the fresh topology too
+    assert keeps == [loader_graph.unet_names(prompt)] * 2 and OLD in keeps[0]
+
+
+def test_the_loader_never_clears_under_a_pinned_session(monkeypatch):
+    """Finding 6: a Pipeline or Gate session owns its mesh, at both loader sites."""
+    from dgx_monarch.nodes import loader_preflight, loaders, render_session
+    from dgx_monarch.nodes.common import MeshSpec
+
+    consent_store.set_standing("auto_clear", True)
+    monkeypatch.setattr(render_session, "active_render_session", lambda: object())
+    old, fresh = _LiveHandle(), _LiveHandle()
+    old.world = 2
+    _loader_seams(monkeypatch, old, fresh)
+
+    def refuse(*_a, **_k):
+        raise _loader_refusal()
+
+    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint", refuse)
+    mesh = MeshSpec(handle=old, topology_preset="uly2", attention="TORCH_FLASH",
+                    sync_ulysses=True)
+    with pytest.raises(old_model.LoaderOldModelError):
+        loaders.DGXMonarchUNETLoader().load(mesh, NEW)
+    monkeypatch.setattr(loader_preflight, "preflight_loader_footprint",
+                        lambda *_a, **_k: object())
+
+    def agree(*_args, **_kwargs):
+        raise _refusal()
+
+    monkeypatch.setattr(capacity_agreement, "agree_load", agree)
+    with pytest.raises(old_model.OldModelRefusal):
+        loaders.DGXMonarchUNETLoader().load(mesh, NEW)
+    assert old.recycles == 0
+
+
+def test_always_answers_the_cards_then_takes_the_reset_gate(monkeypatch):
+    """Finding 8: no click can start a second reset beside the Always one."""
+    from dgx_monarch.nodes import routes
+
+    consent_store.set_standing("auto_clear", True)
+    _card()
+    handle = _LiveHandle()
+    seen: list[int] = []
+    real = handle.recycle_detailed
+
+    def recycle():
+        seen.append(len(consent_pending.pending_cards()))
+        assert routes._RECYCLE_RATE["active"] is True
+        return real()
+
+    handle.recycle_detailed = recycle
+    assert old_model_clear.clear_for_retry(handle, _refusal()) is True
+    assert seen == [0] and routes._RECYCLE_RATE["active"] is False
+    monkeypatch.setattr(routes, "_RECYCLE_RATE", {"active": True,
+                                                 "last_finished": float("-inf")})
+    other = _LiveHandle()
+    assert old_model_clear.clear_for_retry(other, _refusal()) is False
+    assert other.recycles == 0
+
+
+def test_the_refusals_read_plainly():
+    """Finding 9: whole sentences, one name per box, and a next step every time."""
+    short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=NEW)
+    text = str(raised.value)
+    assert "1 of 2 cannot hold it beside the model an earlier render left there" in text
+    assert "rank 0 on head priced a stock load" in text and "(host host0)" not in text
+    with pytest.raises(FleetCapacityError) as plain:
+        decide([_answer(0, replace(short, arena_bytes=0, resident_bytes={})),
+                _fits(1, "sibling")], 2, unet_name=NEW)
+    assert "Choose a smaller or quantized artifact" in str(plain.value)
+
+
+def test_no_card_means_the_remedy_names_only_the_reset(monkeypatch):
+    """Finding 9: a driver that cannot resolve the checkpoint raises no card."""
+    missing = "not_on_this_driver.safetensors"
+    short = _stock("refuse", size_gib=19.0, avail_gib=27.4)
+    with pytest.raises(old_model.OldModelRefusal) as raised:
+        decide([_answer(0, short), _fits(1, "sibling")], 2, unet_name=missing)
+    text = str(raised.value)
+    assert "Open the DGX Monarch panel and click Reset attached mesh, then queue" in text
+    assert '"Clear and retry"' not in text and "DGXM_ALLOW_CLEAR_RETRY=1" in text
+    offer = old_model.ClearOffer(missing, (old_model.ShortBox(
+        "this box", ("flux1-dev",), 46 * _GIB, 42 * _GIB, 12 * _GIB),), 1, True)
+    with pytest.raises(old_model.LoaderOldModelError) as loader:
+        old_model_clear.refuse_at_loader(offer, "refused.")
+    assert '"Clear and retry"' not in str(loader.value)
+    assert consent_pending.pending_cards() == []
+
+
+def test_the_card_copy_and_its_answers_are_plain():
+    """Finding 9: no project terms on the card or in its answer."""
+    spec = consent_pending.KIND_SPECS[consent_descriptor.KIND_CLEAR_RETRY]
+    assert spec.risk == ("A model an earlier render loaded is still in memory, so this "
+                         "one does not fit beside it.")
+    assert spec.evidence == ("Clear and retry gives back all the memory the Sparks hold "
+                             "for models, the same as Reset attached mesh, and changes no "
+                             "setting.")
+    local = old_model.ClearOffer(NEW, (), 1, True)
+    pair = old_model.ClearOffer(NEW, (), 2, False)
+    assert old_model_clear.cleared(local) == "Cleared this box; queue the render again."
+    assert old_model_clear.cleared(pair) == "Cleared both Sparks; queue the render again."

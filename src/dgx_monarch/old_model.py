@@ -18,7 +18,9 @@ call and no file read.
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Iterable, Iterator, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -41,6 +43,11 @@ LOCAL_BOX = "this box"
 CREDITED_RESIDENCY = "stock"
 _NOT_A_RESIDENT = frozenset({"in_flight"})
 _MODEL_SUFFIXES = (".safetensors", ".sft", ".gguf", ".ckpt", ".pt", ".pth", ".bin")
+# What a fresh Worker takes back on its first load (lazy imports, kernel
+# caches) that the arena figure counts as returned: a clear must beat the
+# shortfall by this much before the card is offered. The Worker ladder's copy
+# is actor_footprint.RESET_MARGIN_BYTES.
+CLEAR_MARGIN_BYTES = 2 << 30
 FLEET_GUARD = "cross_rank_capacity"
 LOADER_GUARD = "loader_footprint_preflight"
 TROUBLESHOOTING = 93
@@ -68,7 +75,13 @@ class ShortBox:
 
     @property
     def clear_makes_room(self) -> bool:
-        return bool(self.old_models) and self.shortfall_bytes < self.gain_bytes
+        return (bool(self.old_models)
+                and self.shortfall_bytes + CLEAR_MARGIN_BYTES < self.gain_bytes)
+
+    @property
+    def cleared_bytes(self) -> int:
+        """About what this box would have for the load after a clear."""
+        return max(self.available_bytes + self.gain_bytes - CLEAR_MARGIN_BYTES, 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +114,9 @@ class OldModelRefusal(StockLoadCapacityError):
     def __init__(self, message: str, offer: ClearOffer | None = None) -> None:
         super().__init__(message)
         self.offer = offer
+        # The attached mesh that refused, bound by the raising site's caller,
+        # so a card never resets a fleet that came later (old_model_clear.py).
+        self.fleet: Any = None
 
 
 class LoaderOldModelError(DriverFootprintCapacityError, OldModelRefusal):
@@ -128,23 +144,62 @@ def box_name(answer: RankAnswer) -> str:
     return configured or getattr(answer, "host", "") or f"rank {answer.rank}"
 
 
-def old_models(quote: RankPrice) -> tuple[str, ...]:
+def kept_slots(quotes: Sequence[RankPrice], keep: frozenset[str] = frozenset()) -> frozenset[str]:
+    """The slots on one rank whose resident this request or graph still needs.
+
+    A slot the request reuses is needed, and so is one holding a model this
+    graph loads: a clear would only make the fresh fleet load it again, so it
+    is neither an old model nor memory a clear gives back.
+    """
+    kept = {quote.slot for quote in quotes if quote.would_load == "reuse"}
+    for quote in quotes[:1]:
+        kept.update(slot for slot, name in quote.resident_names.items()
+                    if name and name in keep)
+    return frozenset(kept)
+
+
+# Load lifetime: the checkpoints the graph being run loads, set by the loader
+# node around its eager agreement, so no card calls one of them old.
+_GRAPH_LOADS: ContextVar[frozenset[str]] = ContextVar("dgxm_graph_loads", default=frozenset())
+
+
+@contextmanager
+def graph_loads(names: Iterable[str]) -> Iterator[None]:
+    """Name the checkpoints this graph loads for the agreements inside the block."""
+    token = _GRAPH_LOADS.set(frozenset(str(name) for name in names))
+    try:
+        yield
+    finally:
+        _GRAPH_LOADS.reset(token)
+
+
+def graph_names() -> frozenset[str]:
+    return _GRAPH_LOADS.get()
+
+
+def named_in(specs: Any) -> frozenset[str]:
+    """The checkpoints a quote request loads, which no card may call old."""
+    return frozenset(str(spec.get("unet_name")) for spec in specs or ()
+                     if isinstance(spec, dict) and spec.get("unet_name"))
+
+
+def old_models(quote: RankPrice, kept: frozenset[str] = frozenset()) -> tuple[str, ...]:
     """The models this rank's slots hold, by name, or () when its row names none."""
     names: list[str] = []
     for slot, word in quote.holds_resident.items():
         name = quote.resident_names.get(slot)
-        if word and word not in _NOT_A_RESIDENT and name:
+        if word and word not in _NOT_A_RESIDENT and name and slot not in kept:
             shown = display_name(name)
             if shown not in names:
                 names.append(shown)
     return tuple(names)
 
 
-def rank_gain(quote: RankPrice) -> int:
+def rank_gain(quote: RankPrice, kept: frozenset[str] = frozenset()) -> int:
     """What a clear gives back on this rank beyond an in-process unload."""
     held = sum(max(int(quote.resident_bytes.get(slot, 0) or 0), 0)
                for slot, word in quote.holds_resident.items()
-               if word == CREDITED_RESIDENCY)
+               if word == CREDITED_RESIDENCY and slot not in kept)
     return held + max(int(quote.arena_bytes or 0), 0)
 
 
@@ -158,23 +213,26 @@ def _numbers(quote: RankPrice) -> tuple[int, int] | None:
 
 
 def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
-                answers: Sequence[RankAnswer], unet_name: str) -> ClearOffer | None:
+                answers: Sequence[RankAnswer], unet_name: str,
+                keep: frozenset[str] = frozenset()) -> ClearOffer | None:
     """The offer for a fleet's short rows, or None when it cannot be stated.
 
     None when no short box names an old model, or when a short row carries no
     figures: a price that cannot be read can never show that a clear makes
     room. One rank's rows share one snapshot, so a rank counts its gain once
-    and keeps its worst row; ranks that share a box add their gains.
+    and keeps its worst row; ranks that share a box add their gains. ``keep``
+    names the models this request and graph load (``kept_slots``).
     """
     ranks: dict[int, tuple[str, tuple[str, ...], int, int, int]] = {}
     for answer, quote in short:
         numbers = _numbers(quote)
         if numbers is None:
             return None
+        kept = kept_slots(answer.quotes or (quote,), keep)
         seen = ranks.get(answer.rank)
         if seen is None or numbers[0] - numbers[1] > seen[2] - seen[3]:
-            ranks[answer.rank] = (box_name(answer), old_models(quote), *numbers,
-                                  rank_gain(quote))
+            ranks[answer.rank] = (box_name(answer), old_models(quote, kept), *numbers,
+                                  rank_gain(quote, kept))
     boxes: dict[str, ShortBox] = {}
     for _rank, (name, olds, required, available, gain) in sorted(ranks.items()):
         seen_box = boxes.get(name)
@@ -214,12 +272,16 @@ def held_sentence(offer: ClearOffer) -> str:
              if not index else f"the old model ({_join(names)}) on {_join(where)}"
              for index, (names, where) in enumerate(groups.items())]
     if len(parts) == 1:
-        return f"The old model {parts[0]} and {offer.new_model} does not fit beside it."
+        # A comma when the box list already has an "and" of its own.
+        joint = "," if " and " in parts[0].rsplit(" on ", 1)[-1] else ""
+        return (f"The old model {parts[0]}{joint} and {offer.new_model} does not fit "
+                "beside it.")
     return (f"The old model {', '.join(parts)}, and {offer.new_model} does not fit "
             "beside them.")
 
 
-def _scope(offer: ClearOffer, *, cleared: bool) -> str:
+def scope_words(offer: ClearOffer, *, cleared: bool) -> str:
+    """'this box', 'the Sparks', or after a clear 'both Sparks'."""
     if offer.local:
         return LOCAL_BOX
     if offer.hosts == 1:
@@ -231,14 +293,20 @@ def _scope(offer: ClearOffer, *, cleared: bool) -> str:
 
 def card_body(offer: ClearOffer) -> str:
     """The card's sentence: what is in the way, and the question."""
-    scope = _scope(offer, cleared=False)
+    scope = scope_words(offer, cleared=False)
     return f"{held_sentence(offer)} Clear {scope} and run again?"
 
 
-def remedy(offer: ClearOffer) -> str:
-    """The one action that clears it, in the panel and headless."""
-    return (f'Open the DGX Monarch panel and click "{CLEAR_LABEL}" on the "{CARD_TITLE}" '
-            "card, or click Reset attached mesh, then queue the render again. Headless: "
+def remedy(offer: ClearOffer, *, card: bool = True) -> str:
+    """The one action that clears it, in the panel and headless.
+
+    ``card`` is whether a card was raised: a driver that cannot resolve the
+    checkpoint in its own model folders raises none, so the text names only
+    the panel's Reset attached mesh.
+    """
+    click = (f'click "{CLEAR_LABEL}" on the "{CARD_TITLE}" card, or click Reset attached '
+             "mesh," if card else "click Reset attached mesh,")
+    return (f"Open the DGX Monarch panel and {click} then queue the render again. Headless: "
             f"set {CLEAR_ENV}=1 on the driver and it clears and retries on its own.")
 
 
@@ -248,7 +316,9 @@ def no_room(offer: ClearOffer) -> str:
         if not box.clear_makes_room:
             return (f"A clear would not make room: {offer.new_model} needs "
                     f"{gib(box.required_bytes)} GiB on {box.box}, and a cleared box "
-                    f"would have about {gib(box.available_bytes + box.gain_bytes)} GiB.")
+                    f"would have about {gib(box.cleared_bytes)} GiB. Choose a smaller or "
+                    "quantized artifact, free memory on that box, or use slab residency "
+                    "where a card offers it.")
     return ""
 
 
@@ -257,7 +327,7 @@ def log_line(offer: ClearOffer) -> str:
     olds = list(dict.fromkeys(name for box in offer.boxes for name in box.old_models))
     were = ("was loaded from an earlier render" if len(olds) == 1
             else "were loaded from earlier renders")
-    return (f"cleared {_scope(offer, cleared=True)} to make room for {offer.new_model}; "
+    return (f"cleared {scope_words(offer, cleared=True)} to make room for {offer.new_model}; "
             f"{_join(olds) if olds else 'the old model'} {were}")
 
 
@@ -266,6 +336,11 @@ def card_numbers(offer: ClearOffer) -> str:
     box = max(offer.boxes, key=lambda item: item.shortfall_bytes)
     return (f"needs {gib(box.required_bytes)} GiB, {gib(box.available_bytes)} GiB "
             f"available on {box.box}")
+
+
+def where(answer: RankAnswer) -> str:
+    """A rank by the box name the held sentence uses: 'rank 0 on head'."""
+    return f"rank {answer.rank} on {box_name(answer)}"
 
 
 def held_clause(pairs: Sequence[tuple[RankAnswer, RankPrice]],
@@ -285,21 +360,23 @@ def held_clause(pairs: Sequence[tuple[RankAnswer, RankPrice]],
 
 
 def raise_fleet_refusal(offer: ClearOffer, short_ranks: int, world: int,
-                        priced: str) -> NoReturn:
+                        priced: str, *, card: bool = True) -> NoReturn:
     """The cross-rank agreement's refusal when a clear would make room."""
     raise OldModelRefusal(refusal(
         RefusalClass.CAPACITY,
         f"this render needs every rank to hold the model and {short_ranks} of {world} "
-        "cannot beside the model an earlier render left there, so nothing was loaded on "
-        f"any rank. {priced} {held_sentence(offer)} {remedy(offer)} This refusal is "
+        "cannot hold it beside the model an earlier render left there, so nothing was "
+        f"loaded on any rank. {priced} {held_sentence(offer)} {remedy(offer, card=card)} "
+        "This refusal is "
         "capacity-protective (class C), and nothing was quarantined.",
         guard=FLEET_GUARD, waivable=False, troubleshooting=TROUBLESHOOTING), offer)
 
 
-def raise_loader_refusal(offer: ClearOffer, message: str) -> NoReturn:
+def raise_loader_refusal(offer: ClearOffer, message: str, *, card: bool = True) -> NoReturn:
     """The loader preflight's refusal when a clear would make room."""
     raise LoaderOldModelError(refusal(
-        RefusalClass.CAPACITY, f"{message} {held_sentence(offer)} {remedy(offer)}",
+        RefusalClass.CAPACITY,
+        f"{message} {held_sentence(offer)} {remedy(offer, card=card)}",
         guard=LOADER_GUARD, waivable=False), offer)
 
 

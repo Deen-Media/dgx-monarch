@@ -187,9 +187,11 @@ def _pairs(answers: list[RankAnswer], verdict: str) -> list[tuple[RankAnswer, Ra
                   key=lambda pair: _headroom(pair[1]))
 
 
-def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> str:
+def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str,
+                     where: str = "") -> str:
     """The refusing rank's own numbers, formatted rather than re-derived."""
     measured = _block(quote)
+    where = where or answer.where
     try:
         needed, weights, avail, headroom = (
             float(measured[key]) for key in
@@ -198,12 +200,12 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> st
         text = " ".join(str(quote.reason).split())
         if len(text) > _MAX_REASON_CHARS:
             text = text[:_MAX_REASON_CHARS] + "..."
-        return f"{answer.where} refused: {text}."
+        return f"{where} refused: {text}."
     if measured.get("probe") == PROBE_PREFLIGHT_WALL:
         # Managed and FSDP estimates come from their own capacity checks; neither
         # charges the stock arena, so the sentence names no second term.
         kind = "comfy-managed" if quote.rung == RUNG_COMFY_MANAGED else "sharded"
-        return (f"{answer.where} priced a {kind} load of {unet_name}: the load "
+        return (f"{where} priced a {kind} load of {unet_name}: the load "
                 f"needs {needed} GiB against a {weights} GiB file, and {avail} "
                 f"GiB of unified memory is available, {abs(headroom)} GiB short.")
     if quote.use_slab:
@@ -218,7 +220,7 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> st
     else:
         kind, second_term = "stock", "plus the host copy it is placed from"
     return (
-        f"{answer.where} priced a {kind} load of {unet_name}: the load needs "
+        f"{where} priced a {kind} load of {unet_name}: the load needs "
         f"{needed} GiB, a {weights} GiB file {second_term}, and {avail} GiB of "
         f"unified memory is available, {abs(headroom)} GiB short."
     )
@@ -244,7 +246,8 @@ def _refuse_unavailable(text: str) -> NoReturn:
 
 def decide(answers: list[RankAnswer], world: int, *,
            unet_name: str = "this checkpoint",
-           deadline_s: float = CAPACITY_QUOTE_DEADLINE_S) -> None:
+           deadline_s: float = CAPACITY_QUOTE_DEADLINE_S,
+           keep: frozenset[str] = frozenset()) -> None:
     """Evaluate fleet replies and raise on a definite refusal or invalid evidence.
 
     Check missing replies, incomplete or duplicated rank inventories, and
@@ -274,11 +277,15 @@ def decide(answers: list[RankAnswer], world: int, *,
     rescuing = _pairs(answers, VERDICT_RESCUE)
     # Priced with the residents still held: a clear may make room on every short box.
     short = refusing + rescuing
-    offer = old_model.fleet_offer(short, answers, unet_name)
+    # ``keep``: the models this request and graph load are never in the way.
+    offer = old_model.fleet_offer(short, answers, unet_name, keep)
     if offer is not None and offer.helps:
         _log_fleet(answers, "refused, old model in the way")
-        priced = " ".join(_priced_sentence(*pair, unet_name) for pair in short)
-        old_model.raise_fleet_refusal(offer, len({a.rank for a, _q in short}), world, priced)
+        from .nodes import old_model_clear
+
+        priced = " ".join(_priced_sentence(a, q, unet_name, old_model.where(a)) for a, q in short)
+        old_model.raise_fleet_refusal(offer, len({a.rank for a, _q in short}), world, priced,
+                                      card=old_model_clear.card_possible(unet_name))
     if refusing:
         _log_fleet(answers, "refused")
         _refuse_shortfall(refusing, answers, world, unet_name, offer)
@@ -512,18 +519,23 @@ def agree_sample(handle: Any, request: dict) -> None:
 
 
 def agree_load(handle: Any, unet_name: str, options: dict | None,
-               lora_stack: list | None, slot: str) -> None:
-    """Agree one eager loader-node load before any rank allocates."""
+               lora_stack: list | None, slot: str, keep: Any = ()) -> None:
+    """Agree one eager loader-node load before any rank allocates.
+
+    ``keep`` names the checkpoints the same graph loads, so a model the graph's
+    other loader placed seconds earlier is never offered as an old model.
+    """
     agree_or_refuse(
         handle,
         quote_request([{"unet_name": unet_name, "options": options,
                         "loras": lora_stack, "slot": slot}]),
-        unet_name=unet_name)
+        unet_name=unet_name, keep=frozenset(str(name) for name in keep or ()))
 
 
 def agree_or_refuse(handle: Any, request: dict, *,
                     unet_name: str = "this checkpoint",
-                    deadline_s: float = CAPACITY_QUOTE_DEADLINE_S) -> None:
+                    deadline_s: float = CAPACITY_QUOTE_DEADLINE_S,
+                    keep: frozenset[str] = frozenset()) -> None:
     """Agree the load across the fleet, or raise before any rank allocates.
 
     World 1 is a no op, the way the post-load weight-residency guard already is.
@@ -536,8 +548,11 @@ def agree_or_refuse(handle: Any, request: dict, *,
         return
     answers = collect(handle, request, world, deadline_s=deadline_s)
     try:
-        decide(answers, world, unet_name=unet_name, deadline_s=deadline_s)
+        decide(answers, world, unet_name=unet_name, deadline_s=deadline_s,
+               keep=keep | old_model.named_in(request.get("specs")) | old_model.graph_names())
     except BaseException as exc:
+        if isinstance(exc, old_model.OldModelRefusal):
+            exc.fleet = handle  # its card may reset this fleet and no later one
         # The one driver frame that sees this raise, so the rescue arm becomes a
         # panel card here. Best effort, and it never replaces the refusal.
         from .consent_observe import observe_refusal

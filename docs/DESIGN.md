@@ -1679,18 +1679,27 @@ attached mesh, the same teardown as Reset attached mesh, gives back on each
 short box: the file bytes of each stock resident, whose GPU copy an in-process
 drop returned on 2026-11-04, plus the actor's anonymous memory above what it
 held at its first load (`actor/actor_footprint.py`). A slab or comfy-managed
-resident is credited the arena only. Only when every short box is short by
-less than that does the refusal become "Old model in the way" (`old_model.py`),
-at the agreement and at the loader windows, which ask the Workers on the
-driver host for the same facts after their own estimate refused. The card's
-Clear and retry grants nothing: it writes no memo and no ledger row and lifts
-no guard, so its kind stays outside the frozen audit vocabulary. With Always clear and
-retry ticked (`auto_clear` in the consent memo) or `DGXM_ALLOW_CLEAR_RETRY`
-set on the driver, the driver clears by itself, at most once per load attempt
-and never under a Pipeline or Gate session pinned to its mesh, waits for the
-driver host's MemAvailable to settle, attaches a fresh fleet and prices again.
-That price decides: a load that still does not fit refuses in the plain words
-above, and the credit still waits for its measurement.
+resident, an FSDP shard and a load cast to another weight dtype are credited
+the arena only. A slot the request reuses, and a model this graph loads, are
+neither old nor credited: a fresh fleet would only load them again. Only when
+every short box is short by less than that, with 2 GiB to spare for what a
+fresh Worker takes back, does the refusal become "Old model in the way"
+(`old_model.py`), at the agreement and at the loader windows. The loader asks
+the Workers on the driver host for the same facts after its own estimate
+refused, and a clear must make room in both of its windows, against their
+unclamped budgets. The card's Clear and retry grants nothing: it writes no
+memo and no ledger row and lifts no guard, so its kind stays outside the frozen
+audit vocabulary. A card resets only the fleet that refused, and every reset,
+from any door, answers every open card. With Always clear and retry ticked
+(`auto_clear` in the consent memo) or `DGXM_ALLOW_CLEAR_RETRY` set on the
+driver, the driver clears by itself, at most once per load attempt, under the
+reset route's single-flight gate and never under a Pipeline or Gate session
+pinned to its mesh, waits for the driver host's MemAvailable to settle,
+attaches a fresh fleet and prices again. That price decides: a load that still
+does not fit refuses in the plain words above, and the credit still waits for
+its measurement. The Worker's own wall prices after its in-process drop, so it
+names no old model; when the arena it still holds would cover its shortfall,
+its refusal says so and names Reset attached mesh.
 
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate

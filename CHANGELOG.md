@@ -128,7 +128,9 @@
   itself, once per load. The card writes no consent and no ledger row, and the
   load is priced again on the fresh Workers. Both the cross-rank agreement and
   the loader's own check raise it, and the agreement's slab rescue card now
-  names a held model too. On 2026-11-04, 19 of 20 template errors were this
+  names a held model too. A one-GPU fleet or a Fleet job, whose Worker prices
+  its own load, names the memory an earlier render left behind and Reset
+  attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
   case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
 

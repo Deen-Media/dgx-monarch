@@ -85,11 +85,10 @@ _SPECS: tuple[KindSpec, ...] = (
         kind="clear-retry",
         style="capacity",
         title="Old model in the way",
-        risk=("A model an earlier render loaded is still held on the attached mesh, so "
-              "this load does not fit beside it."),
-        evidence=("Clear and retry stops the Worker processes of the attached mesh, the "
-                  "same reset as Reset attached mesh, which gives back all the memory they "
-                  "hold, and the next render starts fresh ones. It changes no setting."),
+        risk=("A model an earlier render loaded is still in memory, so this one does not "
+              "fit beside it."),
+        evidence=("Clear and retry gives back all the memory the Sparks hold for models, "
+                  "the same as Reset attached mesh, and changes no setting."),
         primary_label="Clear and retry",
         env_var="DGXM_ALLOW_CLEAR_RETRY",
         auto_eligible=False,

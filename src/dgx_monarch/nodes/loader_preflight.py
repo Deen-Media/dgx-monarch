@@ -43,6 +43,7 @@ from .loader_graph import (
     note_stack_charged,
     remember,
     reset_charged_artifacts,
+    unet_names,
 )
 
 log = get_logger(__name__)
@@ -533,12 +534,12 @@ def preflight_loader_footprint(
                 })
 
         # The head's Worker shares this box: an old model it holds may be in the way.
-        clear = old_model_clear.loader_offer(
-            mesh, unet_name, options, required=binding.projected, available=binding.usable)
+        clear = old_model_clear.loader_offer(mesh, unet_name, options, windows=(transient, settled),
+                                             keep=unet_names(prompt))
         if clear is not None and clear.helps:
             old_model_clear.refuse_at_loader(clear, loader_refusal(
                 binding, terms, unet_name=unet_name, profile=profile, floor_reserve=floor_reserve,
-                rescue=None, window=window, bypass=False))
+                rescue=None, window=window, bypass=False), mesh.handle)
         message = loader_refusal(
             binding, terms, unet_name=unet_name, profile=profile,
             floor_reserve=floor_reserve, rescue=rescue, window=window)
