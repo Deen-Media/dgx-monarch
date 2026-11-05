@@ -198,7 +198,10 @@ start with the new setting. See [docs/TROUBLESHOOTING.md #62](TROUBLESHOOTING.md
 spawn fresh ones on the next render. `recycle` is the graph and internal term;
 the sidebar says **Reset attached mesh** to distinguish it from restarting a
 Worker service. A reset reclaims the retained arena; slab mode normally avoids
-it.
+it. When you move from one large model to another on the same attached mesh,
+the next load is priced with the last one still held, so a refusal may say "the
+old model (<name>) is still loaded" and offer **Clear and retry**, which runs
+this reset; **Always clear and retry** lets the driver run it for you.
 
 ## Trust words
 

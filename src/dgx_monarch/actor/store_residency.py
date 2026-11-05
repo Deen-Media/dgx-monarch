@@ -37,7 +37,7 @@ from ..mesh_safety import StockLoadCapacityError
 from ..refusal import PanelAction, RefusalClass, refusal, untagged
 from ..residency_mode import PINNED_STAGING_FACTOR
 from ..transfer_utils import failure_summary, safe_call
-from . import capacity_quote, store_slab_admit
+from . import actor_footprint, capacity_quote, store_slab_admit
 
 # One home for the rung words and the shared price helpers; a caller that
 # spells them ``store_residency.X`` resolves the same object.
@@ -148,8 +148,8 @@ def resolve(
         # card. A raise here would take the bare branch below, which drops the
         # managed card's staging cause, fixes and entry pointer.
         if row.use_slab and slab_fit is not None:
-            store_slab_admit.admit(slab_fit, unet_name, _host(),
-                                   reserve_bytes=reserve_bytes)
+            store_slab_admit.admit(slab_fit, unet_name, _host(), reserve_bytes=reserve_bytes,
+                                   tail=actor_footprint.block_clause(row.slab_measured))
         if row.blocker is not None and fit is not None:
             raise StockLoadCapacityError(refusal(
                 RefusalClass.CAPACITY, _no_rescue_text(unet_name, fit, row.blocker),
@@ -159,7 +159,7 @@ def resolve(
         # re-raises it under the same class and guard, so the operator meets one
         # refusal with one boundary named, not an echo of another module's tag.
         raise StockLoadCapacityError(refusal(
-            RefusalClass.CAPACITY, untagged(row.reason),
+            RefusalClass.CAPACITY, untagged(row.reason) + actor_footprint.block_clause(row.measured),
             guard=RESCUE_GUARD, waivable=False))
     if row.verdict == capacity_quote.VERDICT_RESCUE and fit is not None:
         raise SlabResidencyRescueOffer(refusal(
@@ -221,7 +221,7 @@ def _no_rescue_text(unet_name: str, fit: StockFit, blocker: tuple[str, str]) -> 
         f"available, so it would be killed out of memory. Slab rescue is unavailable here "
         f"because {why}. What would fit: {options}. This refusal is capacity-protective "
         "(class C, StockLoadCapacityError family); nothing was loaded and nothing was quarantined."
-    )
+    ) + actor_footprint.ladder_clause(fit.required_bytes, fit.avail_bytes)
 
 
 def _rescue_offer_text(descriptor: ConsentDescriptor, fit: StockFit,
@@ -240,7 +240,7 @@ def _rescue_offer_text(descriptor: ConsentDescriptor, fit: StockFit,
         f"{consent_descriptor.EVIDENCE_BYTE_VERIFIED}.{clause} This refusal is "
         "capacity-protective (StockLoadCapacityError family); nothing was loaded and "
         "nothing was quarantined."
-    )
+    ) + actor_footprint.ladder_clause(fit.required_bytes, fit.avail_bytes)
 
 
 def _wire_tail(fit: StockFit, descriptor: ConsentDescriptor | None) -> str:

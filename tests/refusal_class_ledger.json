@@ -1245,6 +1245,18 @@
       "waivable": false
     },
     {
+      "site": "old_model.py::raise_fleet_refusal::OldModelRefusal#0",
+      "class": "C",
+      "guard": "cross_rank_capacity",
+      "waivable": false
+    },
+    {
+      "site": "old_model.py::raise_loader_refusal::LoaderOldModelError#0",
+      "class": "C",
+      "guard": "loader_footprint_preflight",
+      "waivable": false
+    },
+    {
       "site": "render_memory_price.py::refuse_render_memory::RenderMemoryPriceError#0",
       "class": "C",
       "guard": "activation_footprint_preflight",

@@ -47,6 +47,9 @@ REFUSAL_CLASSES = frozenset({
     "StockLoadCapacityError",
     "ComfyManagedResidencyError",
     "DriverFootprintCapacityError",
+    # The Old model in the way refusal, at the agreement and the loader (old_model.py).
+    "OldModelRefusal",
+    "LoaderOldModelError",
     "ConsentRequiredError",
     "SlabResidencyRescueOffer",
     "SlabCertificateError",

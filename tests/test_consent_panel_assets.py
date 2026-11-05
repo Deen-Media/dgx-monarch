@@ -169,3 +169,19 @@ def test_a_revoke_forgets_the_local_allowed_row_for_its_key():
     first, done = handler.split("}, () => {", 1)
     assert 'action: "revoke"' in first
     assert "delete justAccepted[row.key]" in done
+
+
+def test_an_action_card_is_server_driven_and_waits_as_long_as_its_reset():
+    """The Old model in the way card: its checkbox and its button come from the
+    server (card.runs, card.always), and its accept waits out the reset's 260 s
+    server deadline rather than the 15 s a consent click gets."""
+    source = CONSENT.read_text()
+    assert "clear-retry" not in source
+    assert "card.runs && card.always" in source
+    assert "body.always = always.checked" in source
+    assert "const ACTION_POST_TIMEOUT_MS = 270000;" in source
+    assert 'verbsKey === "runs" ? ACTION_POST_TIMEOUT_MS : POST_TIMEOUT_MS' in source
+    assert 'answer(key, { action, value: box.checked })' in source
+    assert '"auto_clear"' in source and "DGXM_ALLOW_CLEAR_RETRY" in source
+    assert "card.detail" in source
+

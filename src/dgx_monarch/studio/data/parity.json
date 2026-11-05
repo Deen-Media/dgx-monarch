@@ -9,7 +9,7 @@
     "configuration": 54,
     "node": 21,
     "node_input": 138,
-    "panel_action": 7,
+    "panel_action": 8,
     "telemetry": 17,
     "tui_action": 9,
     "workflow": 73
@@ -16332,6 +16332,44 @@
       "datatype": "action",
       "default": null,
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "panel.action.dgx_monarch_consent.always.onchange",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "handler": "always.onchange",
+          "status": "available"
+        },
+        "studio": {
+          "reason": "Studio has no control for the Old model in the way card's Always clear and retry box; tick it on the card in the ComfyUI panel.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "panel_action",
+      "name": "always",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "web/js/dgx_monarch_consent.js:always.onchange",
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "panel.action.dgx_monarch_consent.box.onchange",
       "interfaces": {
         "cli": {
@@ -16347,7 +16385,7 @@
           "status": "available"
         },
         "studio": {
-          "reason": "Studio has no control for the automatic rescue setting (auto_rescue); change it in the ComfyUI panel.",
+          "reason": "Studio has no control for the automatic rescue setting (auto_rescue) or for Always clear and retry (auto_clear); change them in the ComfyUI panel.",
           "status": "not_represented"
         },
         "tui": {

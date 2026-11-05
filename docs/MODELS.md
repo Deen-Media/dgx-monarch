@@ -1547,7 +1547,10 @@ template's `uma_reserve_gb` of 0.0. A template cannot set the launch flag.
 Every template ships the Init `uma_reserve_gb` and `reserve_vram_gb` at 0.0;
 with `reserve_vram_gb` at 0.0, workers on unified memory reserve 8 GiB unless
 `cluster.toml` `[worker_args]` sets another value. Keep a higher reserve when
-other applications need the memory. If BF16 admission refuses, choose INT8 or the
+other applications need the memory. If BF16 admission refuses, read the
+refusal first: when it says an old model is still loaded, Clear and
+retry on its Old model in the way card, or Reset attached
+mesh, is the remedy. Otherwise choose INT8 or the
 [memory-saver workflow](../example_workflows/dgx-monarch-wan-animate2-memory-saver.json),
 which recycles actors before decode and reloads them on the next queue;
 persistent Worker services keep running. Do not disable admission guards.
