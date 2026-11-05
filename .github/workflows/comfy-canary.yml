@@ -27,6 +27,7 @@ on:
       # The comfy module guard in conftest.py runs under every pytest step.
       - "tests/conftest.py"
       - "tests/test_bake_equivalence.py"
+      - "tests/test_lora_cast_time.py"
       - "tests/test_comfy_seam_contracts.py"
       - "tests/test_int8_linear_layout.py"
       - "tests/test_slab_hook_canary.py"
@@ -175,6 +176,12 @@ jobs:
         env:
           COMFY_DIR: ../ComfyUI
         run: python tests/canary/bake_equivalence_canary.py
+      # The cast-time LoRA bake against comfy.ops' own cast (#145): the keys it
+      # leaves to the classic bake, the installed patcher and the lazy swap's verify.
+      - name: Cast-time LoRA bake vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: pytest -q tests/test_lora_cast_time.py
       - name: Slab hook surfaces vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
@@ -412,6 +419,7 @@ jobs:
           pytest -q
           tests/test_comfy_seam_contracts.py
           tests/test_bake_equivalence.py
+          tests/test_lora_cast_time.py
           tests/test_slab_hook_canary.py
           tests/test_lens_comfy_exactness.py
           tests/test_lens_text_projections.py

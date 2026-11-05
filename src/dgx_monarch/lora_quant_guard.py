@@ -41,11 +41,12 @@ def assert_lora_quant_supported(family: str | None, quant_kind: str | None,
     raise UnsupportedModelError(refusal(
         RefusalClass.PHYSICS,
         f"{family}: an {str(quant_kind).upper()} file with a LoRA ({names}) rendered far "
-        "from stock ComfyUI on the cluster on 2026-10-21. dgx-monarch bakes the LoRA into "
+        "from stock ComfyUI on the cluster on 2026-10-21. dgx-monarch baked the LoRA into "
         "the quantized weights as stock's classic loader does, and stock with DynamicVRAM "
-        "off rendered the Kromoss INT8 file with its DMD2 LoRA as far from its own default, "
-        "so this release refuses the pair on every topology before any weight moves: each "
-        "one bakes the LoRA the same way, mode=local on one GPU included. Render this graph "
+        "off rendered the Kromoss INT8 file with its DMD2 LoRA as far from its own default. "
+        "The Workers now bake stock's cast-time weight instead (#145), which no hardware run "
+        "has measured on this file yet, so this release still refuses the pair on every "
+        "topology before any weight moves, mode=local on one GPU included. Render this graph "
         "in stock ComfyUI on one GPU instead, with its default DynamicVRAM loader, or remove "
         "the LoRA; a BF16 file with a LoRA is not refused.",
         troubleshooting=129))
