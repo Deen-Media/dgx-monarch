@@ -1334,7 +1334,7 @@
       "test_comfyuis_requirements_pin_a_validated_comfy_kitchen": "2f97315b8bfb8d10",
       "test_the_docs_name_the_validated_set": "131ef1445b12e9dd",
       "test_the_installed_comfy_kitchen_is_validated": "9136c3d703f8029e",
-      "test_the_requirements_check_reads_one_exact_pin": "7d14f6a911fa615a"
+      "test_the_requirements_check_reads_one_exact_pin": "1767bf8c192ded59"
     },
     "tests/test_int8_gemm_option.py": {
       "test_a_backend_without_its_cuda_extension_has_nothing_to_replace": "513aeed494bf73eb",
@@ -1347,7 +1347,7 @@
       "test_an_error_after_the_wrap_restores_both_replacements_for_good": "d0c19c9d501f1c0b",
       "test_an_imported_comfy_kitchen_is_wrapped_in_place_and_unwrapped_on_cutlass": "03f7f94eadff8b14",
       "test_an_unknown_value_runs_stock_cutlass_with_one_warning": "fcc4e5385d0c1326",
-      "test_an_unvalidated_comfy_kitchen_keeps_stock_cutlass_with_one_warning": "a1549a5a465c3eaf",
+      "test_an_unvalidated_comfy_kitchen_keeps_stock_cutlass_with_one_warning": "54236138ee6063b4",
       "test_apply_worker_args_switches_a_live_proc": "8321a7b5d4b6056f",
       "test_bootstrap_proc_registers_the_hook_after_the_source_path": "dbe1afef8b99eaf8",
       "test_cluster_toml_carries_the_key_to_the_worker_args": "f0142e5bd50f12e8",
@@ -1362,7 +1362,7 @@
       "test_the_import_hook_applies_the_mode_set_before_comfy_kitchen_loads": "3679533170e449af",
       "test_the_option_module_imports_only_the_standard_library": "91bc1371df873801",
       "test_the_schema_admits_exactly_the_two_modes": "695c442ffb64e12a",
-      "test_the_validated_set_is_the_recorded_one": "f600f38d7bcfff12",
+      "test_the_validated_set_is_the_recorded_one": "84e7816bb5153045",
       "test_the_worker_never_writes_the_default_into_its_args": "b31aab7faf0da865",
       "test_triton_failing_to_load_keeps_stock_cutlass_with_one_warning": "8b73fbea0100dd3f"
     },

@@ -136,6 +136,14 @@
 
 ### Compatibility and verification
 
+- comfy-kitchen 0.2.41, the release ComfyUI master now pins, joins the INT8
+  GEMM kernel's validated set, so an install that follows that pin keeps the
+  kernel on instead of running every INT8 linear on CUTLASS with a WARNING.
+  0.2.41 changes no INT8 or W4A8 code, and the kernel's GPU check matched 240
+  of 240 cases on it. The render comparison was not rerun: a release now needs
+  one only when it changes the INT8 path. The comfy canary's comfy-kitchen check, red against ComfyUI
+  master, passes again ([Models](docs/MODELS.md#int8-gemm-kernel),
+  [VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
 - The video templates follow ComfyUI 0.44.0's Create Video, which gained
   `chroma_subsampling` before `codec` (ComfyUI #17463); they hold its default,
   `auto`. On ComfyUI 0.43 and older, which lack the widget, this pack's
@@ -194,8 +202,8 @@
   output; in the 2026-10-28 and 29 comparison MiniMax H3 and Wan Animate 2
   rendered 16 to 25 percent faster. `[worker_args] int8_gemm = "cutlass"` turns it off in the actors and
   `DGXM_INT8_GEMM=cutlass` in the ComfyUI process. A process without Python.h,
-  Triton or a validated comfy-kitchen release (0.2.37 or 0.2.40) runs CUTLASS
-  and logs one WARNING ([Models](docs/MODELS.md#int8-gemm-kernel),
+  Triton or a validated comfy-kitchen release (0.2.37, 0.2.40 or 0.2.41) runs
+  CUTLASS and logs one WARNING ([Models](docs/MODELS.md#int8-gemm-kernel),
   [TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
   The kernel option's install points ran on hardware, one short render per
   process kind ([VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).

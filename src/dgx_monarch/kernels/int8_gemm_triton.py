@@ -48,8 +48,8 @@ dgx-monarch:
   and every log line, and calls into this module.
 - The cublas mode and the fixed Python.h fallback directory are gone; a missing
   Python.h is one of ``int8_gemm.py``'s fallback reasons.
-- ``VALIDATED_KITCHEN`` admits 0.2.40 beside 0.2.37 (docs/VALIDATION.md, "INT8
-  GEMM kernel comparison").
+- ``VALIDATED_KITCHEN`` admits 0.2.40 and 0.2.41 beside 0.2.37
+  (docs/VALIDATION.md, "INT8 GEMM kernel comparison").
 - A failed Triton build or launch reports through a callback instead of
   printing a traceback; the import hook calls back instead of applying a mode.
 - Names lost their leading underscore, and the code gained type hints.
@@ -70,7 +70,7 @@ TOP = "comfy_kitchen"
 # The comfy-kitchen releases this kernel was proven exact against. A release
 # outside the set keeps stock CUTLASS; tests/test_int8_gemm_kitchen_version.py
 # fails when ComfyUI's requirements or the installed package move past it.
-VALIDATED_KITCHEN = ("0.2.37", "0.2.40")
+VALIDATED_KITCHEN = ("0.2.37", "0.2.40", "0.2.41")
 MIN_M = 128
 
 

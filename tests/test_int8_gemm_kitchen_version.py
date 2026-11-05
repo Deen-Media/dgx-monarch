@@ -73,7 +73,7 @@ def test_comfyuis_requirements_pin_a_validated_comfy_kitchen():
 @pytest.mark.parametrize("text, words", [
     ("torch\ncomfy-kitchen==0.2.40\nsafetensors>=0.4.2\n", None),
     ("comfy_kitchen == 0.2.37  # pinned\n", None),
-    ("comfy-kitchen==0.2.41\n", "pins comfy-kitchen 0.2.41, outside"),
+    ("comfy-kitchen==0.2.42\n", "pins comfy-kitchen 0.2.42, outside"),
     ("comfy-kitchen>=0.2.40\n", "not one exact release"),
     ("comfy-kitchen\n", "not one exact release"),
     ("torch\nnumpy\n", "no longer names comfy-kitchen"),
