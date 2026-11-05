@@ -1729,7 +1729,7 @@ per residency, as the FSDP clean reload's credit did.
 
 **A model in the way offers a clear, not a credit.** A refusal priced over a
 Worker resident names the old model and its box: "the old model (flux1-dev)
-is still loaded on head". The driver then works out what a clear of the
+is still loaded on the head". The driver then works out what a clear of the
 attached mesh, the same teardown as Reset attached mesh, gives back on each
 short box: the file bytes of each stock resident, whose GPU copy an in-process
 drop returned on 2026-11-04, plus the actor's anonymous memory above what it
@@ -1758,6 +1758,20 @@ does not fit refuses in the plain words above, and the credit still waits for
 its measurement. The Worker's own wall prices after its in-process drop, so it
 names no old model; when the arena it still holds would cover its shortfall,
 its refusal says so and names Reset attached mesh.
+
+**A refusal names a box the way the user does.** The box the driver runs on is
+"the head". With one other box, that box is "the sibling"; with more, each is
+"the sibling at <host name>", so no two read alike. A local fleet is "this
+box", and a box that runs more than one rank names its GPU too ("GPU 1 on the
+head"). The head is the `[[hosts]]` entry that resolves to the driver's own
+machine, the check rank 0's co-residency already makes, never the first entry
+by position. One module words it (`box_names.py`); the agreement stamps the
+name on every rank's answer, and the capacity refusals, the Old model in the
+way card, the agreement's log line and the FSDP clean-reload refusal read that
+stamp. So none names a box by its rank number or by the address cluster.toml
+gives it. Machine fields keep the host name and the rank number for operators
+and parsers, and so does a Worker's own refusal: a Worker words no sentence
+about a peer and does not know which box the driver runs on.
 
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate

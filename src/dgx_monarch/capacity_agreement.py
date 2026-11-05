@@ -19,7 +19,7 @@ from dataclasses import dataclass, replace
 from functools import partial
 from typing import Any, NoReturn
 
-from . import old_model
+from . import box_names, old_model
 from .actor import store_slab_admit
 from .actor.capacity_quote import (
     RUNG_COMFY_MANAGED,
@@ -73,11 +73,6 @@ class FleetQuoteUnavailableError(RuntimeError):
     """
 
 
-# What the driver calls its own box when no cluster config names one: a local
-# fleet runs every rank in the driver's process tree, so this is not a guess.
-LOCAL_HOST_NAME = old_model.LOCAL_BOX
-
-
 @dataclass(frozen=True, slots=True)
 class RankAnswer:
     """One rank's reply, or the fact that it did not give one."""
@@ -87,39 +82,17 @@ class RankAnswer:
     quotes: tuple[RankPrice, ...] = ()
     silent: str = ""
     elapsed_s: float = 0.0
-    # Configured host label for diagnostics when the rank did not reply.
-    configured_host: str = ""
+    # The rank's box in plain words and, on a box of several ranks, its GPU (box_names.py).
+    box: str = ""
+    gpu: int | None = None
 
     def verdicts(self, verdict: str) -> list[RankPrice]:
         return [quote for quote in self.quotes if quote.verdict == verdict]
 
     @property
     def where(self) -> str:
-        """Name the box, and say who named it.
-
-        The rank's own report wins. The config name is the fallback and is
-        marked as one, because a silent rank reported nothing and the card must
-        not present the driver's name as the rank's own report.
-        """
-        if self.host:
-            return f"rank {self.rank} (host {self.host})"
-        if self.configured_host:
-            return f"rank {self.rank} (host {self.configured_host} as configured)"
-        return f"rank {self.rank} (host unnamed)"
-
-
-def _configured_hosts(handle: Any, world: int, gpus: int) -> list[str]:
-    """The driver's name for each rank's box, in rank order.
-
-    Ranks fill hosts in blocks of ``gpus``, the order ``collect`` slices the
-    worker mesh in, so rank ``i`` sits on host ``i // gpus``. No host list is
-    a local fleet, where every rank is the driver's own box.
-    """
-    hosts = tuple(getattr(getattr(handle, "config", None), "hosts", None) or ())
-    if not hosts:
-        return [LOCAL_HOST_NAME] * world
-    return [str(getattr(hosts[index // gpus], "name", "") or "")
-            if index // gpus < len(hosts) else "" for index in range(world)]
+        """The rank in plain words, 'the sibling': the driver names every box."""
+        return box_names.label(self.box or box_names.UNLISTED, self.gpu)
 
 
 def _block(quote: RankPrice) -> dict[str, Any]:
@@ -187,11 +160,10 @@ def _pairs(answers: list[RankAnswer], verdict: str) -> list[tuple[RankAnswer, Ra
                   key=lambda pair: _headroom(pair[1]))
 
 
-def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str,
-                     where: str = "") -> str:
+def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str) -> str:
     """The refusing rank's own numbers, formatted rather than re-derived."""
     measured = _block(quote)
-    where = where or answer.where
+    where = box_names.opening(answer.where)
     try:
         needed, weights, avail, headroom = (
             float(measured[key]) for key in
@@ -231,10 +203,10 @@ def _priced_sentence(answer: RankAnswer, quote: RankPrice, unet_name: str,
 def _log_fleet(answers: list[RankAnswer], outcome: str) -> None:
     # A price logged only on a refusal leaves a fitting fleet
     # indistinguishable from a host where the price made no claim at all.
-    rows = [f"rank {answer.rank}={quote.slot}:{quote.verdict}/{quote.rung}"
+    rows = [f"{answer.where}={quote.slot}:{quote.verdict}/{quote.rung}"
             f"@{_headroom_text(quote)}"
             for answer in answers for quote in answer.quotes]
-    rows += [f"rank {answer.rank}={answer.silent or 'no rows'}"
+    rows += [f"{answer.where}={answer.silent or 'no rows'}"
              for answer in answers if answer.silent or not answer.quotes]
     safe_call(log.info, "cross-rank capacity %s: %s", outcome, ", ".join(rows))
 
@@ -273,8 +245,7 @@ def decide(answers: list[RankAnswer], world: int, *,
     disagree = {slot: sorted(seen) for slot, seen in sizes.items() if len(seen) > 1}
     if silent or len(answers) != world or len(set(ranks)) != len(ranks) or disagree:
         _log_fleet(answers, "unavailable")
-        _refuse_unavailable(_unavailable_text(
-            answers, silent, world, ranks, disagree, deadline_s))
+        _refuse_unavailable(_unavailable_text(answers, silent, world, disagree, deadline_s))
     refusing = _pairs(answers, VERDICT_REFUSE)
     rescuing = _pairs(answers, VERDICT_RESCUE)
     # Priced with the residents still held: a clear may make room on every short box.
@@ -285,7 +256,7 @@ def decide(answers: list[RankAnswer], world: int, *,
         _log_fleet(answers, "refused, old model in the way")
         from .nodes import old_model_clear
 
-        priced = " ".join(_priced_sentence(a, q, unet_name, old_model.where(a)) for a, q in short)
+        priced = " ".join(_priced_sentence(a, q, unet_name) for a, q in short)
         old_model.raise_fleet_refusal(offer, len({a.rank for a, _q in short}), world, priced,
                                       card=old_model_clear.card_possible(unet_name))
     if refusing:
@@ -297,13 +268,13 @@ def decide(answers: list[RankAnswer], world: int, *,
     _log_fleet(answers, "admitted")
 
 
-def _unavailable_text(answers: list[RankAnswer], silent: list[RankAnswer],
-                      world: int, ranks: list[int],
+def _unavailable_text(answers: list[RankAnswer], silent: list[RankAnswer], world: int,
                       disagree: dict[str, list[int]], deadline_s: float) -> str:
     if silent:
         named = "; ".join(f"{answer.where} {answer.silent}" for answer in silent)
-        heard = "; ".join(f"rank {answer.rank} answered in {answer.elapsed_s:.2f} s"
-                          for answer in answers if not answer.silent)
+        heard = box_names.opening("; ".join(
+            f"{answer.where} answered in {answer.elapsed_s:.2f} s"
+            for answer in answers if not answer.silent))
         return (
             f"{_NEEDS_EVERY_RANK}, and {named} (deadline {deadline_s:.0f} s). "
             f"{heard or 'No other rank answered either'}. A rank that cannot "
@@ -317,9 +288,10 @@ def _unavailable_text(answers: list[RankAnswer], silent: list[RankAnswer],
             "bytes per slot), so the worker hosts hold different files under "
             f"the same checkpoint name. {_NOTHING_LOADED} Stage the same "
             "artifact on every host first.")
+    named = ", ".join(answer.where for answer in sorted(answers, key=lambda a: a.rank))
     return (
         f"{_NEEDS_EVERY_RANK}, and the fleet of {world} returned "
-        f"{len(answers)} answers from ranks {sorted(ranks)}. A rank inventory "
+        f"{len(answers)} answers, from {named}. A rank inventory "
         "that is short or duplicated cannot say what the leanest box holds. "
         f"{_NOTHING_LOADED}")
 
@@ -349,7 +321,7 @@ def _refuse_shortfall(refusing: list[tuple[RankAnswer, RankPrice]],
         f"{world} cannot, so nothing was loaded on any rank. "
         + " ".join(_priced_sentence(answer, quote, unet_name)
                    for answer, quote in refusing)
-        + (f" {'; '.join(fitting)}." if fitting else "")
+        + (f" {box_names.opening('; '.join(fitting))}." if fitting else "")
         + " The fleet takes the leanest answer, because the load runs everywhere."
         + (f" {held}" if held else "")
         + (f" What would fit: {blocker}." if blocker else "")
@@ -421,7 +393,7 @@ def _answer_from(rank: int, reply: Any, elapsed: float) -> RankAnswer:
         # The driver knows which rank it sent to and keeps that name: a reply
         # that renames itself makes one rank's answer stand for another's.
         return RankAnswer(rank, host, elapsed_s=elapsed,
-                          silent=f"answered as rank {reported}")
+                          silent="answered as another rank")
     rows = reply.get("quotes")
     if not isinstance(rows, list) or not rows:
         # ``decide`` counts answers, not rows: an empty inventory priced nothing.
@@ -487,10 +459,10 @@ def collect(handle: Any, request: dict, world: int, *,
             # Measure this rank's wait, not cumulative collection time: all futures
             # start together but are read in order.
             answers.append(_answer_from(index, reply, time.monotonic() - asked))
-    # A silent rank never names its own box, so the driver's own list goes on
-    # every row here rather than at four raise sites.
-    named = _configured_hosts(handle, world, gpus)
-    return [replace(answer, configured_host=named[answer.rank])
+    # The driver names every box (box_names.py), on every row here rather
+    # than at four raise sites, so a silent rank is named too.
+    named = box_names.fleet_boxes(handle, world)
+    return [replace(answer, box=named[answer.rank][0], gpu=named[answer.rank][1])
             if answer.rank < len(named) else answer for answer in answers]
 
 

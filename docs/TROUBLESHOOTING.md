@@ -128,7 +128,7 @@ out.
 old actors. A message to one of them comes back to the driver's fault hook as
 undeliverable, and never to the call that sent it, so before 1.2.0 the
 render's cross-rank price request
-([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box))
 waited its whole 30 s deadline and refused with `did not answer in time`,
 naming Reset attached mesh. Now the price wait ends within half a second of
 the first delivery failure that names a fleet host and the mesh the price
@@ -2100,8 +2100,9 @@ to change it. Automatic rescue never grants an accuracy waiver.
 
 **Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every
-short box, the refusal says "the old model (<name>) is still loaded on <box>"
-and the card is titled Old model in the way. Its Clear and retry button resets
+short box, the refusal says "the old model (<name>) is still loaded on the
+head" (or on the sibling, or on this box for a local fleet) and the card is
+titled Old model in the way. Its Clear and retry button resets
 the attached mesh, the same as Reset attached mesh, and writes no memo and no
 ledger row; then queue again, and the load is priced again on fresh Workers.
 Tick Always clear and retry on the card, or the toggle of that name under
@@ -2388,7 +2389,7 @@ render is live in this driver: a pipelined submission behind a render in
 flight, a held or abandoned result lease, or a Worker call in flight keeps the
 models, and the refusal says which. It never touches the Workers' residents or
 ComfyUI's cached node outputs, and the cross-rank agreement
-([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box))
 still prices a load that replaces a Worker resident with that resident held.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the step off, and the guard
 then refuses on the first reading.
@@ -4701,10 +4702,10 @@ Run it at a driver boundary, with no render queued: it reads the open rows
 first and appends after, so a check that passes in between would be
 superseded by a repair row landing later and would have to prove itself again.
 
-## 93. A multi-rank render refuses before any rank loads, and names a rank
+## 93. A multi-rank render refuses before any rank loads, and names a box
 
-**Symptom:** a world-2 render stops with a class C refusal that names one rank
-and its numbers, says a rank did not answer within 30 s, or says a message to
+**Symptom:** a world-2 render stops with a class C refusal that names one box
+and its numbers, says a box did not answer within 30 s, or says a message to
 a rank's Worker actor was undeliverable. No worker journal shows a load
 starting and the refusal quarantines nothing. Except after an undeliverable
 message, the fleet is still up and the next queue dispatches on the same fleet
@@ -4715,7 +4716,12 @@ asks each rank one bounded question on a read-only endpoint that takes no GPU
 lock and mutates nothing, collects the rows, and decides once. The leanest
 answer governs, because the load runs everywhere: a rank that cannot hold the
 model refuses the render for the fleet rather than letting its peers load first
-and meet the refusal sixty seconds in. Six shapes reach the operator:
+and meet the refusal sixty seconds in. The refusal names each box the way
+these docs do: the box the driver runs on is the head and the other is the
+sibling. With more than two boxes, each other box is the sibling at its host
+name, a local fleet is this box, and a box that runs more than one rank adds
+its GPU ("GPU 1 on the head"). It never names a box by rank number or by the
+address cluster.toml gives it. Six shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.
@@ -4750,7 +4756,7 @@ and meet the refusal sixty seconds in. Six shapes reach the operator:
 Read the numbers with two limits in mind. Each rank prices against what it
 holds at that moment, so a card can quote a figure taken with the previous
 model still resident, and it says so by name: "the old model (flux1-dev) is
-still loaded on head". The quote does not price shared memory
+still loaded on the head". The quote does not price shared memory
 either: a rank holding a weight slab in the other slot, or a slab retained by a
 load that failed, reads as having more available than it has. The rank's row
 records both (`shmem_bytes`, each slot's resident and the retained-slab count)

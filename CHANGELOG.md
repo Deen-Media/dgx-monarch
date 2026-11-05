@@ -132,7 +132,19 @@
   its own load, names the memory a model loaded earlier left behind and Reset
   attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
   case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
-  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank)).
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- The capacity refusals, the Old model in the way card and the driver's
+  capacity log line name a box as the head (where the driver runs) or the
+  sibling, the way the docs do. Before, one refusal could name the same box by
+  its host name, by the address cluster.toml gives it, and as "rank 0", so on a
+  pair configured by address the card read "is still loaded on" and an
+  address. Now it reads "The old model (flux1-dev) is still loaded on the head
+  and qwen_image_2512_fp8_e4m3fn does not fit beside it. Clear the Sparks and
+  run again?". With more than two boxes each other box is "the sibling at" its
+  host name, a local fleet is "this box", and the FSDP clean-reload refusal
+  names its leanest box the same way. A Worker's own refusal still names its
+  host ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
+  [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
 
 ### Compatibility and verification
 

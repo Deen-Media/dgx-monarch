@@ -22,6 +22,12 @@ those actors and their models; it does not stop the persistent Worker
 services. When a render is split across GPUs, the mesh actors do the work and
 the driver orchestrates them.
 
+**The head and the sibling.** On a pair of boxes, the head is the box the
+driver runs on and the sibling is the other one. Refusals, cards and the
+driver's log name a box this way, never by rank number or by its address in
+cluster.toml. With more than two boxes, each other box is "the sibling at" its
+host name; a local fleet, all on the driver's box, is "this box".
+
 **Render session.** One logical unit of active render work holding the
 Attached mesh, including pending results and identity-gate proof renders. A
 Render session can block a reset or update even between visible denoising
