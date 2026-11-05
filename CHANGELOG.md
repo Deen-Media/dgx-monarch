@@ -118,6 +118,30 @@
   names other text boxes by their node. The prompt box starts taller and grows
   with its text, an empty negative prompt waits behind Add negative prompt on
   Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
+- The UNET loader now prices every model the graph loads on the driver. Under
+  `auto` the DiT loads at the first render, after the driver has loaded the
+  text encoders, VAEs and any prompt upsampler, and the loader's load window
+  used to charge the DiT alone: on 2026-11-05 the BF16 p-h3-image template
+  passed it on one Spark, ran its 18 GB upsampler, and refused at the sampler
+  2.0 GiB short. That window now charges those models too, so the template
+  refuses before anything loads, and the refusal opens with one plain sentence
+  ("p-h3-image_bf16.safetensors needs 119.8 GiB on this box and 110.8 GiB is
+  available, 9.0 GiB short") and names what would fit: the same model in
+  another precision on disk here (the INT8 ConvRot and W4A8 DiT and upsampler
+  files), a switch whose other setting skips a model, and a pair's
+  `uly2+fsdp` preset after an Identity Gate PASS on it. A model only a fixed
+  switch's other branch reaches is no longer charged, so the template with
+  the upsampler switched off loads. MOSS-Image, MOSS-Image Base and Kromoss
+  get the loader's price too, their 19.31 GB encoder included. A refusal a
+  Worker raises at the sampler or the loader now opens the prompt error, card
+  sentence included, with the traceback in the log, where the error used to
+  begin "Actor call dgxm_worker.sample failed.". With `slab_weights=on` and no
+  Identity Gate PASS the refusal says the driver ran stock for that reason and
+  names the gate, where it used to ask for `slab_weights=on`. The Old model in
+  the way card's loader text keeps the sentence that turns the preflight off,
+  and its no-room sentence quotes the same window and figure as the lead
+  ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
+  [#53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
 - A load that does not fit because a model loaded earlier is still
   held now says so: "the old model (<name>) is still loaded on <box>". When a
   clear of the attached mesh would make room on every short box, the panel

@@ -439,6 +439,38 @@ def test_the_loader_keeps_its_own_refusal_when_a_clear_would_not_make_room(
     assert "clear-retry" not in [card["kind"] for card in consent_pending.pending_cards()]
 
 
+def test_the_loader_card_keeps_the_preflight_switch_and_one_space(monkeypatch, tmp_path):
+    """2026-11-05 (A5b): the card's form of the loader refusal dropped the
+    sentence that turns the preflight off, which the plain form carries, and
+    left two spaces where it had been."""
+    from dgx_monarch.nodes import loader_preflight
+
+    mesh = _loader_rig(monkeypatch, tmp_path, held_gib=12.0)
+    with pytest.raises(old_model.LoaderOldModelError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None)
+    text = str(raised.value)
+    assert "Set DGXM_DISABLE_DRIVER_PREFLIGHT=1 to turn this preflight off" in text
+    assert "  " not in text
+
+
+def test_the_no_room_sentence_quotes_the_window_and_figure_the_lead_quotes(
+        monkeypatch, tmp_path):
+    """2026-11-05 (A5b): the lead priced the resident window and the old-model
+    sentence the load window, so one refusal named two different needs."""
+    from dgx_monarch import driver_footprint
+    from dgx_monarch.nodes import loader_preflight
+
+    mesh = _loader_rig(monkeypatch, tmp_path, held_gib=1.0)
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None)
+    text = str(raised.value)
+    assert f"{NEW} needs 47.0 GiB on this box and 40.0 GiB is available" in text
+    assert ("A clear would not make room in the load window: qwen_image_2512_bf16 needs "
+            "47.0 GiB on this box") in text
+    assert "Refuses qwen_image_2512_bf16.safetensors at the load window" in text
+    assert "  " not in text
+
+
 # The memo flag and the env var.
 
 def test_the_always_flag_sits_beside_auto_rescue_and_an_older_memo_still_reads(tmp_path):

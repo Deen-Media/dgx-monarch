@@ -1903,11 +1903,22 @@ must not be retried merely because the memory remains allocated.
 
 **Symptom:** `DriverFootprintCapacityError` (a `StockLoadCapacityError`)
 refuses before worker RPCs. Render-time messages start
-`driver-side footprint preflight:`; loader messages start
-`driver-side footprint preflight at the loader node:`. The latter carries
+`driver-side footprint preflight:`. Loader messages start with one plain
+sentence, then the budget detail from
+`driver-side footprint preflight at the loader node:` on. The latter carries
 `[dgxm:K]` if a Gate FAIL blocks rescue; ordinary capacity refusals are class C.
+For example, the p-h3-image template on one Spark:
 
-**What to do:** follow the reported shortfall and fitting options. For H3,
+```
+[dgxm:C guard=loader_footprint_preflight waivable=1] p-h3-image_bf16.safetensors needs 119.8 GiB on this box and 110.8 GiB is available, 9.0 GiB short. It loads at the first render, beside p-h3-image_text_encoder_bf16.safetensors, p-h3-image_prompt_upsampler_bf16.safetensors and p-h3-image_vae_bf16.safetensors, which this graph loads on the driver first. Nothing was loaded. On disk here, these would fit: p-h3-image_int8_convrot.safetensors (19.8 GiB) or p-h3-image_w4a8.safetensors (12.4 GiB) in place of p-h3-image_bf16.safetensors; ...
+```
+
+**What to do:** follow the reported shortfall and fitting options. A loader
+refusal names what would fit first, each one priced in both windows: files on
+disk here that hold the same model in another precision, in place of the DiT or
+of a driver model; a lazy switch whose other setting skips a model; and on a
+pair, the `uly2+fsdp` preset, where the head holds half the DiT, after an
+Identity Gate PASS on that preset. For H3,
 try a smaller text encoder, a pruned/quantized DiT, fewer or smaller references,
 a smaller canvas/clip, or more free host memory. Pruned int8/fp8 reference-video
 files are 19.5 GiB versus bf16's 61.7 GiB. For LTX, start with a smaller canvas
@@ -1930,7 +1941,7 @@ admitted DiT load; see [VALIDATION.md](VALIDATION.md).
 
 | Window | Charge and remedy |
 |---|---|
-| `load` | Stock placement peaks near 2.1x checkpoint size, before the driver stack exists. Slab avoids the host copy and may offer rescue. |
+| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists. Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
 | `resident` | Weights plus the graph's future text encoder, VAEs, reference/guide encodes, and declared render activations. If this does not fit, use smaller artifacts or inputs; changing residency cannot remove the stack. |
 
 Rescue is offered only if slab fits both windows
@@ -1941,7 +1952,10 @@ copy; other families include it. H3 activations are described in
 [#56](#56-minimax-h3-render-refused-activation-footprint-preflight).
 
 The loader checks before liveness, topology, or rank effects. It prices the
-pending stack from the prompt graph. An unreadable graph leaves that stack
+pending stack from the prompt graph: text encoders, CLIP Vision, VAEs, and any
+checkpoint or stock UNET the driver loads itself. A model that only the
+unselected branch of an If/Else or Soft Switch with a fixed value reaches never
+loads and is not charged. An unreadable graph leaves that stack
 unpriced and warns once per family; other estimator failures also admit the
 load. A cleared charge is cached per checkpoint and world for the session.
 Direct headless calls need their own budget
@@ -2057,13 +2071,19 @@ accepting. Tags distinguish capacity (`C`), unproven correctness (`U`), known
 incorrect output (`K`), and physical constraints with no bypass (`P`);
 see DESIGN.md section 5.9.
 
+**The sentence leads the error.** A refusal a Worker raises at the sampler or
+the loader shows in the prompt error tag first, then its sentence and the card
+it names; the remote traceback is in the ComfyUI log. Before 2026-11-05 the
+error began "Actor call dgxm_worker.sample failed." and the reason sat at the
+end of that traceback.
+
 **No button means no panel remedy.** Class C messages can link here without
 offering consent. Follow their "What would fit" clause; all cases below are
 `waivable=0`, and `DGXM_ALLOW_SLAB_RESCUE=1` grants nothing:
 
 | Guard/path | Why no rescue is offered |
 |---|---|
-| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. |
+| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. |
 | `slab_load_preflight` | Slab itself does not fit. The message includes the larger stock estimate, so disabling slab cannot help. |
 | Comfy-managed `stock_load_preflight` | That residency cannot fit and has forced slab off. Turn off `comfy_managed` and follow its reset requirements in [#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) before using slab. |
 
@@ -2107,7 +2127,8 @@ ledger row; then queue again, and the load is priced again on fresh Workers.
 Tick Always clear and retry on the card, or the toggle of that name under
 "Consents and waivers", and the driver clears and retries by itself, at most
 once per load. When a clear would not make room, the refusal says so and
-offers no card. A model this graph loads, or one the request reuses, is never
+offers no card; at the loader it names the window its first sentence priced,
+with the same figure. A model this graph loads, or one the request reuses, is never
 the old model. A card resets only the attached mesh that refused: if that mesh
 is gone, the click answers the card and resets nothing, and any reset answers
 every open card. A one-GPU fleet or a Fleet job, whose Worker prices its own

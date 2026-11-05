@@ -68,6 +68,9 @@ class ShortBox:
     required_bytes: int
     available_bytes: int
     gain_bytes: int
+    # The loader preflight's window these figures come from ("load" or
+    # "resident"), so its no-room sentence names the window its lead priced.
+    window: str = ""
 
     @property
     def shortfall_bytes(self) -> int:
@@ -318,7 +321,8 @@ def no_room(offer: ClearOffer) -> str:
     """Why the ordinary refusal stands although an old model is still loaded."""
     for box in offer.boxes:
         if not box.clear_makes_room:
-            return (f"A clear would not make room: {offer.new_model} needs "
+            where = f" in the {box.window} window" if box.window else ""
+            return (f"A clear would not make room{where}: {offer.new_model} needs "
                     f"{gib(box.required_bytes)} GiB on {box.box}, and a cleared box "
                     f"would have about {gib(box.cleared_bytes)} GiB. Choose a smaller or "
                     "quantized artifact, free memory on that box, or use slab residency "

@@ -129,6 +129,16 @@ targets throughput rather than single-render latency.
 **Single-copy.** One weight allocation per GPU. The worker also needs memory
 for LoRA backups and the retained arena described below.
 
+**Driver models.** The text encoders, VAEs and prompt upsampler a graph loads
+on the driver share the head with rank 0's DiT. Under `auto` the DiT loads at
+the first render, after the driver has loaded them, so the UNET loader prices
+the DiT's load beside every model the graph loads, and a model behind a
+switch's unused branch is not counted. When the sum does not fit, the loader
+refuses before anything loads and names the smaller files on disk that would,
+and the pair's `uly2+fsdp` preset where half the DiT would. On the pair,
+Ulysses and ring hold the whole DiT on the head, so the pair alone does not
+help.
+
 **The LoRA backup.** When ComfyUI applies ("bakes") a LoRA into a model, it
 keeps a backup of every original weight it touched so it can undo the edit
 later. A LoRA stack that touches most of the model therefore costs almost a

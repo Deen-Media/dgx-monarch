@@ -556,8 +556,8 @@ def test_the_refusal_leads_with_the_numbers_so_a_gate_leg_truncation_keeps_them(
     message = _refuse(_Mesh(), REF2VA_BF16,
                       prompt=_graph(dit=REF2VA_BF16, refs="video"))
     head = message[:200]
-    assert "61.7 GiB to place on the driver host" in head
-    assert "GiB usable" in head
+    assert "minimax_h3_ref2va_bf16.safetensors needs 140.0 GiB on this box" in head
+    assert "114.5 GiB is available, 25.5 GiB short" in head
 
 
 # The FSDP shard-build price. Under a `*+fsdp` preset each rank builds one shard
@@ -668,7 +668,7 @@ def test_an_auto_preset_is_never_priced_as_a_shard_build():
     reading is the one that charges more."""
     message = _refuse(_Mesh(topology_preset="auto"), REF2VA_BF16,
                       prompt=_graph(dit=REF2VA_BF16, refs="video"))
-    assert "61.7 GiB to place" in message
+    assert "DiT weights 61.7 GiB (co-resident rank 0, not yet loaded)" in message
     assert "at world" not in message
 
 

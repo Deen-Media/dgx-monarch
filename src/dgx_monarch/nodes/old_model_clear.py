@@ -284,7 +284,7 @@ def _worst(windows: Iterable[Any]) -> Any:
 
 
 def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[Any],
-                 keep: Iterable[str] = ()) -> old_model.ClearOffer | None:
+                 keep: Iterable[str] = (), window: str = "") -> old_model.ClearOffer | None:
     """Ask the Workers on the driver host what they hold, after the loader refused.
 
     Read-only and best effort: only a live, set-up fleet whose rank 0 shares
@@ -292,7 +292,8 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     means no card and the loader's own refusal. The box is short by the worst
     failing window's unclamped shortfall (``DriverFootprintEstimate.shortfall``):
     a clear must make room in both windows. Slots this load reuses, and models
-    this graph loads (``keep``), are not old models.
+    this graph loads (``keep``), are not old models. ``window`` names the
+    worst window, the one the loader's own refusal leads with.
     """
     from .. import capacity_agreement, driver_footprint
 
@@ -333,7 +334,7 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
     required = int(worst.projected) + int(worst.reserve)
     return old_model.box_offer(
         unet_name, old_model.ShortBox(box, tuple(dict.fromkeys(names)), required,
-                                      int(worst.mem_available), gain),
+                                      int(worst.mem_available), gain, window),
         hosts=1 if local else len(hosts), local=local, fleet=handle)
 
 
