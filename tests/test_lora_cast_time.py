@@ -195,3 +195,9 @@ def test_a_dynamic_patcher_keeps_stocks_own_method(comfy_cpu, monkeypatch):
     finally:
         lora_cast_time.uninstall()
     assert comfy_cpu.same_weight(via, classic)
+
+
+def test_the_bake_takes_cast_time_on_exactly_the_keys_stocks_own_load_does(comfy_cpu):
+    """Stock's ModelPatcherDynamic.load chooses; the bake must choose the same keys,
+    across the 16 KiB cut-off for BF16 and INT8 ConvRot, a bias and a resize."""
+    assert comfy_cpu.check_stock_choice() == 17

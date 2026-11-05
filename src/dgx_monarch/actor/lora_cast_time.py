@@ -18,11 +18,13 @@ another rounding (docs/TROUBLESHOOTING.md #145).
 
 ``cast_time_weight`` returns stock's cast-time weight for one key, or
 ``None`` where stock bakes that key classically itself, or where stock's
-cast does not settle on one weight (``_reason``); those keys keep the classic
-bake. ``install`` routes ComfyUI's classic ``patch_weight_to_device``
-through it in a Worker process: the sample-time load, the ``lora_low_rss``
-merge, the clone hot swap and the ambient verify's reference all call that
-method. The lazy swap and the FSDP bake call ``cast_time_weight`` directly. A
+cast does not settle on one weight; those keys keep the classic bake.
+``stock_patches_at_cast_time`` is stock's own load-time choice, which the
+canary checks against ComfyUI's real ``ModelPatcherDynamic.load``.
+``install`` routes ComfyUI's classic ``patch_weight_to_device`` through
+``cast_time_weight`` in a Worker process: the sample-time load, the
+``lora_low_rss`` merge, the clone hot swap and the ambient verify's
+reference all call that method. The lazy swap and the FSDP bake call ``cast_time_weight`` directly. A
 dynamic patcher (comfy-managed residency) keeps stock's own method. ComfyUI
 is imported only inside functions.
 """
@@ -80,20 +82,31 @@ def compute_dtype(model: Any, weight: Any) -> Any:
     return manual if manual is not None else weight.dtype
 
 
-def _reason(patcher: Any, key: str, module: Any, param: str, weight: Any) -> str | None:
-    """Why stock does not cast-time patch ``key`` as one weight, or ``None``."""
+def _stock_classic_reason(patcher: Any, key: str, module: Any, param: str, weight: Any) -> str | None:
+    """Why ``ModelPatcherDynamic.load`` bakes ``key`` classically itself, or ``None``.
+
+    Stock attaches a cast-time patch only to the weight or bias of a cast
+    module larger than 16 KiB, and only when the LoRA keeps the weight's
+    shape; it force-loads every other patched parameter through the classic
+    bake. The bake-equivalence canary runs stock's own load to hold this.
+    """
     if param not in ("weight", "bias") or not hasattr(module, "comfy_cast_weights"):
         return "stock patches it at load (not a cast weight)"
     import comfy.lora
-    import comfy.ops
 
-    patches = patcher.patches[key]
-    if key in getattr(patcher, "weight_wrapper_patches", {}):
-        return "it carries a weight wrapper"
     if _module_bytes(module) <= SMALL_MODULE_BYTES and not getattr(patcher.model, "comfy_writable", False):
         return "stock force-loads a module this small"
-    if comfy.lora.calculate_shape(patches, weight, key) != weight.shape:
+    if comfy.lora.calculate_shape(patcher.patches[key], weight, key) != weight.shape:
         return "the LoRA resizes the weight"
+    return None
+
+
+def _one_weight_reason(patcher: Any, key: str, module: Any, weight: Any) -> str | None:
+    """Why stock's cast-time patch on ``key`` is not one weight, or ``None``."""
+    import comfy.ops
+
+    if key in getattr(patcher, "weight_wrapper_patches", {}):
+        return "it carries a weight wrapper"
     if _is_quantized(weight):
         if not (isinstance(module, comfy.ops.MixedPrecisionOp) and type(module).__name__ == "Linear"):
             return "a quantized weight outside a Linear"
@@ -104,6 +117,25 @@ def _reason(patcher: Any, key: str, module: Any, param: str, weight: Any) -> str
     if weight.dtype != compute_dtype(patcher.model, weight):
         return "the weight is stored in another dtype than the forward, where stock's first cast differs"
     return None
+
+
+def _locate(patcher: Any, key: str, source: Any = None) -> tuple[Any, str, Any] | None:
+    """The module, parameter name and weight ``key`` names, or ``None``."""
+    module_key, _, param = key.rpartition(".")
+    module = patcher.model
+    try:
+        for name in module_key.split(".") if module_key else ():
+            module = getattr(module, name)  # comfy.utils.get_attr's walk
+    except AttributeError:
+        return None  # the classic bake's get_key_weight walks the same path
+    weight = source if source is not None else getattr(module, param, None)
+    return None if weight is None else (module, param, weight)
+
+
+def stock_patches_at_cast_time(patcher: Any, key: str) -> bool:
+    """Whether stock's DynamicVRAM load attaches a cast-time patch to ``key``."""
+    found = _locate(patcher, key) if key in patcher.patches else None
+    return found is not None and _stock_classic_reason(patcher, key, *found) is None
 
 
 def cast_time_weight(patcher: Any, key: str, device: Any, source: Any = None) -> Any:
@@ -118,17 +150,13 @@ def cast_time_weight(patcher: Any, key: str, device: Any, source: Any = None) ->
     import comfy.model_patcher as comfy_mp
     import comfy.utils
 
-    module_key, _, param = key.rpartition(".")
-    module = patcher.model
-    try:
-        for name in module_key.split(".") if module_key else ():
-            module = getattr(module, name)  # comfy.utils.get_attr's walk
-    except AttributeError:
-        return None  # the classic bake's get_key_weight walks the same path
-    weight = source if source is not None else getattr(module, param, None)
-    if weight is None:
+    found = _locate(patcher, key, source)
+    if found is None:
         return None
-    why = _reason(patcher, key, module, param, weight)
+    module, param, weight = found
+    module_key = key.rpartition(".")[0]
+    why = (_stock_classic_reason(patcher, key, module, param, weight)
+           or _one_weight_reason(patcher, key, module, weight))
     if why is not None:
         _say(why, "LoRA bake: %s keeps ComfyUI's classic bake (%s); later keys like it log nothing",
              key, why)
@@ -227,4 +255,5 @@ def uninstall() -> bool:
     return True
 
 
-__all__ = ["SMALL_MODULE_BYTES", "cast_time_weight", "compute_dtype", "install", "store", "uninstall"]
+__all__ = ["SMALL_MODULE_BYTES", "cast_time_weight", "compute_dtype", "install",
+           "stock_patches_at_cast_time", "store", "uninstall"]

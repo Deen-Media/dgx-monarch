@@ -835,7 +835,9 @@ stored in another dtype than the forward, or a quantized layer on a
 full-precision matmul, where stock's first forward uses another weight than
 the later ones. Comfy-managed residency runs ComfyUI's own patcher and is not
 touched. The bake-equivalence canary compares the bake with comfy.ops' own
-cast on INT8 ConvRot and BF16 layers against ComfyUI master every day.
+cast on INT8 ConvRot and BF16 layers, and the keys it bakes at cast time with
+the keys stock's own `ModelPatcherDynamic.load` chooses on both sides of the
+16 KiB cut-off, against ComfyUI master every day.
 
 With automatic slab residency, a first stock load that identifies a family validated for slab permits exactly one in-memory retry, even if the best-effort family memo is unavailable. Slab-capable `.safetensors` and `.sft`
 suffixes are case-insensitive. Unsupported paths and dtype fallback remain
