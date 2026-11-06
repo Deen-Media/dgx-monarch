@@ -59,10 +59,13 @@ implementation that ends an actor at its first process group under ComfyUI's
 cudaMallocAsync allocator
 ([TROUBLESHOOTING #143](TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group)).
 This release starts every actor with `TORCH_DIST_USE_NCCL2=0`, which keeps
-torch's legacy NCCL backend, the one torch 2.12 ships. Its hardware checks ran
-on torch 2.12.0+cu132; the checks on torch 2.15 go in
-[VALIDATION](VALIDATION.md#torch-2-15) when they run. The steps below complete
-with either build.
+torch's legacy NCCL backend, the one torch 2.12 ships. This release ships on
+torch 2.15.0+cu132: on 2026-11-05 and 06 its ladder passed on the pair
+([VALIDATION](VALIDATION.md#torch-2-15)) with cuDNN 9.26, Triton 3.9.0,
+torchvision 0.29.2 and torchaudio 2.11.1, and with NCCL 2.32.3 loaded through
+a symlink from the wheel's `libnccl.so.2` to a 2.32.3 build, in place of the
+2.30.7 torch 2.15 pins. Most of its other hardware checks ran on torch
+2.12.0+cu132, and the steps below complete with either build.
 
 To match another Spark, install its torch and torchvision builds by exact
 version from the same PyTorch index. On 2026-11-03 neither the cu132 index nor
