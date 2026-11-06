@@ -219,6 +219,14 @@
   rows read "the head" and "the sibling" where they read "box 1" and "box 2"
   ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
   [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
+- The error a sampler, Fleet KSampler, a UNET loader or Identity Gate raises for
+  a refusal ends with its sentence and the card's plain words. It no longer
+  ends with the measured numbers and the consent block as JSON: the card is
+  already raised when the driver receives the refusal, and ComfyUI's log keeps
+  both blocks. Studio's Queue row offers no Grant and retry for such a refusal;
+  grant it from Operations, consent apply, which lists the driver's pending
+  requests ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
+  [Studio](docs/STUDIO.md#read-a-failure-and-grant-a-consent)).
 - A LoRA change on a BF16 model the Workers already hold, with `lora_low_rss`
   off as the Wan-Animate 2 BF16 templates set it, no longer stalls, and no
   longer ends in a refusal with nothing to click. Adding a LoRA to a bare base

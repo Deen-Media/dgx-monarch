@@ -2233,8 +2233,11 @@ write access, then retry the click; no consent was granted.
 
 **Error metadata:** `[dgxm:measured {...}]` contains ledger measurements and
 `<<<DGXM-CONSENT-V1 ... DGXM-CONSENT-END>>>` contains the card descriptor.
-These survive text-only worker exception transport. Follow the prose before
-them; the panel reads the metadata.
+These survive text-only worker exception transport, and the driver reads them
+where it receives the refusal, which is when the card appears. The error the
+samplers, Fleet KSampler, the UNET loaders and Identity Gate raise then drops
+both, so it ends with the prose and the card's sentence; ComfyUI's log keeps
+them on the chained wrapper.
 
 ## 54. Slab byte-verify certificate mismatch
 

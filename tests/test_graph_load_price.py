@@ -371,6 +371,67 @@ def test_an_untagged_worker_crash_keeps_its_wrapper():
     assert refusal_lead.surfaced(crash) is None
 
 
+def _consent_block() -> str:
+    from dgx_monarch import consent_descriptor
+
+    return consent_descriptor.encode(consent_descriptor.ConsentDescriptor(
+        version=consent_descriptor.CONSENT_DESCRIPTOR_VERSION,
+        kind=consent_descriptor.KIND_RESCUE_SLAB,
+        consent_id=consent_descriptor.consent_id("rescue-slab", "size:1", "c0ffee00c0ffee00"),
+        unet_name=DIT, file_identity="size:1", context_fingerprint="c0ffee00c0ffee00",
+        family_hint="minimax_h3", measured={"checkpoint_bytes": 1},
+        memo_context={"combo_key": DIT}, human_reason=f"{DIT} needs more memory.",
+        evidence=consent_descriptor.EVIDENCE_BYTE_VERIFIED,
+        panel_action="Load with slab residency", env_fallback=consent_descriptor.ENV_SLAB_RESCUE))
+
+
+def test_a_class_k_card_ends_with_its_plain_words_not_the_consent_json():
+    """Hardware D4 (cell 4, ring2): the error ended with the consent block's JSON.
+    The receive point registered the card below the node method, so the user
+    reads the sentence and the card's plain words; the log keeps the block."""
+    from dgx_monarch import consent_descriptor
+
+    text = _ring_pad_text()
+    wrapper = _actor_error(UnsupportedModelError(f"{text}\n{_consent_block()}"))
+    assert consent_descriptor.parse(str(wrapper.exception)) is not None
+
+    @refusal_lead.lead_with_refusal
+    def sample():
+        raise wrapper
+
+    with pytest.raises(UnsupportedModelError) as raised:
+        sample()
+    shown = str(raised.value)
+    assert shown == text
+    assert shown.endswith("See docs/TROUBLESHOOTING.md #49.")
+    assert "{" not in shown and consent_descriptor.DESCRIPTOR_BEGIN not in shown
+    assert consent_descriptor.DESCRIPTOR_BEGIN in str(wrapper), "the log keeps the block"
+
+
+def test_the_prompt_error_ends_with_the_sentence_not_the_measured_json(monkeypatch):
+    """Hardware D4: the lifted error ended with machine JSON. The measured line's
+    readers (the gate ledger, the card) took it below the node method, so the
+    user reads the sentence and the remote traceback in the log keeps the line."""
+    from dgx_monarch.capacity_fit import StockFit
+    from dgx_monarch.gate_audit_evidence import measured_tag
+
+    sentence = _worker_stock_refusal(monkeypatch)
+    measured = measured_tag(StockFit(False, True, 37 * _GIB, 30 * _GIB).measured())
+    tail = f"{measured}\n{_consent_block()}"
+    wrapper = _actor_error(mesh_safety.StockLoadCapacityError(f"{sentence}\n{tail}"))
+    typed = mesh_safety.StockLoadCapacityError(f"{sentence}\n{tail}")
+    for error in (wrapper, typed):
+        @refusal_lead.lead_with_refusal
+        def sample(error=error):
+            raise error
+
+        with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
+            sample()
+        assert str(raised.value) == sentence
+        assert "{" not in str(raised.value)
+    assert "[dgxm:measured " in str(wrapper), "the log keeps the numbers"
+
+
 # --- forced stock says why, and names the gate ------------------------------
 
 def _worker_stock_refusal(monkeypatch) -> str:

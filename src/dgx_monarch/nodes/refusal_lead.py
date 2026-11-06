@@ -9,7 +9,10 @@ raised as itself, chained from the wrapper, as ``driver_unload`` reads it
 through ``consent_observe.refusal_text`` (#139): the prompt error then leads
 with the sentence and the card it names, and ComfyUI's log keeps the remote
 traceback through the chain. Everything that decides on the wrapper (the sample
-lease, eviction, card registration) has already run below the node method.
+lease, eviction, card registration) has already run below the node method, so
+the error the user reads ends with the sentence and the card's plain words: the
+machine blocks after them (the measured numbers and the consent descriptor) stay
+in the log, on the chained wrapper.
 
 When the Init node asks for ``slab_weights=on`` and the combination has no
 exact Identity Gate PASS, the driver dispatches on stock residency and notes it
@@ -21,12 +24,15 @@ cause and the remedy in place of those two clauses.
 from __future__ import annotations
 
 import functools
+import re
 import threading
 from collections.abc import Callable
 from typing import Any, TypeVar, cast
 
 from .. import mesh_safety
+from ..consent_descriptor import DESCRIPTOR_BEGIN, DESCRIPTOR_END
 from ..consent_observe import refusal_text
+from ..gate_audit_vocab import MEASURED_TAG_PREFIX
 from ..refusal import RefusalClass, parse_leading_refusal_tag, read_rank
 
 # The Worker's words for a render that arrived on stock (actor/worker_env
@@ -46,6 +52,16 @@ GATE_REMEDY = ("run Identity Gate (DGX Monarch) on this model with slab_weights=
 # The state a dual-model render notes: the gate proves one model, so no PASS
 # can authorize slab for it and the remedy names none.
 DUAL_MODEL = "two models"
+
+# The machine blocks a refusal carries after its sentence: the measured numbers
+# (gate_audit_evidence.measured_tag) and the consent descriptor
+# (consent_descriptor.encode). Their readers take them below the node method,
+# where the receive point registers the card and the gate records the numbers,
+# so the prompt error drops both: a user reads the sentence and the card's
+# plain words, and ComfyUI's log keeps the blocks in the chained wrapper.
+_MACHINE_BLOCKS = re.compile(
+    r"\n?(?:" + re.escape(MEASURED_TAG_PREFIX) + r"\{.*?\}\]|"
+    + re.escape(DESCRIPTOR_BEGIN) + r".*?" + re.escape(DESCRIPTOR_END) + r")", re.DOTALL)
 
 # Render lifetime, one per ComfyUI executor thread: set while the render is
 # authorized, read by the node method's own wrapper, and cleared at its entry
@@ -101,7 +117,9 @@ def surfaced(exc: BaseException, forced: str | None = None) -> BaseException | N
 
     The point that received the error has already put its box ahead of the
     Worker's sentence (``worker_box.py``); a rank mark that path did not take
-    off is dropped here, so no prompt error shows one.
+    off is dropped here, so no prompt error shows one, and so are the
+    measured numbers and the consent descriptor, whose readers took them below
+    the node method.
     """
     inner = getattr(exc, "exception", None)
     wrapped = isinstance(inner, Exception)
@@ -110,8 +128,8 @@ def surfaced(exc: BaseException, forced: str | None = None) -> BaseException | N
     tag = parse_leading_refusal_tag(text)
     if tag is None:
         return None
-    worded = (forced_stock_text(text, forced)
-              if forced and tag.refusal_class is RefusalClass.CAPACITY else text)
+    worded = _MACHINE_BLOCKS.sub("", forced_stock_text(text, forced)
+                                 if forced and tag.refusal_class is RefusalClass.CAPACITY else text)
     if not wrapped and worded == raw:
         return None
     target = cast(BaseException, inner if wrapped else exc)

@@ -1310,6 +1310,7 @@
     },
     "tests/test_graph_load_price.py": {
       "test_a_cast_dit_is_priced_at_its_copy_beside_the_graph": "0407616dfe52face",
+      "test_a_class_k_card_ends_with_its_plain_words_not_the_consent_json": "4a0281ba502e1659",
       "test_a_class_k_sampler_refusal_leads_the_prompt_error": "6d331b611060d5ba",
       "test_a_forced_stock_cast_never_names_the_gate": "f2394fe0da81e69c",
       "test_a_forced_stock_refusal_names_the_gate_not_the_setting": "caaad87a4a0b26f9",
@@ -1325,6 +1326,7 @@
       "test_only_the_twins_that_fit_are_named": "9783f1bf8fe06964",
       "test_the_driver_notes_forced_stock_only_where_slab_was_asked_for": "2de9dad65a1c23e4",
       "test_the_loader_node_refuses_before_the_fleet_is_touched": "390436b0842429f5",
+      "test_the_prompt_error_ends_with_the_sentence_not_the_measured_json": "2dc8adaa9da5cc51",
       "test_the_upsampler_switched_off_is_not_charged_and_the_load_is_admitted": "6e5a40aa9cd03345",
       "test_the_worker_still_words_explicit_stock_as_the_driver_matches_it": "e230119d336a35f6",
       "test_without_the_note_the_worker_sentence_is_only_unwrapped": "5ab40ef24fed6b74"

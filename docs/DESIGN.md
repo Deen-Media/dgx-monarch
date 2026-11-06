@@ -1413,7 +1413,11 @@ refusal itself, chained from the wrapper, so the error starts with the tag, the
 sentence and the card it names, and ComfyUI's log keeps the remote traceback
 (`nodes/refusal_lead.py`). Only a text that leads with a tag is lifted out, so
 a crash keeps its wrapper, and every decision that reads the wrapper (the
-sample lease, eviction, the card) runs below the node method. A wrapper the
+sample lease, eviction, the card) runs below the node method. So the lifted
+error drops the machine blocks after the sentence, the measured numbers and the
+consent descriptor: the receive point has already registered the card and the
+gate has recorded the numbers, the user reads the sentence and the card's plain
+words, and ComfyUI's log keeps the blocks on the chained wrapper. A wrapper the
 prompt error keeps names the box on its own first line ("On the sibling, actor
 call dgxm_worker.load_model failed."), by the rule under "A Worker's own
 refusal says here". When the driver

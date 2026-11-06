@@ -1237,9 +1237,15 @@ shows a 64 pixel thumbnail of the job's newest final output when the snapshot
 holds one, and nothing when it does not. The preview downloads once the row
 scrolls within 200 pixels of the visible area.
 
-A refusal that a consent can clear carries a consent request. The status line
-and the Queue row then show its reason and the label of the ComfyUI panel button
-that grants it, with a Grant and retry button. That button opens Operations with
+A refusal that a consent can clear names the ComfyUI panel button that grants
+it. The samplers, Fleet KSampler, the UNET loaders and Identity Gate end the
+error with that sentence and drop the machine consent block
+([DESIGN.md section 5.9](DESIGN.md#59-refusal-taxonomy-what-a-typed-refusal-is-allowed-to-do)),
+so for those the status line shows the remedy and no consent request: open
+Operations and choose consent apply, which lists the driver's pending requests.
+A recorded error that still carries a consent request, such as one from an
+older driver, shows its reason and the label of the ComfyUI panel button that
+grants it, with a Grant and retry button. That button opens Operations with
 consent apply chosen and its key and id empty, beside the request's model, kind
 and consent id. Review it: with one pending request the review selects it, and
 with several it lists each one with its consent id. Studio says whether the
