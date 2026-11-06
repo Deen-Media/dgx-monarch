@@ -12,7 +12,8 @@ traceback through the chain. Everything that decides on the wrapper (the sample
 lease, eviction, card registration) has already run below the node method, so
 the error the user reads ends with the sentence and the card's plain words: the
 machine blocks after them (the measured numbers and the consent descriptor) stay
-in the log, on the chained wrapper.
+in the log, on the original error the shortened one is chained from, whether a
+Worker raised it inside Monarch's wrapper or the driver raised it directly.
 
 When the Init node asks for ``slab_weights=on`` and the combination has no
 exact Identity Gate PASS, the driver dispatches on stock residency and notes it
@@ -119,7 +120,8 @@ def surfaced(exc: BaseException, forced: str | None = None) -> BaseException | N
     Worker's sentence (``worker_box.py``); a rank mark that path did not take
     off is dropped here, so no prompt error shows one, and so are the
     measured numbers and the consent descriptor, whose readers took them below
-    the node method.
+    the node method. The error passed in is never changed: a shortened text
+    comes back as a new error (``_shortened``) that the caller chains from it.
     """
     inner = getattr(exc, "exception", None)
     wrapped = isinstance(inner, Exception)
@@ -133,12 +135,26 @@ def surfaced(exc: BaseException, forced: str | None = None) -> BaseException | N
     if not wrapped and worded == raw:
         return None
     target = cast(BaseException, inner if wrapped else exc)
-    if str(target) != worded:
-        target.args = (worded,)
-    if str(target) != worded:  # a type that does not print its args
-        target = (mesh_safety.StockLoadCapacityError(worded)
-                  if tag.refusal_class is RefusalClass.CAPACITY else RuntimeError(worded))
-    return target
+    if wrapped and str(target) == worded:
+        return target
+    return _shortened(target, worded, tag.refusal_class)
+
+
+def _shortened(original: BaseException, worded: str, refusal_class: RefusalClass) -> BaseException:
+    """A new error of ``original``'s type that says ``worded``; ``original`` is left whole.
+
+    ``lead_with_refusal`` raises it chained from the error it caught, so
+    ComfyUI's log keeps the original, its measured numbers and consent block
+    included, while the prompt error reads the sentence alone.
+    """
+    try:
+        fresh: BaseException | None = type(original)(worded)
+    except Exception:  # a constructor that takes other arguments
+        fresh = None
+    if fresh is None or str(fresh) != worded:  # or a type that prints something else
+        fresh = (mesh_safety.StockLoadCapacityError(worded)
+                 if refusal_class is RefusalClass.CAPACITY else RuntimeError(worded))
+    return fresh
 
 
 def lead_with_refusal(method: _Method) -> _Method:

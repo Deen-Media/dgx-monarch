@@ -408,6 +408,36 @@ def test_a_class_k_card_ends_with_its_plain_words_not_the_consent_json():
     assert consent_descriptor.DESCRIPTOR_BEGIN in str(wrapper), "the log keeps the block"
 
 
+def test_a_direct_rescue_offer_is_shortened_and_kept_whole_as_the_cause():
+    """Review of #147: the world-2 rescue offer the agreement raises directly is
+    not inside a wrapper. The prompt error reads its sentence, and ComfyUI's log
+    keeps the original, measured numbers and consent block included, as the cause."""
+    from dgx_monarch import consent_descriptor
+    from dgx_monarch.capacity_fit import StockFit
+    from dgx_monarch.gate_audit_evidence import measured_tag
+
+    sentence = refusal(
+        RefusalClass.CAPACITY,
+        f"capacity rescue available for {DIT}: it needs 84.1 GiB and 82.1 GiB is available.",
+        guard="stock_load_preflight", waivable=True,
+        panel_action=PanelAction(label="Load with slab residency", env="DGXM_ALLOW_SLAB_RESCUE"),
+        troubleshooting=12)
+    whole = (f"{sentence}\n{measured_tag(StockFit(False, True, 37 * _GIB, 30 * _GIB).measured())}"
+             f"\n{_consent_block()}")
+    original = consent_descriptor.SlabResidencyRescueOffer(whole)
+
+    @refusal_lead.lead_with_refusal
+    def load():
+        raise original
+
+    with pytest.raises(consent_descriptor.SlabResidencyRescueOffer) as raised:
+        load()
+    assert str(raised.value) == sentence and "{" not in str(raised.value)
+    assert raised.value is not original and raised.value.__cause__ is original
+    assert str(original) == whole, "the original keeps its blocks for the log"
+    assert consent_descriptor.parse(str(original)) is not None
+
+
 def test_the_prompt_error_ends_with_the_sentence_not_the_measured_json(monkeypatch):
     """Hardware D4: the lifted error ended with machine JSON. The measured line's
     readers (the gate ledger, the card) took it below the node method, so the

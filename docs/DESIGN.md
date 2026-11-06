@@ -1417,7 +1417,9 @@ sample lease, eviction, the card) runs below the node method. So the lifted
 error drops the machine blocks after the sentence, the measured numbers and the
 consent descriptor: the receive point has already registered the card and the
 gate has recorded the numbers, the user reads the sentence and the card's plain
-words, and ComfyUI's log keeps the blocks on the chained wrapper. A wrapper the
+words, and ComfyUI's log keeps the blocks on the original error, which the
+shortened one is raised from and never changes, wrapped by Monarch or raised by
+the driver directly. A wrapper the
 prompt error keeps names the box on its own first line ("On the sibling, actor
 call dgxm_worker.load_model failed."), by the rule under "A Worker's own
 refusal says here". When the driver

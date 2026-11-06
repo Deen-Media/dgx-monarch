@@ -2237,7 +2237,7 @@ These survive text-only worker exception transport, and the driver reads them
 where it receives the refusal, which is when the card appears. The error the
 samplers, Fleet KSampler, the UNET loaders and Identity Gate raise then drops
 both, so it ends with the prose and the card's sentence; ComfyUI's log keeps
-them on the chained wrapper.
+them on the original error, which that error is raised from.
 
 ## 54. Slab byte-verify certificate mismatch
 
