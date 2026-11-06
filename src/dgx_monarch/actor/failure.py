@@ -12,6 +12,8 @@ import functools
 import gc
 
 from ..log import get_logger
+from ..refusal import mark_rank as _marked
+from ..refusal import read_rank
 from ..transfer_utils import (
     failure_summary,
     raise_with_distinct_cause,
@@ -72,18 +74,48 @@ def _note_poison_if_context_dead(worker) -> None:
         pass
 
 
+def mark_rank(worker, exc: BaseException) -> None:
+    """Say which rank raised ``exc`` when this Worker is one of several ranks.
+
+    Monarch's wrapper carries no rank, so at a collective call the driver
+    could not tell which box refused (``worker_box.py`` names it from this
+    mark). A Fleet actor is world 1, and the driver knows the actor it sent
+    the job to, so it marks nothing. Only an exception whose args are exactly
+    the one message it prints is marked, so unpickling one whose constructor
+    takes other arguments cannot break; operational cancellation (a bare
+    BaseException) and a refusal that speaks for the whole fleet
+    (``fleet_wide``) are left as they are.
+    """
+    try:
+        world, rank = getattr(worker, "world", None), getattr(worker, "rank", None)
+        if type(world) is not int or world < 2 or type(rank) is not int:
+            return
+        if not isinstance(exc, Exception) or getattr(type(exc), "fleet_wide", False):
+            return
+        args = exc.args
+        if len(args) != 1 or not isinstance(args[0], str) or str(exc) != args[0]:
+            return
+        if read_rank(args[0])[1] is None:
+            exc.args = (_marked(args[0], rank),)
+    except Exception:  # A mark is wording; it must never replace the failure.
+        pass
+
+
 def cleanup_on_failure(func):
     """Decorator for GPUWorker sampler/loader endpoints.
 
     On failure: clean up the active patchers, empty the allocator cache, and
     run gc. Ordinary cleanup errors stay secondary; operational cancellation
-    wins with exact identity so the driver can stop promptly.
+    wins with exact identity so the driver can stop promptly. The error that
+    leaves carries this rank's mark (``mark_rank``).
     """
 
     @functools.wraps(func)
     def wrapper(self, *args, **kwargs):
         if getattr(self, "_cuda_context_poisoned", False):
-            raise CudaContextPoisonedError(_POISON_TEXT)
+            poisoned = CudaContextPoisonedError(_POISON_TEXT)
+            mark_rank(self, poisoned)
+            raise poisoned
         try:
             return func(self, *args, **kwargs)
         except BaseException as primary:
@@ -121,6 +153,7 @@ def cleanup_on_failure(func):
             # context once per failure so the next endpoint refuses typed
             # instead of computing on a dead context or blocking its peer.
             _note_poison_if_context_dead(self)
+            mark_rank(self, failure)
             if failure is primary and failure_cause is None:
                 raise
             raise_with_distinct_cause(failure, failure_cause)

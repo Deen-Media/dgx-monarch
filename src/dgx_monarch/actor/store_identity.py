@@ -1,7 +1,11 @@
 """Bounded artifact identities used by the worker model-store cache."""
 from __future__ import annotations
 
+import socket
 from collections.abc import Callable
+from typing import Any
+
+from .failure import mark_rank
 
 
 def build_request_artifact_identity(
@@ -51,3 +55,22 @@ def assert_stable_identity(current: dict, expected: dict, phase: str) -> None:
         from ..mesh_safety import ArtifactBindingError
 
         raise ArtifactBindingError(f"model/LoRA identity changed while {phase}")
+
+
+def identity_reply(worker: Any, model_specs: list[dict],
+                   identity: Callable[[str, list[dict] | None], dict]) -> dict:
+    """The ``artifact_identity`` endpoint's reply: this box's identity for each spec.
+
+    A spec whose file this box cannot read raises, and the error carries this
+    rank's mark (``failure.mark_rank``) so the driver can say which box lacks it.
+    """
+    try:
+        return {
+            "host": socket.gethostname(),
+            "rank": worker.rank,
+            "artifact_sets": [identity(spec["unet_name"], spec.get("loras"))
+                              for spec in model_specs],
+        }
+    except Exception as exc:
+        mark_rank(worker, exc)
+        raise

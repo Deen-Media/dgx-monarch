@@ -383,6 +383,28 @@ def untagged(text: str) -> str:
     return text.split("] ", 1)[-1]
 
 
+# Which rank raised an error: one machine line a Worker in a fleet of more than
+# one rank adds (actor/failure.py), because Monarch's wrapper carries no rank.
+# The driver reads it to name the box and removes it (worker_box.py), so no
+# user reads the number. No class letter follows the colon, so no tag parser
+# here, in Studio or in job_observations reads it as a tag.
+RANK_MARK: Final = "[dgxm:rank {rank}]"
+_RANK_RE: Final = re.compile(r"\n?\[dgxm:rank (\d{1,4})\]")
+
+
+def mark_rank(text: str, rank: int) -> str:
+    """``text`` with the line that says which rank raised it."""
+    return f"{text}\n{RANK_MARK.format(rank=int(rank))}"
+
+
+def read_rank(text: str) -> tuple[str, int | None]:
+    """``text`` without its rank lines, and the rank the last one names."""
+    found = _RANK_RE.findall(text)
+    if not found:
+        return text, None
+    return _RANK_RE.sub("", text), int(found[-1])
+
+
 def is_waivable(text: str) -> bool:
     """True when the message declares a bypass a consent in this release can grant."""
     tag = parse_refusal_tag(text)

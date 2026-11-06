@@ -1,7 +1,8 @@
 """Build capacity rescue descriptors shared by pricing and load decisions.
 
 ``store_residency`` raises the offer; ``capacity_quote`` returns it as data.
-Both use the same descriptor, blocker pair, and local hostname.
+Both use the same descriptor and blocker pair, and the descriptor's machine
+field carries the local hostname; no sentence a user reads prints it.
 
 The driver compares only rank-invariant fields: ``consent_id``, ``kind``,
 ``file_identity``, ``context_fingerprint``, ``memo_context``, and ``family_hint``.
@@ -56,7 +57,11 @@ COLD_MEMO_CLAUSE = (
 
 
 def host_name() -> str:
-    """This box's own name. No rank ever composes a sentence about a peer."""
+    """This box's own name, for machine fields only.
+
+    No rank composes a sentence about a peer, and none names its own host in
+    one either: a wall says "here" and the driver names the box (worker_box.py).
+    """
     try:
         return socket.gethostname()
     except OSError:

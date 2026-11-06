@@ -926,7 +926,7 @@ def test_an_operator_reserve_above_the_floor_is_what_the_card_quotes(tmp_path, m
     reserved = capacity_fit.slab_load_fit(str(path), {}, reserve_bytes=10 * gib)
     assert reserved.floor_bytes == 10 * gib and not reserved.fits
 
-    card = store_slab_admit.card(reserved, "w.safetensors", "this host",
+    card = store_slab_admit.card(reserved, "w.safetensors",
                                 reserve_bytes=10 * gib)
     assert "plus the 10.0 GiB this host reserves (uma_reserve_gb)" in card
     assert "above the default floor" in card
@@ -951,7 +951,7 @@ def test_a_reserve_the_arena_cap_clips_is_still_named_on_the_card(tmp_path, monk
 
     clipped = capacity_fit.slab_load_fit(str(path), {}, reserve_bytes=20 * gib)
     assert clipped.floor_bytes == int(capacity_fit.LEGACY_ARENA_RATIO * 10 * gib)
-    card = store_slab_admit.card(clipped, "w.safetensors", "this host",
+    card = store_slab_admit.card(clipped, "w.safetensors",
                                  reserve_bytes=20 * gib)
     assert "8.5 GiB floor" in card
     assert "20.0 GiB this host reserves (uma_reserve_gb)" in card
@@ -1037,10 +1037,10 @@ def test_the_card_names_no_lever_it_cannot_prove_exists(monkeypatch):
     and no caller sets it today."""
     from dgx_monarch.actor import store_slab_admit
 
-    plain = store_slab_admit.card(SLAB_SHORT, "m.safetensors", "this host")
+    plain = store_slab_admit.card(SLAB_SHORT, "m.safetensors")
     assert "fsdp" not in plain
     assert "fsdp preset on world 2" in store_slab_admit.card(
-        SLAB_SHORT, "m.safetensors", "this host", fsdp_lever=True)
+        SLAB_SHORT, "m.safetensors", fsdp_lever=True)
     assert "fsdp" not in store_slab_admit.rescue_blocker(SLAB_SHORT)[1]
 
 

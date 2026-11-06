@@ -567,9 +567,11 @@ To measure your own selected rail, run the qualifier's `--timing` mode in
 **Symptom (0.1.0 and earlier):** a custom sampler picked in the KSampler
 dropdown (RES4LYF `res_2s`, `res_3s`, …) renders at euler cost and quality;
 multi-stage samplers silently under-compute. **Symptom (current):**
-the render fails typed with "sampler … is not registered with ComfyUI on
-worker host …", or the SamplerCustom path fails deserializing a SAMPLER
-object.
+the render fails typed with "sampler ... is not registered with ComfyUI here",
+or the SamplerCustom path fails deserializing a SAMPLER object. The error
+opens with the box whose Worker lacks it, "On the sibling, actor call
+dgxm_worker.sample failed.", unless the fleet runs on the driver's box alone,
+where "here" is that box.
 
 **Cause:** the pack providing the sampler did not import inside the worker
 procs, so its names never reached the worker's `KSampler.SAMPLERS`, and
@@ -2250,8 +2252,11 @@ write access, then retry the click; no consent was granted.
 
 **Error metadata:** `[dgxm:measured {...}]` contains ledger measurements and
 `<<<DGXM-CONSENT-V1 ... DGXM-CONSENT-END>>>` contains the card descriptor.
-These survive text-only worker exception transport. Follow the prose before
-them; the panel reads the metadata.
+These survive text-only worker exception transport, and the driver reads them
+where it receives the refusal, which is when the card appears. The error the
+samplers, Fleet KSampler, the UNET loaders and Identity Gate raise then drops
+both, so it ends with the prose and the card's sentence; ComfyUI's log keeps
+them on the original error, which that error is raised from.
 
 ## 54. Slab byte-verify certificate mismatch
 
@@ -2933,8 +2938,9 @@ alternative, and none of them loads, bakes or quarantines anything.
 There is also one capacity refusal on this path, class C under the usual
 `stock_load_preflight` guard and
 [#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click):
-**`comfy-managed residency cannot load <model> on <host>`**. See "The capacity
-wall it keeps" below.
+**`comfy-managed residency cannot load <model> here`**, which the driver opens
+with the box that refused ("On the sibling, ..."). See "The capacity wall it
+keeps" below.
 
 ### The five bring-up refusals, by first line
 
@@ -4810,7 +4816,10 @@ sibling. With more than two boxes, each other box is the sibling at its host
 name, a fleet on the driver's box alone is this box, and a box that runs more
 than one rank adds its GPU ("GPU 1 on the head"). None of the six shapes below
 names a box by rank number or by the address cluster.toml gives it, the
-undeliverable actor included. Six shapes reach the operator:
+undeliverable actor included. When the agreement admits and a Worker's own wall
+then refuses the load, the Worker's sentence says "here" and the driver opens
+it with that box: "On the sibling, stock residency cannot load X here: ...".
+Six shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.
@@ -4900,7 +4909,11 @@ other box's journal names the cause. This box's journal shows its own load
 finishing normally and then the line `rank readiness: this rank loaded`. The
 other box's journal carries `load failed on this rank` and the real cause under
 it. Nothing was sampled. The refusal arrives in seconds, not minutes, and the
-fleet is still up.
+fleet is still up. It opens with the box that raised it, the one that loaded
+cleanly: "On the head, a peer rank could not load ..." means the sibling failed.
+When the failing box's own refusal reaches the driver first, that one is shown
+instead, opened with its box ("On the sibling, stock residency cannot load X
+here: ...").
 
 **Cause:** every rank prices the load before any rank allocates (entry 93), but
 memory moves between that quote and the load. A capacity check can still refuse on one box
@@ -7515,7 +7528,7 @@ decode, or one unit of it, on the driver. The line names the reason:
 
 The WARNING names the rank and its first cause:
 
-- `is not the driver's file` or `not found on host`: copy the driver's VAE
+- `is not the driver's file` or `was not found here`: copy the driver's VAE
   file into that Worker's `models/vae` under the same name.
 - `differs from the driver's` (ComfyUI commit, torch, CUDA, comfy-kitchen or
   VAE class): bring that Worker host to the driver's versions; `dgxm doctor`

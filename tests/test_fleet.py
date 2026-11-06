@@ -982,8 +982,8 @@ def _run_fleet_result(
 
     class Handle:
         world = 2
-        # One GPU per box: rank equals box index, and the box labels the
-        # driver publishes read box 1 and box 2.
+        # One GPU per box: rank equals box index, and with the driver on the
+        # first box the labels it publishes read the head and the sibling.
         gpus_per_host = 1
         # The driver's name for each box, which a row's answering host is
         # checked against.
@@ -1512,6 +1512,11 @@ class _StubClip:
 
 
 def _fresh_fleet_ledger(monkeypatch):
+    # The driver runs on the first configured box, as on the pair, so the rows
+    # name the boxes the way refusals do; no name is resolved for real.
+    from dgx_monarch import driver_footprint
+
+    monkeypatch.setattr(driver_footprint, "host_is_local", lambda name: name == "worker-a")
     ledger = telemetry_fleet.FleetJobs()
     monkeypatch.setattr(telemetry_fleet, "fleet_jobs", ledger)
     return ledger
@@ -1535,7 +1540,7 @@ def test_fleet_publishes_the_host_rank_and_box_of_every_job(monkeypatch):
     assert [row["job"] for row in block["jobs"]] == [0, 1]
     assert [row["host"] for row in block["jobs"]] == ["worker-a", "worker-b"]
     assert [row["rank"] for row in block["jobs"]] == [0, 1]
-    assert [row["box"] for row in block["jobs"]] == ["box 1", "box 2"]
+    assert [row["box"] for row in block["jobs"]] == ["the head", "the sibling"]
     assert [row["wall_s"] for row in block["jobs"]] == [1.25, 2.5]
     # A conditioning-list job carries no prompt line to stand for.
     assert [row["prompt"] for row in block["jobs"]] == [None, None]
@@ -1579,7 +1584,7 @@ def test_a_prompt_line_reaches_the_published_row_as_a_digest(monkeypatch):
         telemetry_fleet.prompt_digest("a cat"),
         telemetry_fleet.prompt_digest("a dog"),
     ]
-    assert [row["box"] for row in block["jobs"]] == ["box 1", "box 2", "box 1"]
+    assert [row["box"] for row in block["jobs"]] == ["the head", "the sibling", "the head"]
 
 
 def test_a_reply_that_names_a_rank_of_its_own_keeps_the_rank_the_driver_sent_to(
@@ -1595,7 +1600,7 @@ def test_a_reply_that_names_a_rank_of_its_own_keeps_the_rank_the_driver_sent_to(
 
     row, = ledger.snapshot()["jobs"]
     assert row["rank"] == 0
-    assert row["box"] == "box 1"
+    assert row["box"] == "the head"
     assert "host_reported" not in row
 
 
@@ -1613,7 +1618,7 @@ def test_a_job_answered_by_another_boxs_host_is_marked(monkeypatch):
 
     first, second = ledger.snapshot()["jobs"]
     assert "host_reported" not in first
-    assert (second["box"], second["host_reported"]) == ("box 2", "worker-a")
+    assert (second["box"], second["host_reported"]) == ("the sibling", "worker-a")
 
 
 def test_a_reply_the_driver_rejected_leaves_its_row_open(monkeypatch):
@@ -1635,8 +1640,8 @@ def test_a_reply_the_driver_rejected_leaves_its_row_open(monkeypatch):
     block = ledger.snapshot()
     assert block["count"] == 2
     answered, lost = block["jobs"]
-    assert (answered["host"], answered["box"]) == ("worker-a", "box 1")
+    assert (answered["host"], answered["box"]) == ("worker-a", "the head")
     assert answered["ended_s"] is not None
-    assert (lost["box"], lost["host"]) == ("box 2", None)
+    assert (lost["box"], lost["host"]) == ("the sibling", None)
     assert lost["started_s"] is not None
     assert (lost["ended_s"], lost["wall_s"]) == (None, None)

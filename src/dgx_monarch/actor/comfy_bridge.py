@@ -517,15 +517,14 @@ def resolve_model_path(kind: str, name: str) -> str:
 
     Model files are referenced by name so each host resolves against its own
     models directory; the requirement is the same relative layout on all hosts.
+    A missing file says "here"; the driver names the box (worker_box.py).
     """
     import folder_paths
 
     path = folder_paths.get_full_path(kind, name)
     if path is None:
-        import socket
-
         raise FileNotFoundError(
-            f"model {name!r} (kind {kind!r}) not found on host {socket.gethostname()}. "
+            f"model {name!r} (kind {kind!r}) was not found here. "
             "Cluster renders need the model present on every worker host under the same name."
         )
     return path
