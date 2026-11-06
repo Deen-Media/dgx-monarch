@@ -7726,6 +7726,12 @@ reach this path.
   under. When the ledger holds a PASS that differs only in that build, the
   notice names both builds.
 
+On 2026-11-03 the pair's first torch 2.15 render failed this way. With the
+setting, on 2026-11-05, every actor built its process groups through the
+torch 2.15 ladder, and the 1 GiB all-reduce across both rails ran at about
+99 percent of its torch 2.12 record
+([VALIDATION](VALIDATION.md#torch-2-15)).
+
 ## 144. A p-h3-image render or ModelSamplingMiniMaxH3 (DGX Monarch) refuses
 
 **Symptom:** a render fails before it samples with a class P refusal that

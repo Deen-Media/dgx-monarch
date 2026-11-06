@@ -3181,23 +3181,43 @@ Gate PASS names the driver's torch and CUDA build, so a torch change proves
 each gated combination again on first use. The CPU checks
 (`tests/test_monarch_launch.py`, `tests/test_doctor_actor_nccl_row.py` and
 `tests/test_gate_runtime.py`) pass under torch 2.12.0+cu132 and 2.15.0+cu132.
-No render has run with the setting. The ladder below must run on the pair on
-torch 2.15.0+cu132 with this release on the driver and both Worker hosts, and
-every head row notes the state of the head's clock cap.
+
+**torch 2.15.0 ladder (2026-11-05 and 06).** The ladder below ran on the pair
+with dev `7c3eecb` on the driver and both Worker hosts and ComfyUI
+`8a98ecf58`, and every step passed; the release ships on torch 2.15.0+cu132.
+Both Sparks switched their Monarch environment to torch 2.15.0+cu132 at
+20:44 MST on 2026-11-05, with cuDNN 9.26, Triton 3.9.0, torchvision 0.29.2,
+torchaudio 2.11.1 and SageAttention 2.2.0 rebuilt against it, and NCCL 2.32.3
+loaded through the kit's symlink in place of the 2.30.7 that torch 2.15 pins.
+The torch 2.12 references for steps 6 and 8 are the 2026-11-03 FP8 cells of
+the same graphs, on dev `4b71822`, and, for the sage launcher, the 1 MP cfg2
+cell and the 1664 square cells, renders on this checkout that evening before
+the switch. The head's 2100 MHz cap was applied once with its
+unit off, SM 2080 to 2093 MHz under load in every render step; the sibling
+ran uncapped. One-step figures are latent NRMS against the torch 2.12
+render, with the 0.10 floor. Full-schedule pixels differ across the two
+torch builds, pixel NRMS 0.0055 for BF16 to 0.33 for fp8_scaled, which the
+[comparison method](#comparison-method) treats as descriptive. Two steps
+failed once and passed on a rerun: step 9 at 21:44, whose head reading was
+taken while CPU test suites ran on the head, passed at 22:00, and step 10 at
+22:00, which started one second after a render ended and met the idle check,
+passed at 08:11 on 2026-11-06. The rows below cite the passing runs.
 
 | step | what a run must show | status |
 |---|---|---|
-| 1. Switch | both hosts import torch 2.15.0+cu132 from the ComfyUI environment, and both Worker services are active | NOT RUN |
-| 2. Doctor | exit 0 with no FAIL row and no row worse than the torch 2.12 baseline; `actor NCCL backend` ok, naming torch 2.15.0+cu132 and `TORCH_DIST_USE_NCCL2=0`; `torch CUDA`, `torch version match` and both host env rows at 2.15.0+cu132; `NCCL library` at 2.32.3 on both hosts; both `INT8 GEMM` rows ok with Triton | NOT RUN |
-| 3. torch on the GPU | on each host, capability (12, 1), the loaded NCCL at 2.32.3, and a bf16 GEMM and SDPA within NRMS 1e-2 and 2e-2 of fp32 references | NOT RUN |
-| 4. SageAttention | both kernels within NRMS 0.10 and cosine 0.99 of fp32 attention at head dims 128 and 64, all finite, and fp8 quantization with finite positive scales | NOT RUN |
-| 5. INT8 ConvRot | comfy-kitchen's cuda backend on both hosts, then three INT8 renders, by a local actor, by the driver and by both Worker actors on the pair, each logging `INT8 GEMM: Triton kernel on` and no CUTLASS warning; every actor builds its process groups and Worker setup completes | NOT RUN |
-| 6. One GPU on the head | Krea2 Turbo BF16 and fp8_scaled at seed 1031, on the plain and the sage launchers, each within the one-step latent NRMS floor of 0.10 against the torch 2.12 references | NOT RUN |
-| 7. NCCL across the pair | the bench with both rails and `NCCL_P2P_DISABLE` unset: every size reduced correctly, the 1 GiB all-reduce at 90 percent or more of the 2026-10-06 record, and channels on both rails | NOT RUN |
-| 8. Mesh renders on the pair | Krea2 cells on uly2, cfg2 and topology auto with SAGE_AUTO, each within the 0.10 floor against its reference. Each gated cell runs the identity gate once on its first render and writes a PASS whose capability context names torch 2.15.0+cu132; where this release wrote a torch 2.12 PASS for the same combination, the gate notice names both builds; a second render of the cell skips the gate | NOT RUN |
-| 9. MiniMax H3 speed and memory | step 5's pair render within the ladder's bands of the 2026-10-29 record: sampling time, wall time, each actor's GPU peak and each host's lowest available memory | NOT RUN |
-| 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | NOT RUN |
-| 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN |
+| 1. Switch | both hosts import torch 2.15.0+cu132 from the ComfyUI environment, and both Worker services are active | PASS: both hosts on 2.15.0+cu132, both Worker services active from 20:44 |
+| 2. Doctor | exit 0 with no FAIL row and no row worse than the torch 2.12 baseline; `actor NCCL backend` ok, naming torch 2.15.0+cu132 and `TORCH_DIST_USE_NCCL2=0`; `torch CUDA`, `torch version match` and both host env rows at 2.15.0+cu132; `NCCL library` at 2.32.3 on both hosts; both `INT8 GEMM` rows ok with Triton | PASS: 50 rows, 48 ok and the 2 WARN rows of the 2.12 baseline (unexpected shutdowns, and the clock check doctor does not run), 0 FAIL; the 8 rows that changed are details, all ok: `actor NCCL backend` names 2.15.0+cu132 and `TORCH_DIST_USE_NCCL2=0`, and `torch CUDA`, `torch version match` and both env rows read 2.15.0+cu132 |
+| 3. torch on the GPU | on each host, capability (12, 1), the loaded NCCL at 2.32.3, and a bf16 GEMM and SDPA within NRMS 1e-2 and 2e-2 of fp32 references | PASS on both hosts: capability (12, 1), NCCL 2.32.3 loaded, bf16 GEMM NRMS 1.66e-03 and every SDPA backend 2.25e-03 to 2.26e-03, the 2.12 figures |
+| 4. SageAttention | both kernels within NRMS 0.10 and cosine 0.99 of fp32 attention at head dims 128 and 64, all finite, and fp8 quantization with finite positive scales | PASS on both hosts: fp8 NRMS 0.038 and cosine 0.9993, fp16 0.011 and 0.9999, at both head dims, and fp8 quantization ok, the 2.12 figures |
+| 5. INT8 ConvRot | comfy-kitchen's cuda backend on both hosts, then three INT8 renders, by a local actor, by the driver and by both Worker actors on the pair, each logging `INT8 GEMM: Triton kernel on` and no CUTLASS warning; every actor builds its process groups and Worker setup completes | PASS: comfy-kitchen 0.2.40 with Triton 3.9.0, its cuda and triton backends available on both hosts; the local-actor and driver INT8 renders and the MiniMax H3 INT8 render on the pair each logged the Triton line once per process with no warning, and Worker setup completed. On 2026-11-03, before `TORCH_DIST_USE_NCCL2=0`, this step had failed at its first render |
+| 6. One GPU on the head | Krea2 Turbo BF16 and fp8_scaled at seed 1031, on the plain and the sage launchers, each within the one-step latent NRMS floor of 0.10 against the torch 2.12 references | PASS: BF16 identical to 2.12 at one step on both launchers, and fp8_scaled below 0.0001; samples 73.1 s against 74.2 s (BF16) and 65.3 s against 64.1 s (fp8_scaled) on the plain launcher, 72.6 s against 72.2 s and 63.3 s against 62.9 s on the sage launcher |
+| 7. NCCL across the pair | the bench with both rails and `NCCL_P2P_DISABLE` unset: every size reduced correctly, the 1 GiB all-reduce at 90 percent or more of the 2026-10-06 record, and channels on both rails | PASS: NCCL 2.32.3 on both hosts, every size reduced to the record's bytes, the 1 GiB all-reduce at 19774 and 19762 MiB/s against 20011 MiB/s, about 99 percent, on both rails |
+| 8. Mesh renders on the pair | Krea2 cells on uly2, cfg2 and topology auto with SAGE_AUTO, each within the 0.10 floor against its reference. Each gated cell runs the identity gate once on its first render and writes a PASS whose capability context names torch 2.15.0+cu132; where this release wrote a torch 2.12 PASS for the same combination, the gate notice names both builds; a second render of the cell skips the gate | PASS: BF16 on uly2 and cfg2 identical to 2.12 at one step, BF16 cfg2 at 1 MP 0.0036, fp8_scaled on uly2 below 0.0001, and fp8_scaled at 1664 square 0.0043 on one GPU and under `auto` with SAGE_AUTO. Every gated cell ran its gate again on its first render on 2.15 and wrote a PASS. Samples moved by -0.3 to +6.3 percent: 14.6 s against 14.3 s at 1 MP, 37.0 against 36.5 on cfg2, 44.4 against 44.5 on uly2, 40.2 against 39.3 for fp8_scaled on uly2, 70.0 against 69.9 and 43.2 against 40.6 at 1664 |
+| 9. MiniMax H3 speed and memory | step 5's pair render within the ladder's bands of the 2.12 record: sampling time, wall time, each actor's GPU peak and each host's lowest available memory | PASS against the 2026-11-03 torch 2.12 render of the same graph: sampling 451.6 s against 448.4 s (+0.7 percent), wall 540.1 s against 660.1 s, each actor's GPU peak 26.8 GiB on both builds, the head's lowest MemAvailable 50.3 GiB on both and the sibling's 79.1 against 77.5 GiB. The 2.12 render read the head's SM clock at 2398 MHz at submit |
+| 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | PASS: exit 0, the dense kernel control on `cute_sm120` at relative L2 0.00298337 on both hosts, the figure of 2026-10-11. It runs no render and says nothing of sparse-attention or model accuracy |
+| 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN: the commands were printed and not run, because the release ships on torch 2.15; the torch 2.12 environment stays parked on both hosts |
+
+**NOT RUN on torch 2.15:** the template release test, which is running.
 
 ## Memory calibration
 

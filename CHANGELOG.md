@@ -237,10 +237,15 @@
   warm, short-of-memory, 362-frame and Clear VRAM checks, the MiniMax H3
   context windows, the ComfyUI 0.44.0 rows, the BF16 rescue's other forms,
   the pipelined unload, the Old model in the way card, the cast and swap
-  credits, and a LoRA change on a held base. Still NOT RUN: the torch 2.15
-  ladder, the release test on the release commit and its torch, LTX 2.3's
-  decode split, and a Worker on ComfyUI 0.43 with context windows
+  credits, and a LoRA change on a held base. The torch 2.15.0 ladder passed
+  every step on the pair on 2026-11-05 and 06, and this release ships on
+  torch 2.15.0+cu132. Ideogram4's MODELS row now says its fp8_scaled pair
+  reads 0.161 against the BF16 pair, from the file's quantization, and the
+  p-h3-image template's note says what its edit's hardware record shows.
+  Still NOT RUN: the release test on torch 2.15, LTX 2.3's decode split, and
+  a Worker on ComfyUI 0.43 with context windows
   ([VALIDATION](docs/VALIDATION.md#release-test-2026-11-04),
+  [VALIDATION](docs/VALIDATION.md#torch-2-15),
   [MODELS](docs/MODELS.md#model-p-h3-image),
   [MODELS](docs/MODELS.md#model-wan-2-2-ti2v-5b)).
 - comfy-kitchen 0.2.41, the release ComfyUI master now pins, joins the INT8
@@ -270,8 +275,8 @@
   builds when only the build moved. A row written before this change carries
   no build and reads stale. INSTALL now says what the ComfyUI guide's torch
   2.15.0 changes, gives the import check its commands and notes the torchaudio
-  builds that no longer load against torch 2.12.0+cu132. No render has run on
-  torch 2.15 with the setting
+  builds that no longer load against torch 2.12.0+cu132. On 2026-11-05 and 06
+  the torch 2.15 ladder passed on the pair with the setting
   ([TROUBLESHOOTING #143](docs/TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group),
   [VALIDATION](docs/VALIDATION.md#torch-2-15),
   [INSTALL](docs/INSTALL.md#install-from-source)).
