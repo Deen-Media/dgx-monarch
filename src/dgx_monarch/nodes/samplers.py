@@ -11,6 +11,7 @@ from ..constants import GUIDER_TYPE, MODEL_TYPE, NODE_CATEGORY
 from ..mesh import ensure_live
 from ..sampling_contract import custom_schedule_steps
 from ..topology import topology_from_preset
+from . import requeue_price
 from .common import (
     ModelSpec,
     RenderPipeline,
@@ -81,7 +82,7 @@ class DGXMonarchKSampler:
                 "latent_image": ("LATENT",),
                 "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
-            "hidden": {"unique_id": "UNIQUE_ID"},
+            "hidden": {"unique_id": "UNIQUE_ID", "prompt": "PROMPT"},
         }
 
     RETURN_TYPES = ("LATENT",)
@@ -90,7 +91,8 @@ class DGXMonarchKSampler:
 
     @lead_with_refusal
     def sample(self, model: ModelSpec, seed, steps, cfg, sampler_name, scheduler,
-               positive, negative, latent_image, denoise=1.0, unique_id=None):
+               positive, negative, latent_image, denoise=1.0, unique_id=None, prompt=None):
+        requeue_price.price_cached_loader(model, prompt)
         request = {
             "kind": "ksampler",
             "positive": conditioning_for_wire(positive),
@@ -133,7 +135,7 @@ class DGXMonarchKSamplerPipeline:
                 "latent_image": ("LATENT",),
                 "denoise": ("FLOAT", {"default": 1.0, "min": 0.0, "max": 1.0, "step": 0.01}),
             },
-            "hidden": {"unique_id": "UNIQUE_ID"},
+            "hidden": {"unique_id": "UNIQUE_ID", "prompt": "PROMPT"},
         }
 
     RETURN_TYPES = ("LATENT",)
@@ -174,7 +176,8 @@ class DGXMonarchKSamplerPipeline:
 
     @lead_with_refusal
     def sample(self, model: ModelSpec, seeds, steps, cfg, sampler_name, scheduler,
-               positive, negative, latent_image, denoise=1.0, unique_id=None):
+               positive, negative, latent_image, denoise=1.0, unique_id=None, prompt=None):
+        requeue_price.price_cached_loader(model, prompt)
         validate_inherited_stamps(latent_image)
         # Tag once: the first-use check, the first render and every pushed
         # render resolve the same topology from it.
@@ -279,7 +282,7 @@ class DGXMonarchKSamplerAdvanced:
                 "end_at_step": ("INT", {"default": 10000, "min": 0, "max": 10000}),
                 "return_with_leftover_noise": (["disable", "enable"],),
             },
-            "hidden": {"unique_id": "UNIQUE_ID"},
+            "hidden": {"unique_id": "UNIQUE_ID", "prompt": "PROMPT"},
         }
 
     RETURN_TYPES = ("LATENT",)
@@ -289,7 +292,8 @@ class DGXMonarchKSamplerAdvanced:
     @lead_with_refusal
     def sample(self, model: ModelSpec, add_noise, noise_seed, steps, cfg, sampler_name, scheduler,
                positive, negative, latent_image, start_at_step, end_at_step,
-               return_with_leftover_noise, unique_id=None):
+               return_with_leftover_noise, unique_id=None, prompt=None):
+        requeue_price.price_cached_loader(model, prompt)
         request = {
             "kind": "ksampler_advanced",
             "positive": conditioning_for_wire(positive),
@@ -389,7 +393,7 @@ class DGXMonarchSamplerCustom:
                 "sigmas": ("SIGMAS",),
                 "latent_image": ("LATENT",),
             },
-            "hidden": {"unique_id": "UNIQUE_ID"},
+            "hidden": {"unique_id": "UNIQUE_ID", "prompt": "PROMPT"},
         }
 
     RETURN_TYPES = ("LATENT", "LATENT")
@@ -398,8 +402,9 @@ class DGXMonarchSamplerCustom:
     CATEGORY = NODE_CATEGORY
 
     @lead_with_refusal
-    def sample(self, noise, guider, sampler, sigmas, latent_image, unique_id=None):
+    def sample(self, noise, guider, sampler, sigmas, latent_image, unique_id=None, prompt=None):
         model: ModelSpec = guider["model"]
+        requeue_price.price_cached_loader(model, prompt, guider.get("uncond_model"))
         # A SAMPLER object carries no name, so the render stays untagged and
         # auto keeps the CFG-1 skip; any inherited tag is dropped.
         latent = sampler_latent(latent_image, None)

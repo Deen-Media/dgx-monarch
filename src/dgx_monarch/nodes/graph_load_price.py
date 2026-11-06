@@ -21,7 +21,7 @@ from .. import box_names, consent_pending, driver_footprint
 from ..log import get_logger
 from .graph_live import SWITCH_TITLES, is_link, live_nodes
 from .graph_twins import _SHARDED_KINDS, _gib, _join, dit_twins, model_twins
-from .loader_graph import DriverStackTerms
+from .loader_graph import DriverStackTerms, credited_terms, remember
 
 log = get_logger(__name__)
 
@@ -39,6 +39,80 @@ PAIR_PRESET = "uly2+fsdp"
 # stay; the lead and the remedy always stay. ``bounded`` caps the whole.
 TEXT_BUDGET = 3000
 _MIN_TERMS = 800
+# Where the price runs: the UNET loader, or the first node that renders a queue
+# whose loader output ComfyUI kept from an earlier queue (nodes/requeue_price.py):
+# a sampler, or Identity Gate (DGX Monarch).
+SITE_LOADER = "loader"
+SITE_SAMPLER = "sampler"
+SITE_GATE = "gate"
+RENDER_SITES = frozenset({SITE_SAMPLER, SITE_GATE})
+# Each render site's node as the words name it; read-only after import.
+_SITE_NODES = {SITE_SAMPLER: "the sampler", SITE_GATE: "Identity Gate (DGX Monarch)"}
+# A held encoder's resident size, as measured on 2026-08-05: the price charges it
+# at loader_graph.TE_RESIDENT_RATIO, this rounded up, and credits it no higher.
+HELD_ENCODER_RATIO = 1.144
+
+
+def _site_words(site: str) -> str:
+    node = _SITE_NODES.get(site)
+    return (f"at {node} (the UNET Loader's output came from an earlier queue)" if node
+            else "at the loader node")
+# Session lifetime, FIFO-capped through loader_graph.remember: the ComfyUI prompt
+# id and checkpoint of each price that ran, so a sampler prices only a prompt
+# whose loader did not. A lost entry prices a prompt twice; it never skips one.
+_PRICED_PROMPTS: dict[str, None] = {}
+
+
+def site_terms(terms: DriverStackTerms, site: str) -> DriverStackTerms:
+    """The terms the price charges at ``site``, held models credited.
+
+    At a render site the graph's encoders have run, so ComfyUI's held bytes are
+    read as encoders at their measured resident size, which MemAvailable already
+    counts. The encodes have run too, and the render-site checks that run next
+    price the activations, crediting what the Workers retain and freeing what
+    ComfyUI can reload (``render_preflight``), so charging them here would refuse
+    a re-queue the box just rendered.
+    """
+    if site not in RENDER_SITES:
+        return credited_terms(terms)
+    return replace(credited_terms(terms, HELD_ENCODER_RATIO), ref_bytes=0, guide_bytes=0,
+                   activation_bytes=0, guide_note=f"encoded before {_SITE_NODES[site]}",
+                   activation_note="the render-site checks price them next")
+
+
+def load_window_models(terms: DriverStackTerms, site: str) -> tuple[int, tuple[str, ...]]:
+    """The driver models a deferred load meets, in bytes and by name.
+
+    At a render site a VAE still charged is not held, so it loads for the decode,
+    after the DiT places: the settled window carries it, and the load window not.
+    """
+    if site not in RENDER_SITES:
+        return terms.models_bytes, terms.models
+    return terms.models_bytes - terms.vae_bytes, (*terms.te_artifacts, *terms.model_artifacts)
+
+
+def executing_prompt_id() -> str | None:
+    """The ComfyUI prompt this thread is executing, or None (headless, no ComfyUI)."""
+    try:
+        from comfy_execution.utils import get_executing_context
+
+        prompt_id = getattr(get_executing_context(), "prompt_id", None)
+    except Exception:
+        return None
+    return prompt_id if isinstance(prompt_id, str) and prompt_id else None
+
+
+def note_priced(unet_name: str) -> None:
+    """Record that the graph price ran for this checkpoint in the executing prompt."""
+    prompt_id = executing_prompt_id()
+    if prompt_id is not None:
+        remember(_PRICED_PROMPTS, f"{prompt_id}\x00{unet_name}")
+
+
+def priced_this_prompt(unet_name: str) -> bool | None:
+    """Whether the graph price ran for this checkpoint in this prompt; None without a prompt id."""
+    prompt_id = executing_prompt_id()
+    return None if prompt_id is None else f"{prompt_id}\x00{unet_name}" in _PRICED_PROMPTS
 
 
 def driver_box(mesh: Any) -> str:
@@ -123,6 +197,7 @@ def loader_refusal(
     rescue: driver_footprint.DriverFootprintEstimate | None, window: str = WINDOW_SETTLED,
     bypass: bool = True, lead: str = "", fits: str = "", load_models: int | None = None,
     windows: tuple[driver_footprint.DriverFootprintEstimate, ...] = (), cast: bool = False,
+    site: str = SITE_LOADER,
 ) -> str:
     """A capacity refusal with its charged terms and remedies, stripped at both ends.
 
@@ -136,12 +211,13 @@ def loader_refusal(
     ref_note = (f"{terms.video_refs} reference video block(s), single-shape "
                 f"calibration 2026-08-04, not extrapolated"
                 if terms.ref_bytes else
+                f"encoded before {_SITE_NODES[site]}" if site in RENDER_SITES and terms.video_refs else
                 ("no reference video in this graph" if terms.resolved
                  else "no graph available at the loader node"))
     models = (f"; driver-side models {_gib(terms.model_bytes)} GiB "
               f"({', '.join(terms.model_artifacts)})" if terms.model_bytes else "")
     body = (
-        f"driver-side footprint preflight at the loader node: "
+        f"driver-side footprint preflight {_site_words(site)}: "
         f"{_gib(estimate.projected)} GiB to place on the driver host, "
         f"{_gib(estimate.usable)} GiB usable ({_gib(estimate.mem_available)} GiB "
         f"MemAvailable minus a {_gib(floor_reserve)} GiB reserve and "
@@ -217,8 +293,12 @@ def what_would_fit(windows: tuple[driver_footprint.DriverFootprintEstimate, ...]
 
 def plain_lead(estimate: driver_footprint.DriverFootprintEstimate, *, window: str,
                unet_name: str, models: tuple[str, ...], deferred: bool,
-               box: str = box_names.LOCAL) -> str:
-    """One plain sentence: what does not fit, by how much, and why at this window."""
+               box: str = box_names.LOCAL, site: str = SITE_LOADER) -> str:
+    """One plain sentence: what does not fit, by how much, and why at this window.
+
+    At a render site the driver has loaded the graph's own models by then, so the
+    last sentence says what the Workers did not load, and why the price ran there.
+    """
     name = os.path.basename(unet_name)
     subject = (f"{name} needs" if estimate.weight_bytes
                else f"Beside {name}, this graph's driver models need")
@@ -232,9 +312,12 @@ def plain_lead(estimate: driver_footprint.DriverFootprintEstimate, *, window: st
                "placed from." if estimate.arena_bytes else "That is the peak of its load.")
     else:
         why = "That is the DiT in memory beside what this graph still needs on the driver."
+    loaded = (f"The UNET Loader's output came from an earlier queue, so {_SITE_NODES[site]} "
+              "priced this graph, and the Workers loaded nothing." if site in RENDER_SITES
+              else "Nothing was loaded.")
     return (f"{subject} {_gib(estimate.projected + estimate.reserve)} GiB on {box} and "
             f"{_gib(estimate.mem_available)} GiB is available, {_gib(estimate.shortfall)} "
-            f"GiB short. {why} Nothing was loaded.")
+            f"GiB short. {why} {loaded}")
 
 
 def graph_loras(prompt: object) -> tuple[str, ...]:
@@ -251,7 +334,7 @@ def graph_loras(prompt: object) -> tuple[str, ...]:
 
 def _switch_clause(shape: Any, fits: Callable[[Any], bool], terms: DriverStackTerms,
                    prompt: object, stack_for: Callable[[object], DriverStackTerms],
-                   deferred: bool) -> str:
+                   load_of: Callable[[DriverStackTerms], int]) -> str:
     """The first literal switch whose other setting skips a priced model and fits."""
     if not isinstance(prompt, Mapping) or not terms.models_bytes:
         return ""
@@ -265,10 +348,9 @@ def _switch_clause(shape: Any, fits: Callable[[Any], bool], terms: DriverStackTe
         flipped = {**prompt, key: {**node, "inputs": {**inputs, "switch": not inputs["switch"]}}}
         other = stack_for(flipped)
         dropped = [name for name in terms.models if name not in other.models]
-        load_delta = other.models_bytes - terms.models_bytes
         if dropped and fits(replace(
                 shape, stack_bytes=shape.stack_bytes + other.total - terms.total,
-                load_stack_bytes=shape.load_stack_bytes + (load_delta if deferred else 0))):
+                load_stack_bytes=shape.load_stack_bytes + load_of(other) - load_of(terms))):
             return (f"{SWITCH_TITLES[node['class_type']]} (node {key}) set to "
                     f"{str(not inputs['switch']).lower()} would fit too: the graph then does "
                     f"not load {_join(os.path.basename(name) for name in dropped)}.")
@@ -298,12 +380,15 @@ def _pair_clause(shape: Any, fits: Callable[[Any], bool], quant_kind: str,
 def alternatives(shape: Any, *, fits: Callable[[Any], bool], unet_name: str, family: str,
                  quant_kind: str, terms: DriverStackTerms, deferred: bool, prompt: object,
                  stack_for: Callable[[object], DriverStackTerms], pair: bool,
-                 mesh: Any = None) -> str:
+                 mesh: Any = None, site: str = SITE_LOADER) -> str:
     """What would fit in place of what does not; empty when nothing does.
 
-    ``fits`` prices a changed shape in every window. Best effort: a fault names
-    nothing and the refusal stands without it.
+    ``fits`` prices a changed shape in every window, its load window as ``site``
+    charges it. Best effort: a fault names nothing and the refusal stands without it.
     """
+    def load_of(stack: DriverStackTerms) -> int:
+        return load_window_models(stack, site)[0] if deferred else 0
+
     try:
         swaps = []
         # A cast prices another file at another copy; its twins and the shard
@@ -314,9 +399,9 @@ def alternatives(shape: Any, *, fits: Callable[[Any], bool], unet_name: str, fam
             dit = dit_twins(shape, fits, unet_name, family, loras=loras, mesh=mesh)
             if dit:
                 swaps.append(f"{_join(dit, 'or')} in place of {unet_name}")
-        swaps += model_twins(shape, fits, terms, deferred, prompt, stack_for)
+        swaps += model_twins(shape, fits, terms, load_of, prompt, stack_for)
         parts = [f"On disk here, these would fit: {'; '.join(swaps)}."] if swaps else []
-        parts.append(_switch_clause(shape, fits, terms, prompt, stack_for, deferred))
+        parts.append(_switch_clause(shape, fits, terms, prompt, stack_for, load_of))
         parts.append(_pair_clause(shape, fits, quant_kind, loras) if pair and not cast else "")
         return " ".join(part for part in parts if part)
     except Exception as exc:  # naming alternatives never replaces the refusal

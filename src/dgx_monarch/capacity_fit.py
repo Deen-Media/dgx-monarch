@@ -26,6 +26,9 @@ from .safetensors_header import (
     UnsupportedSafetensorsDtypeError,
     read_safetensors_header,
 )
+from .stock_words import hot_swap_sentence as hot_swap_sentence
+from .stock_words import stock_second_term as stock_second_term
+from .stock_words import stock_terms as stock_terms
 
 # Both probes stay in ``gate_audit_vocab.MEASURED_PROBES`` so their measurements
 # can support a capacity-certified ledger row.
@@ -80,6 +83,11 @@ class StockFit:
     cast_bytes: int = 0
     # The slot's resident a swap credit drops first (credit_stock_swap); "" is in place.
     dropped: str = ""
+    # The part of ``credit_bytes`` that is ComfyUI's backup of the held stack's weights.
+    backup_bytes: int = 0
+    # The new stack's own LoRA files, which a backup credit is net of: the Worker reads
+    # them again into anonymous memory on every in-place change.
+    stack_bytes: int = 0
 
     @property
     def size_gib(self) -> float:
@@ -132,6 +140,8 @@ class StockFit:
             credit.update(cast_bytes=int(self.cast_bytes), cast_gib=gib(self.cast_bytes))
         if self.dropped and self.credit_bytes > 0:
             credit["dropped"] = self.dropped
+        if self.backup_bytes > 0:
+            credit.update(backup_bytes=int(self.backup_bytes), stack_bytes=int(self.stack_bytes))
         return {
             "probe": PROBE_STOCK_LOAD_FIT,
             "checkpoint_bytes": int(self.size_bytes),
@@ -148,36 +158,6 @@ class StockFit:
             "applies": bool(self.applies),
             **credit,
         }
-
-
-def stock_terms(size_gib: float, credit_bytes: int = 0) -> str:
-    """What a stock price charges, as the rescue card prints it after "under stock residency".
-
-    A credit is the copy the slot holds, which a cast makes other than the file.
-    """
-    if credit_bytes:
-        return (f"beside the {gib(credit_bytes)} GiB copy of this file the Worker already holds, "
-                "room for a host copy of the weights its LoRA stack changes and the floor,")
-    return f"(a {size_gib} GiB file plus the host copy it is placed from)"
-
-
-def stock_second_term(measured: dict) -> str:
-    """The fleet card's words after "a N GiB file": the host copy, and a cast's own copy."""
-    cast = measured.get("cast_gib")
-    return (f"cast to a {cast} GiB copy, " if cast else "") + "plus the host copy it is placed from"
-
-
-def hot_swap_sentence(where: str, unet_name: str, needed: float, weights: float,
-                      avail: float, short: float) -> str:
-    """The fleet card's sentence for a credited price that still falls short.
-
-    The figure leaves out the held file, so the sentence says it is room beside
-    that copy rather than adding the file into the sum.
-    """
-    return (f"{where} priced a LoRA change on {unet_name}: the change needs {needed} GiB "
-            f"beside the {weights} GiB copy of this file the Worker already holds, room "
-            "for a host copy of the weights its LoRA stack changes and the floor. Only "
-            f"{avail} GiB of unified memory is available, {short} GiB short.")
 
 
 @dataclass(frozen=True, slots=True)
