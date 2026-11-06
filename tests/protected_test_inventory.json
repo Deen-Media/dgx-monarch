@@ -1347,7 +1347,7 @@
       "test_bounded_cuts_the_middle_and_keeps_both_ends": "533c03739b3b228e",
       "test_every_stock_fallback_of_a_render_is_noted": "435bccd4468170b4",
       "test_fleet_notes_the_stock_it_forces": "c8c7aff1012f5a93",
-      "test_models_names_the_slab_card_for_the_bf16_template": "9c0e7c064d606366",
+      "test_models_names_the_slab_card_for_the_bf16_template": "07f47e35f2fc3736",
       "test_the_card_and_the_refusal_read_a_window_alike": "2629b63d99ec1658",
       "test_the_docs_this_pr_adds_name_no_box_by_rank": "12c571f2fcf5cc92",
       "test_the_gate_remedy_says_how_to_make_the_stock_reference_fit": "fcfec13e0cb06ac3",

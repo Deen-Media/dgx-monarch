@@ -381,7 +381,7 @@ rendered, and a second queue rendered with the encoder loaded again
 ([TROUBLESHOOTING #66](TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora));
 the memory-saver's change was admitted on both ranks and rendered; and the
 Wan 2.2 text-to-video template sampled 10 steps per stage with the head held
-at 10.6 to 12.2 GiB and no stall
+near 12 GiB for two minutes of stage 1, lowest 10.6 GiB, and no stall
 ([Wan 2.2 T2V](#evidence-wan-2-2-t2v-high-low)). On dev `7c3eecb` the
 memory-saver's change loads base and LoRA fresh and samples in 41.4 s, and
 the INT8 Wan-Animate 2 template took 100.1 s against pass 3's 240.1 s
@@ -1649,7 +1649,8 @@ Images were compared as RGB arrays and none was viewed. Cells 1 to 3 passed
 for all three DiT files, so the row is HW. On `7c3eecb` the cells that #142
 to #146 changed ran again: the LoRA route is now exact, and the shipped
 template refuses at the loader before anything loads, as designed, and renders
-each way the refusal names.
+each way the refusal names but the INT8 ConvRot DiT beside the BF16 upsampler,
+which has not run.
 
 p-h3-image is a MiniMax H3 DiT on the H3 adapter. The CPU tests, against ComfyUI 0.44.0, hold
 three things. ModelSamplingMiniMaxH3 (DGX Monarch) gives each Worker's clone
@@ -1683,7 +1684,7 @@ encoder and VAE. One step means Manual Sigmas `1.0, 0.0`.
 | uly2+fsdp | topology `uly2+fsdp`, one step, `bf16` after an Identity Gate (DGX Monarch) PASS on `uly2+fsdp`, then `w4a8` | `bf16` completes with identical latents and its image recorded against resident uly2; `w4a8` refuses class P at launch with the grouped 4-bit layout text | PASS on `91fd15f`. Before the gate PASS, `bf16` refused with `automatic FSDP execution requires an exact clean-reload Gate PASS (ledger=unknown, process=None)` and no proof ran. Identity Gate (DGX Monarch) on `uly2+fsdp` at two steps wrote `identity gate PASS (explicit): independently loaded FSDP shards render bit-identically`, and the render then sampled in 5.45 s with the shards resident, both ranks identical, its image pixel-identical to resident uly2. `w4a8` refused class P at launch |
 | W4A8 kernels | `w4a8` on one rank, with a one-line probe or a profiler trace that records which W4A8 path ran (comfy-kitchen's `_W4A8_CHUNKED` and the chunked kernels' `used` flag, or the kernel names), then again with `[worker_args] int8_gemm = "cutlass"` | the render completes on GB10 on comfy-kitchen's own W4A8 kernels, and the record names the path; the `int8_gemm` toggle changes only the 40 `int8_tensorwise` layers and any fallback calls, so the two images match; a missing kernel shows here as a load or first-step error, which MODELS then records | PASS on `91fd15f`, with a gap: both renders completed, and the CUTLASS render was pixel-identical to the Triton render and to stock. No probe could attach to the actor, so the record names the path by construction, not by trace: the file's 168 grouped layers store their scales in the layout comfy-kitchen 0.2.40 sends to its chunked W4A8 kernels, and whether each call's `used` flag came back true is not recorded |
 | no shift node | `bf16` with ModelSamplingMiniMaxH3 (DGX Monarch) removed, then the same model through Fleet KSampler (DGX Monarch) on the pair, wired with `model` from the UNET loader, `clip` from the text encoder's CLIPLoader, `positive` and `negative` both from p-h3-image Conditioning's conditioning output (the graph has no negative), `latent_image` from its latent output, one step, CFG 1.0, `euler` on `simple`, and its output into the template's VAE Decode | the driver refuses class P with the one-frame text (#144) before any Worker call, on both | PASS on `91fd15f`: both refused with the #144 text, Fleet KSampler in 0.3 s with no load, quote or sample line |
-| upsampler | `bf16` as shipped, switch on, one rank | the loader refuses, class C, before Generate Text and before anything loads, naming the INT8 ConvRot and W4A8 files on disk, the switch and `uly2+fsdp` after its gate, and offering the slab card; the slab card, a named file, the switch set to false and `uly2+fsdp` after its gate each render | PASS on `7c3eecb`: refused in 4.7 s, 119.8 GiB against 109.6 GiB, 10.2 GiB short, with no model loaded. Then each named way rendered: the slab card, its image pixel-identical to the stock render; `p-h3-image_w4a8.safetensors` in the UNET loader; `p-h3-image_prompt_upsampler_w4a8.safetensors` beside the BF16 DiT, the first record of that file; the switch set to false, with no upsampler load; and on the pair `uly2+fsdp` after its gate, pixel-identical to one rank. On `91fd15f`, before the loader priced the upsampler, the same graph ran Generate Text and refused at the sampler 2.0 GiB short |
+| upsampler | `bf16` as shipped, switch on, one rank | the loader refuses, class C, before Generate Text and before anything loads, naming the INT8 ConvRot and W4A8 files on disk, the switch and `uly2+fsdp` after its gate, and offering the slab card; the slab card, a named file, the switch set to false and `uly2+fsdp` after its gate each render | PASS on `7c3eecb`: refused in 4.7 s, 119.8 GiB against 109.6 GiB, 10.2 GiB short, with no model loaded. Then each named way but the INT8 ConvRot DiT rendered: the slab card, its image pixel-identical to the same graph on stock residency; `p-h3-image_w4a8.safetensors` in the UNET loader; `p-h3-image_prompt_upsampler_w4a8.safetensors` beside the BF16 DiT, the first record of that file; the switch set to false, with no upsampler load; and on the pair `uly2+fsdp` after its gate, pixel-identical to one rank. The INT8 ConvRot DiT beside the BF16 upsampler has not run; it rendered on `91fd15f` with the switch false. On `91fd15f`, before the loader priced the upsampler, the same graph ran Generate Text and refused at the sampler 2.0 GiB short |
 | edit | `bf16`, a Load Image wired to `image_1`, uly2 and one rank, one step | the reference rows reach the packed stream on both ranks, both report identical latents, and the image matches the one-rank cell | PASS on `91fd15f`: both ranks identical, and the uly2 image pixel-identical to one rank. No stock comparison ran |
 | LoRA route | `dgx-monarch-test-p-h3-image-lora.json`, its slot mapped to `p-h3-image_lora_bf16.safetensors` at the 1.0 the graph holds and the sweep keeps, one rank, one step and 8, against ComfyUI's own `image_p_h3_t2i` recipe through its stock twin | the image pixel-identical to stock | PASS on `7c3eecb`: pixel-identical to stock at one step and at 8 (NRMS 0.0), and `auto` on the pair (uly2) pixel-identical to one rank. On `91fd15f`, with the classic bake, it read NRMS 0.0772 at one step and 0.2567 at 8 ([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)) |
 
@@ -1691,10 +1692,11 @@ A fail is any other outcome in a cell: a refusal where the table expects a
 render, a render where it expects a refusal, latents that differ across
 ranks, or a uly2 image that differs from one rank at one step.
 
-The three DiT files, read from the head Worker's journal on the pair. Load and
-sample times include each file's first load; the 8-step INT8 ConvRot render
-ran on a fresh fleet after an Old model in the way refusal beside the BF16 and
-W4A8 files.
+The three DiT files. The load and 8-step columns come from the head Worker's
+journal on the pair, the one-step column from the one-rank sessions. Each 8-step
+cell says whether its time includes the file's load; the 8-step INT8 ConvRot
+render ran on a fresh fleet after an Old model in the way refusal beside the
+BF16 and W4A8 files.
 
 | file | file size | resident on each rank | stock price | load | one step, one rank | 8 steps, uly2 |
 |---|---|---|---|---|---|---|
@@ -1984,8 +1986,9 @@ cond and uncond as the leanest rank does
 ([TROUBLESHOOTING #79](TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)),
 the two stages sampled in 26.84 and 26.19 s against 26.46 and 26.40 s on
 `15b48c2`, +1.4 and -0.8 percent, below what one-step samples resolve. At the
-template's 10 steps per stage, with the head held at 10.6 to 12.2 GiB through
-stage 1 and the sibling near 68 GiB, both stages sampled with no stall, and both ranks
+template's 10 steps per stage, with the head held near 12 GiB from about 60 s
+to 180 s of stage 1's 277.6 s, lowest 10.6 GiB, and the sibling near 68 GiB,
+both stages sampled with no stall, and both ranks
 reported the same latents. Where the head fell from 92 to 10.6 GiB during
 stage 1, both ranks took the other batch path alike: the stage's latent
 changed, and stayed identical across the ranks. The head was capped, SM 2086
@@ -3118,8 +3121,9 @@ decode split's declines for the Sol-H3-VAE decoder, the p-h3-image VAE and a
 VAE whose compute dtype the VAE Compute Dtype node set
 (`tests/test_vae_decode_split_comfy.py`). On ComfyUI 0.43 and older the tests
 for these additions skip with a reason. On 2026-11-04 the FP8, VAE Compute
-Dtype, context-window and Create Video rows ran on dev `15b48c2` with ComfyUI
-`8a98ecf58` (v0.44.0 code) on both Sparks, and on 2026-11-05 the p-h3-image
+Dtype and context-window rows ran on dev `15b48c2` with ComfyUI `8a98ecf58`
+(v0.44.0 code) on both Sparks, the Create Video row in a ComfyUI 0.43.0 clone
+as its row says, and on 2026-11-05 the p-h3-image
 and Sol-H3-VAE rows on dev `91fd15f`; the head was capped, SM 2080 to 2093
 MHz under load.
 
@@ -3186,9 +3190,10 @@ each gated combination again on first use. The CPU checks
 
 **torch 2.15.0 ladder (2026-11-05 and 06).** The ladder below ran on the pair
 with dev `7c3eecb` on the driver and both Worker hosts and ComfyUI
-`8a98ecf58`, and every step passed; the release ships on torch 2.15.0+cu132.
+`8a98ecf58`; steps 1 to 10 passed and step 11 is not run; the release ships on
+torch 2.15.0+cu132.
 Both Sparks switched their Monarch environment to torch 2.15.0+cu132 at
-20:44 MST on 2026-11-05, with cuDNN 9.26, Triton 3.9.0, torchvision 0.29.2,
+20:44 on 2026-11-05, with cuDNN 9.26, Triton 3.9.0, torchvision 0.29.2,
 torchaudio 2.11.1 and SageAttention 2.2.0 rebuilt against it, and NCCL 2.32.3
 loaded through the kit's symlink in place of the 2.30.7 that torch 2.15 pins.
 The torch 2.12 references for steps 6 and 8 are the 2026-11-03 FP8 cells of
@@ -3201,7 +3206,8 @@ render, with the 0.10 floor. Full-schedule pixels differ across the two
 torch builds, pixel NRMS 0.0055 for BF16 to 0.33 for fp8_scaled, which the
 [comparison method](#comparison-method) treats as descriptive. Two steps
 failed once and passed on a rerun: step 9 at 21:44, whose head reading was
-taken while CPU test suites ran on the head, passed at 22:00, and step 10 at
+most likely taken while CPU test suites ran on the head (inferred from the
+suite logs' times, not in the ladder record), passed at 22:00, and step 10 at
 22:00, which started one second after a render ended and met the idle check,
 passed at 08:11 on 2026-11-06. The rows below cite the passing runs.
 
@@ -3214,7 +3220,7 @@ passed at 08:11 on 2026-11-06. The rows below cite the passing runs.
 | 5. INT8 ConvRot | comfy-kitchen's cuda backend on both hosts, then three INT8 renders, by a local actor, by the driver and by both Worker actors on the pair, each logging `INT8 GEMM: Triton kernel on` and no CUTLASS warning; every actor builds its process groups and Worker setup completes | PASS: comfy-kitchen 0.2.40 with Triton 3.9.0, its cuda and triton backends available on both hosts; the local-actor and driver INT8 renders and the MiniMax H3 INT8 render on the pair each logged the Triton line once per process with no warning, and Worker setup completed. On 2026-11-03, before `TORCH_DIST_USE_NCCL2=0`, this step had failed at its first render |
 | 6. One GPU on the head | Krea2 Turbo BF16 and fp8_scaled at seed 1031, on the plain and the sage launchers, each within the one-step latent NRMS floor of 0.10 against the torch 2.12 references | PASS: BF16 identical to 2.12 at one step on both launchers, and fp8_scaled below 0.0001; samples 73.1 s against 74.2 s (BF16) and 65.3 s against 64.1 s (fp8_scaled) on the plain launcher, 72.6 s against 72.2 s and 63.3 s against 62.9 s on the sage launcher |
 | 7. NCCL across the pair | the bench with both rails and `NCCL_P2P_DISABLE` unset: every size reduced correctly, the 1 GiB all-reduce at 90 percent or more of the 2026-10-06 record, and channels on both rails | PASS: NCCL 2.32.3 on both hosts, every size reduced to the record's bytes, the 1 GiB all-reduce at 19774 and 19762 MiB/s against 20011 MiB/s, about 99 percent, on both rails |
-| 8. Mesh renders on the pair | Krea2 cells on uly2, cfg2 and topology auto with SAGE_AUTO, each within the 0.10 floor against its reference. Each gated cell runs the identity gate once on its first render and writes a PASS whose capability context names torch 2.15.0+cu132; where this release wrote a torch 2.12 PASS for the same combination, the gate notice names both builds; a second render of the cell skips the gate | PASS: BF16 on uly2 and cfg2 identical to 2.12 at one step, BF16 cfg2 at 1 MP 0.0036, fp8_scaled on uly2 below 0.0001, and fp8_scaled at 1664 square 0.0043 on one GPU and under `auto` with SAGE_AUTO. Every gated cell ran its gate again on its first render on 2.15 and wrote a PASS. Samples moved by -0.3 to +6.3 percent: 14.6 s against 14.3 s at 1 MP, 37.0 against 36.5 on cfg2, 44.4 against 44.5 on uly2, 40.2 against 39.3 for fp8_scaled on uly2, 70.0 against 69.9 and 43.2 against 40.6 at 1664 |
+| 8. Mesh renders on the pair | Krea2 cells on uly2, cfg2 and topology auto with SAGE_AUTO, each within the 0.10 floor against its reference. Each gated cell runs the identity gate once on its first render and writes a PASS whose capability context names torch 2.15.0+cu132; where this release wrote a torch 2.12 PASS for the same combination, the gate notice names both builds; a second render of the cell skips the gate | PASS: BF16 on uly2 and cfg2 identical to 2.12 at one step, BF16 cfg2 at 1 MP 0.0036, fp8_scaled on uly2 below 0.0001, and fp8_scaled at 1664 square 0.0043 on one GPU and under `auto` with SAGE_AUTO. Every gated combination ran its gate again on 2.15 and wrote a PASS. Samples moved by -0.3 to +6.3 percent: 14.6 s against 14.3 s at 1 MP, 37.0 against 36.5 on cfg2, 44.4 against 44.5 on uly2, 40.2 against 39.3 for fp8_scaled on uly2, 70.0 against 69.9 and 43.2 against 40.6 at 1664 |
 | 9. MiniMax H3 speed and memory | step 5's pair render within the ladder's bands of the 2.12 record: sampling time, wall time, each actor's GPU peak and each host's lowest available memory | PASS against the 2026-11-03 torch 2.12 render of the same graph: sampling 451.6 s against 448.4 s (+0.7 percent), wall 540.1 s against 660.1 s, each actor's GPU peak 26.8 GiB on both builds, the head's lowest MemAvailable 50.3 GiB on both and the sibling's 79.1 against 77.5 GiB. The 2.12 render read the head's SM clock at 2398 MHz at submit |
 | 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | PASS: exit 0, the dense kernel control on `cute_sm120` at relative L2 0.00298337 on both hosts, the figure of 2026-10-11. It runs no render and says nothing of sparse-attention or model accuracy |
 | 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN: the commands were printed and not run, because the release ships on torch 2.15; the torch 2.12 environment stays parked on both hosts |
@@ -3360,14 +3366,16 @@ after #143, every card, refusal and log line under the agreement's guard
 said the head, the sibling or this box, and the only host name a user could read was
 the Worker's own stock wall on a one-Spark fleet
 ([TROUBLESHOOTING #53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)),
-which #147 has since changed to say "here" after the box's name.
+which #147 has since changed to say "here", with the box's name in front of
+it on the pair only.
 
 **What a clear gives back.** The card credits a short box the stock
 resident's file plus the actor's anonymous memory above what it held at its
 first load. After one template a clear returned 33.3 GiB on the head against
 about 24 GiB credited, the 22.2 GiB flux1-dev file and 1.7 GiB. After four
 templates on one Worker generation, the head's figure by that rule read
-6.0 GiB, the figure its refusal printed; each actor's RSS growth exceeded it
+6.0 GiB, from the 53.6 GiB its refusal printed for a cleared box; each actor's
+RSS growth exceeded it
 by the 6.0 GiB of shared memory every actor holds, and the clear returned
 37.7 GiB on the head and 61.5 GiB on the sibling against 28.2 and 52.0 GiB
 credited. The rule errs low, so the card shows less often, never wrongly.
@@ -3380,8 +3388,9 @@ and no card, twice, the second time with the head held at 20.1 GiB. The
 first time the agreement admitted it with 19.1 GiB to spare over its
 69.1 GiB price, where the 1 Hz reader had shown the head at 49.2 GiB just
 before. Within 2 s the actor's shared memory, the slab and the 6 GiB every
-actor holds, fell from 39.06 to 6.04 GiB and MemAvailable rose from 49 to
-88 GiB, before the host copy grew. The record does not show whether the slab
+actor holds, fell from 39.06 to 6.04 GiB, and within 4 s MemAvailable rose
+from 49 to 88 GiB, before the host copy grew. The record does not show
+whether the slab
 was dropped before the quote read the box. No refusal priced over a slab
 resident was reached.
 
@@ -3777,8 +3786,9 @@ only `DGXM_AUTO_RESCUE=1` set, it rendered again, the first of the hardware
 checks there.
 
 On 2026-11-04, still on dev `4b71822` with both driver preflights on,
-the other rescue forms ran at 1344x768x124, 20 steps, one render each, the
-head capped with its SM clock read only at submit (2093 MHz). Every render
+the other rescue forms ran at 1344x768x124, 20 steps, each twice with the
+first run cited, the head capped with its SM clock read only at submit
+(2093 MHz). Every render
 loaded the file into slab residency on each rank that held it, and the gate
 kept slab, INCONCLUSIVE with no stock reference, naming the consent's source:
 
@@ -3815,7 +3825,8 @@ models they use. The first run, on dev `4b71822`, was INCONCLUSIVE: with three
 seeds at depth 2 the third push's check ran 1 s after the second dispatch, at
 about 75 GiB MemAvailable, before the balloon had filled. The rerun on dev
 `15b48c2` sent four seeds at `pipeline_depth` 2 (MiniMax H3 pruned INT8
-ConvRot, 1344x768x124, uly2, the head capped) with the head held near 12 GiB
+ConvRot, 1344x768x124, uly2, the head capped with its SM clock not sampled
+under load) with the head held near 12 GiB
 from just after the first two dispatches. The first render finished on both
 ranks at 492.1 s, the third dispatched, and at 518.1 s the fourth push's check
 refused with two renders in flight: "15.9 GiB needed per rank, 8.6 GiB usable

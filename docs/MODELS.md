@@ -127,7 +127,7 @@ that match the tested configurations in its model details. See
 | Wan 2.1 (t2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 Ulysses passed its output comparisons. [Details](#model-wan-2-1-t2v) · [Workflow](../example_workflows/dgx-monarch-wan-t2v.json) |
 | Wan 2.2 (t2v, high/low) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | BF16 and FP16 high/low were tested separately; FP8 T2V has not been compared. [Details](#model-wan-2-2-t2v-high-low) · [Workflow](../example_workflows/dgx-monarch-wan22-t2v.json) |
 | Wan 2.2 (i2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | The four-step LoRA test and no-LoRA FP8 test used different recipes. [Details](#model-wan-2-2-i2v) · [Workflow](../example_workflows/dgx-monarch-wan22-i2v.json) |
-| Wan 2.2 TI2V 5B | ✓ | n/a | ★ | ✓ | ✓ | **HW** | One FP16 checkpoint, the only public file. At the shipped 20 steps one GPU is pixel-identical to stock and uly2 to one GPU, text and image to video; ring, cfg2 and FSDP have not run on it. A start image keeps the first latent frame at its own timestep. [Details](#model-wan-2-2-ti2v-5b) · [Workflow](../example_workflows/dgx-monarch-wan22-ti2v.json) |
+| Wan 2.2 TI2V 5B | ✓ | n/a | ★ | ✓ | ✓ | **HW** | One FP16 checkpoint, the only public file. At the shipped 20 steps one GPU is pixel-identical to stock for text to video, and uly2 to one GPU for text and image to video; ring, cfg2 and FSDP have not run on it. A start image keeps the first latent frame at its own timestep. [Details](#model-wan-2-2-ti2v-5b) · [Workflow](../example_workflows/dgx-monarch-wan22-ti2v.json) |
 | Wan 2.1 (i2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 Ulysses passed; the BF16/FSDP capacity alternative has no reference comparison. [Details](#model-wan-2-1-i2v) · [Workflow](../example_workflows/dgx-monarch-wan21-i2v.json) |
 | Wan FlowRVS | ✓ | n/a | ★ | ✓ | ✓ | **HW** | Tested with synthetic clips. Use CFG 1 and no added noise for segmentation. [Details](#model-wan-flowrvs) · [Workflow](../example_workflows/dgx-monarch-wan-flowrvs.json) |
 | Wan Bernini-R | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 high/low T2V only; fresh solver history per stage. [Details](#model-wan-bernini-r) · [Workflow](../example_workflows/dgx-monarch-wan-bernini.json) |
@@ -1028,9 +1028,10 @@ Worker holds the whole DiT, as on one Spark, so the pair alone does not fit it.
 The refusal also offers the Load with slab residency card: slab places no host
 copy, so that load prices at 78.3 GiB and fits. On 2026-11-05 on one Spark the
 refusal came 4.7 s after the queue with nothing loaded, 119.8 GiB against
-109.6 GiB, 10.2 GiB short, and each way it names rendered: the slab card,
-whose image was pixel-identical to the stock render; the W4A8 DiT; the W4A8
-upsampler beside the BF16 DiT; and the switch set to false. On the pair,
+109.6 GiB, 10.2 GiB short, and each way it names but the INT8 ConvRot DiT rendered:
+the slab card, whose image was pixel-identical to the same graph on stock
+residency; the W4A8 DiT; the W4A8 upsampler beside the BF16 DiT; and the
+switch set to false. On the pair,
 `uly2+fsdp` after its Identity Gate PASS rendered pixel-identical to one rank.
 With the switch false the graph does not load the upsampler and the price
 does not charge it.
@@ -1413,7 +1414,7 @@ pixel-identical to one GPU on the same latent; and image to video on uly2
 and one GPU, whose first frame follows the image and whose frames match. One
 step cannot test this model, because ComfyUI's `uni_pc` at one step returns
 the scaled starting noise. Under Worker-assisted VAE decode the Wan 2.2 VAE
-split byte-identical to the one-host tiled decode. The CPU tests check the
+split pixel-identical to the one-host tiled decode. The CPU tests check the
 template against the stock node definitions, and the Wan adapter's
 exact-class match and per-frame timestep sharding.
 

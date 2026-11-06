@@ -2024,8 +2024,9 @@ yet moved into memory: p-h3-image prices 9.0 GiB short where the hardware ran
 2.0 GiB short, and LTX 2.3 text to video now needs 80.9 GiB where it needed
 65.8. On 2026-11-05, on one Spark with 109.6 GiB free, the p-h3-image
 template refused 4.7 s after the queue with no model loaded, 10.2 GiB short,
-and each way its refusal named rendered: the slab card, the W4A8 DiT, the
-W4A8 upsampler beside the BF16 DiT and the switch set to false; on the pair,
+and each way its refusal named but the INT8 ConvRot DiT rendered: the slab
+card, the W4A8 DiT, the W4A8 upsampler beside the BF16 DiT and the switch set
+to false; on the pair,
 `uly2+fsdp` after its Identity Gate PASS. That day a re-queue whose loader
 ComfyUI kept ran no price and rendered only because the box had room, which is
 why the sampler now runs this price. A
@@ -2165,7 +2166,7 @@ offering consent. Follow their "What would fit" clause; all cases below are
 
 | Guard/path | Why no rescue is offered |
 |---|---|
-| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. On a one-Spark fleet on 2026-11-05 this refusal came from the Worker's own wall, which named the box by its host name and said "this host", the one refusal of that day's checks to name a host. Since #147 the Worker says "here" and the driver opens the sentence with the box's name ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)). |
+| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. On a one-Spark fleet on 2026-11-05 this refusal came from the Worker's own wall, which named the box by its host name and said "this host", the one refusal of the `7c3eecb` checks to name a host. Since #147 the Worker says "here"; on the pair the driver opens the sentence with the box's name, and on one box the sentence stands as it is ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)). |
 | `slab_load_preflight` | Slab itself does not fit. The message includes the larger stock estimate, so disabling slab cannot help. |
 | Comfy-managed `stock_load_preflight` | That residency cannot fit and has forced slab off. Turn off `comfy_managed` and follow its reset requirements in [#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) before using slab. |
 
@@ -3919,7 +3920,8 @@ exchange per model call, and each box's worker journal says so once per
 process: `cond batch agreement: ComfyUI's cond batch rule reads the leanest
 rank's free memory on every rank`. On 2026-11-05 the Wan 2.2 text-to-video
 template that had stalled 600 s on 2026-11-04 sampled 10 steps per stage with
-the head held at 10.6 to 12.2 GiB and the sibling near 68 GiB, with no stall,
+the head held near 12 GiB for two minutes of stage 1, lowest 10.6 GiB, and
+the sibling near 68 GiB, with no stall,
 and the exchange's cost was below what one-step samples resolve
 ([VALIDATION](VALIDATION.md#evidence-wan-2-2-t2v-high-low)).
 
@@ -7764,7 +7766,8 @@ reach this path.
   under. When the ledger holds a PASS that differs only in that build, the
   notice names both builds.
 
-On 2026-11-03 the pair's first torch 2.15 render failed this way. With the
+On 2026-11-03 the first torch 2.15 render, a local-actor INT8 cell on the
+head, failed this way. With the
 setting, on 2026-11-05, every actor built its process groups through the
 torch 2.15 ladder, and the 1 GiB all-reduce across both rails ran at about
 99 percent of its torch 2.12 record

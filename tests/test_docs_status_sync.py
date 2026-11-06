@@ -867,8 +867,8 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
         "granted", "2026-11-05 BF16, INT8 ConvRot and W4A8 uly2 pixel-identical to one "
         "rank, and one rank to stock, at one step and 2912 square"),
     ("Wan 2.2 TI2V 5B", "uly"): (
-        "granted", "2026-11-04 uly2 pixel-identical to one GPU, and one GPU to stock, "
-        "121 of 121 frames at 20 steps, text and image to video"),
+        "granted", "2026-11-04 uly2 pixel-identical to one GPU for text and image to "
+        "video, and one GPU to stock for text to video, 121 of 121 frames at 20 steps"),
 }
 
 # Cells that must read constrained (_CONSTRAINED_MARK): FSDP cells whose
