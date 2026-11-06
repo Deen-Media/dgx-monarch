@@ -168,7 +168,13 @@ retains a model-sized allocation (~20 GB for a 24 GB model) after model
 unload. It returns to the operating system only when the actor process exits.
 The "pool" segment in `dgxm top` shows this allocation. **Reset attached
 mesh** in the panel (or the `recycle` level on the Clear VRAM node) reclaims
-it (see Recycle below). Slab mode does not create the arena.
+it (see Recycle below). Slab mode does not create the arena. What an actor
+keeps varies by load: on 2026-11-05 a stock load with no LoRA left about
+3 GiB of anonymous memory once the weights were placed, a load with a LoRA
+kept 33.6 to 34.0 GiB, ComfyUI's backup of the weights the LoRA patches, and
+after four templates on one Worker generation the head's actor had kept
+6.0 GiB and the sibling's 29.9 GiB
+([VALIDATION](VALIDATION.md#capacity-checks-2026-11-05)).
 
 For a memory-heavy decode, connect the final sampled latent to Clear VRAM's
 optional `samples` input and connect its `samples` output (slot 1) to the

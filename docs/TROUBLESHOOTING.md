@@ -380,6 +380,14 @@ they must never shut down the persistent Worker services.
 **Fix:** `dgxm restart`. The `nccl master port` row of `dgxm doctor` warns when
 the port accepts connections outside a render.
 
+The same port can still be held by the session before yours. On 2026-11-04 a
+driver session started two minutes after the previous one stopped failed
+Worker setup at once with `torch.distributed.DistNetworkError: The server
+socket has failed to listen on any local network address. port: 29905 ...
+EADDRINUSE`, and a split-decode session on 2026-11-03 failed the same way on
+port 29857. Both times a fresh session started later went through. Wait a
+minute and queue again, and run `dgxm restart` if it repeats.
+
 ## 4. `SupervisionError: … process exited with non-zero code`
 
 A worker actor died. The error identifies its endpoint and host. Check the
@@ -1993,7 +2001,16 @@ from; until 2026-11-05 any one held model credited the whole stack. On a fresh
 driver the price errs high by the 1.15 encoder ratio and a VAE ComfyUI has not
 yet moved into memory: p-h3-image prices 9.0 GiB short where the hardware ran
 2.0 GiB short, and LTX 2.3 text to video now needs 80.9 GiB where it needed
-65.8. A loader `weight_dtype` cast is priced at the copy
+65.8. On 2026-11-05, on one Spark with 109.6 GiB free, the p-h3-image
+template refused 4.7 s after the queue with no model loaded, 10.2 GiB short,
+and each way its refusal named rendered: the slab card, the W4A8 DiT, the
+W4A8 upsampler beside the BF16 DiT and the switch set to false; on the pair,
+`uly2+fsdp` after its Identity Gate PASS. A re-queue in the same driver whose
+loader inputs did not change runs no loader price at all, because ComfyUI
+keeps the loader node's output: that day the second queue loaded the
+upsampler beside the resident DiT and rendered, because the box had room;
+on a short box nothing would have priced the upsampler before it loaded. A
+loader `weight_dtype` cast is priced at the copy
 the cast builds, read from the file's header, beside a host copy at the file's
 own width, where the load runs stock, with no slab card; under slab,
 comfy-managed residency or a `*+fsdp` preset the loader makes no claim on a
@@ -2117,7 +2134,11 @@ see DESIGN.md section 5.9.
 loader or Identity Gate shows in the prompt error tag first, then its sentence and the card
 it names; the remote traceback is in the ComfyUI log. Before 2026-11-05 the
 error began "Actor call dgxm_worker.sample failed." and the reason sat at the
-end of that traceback.
+end of that traceback. On 2026-11-05 a class K ring-pad refusal and a stock
+wall refusal at the sampler each reached the prompt error that way. A refusal
+that offers a card ends with its machine block,
+`<<<DGXM-CONSENT-V1 {...} DGXM-CONSENT-END>>>`, after the sentence: that is
+for the panel, and the prose before it is the message.
 
 **No button means no panel remedy.** Class C messages can link here without
 offering consent. Follow their "What would fit" clause; all cases below are
@@ -2125,7 +2146,7 @@ offering consent. Follow their "What would fit" clause; all cases below are
 
 | Guard/path | Why no rescue is offered |
 |---|---|
-| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. |
+| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. On a one-Spark fleet on 2026-11-05 this refusal came from the Worker's own wall, which named the box by its host name and said "this host", the one refusal of that day's checks to name a host. |
 | `slab_load_preflight` | Slab itself does not fit. The message includes the larger stock estimate, so disabling slab cannot help. |
 | Comfy-managed `stock_load_preflight` | That residency cannot fit and has forced slab off. Turn off `comfy_managed` and follow its reset requirements in [#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) before using slab. |
 
@@ -2195,6 +2216,21 @@ curl -s -X POST localhost:8191/dgxm/consent \
 
 Add `"always":true` to the body to save Always clear and retry with the same
 click. The answer waits for the reset, up to 260 s.
+
+On 2026-11-05 the card, Clear and retry and both forms of Always clear and
+retry ran on the pair and on one box as described here
+([VALIDATION](VALIDATION.md#capacity-checks-2026-11-05)). The card is rarer
+than it was: a load that replaces the stock model in its own slot is priced
+after the Worker drops that model, so qwen-image-t2i after flux1-dev, which
+raised the card that morning with the head held short, refuses later the
+same day without it, saying a clear would not make room. The card still
+comes for a model in the other slot, for memory earlier loads left behind,
+and for a LoRA change on a BF16 base the Workers hold with its LoRA
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+
+The Load with slab residency card has one fixed line: its risk reads "Stock
+residency cannot fit this checkpoint on this box" on the pair too, where its
+numbers say "on the head".
 
 **Quarantine always takes precedence.** FAIL applies before residency
 selection, and an explicit stock request remains stock regardless of consent.
@@ -2455,7 +2491,9 @@ message ends by naming the models and both readings. The step runs at most
 once per render and only when ComfyUI holds a model. It never runs while a
 render is live in this driver: a pipelined submission behind a render in
 flight, a held or abandoned result lease, or a Worker call in flight keeps the
-models, and the refusal says which. It never touches the Workers' residents or
+models, and the refusal says which. On 2026-11-04 a KSampler Pipeline push
+behind two MiniMax H3 renders in flight refused that way, keeping the text
+encoder the renders used. It never touches the Workers' residents or
 ComfyUI's cached node outputs. The cross-rank agreement
 ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box))
 prices a load that replaces a Worker's stock resident after the drop that
@@ -3254,6 +3292,15 @@ and disables both settings for that combination, like any other unfinished
 check, so your render is priced as a stock load. `DGXM_DISABLE_DRIVER_UNLOAD=1`
 turns the unload and the release off here too.
 
+On 2026-11-05 the Flux 2 template ran this way on a fresh pair. The stock
+reference first refused 8.6 GiB short on the head with the text encoder
+loaded; the driver unloaded it, the head went from 65.7 to 98.7 GiB, and the
+reference loaded with 33.4 GiB left at its lowest. The check passed in 41.7 s
+over four proof renders and your render followed. A second queue with a new
+prompt loaded the 33 GB encoder again beside the model the Workers held and
+rendered, with the head at 30.0 GiB at its lowest. After that PASS the render
+ran on stock residency, not slab.
+
 **A check that a class-K guard stopped disables no residency setting.** A check
 renders without accuracy waivers deliberately, so a measured guard such as
 `shard_quant_scale:chroma` or `sol_attn` refuses inside it whether or not you
@@ -3847,7 +3894,11 @@ stall, with one rank's collectives carrying twice the other's elements. Every
 rank now reads the leanest rank's free memory for that choice, one 8-byte
 exchange per model call, and each box's worker journal says so once per
 process: `cond batch agreement: ComfyUI's cond batch rule reads the leanest
-rank's free memory on every rank`.
+rank's free memory on every rank`. On 2026-11-05 the Wan 2.2 text-to-video
+template that had stalled 600 s on 2026-11-04 sampled 10 steps per stage with
+the head held at 10.6 to 12.2 GiB and the sibling near 68 GiB, with no stall,
+and the exchange's cost was below what one-step samples resolve
+([VALIDATION](VALIDATION.md#evidence-wan-2-2-t2v-high-low)).
 
 **When the short rank holds a slab or an FSDP shard,** read the load lines
 first. Both builds put every weight on the compute device without ComfyUI's own
@@ -4742,6 +4793,14 @@ retry reads `automatic FSDP execution denied by the process-local clean-reload
 Gate verdict INCONCLUSIVE`. Restart ComfyUI to clear it, or run the combination
 with `auto_gate=off`.
 
+A render can also meet the FSDP denial with no proof run at all. On 2026-11-05
+a p-h3-image BF16 render on `uly2+fsdp` with no PASS for its combination
+refused at once with `automatic FSDP execution requires an exact clean-reload
+Gate PASS (ledger=unknown, process=None)`. Identity Gate (DGX Monarch) on
+`uly2+fsdp` then wrote `identity gate PASS (explicit): independently loaded
+FSDP shards render bit-identically`, and the same render ran. Run the gate
+node on the FSDP preset first, as the loader's refusal for that model says.
+
 A capacity stop taken during the proof, and the reprice the check runs between
 the baseline render and the reload cycle, both happen after the check unloaded
 your shards. The reprice, and any stop after the baseline render's own load,
@@ -4830,7 +4889,11 @@ undeliverable actor included. Six shapes reach the operator:
   "The model loaded earlier (<name>) holds about <N> GiB on the head that this
   change needs. Clear the Sparks and run again?", and it appears only when a
   cleared box would hold a fresh load of the model and its LoRA, which costs
-  more than the change.
+  more than the change. On 2026-11-05 a strength change from 1.0 to 0.8 on the
+  BF16 Wan-Animate 2 warm template was refused 13.3 GiB short on the head with
+  the card ("holds about 33.0 GiB on the head"); Clear and retry cleared both
+  Sparks in 4.45 s and the next queue rendered, and with Always clear and
+  retry on, a queue cleared once and rendered.
 * **World 1 is a no op.** The one box prices its own load.
 
 Read the numbers with two limits in mind. Each rank prices against what it
@@ -7527,9 +7590,13 @@ matmuls run in FP8 ([MODELS.md](MODELS.md#fp8-compute-paths)):
   process runs with `--fast fp8_matrix_mult`. `manual_cast` dequantizes every
   FP8 weight to BF16 for every matmul: correct output at BF16 speed.
 - Under either of those, the file takes `fp8_ops`, ComfyUI's FP8 matmul path,
-  instead. On GB10 that path renders noise: on 2026-10-31 Qwen-Image 2512 FP8
-  came out as a speckle field on `fp8_ops` in the actors and in the driver
-  alike ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
+  instead. On GB10 that path renders Qwen-Image 2512's file as noise: on
+  2026-10-31 it came out as a speckle field on `fp8_ops` in the actors and in
+  the driver alike, and on 2026-11-03 again on cfg2 and from the loader's
+  `fp8_e4m3fn_fast`. HunyuanImage 2.1's plain FP8 file stayed inside the
+  one-step floor on it, 0.057 against its dequantizing path, so the noise is
+  not every plain FP8 file's, but the path reaches every one of them
+  ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
 - A file with comfy-kitchen metadata runs comfy-kitchen's kernels whatever the
   flags say, and a layer whose record sets `full_precision_matrix_mult`
   dequantizes to BF16. Some fp8_scaled releases set it on every layer.
@@ -7548,8 +7615,8 @@ Worker services started with `dgxm up` log to
 `~/.local/state/dgx-monarch/worker-loop.log` instead.
 
 - `picked fp8_ops for weights stored as float8_e4m3fn`: the path that renders
-  a plain FP8 file as noise on GB10, and a BF16 file cast at load as an image
-  past the fidelity floor. Turn it off: drop `--fast fp8_matrix_mult` from the
+  Qwen-Image 2512's plain FP8 file as noise on GB10, and a BF16 file cast at
+  load as an image past the fidelity floor. Turn it off: drop `--fast fp8_matrix_mult` from the
   ComfyUI command line, take `fp8_matrix_mult = "on"` out of `[worker_args]`,
   and set the loader's weight dtype back to `default`. When a shared
   workflow's loader asks for `fp8_e4m3fn_fast`, `fp8_matrix_mult = "off"`
@@ -7710,6 +7777,10 @@ stop a render:
   release cannot carry the shift on that ComfyUI yet. p-h3-image itself, its
   conditioning node, text encoder and VAE, needs ComfyUI 0.44.0 or newer.
 
+On 2026-11-05 the first refusal above stopped the BF16 template with the
+shift node removed on one rank, and the same model through Fleet KSampler
+(DGX Monarch) on the pair in 0.3 s, both before any Worker call.
+
 ## 145. A LoRA render on a Worker differs from stock ComfyUI
 
 **Symptom:** on a release before this fix, a render with a LoRA on the
@@ -7751,8 +7822,12 @@ key of each kind logs the dtype it used. On 2026-11-05 the probe loaded three
 INT8 ConvRot layers and two BF16 layers of the pruned H3 file with the LoRA
 into ComfyUI's own layer class: the new bake was bit-identical to stock's cast
 on all five, in the INT8 values, the scales and the layer's output, and
-stock's cast gave the same bits in three separate processes. A whole render on
-the new bake has not run on hardware yet.
+stock's cast gave the same bits in three separate processes. On the Workers
+running the fix, later that day, the same file with the LoRA on one rank was
+pixel-identical to stock at one step and at 8 (NRMS 0.0), and on the pair
+under `auto` (uly2) pixel-identical to one rank; each Worker logged the bake
+lines, its first quantized key dequantized to bf16. The Kromoss DMD LoRAs and
+MOSS-Image's INT8 files have not run on the new bake.
 
 A key stock bakes at load itself keeps ComfyUI's classic bake, as it does in
 stock: a module of 16 KiB or less, a LoRA that resizes the weight, or a

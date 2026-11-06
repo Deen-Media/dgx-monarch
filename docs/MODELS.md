@@ -27,7 +27,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly. Since the fused-norm parity change, edits and text to image at 704 square or below on uly2 are bit-identical to one GPU too, confirmed on hardware on 2026-10-16. See the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
 | [MOSS-Image SFT and Base](#model-moss-image-sft) | Text-to-image, and a JSON layout prompt on SFT | Needs ComfyUI 0.42.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Keep the template's 50 Euler steps at CFG 3 on the `normal` scheduler and its Skip Layer Guidance (DGX Monarch) node, which skips layer 22 on the negative pass; cfg2 refuses while that skip is on. BF16 Ulysses matched one GPU exactly, up to 2048 square on SFT; see the [tested configurations](VALIDATION.md#evidence-moss-image-sft). |
 | [Kromoss](#model-kromoss) | Text-to-image at 50 steps, and at 8 steps with a DMD LoRA | A MOSS-Image Base fine-tune on the same files and adapter. Pin the manifest's revision: the vendor replaces the files under the same names. Use the DMD LoRAs with the BF16 file: a LoRA on the INT8 file refuses. BF16 Ulysses at 1024 and 1536 square matched one GPU exactly; see the [tested configurations](VALIDATION.md#evidence-kromoss). |
-| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.44.0 or newer. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, whose render has no hardware record yet. No hardware has run it yet. |
+| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.44.0 or newer. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, which renders it on one Spark. BF16, INT8 ConvRot and W4A8 matched stock on one rank, and uly2 matched one rank, on hardware on 2026-11-05. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -101,7 +101,7 @@ that match the tested configurations in its model details. See
 | MOSS-Image SFT | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with Skip Layer Guidance (DGX Monarch) skipping layer 22 on the negative pass. BF16 uly2 is bit-identical to one GPU from 1024 to 2048 square, one step and full schedule, and at one step to stock from 512 to 2048 square. INT8 files pin an approximate attention kernel: single, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pin; since the INT8 dispatch fix, confirmed on hardware on 2026-10-21, INT8 uly2 is bit-identical to a pin-stripped one-GPU render, where it read one-step NRMS 0.027 to 0.036 earlier that day. cfg2 refuses while the skip is on; with it off, a prompt and a negative of different lengths split on cfg2 bit-identical to one GPU, and an equal-length pair is measured, one-step NRMS 0.023 to 0.026, so auto never picks cfg2. ring2 is measured, one-step NRMS 0.0025 to 0.031 without a LoRA, so use uly2; padded ring needs a waiver, and ring2 with a LoRA is not supported. `uly2+fsdp` is bit-identical to resident uly2. NVFP4 and an fp8 `weight_dtype` cast refuse on uly2, ring and cfg2. A LoRA on the INT8 files refuses class P on every topology ([TROUBLESHOOTING #129](TROUBLESHOOTING.md#129-a-moss-image-int8-render-with-a-lora-refuses-on-every-topology)); BF16 with a LoRA renders. Reference-image edits for edit LoRAs run on one GPU only and refuse class P on every cluster topology ([TROUBLESHOOTING #130](TROUBLESHOOTING.md#130-a-moss-image-render-with-reference-images-refuses-on-every-topology-but-one-gpu)). An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch, as a hardware run observed on uly2 and ring2 on 2026-10-27; on single, cfg2 and dp2 row 0 it was bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). The loader preflight prices the 19.31 GB BF16 encoder beside the DiT. [Details](#model-moss-image-sft) · [Workflow](../example_workflows/dgx-monarch-moss-image-t2i.json) |
 | MOSS-Image Base | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | CFG 3, 50 steps, euler on the `normal` scheduler, with the same layer-22 skip. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule; its FSDP reading comes from the scoped sweep. Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-moss-image-base) · [Workflow](../example_workflows/dgx-monarch-moss-image-base-t2i.json) |
 | Kromoss | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | MOSS-Image Base fine-tune; no header field tells it from Base or SFT. CFG 3, 50 steps, euler on the `normal` scheduler, with the layer-22 skip, or 8 Euler steps on `simple` at CFG 1 with a DMD LoRA, where cfg2 has nothing to split and refuses. BF16 uly2 is bit-identical to one GPU at 1024 and 1536 square, one step and full schedule. The DMD LoRAs render the same on uly2 and one GPU; with the classic bake of earlier releases they read one-step NRMS 0.0365 to 0.0635 against stock at strengths 0.8 and 1.0, because stock applies them at cast time, and this release bakes the weight that cast computes, not yet measured on this file ([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)). Same cfg2, INT8, quantization, ring, LoRA, edit and driver notes as MOSS-Image SFT. An edit with `image_strength` other than 1.0 refuses class P under sequence parallelism, at the driver before dispatch; on 2026-10-27 a hardware run observed that refusal on uly2 and ring2 with MOSS-Image SFT, whose edits on single, cfg2 and dp2 row 0 were bit-identical to stock on one GPU ([TROUBLESHOOTING #135](TROUBLESHOOTING.md#135-a-moss-image-edit-with-an-image-strength-other-than-10-refuses-under-sequence-parallelism)). [Details](#model-kromoss) · [Workflow](../example_workflows/dgx-monarch-kromoss-t2i.json) |
-| p-h3-image | 🔒 | ✗ | ★⏳ | 🔒 | 🔒 | impl | A MiniMax H3 DiT with one video latent frame, on the H3 adapter: batch one, cfg2 and dp2 refuse, padded ring needs a waiver, and the W4A8 file refuses FSDP. Needs ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0; without any H3 shift the image latent refuses class P ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)). On one Spark the BF16 DiT beside the BF16 prompt upsampler refuses at the loader, before any load, and the refusal names the INT8 ConvRot and W4A8 files ([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)). No hardware comparison yet. [Details](#model-p-h3-image) · [Workflow](../example_workflows/dgx-monarch-p-h3-image.json) |
+| p-h3-image | 🔒 | ✗ | ★ | 🔒 | 🔒 | **HW** | A MiniMax H3 DiT with one video latent frame, on the H3 adapter: batch one, cfg2 and dp2 refuse, padded ring needs a waiver, and the W4A8 file refuses FSDP. Needs ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0; without any H3 shift the image latent refuses class P ([TROUBLESHOOTING #144](TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)). BF16, INT8 ConvRot and W4A8 on one rank are pixel-identical to stock and uly2 to one rank; the LoRA route on the pruned INT8 H3 file is pixel-identical to stock; BF16 on `uly2+fsdp` needs an Identity Gate PASS on that preset first. On one Spark the BF16 DiT beside the BF16 prompt upsampler refuses at the loader, before any load, and the refusal names the INT8 ConvRot and W4A8 files ([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)). [Details](#model-p-h3-image) · [Workflow](../example_workflows/dgx-monarch-p-h3-image.json) |
 | LongCat-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Padded image streams use Ulysses; ring/hybrid padding is guarded. [Details](#model-longcat-image) · [Workflow](../example_workflows/dgx-monarch-longcat-t2i.json) |
 | HunyuanImage 2.1 (+refiner) | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Extended-text cfg2 needs equal Qwen lengths; refiner FSDP measured at FP8 only; SR FSDP unmeasured. [Details](#model-hunyuanimage-2-1-refiner) · [Workflow](../example_workflows/dgx-monarch-hunyuan-image.json) |
 | Qwen-Image | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers base 2512 FP8 from 1.2 to 1.77 MP. Edit reference-method limits differ from base; sharded Edit can refuse. [Details](#model-qwen-image) · [Workflow](../example_workflows/dgx-monarch-qwen-image-t2i.json) |
@@ -127,7 +127,7 @@ that match the tested configurations in its model details. See
 | Wan 2.1 (t2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 Ulysses passed its output comparisons. [Details](#model-wan-2-1-t2v) · [Workflow](../example_workflows/dgx-monarch-wan-t2v.json) |
 | Wan 2.2 (t2v, high/low) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | BF16 and FP16 high/low were tested separately; FP8 T2V has not been compared. [Details](#model-wan-2-2-t2v-high-low) · [Workflow](../example_workflows/dgx-monarch-wan22-t2v.json) |
 | Wan 2.2 (i2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | The four-step LoRA test and no-LoRA FP8 test used different recipes. [Details](#model-wan-2-2-i2v) · [Workflow](../example_workflows/dgx-monarch-wan22-i2v.json) |
-| Wan 2.2 TI2V 5B | ✓ | n/a | ★⏳ | ✓ | ✓ | impl | One FP16 checkpoint, the only public file, has no comparison on hardware. A start image keeps the first latent frame at its own timestep. [Details](#model-wan-2-2-ti2v-5b) · [Workflow](../example_workflows/dgx-monarch-wan22-ti2v.json) |
+| Wan 2.2 TI2V 5B | ✓ | n/a | ★ | ✓ | ✓ | **HW** | One FP16 checkpoint, the only public file. At the shipped 20 steps one GPU is pixel-identical to stock and uly2 to one GPU, text and image to video; ring, cfg2 and FSDP have not run on it. A start image keeps the first latent frame at its own timestep. [Details](#model-wan-2-2-ti2v-5b) · [Workflow](../example_workflows/dgx-monarch-wan22-ti2v.json) |
 | Wan 2.1 (i2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 Ulysses passed; the BF16/FSDP capacity alternative has no reference comparison. [Details](#model-wan-2-1-i2v) · [Workflow](../example_workflows/dgx-monarch-wan21-i2v.json) |
 | Wan FlowRVS | ✓ | n/a | ★ | ✓ | ✓ | **HW** | Tested with synthetic clips. Use CFG 1 and no added noise for segmentation. [Details](#model-wan-flowrvs) · [Workflow](../example_workflows/dgx-monarch-wan-flowrvs.json) |
 | Wan Bernini-R | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 high/low T2V only; fresh solver history per stage. [Details](#model-wan-bernini-r) · [Workflow](../example_workflows/dgx-monarch-wan-bernini.json) |
@@ -886,7 +886,7 @@ carry.
 
 ### p-h3-image
 
-Detail status (`p-h3-image`): impl.
+Detail status (`p-h3-image`): **HW**.
 
 p-h3-image is PrunaAI's image model on MiniMax H3: text to image at 8 MP in 8
 steps without CFG, and edits with up to 8 input images. ComfyUI supports it
@@ -918,8 +918,9 @@ keep only the request text in the box. Other
 8 MP sizes are 3360x2496 (4:3), 3552x2368 (3:2) and 3872x2176 (16:9), with the
 sides swapped for portrait. For an edit, wire images to p-h3-image
 Conditioning: `image_1` is the image to edit, the rest are references, and the
-VAE encodes each on the driver. Edits have no testing graph and no hardware
-record yet.
+VAE encodes each on the driver. Edits have no testing graph. On 2026-11-05 a
+one-image edit on uly2 was pixel-identical to the same edit on one rank; no
+edit has been compared with stock.
 
 **The shift.** The vendor's workflows and ComfyUI's own set both MiniMax H3
 flow shifts to 1.0 through ComfyUI's ModelSamplingMiniMaxH3 node, which
@@ -971,8 +972,10 @@ stores 4-bit weights with an FP8 scale per 16 inputs in 168 `asym_w4a8_int8`
 layers and keeps 40 sensitive layers, the token refiner's among them,
 `int8_tensorwise`; it reads as `w4a8`, both from its header and once loaded.
 No p-h3-image file pins an attention kernel. The Worker venv's comfy-kitchen
-0.2.40 carries the W4A8 layout and its CUDA kernels; whether they run on GB10
-is the hardware leg's to say. The 168 `asym_w4a8_int8` layers run
+0.2.40 carries the W4A8 layout and its CUDA kernels, and on 2026-11-05 the
+W4A8 file rendered on GB10, pixel-identical to stock. No probe could attach
+to the actor, so the record names the kernels by the file's layout and
+comfy-kitchen's dispatch, not by a trace. The 168 `asym_w4a8_int8` layers run
 comfy-kitchen's own W4A8 kernels, its codebook GEMV for a few rows and its
 chunked GEMM otherwise, and reach the INT8 GEMM call only on the fallback
 where a chunked kernel declines, which dequantizes the weights to INT8 first.
@@ -1000,10 +1003,9 @@ ComfyUI's template computes when it applies the LoRA at cast time
 Before that fix the Workers baked it with ComfyUI's classic merge, and on
 2026-11-05 the testing graph `dgx-monarch-test-p-h3-image-lora` on one rank
 read NRMS 0.077 against ComfyUI's own `image_p_h3_t2i` recipe at one step and
-0.257 at 8 steps. A probe of three INT8 ConvRot and two BF16 layers of the
-pruned file found the new bake bit-identical to stock's cast; the render
-itself has not run on the new bake yet. Do not put the LoRA on a p-h3-image
-DiT: the release already carries it.
+0.257 at 8 steps. On the new bake the same render is pixel-identical to that
+recipe at one step and at 8, and `auto` on the pair is pixel-identical to one
+rank. Do not put the LoRA on a p-h3-image DiT: the release already carries it.
 
 **Decode.** The p-h3-image VAE decodes one frame, so Worker-assisted VAE
 decode leaves it on the driver with one line saying why
@@ -1024,13 +1026,22 @@ to `uly2+fsdp`, which `auto` never picks, after an Identity Gate PASS on that
 preset, where the head holds half the DiT. On the pair under `auto` the head's
 Worker holds the whole DiT, as on one Spark, so the pair alone does not fit it.
 The refusal also offers the Load with slab residency card: slab places no host
-copy, so that load prices at 78.3 GiB and fits, but no hardware has run the
-slab render of this graph yet. With the switch false the graph does not load
-the upsampler and the price does not charge it.
+copy, so that load prices at 78.3 GiB and fits. On 2026-11-05 on one Spark the
+refusal came 4.7 s after the queue with nothing loaded, 119.8 GiB against
+109.6 GiB, 10.2 GiB short, and each way it names rendered: the slab card,
+whose image was pixel-identical to the stock render; the W4A8 DiT; the W4A8
+upsampler beside the BF16 DiT; and the switch set to false. On the pair,
+`uly2+fsdp` after its Identity Gate PASS rendered pixel-identical to one rank.
+With the switch false the graph does not load the upsampler and the price
+does not charge it.
 
-**Known limitations.** No hardware record. Edits and the LoRA route have no
-comparison. On stock residency the BF16 DiT and the BF16 upsampler do not fit one Spark
-together. ComfyUI's MiniMax H3 Context Windows gain nothing on one frame.
+**Known limitations.** No edit has been compared with stock; the uly2 edit
+matched one rank. On stock residency the BF16 DiT
+and the BF16 upsampler do not fit one Spark together. A re-queue in the same
+driver whose loader inputs did not change runs no loader price, because
+ComfyUI keeps the loader node's output, so nothing prices the driver's
+models for that queue. ComfyUI's MiniMax H3 Context Windows gain
+nothing on one frame.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-p-h3-image).
 
@@ -1386,7 +1397,7 @@ Detail status (`Wan 2.2 (i2v)`): **HW**.
 
 ### Wan 2.2 TI2V 5B
 
-Detail status (`Wan 2.2 TI2V 5B`): impl.
+Detail status (`Wan 2.2 TI2V 5B`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-wan22-ti2v.json).
 It keeps the settings of ComfyUI's own TI2V template, so a stock render of
@@ -1394,9 +1405,16 @@ that template is comparable: 1280x704, 121 frames at 24 fps, 20 uni_pc steps
 on the simple schedule at cfg 5 and sampling shift 8, text to video as
 shipped.
 
-**Tested configurations.** None on hardware. The CPU tests check the template
-against the stock node definitions, and the Wan adapter's exact-class match
-and per-frame timestep sharding.
+**Tested configurations.** On 2026-11-04, at the shipped 20 steps: one GPU
+pixel-identical to ComfyUI's own TI2V template, all 121 frames, with the
+stock reference rendered without `--use-sage-attention`; uly2 under `auto`
+pixel-identical to one GPU on the same latent; and image to video on uly2
+and one GPU, whose first frame follows the image and whose frames match. One
+step cannot test this model, because ComfyUI's `uni_pc` at one step returns
+the scaled starting noise. Under Worker-assisted VAE decode the Wan 2.2 VAE
+split byte-identical to the one-host tiled decode. The CPU tests check the
+template against the stock node definitions, and the Wan adapter's
+exact-class match and per-frame timestep sharding.
 
 **Known limitations.** The model is one checkpoint, not a high/low pair, so
 one sampler stage runs the whole schedule. One public file exists,
@@ -1542,7 +1560,7 @@ Detail status (`Wan-Animate 2`): **HW**.
 
 **Tested configurations.** Base twelve-format Ulysses probes, named Base/Distilled portrait recipes, official INT8 ConvRot acceleration and INT8/BF16 warm full-decode sequences. Only each cold leg matched its preserved baseline; changed-seed/prompt outputs were distinct.
 
-**Known limitations.** Sharded renders need TORCH_FLASH; any other kernel refuses. On sharded renders, a checkpoint that pins a kernel on its attention modules, such as comfy-kitchen Sol, renders its self-attention with the TORCH_FLASH path, ComfyUI's default exact backend (torch scaled dot product attention when the worker cannot import xformers), and the adapter logs the pin once at debug level and ignores it. The stock cross-attention ignores the pin too and runs that default backend ([ADAPTERS.md](ADAPTERS.md)). Without sequence parallelism the pin runs as in stock ComfyUI, the render record names it, and a pinned approximate kernel asks for the Sol-Attn waiver first; under FSDP a bf16 or fp16 checkpoint that pins refuses class P at the launch check instead ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). The warm tests do not cover slab/low-RSS, first-use LoRA, FSDP, ring, cache, background replacement or other shapes. Every Wan-Animate 2 template ships `slab_weights=off` and `lora_low_rss=off`. Keep ordinary residency for the warm recipes; other shapes or background applications may need larger memory reserves. Explicit `lora_low_rss=off` refuses FSDP with a LoRA on these templates (class P, `validate_fsdp_launch_loras`), and the INT8 checkpoint refuses it whatever `lora_low_rss` is, because its shards are quantized (`refuse_fsdp_lora_checkpoint_property`). Run a LoRA recipe on a resident topology. On the BF16 warm and memory-saver templates the resident LoRA backup is about one BF16 model per rank.
+**Known limitations.** Sharded renders need TORCH_FLASH; any other kernel refuses. On sharded renders, a checkpoint that pins a kernel on its attention modules, such as comfy-kitchen Sol, renders its self-attention with the TORCH_FLASH path, ComfyUI's default exact backend (torch scaled dot product attention when the worker cannot import xformers), and the adapter logs the pin once at debug level and ignores it. The stock cross-attention ignores the pin too and runs that default backend ([ADAPTERS.md](ADAPTERS.md)). Without sequence parallelism the pin runs as in stock ComfyUI, the render record names it, and a pinned approximate kernel asks for the Sol-Attn waiver first; under FSDP a bf16 or fp16 checkpoint that pins refuses class P at the launch check instead ([TROUBLESHOOTING #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)). The warm tests do not cover slab/low-RSS, first-use LoRA, FSDP, ring, cache, background replacement or other shapes. Every Wan-Animate 2 template ships `slab_weights=off` and `lora_low_rss=off`. Keep ordinary residency for the warm recipes; other shapes or background applications may need larger memory reserves. Explicit `lora_low_rss=off` refuses FSDP with a LoRA on these templates (class P, `validate_fsdp_launch_loras`), and the INT8 checkpoint refuses it whatever `lora_low_rss` is, because its shards are quantized (`refuse_fsdp_lora_checkpoint_property`). Run a LoRA recipe on a resident topology. On the BF16 warm and memory-saver templates the resident LoRA backup is about one BF16 model per rank: on 2026-11-05 each actor kept about 34 GiB after loading the BF16 base with its LoRA. So on the pair a LoRA change on that held base, a new strength included, refuses on the head and offers Old model in the way; Clear and retry, or Always clear and retry, then renders it. A change whose patched weights the backup does not hold drops the copy and loads base and LoRA fresh: on the memory-saver template that sampled in 41.4 s, where the in-place swap it replaces took 269.4 s ([VALIDATION](VALIDATION.md#evidence-wan-animate-2)).
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-wan-animate-2).
 
@@ -1723,8 +1741,12 @@ file does both. Worker-assisted VAE decode leaves this decoder on the driver
 with one line saying why: it decodes the whole clip in one pass and has no
 chunks to split
 ([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
-No template names it, and its time and memory against the H3 video VAE have
-no record yet ([VALIDATION](VALIDATION.md#comfyui-0440-additions)).
+No template names it. On 2026-11-05 at the H3 template's shipped size,
+`sol_h3_vae.safetensors` and `minimax_h3_sol_vae_fp16.safetensors` each
+decoded the 124 frames in a 20.0 s prompt with the driver's GPU memory
+peaking at 28.4 and 31.5 GB, against 57.0 s and 19.9 GB for the H3 video VAE's
+split decode, at NRMS 0.051 from its frames
+([VALIDATION](VALIDATION.md#comfyui-0440-additions)).
 ComfyUI's MiniMax H3 Context Windows node (#17425) patches a stock MODEL, so it
 cannot connect to a DGX Monarch loader's DGXM_MODEL. Use MiniMax H3 Context
 Windows (DGX Monarch) instead: it takes the stock node's five widgets, and
@@ -1739,7 +1761,11 @@ two-checkpoint guider's negative model
 The sample deadline counts every window's rows. The activation preflight
 still prices the whole clip, which charges a windowed render more than it
 uses, so windows do not yet let through a clip that the preflight refuses
-whole. No windowed render has a hardware record
+whole. On 2026-11-04 the H3 template at 1344x768 and 362 frames with the
+node at its defaults rendered as one rank in 3990.7 s and on the pair under
+uly2 in 2080.4 s, four windows on every step, with the same latents and 362
+of 362 frames identical; on ring2 its first window refused class K with the
+ring-pad text in 30 s
 ([VALIDATION](VALIDATION.md#minimax-h3-context-windows)).
 
 **Tested configurations.** Ulysses/ring with audio and anchored guides at the sizes listed in the linked results. The FP8 xFuser compatibility test at 512x320x5 also reproduced both latent streams, five decoded frames and audio.
@@ -1886,7 +1912,7 @@ fp8_matrix_mult = "off"
 | Value | What the actors build |
 |---|---|
 | `"auto"` (the default) | What each loader's weight dtype asks for, as stock ComfyUI does without the flag: `fp8_ops` only under `fp8_e4m3fn_fast`. |
-| `"on"` | Every model passes the loader option the flag stands in for, so plain FP8 checkpoints take `fp8_ops`, as the flag makes the driver's own loads do. Unsafe on GB10: plain FP8 renders noise. |
+| `"on"` | Every model passes the loader option the flag stands in for, so plain FP8 checkpoints take `fp8_ops`, as the flag makes the driver's own loads do. Unsafe on GB10: Qwen-Image 2512's plain FP8 renders noise. |
 | `"off"` | No model passes it: a loader's `fp8_e4m3fn_fast` builds as `fp8_e4m3fn` and takes `manual_cast`, so no actor build takes `fp8_ops`. |
 
 A checkpoint with comfy-kitchen metadata takes `mixed_precision_ops` under all
@@ -1931,8 +1957,15 @@ It decides what to use on this GPU and build:
   faster but drifts past the floor, at one-step NRMS 0.19 against BF16. The
   plain `fp8_e4m3fn` cast stays inside it, at 0.055, and cuts the actor's
   GPU peak from 25.7 to 13.9 GiB, at 4 percent more sampling time.
+- On 2026-11-03 the rest of the matrix ran on the pair on ComfyUI 0.44.0
+  code. HunyuanImage 2.1, the other plain FP8 file, read one-step NRMS 0.057
+  on `fp8_ops` against its dequantizing path, inside the floor, and sampled
+  30 to 35 percent faster, so the noise is not every plain FP8 file's. Among
+  the kitchen files, Chroma1-HD fp8mixed read 0.064 against its BF16 file and
+  the Ideogram4 fp8_scaled pair 0.161 against the BF16 pair, past the floor.
 - Keep `fp8_matrix_mult` at `"auto"` by leaving the key out. `"on"` is unsafe
-  on GB10 until a later torch or ComfyUI build passes the leg again. `"off"`
+  on GB10 until a later torch or ComfyUI build passes the leg again: it
+  reaches every plain FP8 file, Qwen-Image 2512's included. `"off"`
   keeps a workflow's `fp8_e4m3fn_fast` loader off `fp8_ops` in the actors.
 
 **Limits.**
@@ -1963,9 +1996,10 @@ the driver decodes its own share and each Worker rank on another GPU decodes
 the rest. The output is byte-identical to ComfyUI's one-host tiled decode for
 that VAE, because ComfyUI's own loop runs once on the driver with only the
 per-unit decode swapped (DESIGN.md section 5.6). It is off by default. On the
-pair the byte compare passed for MiniMax H3, Wan 2.1 and LTX 2.5 with the
-driver started with `--use-sage-attention`, `--bf16-vae` and `--bf16-text-enc`,
-so with one of those three families you can set `"auto"`. The other families
+pair the byte compare passed for MiniMax H3, Wan 2.1, Wan 2.2 TI2V 5B,
+HunyuanVideo 1.0, HunyuanVideo 1.5 and LTX 2.5 with the driver started with
+`--use-sage-attention`, `--bf16-vae` and `--bf16-text-enc`, so with one of
+those families you can set `"auto"`. LTX 2.3 and LTX 2.5's convolutional VAE
 are unchecked
 ([VALIDATION](VALIDATION.md#worker-assisted-vae-decode)).
 
@@ -1973,11 +2007,11 @@ are unchecked
 |---|---|---|---|---|
 | MiniMax H3 video | `minimax_h3_video_vae_fp16.safetensors` | VAE Decode and VAE Decode (Tiled), which run the same decode on this VAE | one temporal chunk, which the VAE tiles inside | passed 2026-11-01: 124 of 124 frames at 1344x768, saved as PNG straight from the decoder |
 | Wan 2.1 (also Wan 2.2 14B, FlowRVS, SCAIL, WanDancer, Wan-Animate 2) | `wan_2.1_vae.safetensors`, `Wan2_1_VAE_bf16.safetensors`, `wan21_flow_rvs_mask_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | passed 2026-10-31 with `wan_2.1_vae.safetensors`, 33 of 33 frames. The other two files are unchecked. |
-| Wan 2.2 TI2V 5B | `wan2.2_vae.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | NOT RUN on the pair; on CPU the real file splits byte-identical to the stock tiled decode |
-| HunyuanVideo 1.0 (also Kandinsky5 Video) | `hunyuan_video_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
-| HunyuanVideo 1.5 | `hunyuanvideo15_vae_fp16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
+| Wan 2.2 TI2V 5B | `wan2.2_vae.safetensors` | VAE Decode (Tiled) | one tile of the tiled decode | passed 2026-11-04: 121 of 121 frames at 1280x704 |
+| HunyuanVideo 1.0 (also Kandinsky5 Video) | `hunyuan_video_vae_bf16.safetensors` | VAE Decode (Tiled) | one tile | passed 2026-11-03 through Kandinsky5 Video Lite: 33 of 33 frames |
+| HunyuanVideo 1.5 | `hunyuanvideo15_vae_fp16.safetensors` | VAE Decode (Tiled) | one tile | passed 2026-11-03: 33 of 33 frames |
 | LTX 2.5, diffusion decoder | `ltx-2.5-video-vae-bf16.safetensors` | VAE Decode (Tiled) | one tile | passed 2026-10-31: 121 of 121 frames at 1280x704 |
-| LTX 2.3, and LTX 2.5's convolutional VAE | `LTX23_video_vae_bf16.safetensors`, `ltx-2.5-video-vae-conv-bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN |
+| LTX 2.3, and LTX 2.5's convolutional VAE | `LTX23_video_vae_bf16.safetensors`, `ltx-2.5-video-vae-conv-bf16.safetensors` | VAE Decode (Tiled) | one tile | NOT RUN: the 2026-11-03 LTX 2.3 attempt completed no split render |
 
 **Which node.** On every family but MiniMax H3, VAE Decode runs the whole
 latent through the model at once, a different result from the tiled decode,
@@ -2031,7 +2065,9 @@ logs one line saying whether it split and why not
   1280x704 took 18.8 s split, in a prompt that ran 110.1 s against 120.1 s
   without the split. Both split figures include the sibling building its
   decode VAE, and each MiniMax H3 chunk carries about 173 MB of pixels back to
-  the driver ([BENCHMARKS](BENCHMARKS.md#worker-assisted-vae-decode)).
+  the driver ([BENCHMARKS](BENCHMARKS.md#worker-assisted-vae-decode)). On
+  2026-11-03 a second split decode in the same session, with the VAE already
+  on the sibling, took 36.7 s against 40.9 s for the first.
 
 ## Model-adoption quant artifact catalog
 

@@ -223,6 +223,26 @@
 
 ### Compatibility and verification
 
+- The hardware checks of 2026-11-03 to 05 are in the docs. p-h3-image and
+  Wan 2.2 TI2V 5B are HW: all three p-h3-image DiT files on one rank match
+  stock and on uly2 match one rank, its LoRA route matches stock, and the
+  BF16 template refuses on one Spark before anything loads and renders each
+  way the refusal names; at its 20 steps Wan 2.2 TI2V on one GPU matches
+  stock and on uly2 matches one GPU. VALIDATION gains the template release
+  test of 2026-11-04 and what #139 fixed, the other 32 FP8 compute cells
+  (HunyuanImage 2.1's plain FP8
+  stays inside the floor on `fp8_ops` and the Ideogram4 fp8_scaled pair does
+  not, against BF16; `fp8_matrix_mult = "on"` stays unsafe), Worker-assisted
+  VAE decode on Wan 2.2 TI2V and both HunyuanVideo VAEs with its fail-open,
+  warm, short-of-memory, 362-frame and Clear VRAM checks, the MiniMax H3
+  context windows, the ComfyUI 0.44.0 rows, the BF16 rescue's other forms,
+  the pipelined unload, the Old model in the way card, the cast and swap
+  credits, and a LoRA change on a held base. Still NOT RUN: the torch 2.15
+  ladder, the release test on the release commit and its torch, LTX 2.3's
+  decode split, and a Worker on ComfyUI 0.43 with context windows
+  ([VALIDATION](docs/VALIDATION.md#release-test-2026-11-04),
+  [MODELS](docs/MODELS.md#model-p-h3-image),
+  [MODELS](docs/MODELS.md#model-wan-2-2-ti2v-5b)).
 - comfy-kitchen 0.2.41, the release ComfyUI master now pins, joins the INT8
   GEMM kernel's validated set, so an install that follows that pin keeps the
   kernel on instead of running every INT8 linear on CUTLASS with a WARNING.
