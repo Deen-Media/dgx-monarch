@@ -554,7 +554,7 @@ Description=ComfyUI driver with DGX Monarch
 
 [Service]
 WorkingDirectory=/home/user/ComfyUI
-Environment=CUDA_CACHE_MAXSIZE=4294967296 CUDA_MODULE_LOADING=LAZY OMP_NUM_THREADS=16
+Environment=CUDA_CACHE_MAXSIZE=4294967296 CUDA_MODULE_LOADING=LAZY OMP_NUM_THREADS=16 MIMALLOC_PURGE_DELAY=0
 Environment=TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas DGXM_CLUSTER_TOML=/home/user/.config/dgx-monarch/cluster.toml
 UnsetEnvironment=NCCL_P2P_DISABLE NCCL_PROTO
 ExecStart=/home/user/monarch-env/bin/python /home/user/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --disable-pinned-memory --disable-async-offload --reserve-vram 2 --bf16-vae --bf16-text-enc --dont-upcast-attention --disable-auto-launch

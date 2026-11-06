@@ -551,3 +551,13 @@ def test_desktop_persists_combined_launch_config(tmp_path: Path) -> None:
     assert "--with-top" in source
     assert "--cluster-config" in source
     assert str(config).replace("$", r"\$") in source
+
+
+def test_launcher_purges_host_memory_at_free_time() -> None:
+    # torch's bundled mimalloc gives freed host memory back only at a purge; the
+    # driver purges at free time, as the Workers do, unless the operator set a
+    # delay (dgx_monarch.cli.worker_process_env.HOST_ALLOCATOR_PURGE_ENV).
+    from dgx_monarch.cli.worker_process_env import HOST_ALLOCATOR_PURGE_DEFAULT, HOST_ALLOCATOR_PURGE_ENV
+
+    text = LAUNCHER.read_text(encoding="utf-8")
+    assert f"export {HOST_ALLOCATOR_PURGE_ENV}=${{{HOST_ALLOCATOR_PURGE_ENV}:-{HOST_ALLOCATOR_PURGE_DEFAULT}}}" in text

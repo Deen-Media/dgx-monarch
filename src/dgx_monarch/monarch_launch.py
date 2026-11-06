@@ -6,7 +6,11 @@ import sys
 from dataclasses import replace
 from typing import Any
 
-from .cli.worker_process_env import worker_environment_key_allowed
+from .cli.worker_process_env import (
+    HOST_ALLOCATOR_PURGE_DEFAULT,
+    HOST_ALLOCATOR_PURGE_ENV,
+    worker_environment_key_allowed,
+)
 from .monarch_policy import MonarchPolicy, encode_policy, policy_environment
 from .runtime_provenance import SOURCE_ONLY_PYCACHE_PREFIX
 
@@ -64,6 +68,9 @@ def actor_bootstrap_command(config: Any, use_cluster: bool):
 
         local: dict[str, str | None] = {name: os.environ[name] for name in os.environ
                  if worker_environment_key_allowed(name)}
+        # The worker loop gives cluster actors the host allocator's purge delay;
+        # a local actor takes the driver's value, or the same default.
+        local.setdefault(HOST_ALLOCATOR_PURGE_ENV, HOST_ALLOCATOR_PURGE_DEFAULT)
         local.update(environment)
         from importlib.metadata import distribution
 

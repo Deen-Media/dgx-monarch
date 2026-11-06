@@ -1895,13 +1895,38 @@ resident or ComfyUI's node output cache. The loader windows take neither,
 because the graph still needs its text encoder and VAEs before sampling. The
 agreement below credits a Worker resident that a load would replace only where
 the drop was measured: the GPU copy of the slot's own stock resident, never
-the arena a stock load retains, which an in-process unload does not return,
-and never a slab resident. A slab resident does hold MemAvailable: on
-2026-11-05 the drop of a 33.02 GiB Flux 2 slab freed its shared memory
-within 2 s, and MemAvailable rose from 49 to 88 GiB. Two stock loads over
-that slab were admitted with no
-refusal that day, so no credit for it has been needed yet
+the arena a stock load retains, which an in-process unload returns only at
+the allocator's purge (below), and never a slab resident. A slab resident
+does hold MemAvailable: on 2026-11-05 the drop of a 33.02 GiB Flux 2 slab
+freed its shared memory within 2 s, and MemAvailable rose from 49 to 88 GiB.
+Two stock loads over that slab were admitted with no refusal that day, so no
+credit for it has been needed yet
 ([VALIDATION](VALIDATION.md#capacity-checks-2026-11-05)).
+
+**Freed host memory goes back at once.** torch's wheels allocate host memory
+through a bundled mimalloc, which gives freed pages back to the box only at a
+purge, and a purge runs only when the thread that owns them allocates again
+after the purge delay. A stock load frees its host copy as it places weights,
+the last of those frees come just before the load returns, and nothing
+allocates between them and the next price, so no positive delay can fire in
+that window. torch 2.15.0 carries mimalloc 2.5.2, which purges far less than
+the 2.2.6 in 2.12.0 even on later allocations: with flux1-dev placed, the head
+actor's anonymous memory was 15.0 and 16.1 GiB on 2.15.0 against 2.5 GiB on
+2.12.0 with the same source and ComfyUI (2026-11-05 and 2026-11-06), and the
+actor held 17.8 GiB of resident memory after the Kandinsky 5 Pro video file's
+placement and through the gate's drop, so the ceremony's re-price came up 6.9
+GiB short on a box with room. The
+worker loop therefore sets `MIMALLOC_PURGE_DELAY=0` in the environment every
+cluster actor inherits, the driver's launch does the same for a local actor
+(`cli/worker_process_env.HOST_ALLOCATOR_PURGE_ENV`; a value the loop or the
+driver inherits stands, and the unit `dgxm update` installs starts from an
+empty environment), and `scripts/comfy-driver.sh` exports the same for the
+driver, so a free on the thread that allocated the memory gives it back at
+once. A small block freed from another thread still waits for that thread's
+next allocations. The cost is about 20 percent on a loop that does nothing but
+allocate and free host memory (0.44 s against 0.36 s for ten rounds of 16
+blocks of 128 MiB); the release test on this setting measures what renders pay.
+Each actor logs the value it started with in its `UMA posture` line.
 
 **A model in the way offers a clear, not a credit.** A refusal priced over a
 Worker resident names the old model and its box: "the old model (flux1-dev)

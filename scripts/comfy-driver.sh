@@ -354,6 +354,12 @@ export CUDA_MODULE_LOADING=LAZY
 export TRITON_PTXAS_PATH=${TRITON_PTXAS_PATH:-/usr/local/cuda/bin/ptxas}
 export OMP_NUM_THREADS=${OMP_NUM_THREADS:-16}
 
+# torch's wheels allocate host memory through a bundled mimalloc, which gives
+# freed memory back only at a purge; torch 2.15's copy purges so late that a
+# dropped model's host copy stayed for the next capacity price. Purge at free
+# time, as the Workers do (dgx_monarch.cli.worker_process_env).
+export MIMALLOC_PURGE_DELAY=${MIMALLOC_PURGE_DELAY:-0}
+
 # NCCL_P2P_DISABLE is fine on one box but breaks cross-Spark NCCL, and doctor
 # fails NCCL_PROTO=LL on every layer. Worker fabric settings belong in cluster.toml.
 unset NCCL_P2P_DISABLE NCCL_PROTO 2>/dev/null || true

@@ -2,7 +2,10 @@
 
 An in-process unload of a stock resident returns its GPU copy, about the file
 size, but not the host-side arena the actor kept from earlier loads; an actor
-exit returns both (measured 2026-11-04, docs/DESIGN.md section 5.9). The arena
+exit returns both (measured 2026-11-04 on torch 2.12.0, docs/DESIGN.md section
+5.9; with the purge delay at 0, cli/worker_process_env, a free on the thread
+that allocated returns at once and the arena is mostly what other threads'
+frees kept). The arena
 is this process's anonymous memory now, less what it held at its first load,
 before any weight was placed: this box's own floor for a fresh actor, which the
 fresh actor a clear brings up pays again.

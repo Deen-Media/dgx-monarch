@@ -40,6 +40,7 @@ def test_worker_environment_preserves_reviewed_runtime_and_compute_names():
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "XDIT_LOGGING_LEVEL": "WARN",
         "OMP_NUM_THREADS": "16",
+        "MIMALLOC_PURGE_DELAY": "0",
     }
 
     assert worker_process_env.filter_worker_environment(environment) == 0
@@ -48,7 +49,7 @@ def test_worker_environment_preserves_reviewed_runtime_and_compute_names():
         "DGXM_RDMA_MIN_BYTES", "DGXM_RDMA_QP_SPLIT",
         "CUDA_DEVICE_ORDER", "CUDA_MODULE_LOADING", "CUDA_CACHE_MAXSIZE",
         "PYTORCH_CUDA_ALLOC_CONF",
-        "XDIT_LOGGING_LEVEL", "OMP_NUM_THREADS",
+        "XDIT_LOGGING_LEVEL", "OMP_NUM_THREADS", "MIMALLOC_PURGE_DELAY",
     }
 
 
@@ -222,6 +223,22 @@ def test_prepare_worker_process_environment_sets_umask_filters_and_secures_tmp(
     assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
     assert environment["PYTHONPYCACHEPREFIX"] == "/proc/self/fd/2147483647"
     assert environment["TMPDIR"] == str(runtime)
+    assert environment["MIMALLOC_PURGE_DELAY"] == "0"
+
+
+def test_an_operator_purge_delay_stands_and_the_default_fills_in(monkeypatch, tmp_path: Path):
+    # torch's bundled mimalloc gives freed host memory back only at a purge; the
+    # loop makes every actor purge at free time unless the operator chose a delay.
+    monkeypatch.setattr(worker_process_env.os, "umask", lambda mask: None)
+    managed = tmp_path / "managed-src"
+    managed.mkdir()
+    own = {"HOME": str(tmp_path), "PATH": "/usr/bin", "MIMALLOC_PURGE_DELAY": "25"}
+    worker_process_env.prepare_worker_process_environment(managed, own)
+    assert own["MIMALLOC_PURGE_DELAY"] == "25"
+    absent = {"HOME": str(tmp_path), "PATH": "/usr/bin"}
+    worker_process_env.prepare_worker_process_environment(managed, absent)
+    assert absent[worker_process_env.HOST_ALLOCATOR_PURGE_ENV] == "0"
+    assert worker_process_env.HOST_ALLOCATOR_PURGE_DEFAULT == "0"
 
 
 def test_sanitized_environment_is_inherited_by_child_process(tmp_path: Path):
@@ -245,9 +262,11 @@ check = (
     and os.environ.get("DGXM_PYTHONPATH") == str(managed)
     and os.environ.get("PYTHONDONTWRITEBYTECODE") == "1"
     and os.environ.get("PYTHONPYCACHEPREFIX") == "/proc/self/fd/2147483647"
+    and os.environ.get("MIMALLOC_PURGE_DELAY") == "0"
 )
 child = subprocess.run(
-    [sys.executable, "-c", "import os, sys; sys.exit('FICTIONAL_SERVICE_TOKEN' in os.environ)"],
+    [sys.executable, "-c", "import os, sys; sys.exit('FICTIONAL_SERVICE_TOKEN' in os.environ"
+     " or os.environ.get('MIMALLOC_PURGE_DELAY') != '0')"],
     check=False,
 )
 raise SystemExit(0 if check and child.returncode == 0 else 1)
