@@ -404,8 +404,10 @@ def test_a_forced_stock_refusal_names_the_gate_not_the_setting(monkeypatch):
     with pytest.raises(mesh_safety.StockLoadCapacityError) as raised:
         render()
     text = str(raised.value)
+    # The Worker's sentence says "here": its own host name never reaches it.
     assert text.startswith("[dgxm:C guard=stock_load_preflight waivable=0] stock residency "
-                           "cannot load p-h3-image_bf16.safetensors on head: the load needs 84.1 GiB")
+                           "cannot load p-h3-image_bf16.safetensors here: the load needs 84.1 GiB")
+    assert "on head" not in text
     assert ("Slab residency was not used, although the Init node sets slab_weights=on: this "
             "combination has no Identity Gate PASS for its current state (stale), so the "
             "driver ran this render on stock residency.") in text

@@ -47,13 +47,15 @@ def prompt_digest(text: object) -> str | None:
 
 
 def box_label(rank: object, gpus_per_host: object, host: object) -> str | None:
-    """Name the machine a rank sits on, short enough for a sidebar row.
+    """Name the machine a rank sits on when the wave has no plain names.
 
-    Box ``rank // gpus_per_host``, the arithmetic capacity_agreement.collect
-    builds its own coordinates from, so the number is the driver's and not one
-    the reply chose. With no usable gpus_per_host the host's first label stands
-    in. Neither path returns a full address; the host that answered rides the
-    row in its own field.
+    A wave opened from a handle names each box the way refusals do ("the
+    head", "the sibling", ``open_wave_for``); this is the fallback for one
+    opened without them. Box ``rank // gpus_per_host``, the arithmetic
+    capacity_agreement.collect builds its own coordinates from, so the number
+    is the driver's and not one the reply chose. With no usable gpus_per_host
+    the host's first label stands in. Neither path returns a full address; the
+    host that answered rides the row in its own field.
     """
     index = box_index(rank, gpus_per_host)
     if index is not None:
@@ -61,6 +63,22 @@ def box_label(rank: object, gpus_per_host: object, host: object) -> str | None:
     if isinstance(host, str) and host.strip():
         return host.strip().split(".", 1)[0][:_LABEL_CHARS]
     return None
+
+
+def _plain(labels: object) -> tuple[str, ...]:
+    """The plain names a wave was opened with, or none."""
+    if not isinstance(labels, (list, tuple)):
+        return ()
+    return tuple(str(label)[:_HOST_CHARS] for label in labels)
+
+
+def _box(wave: dict, rank: object, host: object) -> str | None:
+    """A row's box: its plain name when the wave has one, else ``box_label``."""
+    index = _whole(rank)
+    labels = wave.get("labels") or ()
+    if index is not None and 0 <= index < len(labels):
+        return labels[index]
+    return box_label(rank, wave["gpus_per_host"], host)
 
 
 def box_index(rank: object, gpus_per_host: object) -> int | None:
@@ -157,12 +175,13 @@ class FleetJobs:
         self._wave: dict | None = None
 
     def open_wave(self, jobs: object, gpus_per_host: object,
-                  config: object = None) -> None:
+                  config: object = None, labels: object = None) -> None:
         """Start the record for a new wave and forget the previous one.
 
         ``config`` is this driver's own cluster config, read for its host
         names alone, so a row can say when a reply named a box the driver did
-        not send that job to.
+        not send that job to. ``labels`` names each rank's box in plain words,
+        in rank order (``box_names.fleet_labels``).
         """
         wave: dict | None
         try:
@@ -173,6 +192,7 @@ class FleetJobs:
                 "count": len(rows),
                 "gpus_per_host": gpus_per_host,
                 "hosts": host_names(config),
+                "labels": _plain(labels),
                 "digests": [
                     prompt_digest(job.get("text")) if isinstance(job, Mapping) else None
                     for job in rows
@@ -226,7 +246,7 @@ class FleetJobs:
             "prompt": wave["digests"][index],
             "host": None,
             "rank": submitted,
-            "box": box_label(submitted, wave["gpus_per_host"], None),
+            "box": _box(wave, submitted, None),
             "wall_s": None,
             "started_s": _elapsed(wave),
             "ended_s": None,
@@ -255,7 +275,7 @@ class FleetJobs:
             "prompt": wave["digests"][index],
             "host": host,
             "rank": submitted,
-            "box": box_label(submitted, wave["gpus_per_host"], host),
+            "box": _box(wave, submitted, host),
             "wall_s": _wall_s(answer.get("sample_s")),
             "started_s": row["started_s"] if row is not None else None,
             "ended_s": _elapsed(wave),
@@ -297,9 +317,20 @@ fleet_jobs = FleetJobs()
 
 
 def open_wave_for(jobs: object, handle: object) -> None:
-    """Start a wave's record: the ledger reads the handle, the node does not."""
+    """Start a wave's record: the ledger reads the handle, the node does not.
+
+    The rows name each box the way refusals do, worked out once per wave
+    here and never per job, since naming the head can resolve a host name.
+    """
+    labels = None
+    try:
+        from . import box_names
+
+        labels = box_names.fleet_labels(handle, int(getattr(handle, "world", 0) or 0))
+    except Exception as exc:
+        log.debug("fleet job ledger could not name the boxes (%r)", exc)
     fleet_jobs.open_wave(jobs, getattr(handle, "gpus_per_host", 0),
-                         getattr(handle, "config", None))
+                         getattr(handle, "config", None), labels=labels)
 
 
 def with_fleet(render: object) -> object:

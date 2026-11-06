@@ -24,11 +24,13 @@ the driver orchestrates them.
 
 **The head and the sibling.** On a pair of boxes, the head is the box the
 driver runs on and the sibling is the other one. The capacity refusals, the Old
-model in the way card and the capacity agreement's log line name a box this
-way, never by rank number or by its address in cluster.toml. With more than two
-boxes, each other box is "the sibling at" its host name; a fleet on the
-driver's box alone is "this box". Other messages, such as a Worker's own
-refusal, may still name a host.
+model in the way card, the capacity agreement's log line and the Fleet
+timeline name a box this way, never by rank number or by its address in
+cluster.toml. With more than two boxes, each other box is "the sibling at" its
+host name; a fleet on the driver's box alone is "this box". A Worker's own
+refusal says "here", and the driver opens it with the box: "On the sibling,
+stock residency cannot load X here". Operator logs and machine fields may still
+name a host.
 
 **Render session.** One logical unit of active render work holding the
 Attached mesh, including pending results and identity-gate proof renders. A

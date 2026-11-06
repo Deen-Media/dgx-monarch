@@ -266,10 +266,9 @@ def fresh_load(
                     # bake runs.
                     from .. import capacity_fit
                     from . import store_slab_admit
-                    from .rescue_offer import host_name
 
                     size = os.path.getsize(path) if os.path.exists(path) else 0
-                    store_slab_admit.admit_bake(active, unet_name, host_name(),
+                    store_slab_admit.admit_bake(active, unet_name,
                                                 capacity_fit.slab_floor_bytes(size, reserve_bytes))
                 unbake_record = _merge_and_free(active, base_path=path)
         if slab is not None:

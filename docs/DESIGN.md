@@ -1182,11 +1182,14 @@ Category **"DGX Monarch"**. The node surface is small by design:
   the `fleet` sub-block of the telemetry render block, and its answer closes it
   (`src/dgx_monarch/telemetry_fleet.py`). The row carries the job index, the
   prompt digest, the answering host, the rank the driver submitted to, that
-  rank's short box label, the worker's measured duration, and `started_s` and
+  rank's box in the words a refusal uses ("the head", "the sibling", "this
+  box", worked out once per wave by `box_names.py`), the worker's measured
+  duration, and `started_s` and
   `ended_s`, both counted from the moment the wave opened. The block carries
   that moment and is retained the way `render.last` is. The sidebar timeline
-  draws one row per job in dispatch order, tagged with its box label and
-  answering host, beside the per-box memory cards. A job that never came back
+  draws one row per job in dispatch order, tagged with its box and
+  answering host, beside the per-box memory cards, so a row and a refusal
+  name one box the same way. A job that never came back
   keeps the row its dispatch opened and reads as no result, so a stopped wave
   still names the box the lost job went to. A row carries
   `host_reported`, and the sidebar says it answered from another box, when the
@@ -1410,7 +1413,10 @@ refusal itself, chained from the wrapper, so the error starts with the tag, the
 sentence and the card it names, and ComfyUI's log keeps the remote traceback
 (`nodes/refusal_lead.py`). Only a text that leads with a tag is lifted out, so
 a crash keeps its wrapper, and every decision that reads the wrapper (the
-sample lease, eviction, the card) runs below the node method. When the driver
+sample lease, eviction, the card) runs below the node method. A wrapper the
+prompt error keeps names the box on its own first line ("On the sibling, actor
+call dgxm_worker.load_model failed."), by the rule under "A Worker's own
+refusal says here". When the driver
 sends a render on stock although `slab_weights=on`, for want of an Identity
 Gate PASS, after a failed authorization, for a second model, or from Fleet,
 the Worker sees only the setting arrive off; the same seam replaces its
@@ -1914,13 +1920,31 @@ when that check cannot resolve the driver's entry, every box reads "the sibling
 at <host name>". One module words it (`box_names.py`). The agreement stamps the
 name on every rank's answer, and the refusals under its guard (its own, and the
 undeliverable-actor refusals that end its wait, `restart_reattach.py`), the Old
-model in the way card, the agreement's log line and the FSDP clean-reload
-refusal take their words from it. So none of those names a box by its rank
-number or by the address cluster.toml gives it. Machine fields keep the host
+model in the way card, the agreement's log line, the FSDP clean-reload
+refusal and the Fleet timeline take their words from it. So none of those
+names a box by its rank number or by the address cluster.toml gives it. Machine fields keep the host
 name, the address and the rank number for operators and parsers: the attach
 trace, ledger rows, and the warning a reply that names another rank leaves in
-the log. So does a Worker's own refusal: a Worker words no sentence about a
-peer and does not know which box the driver runs on.
+the log.
+
+**A Worker's own refusal says "here", and the driver names the box.** A
+Worker words no sentence about a peer and does not know which box the driver
+runs on, so its walls say where in its own voice: "stock residency cannot load
+X here", "the LoRA bake for X cannot proceed here", "model X was not found
+here", "sampler X is not registered with ComfyUI here". The driver knows which
+box each rank sits on, and it names the box where it receives the error, before
+any other reader sees it (`worker_box.py`, at `mesh_rpc.call_all_bound`,
+`mesh_lease.collect_sample` and the Fleet drain): "On the sibling, stock
+residency cannot load X here: ...", after the tag, with the words from
+`box_names.py`. A fleet on the driver's box alone gets no prefix, since "here"
+is already the box the user reads about. A Fleet job takes the box of the actor
+the driver sent it to. At a collective call of more than one rank, Monarch's
+wrapper says nothing of which rank raised, so the Worker adds one machine line
+naming its rank (`actor/failure.mark_rank`), which the driver reads and takes
+off, so no user reads the number. The line is no tag, a Worker one release
+behind sends none and keeps its host name, and the partial-load refusal, which
+every rank raises alike and which speaks for the fleet, gets none. The label
+never rides the setup key.
 
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate

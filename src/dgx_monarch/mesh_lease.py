@@ -445,6 +445,9 @@ def collect_sample(handle: Any, future: Any, timeout_s: float,
             log.warning("stall eviction publication failed: %r", publication_exc)
         raise
     except Exception as exc:
+        from . import worker_box
+
+        worker_box.name(exc, handle)
         mesh_helpers.mark_defunct_preserving_primary(
             handle, exc, holding_lock=False)
         raise

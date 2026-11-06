@@ -44,7 +44,7 @@ from ..log import get_logger
 from ..model_sampling import normalize_model_sampling
 from ..runtime_timing import MeasuredAsyncLock, run_gpu_phase
 from ..transfer import LatentReturn
-from . import sample_protocol, store_fsdp, worker_env, worker_status
+from . import sample_protocol, store_fsdp, store_identity, worker_env, worker_status
 from .cancellation import CancellableSampleMixin
 from .failure import cleanup_on_failure
 from .gate_fsdp_cycle import FsdpGateCycleMixin
@@ -134,15 +134,9 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
         It stays outside ``_gpu_lock`` so a pipelined driver's safety
         preflight can run while the actor's dedicated GPU thread is denoising.
         It reads bounded file windows only and never mutates the model store.
+        The identity seam is read from this module at every call.
         """
-        return {
-            "host": socket.gethostname(),
-            "rank": self.rank,
-            "artifact_sets": [
-                request_artifact_identity(spec["unet_name"], spec.get("loras"))
-                for spec in model_specs
-            ],
-        }
+        return store_identity.identity_reply(self, model_specs, request_artifact_identity)
 
     @concurrent_endpoint
     async def capacity_quote(self, request: dict) -> dict:

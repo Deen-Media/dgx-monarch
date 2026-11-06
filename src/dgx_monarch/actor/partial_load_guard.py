@@ -33,8 +33,12 @@ class PartialLoadDivergenceError(RuntimeError):
     Never a ``StockLoadCapacityError``: that family routes to the residency
     rescue ladder and to the ceremony's "cannot load under stock" verdict, and
     neither is true here. The weights loaded. What failed is an agreement
-    between ranks, and it is knowable only after an exchange.
+    between ranks, and it is knowable only after an exchange. Every rank raises
+    it alike, so it speaks for the fleet and carries no rank's mark
+    (``failure.mark_rank``): the driver names no box ahead of it.
     """
+
+    fleet_wide = True
 
 
 # Build refusal text at the raise, never during driver-side exception imports:

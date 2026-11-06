@@ -204,8 +204,20 @@
   host name, and a fleet on the driver's box alone is "this box". The FSDP
   clean-reload refusal and the refusal for a Worker actor a restart left
   undeliverable name their boxes the same way, and the loader's charge note
-  says "a Worker on this box" where it said "co-resident rank 0". A Worker's
-  own refusal still names its host ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
+  says "a Worker on this box" where it said "co-resident rank 0"
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
+  [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
+- A Worker's own refusal names no host either. Its sentence says "here", and
+  the driver opens it with the box that refused: "On the sibling, stock
+  residency cannot load p-h3-image_bf16.safetensors here: the load needs ...".
+  On one box, where the loader card says "this box", it reads "here" with
+  nothing before it. The slab, comfy-managed, rescue and LoRA bake walls read
+  the same way, and so do a model file missing on one box, whose error opens
+  "On the sibling, actor call dgxm_worker.load_model failed." above "model ...
+  was not found here", and a sampler or scheduler one box's ComfyUI lacks. A
+  Fleet job takes the box of the actor it went to, and the Fleet timeline's
+  rows read "the head" and "the sibling" where they read "box 1" and "box 2"
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
   [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
 - A LoRA change on a BF16 model the Workers already hold, with `lora_low_rss`
   off as the Wan-Animate 2 BF16 templates set it, no longer stalls, and no

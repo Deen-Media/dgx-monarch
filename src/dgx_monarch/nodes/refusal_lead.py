@@ -27,7 +27,7 @@ from typing import Any, TypeVar, cast
 
 from .. import mesh_safety
 from ..consent_observe import refusal_text
-from ..refusal import RefusalClass, parse_leading_refusal_tag
+from ..refusal import RefusalClass, parse_leading_refusal_tag, read_rank
 
 # The Worker's words for a render that arrived on stock (actor/worker_env
 # slab_mode_reason and actor/rescue_offer rescue_blocker). The tests hold both
@@ -97,16 +97,22 @@ def forced_stock_text(text: str, state: str) -> str:
 
 
 def surfaced(exc: BaseException, forced: str | None = None) -> BaseException | None:
-    """The refusal to raise for ``exc``: the inner one, ``exc`` reworded, or None as it is."""
+    """The refusal to raise for ``exc``: the inner one, ``exc`` reworded, or None as it is.
+
+    The point that received the error has already put its box ahead of the
+    Worker's sentence (``worker_box.py``); a rank mark that path did not take
+    off is dropped here, so no prompt error shows one.
+    """
     inner = getattr(exc, "exception", None)
     wrapped = isinstance(inner, Exception)
-    text = refusal_text(exc) if wrapped else str(exc)
+    raw = refusal_text(exc) if wrapped else str(exc)
+    text = read_rank(raw)[0]
     tag = parse_leading_refusal_tag(text)
     if tag is None:
         return None
     worded = (forced_stock_text(text, forced)
               if forced and tag.refusal_class is RefusalClass.CAPACITY else text)
-    if not wrapped and worded == text:
+    if not wrapped and worded == raw:
         return None
     target = cast(BaseException, inner if wrapped else exc)
     if str(target) != worded:
