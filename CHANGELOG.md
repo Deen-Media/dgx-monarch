@@ -486,6 +486,12 @@
   `~/.cache/dgx-monarch/inductor`, so `compile_dit` no longer repeats its
   autotune after a reboot; set `TORCHINDUCTOR_CACHE_DIR` to place it elsewhere ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
 
+- Workers and the driver give freed host memory back at once: the worker
+  loop sets `MIMALLOC_PURGE_DELAY=0` for every cluster actor, the driver's
+  launch for a local actor, and `scripts/comfy-driver.sh` exports it, because torch 2.15.0's bundled mimalloc 2.5.2 purges so late
+  that an actor kept 15 to 18 GiB of host memory after a stock load and the
+  next load was priced short ([TROUBLESHOOTING #146](docs/TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
+
 ### Rendering
 
 - Before a render-site capacity check refuses, the driver unloads the models

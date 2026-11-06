@@ -7801,3 +7801,45 @@ dtype than the forward or a quantized layer on a full-precision matmul; the
 log names the first such key and why. Comfy-managed residency runs ComfyUI's
 own patcher and was always stock. MOSS-Image's INT8 files keep the #129
 refusal until a hardware run measures a LoRA on them with this bake.
+
+## 146. A Worker keeps a dropped model's host memory, and the next load is priced short
+
+**Symptom:** a Worker loads a model and drops it (the identity gate's ceremony
+drops a model the loader placed before its first proof render; a clear drops a
+model in the way), and the next capacity price on that box comes up short by
+about what the drop should have given back. On torch 2.15.0 the 2026-11-06
+release test refused the Kandinsky 5 Pro video template this way: `the load
+needs 89.9 GiB, a 40.4 GiB file plus the host copy it is placed from, and 83.0
+GiB of unified memory is available, 6.9 GiB short`, on a head that had 98.8
+GiB free when the prompt was queued. The Worker journal shows `loaded
+completely` while the actor's resident memory (VmRSS, sampled once a second)
+is already 17.8 GiB, and the drop a second later gives back the GPU copy and
+nothing else. The same template passed on torch 2.12.0 two days earlier with
+3.1 GiB resident through the placement and 4.5 GiB after the drop.
+
+**Cause:** torch's wheels allocate host memory through a bundled mimalloc,
+which gives freed pages back to the box only at a purge, and a purge runs only
+when the thread that owns them allocates again after the purge delay. A stock
+load frees its host copy as it places weights, the last of those frees come
+just before the load returns, and nothing allocates between them and the next
+price, so the memory still counts as spent. torch 2.15.0 carries mimalloc
+2.5.2, which purges far less than the 2.2.6 in 2.12.0 even on later
+allocations: with flux1-dev placed, the head actor held 15.0 and 16.1 GiB of
+anonymous memory on 2.15.0 against 2.5 GiB on 2.12.0 with the same source and
+ComfyUI (2026-11-05 and 2026-11-06). Most other large files loaded through
+stock residency held more the same way; H3, the slab rows and wan-scail did
+not.
+
+**Fix:** update. The worker loop sets `MIMALLOC_PURGE_DELAY=0` in the
+environment every cluster actor inherits, the driver's launch does the same
+for a local actor, and `scripts/comfy-driver.sh` exports it for the driver,
+so a free on the thread that allocated the memory gives it back at once. A
+value the loop or the driver inherits stands, from a nohup start or your own
+unit; the Worker unit `dgxm update` installs starts from an empty environment. A driver
+started by hand or by your own unit needs the variable too; the Studio guide's
+unit example carries it.
+
+**Check:** each actor's `UMA posture` journal line ends with
+`host_purge_delay=0`. With a model placed, the actor's anonymous memory then
+sits near a fresh actor's floor, a few GiB, and the identity gate's re-price
+after a drop finds the room the loader found.

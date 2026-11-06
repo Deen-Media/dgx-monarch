@@ -4,6 +4,11 @@ Actor launchers inherit this environment, so it is filtered before Monarch is
 imported. Both ``nohup`` and systemd execute
 :mod:`dgx_monarch.cli.worker_loop`; systemd ``PassEnvironment=`` entries remain
 subject to the same filter.
+
+The loop also installs the host allocator policy actors inherit: torch's
+wheels allocate host memory through a bundled mimalloc, and the Workers purge
+at free time (``HOST_ALLOCATOR_PURGE_ENV``) so a dropped model's memory is back
+before the next price reads MemAvailable.
 """
 from __future__ import annotations
 
@@ -46,6 +51,8 @@ _SAFE_EXACT = frozenset({
     "CUDA_CACHE_PATH",
     "CUDA_LAUNCH_BLOCKING",
     "PYTORCH_CUDA_ALLOC_CONF",
+    # An operator's own mimalloc purge delay stands; the loop defaults it below.
+    "MIMALLOC_PURGE_DELAY",
     "CUBLAS_WORKSPACE_CONFIG",
     "OMP_NUM_THREADS",
     "MKL_NUM_THREADS",
@@ -115,6 +122,16 @@ _DANGEROUS_EXACT = frozenset({
 # ownership-checked, symlink-rejected, and forced to 0700 before use.
 _FALLBACK_RUNTIME_ROOT = Path("/tmp")  # noqa: S108
 INDUCTOR_CACHE_ENV = "TORCHINDUCTOR_CACHE_DIR"
+# torch's wheels allocate host memory through a bundled mimalloc (2.12.0 carries
+# 2.2.6, 2.15.0 carries 2.5.2), which gives freed pages back to the box only at
+# a purge, and a purge runs only when the owning thread allocates again after
+# the delay. A stock load frees its host copy as it places weights and nothing
+# allocates before the next price reads MemAvailable, so no positive delay
+# fires in that window: on torch 2.15.0 an actor kept 15 to 18 GiB of a placed
+# stock load (2026-11-06). Purge at free time instead. A value the loop
+# inherits stands.
+HOST_ALLOCATOR_PURGE_ENV = "MIMALLOC_PURGE_DELAY"
+HOST_ALLOCATOR_PURGE_DEFAULT = "0"
 # Monarch appends a temporary directory and a proc id for each Unix socket.
 # Leave at least 39 bytes below macOS's 104-byte sockaddr_un limit (108 on
 # Linux), including separators and the terminating NUL. Count encoded bytes,
@@ -287,6 +304,7 @@ def prepare_worker_process_environment(
 
     target["PYTHONDONTWRITEBYTECODE"] = "1"
     target["PYTHONPYCACHEPREFIX"] = SOURCE_ONLY_PYCACHE_PREFIX
+    target.setdefault(HOST_ALLOCATOR_PURGE_ENV, HOST_ALLOCATOR_PURGE_DEFAULT)
     runtime = secure_worker_runtime(target)
     route_inductor_cache(target)
     return removed, runtime

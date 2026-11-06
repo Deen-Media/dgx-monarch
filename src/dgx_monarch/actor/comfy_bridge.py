@@ -506,10 +506,11 @@ def _apply_worker_args(worker_args: dict) -> None:
         -1 if worker_args.get("disable_pinned_memory")
         else _MEMORY_BASELINE["MAX_PINNED_MEMORY"])
     # comfy's import-time "pinned N / M streams" lines are both overwritten
-    # above and nothing else records the result; log the final UMA posture.
-    log.info("UMA posture: streams=%s pinned=%s smart_memory=%s reserve=%.1fGiB",
-             mm.NUM_STREAMS, mm.MAX_PINNED_MEMORY,
-             not mm.DISABLE_SMART_MEMORY, mm.EXTRA_RESERVED_VRAM / 2**30)
+    # above; log the final UMA posture and the mimalloc purge delay (cli/worker_process_env).
+    log.info("UMA posture: streams=%s pinned=%s smart_memory=%s reserve=%.1fGiB "
+             "host_purge_delay=%s", mm.NUM_STREAMS, mm.MAX_PINNED_MEMORY,
+             not mm.DISABLE_SMART_MEMORY, mm.EXTRA_RESERVED_VRAM / 2**30,
+             os.environ.get("MIMALLOC_PURGE_DELAY", "default"))
 
 
 def resolve_model_path(kind: str, name: str) -> str:

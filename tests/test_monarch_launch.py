@@ -266,3 +266,17 @@ def test_every_actor_starts_on_torchs_legacy_nccl_backend(commands, monkeypatch,
     # the launcher is the one place the setting comes from.
     assert not worker_environment_key_allowed("TORCH_DIST_USE_NCCL2")
     assert launch.actor_environment(config(), "a")["TORCH_DIST_USE_NCCL2"] == "0"
+
+
+def test_a_local_actor_purges_host_memory_at_free_time_unless_the_driver_chose(commands, monkeypatch):
+    """The worker loop gives cluster actors MIMALLOC_PURGE_DELAY=0; a local actor
+    takes the driver's value or the same default (DESIGN, "Freed host memory
+    goes back at once")."""
+    from dgx_monarch.cli.worker_process_env import HOST_ALLOCATOR_PURGE_DEFAULT, HOST_ALLOCATOR_PURGE_ENV
+
+    monkeypatch.delenv(HOST_ALLOCATOR_PURGE_ENV, raising=False)
+    cmd = launch.actor_bootstrap_command(config(), False)({"gpus": 0})
+    assert cmd.env[HOST_ALLOCATOR_PURGE_ENV] == HOST_ALLOCATOR_PURGE_DEFAULT == "0"
+    monkeypatch.setenv(HOST_ALLOCATOR_PURGE_ENV, "25")
+    cmd = launch.actor_bootstrap_command(config(), False)({"gpus": 0})
+    assert cmd.env[HOST_ALLOCATOR_PURGE_ENV] == "25"
