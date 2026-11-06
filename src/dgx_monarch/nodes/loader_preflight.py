@@ -39,7 +39,6 @@ from .loader_graph import (
     DriverStackTerms,
     activation_sp_degree,
     clear_memos,
-    credited_terms,
     driver_stack_terms,
     note_stack_charged,
     remember,
@@ -326,17 +325,17 @@ def _lead(binding: driver_footprint.DriverFootprintEstimate, window: str, shape:
         return all(map(fits_box, _windows(alt, slab=slab)))
 
     def stack_for(graph: object) -> DriverStackTerms:
-        return graph_load_price.site_terms(credited_terms(driver_stack_terms(
-            graph, family=family, sp_degree=activation_sp_degree(mesh, family))), site)
+        return graph_load_price.site_terms(driver_stack_terms(
+            graph, family=family, sp_degree=activation_sp_degree(mesh, family)), site)
 
     lead = graph_load_price.plain_lead(
         binding, window=window, unet_name=unet_name, deferred=deferred,
-        models=terms.models if shape.load_stack_bytes else (),
+        models=graph_load_price.load_window_models(terms, site)[1] if shape.load_stack_bytes else (),
         box=graph_load_price.driver_box(mesh), site=site)
     return {"lead": lead, "fits": graph_load_price.alternatives(
         shape, fits=fits, unet_name=unet_name, family=family, quant_kind=quant_kind,
         terms=terms, deferred=deferred, prompt=prompt, stack_for=stack_for,
-        pair=not residency_mode.requested(worker_args), mesh=mesh)}
+        pair=not residency_mode.requested(worker_args), mesh=mesh, site=site)}
 
 
 def preflight_loader_footprint(
@@ -391,9 +390,9 @@ def preflight_loader_footprint(
         # reserve and the same residency levers.
         worker_args = effective_worker_args(mesh)
 
-        terms = graph_load_price.site_terms(credited_terms(driver_stack_terms(
+        terms = graph_load_price.site_terms(driver_stack_terms(
             prompt, family=family,
-            sp_degree=activation_sp_degree(mesh, family))), site)
+            sp_degree=activation_sp_degree(mesh, family)), site)
         if not terms.resolved and _first_unpriced_stack_warn(family):
             # A direct node call carries no hidden prompt, so the estimator priced
             # only the weights. Say so once per family, so a post-mortem does
@@ -427,7 +426,8 @@ def preflight_loader_footprint(
             profile=profile, mem_available=avail, weight_bytes=weight_bytes,
             weights_resident=memo_key in _CLEARED_UNETS, co_resident=co_resident,
             floor_reserve=floor_reserve, stack_bytes=stack_bytes,
-            fsdp_world=fsdp_world, load_stack_bytes=terms.models_bytes if deferred else 0,
+            fsdp_world=fsdp_world,
+            load_stack_bytes=graph_load_price.load_window_models(terms, site)[0] if deferred else 0,
             cast_bytes=cast_bytes)
         transient, settled = _windows(shape, slab=effective_slab)
         if fits_box(transient) and fits_box(settled):

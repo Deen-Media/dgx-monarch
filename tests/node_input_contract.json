@@ -108,7 +108,7 @@
       ["cfg", "FLOAT", 1.0], ["sampler_name", "COMBO", "<first-option>"], ["scheduler", "COMBO", "<first-option>"]
     ],
     "optional": [["strict", "BOOLEAN", false], ["run_id", "STRING", ""]],
-    "hidden": [["unique_id", "UNIQUE_ID", null]]
+    "hidden": [["unique_id", "UNIQUE_ID", null], ["prompt", "PROMPT", null]]
   },
   "DGXMonarchFleetKSampler": {
     "required": [

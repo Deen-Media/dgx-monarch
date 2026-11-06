@@ -258,9 +258,11 @@ def held_backup_credit(held: object, request_key: str, size_bytes: int) -> int:
     measured on 2026-11-05 (``actor/worker_capacity._backup_bytes``). The held stack
     patched every weight a stack of its own files patches, so a change to such a
     stack (a strength, an order, a LoRA removed) swaps in place from that copy and
-    places again only what the backup lacks: E3 grew the actor by 0.8 GiB. A file the
-    held stack lacks gets nothing, since the store may reload, which keeps the backup
-    through the fresh load. Never more than the host copy the stock price charges.
+    places again only what the backup lacks, 3.8 MiB for the distill LoRA's base.
+    E3's 0.8 GiB was the 0.69 GiB LoRA file read again plus the patch temporaries,
+    which the price charges beside this credit. A file the held stack lacks gets
+    nothing, since the store may reload, which keeps the backup through the fresh
+    load. Never more than the host copy the stock price charges.
     """
     from .capacity_fit import STOCK_PLACEMENT_RATIO
 
@@ -275,8 +277,24 @@ def held_backup_credit(held: object, request_key: str, size_bytes: int) -> int:
     return min(reported, int(STOCK_PLACEMENT_RATIO * max(int(size_bytes), 0)))
 
 
+def stack_file_bytes(stack: object) -> int | None:
+    """The bytes of a stack's LoRA files, from ``(lora_stack, resolve_lora_path)``, or None.
+
+    The Worker reads each LoRA through the pread backend into anonymous memory on
+    every in-place change (``ModelStore._build_active``), so a backup credit is net
+    of them. A file it cannot find or size reads as unknown.
+    """
+    try:
+        entries: Any
+        resolve: Any
+        entries, resolve = stack  # type: ignore[misc]
+        return sum(int(os.path.getsize(resolve(str(entry["name"])))) for entry in entries or ())
+    except Exception:
+        return None
+
+
 def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | None,
-                    slab_weights: object) -> Any:
+                    slab_weights: object, stack: object = None) -> Any:
     """The stock price of a LoRA change the store makes in place, with the held copy credited.
 
     The quote reads such a change as a swap and would price a whole stock load
@@ -295,8 +313,9 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
     dropping this copy and loading fresh (``store_bake.copies_off_the_gpu``)
     keeps it: the drop returns the copy, and its wall prices the load whole. A
     change to a stack of the held stack's own files is also credited the backup
-    the Worker reports (``held_backup_credit``); ``credit_bytes`` carries both, so a
-    clear is still weighed against the price a cleared box pays (``old_model``).
+    the Worker reports (``held_backup_credit``), net of its own LoRA files
+    (``stack_file_bytes``); ``credit_bytes`` carries both credits, so a clear is
+    still weighed against the price a cleared box pays (``old_model``).
     """
     from dataclasses import replace
 
@@ -319,10 +338,15 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
             held_bytes = 0
     if held_bytes <= 0:
         return fit
-    # ComfyUI's backup of the held stack's weights, where this change re-applies from it.
-    backup = 0 if int(getattr(fit, "cast_bytes", 0) or 0) > 0 else held_backup_credit(
+    # ComfyUI's backup of the held stack's weights, where this change re-applies from it,
+    # net of the new stack's own files; none when they cannot be sized or cost as much.
+    files = stack_file_bytes(stack)
+    backup = 0 if int(getattr(fit, "cast_bytes", 0) or 0) > 0 or files is None else held_backup_credit(
         held, request_key, fit.size_bytes)
-    credited = replace(fit, credit_bytes=held_bytes + backup, backup_bytes=backup)
+    if files is None or backup <= files:
+        backup = files = 0
+    credited = replace(fit, credit_bytes=held_bytes + backup - files, backup_bytes=backup,
+                       stack_bytes=files)
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 
@@ -354,4 +378,4 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
 
 
 __all__ = ["credit_hot_swap", "credit_stock_swap", "held_backup_credit", "lora_bake_bytes",
-           "patched_base_keys", "swap_credit_bytes"]
+           "patched_base_keys", "stack_file_bytes", "swap_credit_bytes"]

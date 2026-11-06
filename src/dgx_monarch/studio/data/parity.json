@@ -8,7 +8,7 @@
     "cli_option": 102,
     "configuration": 54,
     "node": 21,
-    "node_input": 142,
+    "node_input": 143,
     "panel_action": 8,
     "telemetry": 17,
     "tui_action": 9,
@@ -11466,6 +11466,51 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "schema_source": "source AST + tests/node_input_contract.json",
       "section": "required",
+      "source": "src/dgx_monarch/nodes/gate_node.py:DGXMonarchIdentityGate.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchIdentityGate.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchIdentityGate",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchIdentityGate",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
       "source": "src/dgx_monarch/nodes/gate_node.py:DGXMonarchIdentityGate.INPUT_TYPES",
       "units": null,
       "validation": {}

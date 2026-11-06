@@ -127,7 +127,8 @@ def _backup_bytes(worker: Any, store: Any, stored: Any, slot: str) -> int:
     ComfyUI keeps each weight a stack patches, as it was, on the host
     (``ModelPatcher.patch_weight_to_device``); every clone of the base shares that
     dict, and an in-place change puts those weights back from it and places again
-    only what it lacks (2026-11-05: the actor grew 0.8 GiB on a strength change).
+    only what it lacks: 3.8 MiB of the BF16 Wan-Animate 2 base for its distill LoRA,
+    whose 1261 patched weights the headers put at 32,785,804,928 bytes, the file.
     The sum of the tensors' bytes is a lower bound of the memory they hold. It is
     reported only for the state that was measured: classic mode, a stock, uncast,
     full-precision resident placed whole on the GPU, the other slot empty (the

@@ -148,8 +148,8 @@ and that this graph would run, and a pair with the Init node's topology set to
 `uly2+fsdp`, where half the DiT would. On the pair, Ulysses and ring hold the
 whole DiT on the head, so the pair alone does not help, and `auto` never picks
 `uly2+fsdp`. ComfyUI does not run the loader again on a re-queue that changes
-nothing upstream of it, so the sampler runs the same price for such a queue,
-crediting the models ComfyUI holds by then.
+nothing upstream of it, so the sampler, or Identity Gate (DGX Monarch), runs the
+same price for such a queue, crediting the models ComfyUI holds by then.
 
 **The LoRA backup.** When ComfyUI applies ("bakes") a LoRA into a model, it
 keeps a backup of every original weight it touched so it can undo the edit
@@ -157,8 +157,9 @@ later. A LoRA stack that touches most of the model therefore costs almost a
 full extra copy of the model, about 24 GB for a 24 GB model. On a discrete
 GPU, that backup uses system RAM; on unified memory it uses the shared pool.
 A new strength, a new order or a LoRA removed reuses that backup, so the capacity
-check counts it as held: on a BF16 Wan-Animate 2 model such a change took
-under 1 GB more (2026-11-05).
+check counts it as held and charges only the LoRA files the change reads again:
+on a BF16 Wan-Animate 2 model such a change took under 1 GB more, about its
+LoRA file (2026-11-05).
 
 **low_rss (lazy un-bake).** Enabled by default on unified memory. The original
 weights remain in the checkpoint file. The worker bakes the LoRA, discards the
@@ -232,7 +233,7 @@ the driver run it for you. A new LoRA on a large model held with another one
 can meet the same card when the host copy that LoRA keeps holds the memory:
 "The model loaded earlier (<name>) holds about <N> GiB on the head that this
 change needs. Clear the Sparks and run again?" A new strength or order of the
-LoRAs it holds reuses that host copy and does not.
+LoRAs it holds, or one of them removed, reuses that host copy and does not.
 
 ## Trust words
 

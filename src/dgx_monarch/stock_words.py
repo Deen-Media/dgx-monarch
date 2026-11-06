@@ -16,25 +16,29 @@ def _gib(value: int) -> float:
     return gib(value)
 
 
-def _beside(weights: float, backup: float) -> str:
+def _beside(weights: float, backup: float, stack: float = 0.0) -> str:
     """What a credited LoRA change is priced beside, and what it still charges."""
     if not backup:
         return (f"the {weights} GiB copy of this file the Worker already holds, room for a host "
                 "copy of the weights its LoRA stack changes and the floor")
+    files = f"the {stack} GiB of LoRA files the new stack reads, " if stack else ""
     return (f"the {weights} GiB copy of this file and the {backup} GiB host copy of its patched "
-            "weights (ComfyUI's backup) the Worker already holds, room for the weights that "
-            "backup does not hold and the floor")
+            f"weights (ComfyUI's backup) the Worker already holds, room for {files}the weights "
+            "that backup does not hold and the floor")
 
 
-def stock_terms(size_gib: float, credit_bytes: int = 0, backup_bytes: int = 0) -> str:
+def stock_terms(size_gib: float, credit_bytes: int = 0, backup_bytes: int = 0,
+                stack_bytes: int = 0) -> str:
     """What a stock price charges, as the rescue card prints it after "under stock residency".
 
     A credit is the copy the slot holds, which a cast makes other than the file,
-    and ``backup_bytes`` of it the held backup.
+    plus the held backup (``backup_bytes``) net of the new stack's own files
+    (``stack_bytes``), which stay charged.
     """
     if credit_bytes:
-        backup = max(int(backup_bytes), 0)
-        return f"beside {_beside(_gib(int(credit_bytes) - backup), _gib(backup))},"
+        backup, files = max(int(backup_bytes), 0), max(int(stack_bytes), 0)
+        held = _gib(int(credit_bytes) - backup + files)
+        return f"beside {_beside(held, _gib(backup), _gib(files))},"
     return f"(a {size_gib} GiB file plus the host copy it is placed from)"
 
 
@@ -45,7 +49,7 @@ def stock_second_term(measured: dict) -> str:
 
 
 def hot_swap_sentence(where: str, unet_name: str, needed: float, weights: float,
-                      avail: float, short: float, backup: float = 0.0) -> str:
+                      avail: float, short: float, backup: float = 0.0, stack: float = 0.0) -> str:
     """The fleet card's sentence for a credited price that still falls short.
 
     The figure leaves out the held file, and the held backup when it was
@@ -53,7 +57,7 @@ def hot_swap_sentence(where: str, unet_name: str, needed: float, weights: float,
     them into the sum.
     """
     return (f"{where} priced a LoRA change on {unet_name}: the change needs {needed} GiB "
-            f"beside {_beside(weights, backup)}. Only {avail} GiB of unified memory is "
+            f"beside {_beside(weights, backup, stack)}. Only {avail} GiB of unified memory is "
             f"available, {short} GiB short.")
 
 

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import sys
 import types
+from pathlib import Path
 
 import pytest
 
@@ -151,8 +152,8 @@ def test_a_short_box_refuses_at_the_sampler_with_the_loaders_sentence(_prompt, m
     text = str(raised.value)
     assert text.startswith(
         "[dgxm:C guard=loader_footprint_preflight waivable=1] p-h3-image_bf16.safetensors "
-        "needs 93.3 GiB on this box and 80.3 GiB is available, 13.0 GiB short. It loads "
-        f"at the first render, beside {TE}, {UPSAMPLER} and {VAE}, which this graph loads "
+        "needs 84.3 GiB on this box and 80.3 GiB is available, 4.0 GiB short. It loads "
+        f"at the first render, beside {TE} and {UPSAMPLER}, which this graph loads "
         f"on the driver first. {SAMPLER_SENTENCE}")
     assert "Nothing was loaded." not in text
     assert ("driver-side footprint preflight at the sampler (the UNET Loader's output came "
@@ -166,6 +167,29 @@ def test_a_short_box_refuses_at_the_sampler_with_the_loaders_sentence(_prompt, m
     tag = parse_leading_refusal_tag(text)
     assert tag is not None and tag.refusal_class is RefusalClass.CAPACITY and tag.waivable
     assert len(text) < 4000
+
+
+def test_held_encoders_count_at_their_resident_size_and_the_decode_vae_waits(_prompt, monkeypatch):
+    """Review finding 3, its rig probe: the switch-off graph rendered, a reset left the DiT
+    pending, and the re-queue meets the text encoder held at its raw size. The sampler
+    charged it again at the 1.15 ratio and put the decode VAE in the load window, so it
+    needed 90.6 GiB where the Worker's wall needs 84.1. A held encoder is credited at
+    its measured 1.144 and the VAE, which loads after the DiT places, waits for the
+    settled window, so 88 GiB admits and the price sits beside the wall."""
+    mesh = _first_prompt_renders(_prompt, monkeypatch)
+    recycle_drain.drop_residency_memos()
+    _comfy_holds(monkeypatch, SIZES[("text_encoders", TE)])
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(88.0 * _GIB))
+    requeue_price.price_cached_loader(_model(mesh), _graph(False))          # admitted
+    recycle_drain.drop_residency_memos()        # reset again: the DiT is pending once more
+    _prompt.prompt_id = "prompt-3"
+    monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(84.0 * _GIB))
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        requeue_price.price_cached_loader(_model(mesh), _graph(False))
+    text = str(raised.value)
+    assert "needs 84.2 GiB on this box and 84.0 GiB is available" in text
+    assert f"beside {TE}, which this graph loads on the driver first" in text
+    assert VAE not in text.split(". ")[1], "the decode VAE is not in the load window"
 
 
 def test_the_same_short_box_with_room_renders(_prompt, monkeypatch):
@@ -247,6 +271,28 @@ def test_encodes_and_activations_stay_with_the_render_site_checks(_prompt, monke
 
 # Where it does not run.
 
+def test_identity_gate_prices_a_cached_loader_requeue_before_its_ceremony(_prompt, monkeypatch):
+    """Review finding 5: Identity Gate (DGX Monarch) runs on every queue and renders the
+    cached loader's model, so it prices the re-queue as a sampler does, and says so."""
+    from dgx_monarch.nodes import gate, gate_node
+
+    mesh = _short_requeue(_prompt, monkeypatch)
+
+    def reached(*_args, **_kwargs):
+        raise AssertionError("the ceremony ran before the price")
+
+    monkeypatch.setattr(gate, "run_identity_ceremony", reached)
+    monkeypatch.setattr(gate, "conditioning_for_wire", lambda conds: conds)
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        gate_node.DGXMonarchIdentityGate().gate(
+            _model(mesh), [], [], {"samples": None}, 42, 8, 4.0, "euler", "simple",
+            prompt=_graph(True))
+    text = str(raised.value)
+    assert ("The UNET Loader's output came from an earlier queue, so Identity Gate (DGX "
+            "Monarch) priced this graph, and the Workers loaded nothing.") in text
+    assert "driver-side footprint preflight at Identity Gate (DGX Monarch) (the UNET" in text
+
+
 @pytest.mark.parametrize(("case", "why"), [
     ("headless", "no prompt id: the loader's own price fails open there too"),
     ("explicit", "an explicit preset loaded at the loader node"),
@@ -291,3 +337,33 @@ def test_always_clear_and_retry_clears_once_and_prices_again(_prompt, monkeypatc
     with pytest.raises(old_model.OldModelRefusal):
         requeue_price.price_cached_loader(_model(mesh), _graph(True))
     assert calls == [graph_load_price.SITE_SAMPLER]
+
+
+# The docs say what the code does (review of #148, findings 4, 5 and 6e).
+
+DESIGN = Path(__file__).resolve().parents[1] / "docs" / "DESIGN.md"
+
+
+def _paragraph(title: str) -> list[str]:
+    lines = DESIGN.read_text().splitlines()
+    start = next(index for index, line in enumerate(lines) if line.startswith(f"**{title}**"))
+    end = next(index for index in range(start, len(lines)) if not lines[index].strip())
+    return lines[start:end]
+
+
+def test_design_names_the_doors_that_drain_the_memo_and_every_render_site():
+    """Findings 4 and 5: a restart and a soft or hard Clear VRAM drain nothing before
+    the price, and Identity Gate (DGX Monarch) renders such a queue too."""
+    text = " ".join(" ".join(_paragraph(
+        "A re-queue the loader does not see is priced where it renders.")).split())
+    assert ("Reset attached mesh, Clear and retry and a Clear VRAM node set to `recycle` "
+            "drain that memo") in text
+    assert "a Clear VRAM node at `soft` or `hard` does not" in text
+    assert "a sampler or Identity Gate (DGX Monarch)" in text
+    assert "every clear, reset and restart drains" not in DESIGN.read_text()
+
+
+def test_the_new_design_paragraph_is_wrapped():
+    """Finding 6 (e): no prose line runs on."""
+    assert max(len(line) for line in _paragraph(
+        "A re-queue the loader does not see is priced where it renders.")) <= 80

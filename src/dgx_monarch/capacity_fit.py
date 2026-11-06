@@ -85,6 +85,9 @@ class StockFit:
     dropped: str = ""
     # The part of ``credit_bytes`` that is ComfyUI's backup of the held stack's weights.
     backup_bytes: int = 0
+    # The new stack's own LoRA files, which a backup credit is net of: the Worker reads
+    # them again into anonymous memory on every in-place change.
+    stack_bytes: int = 0
 
     @property
     def size_gib(self) -> float:
@@ -138,7 +141,7 @@ class StockFit:
         if self.dropped and self.credit_bytes > 0:
             credit["dropped"] = self.dropped
         if self.backup_bytes > 0:
-            credit["backup_bytes"] = int(self.backup_bytes)
+            credit.update(backup_bytes=int(self.backup_bytes), stack_bytes=int(self.stack_bytes))
         return {
             "probe": PROBE_STOCK_LOAD_FIT,
             "checkpoint_bytes": int(self.size_bytes),

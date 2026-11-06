@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 import types
+from pathlib import Path
 
 import pytest
 
@@ -30,18 +31,23 @@ _GIB = 2 ** 30
 BASE = "wan_animate_2_bf16.safetensors"
 LORA = "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors"
 NARROW = "wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors"
+SCAIL = "wan2.1_SCAIL_2_DPO_lora_bf16.safetensors"
 BF16_BYTES = 32_789_894_104                     # the 30.5 GiB file
-# E3: the change placed again 0.8 GiB, the weights the backup lacks, so the backup
-# holds about the file less that. The hardware leg reads the Worker's own figure.
-BACKUP_BYTES = int(29.7 * _GIB)
+# The backup, from the safetensors headers on disk: the distill LoRA patches 1261 of
+# the base's 1303 tensors, and those hold 32,785,804,928 bytes. The 42 it leaves out
+# hold 3.8 MiB. The Worker reports the same sum from the tensors it holds.
+BACKUP_BYTES = 32_785_804_928
+# The LoRA files on disk, which the Worker reads again on every in-place change.
+LORA_FILES = {LORA: 738_005_744, NARROW: 1_226_977_424, SCAIL: 1_226_936_552}
 HEAD_AVAILABLE = int(24.3 * _GIB)               # B3's head after the first queue (E1: 24.5)
 SIBLING_AVAILABLE = int(42.2 * _GIB)
 HEAD_ARENA = int(33.0 * _GIB)                   # E1's card: about 33.0 GiB held beyond the copy
 PATCHED = 1261                                  # the distill LoRA's patched weights
 BACKUP_SENTENCE = (
-    "the change needs {needed} GiB beside the 30.5 GiB copy of this file and the 29.7 GiB "
+    "the change needs {needed} GiB beside the 30.5 GiB copy of this file and the 30.5 GiB "
     "host copy of its patched weights (ComfyUI's backup) the Worker already holds, room for "
-    "the weights that backup does not hold and the floor.")
+    "the 0.7 GiB of LoRA files the new stack reads, the weights that backup does not hold and "
+    "the floor.")
 
 
 class _HostTensor:
@@ -93,6 +99,11 @@ def quote(monkeypatch, tmp_path):
     monkeypatch.setattr(worker_capacity, "_pinned_staging", lambda: False)
     monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
     monkeypatch.setattr(actor_footprint, "arena_bytes", lambda *_a: HEAD_ARENA)
+    (tmp_path / "loras").mkdir()
+    for name, size in LORA_FILES.items():
+        with open(tmp_path / "loras" / name, "wb") as handle:
+            handle.truncate(size)
+    monkeypatch.setattr(cq, "default_resolve_lora_path", lambda name: str(tmp_path / "loras" / name))
 
     def run(store, stack, available=HEAD_AVAILABLE) -> cq.RankPrice:
         monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: available)
@@ -133,12 +144,14 @@ def test_b3_strength_change_is_admitted_with_the_backup_credited(quote, caplog):
     head = quote(_b3_store(), [(LORA, 0.8)])
     assert (head.would_load, head.verdict) == ("swap", "fits")
     assert head.measured["backup_bytes"] == BACKUP_BYTES
-    assert head.measured["credit_bytes"] == BF16_BYTES + BACKUP_BYTES
-    # 69.1 GiB less the file's copy and the backup: 1.1 times the file less the backup, plus the floor.
-    assert head.measured["required_gib"] == 8.9 and head.measured["headroom_gib"] == 15.4
+    assert head.measured["stack_bytes"] == LORA_FILES[LORA]
+    # The credit is the file's copy plus the backup, net of the LoRA file the swap reads.
+    assert head.measured["credit_bytes"] == BF16_BYTES + BACKUP_BYTES - LORA_FILES[LORA]
+    # 69.1 GiB less the file's copy and the backup, plus the 0.7 GiB LoRA file: 8.7 GiB.
+    assert head.measured["required_gib"] == 8.7 and head.measured["headroom_gib"] == 15.6
     with caplog.at_level(logging.INFO, logger=capacity_agreement.log.name):
         decide(_fleet(head), 2, unet_name=BASE, keep=frozenset({BASE}))   # raises nothing
-    assert "cross-rank capacity admitted: the head=cond:fits/explicit_stock@15.4GiB" in caplog.text
+    assert "cross-rank capacity admitted: the head=cond:fits/explicit_stock@15.6GiB" in caplog.text
 
 
 @pytest.mark.parametrize(("stack", "why"), [
@@ -164,14 +177,15 @@ def test_the_credited_sentence_names_the_backup_when_the_box_is_still_short(quot
         decide(_fleet(head), 2, unet_name=BASE, keep=frozenset({BASE}))
     text = str(raised.value)
     assert ("The head priced a LoRA change on wan_animate_2_bf16.safetensors: "
-            + BACKUP_SENTENCE.format(needed=8.9)) in text
-    assert "Only 6.0 GiB of unified memory is available, 2.9 GiB short." in text
+            + BACKUP_SENTENCE.format(needed=8.7)) in text
+    assert "Only 6.0 GiB of unified memory is available, 2.7 GiB short." in text
     tag = parse_leading_refusal_tag(text)
     assert tag is not None and tag.refusal_class is RefusalClass.CAPACITY
 
 
 def test_a_clear_is_weighed_against_the_price_a_cleared_box_pays(quote):
-    """credit_bytes carries both credits, so the card's need is still 69.1 GiB, not 39.4."""
+    """credit_bytes carries both credits, so the card's need is still 69.1 GiB, the
+    fresh load a cleared box makes, and the new stack's files are not counted twice."""
     head = quote(_b3_store(), [(LORA, 0.8)], available=int(8.0 * _GIB))
     assert head.verdict == "refuse"
     with pytest.raises(old_model.OldModelRefusal) as raised:
@@ -180,8 +194,30 @@ def test_a_clear_is_weighed_against_the_price_a_cleared_box_pays(quote):
     assert offer is not None and offer.same_file
     (box,) = offer.boxes
     assert round(box.required_bytes / _GIB, 1) == 69.1
-    assert box.left_bytes == HEAD_ARENA - BACKUP_BYTES      # beyond the copy and the backup
+    # Beyond the copy and the backup the price credited, net of the files it charged.
+    assert box.left_bytes == HEAD_ARENA - BACKUP_BYTES + LORA_FILES[LORA]
     assert old_model.card_numbers(offer) == "needs 69.1 GiB, 8.0 GiB available on the head"
+
+
+def test_the_new_stacks_own_files_stay_charged_beside_the_backup(quote):
+    """Review finding 2: every in-place change reads the new stack's LoRA files into
+    anonymous memory (the pread backend), so a stack of three is charged all three."""
+    stack = ((LORA, 1.0), (NARROW, 1.0), (SCAIL, 1.0))
+    files = sum(LORA_FILES.values())                    # 2.97 GiB
+    head = quote(_b3_store(stack=stack), [(LORA, 0.5), (NARROW, 0.5), (SCAIL, 0.5)])
+    assert head.measured["stack_bytes"] == files
+    assert head.measured["required_bytes"] == (
+        capacity_fit.stock_required_bytes(BF16_BYTES) - BF16_BYTES - BACKUP_BYTES + files)
+    assert head.measured["required_gib"] == 11.0
+    # A removal to the bare base reads no file and is charged none.
+    bare = quote(_b3_store(), [])
+    assert bare.measured["stack_bytes"] == 0 and bare.measured["required_gib"] == 8.1
+
+
+def test_a_stack_whose_files_cannot_be_sized_gets_no_backup_credit(quote, monkeypatch):
+    monkeypatch.setattr(cq, "default_resolve_lora_path", lambda name: "/nonexistent/" + name)
+    head = quote(_b3_store(), [(LORA, 0.8)])
+    assert "backup_bytes" not in head.measured and head.measured["required_gib"] == 38.6
 
 
 # A LoRA the held stack lacks keeps #146's price and path.
@@ -294,7 +330,46 @@ def test_a_cast_resident_gets_no_backup_credit():
 
 
 def test_the_rescue_card_words_name_the_backup():
-    assert capacity_fit.stock_terms(30.5, BF16_BYTES + BACKUP_BYTES, BACKUP_BYTES) == (
-        "beside the 30.5 GiB copy of this file and the 29.7 GiB host copy of its patched "
-        "weights (ComfyUI's backup) the Worker already holds, room for the weights that "
-        "backup does not hold and the floor,")
+    credit = BF16_BYTES + BACKUP_BYTES - LORA_FILES[LORA]
+    assert capacity_fit.stock_terms(30.5, credit, BACKUP_BYTES, LORA_FILES[LORA]) == (
+        "beside the 30.5 GiB copy of this file and the 30.5 GiB host copy of its patched "
+        "weights (ComfyUI's backup) the Worker already holds, room for the 0.7 GiB of LoRA "
+        "files the new stack reads, the weights that backup does not hold and the floor,")
+
+
+# The docs cite what the code computes (review of #148, findings 1 and 6).
+
+ROOT = Path(__file__).resolve().parents[1]
+
+
+def _doc(name: str) -> str:
+    return " ".join((ROOT / name).read_text().split())
+
+
+def test_the_docs_cite_the_backup_the_headers_prove_and_the_price_it_gives(quote):
+    """Finding 1: the figures come from the header sum, not a rounded reading."""
+    head = quote(_b3_store(), [(LORA, 0.8)])
+    price = f"about {head.measured['required_gib']} GiB"
+    design, trouble, changelog = (_doc(name) for name in
+                                  ("docs/DESIGN.md", "docs/TROUBLESHOOTING.md", "CHANGELOG.md"))
+    assert f"{price} there" in design and "32,785,804,928 bytes" in design
+    assert f"{price} for the BF16 Wan-Animate 2 strength change" in trouble
+    assert f"needs {price} where it needed 38.6 GiB" in changelog
+    for text in (design, trouble, changelog):
+        assert "29.7 GiB" not in text
+
+
+@pytest.mark.parametrize(("doc", "present", "absent", "why"), [
+    ("docs/DESIGN.md", "An in-place swap runs unpriced on the Worker, so for such a change the "
+     "agreement's price is the only guard", "", "(a) why the credit must hold with no wall"),
+    ("docs/TROUBLESHOOTING.md", "the price cannot tell which weights a new LoRA patches",
+     "which a new LoRA cannot reuse", "(b) E3 q3 swapped a new LoRA in place"),
+    ("docs/TROUBLESHOOTING.md", "which costs more than the change. A new strength",
+     "strength change that needed 38.6. Then the card reads", "(c) the card follows its own case"),
+    ("docs/CONCEPTS.md", "or one of them removed, reuses that host copy", "", "(d) removal too"),
+])
+def test_the_backup_credit_docs_agree_with_section_5_9(doc, present, absent, why):
+    """Finding 6, (a) to (d)."""
+    text = _doc(doc)
+    assert present in text, why
+    assert not absent or absent not in text, why
