@@ -3219,7 +3219,7 @@ passed at 08:11 on 2026-11-06. The rows below cite the passing runs.
 | 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | PASS: exit 0, the dense kernel control on `cute_sm120` at relative L2 0.00298337 on both hosts, the figure of 2026-10-11. It runs no render and says nothing of sparse-attention or model accuracy |
 | 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN: the commands were printed and not run, because the release ships on torch 2.15; the torch 2.12 environment stays parked on both hosts |
 
-**NOT RUN on torch 2.15:** the template release test, which is running.
+**NOT RUN on torch 2.15:** the [template release test](#release-test-2026-11-04) on the release commit.
 
 ## Memory calibration
 
@@ -3359,7 +3359,8 @@ refusal named a box by its configured host name or address. On `7c3eecb`,
 after #143, every card, refusal and log line under the agreement's guard
 said the head, the sibling or this box, and the only host name a user could read was
 the Worker's own stock wall on a one-Spark fleet
-([TROUBLESHOOTING #53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+([TROUBLESHOOTING #53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)),
+which #147 has since changed to say "here" after the box's name.
 
 **What a clear gives back.** The card credits a short box the stock
 resident's file plus the actor's anonymous memory above what it held at its
