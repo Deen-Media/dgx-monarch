@@ -43,9 +43,9 @@ VERDICTS = frozenset({
 
 # What the load would do to the slot. A reuse places nothing and admits. A swap
 # over a stock resident is credited the GPU copy the store drops before it loads
-# (capacity_lora_bake.credit_stock_swap); other swaps and unknown price as held,
-# since a slab resident barely moves MemAvailable. ``unknown`` reads as
-# ``fresh``: a quote can land between a slot's drop and its repopulation.
+# (capacity_lora_bake.credit_stock_swap); other swaps and unknown price as held: a
+# slab resident holds MemAvailable, but no load over one has yet needed its drop
+# credited. ``unknown`` reads as ``fresh``: a quote can land between a drop and a refill.
 WOULD_LOAD_FRESH = "fresh"
 WOULD_LOAD_REUSE = "reuse"
 WOULD_LOAD_SWAP = "swap"
