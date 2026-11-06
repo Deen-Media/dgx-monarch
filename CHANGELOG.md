@@ -257,6 +257,32 @@
 
 ### Compatibility and verification
 
+- The hardware checks of 2026-11-03 to 05 are in the docs. p-h3-image and
+  Wan 2.2 TI2V 5B are HW: all three p-h3-image DiT files on one rank match
+  stock and on uly2 match one rank, its LoRA route matches stock, and the
+  BF16 template refuses on one Spark before anything loads and renders each
+  way the refusal names but the INT8 ConvRot DiT; at its 20 steps Wan 2.2
+  TI2V on one GPU matches stock and on uly2 matches one GPU. VALIDATION gains
+  the template release
+  test of 2026-11-04 and what #139 fixed, the other 32 FP8 compute cells
+  (HunyuanImage 2.1's plain FP8
+  stays inside the floor on `fp8_ops` and the Ideogram4 fp8_scaled pair does
+  not, against BF16; `fp8_matrix_mult = "on"` stays unsafe), Worker-assisted
+  VAE decode on Wan 2.2 TI2V and both HunyuanVideo VAEs with its fail-open,
+  warm, short-of-memory, 362-frame and Clear VRAM checks, the MiniMax H3
+  context windows, the ComfyUI 0.44.0 rows, the BF16 rescue's other forms,
+  the pipelined unload, the Old model in the way card, the cast and swap
+  credits, and a LoRA change on a held base. The torch 2.15.0 ladder passed
+  steps 1 to 10 on the pair on 2026-11-05 and 06, and this release ships on
+  torch 2.15.0+cu132. Ideogram4's MODELS row now says its fp8_scaled pair
+  reads 0.161 against the BF16 pair, from the file's quantization, and the
+  p-h3-image template's note says what its edit's hardware record shows.
+  Still NOT RUN: the release test on torch 2.15, LTX 2.3's decode split, and
+  a Worker on ComfyUI 0.43 with context windows
+  ([VALIDATION](docs/VALIDATION.md#release-test-2026-11-04),
+  [VALIDATION](docs/VALIDATION.md#torch-2-15),
+  [MODELS](docs/MODELS.md#model-p-h3-image),
+  [MODELS](docs/MODELS.md#model-wan-2-2-ti2v-5b)).
 - comfy-kitchen 0.2.41, the release ComfyUI master now pins, joins the INT8
   GEMM kernel's validated set, so an install that follows that pin keeps the
   kernel on instead of running every INT8 linear on CUTLASS with a WARNING.
@@ -284,8 +310,8 @@
   builds when only the build moved. A row written before this change carries
   no build and reads stale. INSTALL now says what the ComfyUI guide's torch
   2.15.0 changes, gives the import check its commands and notes the torchaudio
-  builds that no longer load against torch 2.12.0+cu132. No render has run on
-  torch 2.15 with the setting
+  builds that no longer load against torch 2.12.0+cu132. On 2026-11-05 and 06
+  the torch 2.15 ladder passed on the pair with the setting
   ([TROUBLESHOOTING #143](docs/TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group),
   [VALIDATION](docs/VALIDATION.md#torch-2-15),
   [INSTALL](docs/INSTALL.md#install-from-source)).

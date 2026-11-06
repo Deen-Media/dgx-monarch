@@ -1411,7 +1411,10 @@ ComfyUI shows that as the prompt error. The node methods that meet a Worker's
 refusal (the samplers, Fleet KSampler, the UNET loaders, Identity Gate) raise the inner
 refusal itself, chained from the wrapper, so the error starts with the tag, the
 sentence and the card it names, and ComfyUI's log keeps the remote traceback
-(`nodes/refusal_lead.py`). Only a text that leads with a tag is lifted out, so
+(`nodes/refusal_lead.py`). On 2026-11-05 a class K ring-pad refusal and a
+Worker's stock wall at the sampler both reached the prompt error that way,
+with no wrapper and no traceback; a refusal that offers a card ends with the
+consent block the panel reads. Only a text that leads with a tag is lifted out, so
 a crash keeps its wrapper, and every decision that reads the wrapper (the
 sample lease, eviction, the card) runs below the node method. So the lifted
 error drops the machine blocks after the sentence, the measured numbers and the
@@ -1893,7 +1896,12 @@ because the graph still needs its text encoder and VAEs before sampling. The
 agreement below credits a Worker resident that a load would replace only where
 the drop was measured: the GPU copy of the slot's own stock resident, never
 the arena a stock load retains, which an in-process unload does not return,
-and never a slab resident, which barely moves MemAvailable.
+and never a slab resident. A slab resident does hold MemAvailable: on
+2026-11-05 the drop of a 33.02 GiB Flux 2 slab freed its shared memory
+within 2 s, and MemAvailable rose from 49 to 88 GiB. Two stock loads over
+that slab were admitted with no
+refusal that day, so no credit for it has been needed yet
+([VALIDATION](VALIDATION.md#capacity-checks-2026-11-05)).
 
 **A model in the way offers a clear, not a credit.** A refusal priced over a
 Worker resident names the old model and its box: "the old model (flux1-dev)

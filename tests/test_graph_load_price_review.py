@@ -254,7 +254,9 @@ def test_the_slab_card_quotes_the_figures_the_refusal_leads_with():
 def test_models_names_the_slab_card_for_the_bf16_template():
     section = (ROOT / "docs" / "MODELS.md").read_text().split('<a id="model-p-h3-image">')[1]
     memory = section.split("**Memory.**")[1].split("**Known limitations.**")[0]
-    assert "Load with slab residency" in memory and "no hardware" in memory
+    # The 2026-11-05 recheck rendered the template on one Spark under the card.
+    assert "Load with slab residency" in memory and "the slab card" in memory
+    assert "2026-11-05" in memory and "pixel-identical to the same graph on stock" in memory
 
 
 def test_troubleshooting_says_what_a_held_model_credits_and_a_fresh_driver_costs():

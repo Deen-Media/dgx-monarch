@@ -333,6 +333,64 @@ retest.
   compatibility wheel against a ComfyUI interpreter, was **NOT RUN** for this
   release; the rig's own venv already carries that wheel.
 
+<a id="release-test-2026-11-04"></a>
+
+## Template release test (2026-11-04)
+
+The release test renders every shipped template once on the pair: one step at
+seed 1031 on uly2, or ring2 for Omnigen2, which Ulysses cannot run, in one
+driver session through the maintained launcher, with an 8 GiB MemAvailable
+watchdog on both hosts. Seven templates are skipped, because they need inputs
+a user supplies: the two LoRA templates, `dgx-monarch-identity-gate.json` and
+`dgx-monarch-lora-low-rss.json`, and five whose demo inputs are not in the
+test's ComfyUI input folder (`qwen-image21-edit-mask-rgba`,
+`qwen-image21-edit-rgba`, `wan-flowrvs`, `wan-scail2` and `wandancer`). Every
+pass ran ComfyUI `8a98ecf58` (v0.44.0 code) and torch 2.12.0+cu132, with the
+head's 2100 MHz cap applied once and its unit off; no pass sampled the SM
+clock under load. The sibling ran uncapped.
+
+| pass | dev | rendered | error | skipped | how it ended |
+|---|---|---|---|---|---|
+| 1, from 02:31 | `4b71822` | 22 | 7 | 2 | the watchdog fired during the LTX 2.3 image-to-video template, the 31st |
+| 2, from 04:29 | `15b48c2` | 45 | 20 | 7 | the end of the list |
+| 3, from 13:53 | `15b48c2` | 63 | 2 | 7 | the end of the list |
+
+Passes 1 and 2 ran every template in one session with no reset between them,
+so each load met what earlier templates had left on the Workers. Of pass 2's
+20 errors, 19 were capacity refusals priced beside those models, and one was
+the harness's topology choice for Omnigen2. Its Wan 2.2 text-to-video
+template reported success after 900.3 s, which hid a 600 s stall: the two
+ranks ran collectives of different sizes, the sibling's carrying twice the
+head's elements, while the head read 12.5 GiB free and the sibling 26.1 GiB.
+
+Pass 3 reset the attached mesh before every template, as Reset attached mesh
+does, and waited 70 s for the next attach. Two templates failed:
+
+- `dgx-monarch-flux2-t2i`: the identity gate's stock reference was priced at
+  74.3 GiB against 63.0 GiB on the head, 11.4 GiB short beside the driver's
+  33 GiB Flux 2 text encoder, so the gate ended INCONCLUSIVE and the render
+  refused the same way.
+- `dgx-monarch-wan-animate2-memory-saver`: the loader placed the bare BF16
+  base, and the sampler's change to base plus LoRA was priced as a whole
+  stock load beside it, 69.1 GiB against 61.8 GiB, 7.4 GiB short.
+
+#139 fixed both and the stall, and the fixes ran on the pair from fresh
+fleets. On dev `91fd15f` on 2026-11-05 the Flux 2 template unloaded the
+driver's encoder for the gate's stock reference, passed the gate and
+rendered, and a second queue rendered with the encoder loaded again
+([TROUBLESHOOTING #66](TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora));
+the memory-saver's change was admitted on both ranks and rendered; and the
+Wan 2.2 text-to-video template sampled 10 steps per stage with the head held
+near 12 GiB for two minutes of stage 1, lowest 10.6 GiB, and no stall
+([Wan 2.2 T2V](#evidence-wan-2-2-t2v-high-low)). On dev `7c3eecb` the
+memory-saver's change loads base and LoRA fresh and samples in 41.4 s, and
+the INT8 Wan-Animate 2 template took 100.1 s against pass 3's 240.1 s
+([Wan-Animate 2](#evidence-wan-animate-2)). Each of those cells ran alone,
+not as part of a pass.
+
+**NOT RUN:** the whole pass again on the release commit and the torch it
+ships, and the seven skipped templates.
+
 ## Comparison method
 
 - **Native reference:** an independent stock ComfyUI workflow.
@@ -1578,8 +1636,23 @@ from its own default.
 
 ### p-h3-image
 
-No hardware comparison has run, so the row stays impl. p-h3-image is a
-MiniMax H3 DiT on the H3 adapter. The CPU tests, against ComfyUI 0.44.0, hold
+**2026-11-05, dev `91fd15f`, then `7c3eecb`.** The cells below ran on the pair
+and on one Spark (Init `mode=local`, `gpus_per_host=1`), ComfyUI `8a98ecf58`,
+torch 2.12.0+cu132, with the head's 2100 MHz cap applied once and its unit
+off, SM 2080 to 2093 MHz under load, and the sibling uncapped. Each stock
+reference is the stock twin of its graph: every DGX Monarch node replaced by
+the stock node it wraps, the Init node dropped, every other input byte for
+byte. PrunaAI's own `p-h3-image_text_to_image` workflow, converted with its
+upsampler switch false, the template's two lines and seed 42, rendered
+pixel-identical to the BF16 twin, so the twins stand for the vendor recipe.
+Images were compared as RGB arrays and none was viewed. Cells 1 to 3 passed
+for all three DiT files, so the row is HW. On `7c3eecb` the cells that #142
+to #146 changed ran again: the LoRA route is now exact, and the shipped
+template refuses at the loader before anything loads, as designed, and renders
+each way the refusal names but the INT8 ConvRot DiT beside the BF16 upsampler,
+which has not run.
+
+p-h3-image is a MiniMax H3 DiT on the H3 adapter. The CPU tests, against ComfyUI 0.44.0, hold
 three things. ModelSamplingMiniMaxH3 (DGX Monarch) gives each Worker's clone
 the sampling object and the two shift keys a stock graph gets
 (`tests/test_h3_sigma_shift_comfy.py`). The one-frame latent of
@@ -1591,8 +1664,7 @@ with one and two references, at shifts 1.0 and 1.0 and at 12.0 and 3.0
 `minimax_h3`, and as `bf16`, `int8` and `w4a8`
 (`tests/test_p_h3_image_support.py`). None of it runs a GPU.
 
-The maintainer's cells, all NOT RUN. Each renders at 2912 square, seed 42,
-the head capped at 2100 MHz. `bf16` is `dgx-monarch-p-h3-image.json` with
+Each cell renders at 2912 square, seed 42. `bf16` is `dgx-monarch-p-h3-image.json` with
 the If/Else switch set to false, so the box's text reaches the model as it
 is and no cell depends on the upsampler. Set every graph's seed control to
 `fixed` before any comparison cell, the vendor's and ComfyUI's included: the
@@ -1604,21 +1676,33 @@ encoder and VAE. One step means Manual Sigmas `1.0, 0.0`.
 
 | cell | settings | a pass shows | status |
 |---|---|---|---|
-| detection, each file | topology `auto` on the pair | the driver logs `auto: uly2; minimax_h3 bf16 at 8.48 MP, world 2, table row 53`, with `int8` or `w4a8` for the other files, and `minimax_h3: one-frame image latent (p-h3-image) at shifts 1.0 and 1.0` | NOT RUN |
-| one rank against stock, each file | Init `mode=local`, `gpus_per_host=1`, one step, against the vendor's `p-h3-image_text_to_image` workflow at the same seed and files, its upsampler switch false and the template's request in its request box | the decoded image is pixel-identical to stock's, and the actor log shows the stock forward (no `minimax_h3 USP injected` line) | NOT RUN |
-| uly2 against one rank, each file | topology `auto` on the pair, one step, then 8 | the actor log shows `minimax_h3 USP injected: 50 blocks, sp=2`, both ranks report identical latents, and the image matches the one-rank cell at one step; the 8-step image is recorded beside it | NOT RUN |
-| ring2 | topology `ring2`, one step, `bf16` | an odd packed total refuses class K with the H3 ring-pad text (#49) before any block runs; an even one completes with identical latents on both ranks | NOT RUN |
-| cfg2 and dp2 | topologies `cfg2` and `dp2`, `bf16` | both refuse class P before dispatch with the H3 batch-one text | NOT RUN |
-| uly2+fsdp | topology `uly2+fsdp`, one step, `bf16`, then `w4a8` | `bf16` completes with identical latents and its image recorded against resident uly2; `w4a8` refuses class P at launch with the grouped 4-bit layout text | NOT RUN |
-| W4A8 kernels | `w4a8` on one rank, with a one-line probe or a profiler trace that records which W4A8 path ran (comfy-kitchen's `_W4A8_CHUNKED` and the chunked kernels' `used` flag, or the kernel names), then again with `[worker_args] int8_gemm = "cutlass"` | the render completes on GB10 on comfy-kitchen's own W4A8 kernels, and the record names the path; the `int8_gemm` toggle changes only the 40 `int8_tensorwise` layers and any fallback calls, so the two images match; a missing kernel shows here as a load or first-step error, which MODELS then records | NOT RUN |
-| no shift node | `bf16` with ModelSamplingMiniMaxH3 (DGX Monarch) removed, then the same through Fleet KSampler (DGX Monarch) | the driver refuses class P with the one-frame text (#144) before any Worker call, on both | NOT RUN |
-| upsampler | `bf16` as shipped, switch on, one rank | Generate Text runs on the driver and Preview as Text shows the expanded prompt; the render completes beside the 37.7 GiB DiT | NOT RUN |
-| edit | `bf16`, a Load Image wired to `image_1`, uly2 and one rank, one step | the reference rows reach the packed stream on both ranks, both report identical latents, and the image matches the one-rank cell | NOT RUN |
-| LoRA route | `dgx-monarch-test-p-h3-image-lora.json`, its slot mapped to `p-h3-image_lora_bf16.safetensors` at the 1.0 the graph holds and the sweep keeps, one rank, one step, against ComfyUI's own `image_p_h3_t2i` template with its upsampler bypassed | the NRMS against stock, recorded; a gap like MOSS-Image INT8's (#129) asks for the same refusal on H3 | NOT RUN |
+| detection, each file | topology `auto` on the pair | the driver logs `auto: uly2; minimax_h3 bf16 at 8.48 MP, world 2, table row 53`, with `int8` or `w4a8` for the other files, and `minimax_h3: one-frame image latent (p-h3-image) at shifts 1.0 and 1.0` | PASS for all three files on `91fd15f`; the W4A8 file reads `w4a8`, not `fp8` |
+| one rank against stock, each file | Init `mode=local`, `gpus_per_host=1`, one step, against the stock twin at the same seed and files, its upsampler switch false and the template's request in its request box | the decoded image is pixel-identical to stock's, and the actor log shows the stock forward (no `minimax_h3 USP injected` line) | PASS for all three files on `91fd15f`: pixel-identical to stock, no USP line; samples 8.61 s for BF16, 4.79 s for INT8 ConvRot and 5.08 s for W4A8, each with its load |
+| uly2 against one rank, each file | topology `auto` on the pair, one step, then 8 | the actor log shows `minimax_h3 USP injected: 50 blocks, sp=2`, both ranks report identical latents, and the image matches the one-rank cell at one step; the 8-step image is recorded beside it | PASS for all three files on `91fd15f`: the USP line on both ranks, `cross-rank latent identity: 2 comparisons across 1 DP groups bit-identical`, and each one-step image pixel-identical to its one-rank image; 8 steps recorded, sampling 29.15 s for BF16 with the model resident, 23.89 s for INT8 ConvRot and 25.36 s for W4A8, each with its load |
+| ring2 | topology `ring2`, one step, `bf16` | an odd packed total refuses class K with the H3 ring-pad text (#49) before any block runs; an even one completes with identical latents on both ranks | PASS on `91fd15f`: the total was odd, the refusal came with its waiver card and no rank sampled. On `7c3eecb` the prompt error opens with the tag, the sentence and the card, with no wrapper and no traceback |
+| cfg2 and dp2 | topologies `cfg2` and `dp2`, `bf16` | both refuse class P before dispatch with the packed-latent text: "packed multi-modality latents cannot use cfg-parallel" for cfg2, "packed multi-modality latents cannot be data-parallel" for dp2 | PASS on `91fd15f` |
+| uly2+fsdp | topology `uly2+fsdp`, one step, `bf16` after an Identity Gate (DGX Monarch) PASS on `uly2+fsdp`, then `w4a8` | `bf16` completes with identical latents and its image recorded against resident uly2; `w4a8` refuses class P at launch with the grouped 4-bit layout text | PASS on `91fd15f`. Before the gate PASS, `bf16` refused with `automatic FSDP execution requires an exact clean-reload Gate PASS (ledger=unknown, process=None)` and no proof ran. Identity Gate (DGX Monarch) on `uly2+fsdp` at two steps wrote `identity gate PASS (explicit): independently loaded FSDP shards render bit-identically`, and the render then sampled in 5.45 s with the shards resident, both ranks identical, its image pixel-identical to resident uly2. `w4a8` refused class P at launch |
+| W4A8 kernels | `w4a8` on one rank, with a one-line probe or a profiler trace that records which W4A8 path ran (comfy-kitchen's `_W4A8_CHUNKED` and the chunked kernels' `used` flag, or the kernel names), then again with `[worker_args] int8_gemm = "cutlass"` | the render completes on GB10 on comfy-kitchen's own W4A8 kernels, and the record names the path; the `int8_gemm` toggle changes only the 40 `int8_tensorwise` layers and any fallback calls, so the two images match; a missing kernel shows here as a load or first-step error, which MODELS then records | PASS on `91fd15f`, with a gap: both renders completed, and the CUTLASS render was pixel-identical to the Triton render and to stock. No probe could attach to the actor, so the record names the path by construction, not by trace: the file's 168 grouped layers store their scales in the layout comfy-kitchen 0.2.40 sends to its chunked W4A8 kernels, and whether each call's `used` flag came back true is not recorded |
+| no shift node | `bf16` with ModelSamplingMiniMaxH3 (DGX Monarch) removed, then the same model through Fleet KSampler (DGX Monarch) on the pair, wired with `model` from the UNET loader, `clip` from the text encoder's CLIPLoader, `positive` and `negative` both from p-h3-image Conditioning's conditioning output (the graph has no negative), `latent_image` from its latent output, one step, CFG 1.0, `euler` on `simple`, and its output into the template's VAE Decode | the driver refuses class P with the one-frame text (#144) before any Worker call, on both | PASS on `91fd15f`: both refused with the #144 text, Fleet KSampler in 0.3 s with no load, quote or sample line |
+| upsampler | `bf16` as shipped, switch on, one rank | the loader refuses, class C, before Generate Text and before anything loads, naming the INT8 ConvRot and W4A8 files on disk, the switch and `uly2+fsdp` after its gate, and offering the slab card; the slab card, a named file, the switch set to false and `uly2+fsdp` after its gate each render | PASS on `7c3eecb`: refused in 4.7 s, 119.8 GiB against 109.6 GiB, 10.2 GiB short, with no model loaded. Then each named way but the INT8 ConvRot DiT rendered: the slab card, its image pixel-identical to the same graph on stock residency; `p-h3-image_w4a8.safetensors` in the UNET loader; `p-h3-image_prompt_upsampler_w4a8.safetensors` beside the BF16 DiT, the first record of that file; the switch set to false, with no upsampler load; and on the pair `uly2+fsdp` after its gate, pixel-identical to one rank. The INT8 ConvRot DiT beside the BF16 upsampler has not run; it rendered on `91fd15f` with the switch false. On `91fd15f`, before the loader priced the upsampler, the same graph ran Generate Text and refused at the sampler 2.0 GiB short |
+| edit | `bf16`, a Load Image wired to `image_1`, uly2 and one rank, one step | the reference rows reach the packed stream on both ranks, both report identical latents, and the image matches the one-rank cell | PASS on `91fd15f`: both ranks identical, and the uly2 image pixel-identical to one rank. No stock comparison ran |
+| LoRA route | `dgx-monarch-test-p-h3-image-lora.json`, its slot mapped to `p-h3-image_lora_bf16.safetensors` at the 1.0 the graph holds and the sweep keeps, one rank, one step and 8, against ComfyUI's own `image_p_h3_t2i` recipe through its stock twin | the image pixel-identical to stock | PASS on `7c3eecb`: pixel-identical to stock at one step and at 8 (NRMS 0.0), and `auto` on the pair (uly2) pixel-identical to one rank. On `91fd15f`, with the classic bake, it read NRMS 0.0772 at one step and 0.2567 at 8 ([TROUBLESHOOTING #145](TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)) |
 
 A fail is any other outcome in a cell: a refusal where the table expects a
 render, a render where it expects a refusal, latents that differ across
 ranks, or a uly2 image that differs from one rank at one step.
+
+The three DiT files. The load and 8-step columns come from the head Worker's
+journal on the pair, the one-step column from the one-rank sessions. Each 8-step
+cell says whether its time includes the file's load; the 8-step INT8 ConvRot
+render ran on a fresh fleet after an Old model in the way refusal beside the
+BF16 and W4A8 files.
+
+| file | file size | resident on each rank | stock price | load | one step, one rank | 8 steps, uly2 |
+|---|---|---|---|---|---|---|
+| `p-h3-image_bf16` | 40.5 GB | 37.69 GiB | 84.1 GiB | 26.5 s | 8.61 s | 29.15 s, resident |
+| `p-h3-image_int8_convrot` | 21.2 GB | 19.60 GiB | 46.5 GiB | 9.1 s | 4.79 s | 23.89 s, with its load |
+| `p-h3-image_w4a8` | 13.4 GB | 12.29 GiB | 31.1 GiB | 5.6 s | 5.08 s | 25.36 s, with its load |
 
 <a id="evidence-longcat-image"></a>
 
@@ -1894,6 +1978,22 @@ FP16 high/low auto/Ulysses completed cold/warm 81-frame renders
 and matched the local decoded one-step reference exactly. The FP8 T2V
 high/low pair has not been compared; this FP16 result does not cover it.
 
+**2026-11-04 and 05, the release-test cell.** `dgx-monarch-wan22-t2v.json`
+loads both FP16 stages cast to bf16 at the loaders; one step per stage on
+uly2 at seed 1031 sampled bit-identical latents for both stages on dev
+`15b48c2`, `91fd15f` and `7c3eecb`. On `91fd15f`, where every rank batches
+cond and uncond as the leanest rank does
+([TROUBLESHOOTING #79](TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)),
+the two stages sampled in 26.84 and 26.19 s against 26.46 and 26.40 s on
+`15b48c2`, +1.4 and -0.8 percent, below what one-step samples resolve. At the
+template's 10 steps per stage, with the head held near 12 GiB from about 60 s
+to 180 s of stage 1's 277.6 s, lowest 10.6 GiB, and the sibling near 68 GiB,
+both stages sampled with no stall, and both ranks
+reported the same latents. Where the head fell from 92 to 10.6 GiB during
+stage 1, both ranks took the other batch path alike: the stage's latent
+changed, and stayed identical across the ranks. The head was capped, SM 2086
+MHz median and 2093 MHz at most under load.
+
 <a id="evidence-wan-2-2-i2v"></a>
 
 ### Wan 2.2 I2V
@@ -1911,18 +2011,29 @@ graph completed cold/warm renders and matched a local reference on all
 
 ### Wan 2.2 TI2V 5B
 
-No hardware comparison has run, so the row stays impl. The CPU tests check
-the template against the stock node definitions, the Wan adapter's exact
-class match and its per-frame timestep expansion, and split a real
-`wan2.2_vae.safetensors` decode byte-identical to the stock tiled decode. The
-maintainer's cells, each on `dgx-monarch-wan22-ti2v.json` at seed 1031 with
-the head capped at 2100 MHz, all NOT RUN:
+**2026-11-04, dev `15b48c2`.** ComfyUI `8a98ecf58` on both Sparks, torch
+2.12, `dgx-monarch-wan22-ti2v.json` at seed 1031 with the head's 2100 MHz cap
+applied once and its unit off, SM 2080 to 2093 MHz under load. The stock
+reference is ComfyUI's own `video_wan2_2_5B_ti2v` template at the same seed;
+its loaders, shift, latent, sampler and prompts match the template's. One
+step proves nothing for this model: ComfyUI's `uni_pc` at one step returns
+the scaled starting noise without using the model, so the one-step cells
+agreed with stock whatever the model computed, and the evidence is at the
+shipped 20 steps. Render the stock reference without `--use-sage-attention`:
+the actors compute attention with PyTorch attention (`USP attention kernel:
+TORCH_FLASH`) whatever the driver's flag says, and a stock render with Sage
+sits at NRMS 0.426 from both. The CPU tests check the template against the
+stock node definitions, the Wan adapter's exact class match and its per-frame
+timestep expansion, and split a real `wan2.2_vae.safetensors` decode
+byte-identical to the stock tiled decode.
 
 | cell | settings | a pass shows | status |
 |---|---|---|---|
-| one GPU against stock | Init `mode=local`, `gpus_per_host=1`, steps 1; against ComfyUI's own `video_wan2_2_5B_ti2v` template at the same seed, steps 1, Load Image left bypassed | the decoded 121 frames pixel-identical to stock's | NOT RUN |
-| uly2 against one GPU | topology `auto` on the pair, steps 1, then 20 | the driver logs `auto: uly2` with table row 50, both ranks report identical latents, and the decoded frames at steps 1 match the one-GPU cell | NOT RUN |
-| image to video on uly2 | a Load Image wired to `start_image`, steps 1, on `uly2` and on one GPU | the first decoded frame follows the image and the two renders' frames match | NOT RUN |
+| one GPU against stock | Init `mode=local`, `gpus_per_host=1`, 20 steps; against ComfyUI's own template at the same seed, rendered without `--use-sage-attention`, Load Image left bypassed | the decoded 121 frames pixel-identical to stock's | PASS: 121 of 121 pixel-identical. One GPU took 380.1 s, 292.9 s of it sampling; stock took 360.1 s |
+| uly2 against one GPU | topology `auto` on the pair, 20 steps | the driver logs `auto: uly2` with table row 50, both ranks report identical latents, and the decoded frames match the one-GPU cell | PASS: `auto: uly2; wan fp16 at 0.90 MP, world 2, table row 50`, both ranks and one GPU on one latent sha256 (`edd6944571c3...`), and 121 of 121 frames pixel-identical. The pair took 230.1 s, 168.8 s of it sampling |
+| image to video on uly2 | a Load Image wired to `start_image`, 20 steps, on `uly2` and on one GPU | the first decoded frame follows the image and the two renders' frames match | PASS: frame 0 against the still reads correlation 0.9999 and a mean absolute difference of 0.3 of 255 on one GPU, on the pair and in stock, where a text render's frame 0 scores 0.05; the pair equals one GPU, 121 of 121, on one sha256. The pair took 270.1 s, one GPU 370.1 s |
+
+ring2, cfg2 and FSDP did not run on this model.
 
 <a id="evidence-wan-2-1-i2v"></a>
 
@@ -2065,6 +2176,28 @@ long-duration memory soak.
 Release-before-decode is an explicit alternative that reloads on the next
 queue. Slab/low-RSS has one later cold first-use PASS, without warm-session testing.
 FSDP, ring and caches have not been tested on hardware. Other inputs need their own comparisons.
+
+**A LoRA change on a held base (2026-11-05).** On dev `91fd15f` the
+memory-saver template's sampler changed the bare BF16 base its loader had
+placed to base plus LoRA in place: 230 s of `gpu_load` on each rank at about
+130 MiB/s, a 269.4 s sample, and the head down to 19.1 GiB. On dev `7c3eecb`
+the same change drops the copy and loads base and LoRA fresh: a 14.8 s load
+and 3.0 s of `gpu_load` on the head, a 41.4 s sample, and a latent
+bit-identical to a fresh load of the same stack at the same seed. The INT8
+template takes the same route and took 100.1 s against 240.1 s in the
+2026-11-04 release test. On the pair, a strength change from 1.0 to 0.8 on
+the BF16 warm template was refused 13.3 GiB short on the head with the Old
+model in the way card: the first queue's load had left about 34 GiB of
+anonymous memory in each actor, ComfyUI's backup of the patched weights.
+Clear and retry cleared both Sparks in 4.45 s and the next queue rendered,
+and with Always clear and retry on, a queue cleared once and rendered. On
+one Spark, where no agreement prices the change, the same strength change
+ran in place in 0.2 s in the store and 1.7 s of `gpu_load`, grew the actor by
+0.8 GiB, and gave a latent bit-identical to a fresh load at 0.8. Every pair
+render here kept identical rank latents. Since #148 the price credits that
+held backup for a strength change, about 8.7 GiB where it charged 38.6; no
+hardware run has checked that yet. The head was capped, SM 2080 to 2093 MHz
+under load.
 
 <a id="evidence-hunyuanvideo-1-5-sr"></a>
 
@@ -2605,13 +2738,16 @@ as the NVFP4 quantizers, runs the same in a stock and a kernel pass.
 
 ## FP8 compute paths
 
-**Status: the core subset ran on 2026-10-31. The other cells are NOT RUN.**
-The 17 core cells ran on dev 7b5b59e, deployed to both Workers, with ComfyUI
-0.43.0 and torch 2.12.0+cu132. The head ran its 2100 MHz cap and the sibling
-ran uncapped. ComfyUI's FP8 matmul path, `fp8_ops`, rendered plain FP8 as
-noise, in the actors and in the driver alike. The one FP8 route that sampled
-faster than BF16 inside the 0.10 floor was the Krea2 Turbo fp8_scaled file.
-The other 32 cells of the 49-cell matrix did not run.
+**Status: the 17 core cells ran on 2026-10-31 and the other 32 cells of the
+49-cell matrix on 2026-11-03.** The core cells ran on dev 7b5b59e, deployed
+to both Workers, with ComfyUI 0.43.0 and torch 2.12.0+cu132. The head ran its
+2100 MHz cap and the sibling ran uncapped. ComfyUI's FP8 matmul path,
+`fp8_ops`, rendered plain FP8 as noise, in the actors and in the driver
+alike. The one FP8 route that sampled faster than BF16 inside the 0.10 floor
+was the Krea2 Turbo fp8_scaled file. The other cells
+([below](#fp8-compute-paths-the-other-cells-2026-11-03)) found one plain FP8
+file that `fp8_ops` does not turn to noise, HunyuanImage 2.1, and an
+Ideogram4 kitchen pair past the floor against its BF16 pair.
 
 ComfyUI 0.43.0 picks a model's operations class when it builds the model
 ([MODELS](MODELS.md#fp8-compute-paths)): a checkpoint with comfy-kitchen
@@ -2711,33 +2847,105 @@ What the core shows:
 - The head's lowest MemAvailable was 52.7 to 79.9 GiB, lowest in the BF16
   Krea2 cell. The sibling moved only in the uly2 cells, to 76.4 to 82.8 GiB.
 
-**Not run.** The core decided the question, so the other 32 cells of the
-49-cell matrix were not run: HunyuanImage 2.1 plain FP8 would repeat the
-Qwen-Image rows, and the Chroma and Ideogram4 kitchen files the Krea2
-fp8_scaled rows.
+<a id="fp8-compute-paths-the-other-cells-2026-11-03"></a>
 
-| Group | File | Loader weight_dtype | `--fast fp8_matrix_mult` | `fp8_matrix_mult` | Layouts | What it would measure | Status |
-|---|---|---|---|---|---|---|---|
-| A | Qwen-Image 2512 FP8 | default | off | auto, on | cfg2 | the plain FP8 pair on cfg2 | NOT RUN |
-| A | Qwen-Image 2512 FP8 | fp8_e4m3fn_fast | off | auto | single | the loader route to `fp8_ops`, against `on` | NOT RUN |
-| A | HunyuanImage 2.1 FP8 | default | off | auto, on | single, uly2, cfg2 | the same pair on a second plain FP8 family | NOT RUN |
-| B | Krea2 Turbo BF16 | default, fp8_e4m3fn, fp8_e4m3fn_fast | off | auto | uly2, cfg2 | the BF16 file and its two FP8 casts on the pair | NOT RUN |
-| B | Krea2 Turbo BF16 | default | off | on | single | what `on` costs a BF16 model, whose linears keep the cast path | NOT RUN |
-| C | Krea2 Turbo fp8_scaled | default | off | auto, on | uly2, cfg2 | the kitchen file on the pair | NOT RUN |
-| C | Chroma1-HD fp8mixed, Ideogram4 fp8_scaled pair | default | off | auto, on | single | the same on two more kitchen files | NOT RUN |
-| C | Krea2 Turbo fp8_scaled, Chroma1-HD fp8mixed, Ideogram4 fp8_scaled pair, Wan 2.1 T2V 14B fp8_scaled | fp8_e4m3fn_fast | off | auto | single | what the loader's FP8 dtype does to the weights comfy-kitchen leaves unquantized | NOT RUN |
-| C | Chroma1-HD BF16, Ideogram4 BF16 pair | default | off | auto | single | the BF16 references for Chroma and Ideogram4 | NOT RUN |
-| D | Qwen-Image 2512 FP8, stock graph | fp8_e4m3fn_fast | off, on | none | the ComfyUI process, one GPU | the loader route in the driver, alone and with the flag | NOT RUN |
+**The other cells (2026-11-03).** The core had decided the knob, and the
+other 32 cells of the matrix then ran on dev `4b71822`, deployed to both
+Workers, with ComfyUI `8a98ecf58` (v0.44.0 code) and torch 2.12.0+cu132, by
+the same harness and method; the head's cap was applied once with its unit
+off and its SM clock was not sampled under load, and the sibling ran
+uncapped. Seven core cells ran again first in the same session, so every
+compare below is between cells of that session. The references reproduced
+every 2026-10-31 NRMS figure, and their sampling times moved by -1.1 to
++14.2 s.
 
-**What the result changes.** The plain FP8 path is not a method on GB10, so
-the knob stays at `auto`. [MODELS](MODELS.md#fp8-compute-paths) and
+| Cell | File | Setting | Layout | Class logged | Sampling, s | Wall, s | One-step NRMS | Pixel NRMS | Lowest MemAvailable, GiB, head / sibling | Actor GPU peak, GiB |
+|---|---|---|---|---|---|---|---|---|---|---|
+| qA_1_unset (run again) | Qwen-Image 2512 FP8 | none | one GPU | `manual_cast` | 111.4 | 115 | reference | reference | 74.0 / 115.1 | 20.3 |
+| qA_1_on (run again) | Qwen-Image 2512 FP8 | `fp8_matrix_mult = "on"` | one GPU | `fp8_ops` | 81.1 | 85 | 6.90 against qA_1_unset | 1.89 | 75.1 / 115.1 | 20.1 |
+| kB_1_bf16 (run again) | Krea2 Turbo BF16 | none | one GPU | `disable_weight_init` | 74.2 | 80 | reference | reference | 59.3 / 115.1 | 25.7 |
+| kC_1_unset (run again) | Krea2 Turbo fp8_scaled | none | one GPU | `mixed_precision_ops` | 64.1 | 70 | 0.068 against kB_1_bf16 | 0.40 | 79.4 / 115.1 | 14.1 |
+| wC_1_unset (run again) | Wan 2.1 T2V 14B fp8_scaled, 33 frames | none | one GPU | `mixed_precision_ops` | 315.8 | 325 | reference | reference | 70.8 / 113.6 | 16.9 |
+| qD_plain (run again) | Qwen-Image 2512 FP8, stock graph | none | the driver | `manual_cast` | no actor | 110 | reference | reference | 77.6 / 114.9 | no actor |
+| qD_fast (run again) | Qwen-Image 2512 FP8, stock graph | driver `--fast fp8_matrix_mult` | the driver | `fp8_ops` | no actor | 85 | 6.90 against qD_plain | 1.89 | 79.4 / 115.1 | no actor |
+| qA_c2_unset | Qwen-Image 2512 FP8 | none | cfg2 | `manual_cast` on both Workers | 53.0 | 55 | reference | reference | 63.1 / 77.4 | 21.4 each |
+| qA_c2_on | Qwen-Image 2512 FP8 | `fp8_matrix_mult = "on"` | cfg2 | `fp8_ops` on both Workers | 40.4 | 45 | 6.90 against qA_c2_unset | 1.89 | 70.3 / 82.3 | 21.4 each |
+| qA_1_ldfast | Qwen-Image 2512 FP8 | loader `fp8_e4m3fn_fast` | one GPU | `fp8_ops` | 80.7 | 85 | identical to qA_1_on | identical to qA_1_on | 73.2 / 115.0 | 20.1 |
+| hA_1_unset | HunyuanImage 2.1 FP8 | none | one GPU | `manual_cast` | 76.6 | 80 | reference | reference | 72.0 / 115.0 | 17.8 |
+| hA_1_on | HunyuanImage 2.1 FP8 | `fp8_matrix_mult = "on"` | one GPU | `fp8_ops` | 51.4 | 55 | 0.057 against hA_1_unset | 0.21 | 67.2 / 115.0 | 17.9 |
+| hA_u2_unset | HunyuanImage 2.1 FP8 | none | uly2 | `manual_cast` on both Workers | 51.9 | 55 | reference | reference | 64.2 / 83.1 | 19.3 each |
+| hA_u2_on | HunyuanImage 2.1 FP8 | `fp8_matrix_mult = "on"` | uly2 | `fp8_ops` on both Workers | 36.6 | 40 | 0.057 against hA_u2_unset | 0.21 | 63.8 / 86.0 | 19.3 each |
+| hA_c2_unset | HunyuanImage 2.1 FP8 | none | cfg2 | `manual_cast` on both Workers | 40.1 | 45 | reference | reference | 65.2 / 87.4 | 18.7 / 18.9 |
+| hA_c2_on | HunyuanImage 2.1 FP8 | `fp8_matrix_mult = "on"` | cfg2 | `fp8_ops` on both Workers | 25.9 | 30 | 0.058 against hA_c2_unset | 0.20 | 65.2 / 87.3 | 18.6 each |
+| kB_1_bf16_on | Krea2 Turbo BF16 | `fp8_matrix_mult = "on"` | one GPU | `fp8_ops` | 72.6 | 75 | identical to kB_1_bf16 | identical to kB_1_bf16 | 53.5 / 115.0 | 25.7 |
+| kB_u2_bf16 | Krea2 Turbo BF16 | none | uly2 | `disable_weight_init` on both Workers | 44.5 | 50 | reference | reference | 54.5 / 72.2 | 27.4 each |
+| kB_u2_cast | Krea2 Turbo BF16 | loader `fp8_e4m3fn` | uly2 | `manual_cast` on both Workers | 47.0 | 50 | 0.055 against kB_u2_bf16 | 0.32 | 70.3 / 79.2 | 15.1 each |
+| kB_u2_castfast | Krea2 Turbo BF16 | loader `fp8_e4m3fn_fast` | uly2 | `fp8_ops` on both Workers | 36.6 | 40 | 0.206 against kB_u2_cast; 0.191 against kB_u2_bf16 | 0.41; 0.42 | 69.1 / 84.5 | 15.5 each |
+| kB_c2_bf16 | Krea2 Turbo BF16 | none | cfg2 | `disable_weight_init` on both Workers | 36.5 | 40 | reference | reference | 52.3 / 68.3 | 27.1 each |
+| kB_c2_cast | Krea2 Turbo BF16 | loader `fp8_e4m3fn` | cfg2 | `manual_cast` on both Workers | 38.0 | 40 | 0.055 against kB_c2_bf16 | 0.32 | 64.9 / 78.3 | 15.0 / 27.1 |
+| kB_c2_castfast | Krea2 Turbo BF16 | loader `fp8_e4m3fn_fast` | cfg2 | `fp8_ops` on both Workers | 29.6 | 35 | 0.206 against kB_c2_cast; 0.191 against kB_c2_bf16 | 0.41; 0.42 | 67.3 / 81.2 | 15.2 each |
+| kC_1_ldfast | Krea2 Turbo fp8_scaled | loader `fp8_e4m3fn_fast` | one GPU | `mixed_precision_ops` | 63.4 | 65 | 0.063 against kC_1_unset; 0.063 against kB_1_bf16 | 0.36; 0.33 | 76.6 / 114.9 | 14.1 |
+| kC_u2_unset | Krea2 Turbo fp8_scaled | none | uly2 | `mixed_precision_ops` on both Workers | 39.2 | 45 | 0.068 against kB_u2_bf16 | 0.40 | 73.6 / 90.6 | 16.0 each |
+| kC_u2_on | Krea2 Turbo fp8_scaled | `fp8_matrix_mult = "on"` | uly2 | `mixed_precision_ops` on both Workers | 39.5 | 45 | identical to kC_u2_unset; 0.068 against kB_u2_bf16 | identical to kC_u2_unset; 0.40 | 73.6 / 90.4 | 16.0 each |
+| kC_c2_unset | Krea2 Turbo fp8_scaled | none | cfg2 | `mixed_precision_ops` on both Workers | 31.9 | 35 | 0.068 against kB_c2_bf16 | 0.40 | 75.2 / 90.8 | 15.6 each |
+| kC_c2_on | Krea2 Turbo fp8_scaled | `fp8_matrix_mult = "on"` | cfg2 | `mixed_precision_ops` on both Workers | 31.7 | 35 | identical to kC_c2_unset; 0.068 against kB_c2_bf16 | identical to kC_c2_unset; 0.40 | 74.5 / 90.3 | 15.6 each |
+| cC_1_bf16 | Chroma1-HD BF16 | none | one GPU | `disable_weight_init` | 60.5 | 65 | reference | reference | 74.1 / 91.6 | 17.5 |
+| cC_1_unset | Chroma1-HD fp8mixed | none | one GPU | `mixed_precision_ops` | 44.4 | 45 | 0.064 against cC_1_bf16 | 0.11 | 87.2 / 115.0 | 9.5 |
+| cC_1_on | Chroma1-HD fp8mixed | `fp8_matrix_mult = "on"` | one GPU | `mixed_precision_ops` | 44.5 | 50 | identical to cC_1_unset; 0.064 against cC_1_bf16 | identical to cC_1_unset; 0.11 | 87.5 / 114.9 | 9.5 |
+| cC_1_ldfast | Chroma1-HD fp8mixed | loader `fp8_e4m3fn_fast` | one GPU | `mixed_precision_ops` | 44.4 | 50 | 0.077 against cC_1_unset; 0.080 against cC_1_bf16 | 0.11; 0.14 | 88.1 / 114.9 | 9.5 |
+| iC_1_bf16 | Ideogram4 BF16 pair | none | one GPU | `disable_weight_init` on both models | 53.3 | 55 | reference | reference | 51.9 / 114.9 | 35.8 |
+| iC_1_unset | Ideogram4 fp8_scaled pair | none | one GPU | `mixed_precision_ops` on both models | 34.9 | 40 | 0.161 against iC_1_bf16 | 0.31 | 79.1 / 114.9 | 18.5 |
+| iC_1_on | Ideogram4 fp8_scaled pair | `fp8_matrix_mult = "on"` | one GPU | `mixed_precision_ops` on both models | 35.0 | 40 | identical to iC_1_unset; 0.161 against iC_1_bf16 | identical to iC_1_unset; 0.31 | 74.1 / 115.0 | 18.5 |
+| iC_1_ldfast | Ideogram4 fp8_scaled pair | loader `fp8_e4m3fn_fast` | one GPU | `mixed_precision_ops` on both models | 35.0 | 40 | 0.122 against iC_1_unset; 0.178 against iC_1_bf16 | 0.26; 0.27 | 79.0 / 114.9 | 18.5 |
+| wC_1_ldfast | Wan 2.1 T2V 14B fp8_scaled, 33 frames | loader `fp8_e4m3fn_fast` | one GPU | `mixed_precision_ops` | 294.9 | 305 | identical to wC_1_unset | 0.41 | 77.0 / 114.9 | 16.9 |
+| qD_ldfast | Qwen-Image 2512 FP8, stock graph | loader `fp8_e4m3fn_fast` | the driver | `fp8_ops` | no actor | 85 | 6.90 against qD_plain | 1.89 | 79.7 / 115.0 | no actor |
+| qD_both | Qwen-Image 2512 FP8, stock graph | loader `fp8_e4m3fn_fast`, driver `--fast fp8_matrix_mult` | the driver | `fp8_ops` | no actor | 85 | identical to qD_fast | identical to qD_fast | 79.3 / 114.8 | no actor |
+
+What the 2026-11-03 cells show:
+
+- Qwen-Image 2512 on `fp8_ops` renders the same noise on cfg2, 6.90 against
+  its dequantizing path, and the loader's `fp8_e4m3fn_fast` reaches
+  `fp8_ops` too: in the actors its output is identical to `"on"`, and in the
+  driver it reads 6.90 against the plain stock render.
+- HunyuanImage 2.1, the other plain FP8 file, does not. On `fp8_ops` it read
+  one-step NRMS 0.057 against its dequantizing path on one GPU and on uly2,
+  and 0.058 on cfg2, inside the 0.10 floor, with pixel NRMS 0.20 to 0.21, and
+  it sampled 33, 30 and 35 percent faster. The head holds no BF16 HunyuanImage
+  file, so these figures compare two FP8 paths of one file. The noise is
+  therefore not a property of every plain FP8 file on this build.
+- The Krea2 Turbo BF16 file's two casts read the one-GPU figures on uly2 and
+  on cfg2: `fp8_e4m3fn` 0.055 against BF16 and `fp8_e4m3fn_fast` 0.191,
+  past the floor, the fast cast sampling 18 percent faster than BF16 on uly2
+  and 19 percent on cfg2. `"on"` picks `fp8_ops` for the BF16 file, but its
+  linears keep the cast path, with identical output.
+- `"on"` changed no kitchen file's output on any layout. Krea2 Turbo
+  fp8_scaled read 0.068 against BF16 on uly2 and cfg2, as on one GPU, and
+  Chroma1-HD fp8mixed 0.064 against its BF16 file, inside the floor, sampling
+  27 percent faster. The Ideogram4 fp8_scaled pair read 0.161 against the BF16
+  pair, past the floor, sampling 35 percent faster.
+- The loader's `fp8_e4m3fn_fast` on a kitchen file casts the layers
+  comfy-kitchen leaves unquantized: Krea2 Turbo moved 0.063 and Chroma 0.077
+  from their defaults, inside the floor, and Ideogram4 0.122, past it. The Wan
+  2.1 file, every layer of which is full precision, was identical at one step,
+  but its full render's pixels moved by 0.41.
+- The head's lowest MemAvailable was 51.9 to 88.1 GiB, lowest in the BF16
+  Ideogram4 cell, and the sibling's 68.3 to 115.1 GiB.
+
+**What the result changes.** A switch that sends every plain FP8 file down
+`fp8_ops` is not a method on GB10, because Qwen-Image 2512 renders noise
+there, so the knob stays at `auto`. The HunyuanImage 2.1 rows do not change
+that: `"on"` reaches every plain FP8 file, Qwen-Image 2512's included.
+[MODELS](MODELS.md#fp8-compute-paths) and
 [CLUSTER](CLUSTER.md#worker_args-optional) mark `on` unsafe on GB10, the
 [launch notes](../scripts/README.md#fp8-compute-flag) say
 `--fast fp8_matrix_mult` is not recommended there, and
 [TROUBLESHOOTING #141](TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)
 names the noise and its fix. The kitchen rows changed under neither switch, as
 predicted. A later torch or ComfyUI build reopens the question: rerun the
-Qwen-Image cells of groups A and D before any doc recommends `on`.
+Qwen-Image cells of groups A and D before any doc recommends `on`. The
+2026-11-03 cells ran on a later ComfyUI build than the core, `8a98ecf58`
+against 0.43.0, and Qwen-Image 2512 still rendered noise there, in the
+actors and in the driver.
 
 ## Item 6 probes: NVFP4 GEMM and Sol-Attn (2026-10-31)
 
@@ -2801,9 +3009,10 @@ ranks that raise, decline, time out or answer in the wrong dtype. Where the
 files are on disk, the same file splits a real `wan_2.1_vae.safetensors` and
 `wan2.2_vae.safetensors` decode through a Worker's own decode body,
 byte-identical to the stock tiled decode. On the pair,
-the byte compare passed for Wan 2.1 and LTX 2.5 on 2026-10-31 and for MiniMax
-H3 on 2026-11-01. The other families are unchecked, and the option stays off
-by default.
+the byte compare passed for Wan 2.1 and LTX 2.5 on 2026-10-31, for MiniMax
+H3 on 2026-11-01, for HunyuanVideo 1.5 and for HunyuanVideo 1.0 through
+Kandinsky5 Video Lite on 2026-11-03, and for Wan 2.2 TI2V 5B on 2026-11-04.
+LTX 2.3 is unchecked, and the option stays off by default.
 
 **Method.** Each graph rendered twice at seed 1031 on the pair, uly2: once
 with `[worker_args] worker_vae_decode` absent, so the driver decoded alone,
@@ -2832,10 +3041,10 @@ its session, so the sibling built its decode VAE inside it.
 | MiniMax H3 video, saved streams; `dgx-monarch-minimax-h3-mp4.json` as shipped, VAE Decode | dev `746a229`, 2026-10-31 10:25 to 10:49 | saved streams: 124 of 124 H.264 frames identical by framemd5, and the AAC audio sample-identical | `7 units, 3 here, 4 on rank 1, 39.3 s` | 570.1 s / 530.1 s |
 | Wan 2.1 T2V 14B fp8_scaled, 832x480x33; `dgx-monarch-wan-t2v.json`, VAE Decode (Tiled) swapped in for VAE Decode | dev `4b71822`, 2026-10-31 22:10 to 22:20 | 33 of 33 pixel-identical | `2 units, 1 here, 1 on rank 1, 3.7 s` | 260.1 s / 210.2 s |
 | LTX 2.5 22B distilled INT8 ConvRot t2v, 1280x704x121; `dgx-monarch-ltx25-t2v.json`, VAE Decode (Tiled) as shipped | dev `4b71822`, 2026-10-31 22:21 to 22:27 | 121 of 121 pixel-identical | `18 units, 7 here, 11 on rank 1, 18.8 s` | 120.1 s / 110.1 s |
-| Wan 2.2 TI2V 5B FP16, 1280x704x121; `dgx-monarch-wan22-ti2v.json`, VAE Decode (Tiled) swapped in for VAE Decode, and a SaveImage node on its output | not run | NOT RUN: 121 of 121 PNG frames must be pixel-identical | not run | not run |
-| HunyuanVideo 1.0, also Kandinsky5 Video; `dgx-monarch-kandinsky5-video-lite.json`, node swapped | not run | NOT RUN | not run | not run |
-| HunyuanVideo 1.5; `dgx-monarch-hunyuan-video.json`, node swapped | not run | NOT RUN | not run | not run |
-| LTX 2.3; `dgx-monarch-ltx-i2v-av.json`, VAE Decode (Tiled) as shipped | not run | NOT RUN | not run | not run |
+| Wan 2.2 TI2V 5B FP16, 1280x704x121, 20 steps; `dgx-monarch-wan22-ti2v.json`, VAE Decode (Tiled) swapped in for VAE Decode, and a SaveImage node on its output | dev `15b48c2`, 2026-11-04 | 121 of 121 pixel-identical | `18 units, 6 here, 12 on rank 1, 34.3 s` | 270.1 s / 240.1 s |
+| HunyuanVideo 1.0 VAE, through Kandinsky5 Video Lite at 33 frames; `dgx-monarch-kandinsky5-video-lite.json`, VAE Decode (Tiled) swapped in | dev `4b71822`, 2026-11-03 | 33 of 33 pixel-identical | `2 units, 1 here, 1 on rank 1, 5.1 s` | 130.1 s / 115.2 s |
+| HunyuanVideo 1.5 at 33 frames; `dgx-monarch-hunyuan-video.json`, VAE Decode (Tiled) swapped in | dev `4b71822`, 2026-11-03 | 33 of 33 pixel-identical | `6 units, 2 here, 4 on rank 1, 14.8 s` | 370.1 s / 335.1 s |
+| LTX 2.3; `dgx-monarch-ltx-t2v.json` at 49 frames with VAE Decode (Tiled) swapped in, and `dgx-monarch-ltx-i2v-av.json` with VAE Decode (Tiled) as shipped | tried on dev `4b71822`, 2026-11-03 | NOT RUN: no split render completed. The text-to-video split render refused at the loader, 45.9 GiB to place against 45.6 GiB usable, and the image-to-video one failed Worker setup with EADDRINUSE on the rendezvous port ([TROUBLESHOOTING #3](TROUBLESHOOTING.md#3-next-render-hangs-at-nccl-rendezvous-after-a-crash)) | none | 65.0 s and 125.1 s for the references; no split render |
 
 What the rows show:
 
@@ -2861,17 +3070,45 @@ What the rows show:
   actor's GPU peak stayed between 26.8 and 27.1 GiB. The Wan, LTX and
   2026-11-01 MiniMax H3 legs ran no memory sampler.
 
-Not run: the four unchecked rows above; the fail-open check, one decode with
-the VAE file renamed on the sibling, which must log the decline WARNING and
-keep the frames byte-identical; a warm decode, with the decode VAE already
-resident, against the cold ones above; a MiniMax H3 decode with less than
-512 MiB free on one side, where the model batches fewer tiles per call and the
-bytes may differ; whether the 2 GiB reply budget binds, read from the decode
-line's pauses and `render.vae_decode.peak_reply_gib`; and Clear VRAM releasing
-the resident decode VAE. The remaining families take the same method. Neither
-the CPU tests nor the hardware checks show whether cuDNN and cuBLAS choose the
-same kernels on both boxes at other shapes, how fast a 173 MB reply crosses
-Monarch messaging, or how much the pre-touched return buffers save.
+The 2026-11-03 family rows and the checks below ran on dev `4b71822` with
+ComfyUI `8a98ecf58`, the same launcher flags and the head capped, its SM
+clock not sampled under load; the Wan 2.2 TI2V row ran on `15b48c2`, SM 2080
+MHz median and 2093 MHz at most. Every row's two renders sampled the same
+latent, so each compares the decode alone.
+
+**Checks of 2026-11-03 and 04, dev `4b71822`.** MiniMax H3 at 1344x768x124 on
+uly2, the 2026-11-01 graph with its SaveImage node, against a reference with
+the key absent (590.1 s):
+
+- Fail-open. With the sibling's VAE file renamed, and again with that name
+  pointing at other bytes, the driver logged `Worker-assisted VAE decode fell
+  back to this driver for 2 of 7 units` with the sibling's reason (`not found
+  on host`, then `artifact signature differs`), and all 124 frames were
+  pixel-identical to the reference both times.
+- A warm decode. Two split renders in one session decoded in 40.9 s and then
+  in 36.7 s, the sibling loading its decode VAE once, and the first render's
+  frames were pixel-identical to the reference.
+- Clear VRAM. After those renders the sibling still held the decode VAE.
+  ComfyUI's `/free`, which the panel's Free driver memory calls, left it
+  there, and a DGX Monarch Clear VRAM node at `soft` released it (`VAE
+  decode: released ... (4.9 GiB)`).
+- Short of memory. With one rank on the sibling and `uma_reserve_gb` at 78.8,
+  the sibling declined its units ("not enough memory to load the VAE: 10.2
+  GiB plus a 78.8 GiB floor against 86.9 GiB available"), the driver decoded
+  them, and all 124 frames matched a reference of the same layout.
+- 362 frames. The split decode ran 21 units, 9 here and 12 on rank 1, in
+  127.8 s, and all 362 frames were pixel-identical to the reference (prompt
+  walls 3060.5 s with the key absent and 2960.5 s with `"auto"`). The
+  telemetry row the check read carried no figures for this decode, so the
+  record does not show how close the replies came to the 2 GiB budget.
+
+Not run: the LTX 2.3 row above; a MiniMax H3 decode with less than 512 MiB
+free on one side, where the model batches fewer tiles per call and the bytes
+may differ; and whether the 2 GiB reply budget binds, read from the decode
+line's pauses and `render.vae_decode.peak_reply_gib`. Neither the CPU tests
+nor the hardware checks show whether cuDNN and cuBLAS choose the same kernels
+on both boxes at other shapes, how fast a 173 MB reply crosses Monarch
+messaging, or how much the pre-touched return buffers save.
 
 ## ComfyUI 0.44.0 additions
 
@@ -2883,17 +3120,21 @@ with Create Video's new `chroma_subsampling`
 decode split's declines for the Sol-H3-VAE decoder, the p-h3-image VAE and a
 VAE whose compute dtype the VAE Compute Dtype node set
 (`tests/test_vae_decode_split_comfy.py`). On ComfyUI 0.43 and older the tests
-for these additions skip with a reason. No hardware has run any of the rows
-below.
+for these additions skip with a reason. On 2026-11-04 the FP8, VAE Compute
+Dtype and context-window rows ran on dev `15b48c2` with ComfyUI `8a98ecf58`
+(v0.44.0 code) on both Sparks, the Create Video row in a ComfyUI 0.43.0 clone
+as its row says, and on 2026-11-05 the p-h3-image
+and Sol-H3-VAE rows on dev `91fd15f`; the head was capped, SM 2080 to 2093
+MHz under load.
 
 | behaviour | upstream change | what a run must show | status |
 |---|---|---|---|
-| The FP8 fast loader dtype on a BF16 file | #16941: under dynamic VRAM, ComfyUI's FP8 linear reads the dtype a weight is cast to, not its file dtype, so `fp8_e4m3fn_fast` computes in FP8 there instead of falling back to BF16 | the `kB_1_castfast` cell of [FP8 compute paths](#fp8-compute-paths) on ComfyUI 0.44.0, in the actors and in a dynamic-VRAM driver, against its release figures (18 percent faster, NRMS 0.191 against BF16) | NOT RUN |
-| The VAE Compute Dtype node under Worker-assisted VAE decode | #17450: the node clones the VAE and computes in another dtype over the loader's weights | the decode logs `not split` with the VAE Compute Dtype reason and gives the one-host frames; with the node at `default` the decode splits as in [Worker-assisted VAE decode](#worker-assisted-vae-decode) | NOT RUN |
-| MiniMax H3 context windows under sequence parallelism | #17425: a MiniMax H3 Context Windows node that patches a stock MODEL | the cells of [MiniMax H3 context windows](#minimax-h3-context-windows), which MiniMax H3 Context Windows (DGX Monarch) carries to the Workers | NOT RUN |
-| p-h3-image on the MiniMax H3 path | #17506: the p-h3-image text encoder, VAE and conditioning node; the DiT loads as MiniMax H3 | the cells of [p-h3-image](#evidence-p-h3-image), with ModelSamplingMiniMaxH3 (DGX Monarch) carrying the shifts to the Workers | NOT RUN |
-| The Sol-H3-VAE decoder on an H3 template | #17411: a decoder that decodes the whole clip in one pass | `dgx-monarch-minimax-h3-t2va.json` at its shipped size with `sol_h3_vae.safetensors`, then `minimax_h3_sol_vae_fp16.safetensors`, on VAE Decode, with `minimax_h3_video_vae_fp16.safetensors` kept on the conditioning node, and `worker_vae_decode = "auto"`: the driver logs `not split` with the whole-clip reason, and the decode time, the driver's peak memory and the frames against the H3 video VAE's are recorded | NOT RUN |
-| The Create Video templates on ComfyUI 0.43 | #17463: `chroma_subsampling` between `color_space` and `codec` | `dgx-monarch-minimax-h3-mp4.json` loaded in a ComfyUI 0.43 frontend shows `codec` at `none`, and its MP4 matches one rendered on 0.44.0 frame for frame | NOT RUN in a browser; the restore is checked under node (`tests/test_stock_widget_drift.py`) |
+| The FP8 fast loader dtype on a BF16 file | #16941: under dynamic VRAM, ComfyUI's FP8 linear reads the dtype a weight is cast to, not its file dtype, so `fp8_e4m3fn_fast` computes in FP8 there instead of falling back to BF16 | the `kB_1_castfast` cell of [FP8 compute paths](#fp8-compute-paths) on ComfyUI 0.44.0, in the actors and in a dynamic-VRAM driver, against its release figures (18 percent faster, NRMS 0.191 against BF16) | PASS in both. The actor logged `fp8_ops` and sampled in 59.36 s against 75.10 s for the plain cast, at one-step NRMS 0.1909 against BF16, the release figure to four places. The driver logged `fp8_ops` ("linears stored as float8_e4m3fn run torch._scaled_mm on FP8 tensor cores"), sampled at 7.50 s/it against 9.38 s/it for its cast, and moved away from the cast by NRMS 0.1909, which a fall-back to BF16 compute would not do |
+| The VAE Compute Dtype node under Worker-assisted VAE decode | #17450: the node clones the VAE and computes in another dtype over the loader's weights | the decode logs `not split` with the VAE Compute Dtype reason and gives the one-host frames; with the node at `default` the decode splits as in [Worker-assisted VAE decode](#worker-assisted-vae-decode) | PASS on the Wan 2.2 TI2V graph at 33 frames on uly2: at `default` the decode split (`6 units, 2 here, 4 on rank 1, 8.6 s`); at fp32 it logged `not split` with the VAE Compute Dtype reason, and its 33 frames were pixel-identical to a one-host render with the key absent |
+| MiniMax H3 context windows under sequence parallelism | #17425: a MiniMax H3 Context Windows node that patches a stock MODEL | the cells of [MiniMax H3 context windows](#minimax-h3-context-windows), which MiniMax H3 Context Windows (DGX Monarch) carries to the Workers | PASS for one rank, the pair and ring2; an old ComfyUI NOT RUN (see that section) |
+| p-h3-image on the MiniMax H3 path | #17506: the p-h3-image text encoder, VAE and conditioning node; the DiT loads as MiniMax H3 | the cells of [p-h3-image](#evidence-p-h3-image), with ModelSamplingMiniMaxH3 (DGX Monarch) carrying the shifts to the Workers | PASS (see that section) |
+| The Sol-H3-VAE decoder on an H3 template | #17411: a decoder that decodes the whole clip in one pass | `dgx-monarch-minimax-h3-t2va.json` at its shipped size with `sol_h3_vae.safetensors`, then `minimax_h3_sol_vae_fp16.safetensors`, on VAE Decode, with `minimax_h3_video_vae_fp16.safetensors` kept on the conditioning node, and `worker_vae_decode = "auto"`: the driver logs `not split` with the whole-clip reason, and the decode time, the driver's peak memory and the frames against the H3 video VAE's are recorded | PASS: both decoders logged `not split` with the whole-clip reason and saved 124 frames, each prompt 20.0 s for the decode alone, the driver's GPU memory peaking at 28.4 and 31.5 GB. Against the H3 video VAE, whose split decode took 57.0 s with the driver peaking at 19.9 GB, they read NRMS 0.0508 and 0.0511 (mean PSNR 38.9 and 38.8 dB), and against each other 0.0044 |
+| The Create Video templates on ComfyUI 0.43 | #17463: `chroma_subsampling` between `color_space` and `codec` | `dgx-monarch-minimax-h3-mp4.json` loaded in a ComfyUI 0.43 frontend shows `codec` at `none`, and its MP4 matches one rendered on 0.44.0 frame for frame | PASS for the codec: in headless Firefox on a ComfyUI 0.43.0 clone with frontend 1.57.4 and this pack, the template loaded with `codec` at `none`; without the pack it read `auto`. The MP4 half is NOT RUN, because it needs a render submitted from the 0.43 frontend. The restore is also checked under node (`tests/test_stock_widget_drift.py`) |
 
 <a id="minimax-h3-context-windows"></a>
 
@@ -2909,7 +3150,10 @@ per window. The CPU checks hold that contract against ComfyUI 0.44.0
 `tests/canary/comfy_seam_contracts.py`): the widgets, the handler the stock
 node installs, its static schedule, the audio split, and one recorded model
 call per window. They run no H3 forward under sequence parallelism; the
-hardware cells below do, all NOT RUN.
+hardware cells below do. They ran on 2026-11-04 on dev `15b48c2`, ComfyUI
+`8a98ecf58` on both Sparks, with the pruned INT8 ConvRot DiT, the head
+capped, SM 2086 MHz median and 2093 MHz at most under load, and the driver's
+own sample deadline.
 
 Each cell renders `dgx-monarch-minimax-h3-t2va.json` at 1344x768 with both
 length widgets at 362 frames, seed 1031 and the shipped settings otherwise,
@@ -2920,10 +3164,10 @@ VAE Decode, as the decode check does.
 
 | cell | settings | a pass shows | status |
 |---|---|---|---|
-| one rank | Init `mode=local`, `gpus_per_host=1`, beside the driver on the head | the actor log shows `Using context windows: Context length 37 with overlap 12 for 107 frames.` and `Context window 1/4` to `4/4` on each step; the driver's deadline line counts 150,838 rows plus four times the prompt's text rows, against 109,062 plus one times them unwindowed; the render completes | NOT RUN |
-| the pair | topology `uly2` | the same actor lines on both ranks, both ranks report identical latents, and all 362 PNG frames and the decoded audio are identical to the one-rank cell | NOT RUN |
-| ring | topology `ring2` | a window whose packed total is odd refuses class K with the H3 ring-pad text before any block runs; otherwise the render completes with identical latents on both ranks | NOT RUN |
-| an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#142) and no rank waits out the group timeout | NOT RUN |
+| one rank | Init `mode=local`, `gpus_per_host=1`, beside the driver on the head | the actor log shows `Using context windows: Context length 37 with overlap 12 for 107 frames.` and `Context window 1/4` to `4/4` on each step; the driver's deadline line counts 150,838 rows plus four times the prompt's text rows, against 109,062 plus one times them unwindowed; the render completes | PASS: the four windows (frames 0-36, 25-61, 50-86 and 70-106 of 107) on each of the 20 steps and on each proof-render step, a deadline line for 152,442 packed rows (150,838 plus four times 401 text rows), and 362 PNG frames and a FLAC saved. The prompt took 3990.7 s, 3085.4 s of it sampling (about 154 s per step); the first-use gate's two proof renders, INCONCLUSIVE with nothing to gate, took 637.4 s. The head's lowest MemAvailable was 56.6 GiB |
+| the pair | topology `uly2` | the same actor lines on both ranks, both ranks report identical latents, all 362 PNG frames are identical to the one-rank cell, and the audio latent is identical | PASS: the same four windows on both ranks on every step, `cross-rank latent identity: 2 comparisons across 1 DP groups bit-identical`, the video and audio latents those of the one-rank cell, and 362 of 362 frames pixel-identical to it. The prompt took 2080.4 s, 1799.8 s of it sampling (about 90 s per step); lowest MemAvailable 48.8 GiB on the head and 76.3 GiB on the sibling. The FLAC is not sample-identical to the one-rank cell's: 18 of 964,800 samples differ, by at most 1.4e-3 of full scale. Both audio latents are identical, so that is the driver's audio decode, the noise the [INT8 GEMM kernel comparison](#int8-gemm-kernel-comparison-2026-10-28-and-29) records, not the windows |
+| ring | topology `ring2` | a window whose packed total is odd refuses class K with the H3 ring-pad text before any block runs; otherwise the render completes with identical latents on both ranks | PASS: the first window's total was odd, and both ranks refused class K with the ring-pad text at its entry, inside the gate's first proof render and again in the render, with the waiver card offered; no rank sampled, and the prompt ended in 30 s |
+| an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#142) and no rank waits out the group timeout | NOT RUN: it needs a Worker on ComfyUI 0.43 |
 
 <a id="torch-2-15"></a>
 
@@ -2943,23 +3187,45 @@ Gate PASS names the driver's torch and CUDA build, so a torch change proves
 each gated combination again on first use. The CPU checks
 (`tests/test_monarch_launch.py`, `tests/test_doctor_actor_nccl_row.py` and
 `tests/test_gate_runtime.py`) pass under torch 2.12.0+cu132 and 2.15.0+cu132.
-No render has run with the setting. The ladder below must run on the pair on
-torch 2.15.0+cu132 with this release on the driver and both Worker hosts, and
-every head row notes the state of the head's clock cap.
+
+**torch 2.15.0 ladder (2026-11-05 and 06).** The ladder below ran on the pair
+with dev `7c3eecb` on the driver and both Worker hosts and ComfyUI
+`8a98ecf58`; steps 1 to 10 passed and step 11 is not run; the release ships on
+torch 2.15.0+cu132.
+Both Sparks switched their Monarch environment to torch 2.15.0+cu132 at
+20:44 on 2026-11-05, with cuDNN 9.26, Triton 3.9.0, torchvision 0.29.2,
+torchaudio 2.11.1 and SageAttention 2.2.0 rebuilt against it, and NCCL 2.32.3
+loaded through the kit's symlink in place of the 2.30.7 that torch 2.15 pins.
+The torch 2.12 references for steps 6 and 8 are the 2026-11-03 FP8 cells of
+the same graphs, on dev `4b71822`, and, for the sage launcher, the 1 MP cfg2
+cell and the 1664 square cells, renders on this checkout that evening before
+the switch. The head's 2100 MHz cap was applied once with its
+unit off, SM 2080 to 2093 MHz under load in every render step; the sibling
+ran uncapped. One-step figures are latent NRMS against the torch 2.12
+render, with the 0.10 floor. Full-schedule pixels differ across the two
+torch builds, pixel NRMS 0.0055 for BF16 to 0.33 for fp8_scaled, which the
+[comparison method](#comparison-method) treats as descriptive. Two steps
+failed once and passed on a rerun: step 9 at 21:44, whose head reading was
+most likely taken while CPU test suites ran on the head (inferred from the
+suite logs' times, not in the ladder record), passed at 22:00, and step 10 at
+22:00, which started one second after a render ended and met the idle check,
+passed at 08:11 on 2026-11-06. The rows below cite the passing runs.
 
 | step | what a run must show | status |
 |---|---|---|
-| 1. Switch | both hosts import torch 2.15.0+cu132 from the ComfyUI environment, and both Worker services are active | NOT RUN |
-| 2. Doctor | exit 0 with no FAIL row and no row worse than the torch 2.12 baseline; `actor NCCL backend` ok, naming torch 2.15.0+cu132 and `TORCH_DIST_USE_NCCL2=0`; `torch CUDA`, `torch version match` and both host env rows at 2.15.0+cu132; `NCCL library` at 2.32.3 on both hosts; both `INT8 GEMM` rows ok with Triton | NOT RUN |
-| 3. torch on the GPU | on each host, capability (12, 1), the loaded NCCL at 2.32.3, and a bf16 GEMM and SDPA within NRMS 1e-2 and 2e-2 of fp32 references | NOT RUN |
-| 4. SageAttention | both kernels within NRMS 0.10 and cosine 0.99 of fp32 attention at head dims 128 and 64, all finite, and fp8 quantization with finite positive scales | NOT RUN |
-| 5. INT8 ConvRot | comfy-kitchen's cuda backend on both hosts, then three INT8 renders, by a local actor, by the driver and by both Worker actors on the pair, each logging `INT8 GEMM: Triton kernel on` and no CUTLASS warning; every actor builds its process groups and Worker setup completes | NOT RUN |
-| 6. One GPU on the head | Krea2 Turbo BF16 and fp8_scaled at seed 1031, on the plain and the sage launchers, each within the one-step latent NRMS floor of 0.10 against the torch 2.12 references | NOT RUN |
-| 7. NCCL across the pair | the bench with both rails and `NCCL_P2P_DISABLE` unset: every size reduced correctly, the 1 GiB all-reduce at 90 percent or more of the 2026-10-06 record, and channels on both rails | NOT RUN |
-| 8. Mesh renders on the pair | Krea2 cells on uly2, cfg2 and topology auto with SAGE_AUTO, each within the 0.10 floor against its reference. Each gated cell runs the identity gate once on its first render and writes a PASS whose capability context names torch 2.15.0+cu132; where this release wrote a torch 2.12 PASS for the same combination, the gate notice names both builds; a second render of the cell skips the gate | NOT RUN |
-| 9. MiniMax H3 speed and memory | step 5's pair render within the ladder's bands of the 2026-10-29 record: sampling time, wall time, each actor's GPU peak and each host's lowest available memory | NOT RUN |
-| 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | NOT RUN |
-| 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN |
+| 1. Switch | both hosts import torch 2.15.0+cu132 from the ComfyUI environment, and both Worker services are active | PASS: both hosts on 2.15.0+cu132, both Worker services active from 20:44 |
+| 2. Doctor | exit 0 with no FAIL row and no row worse than the torch 2.12 baseline; `actor NCCL backend` ok, naming torch 2.15.0+cu132 and `TORCH_DIST_USE_NCCL2=0`; `torch CUDA`, `torch version match` and both host env rows at 2.15.0+cu132; `NCCL library` at 2.32.3 on both hosts; both `INT8 GEMM` rows ok with Triton | PASS: 50 rows, 48 ok and the 2 WARN rows of the 2.12 baseline (unexpected shutdowns, and the clock check doctor does not run), 0 FAIL; the 8 rows that changed are details, all ok: `actor NCCL backend` names 2.15.0+cu132 and `TORCH_DIST_USE_NCCL2=0`, and `torch CUDA`, `torch version match` and both env rows read 2.15.0+cu132 |
+| 3. torch on the GPU | on each host, capability (12, 1), the loaded NCCL at 2.32.3, and a bf16 GEMM and SDPA within NRMS 1e-2 and 2e-2 of fp32 references | PASS on both hosts: capability (12, 1), NCCL 2.32.3 loaded, bf16 GEMM NRMS 1.66e-03 and every SDPA backend 2.25e-03 to 2.26e-03, the 2.12 figures |
+| 4. SageAttention | both kernels within NRMS 0.10 and cosine 0.99 of fp32 attention at head dims 128 and 64, all finite, and fp8 quantization with finite positive scales | PASS on both hosts: fp8 NRMS 0.038 and cosine 0.9993, fp16 0.011 and 0.9999, at both head dims, and fp8 quantization ok, the 2.12 figures |
+| 5. INT8 ConvRot | comfy-kitchen's cuda backend on both hosts, then three INT8 renders, by a local actor, by the driver and by both Worker actors on the pair, each logging `INT8 GEMM: Triton kernel on` and no CUTLASS warning; every actor builds its process groups and Worker setup completes | PASS: comfy-kitchen 0.2.40 with Triton 3.9.0, its cuda and triton backends available on both hosts; the local-actor and driver INT8 renders and the MiniMax H3 INT8 render on the pair each logged the Triton line once per process with no warning, and Worker setup completed. On 2026-11-03, before `TORCH_DIST_USE_NCCL2=0`, this step had failed at its first render |
+| 6. One GPU on the head | Krea2 Turbo BF16 and fp8_scaled at seed 1031, on the plain and the sage launchers, each within the one-step latent NRMS floor of 0.10 against the torch 2.12 references | PASS: BF16 identical to 2.12 at one step on both launchers, and fp8_scaled below 0.0001; samples 73.1 s against 74.2 s (BF16) and 65.3 s against 64.1 s (fp8_scaled) on the plain launcher, 72.6 s against 72.2 s and 63.3 s against 62.9 s on the sage launcher |
+| 7. NCCL across the pair | the bench with both rails and `NCCL_P2P_DISABLE` unset: every size reduced correctly, the 1 GiB all-reduce at 90 percent or more of the 2026-10-06 record, and channels on both rails | PASS: NCCL 2.32.3 on both hosts, every size reduced to the record's bytes, the 1 GiB all-reduce at 19774 and 19762 MiB/s against 20011 MiB/s, about 99 percent, on both rails |
+| 8. Mesh renders on the pair | Krea2 cells on uly2, cfg2 and topology auto with SAGE_AUTO, each within the 0.10 floor against its reference. Each gated cell runs the identity gate once on its first render and writes a PASS whose capability context names torch 2.15.0+cu132; where this release wrote a torch 2.12 PASS for the same combination, the gate notice names both builds; a second render of the cell skips the gate | PASS: BF16 on uly2 and cfg2 identical to 2.12 at one step, BF16 cfg2 at 1 MP 0.0036, fp8_scaled on uly2 below 0.0001, and fp8_scaled at 1664 square 0.0043 on one GPU and under `auto` with SAGE_AUTO. Every gated combination ran its gate again on 2.15 and wrote a PASS. Samples moved by -0.3 to +6.3 percent: 14.6 s against 14.3 s at 1 MP, 37.0 against 36.5 on cfg2, 44.4 against 44.5 on uly2, 40.2 against 39.3 for fp8_scaled on uly2, 70.0 against 69.9 and 43.2 against 40.6 at 1664 |
+| 9. MiniMax H3 speed and memory | step 5's pair render within the ladder's bands of the 2.12 record: sampling time, wall time, each actor's GPU peak and each host's lowest available memory | PASS against the 2026-11-03 torch 2.12 render of the same graph: sampling 451.6 s against 448.4 s (+0.7 percent), wall 540.1 s against 660.1 s, each actor's GPU peak 26.8 GiB on both builds, the head's lowest MemAvailable 50.3 GiB on both and the sibling's 79.1 against 77.5 GiB. The 2.12 render read the head's SM clock at 2398 MHz at submit |
+| 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | PASS: exit 0, the dense kernel control on `cute_sm120` at relative L2 0.00298337 on both hosts, the figure of 2026-10-11. It runs no render and says nothing of sparse-attention or model accuracy |
+| 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN: the commands were printed and not run, because the release ships on torch 2.15; the torch 2.12 environment stays parked on both hosts |
+
+**NOT RUN on torch 2.15:** the [template release test](#release-test-2026-11-04) on the release commit.
 
 ## Memory calibration
 
@@ -3071,6 +3337,100 @@ Subtracting Shmem again would count the same allocation twice. The
 A 33.10-GiB hidden pinned-staging delta is charged separately. Dirty/writeback
 cost has no measured calibration yet; neither it nor a generic cache haircut
 is inferred from these samples.
+
+<a id="capacity-checks-2026-11-05"></a>
+
+### Capacity checks (2026-11-05)
+
+These ran on the pair with ComfyUI `8a98ecf58` and torch 2.12.0+cu132, one
+step at seed 1031 from fresh fleets unless a line says otherwise, with the
+head's 2100 MHz cap applied once and its unit off, SM 2080 to 2093 MHz under
+load, and the sibling uncapped. Dev `91fd15f` ran the Old model in the way
+card and dev `7c3eecb` the cast price, the same-slot swap credit and the box
+names.
+
+**Old model in the way, on `91fd15f`.** On a fresh fleet neither
+qwen-image-t2i beside a held flux1-dev nor LTX 2.3 beside a held LongCat
+image model on the head's local fleet refused, so those two checks held the
+head short with a fixed balloon. wan-animate2-base-quality beside flux1-dev
+needed none: it refused 4.4 GiB short on the head and raised the card. Each
+time the card carried its title, risk, evidence, Clear and retry and Always
+clear and retry; Clear and retry reset both Sparks in 3.8 s, or the local
+fleet's one box in 1.8 s, and the next queue rendered. Always clear and
+retry, set from the panel's toggle and from `DGXM_ALLOW_CLEAR_RETRY=1`,
+cleared once inside the render and rendered, so the clear joined that
+render's wall: 110 to 112 s, against 24.0 s for the refusal, 3.8 s for the
+click and 84.1 s for the render by hand. On that build the card and the
+refusal named a box by its configured host name or address. On `7c3eecb`,
+after #143, every card, refusal and log line under the agreement's guard
+said the head, the sibling or this box, and the only host name a user could read was
+the Worker's own stock wall on a one-Spark fleet
+([TROUBLESHOOTING #53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)),
+which #147 has since changed to say "here", with the box's name in front of
+it on the pair only.
+
+**What a clear gives back.** The card credits a short box the stock
+resident's file plus the actor's anonymous memory above what it held at its
+first load. After one template a clear returned 33.3 GiB on the head against
+about 24 GiB credited, the 22.2 GiB flux1-dev file and 1.7 GiB. After four
+templates on one Worker generation, the head's figure by that rule read
+6.0 GiB, from the 53.6 GiB its refusal printed for a cleared box; each actor's
+RSS growth exceeded it
+by the 6.0 GiB of shared memory every actor holds, and the clear returned
+37.7 GiB on the head and 61.5 GiB on the sibling against 28.2 and 52.0 GiB
+credited. The rule errs low, so the card shows less often, never wrongly.
+After the same four loads the sibling's actor kept 29.9 GiB by that rule
+against the head's 6.0 GiB.
+
+**A slab resident in the way.** A stock load of the BF16 Wan-Animate 2 base
+over a 33.02 GiB Flux 2 slab in the same slot was admitted with no refusal
+and no card, twice, the second time with the head held at 20.1 GiB. The
+first time the agreement admitted it with 19.1 GiB to spare over its
+69.1 GiB price, where the 1 Hz reader had shown the head at 49.2 GiB just
+before. Within 2 s the actor's shared memory, the slab and the 6 GiB every
+actor holds, fell from 39.06 to 6.04 GiB, and within 4 s MemAvailable rose
+from 49 to 88 GiB, before the host copy grew. The record does not show
+whether the slab
+was dropped before the quote read the box. No refusal priced over a slab
+resident was reached.
+
+**Cast loads and the same-slot credit, on `7c3eecb`.** The Wan 2.2
+text-to-video release-test cell casts both FP16 stages to bf16 at the
+loaders. Stage 2's load over stage 1's resident was priced as the credited
+swap, 34.3 GiB, where `91fd15f` had admitted it with its headroom unstated;
+the in-process drop returned 31.9 GiB within a second, and the Worker's own
+ladder read 90.2 GiB after it. With the head held near 12 GiB, stage 2
+refused before any rank loaded, class C, 11.5 GiB available and 22.8 GiB
+short, and no watchdog fired; on `91fd15f` the same load had been admitted
+unpriced and the vetting watchdog killed the head actor at 7.5 GiB. Two warm
+re-queues, whose loaders ComfyUI cached, loaded each stage at its sampler over
+the other's resident, each admitted at the credited price with no card.
+wan-animate2-base-quality beside a held flux1-dev, which refused with the card
+on `91fd15f`, was admitted with no card: the drop of flux1-dev returned
+26.9 GiB within a second, more than its 22.2 GiB file. qwen-image-t2i beside
+flux1-dev, with the head held short, no longer reaches the card either: the
+swap over flux1-dev is credited the file, so wherever a clear would make room
+the credited load already fits. Short of that it refused 4.1 GiB short with
+no card and said a clear would not make room: 45.0 GiB needed on the head
+against about 40.5 GiB on a cleared box.
+
+**What a stock load keeps afterwards.** On `7c3eecb` a stock load with no
+LoRA left its actor about 3 GiB of anonymous memory: one rank placing the
+37.7 GiB p-h3-image DiT rose to 44.5 GiB during the load and held 3.1 GiB
+after it, and on the pair the Wan 2.2 cell's actors held 3.5 GiB. On
+`91fd15f` the same one-rank load had kept 34.5 GiB. A load with a LoRA kept
+33.6 to 34.0 GiB, ComfyUI's backup of the weights its LoRA patches
+([Wan-Animate 2](#evidence-wan-animate-2)).
+
+**A cached loader on a re-queue.** In one driver, a second queue of the
+p-h3-image template, its loader's inputs unchanged, ran no loader node:
+ComfyUI's cache kept the node's output, so the loader's graph price did not
+run. The upsampler loaded on the driver beside the resident DiT and the
+replay rendered, because the head had 52.8 GiB free. On that build no node
+priced the driver's models for such a queue; the sampler now runs the
+loader's price for them
+([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)),
+which no hardware run has checked yet.
 
 ## FSDP calibration
 
@@ -3425,6 +3785,24 @@ records it. Later that day, at dev `4b71822` with both driver preflights on and
 only `DGXM_AUTO_RESCUE=1` set, it rendered again, the first of the hardware
 checks there.
 
+On 2026-11-04, still on dev `4b71822` with both driver preflights on,
+the other rescue forms ran at 1344x768x124, 20 steps, each twice with the
+first run cited, the head capped with its SM clock read only at submit
+(2093 MHz). Every render
+loaded the file into slab residency on each rank that held it, and the gate
+kept slab, INCONCLUSIVE with no stock reference, naming the consent's source:
+
+| layout | consent | what happened | wall / sampling | lowest MemAvailable, head / sibling |
+|---|---|---|---|---|
+| the pair, uly2 | `DGXM_ALLOW_SLAB_RESCUE=1` | rendered, no card | 820.2 s / 537.6 s | 17.0 / 36.0 GiB |
+| one rank on the sibling alone | `DGXM_ALLOW_SLAB_RESCUE=1` | rendered, no card | 1240.2 s / 898.1 s | 87.7 / 43.7 GiB |
+| the pair, uly2 | the panel's card | the loader refused, 129.6 GiB to place against 89.2 GiB usable, and raised the slab card; the card was accepted through the panel's own route, and the same graph queued again rendered | 800.3 s / 537.5 s | 16.9 / 36.0 GiB |
+| one rank on the head beside the driver | the same panel consent | rendered, no card | 1320.3 s / 961.6 s | 17.7 / 105.4 GiB |
+
+The first try of the panel cells saw the card in the pending
+list, and the test harness's accept came back HTTP 403 because its Origin
+header did not match the host; the second try sent the panel's headers.
+
 ### Driver unload before a render-site refusal (2026-10-29)
 
 Hardware check for the unload step (#105) on dev d34d9b0, both Workers on
@@ -3440,7 +3818,23 @@ where the check needed it.
 | B, 45 GiB balloon | 29 | 11.3 GiB | the check refused on the first reading; the driver unloaded MiniMaxH3VideoVAE, MiniMaxH3AudioVAE and MiniMaxH3TEModel_, MemAvailable 11.3 to 30.3 GiB, a gain of 19.0 GiB, and the render went through in 54 s with no recycle; both VAEs reloaded at decode and the frames and audio saved |
 | C, 67 GiB balloon | 124 | 3.3 GiB | refused after the unload: 21.4 GiB needed per rank against 3.7 GiB usable (8.7 GiB MemAvailable minus the 5.0 GiB reserve), closing with the sentence that names the two models unloaded and MemAvailable 8.3 GiB before and 8.7 GiB after |
 
-Not run: a pipelined submission behind a render in flight.
+**A pipelined submission behind a render in flight (2026-11-04).** The KSampler
+Pipeline runs each push's render-site check before the push waits for a free
+slot, so with renders in flight the driver must refuse without unloading the
+models they use. The first run, on dev `4b71822`, was INCONCLUSIVE: with three
+seeds at depth 2 the third push's check ran 1 s after the second dispatch, at
+about 75 GiB MemAvailable, before the balloon had filled. The rerun on dev
+`15b48c2` sent four seeds at `pipeline_depth` 2 (MiniMax H3 pruned INT8
+ConvRot, 1344x768x124, uly2, the head capped with its SM clock not sampled
+under load) with the head held near 12 GiB
+from just after the first two dispatches. The first render finished on both
+ranks at 492.1 s, the third dispatched, and at 518.1 s the fourth push's check
+refused with two renders in flight: "15.9 GiB needed per rank, 8.6 GiB usable
+... The driver did not unload the 1 model (MiniMaxH3TEModel_) ComfyUI holds on
+this host before refusing, because a render is still running in this driver;
+queue again once that work ends." No `driver unload:` line appeared in the
+session, the head's lowest MemAvailable was 10.83 GiB, and the pipeline's
+abort then retired the two renders in flight.
 
 ## Dependency and setup checks
 
