@@ -204,9 +204,29 @@
   host name, and a fleet on the driver's box alone is "this box". The FSDP
   clean-reload refusal and the refusal for a Worker actor a restart left
   undeliverable name their boxes the same way, and the loader's charge note
-  says "a Worker on this box" where it said "co-resident rank 0". A Worker's
-  own refusal still names its host ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
+  says "a Worker on this box" where it said "co-resident rank 0"
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
   [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
+- A Worker's own refusal names no host either. Its sentence says "here", and
+  the driver opens it with the box that refused: "On the sibling, stock
+  residency cannot load p-h3-image_bf16.safetensors here: the load needs ...".
+  On one box, where the loader card says "this box", it reads "here" with
+  nothing before it. The slab, comfy-managed, rescue and LoRA bake walls read
+  the same way, and so do a model file missing on one box, whose error opens
+  "On the sibling, actor call dgxm_worker.load_model failed." above "model ...
+  was not found here", and a sampler or scheduler one box's ComfyUI lacks. A
+  Fleet job takes the box of the actor it went to, and the Fleet timeline's
+  rows read "the head" and "the sibling" where they read "box 1" and "box 2"
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
+  [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
+- The error a sampler, Fleet KSampler, a UNET loader or Identity Gate raises for
+  a refusal ends with its sentence and the card's plain words. It no longer
+  ends with the measured numbers and the consent block as JSON: the card is
+  already raised when the driver receives the refusal, and ComfyUI's log keeps
+  both blocks. Studio's Queue row offers no Grant and retry for such a refusal;
+  grant it from Operations, consent apply, which lists the driver's pending
+  requests ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
+  [Studio](docs/STUDIO.md#read-a-failure-and-grant-a-consent)).
 - A LoRA change on a BF16 model the Workers already hold, with `lora_low_rss`
   off as the Wan-Animate 2 BF16 templates set it, no longer stalls, and no
   longer ends in a refusal with nothing to click. Adding a LoRA to a bare base
@@ -219,6 +239,20 @@
   This is the LoRA case of the credit for a load that replaces the stock model
   in its own slot
   ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- A new strength, a new order or a LoRA removed on a BF16 model the Workers
+  hold with its LoRA, with `lora_low_rss` off, is admitted without a click
+  where it fits. The change reuses ComfyUI's host copy of the patched weights,
+  which the Workers now report, and the price counts it as held, while it
+  still charges the LoRA files the change reads again: on the pair, the
+  Wan-Animate 2 strength change from 1.0 to 0.8 needs about 8.7 GiB where it
+  needed 38.6 GiB and raised Old model in the way. On one Spark the same change
+  took 0.8 GiB, about the LoRA file it reads again, and rendered a fresh load's
+  latent. A LoRA the held stack lacks keeps the old price and the card. And a
+  re-queue whose UNET loader ComfyUI kept from an earlier queue is now priced
+  at the sampler or at Identity Gate (DGX Monarch), by the loader's own price
+  for what is not yet held, so a short box gets the loader's refusal and what
+  would fit, where only the Worker's wall answered before ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
 
 ### Compatibility and verification

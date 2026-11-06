@@ -1182,11 +1182,14 @@ Category **"DGX Monarch"**. The node surface is small by design:
   the `fleet` sub-block of the telemetry render block, and its answer closes it
   (`src/dgx_monarch/telemetry_fleet.py`). The row carries the job index, the
   prompt digest, the answering host, the rank the driver submitted to, that
-  rank's short box label, the worker's measured duration, and `started_s` and
+  rank's box in the words a refusal uses ("the head", "the sibling", "this
+  box", worked out once per wave by `box_names.py`), the worker's measured
+  duration, and `started_s` and
   `ended_s`, both counted from the moment the wave opened. The block carries
   that moment and is retained the way `render.last` is. The sidebar timeline
-  draws one row per job in dispatch order, tagged with its box label and
-  answering host, beside the per-box memory cards. A job that never came back
+  draws one row per job in dispatch order, tagged with its box and
+  answering host, beside the per-box memory cards, so a row and a refusal
+  name one box the same way. A job that never came back
   keeps the row its dispatch opened and reads as no result, so a stopped wave
   still names the box the lost job went to. A row carries
   `host_reported`, and the sidebar says it answered from another box, when the
@@ -1413,7 +1416,16 @@ Worker's stock wall at the sampler both reached the prompt error that way,
 with no wrapper and no traceback; a refusal that offers a card ends with the
 consent block the panel reads. Only a text that leads with a tag is lifted out, so
 a crash keeps its wrapper, and every decision that reads the wrapper (the
-sample lease, eviction, the card) runs below the node method. When the driver
+sample lease, eviction, the card) runs below the node method. So the lifted
+error drops the machine blocks after the sentence, the measured numbers and the
+consent descriptor: the receive point has already registered the card and the
+gate has recorded the numbers, the user reads the sentence and the card's plain
+words, and ComfyUI's log keeps the blocks on the original error, which the
+shortened one is raised from and never changes, wrapped by Monarch or raised by
+the driver directly. A wrapper the
+prompt error keeps names the box on its own first line ("On the sibling, actor
+call dgxm_worker.load_model failed."), by the rule under "A Worker's own
+refusal says here". When the driver
 sends a render on stock although `slab_weights=on`, for want of an Identity
 Gate PASS, after a failed authorization, for a second model, or from Fleet,
 the Worker sees only the setting arrive off; the same seam replaces its
@@ -1703,10 +1715,40 @@ parallelism. The pair is not offered beside a LoRA. What the driver cannot
 prove, it does not name. On the pair `auto` resolves to Ulysses or ring, which
 hold the whole DiT on the head, so the pair alone changes nothing there; only
 a shard build halves it, and `auto` never picks one (`nodes/graph_load_price.py`).
-The price runs where the loader node runs: on 2026-11-05 a second queue of the
-p-h3-image template in the same driver, its loader's inputs unchanged, took
-ComfyUI's cached loader output, so no loader price ran, and it rendered
-because the box had room.
+
+**A re-queue the loader does not see is priced where it renders.** ComfyUI
+keeps a node's output while nothing upstream of it changes, so a re-queue in
+the same driver can reach the sampler without running the UNET loader, and the
+price above never sees it: on 2026-11-05 a re-queue that switched the
+p-h3-image upsampler on rendered unpriced, only because the box had room. The
+first DGX Monarch node that renders such a queue, a sampler or Identity Gate
+(DGX Monarch), which ComfyUI runs on every queue, runs the same price before
+any session or Worker call and at every world, for a checkpoint the loader did
+not price in this prompt (each price records the ComfyUI prompt id it ran for),
+under `auto` only, and only for what is not yet held. The DiT is charged while
+its deferred load is pending, as the loader memo reads it: Reset attached mesh,
+Clear and retry and a Clear VRAM node set to `recycle` drain that memo, a
+Worker restart drains it only when a Worker call fails, after this price, and a
+Clear VRAM node at `soft` or `hard` does not, so after those two the DiT reads
+as held and the render-site checks price it. The driver models are charged
+beyond what ComfyUI holds. By then ComfyUI holds the encoders and the
+upsampler, and MemAvailable counts them at their resident size, so held bytes
+are credited as encoders at the 1.144 ratio measured on 2026-08-05, which the
+charge rounds up to 1.15, and never above it. A VAE still charged is not held,
+so it loads for the decode after the DiT places: it stays in the settled window
+and leaves the load window. The reference and guide encodes have run by then
+too, and the render activations belong to the render-site checks that run next,
+which credit what the Workers retain and free what ComfyUI can reload, so this
+price leaves all three out; charged here, they would refuse a re-queue of a
+reference-to-video graph the box had just rendered. Its refusal is the
+loader's, cards included, and says which node priced the graph and that the
+Workers loaded nothing (`nodes/requeue_price.py`). The cross-rank agreement is
+not that place: it does nothing at world 1, where that re-queue ran, and it
+prices Worker rows, not a graph. Nothing prices a re-queue before its own
+upstream nodes run: an upsampler loads before the sampler, so a box short for
+that load beside a held DiT is not caught here, and freeing the encoders at the
+sampler waits for a walk that knows which models the rest of the prompt loads
+again.
 
 **A declared shard build is priced as a shard.** Both windows charge the whole
 file, which is what a stock load places, and under a `*+fsdp` preset no rank
@@ -1810,7 +1852,7 @@ bound or its floor.
 | `comfy_managed` | one resident copy, or 2.3 times the file where ComfyUI stages through a pinned host buffer (measured on the tested Spark pair), plus the floor | `actor/capacity_quote._managed`, then `capacity_fit.managed_required_bytes` at `actor/store_residency.preload_capacity_check` |
 | `explicit`, `vouched_auto` | the file plus a capped floor, plus the LoRA bake's stray transient where `lora_low_rss` and a stack are both set; a target the header estimate cannot map prices the whole file; `explicit` refuses a loader dtype cast, which this price cannot measure | `actor/capacity_quote._slab_rung` over `capacity_fit.slab_load_fit`, itself over `capacity_lora_bake.lora_bake_bytes`, taken again by `actor/store_slab_admit.admit`, then by the exact backstop `actor/store_slab_admit.admit_bake` once the real patch set is built |
 | `consented_rescue` | the same, after both probes ran | the consent branch of `actor/capacity_quote.price`, over the same `capacity_fit.slab_load_fit`, taken again by `actor/store_slab_admit.admit` |
-| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. Under a loader dtype cast the copy the cast builds replaces the file, and the host copy stays the file's. A swap over the slot's own stock resident is charged that price less the resident's GPU copy at the fleet agreement, because the store drops it before the load; a LoRA change on a stock copy of the same file is the same credit, 1.1 times the file plus the floor, whether the store re-applies the stack in place or, when that would first copy the model off the GPU, drops the copy and loads fresh; the Worker's own ladder prices after its drop, with no store snapshot, and never applies a credit | `capacity_fit.stock_load_fit` over `stock_required_bytes` and, for a cast, `capacity_fit.cast_resident_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credits are `capacity_lora_bake.credit_stock_swap` over `actor/worker_capacity._resident_bytes` and `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place`, whose in-place or fresh choice is `actor/store_bake.copies_off_the_gpu` |
+| `explicit_stock`, `stock_fits` | the file plus the host copy it is placed from (2.1 times the file in all), plus the floor; the store places every weight at load time, so this is the whole peak. Under a loader dtype cast the copy the cast builds replaces the file, and the host copy stays the file's. A swap over the slot's own stock resident is charged that price less the resident's GPU copy at the fleet agreement, because the store drops it before the load; a LoRA change on a stock copy of the same file is the same credit, 1.1 times the file plus the floor, whether the store re-applies the stack in place or, when that would first copy the model off the GPU, drops the copy and loads fresh, and a change to a stack of the held stack's own files is also credited ComfyUI's backup of its weights, up to that host copy and net of the new stack's own LoRA files; the Worker's own ladder prices after its drop, with no store snapshot, and never applies a credit | `capacity_fit.stock_load_fit` over `stock_required_bytes` and, for a cast, `capacity_fit.cast_resident_bytes`, re-taken by `actor/store_residency.preload_capacity_check`; the credits are `capacity_lora_bake.credit_stock_swap` over `actor/worker_capacity._resident_bytes` and `capacity_lora_bake.credit_hot_swap` over `actor/store_bake.swaps_in_place`, whose in-place or fresh choice is `actor/store_bake.copies_off_the_gpu`, and `capacity_lora_bake.held_backup_credit` over `actor/worker_capacity._backup_bytes`, net of `capacity_lora_bake.stack_file_bytes` |
 | an FSDP launch | bf16/fp16: this rank's shards plus one block; fp8/int8 or an unreadable kind: the conservative full-file bound; every case includes the floor | `actor/capacity_quote_fsdp.fsdp_rung`, `adapters/fsdp.fsdp_load_capacity_check`, and `actor/store_residency.preload_capacity_check`, all over `capacity_fit.fsdp_required_bytes` |
 | the gate ceremony's clean reload | the same kind-aware FSDP figure, against each rank's MemAvailable plus its resident shard pool (torch reserved, capped at one share) | `fsdp_reload_price.price_fsdp_clean_reload`, crediting `fsdp_reload_price._rank_credit_bytes` |
 | the driver host's own stack | the transient and settled windows above, one rank's share where a shard build is declared; under `auto` the transient window carries the driver models the graph loads | `nodes/loader_preflight.preflight_loader_footprint` and `nodes/render_preflight`, both over `driver_footprint.estimate_driver_footprint`, which prices a declared shard build through `driver_footprint.fsdp_shard_build_bytes` |
@@ -1886,7 +1928,9 @@ change prices as a swap when its resident is the very file the change asks for
 copy of the weights its stack patches is what holds the memory: on 2026-11-05 a
 BF16 Wan-Animate 2 actor kept about 34 GiB of anonymous memory after loading
 base and LoRA, and a strength change was refused 14.3 GiB short, while a fresh
-head reads about 95 GiB against the 69.1 GiB a fresh load needs. That slot is
+head reads about 95 GiB against the 69.1 GiB a fresh load needs. That change
+now reuses the backup and is credited it (below); a LoRA the held stack lacks
+still meets this card. That slot is
 weighed like any credited one, and the card names the model asked for: "The
 model loaded earlier (wan_animate_2_bf16) holds about 29.6 GiB on the head that
 this change needs." Only a row the price credited the slot's own stock copy
@@ -1926,13 +1970,31 @@ when that check cannot resolve the driver's entry, every box reads "the sibling
 at <host name>". One module words it (`box_names.py`). The agreement stamps the
 name on every rank's answer, and the refusals under its guard (its own, and the
 undeliverable-actor refusals that end its wait, `restart_reattach.py`), the Old
-model in the way card, the agreement's log line and the FSDP clean-reload
-refusal take their words from it. So none of those names a box by its rank
-number or by the address cluster.toml gives it. Machine fields keep the host
+model in the way card, the agreement's log line, the FSDP clean-reload
+refusal and the Fleet timeline take their words from it. So none of those
+names a box by its rank number or by the address cluster.toml gives it. Machine fields keep the host
 name, the address and the rank number for operators and parsers: the attach
 trace, ledger rows, and the warning a reply that names another rank leaves in
-the log. So does a Worker's own refusal: a Worker words no sentence about a
-peer and does not know which box the driver runs on.
+the log.
+
+**A Worker's own refusal says "here", and the driver names the box.** A
+Worker words no sentence about a peer and does not know which box the driver
+runs on, so its walls say where in its own voice: "stock residency cannot load
+X here", "the LoRA bake for X cannot proceed here", "model X was not found
+here", "sampler X is not registered with ComfyUI here". The driver knows which
+box each rank sits on, and it names the box where it receives the error, before
+any other reader sees it (`worker_box.py`, at `mesh_rpc.call_all_bound`,
+`mesh_lease.collect_sample` and the Fleet drain): "On the sibling, stock
+residency cannot load X here: ...", after the tag, with the words from
+`box_names.py`. A fleet on the driver's box alone gets no prefix, since "here"
+is already the box the user reads about. A Fleet job takes the box of the actor
+the driver sent it to. At a collective call of more than one rank, Monarch's
+wrapper says nothing of which rank raised, so the Worker adds one machine line
+naming its rank (`actor/failure.mark_rank`), which the driver reads and takes
+off, so no user reads the number. The line is no tag, a Worker one release
+behind sends none and keeps its host name, and the partial-load refusal, which
+every rank raises alike and which speaks for the fleet, gets none. The label
+never rides the setup key.
 
 **Every rank prices before any rank allocates.** Before eager loading and again
 before collective sampling, the driver asks every rank for a memory estimate
@@ -1993,9 +2055,37 @@ it is the lower bound the Worker reports, never the price's cast figure, and
 nothing when the Worker reports none. A rank whose drop returned less refuses
 at its own wall before it reads a byte
 ([TROUBLESHOOTING #94](TROUBLESHOOTING.md#94-a-multi-rank-render-refuses-saying-a-peer-rank-could-not-load)).
-The host copy a held stack keeps (ComfyUI's backup) is not credited: an
-in-place swap runs unpriced on the Worker, so that credit waits for a measured
-swap from a resident that holds one. A base the
+The host copy a held stack keeps (ComfyUI's backup) is credited too, as a lower
+bound, for a change to a stack of the held stack's own files: a strength, an
+order, a LoRA removed. ComfyUI keeps each weight a stack patches, as it was, on
+the host; every clone of the base shares that copy, and an in-place change puts
+those weights back from it and places again only what it lacks. For the BF16
+Wan-Animate 2 base and its distill LoRA the headers put the backup at the file:
+1261 of its 1303 tensors, 32,785,804,928 bytes, and the 42 left out hold 3.8
+MiB. Each in-place change also reads the new stack's LoRA files again, through
+the pread backend into anonymous memory (`actor/pread_backend.py`). On
+2026-11-05, on one Spark, a strength change on that base grew the actor by 0.8
+GiB, about the 0.69 GiB LoRA file and the patch temporaries, took 1.7 s of
+`gpu_load` and rendered a fresh load's latent bit for bit, where the agreement
+charged it 38.6 GiB and, on the pair's head at 24.5 GiB, raised Old model in
+the way. An in-place swap runs unpriced on the Worker, so for such a change the
+agreement's price is the only guard, and the backup is reused, not dropped, so
+this credit rests on that measured swap, not on the drop rule above. The Worker
+reports the bytes of the backup's host tensors
+(`actor/worker_capacity._backup_bytes`) only for that state: classic mode, a
+stock, uncast, full-precision resident placed whole, the other slot empty, and
+a held stack whose every patched weight the backup holds. The price credits
+them up to the host copy it charges, net of the new stack's own files, and
+credits no backup when those files cannot be sized or cost as much
+(`capacity_lora_bake.held_backup_credit`,
+`capacity_lora_bake.stack_file_bytes`): 1.1 times the file less the backup,
+plus the files and the floor, about 8.7 GiB there, where a stack of three LoRAs
+of 2.97 GiB prices 11.0 GiB. A LoRA the held stack lacks gets no backup credit,
+covered or not: the quote cannot read ComfyUI's key map without loading the
+file, and when its keys are not covered the store reloads, which keeps the
+backup through the fresh load (the actor rose from 33.9 to 64.8 GiB). The
+credit carries both copies, so a clear is still weighed against the price a
+cleared box pays. A base the
 low-RSS bake consumed with no un-bake record reloads after the store drops it,
 so the swap credit above covers it with the same figure; explicit
 `slab_weights=on` drops the stock resident and loads slab, whose price takes

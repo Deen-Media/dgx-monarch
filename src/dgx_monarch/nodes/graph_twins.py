@@ -198,7 +198,7 @@ def _swapped(prompt: Mapping, old: str, new: str) -> dict:
 
 
 def model_twins(shape: Any, fits: Callable[[Any], bool], terms: DriverStackTerms,
-                 deferred: bool, prompt: object,
+                 load_of: Callable[[DriverStackTerms], int], prompt: object,
                  stack_for: Callable[[object], DriverStackTerms]) -> list[str]:
     """Twins of the driver models, each priced by pricing the graph that loads it.
 
@@ -218,7 +218,7 @@ def model_twins(shape: Any, fits: Callable[[Any], bool], terms: DriverStackTerms
         named = []
         for twin, size in twins_on_disk(folders, name, _artifact_bytes(folders, name)):
             other = stack_for(_swapped(prompt, name, twin))
-            load = other.models_bytes - terms.models_bytes if deferred else 0
+            load = load_of(other) - load_of(terms)      # what the load window carries
             if fits(replace(shape, stack_bytes=shape.stack_bytes + other.total - terms.total,
                             load_stack_bytes=shape.load_stack_bytes + load)):
                 named.append(f"{twin} ({_gib(size)} GiB)")

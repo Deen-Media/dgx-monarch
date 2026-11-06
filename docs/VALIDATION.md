@@ -2191,7 +2191,9 @@ and with Always clear and retry on, a queue cleared once and rendered. On
 one Spark, where no agreement prices the change, the same strength change
 ran in place in 0.2 s in the store and 1.7 s of `gpu_load`, grew the actor by
 0.8 GiB, and gave a latent bit-identical to a fresh load at 0.8. Every pair
-render here kept identical rank latents. The head was capped, SM 2080 to 2093 MHz
+render here kept identical rank latents. Since #148 the price credits that
+held backup for a strength change, about 8.7 GiB where it charged 38.6; no
+hardware run has checked that yet. The head was capped, SM 2080 to 2093 MHz
 under load.
 
 <a id="evidence-hunyuanvideo-1-5-sr"></a>
@@ -3414,8 +3416,11 @@ after it, and on the pair the Wan 2.2 cell's actors held 3.5 GiB. On
 p-h3-image template, its loader's inputs unchanged, ran no loader node:
 ComfyUI's cache kept the node's output, so the loader's graph price did not
 run. The upsampler loaded on the driver beside the resident DiT and the
-replay rendered, because the head had 52.8 GiB free. The sampler's agreement
-prices the DiT, not the driver's models.
+replay rendered, because the head had 52.8 GiB free. On that build no node
+priced the driver's models for such a queue; the sampler now runs the
+loader's price for them
+([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)),
+which no hardware run has checked yet.
 
 ## FSDP calibration
 

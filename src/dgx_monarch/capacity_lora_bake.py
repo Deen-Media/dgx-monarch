@@ -222,23 +222,79 @@ def swap_credit_bytes(held: object, request_key: str, size_bytes: int, context: 
     return max(int(size_bytes), 0)
 
 
-def _same_base_stock_resident(held: object, request_key: str) -> bool:
-    """Whether the slot holds a stock copy of this request's base, whatever its stack."""
+def _keys(held: object, request_key: str) -> tuple[tuple, tuple] | None:
+    """This request's key and the slot's, parsed, for a stock resident; else None."""
     import ast
 
     if not isinstance(held, dict) or held.get("residency") != "stock":
-        return False
+        return None
     try:
         mine, theirs = ast.literal_eval(request_key), ast.literal_eval(held.get("request_key") or "")
     except (ValueError, SyntaxError):
-        return False
+        return None
+    ok = isinstance(mine, tuple) and isinstance(theirs, tuple) and len(mine) > 2 and len(theirs) > 2
+    return (mine, theirs) if ok else None
+
+
+def _same_base_stock_resident(held: object, request_key: str) -> bool:
+    """Whether the slot holds a stock copy of this request's base, whatever its stack."""
+    keys = _keys(held, request_key)
     # (*base_key, lora_signature, quant): the same base checkpoint, any stack.
-    return (isinstance(mine, tuple) and isinstance(theirs, tuple) and len(mine) > 2
-            and mine[:-2] == theirs[:-2] and mine[-1] == theirs[-1])
+    return keys is not None and keys[0][:-2] == keys[1][:-2] and keys[0][-1] == keys[1][-1]
+
+
+def _names(signature: object) -> set[str] | None:
+    """The LoRA files a stack signature ``((name, strength), ...)`` names, or None."""
+    if not isinstance(signature, tuple) or not all(
+            isinstance(entry, tuple) and entry and isinstance(entry[0], str) for entry in signature):
+        return None
+    return {entry[0] for entry in signature}
+
+
+def held_backup_credit(held: object, request_key: str, size_bytes: int) -> int:
+    """The host copy ComfyUI's backup holds that this LoRA change re-applies from, or 0.
+
+    The Worker reports the backup's host bytes, a lower bound, only for the state
+    measured on 2026-11-05 (``actor/worker_capacity._backup_bytes``). The held stack
+    patched every weight a stack of its own files patches, so a change to such a
+    stack (a strength, an order, a LoRA removed) swaps in place from that copy and
+    places again only what the backup lacks, 3.8 MiB for the distill LoRA's base.
+    E3's 0.8 GiB was the 0.69 GiB LoRA file read again plus the patch temporaries,
+    which the price charges beside this credit. A file the held stack lacks gets
+    nothing, since the store may reload, which keeps the backup through the fresh
+    load. Never more than the host copy the stock price charges.
+    """
+    from .capacity_fit import STOCK_PLACEMENT_RATIO
+
+    reported = held.get("backup_bytes") if isinstance(held, dict) else None
+    keys = _keys(held, request_key)
+    if (keys is None or not isinstance(reported, int) or isinstance(reported, bool)
+            or reported <= 0):
+        return 0
+    mine, theirs = _names(keys[0][-2]), _names(keys[1][-2])
+    if mine is None or not theirs or not mine <= theirs:
+        return 0
+    return min(reported, int(STOCK_PLACEMENT_RATIO * max(int(size_bytes), 0)))
+
+
+def stack_file_bytes(stack: object) -> int | None:
+    """The bytes of a stack's LoRA files, from ``(lora_stack, resolve_lora_path)``, or None.
+
+    The Worker reads each LoRA through the pread backend into anonymous memory on
+    every in-place change (``ModelStore._build_active``), so a backup credit is net
+    of them. A file it cannot find or size reads as unknown.
+    """
+    try:
+        entries: Any
+        resolve: Any
+        entries, resolve = stack  # type: ignore[misc]
+        return sum(int(os.path.getsize(resolve(str(entry["name"])))) for entry in entries or ())
+    except Exception:
+        return None
 
 
 def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | None,
-                    slab_weights: object) -> Any:
+                    slab_weights: object, stack: object = None) -> Any:
     """The stock price of a LoRA change the store makes in place, with the held copy credited.
 
     The quote reads such a change as a swap and would price a whole stock load
@@ -255,7 +311,11 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
     whole there. An explicit ``slab_weights=on`` drops a stock
     resident before it loads, so it gets no credit. A change the store makes by
     dropping this copy and loading fresh (``store_bake.copies_off_the_gpu``)
-    keeps it: the drop returns the copy, and its wall prices the load whole.
+    keeps it: the drop returns the copy, and its wall prices the load whole. A
+    change to a stack of the held stack's own files is also credited the backup
+    the Worker reports (``held_backup_credit``), net of its own LoRA files
+    (``stack_file_bytes``); ``credit_bytes`` carries both credits, so a clear is
+    still weighed against the price a cleared box pays (``old_model``).
     """
     from dataclasses import replace
 
@@ -278,7 +338,15 @@ def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | No
             held_bytes = 0
     if held_bytes <= 0:
         return fit
-    credited = replace(fit, credit_bytes=held_bytes)
+    # ComfyUI's backup of the held stack's weights, where this change re-applies from it,
+    # net of the new stack's own files; none when they cannot be sized or cost as much.
+    files = stack_file_bytes(stack)
+    backup = 0 if int(getattr(fit, "cast_bytes", 0) or 0) > 0 or files is None else held_backup_credit(
+        held, request_key, fit.size_bytes)
+    if files is None or backup <= files:
+        backup = files = 0
+    credited = replace(fit, credit_bytes=held_bytes + backup - files, backup_bytes=backup,
+                       stack_bytes=files)
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 
@@ -309,5 +377,5 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
 
 
-__all__ = ["credit_hot_swap", "credit_stock_swap", "lora_bake_bytes", "patched_base_keys",
-           "swap_credit_bytes"]
+__all__ = ["credit_hot_swap", "credit_stock_swap", "held_backup_credit", "lora_bake_bytes",
+           "patched_base_keys", "stack_file_bytes", "swap_credit_bytes"]

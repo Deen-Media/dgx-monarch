@@ -7,8 +7,10 @@ that lists only that box) is "this box": it has no pair to tell apart. A box
 that holds more than one rank names the GPU too ("GPU 1 on the head"). The
 capacity refusals (the agreement's, the FSDP clean-reload price's and the
 undeliverable-actor refusals of ``restart_reattach``), the Old model in the way
-card and the agreement's log line take their words from here, so none names a
-box by its rank number or by the address cluster.toml gives it.
+card, the agreement's log line and the Fleet timeline take their words from
+here, so none names a box by its rank number or by the address cluster.toml
+gives it. A Worker's own refusal says "here" and the driver puts its box ahead
+of it ("On the sibling, ...", ``on_box`` and ``worker_box.py``).
 
 The head is the ``[[hosts]]`` entry that ``driver_footprint.host_is_local``
 resolves to this machine, the check ``rank0_co_resident`` makes; no rule assumes
@@ -75,6 +77,15 @@ def label(box: str, gpu: int | None = None) -> str:
 def opening(words: str) -> str:
     """A name that opens a sentence: 'The head priced ...'."""
     return words[:1].upper() + words[1:]
+
+
+def on_box(box: str) -> str:
+    """The words that put a Worker's own sentence on its box: 'On the sibling, '.
+
+    None for a fleet on the driver's box alone, where the Worker's "here" is
+    already the box the user reads about (worker_box.py).
+    """
+    return "" if box == LOCAL else f"{opening('on ' + box)}, "
 
 
 def fleet_boxes(handle: Any, world: int) -> list[tuple[str, int | None]]:

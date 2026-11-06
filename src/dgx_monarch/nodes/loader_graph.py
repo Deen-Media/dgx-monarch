@@ -445,14 +445,14 @@ def _comfy_held_bytes() -> int | None:
         return None
 
 
-def _credit_held(terms: DriverStackTerms, held: int) -> DriverStackTerms:
+def _credit_held(terms: DriverStackTerms, held: int, ratio: float = 1.0) -> DriverStackTerms:
     """Credit ``held`` bytes against the graph's models; the rest stays charged.
 
     The reference encode stays charged too: with models still to load, it has
-    not run either.
+    not run either. ``ratio`` reads held bytes as encoders resident at that ratio.
     """
-    te = max(terms.te_bytes - held, 0)
-    left = max(held - terms.te_bytes, 0)
+    te = max(terms.te_bytes - int(held * ratio), 0)
+    left = max(held - int(terms.te_bytes / ratio), 0)
     vae = max(terms.vae_bytes - left, 0)
     left = max(left - terms.vae_bytes, 0)
     return replace(terms, te_bytes=te, vae_bytes=vae,
@@ -462,7 +462,7 @@ def _credit_held(terms: DriverStackTerms, held: int) -> DriverStackTerms:
                                   "models this graph loads"))
 
 
-def credited_terms(terms: DriverStackTerms) -> DriverStackTerms:
+def credited_terms(terms: DriverStackTerms, ratio: float = 1.0) -> DriverStackTerms:
     """Apply the residency credits: comfy's loaded models, then earlier charges.
 
     A guide encode survives both credits, like render activations. The first
@@ -476,7 +476,7 @@ def credited_terms(terms: DriverStackTerms) -> DriverStackTerms:
     if _comfy_has_loaded_models():
         held = _comfy_held_bytes()
         if held is not None and held < terms.models_bytes:
-            return _credit_held(terms, held)
+            return _credit_held(terms, held, ratio)
         return replace(terms, te_bytes=0, vae_bytes=0, model_bytes=0, ref_bytes=0,
                        credited=True,
                        credit_reason="comfy already holds loaded models, so "

@@ -24,11 +24,13 @@ the driver orchestrates them.
 
 **The head and the sibling.** On a pair of boxes, the head is the box the
 driver runs on and the sibling is the other one. The capacity refusals, the Old
-model in the way card and the capacity agreement's log line name a box this
-way, never by rank number or by its address in cluster.toml. With more than two
-boxes, each other box is "the sibling at" its host name; a fleet on the
-driver's box alone is "this box". Other messages, such as a Worker's own
-refusal, may still name a host.
+model in the way card, the capacity agreement's log line and the Fleet
+timeline name a box this way, never by rank number or by its address in
+cluster.toml. With more than two boxes, each other box is "the sibling at" its
+host name; a fleet on the driver's box alone is "this box". A Worker's own
+refusal says "here", and the driver opens it with the box: "On the sibling,
+stock residency cannot load X here". Operator logs and machine fields may still
+name a host.
 
 **Render session.** One logical unit of active render work holding the
 Attached mesh, including pending results and identity-gate proof renders. A
@@ -147,13 +149,19 @@ refuses before anything loads and names the smaller files on disk that would
 and that this graph would run, and a pair with the Init node's topology set to
 `uly2+fsdp`, where half the DiT would. On the pair, Ulysses and ring hold the
 whole DiT on the head, so the pair alone does not help, and `auto` never picks
-`uly2+fsdp`.
+`uly2+fsdp`. ComfyUI does not run the loader again on a re-queue that changes
+nothing upstream of it, so the sampler, or Identity Gate (DGX Monarch), runs the
+same price for such a queue, crediting the models ComfyUI holds by then.
 
 **The LoRA backup.** When ComfyUI applies ("bakes") a LoRA into a model, it
 keeps a backup of every original weight it touched so it can undo the edit
 later. A LoRA stack that touches most of the model therefore costs almost a
 full extra copy of the model, about 24 GB for a 24 GB model. On a discrete
 GPU, that backup uses system RAM; on unified memory it uses the shared pool.
+A new strength, a new order or a LoRA removed reuses that backup, so the capacity
+check counts it as held and charges only the LoRA files the change reads again:
+on a BF16 Wan-Animate 2 model such a change took under 1 GB more, about its
+LoRA file (2026-11-05).
 
 **low_rss (lazy un-bake).** Enabled by default on unified memory. The original
 weights remain in the checkpoint file. The worker bakes the LoRA, discards the
@@ -229,10 +237,11 @@ the Worker drops the last one before it loads the next, and the price counts
 that, but the retained arena and any model in the other slot stay. So a
 refusal may still say "the old model (<name>) is still loaded" and offer
 **Clear and retry**, which runs this reset; **Always clear and retry** lets
-the driver run it for you. A LoRA change on a large model held with its LoRA
+the driver run it for you. A new LoRA on a large model held with another one
 can meet the same card when the host copy that LoRA keeps holds the memory:
 "The model loaded earlier (<name>) holds about <N> GiB on the head that this
-change needs. Clear the Sparks and run again?"
+change needs. Clear the Sparks and run again?" A new strength or order of the
+LoRAs it holds, or one of them removed, reuses that host copy and does not.
 
 ## Trust words
 

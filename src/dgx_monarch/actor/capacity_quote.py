@@ -43,9 +43,9 @@ VERDICTS = frozenset({
 
 # What the load would do to the slot. A reuse places nothing and admits. A swap
 # over a stock resident is credited the GPU copy the store drops before it loads
-# (capacity_lora_bake.credit_stock_swap); other swaps and unknown price as held,
-# since a slab resident barely moves MemAvailable. ``unknown`` reads as
-# ``fresh``: a quote can land between a slot's drop and its repopulation.
+# (capacity_lora_bake.credit_stock_swap); other swaps and unknown price as held: a
+# slab resident holds MemAvailable, but no load over one has yet needed its drop
+# credited. ``unknown`` reads as ``fresh``: a quote can land between a drop and a refill.
 WOULD_LOAD_FRESH = "fresh"
 WOULD_LOAD_REUSE = "reuse"
 WOULD_LOAD_SWAP = "swap"
@@ -489,7 +489,7 @@ def price(
 
     fit = capacity_lora_bake.credit_stock_swap(capacity_lora_bake.credit_hot_swap(
         _charge(fit_probe(path, model_options), charged), snapshot.get(slot), request_key, context,
-        slab_weights), snapshot.get(slot), context)
+        slab_weights, stack=(lora_stack, resolve_lora_path)), snapshot.get(slot), context)
     explicit_stock = slab_weights is False or compile_blocks_slab
     if not fit.applies or fit.fits:
         rung = RUNG_EXPLICIT_STOCK if explicit_stock else RUNG_STOCK_FITS

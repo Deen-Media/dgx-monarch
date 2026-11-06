@@ -8,7 +8,7 @@
     "cli_option": 102,
     "configuration": 54,
     "node": 21,
-    "node_input": 138,
+    "node_input": 143,
     "panel_action": 8,
     "telemetry": 17,
     "tui_action": 9,
@@ -11471,6 +11471,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchIdentityGate.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchIdentityGate",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchIdentityGate",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/gate_node.py:DGXMonarchIdentityGate.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "Optional ID that `dgxm gate` sets to find this run's report.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -13023,6 +13068,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSampler.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSampler",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSampler",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSampler.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "required input of DGXMonarchKSampler; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": "_sampler_names()",
@@ -13630,6 +13720,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSamplerAdvanced.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSamplerAdvanced",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSamplerAdvanced",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSamplerAdvanced.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "required input of DGXMonarchKSamplerAdvanced; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -14185,6 +14320,51 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "schema_source": "source AST + tests/node_input_contract.json",
       "section": "required",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSamplerPipeline.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSamplerPipeline.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSamplerPipeline",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSamplerPipeline",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
       "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSamplerPipeline.INPUT_TYPES",
       "units": null,
       "validation": {}
@@ -15402,6 +15582,51 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "schema_source": "source AST + tests/node_input_contract.json",
       "section": "required",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchSamplerCustom.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchSamplerCustom.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSamplerCustom",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchSamplerCustom",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
       "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchSamplerCustom.INPUT_TYPES",
       "units": null,
       "validation": {}
