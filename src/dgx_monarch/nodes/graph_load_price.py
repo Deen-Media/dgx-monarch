@@ -21,7 +21,7 @@ from .. import box_names, consent_pending, driver_footprint
 from ..log import get_logger
 from .graph_live import SWITCH_TITLES, is_link, live_nodes
 from .graph_twins import _SHARDED_KINDS, _gib, _join, dit_twins, model_twins
-from .loader_graph import DriverStackTerms
+from .loader_graph import DriverStackTerms, remember
 
 log = get_logger(__name__)
 
@@ -39,6 +39,56 @@ PAIR_PRESET = "uly2+fsdp"
 # stay; the lead and the remedy always stay. ``bounded`` caps the whole.
 TEXT_BUDGET = 3000
 _MIN_TERMS = 800
+# Where the price runs: the UNET loader, or the sampler of a queue whose loader
+# output ComfyUI kept from an earlier queue (nodes/requeue_price.py).
+SITE_LOADER = "loader"
+SITE_SAMPLER = "sampler"
+# Each site's words in the budget detail; read-only after import.
+_SITE_WORDS = {SITE_LOADER: "at the loader node",
+               SITE_SAMPLER: "at the sampler (the UNET Loader's output came from an earlier queue)"}
+# Session lifetime, FIFO-capped through loader_graph.remember: the ComfyUI prompt
+# id and checkpoint of each price that ran, so a sampler prices only a prompt
+# whose loader did not. A lost entry prices a prompt twice; it never skips one.
+_PRICED_PROMPTS: dict[str, None] = {}
+
+
+def site_terms(terms: DriverStackTerms, site: str) -> DriverStackTerms:
+    """The terms the price charges at ``site``: at the sampler, the driver models only.
+
+    By the sampler the graph's encodes have run, and the render-site checks that
+    run next price the render activations, crediting what the Workers retain and
+    freeing what ComfyUI can reload (``render_preflight``), so charging them here
+    too would refuse a re-queue the box just rendered.
+    """
+    if site != SITE_SAMPLER:
+        return terms
+    return replace(terms, ref_bytes=0, guide_bytes=0, activation_bytes=0,
+                   guide_note="encoded before the sampler",
+                   activation_note="the render-site checks price them next")
+
+
+def executing_prompt_id() -> str | None:
+    """The ComfyUI prompt this thread is executing, or None (headless, no ComfyUI)."""
+    try:
+        from comfy_execution.utils import get_executing_context
+
+        prompt_id = getattr(get_executing_context(), "prompt_id", None)
+    except Exception:
+        return None
+    return prompt_id if isinstance(prompt_id, str) and prompt_id else None
+
+
+def note_priced(unet_name: str) -> None:
+    """Record that the graph price ran for this checkpoint in the executing prompt."""
+    prompt_id = executing_prompt_id()
+    if prompt_id is not None:
+        remember(_PRICED_PROMPTS, f"{prompt_id}\x00{unet_name}")
+
+
+def priced_this_prompt(unet_name: str) -> bool | None:
+    """Whether the graph price ran for this checkpoint in this prompt; None without a prompt id."""
+    prompt_id = executing_prompt_id()
+    return None if prompt_id is None else f"{prompt_id}\x00{unet_name}" in _PRICED_PROMPTS
 
 
 def driver_box(mesh: Any) -> str:
@@ -123,6 +173,7 @@ def loader_refusal(
     rescue: driver_footprint.DriverFootprintEstimate | None, window: str = WINDOW_SETTLED,
     bypass: bool = True, lead: str = "", fits: str = "", load_models: int | None = None,
     windows: tuple[driver_footprint.DriverFootprintEstimate, ...] = (), cast: bool = False,
+    site: str = SITE_LOADER,
 ) -> str:
     """A capacity refusal with its charged terms and remedies, stripped at both ends.
 
@@ -136,12 +187,13 @@ def loader_refusal(
     ref_note = (f"{terms.video_refs} reference video block(s), single-shape "
                 f"calibration 2026-08-04, not extrapolated"
                 if terms.ref_bytes else
+                "encoded before the sampler" if site == SITE_SAMPLER and terms.video_refs else
                 ("no reference video in this graph" if terms.resolved
                  else "no graph available at the loader node"))
     models = (f"; driver-side models {_gib(terms.model_bytes)} GiB "
               f"({', '.join(terms.model_artifacts)})" if terms.model_bytes else "")
     body = (
-        f"driver-side footprint preflight at the loader node: "
+        f"driver-side footprint preflight {_SITE_WORDS.get(site, _SITE_WORDS[SITE_LOADER])}: "
         f"{_gib(estimate.projected)} GiB to place on the driver host, "
         f"{_gib(estimate.usable)} GiB usable ({_gib(estimate.mem_available)} GiB "
         f"MemAvailable minus a {_gib(floor_reserve)} GiB reserve and "
@@ -217,8 +269,12 @@ def what_would_fit(windows: tuple[driver_footprint.DriverFootprintEstimate, ...]
 
 def plain_lead(estimate: driver_footprint.DriverFootprintEstimate, *, window: str,
                unet_name: str, models: tuple[str, ...], deferred: bool,
-               box: str = box_names.LOCAL) -> str:
-    """One plain sentence: what does not fit, by how much, and why at this window."""
+               box: str = box_names.LOCAL, site: str = SITE_LOADER) -> str:
+    """One plain sentence: what does not fit, by how much, and why at this window.
+
+    At the sampler the driver has loaded the graph's own models by then, so the
+    last sentence says what the Workers did not load, and why the price ran there.
+    """
     name = os.path.basename(unet_name)
     subject = (f"{name} needs" if estimate.weight_bytes
                else f"Beside {name}, this graph's driver models need")
@@ -232,9 +288,12 @@ def plain_lead(estimate: driver_footprint.DriverFootprintEstimate, *, window: st
                "placed from." if estimate.arena_bytes else "That is the peak of its load.")
     else:
         why = "That is the DiT in memory beside what this graph still needs on the driver."
+    loaded = ("The UNET Loader's output came from an earlier queue, so the sampler priced this "
+              "graph, and the Workers loaded nothing." if site == SITE_SAMPLER
+              else "Nothing was loaded.")
     return (f"{subject} {_gib(estimate.projected + estimate.reserve)} GiB on {box} and "
             f"{_gib(estimate.mem_available)} GiB is available, {_gib(estimate.shortfall)} "
-            f"GiB short. {why} Nothing was loaded.")
+            f"GiB short. {why} {loaded}")
 
 
 def graph_loras(prompt: object) -> tuple[str, ...]:

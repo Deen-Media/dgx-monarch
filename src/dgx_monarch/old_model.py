@@ -279,16 +279,16 @@ def credited_sentence(where_: str, unet_name: str, quote: RankPrice, needed: flo
                       weights: float, avail: float, short: float) -> str:
     """The fleet card's sentence for a credited price that still falls short.
 
-    A LoRA change the store makes in place on the held base keeps its own words;
-    a swap credit (``dropped`` in the block) names the copy the Worker drops
+    A LoRA change the store makes in place on the held base keeps its own words,
+    naming the backup it credited; a swap credit (``dropped``) names the copy the Worker drops
     before it loads, a change of dtype on the same file included. The held size
     is the credit itself, never the new load's copy, and it is a lower bound of
     what the drop returns (``worker_capacity._cast_bytes``), hence "at least".
     """
-    block = quote.measured or {}
-    held = gib(int(block.get("credit_bytes") or 0))
+    block, backup = quote.measured or {}, int((quote.measured or {}).get("backup_bytes") or 0)
+    held = gib(int(block.get("credit_bytes") or 0) - backup)    # the backup is named apart
     if not block.get("dropped"):
-        return hot_swap_sentence(where_, unet_name, needed, held, avail, short)
+        return hot_swap_sentence(where_, unet_name, needed, held, avail, short, gib(backup))
     return (f"{where_} priced a stock load of {unet_name} after the Worker drops "
             f"{display_name(str(block['dropped']))}, which frees at least {held} GiB. "
             f"Beyond that the load needs {needed} GiB, a {weights} GiB "

@@ -1932,6 +1932,11 @@ refuses before worker RPCs. Render-time messages start
 sentence, then the budget detail from
 `driver-side footprint preflight at the loader node:` on. The latter carries
 `[dgxm:K]` if a Gate FAIL blocks rescue; ordinary capacity refusals are class C.
+A re-queue whose UNET loader ComfyUI kept from an earlier queue gets the same
+refusal from the sampler, which says so after its first sentence ("The UNET
+Loader's output came from an earlier queue, so the sampler priced this graph,
+and the Workers loaded nothing."), and its budget detail starts
+`driver-side footprint preflight at the sampler`.
 For example, the p-h3-image template on one Spark:
 
 ```
@@ -1989,7 +1994,14 @@ unselected branch of an If/Else or Soft Switch with a fixed value reaches, or
 that no output node reaches, never loads and is not charged. When ComfyUI
 already holds models, the price credits only the bytes ComfyUI holds against
 the graph's models, never more, since it cannot tell which files they came
-from; until 2026-11-05 any one held model credited the whole stack. On a fresh
+from; until 2026-11-05 any one held model credited the whole stack. ComfyUI
+does not run a node again while nothing upstream of it changed, so a re-queue in
+the same driver can skip the UNET loader; under `auto` the sampler then runs
+this price, for what is not yet held: the DiT while its load is pending, and
+the models beyond what ComfyUI holds, which by then include the encoders and
+any upsampler. Encodes have run by then, and the render-time estimate below
+prices the activations. A re-queue whose box is short for the upsampler's own load
+beside a held DiT is not caught: that load runs before any DGX Monarch node. On a fresh
 driver the price errs high by the 1.15 encoder ratio and a VAE ComfyUI has not
 yet moved into memory: p-h3-image prices 9.0 GiB short where the hardware ran
 2.0 GiB short, and LTX 2.3 text to video now needs 80.9 GiB where it needed
@@ -4823,10 +4835,15 @@ undeliverable actor included. Six shapes reach the operator:
   short box. The refusal names the old model and its box, and the Old model in
   the way card offers Clear and retry in place of a slab rescue
   ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)). The
-  model in the way can be the one you asked for: a LoRA change (a new LoRA or
-  a new strength) on a large model loaded earlier with its LoRA, with
-  `lora_low_rss` off. The price credits the copy the Worker holds, but that
-  copy keeps a host copy of every weight its LoRA patches. Then the card reads
+  model in the way can be the one you asked for: a new LoRA on a large model
+  loaded earlier with another one, with `lora_low_rss` off. The price credits
+  the copy the Worker holds, but that copy keeps a host copy of every weight
+  its LoRA patches, which a new LoRA cannot reuse. A new strength, a new order
+  or a LoRA removed from the stack it holds reuses that host copy, so the price
+  credits it too and names it ("beside the 30.5 GiB copy of this file and the
+  29.7 GiB host copy of its patched weights (ComfyUI's backup) the Worker
+  already holds"), and such a change is admitted where it fits: about 8.9 GiB
+  for the BF16 Wan-Animate 2 strength change that needed 38.6. Then the card reads
   "The model loaded earlier (<name>) holds about <N> GiB on the head that this
   change needs. Clear the Sparks and run again?", and it appears only when a
   cleared box would hold a fresh load of the model and its LoRA, which costs
@@ -4849,8 +4866,8 @@ and draws no conclusion from them.
 old model is still loaded, or that the model loaded earlier holds memory that
 this change needs, and offers Old model in the way, click Clear and retry on that
 card, or Reset attached mesh, then queue again; moving between large models on
-one attached mesh meets this, and so does changing a LoRA on a BF16 model the
-Workers already hold with its LoRA. For another shortfall,
+one attached mesh meets this, and so does putting a new LoRA on a BF16 model
+the Workers already hold with another. For another shortfall,
 run the checkpoint slab-resident on every rank, use a pruned or quantized
 artifact, or free unified memory on the short box. For a silent rank, recycle
 the fleet from the DGX Monarch panel, or check that box, then queue again. For

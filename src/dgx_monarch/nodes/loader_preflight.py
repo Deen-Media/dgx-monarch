@@ -320,19 +320,19 @@ def _windows(shape: _Shape, *, slab: bool | str) -> tuple[
 def _lead(binding: driver_footprint.DriverFootprintEstimate, window: str, shape: _Shape, *,
           unet_name: str, family: str, quant_kind: str, terms: DriverStackTerms,
           deferred: bool, prompt: object, slab: bool | str, mesh: Any,
-          worker_args: Mapping[str, Any]) -> dict[str, str]:
+          worker_args: Mapping[str, Any], site: str) -> dict[str, str]:
     """The plain sentence, and what would fit, each alternative priced in both windows."""
     def fits(alt: _Shape) -> bool:
         return all(map(fits_box, _windows(alt, slab=slab)))
 
     def stack_for(graph: object) -> DriverStackTerms:
-        return credited_terms(driver_stack_terms(
-            graph, family=family, sp_degree=activation_sp_degree(mesh, family)))
+        return graph_load_price.site_terms(credited_terms(driver_stack_terms(
+            graph, family=family, sp_degree=activation_sp_degree(mesh, family))), site)
 
     lead = graph_load_price.plain_lead(
         binding, window=window, unet_name=unet_name, deferred=deferred,
         models=terms.models if shape.load_stack_bytes else (),
-        box=graph_load_price.driver_box(mesh))
+        box=graph_load_price.driver_box(mesh), site=site)
     return {"lead": lead, "fits": graph_load_price.alternatives(
         shape, fits=fits, unet_name=unet_name, family=family, quant_kind=quant_kind,
         terms=terms, deferred=deferred, prompt=prompt, stack_for=stack_for,
@@ -341,14 +341,16 @@ def _lead(binding: driver_footprint.DriverFootprintEstimate, window: str, shape:
 
 def preflight_loader_footprint(
     mesh: Any, unet_name: str, options: Mapping[str, Any] | None,
-    prompt: object = None,
+    prompt: object = None, site: str = graph_load_price.SITE_LOADER,
 ) -> consent_rescue.RescueLoad | None:
     """Refuse an unaffordable eager load or apply an allowed slab rescue.
 
     This must run above ``ensure_live`` so refusal precedes fleet healing and
     rank mutation. It fails open except for a completed over-budget estimate
-    and a forced family this checkpoint cannot carry.
+    and a forced family this checkpoint cannot carry. ``site`` is the sampler
+    when ComfyUI kept the loader's output from an earlier queue (requeue_price).
     """
+    graph_load_price.note_priced(unet_name)
     try:
         import folder_paths
 
@@ -389,9 +391,9 @@ def preflight_loader_footprint(
         # reserve and the same residency levers.
         worker_args = effective_worker_args(mesh)
 
-        terms = credited_terms(driver_stack_terms(
+        terms = graph_load_price.site_terms(credited_terms(driver_stack_terms(
             prompt, family=family,
-            sp_degree=activation_sp_degree(mesh, family)))
+            sp_degree=activation_sp_degree(mesh, family))), site)
         if not terms.resolved and _first_unpriced_stack_warn(family):
             # A direct node call carries no hidden prompt, so the estimator priced
             # only the weights. Say so once per family, so a post-mortem does
@@ -449,10 +451,10 @@ def preflight_loader_footprint(
         words: dict[str, Any] = {
             "profile": profile, "floor_reserve": floor_reserve, "window": window,
             "load_models": shape.load_stack_bytes if deferred else None,
-            "windows": (transient, settled), "cast": bool(cast_bytes),
+            "windows": (transient, settled), "cast": bool(cast_bytes), "site": site,
             **_lead(binding, window, shape, unet_name=unet_name, family=family,
                     quant_kind=quant_kind, terms=terms, deferred=deferred, prompt=prompt,
-                    slab=effective_slab, mesh=mesh, worker_args=worker_args)}
+                    slab=effective_slab, mesh=mesh, worker_args=worker_args, site=site)}
         blocked = consent_projection.projection_blocker(worker_args)
         rescue_transient, rescue_settled = _windows(shape, slab=True)
         # A slab under a cast keeps the cast copy beside the file and saves nothing.

@@ -62,7 +62,7 @@
       ["positive", "CONDITIONING", null], ["negative", "CONDITIONING", null],
       ["latent_image", "LATENT", null], ["denoise", "FLOAT", 1.0]
     ],
-    "hidden": [["unique_id", "UNIQUE_ID", null]]
+    "hidden": [["unique_id", "UNIQUE_ID", null], ["prompt", "PROMPT", null]]
   },
   "DGXMonarchKSamplerAdvanced": {
     "required": [
@@ -73,7 +73,7 @@
       ["start_at_step", "INT", 0], ["end_at_step", "INT", 10000],
       ["return_with_leftover_noise", "COMBO", "disable"]
     ],
-    "hidden": [["unique_id", "UNIQUE_ID", null]]
+    "hidden": [["unique_id", "UNIQUE_ID", null], ["prompt", "PROMPT", null]]
   },
   "DGXMonarchKSamplerPipeline": {
     "required": [
@@ -82,11 +82,11 @@
       ["positive", "CONDITIONING", null], ["negative", "CONDITIONING", null],
       ["latent_image", "LATENT", null], ["denoise", "FLOAT", 1.0]
     ],
-    "hidden": [["unique_id", "UNIQUE_ID", null]]
+    "hidden": [["unique_id", "UNIQUE_ID", null], ["prompt", "PROMPT", null]]
   },
   "DGXMonarchSamplerCustom": {
     "required": [["noise", "NOISE", null], ["guider", "DGXM_GUIDER", null], ["sampler", "SAMPLER", null], ["sigmas", "SIGMAS", null], ["latent_image", "LATENT", null]],
-    "hidden": [["unique_id", "UNIQUE_ID", null]]
+    "hidden": [["unique_id", "UNIQUE_ID", null], ["prompt", "PROMPT", null]]
   },
   "DGXMonarchBasicScheduler": {
     "required": [["model", "DGXM_MODEL", null], ["scheduler", "COMBO", "<first-option>"], ["steps", "INT", 20], ["denoise", "FLOAT", 1.0]]

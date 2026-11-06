@@ -220,6 +220,19 @@
   in its own slot
   ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- A new strength, a new order or a LoRA removed on a BF16 model the Workers
+  hold with its LoRA, with `lora_low_rss` off, is admitted without a click
+  where it fits. The change reuses ComfyUI's host copy of the patched weights,
+  which the Workers now report, and the price counts it as held: on the pair,
+  the Wan-Animate 2 strength change from 1.0 to 0.8 needs about 8.9 GiB where
+  it needed 38.6 GiB and raised Old model in the way. On one Spark the same
+  change took 0.8 GiB and rendered a fresh load's latent. A LoRA the held
+  stack lacks keeps the old price and the card. And a re-queue whose UNET
+  loader ComfyUI kept from an earlier queue is now priced at the sampler, by
+  the loader's own price for every model the graph loads, so a short box gets
+  the loader's refusal and what would fit, where only the Worker's wall
+  answered before ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
 
 ### Compatibility and verification
 
