@@ -5,7 +5,8 @@ Both capacity prices that see a Worker's resident take it as still held
 preflight on the driver host, where the head's actor shares the box. The one
 exception is the slot's own stock resident a swap replaces, which the store
 drops before the load and the quote credits; a clear is then weighed against
-the uncredited price, because a cleared box holds no copy to drop. A clear of
+the uncredited price, because a cleared box holds no copy to drop. A LoRA change
+on the held file is the same credit (``changes_in_place``). A clear of
 the attached mesh, the same teardown as Reset attached mesh, returns all of it.
 This module decides whether a clear would make room and writes the plain
 sentences such a refusal carries, naming each box by ``box_names.py``'s rule
@@ -118,6 +119,12 @@ class ClearOffer:
     def helps(self) -> bool:
         """Only when a clear would make room on every short box."""
         return bool(self.boxes) and all(box.clear_makes_room for box in self.boxes)
+
+    @property
+    def same_file(self) -> bool:
+        """Whether the only model in the way is the one asked for, loaded earlier."""
+        held = [box for box in self.boxes if box.old_models]
+        return bool(held) and all(box.old_models == box.dropped == (self.new_model,) for box in held)
 
 
 class OldModelRefusal(StockLoadCapacityError):
@@ -240,10 +247,26 @@ def _counts_credit(quote: RankPrice, kept: frozenset[str]) -> bool:
 
 
 def _dropped(quote: RankPrice, kept: frozenset[str]) -> tuple[str, ...]:
-    """The old model this row's swap credit already took out of its price."""
+    """The old model this row's credit took out of its price: a swap's drop or a held base."""
     block = quote.measured or {}
-    name = block.get("dropped") if block.get("credit_bytes") and not quote.use_slab else None
+    name = ((block.get("dropped") or quote.resident_names.get(quote.slot))
+            if block.get("credit_bytes") and not quote.use_slab else None)
     return (display_name(str(name)),) if name and _counts_credit(quote, kept) else ()
+
+
+def changes_in_place(quote: RankPrice, unet_name: str) -> bool:
+    """Whether this row changes the file its own slot holds, so that slot is not kept.
+
+    The copy is not reused as it is, and the host copy its stack keeps holds the
+    memory. Only a row the price credited the slot's own stock copy (a slab,
+    comfy-managed or FSDP resident keeps the plain rule), and only for the file
+    the agreement names: other graph models stay kept.
+    """
+    block = quote.measured or {}
+    return (quote.would_load == "swap" and bool(unet_name) and not quote.use_slab
+            and bool(block.get("credit_bytes"))
+            and quote.holds_resident.get(quote.slot) == CREDITED_RESIDENCY
+            and quote.resident_names.get(quote.slot) == unet_name)
 
 
 def _left_bytes(quote: RankPrice, kept: frozenset[str]) -> int:
@@ -287,6 +310,8 @@ def fleet_offer(short: Sequence[tuple[RankAnswer, RankPrice]],
     ranks: dict[int, tuple[str, tuple[str, ...], int, int, int, tuple[str, ...], int]] = {}
     for answer, quote in short:
         kept = kept_slots(answer.quotes or (quote,), keep)
+        if changes_in_place(quote, unet_name):
+            kept -= {quote.slot}
         numbers = _numbers(quote, kept)
         if numbers is None:
             return None
@@ -336,6 +361,11 @@ def held_sentence(offer: ClearOffer) -> str:
         # Every old model is one the price already dropped: what is left in the
         # way is the memory earlier loads left behind, which a clear returns.
         # Only the card says so (``held_clause`` leaves it out when no clear helps).
+        if offer.same_file:
+            where = _join([f"about {gib(box.left_bytes)} GiB on {box.box}"
+                           for box in offer.boxes if box.old_models])
+            return (f"The model loaded earlier ({offer.new_model}) holds {where} that this "
+                    "change needs.")
         held = [f"{box.box} {'still holds ' if not index else ''}about {gib(box.left_bytes)} GiB"
                 for index, box in enumerate(box for box in offer.boxes if box.old_models)]
         return (f"{box_names.opening(_join(held))} that earlier loads left behind, and "
@@ -401,7 +431,12 @@ def log_line(offer: ClearOffer) -> str:
     "Earlier", not "an earlier render": on the sample path the old model can be
     one an earlier sampler of the same graph loaded.
     """
-    olds = list(dict.fromkeys(name for box in offer.boxes for name in box.old_models))
+    if offer.same_file:
+        return (f"cleared {scope_words(offer, cleared=True)} so {offer.new_model} loads "
+                "fresh; the copy loaded earlier held memory this change needed")
+    # The model asked for is no old model, even where its earlier copy was in the way.
+    olds = list(dict.fromkeys(name for box in offer.boxes for name in box.old_models
+                              if name != offer.new_model or name not in box.dropped))
     were = "was loaded earlier" if len(olds) == 1 else "were loaded earlier"
     return (f"cleared {scope_words(offer, cleared=True)} to make room for {offer.new_model}; "
             f"{_join(olds) if olds else 'the old model'} {were}")

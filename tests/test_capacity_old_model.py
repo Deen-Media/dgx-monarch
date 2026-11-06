@@ -1344,8 +1344,8 @@ def test_no_card_means_the_remedy_names_only_the_reset(monkeypatch):
 def test_the_card_copy_and_its_answers_are_plain():
     """Finding 9: no project terms on the card or in its answer."""
     spec = consent_pending.KIND_SPECS[consent_descriptor.KIND_CLEAR_RETRY]
-    assert spec.risk == ("A model loaded earlier is still in memory, so this one does not "
-                         "fit beside it.")
+    # It reads true for both doors: another model, or the earlier copy of this one.
+    assert spec.risk == "A model loaded earlier still holds memory this load needs."
     assert spec.evidence == ("Clear and retry gives back all the memory the Sparks hold "
                              "for models, the same as Reset attached mesh, and changes no "
                              "setting.")

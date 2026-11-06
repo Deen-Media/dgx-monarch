@@ -273,18 +273,23 @@ def test_a_consent_cannot_turn_a_cast_load_into_a_slab_rescue(tmp_path, unified)
 
 
 def test_a_hot_swap_on_a_cast_resident_credits_the_cast_copy_it_holds():
-    """A LoRA change the store makes in place keeps the base: the credit is the
-    copy the slot holds, which a widening cast makes larger than the file."""
+    """A LoRA change keeps the base, or drops it and loads fresh when an in-place
+    swap would first copy the model off the GPU (store_bake.copies_off_the_gpu).
+    So the credit over a cast is the copy the Worker reports the slot holds, a
+    lower bound, never the price's own cast figure, and nothing without a report."""
     from dgx_monarch import capacity_lora_bake
 
-    size, cast = 13 * _GIB, 26 * _GIB
+    size, cast, held_copy = 13 * _GIB, 26 * _GIB, 20 * _GIB
     fit = StockFit(False, True, size, 40 * _GIB, cast_bytes=cast)
     key = repr(("m.safetensors", (("weight_dtype", "bf16"),), (("lora", 1.0),), "fp8"))
-    held = {"residency": "stock", "swaps_in_place": True,
+    held = {"residency": "stock", "swaps_in_place": True, "resident_bytes": held_copy,
             "request_key": repr(("m.safetensors", (("weight_dtype", "bf16"),), (), "fp8"))}
     credited = capacity_lora_bake.credit_hot_swap(fit, held, key, {"would_load": "swap"}, "auto")
-    assert credited is not fit and credited.credit_bytes == cast
-    assert credited.required_bytes == capacity_fit.stock_required_bytes(size, cast) - cast
+    assert credited is not fit and credited.credit_bytes == held_copy
+    assert credited.required_bytes == capacity_fit.stock_required_bytes(size, cast) - held_copy
+    unreported = {k: v for k, v in held.items() if k != "resident_bytes"}
+    assert capacity_lora_bake.credit_hot_swap(
+        fit, unreported, key, {"would_load": "swap"}, "auto") is fit
 
 
 # Round two: a swap over the slot's own stock resident is priced after its drop.

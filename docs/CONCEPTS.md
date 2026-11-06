@@ -223,7 +223,10 @@ the Worker drops the last one before it loads the next, and the price counts
 that, but the retained arena and any model in the other slot stay. So a
 refusal may still say "the old model (<name>) is still loaded" and offer
 **Clear and retry**, which runs this reset; **Always clear and retry** lets
-the driver run it for you.
+the driver run it for you. A LoRA change on a large model held with its LoRA
+can meet the same card when the host copy that LoRA keeps holds the memory:
+"The model loaded earlier (<name>) holds about <N> GiB on the head that this
+change needs. Clear the Sparks and run again?"
 
 ## Trust words
 
@@ -294,6 +297,9 @@ casts its weight instead, and the Workers bake each weight to the one that cast
 computes, so a LoRA renders as it does in stock ComfyUI, an INT8 file included
 ([DESIGN 5.5](DESIGN.md#55-model-store-reuse--lora-hot-swap)). A hot-swap
 changes the LoRA stack of a loaded model without reloading it from scratch.
+When the swap would first have to copy the whole model off the GPU, as adding
+a LoRA to a bare base does with low-RSS off, the Worker loads base and LoRA
+fresh instead, which is faster at the same price and bakes the same way.
 
 **Checkpoint.** The model file on disk (`.safetensors`).
 
