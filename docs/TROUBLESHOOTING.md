@@ -80,8 +80,12 @@ one the row warns.
 
 Before attaching, the driver checks the exact Worker service process and the
 host's passive LISTEN table, then restarts dead services, so a cold fleet can
-start from a queue press. It never opens a protocol-blind connection to a
-Monarch worker endpoint (docs/VALIDATION.md). If an attach fails anyway, the
+start from a queue press. Only a loop the host saw stopped, or a port it saw
+closed, counts as dead. A check that could not tell, such as a failed `pgrep`
+or `awk`, restarts nothing; the attach refuses and names the host, and
+`dgxm doctor` shows that host's Worker service row as unobserved. It never
+opens a protocol-blind connection to a Monarch worker endpoint
+(docs/VALIDATION.md). If an attach fails anyway, the
 driver retries once in-process (the current pin evicts the stale attach
 session, meta-pytorch/monarch#4067). When the retry also fails, it restarts the
 Worker services so the next attempt starts clean, and that ComfyUI session
@@ -4563,8 +4567,11 @@ recovery test, a reported-dead worker remained alive for eleven more minutes.
 **After worker death plus a timed-out stop:** the driver requests read-only
 actor liveness on every configured host, over SSH remotely and locally on the
 driver host. It checks actors, zombies, live ledger rows, and unidentified
-processes. Unidentified includes empty command line plus environment, and a
-process holding >=4 GiB with unreadable environment and no Python module in
+processes. A host whose process table cannot be listed has counted nothing, so
+it answers unknown: the liveness command prints no answer, exits non-zero and
+says `cannot list the process table`. Unidentified includes empty command line
+plus environment, and a process holding >=4 GiB with unreadable environment and
+no Python module in
 its command line. A named actor module is counted as an actor. Zombies count
 as gone; stopped processes remain alive.
 
@@ -7681,8 +7688,12 @@ Worker services started with `dgxm up` log to
 
 The `FP8 matmul (actors)` row of `dgxm doctor` shows what cluster.toml asks of
 the actors; doctor attaches no mesh, so only the log line says what a build
-picked. On 2026-10-31 `fp8_ops` sampled plain FP8 24 to 30 percent faster than
-the dequantizing path and rendered noise, while the Krea2 Turbo fp8_scaled file
+picked. The row warns for `"on"` where a host reports a GB10 GPU, compute
+capability 12.1: there every plain FP8 checkpoint takes `fp8_ops`, the path that
+rendered Qwen-Image 2512's plain FP8 file as noise
+([MODELS.md](MODELS.md#fp8-on-gb10)). Leave the key out for the default. On
+2026-10-31 `fp8_ops` sampled plain FP8 24 to 30 percent faster than the
+dequantizing path and rendered noise, while the Krea2 Turbo fp8_scaled file
 sampled 11 percent faster than BF16 inside the fidelity floor
 ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
 
