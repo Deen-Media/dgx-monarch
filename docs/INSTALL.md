@@ -64,8 +64,11 @@ torch 2.15.0+cu132: on 2026-11-05 and 06 its ladder passed on the pair
 ([VALIDATION](VALIDATION.md#torch-2-15)) with cuDNN 9.26, Triton 3.9.0,
 torchvision 0.29.2 and torchaudio 2.11.1, and with NCCL 2.32.3 loaded through
 a symlink from the wheel's `libnccl.so.2` to a 2.32.3 build, in place of the
-2.30.7 torch 2.15 pins. Most of its other hardware checks ran on torch
-2.12.0+cu132, and the steps below complete with either build.
+2.30.7 torch 2.15 pins, and the template release test then rendered 66 of 66
+templates on it on 2026-11-06 and 07
+([VALIDATION](VALIDATION.md#release-test-2026-11-04)). Most of its other
+hardware checks ran on torch 2.12.0+cu132, and the steps below complete with
+either build.
 
 To match another Spark, install its torch and torchvision builds by exact
 version from the same PyTorch index. On 2026-11-03 neither the cu132 index nor
@@ -1110,6 +1113,100 @@ when the driver probe gets no answer, because a running driver would keep the
 old Python modules while restarted workers load the new ones. Start ComfyUI
 again afterwards; that restart loads the updated modules, so the node set on
 the canvas matches the tree.
+
+### Upgrading from 1.4.0
+
+Read this before the first update from 1.4.0, in this order. An install on
+1.3.0 or older follows the sections below as well.
+
+1. The first update from 1.4.0 runs the 1.4.0 updater, the `dgxm` installed
+   now. Neither update mode changes in this release, so the release-slot
+   refusal, the dependency checks and the process scan work as they do on
+   1.4.0.
+2. If your Workers run from release slots, update only with
+   `dgxm update --verify`, as [Upgrading from 1.2.0](#upgrading-from-120)
+   describes
+   ([TROUBLESHOOTING #118](TROUBLESHOOTING.md#118-workers-in-release-slots-still-run-the-previous-version-after-a-plain-update)).
+3. This release keeps the torchmonarch pin, the required dependencies and
+   Gate protocol 14 of 1.4.0, so neither mode installs a new pin and the
+   dependency check passes wherever it passes on 1.4.0. A saved Gate grant
+   also names the package version, so the 1.4.0 grants go stale and each
+   model, residency and LoRA combination runs its first-use Gate again, once
+   ([TROUBLESHOOTING #114](TROUBLESHOOTING.md#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
+4. INT8 ConvRot linears now run a Triton GEMM kernel by default, in the
+   ComfyUI process and in every actor, with the same output as
+   comfy-kitchen's CUTLASS kernel. Triton builds a launcher against the
+   Python headers, so check for them on the driver and on every Worker host,
+   as [Install the node pack](#install-the-node-pack) shows. Where they are
+   missing, install the system package for the interpreter's version,
+   `python3.12-dev` on Ubuntu 24.04. Without them a process runs CUTLASS and
+   logs one WARNING, and the new `INT8 GEMM` rows of `dgxm doctor` warn. To keep CUTLASS, set `int8_gemm = "cutlass"` in
+   `[worker_args]` and start ComfyUI with `DGXM_INT8_GEMM=cutlass`
+   ([TROUBLESHOOTING #138](TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
+5. `[worker_args]` takes three new keys, `int8_gemm`, `fp8_matrix_mult` and
+   `worker_vae_decode`. A 1.4.0 checkout refuses a cluster.toml that holds
+   any of them, so add them only after the driver and every checkout that
+   reads the file run this release. Writing `int8_gemm` or `fp8_matrix_mult`,
+   with any value, changes every render's capability context and re-proves
+   every PASS; `worker_vae_decode` reaches only the driver and re-proves none
+   ([CLUSTER](CLUSTER.md#worker_args-optional)).
+6. On GB10, leave `fp8_matrix_mult` out or at `"auto"`. `"on"` sends plain
+   FP8 checkpoints in the actors down ComfyUI's FP8 matmul path, which
+   renders them as noise there, as `--fast fp8_matrix_mult` does in the
+   driver. Every model build now logs one `FP8 compute:` line that names the
+   path ComfyUI picked
+   ([TROUBLESHOOTING #141](TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
+7. Worker-assisted VAE decode is off by default. With
+   `worker_vae_decode = "auto"` the stock VAE Decode and VAE Decode (Tiled)
+   nodes split a video decode over the Workers, byte-identical to the
+   one-host tiled decode. MiniMax H3, Wan 2.1 and LTX 2.5 have passed the
+   hardware byte compare, and the other families are unchecked
+   ([TROUBLESHOOTING #140](TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+8. The MiniMax H3 activation preflight charges each rank an 11.0 GiB floor
+   and 129,024 bytes per row on the rank, in place of 1,032,192 bytes per row
+   with no floor. Long clips now fit where 1.4.0 refused them, such as the
+   15 second clip, 362 frames at 1344x768, on one Spark, while every render
+   pays the floor, so a short one is charged more than on 1.4.0. Before a
+   render-site capacity check refuses, the driver unloads the models ComfyUI
+   holds on its host, then asks the actors to release their allocator caches,
+   and checks again; `DGXM_DISABLE_DRIVER_UNLOAD=1` turns both steps off. The
+   identity gate runs the same checks before its proof render, and a request
+   that cannot fit the slab path records one INCONCLUSIVE capacity row and
+   renders on stock residency
+   ([TROUBLESHOOTING #56](TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
+9. A capacity-rescue consent now keeps slab residency when stock residency
+   cannot load the checkpoint. The gate records INCONCLUSIVE with
+   `cross_mode=CAPACITY` and the render proceeds under slab, where 1.4.0
+   switched slab off and refused under stock. `DGXM_ALLOW_SLAB_RESCUE=1`,
+   `DGXM_AUTO_RESCUE=1` and the panel's Auto-allow toggle give the same
+   consent as a click on the card
+   ([TROUBLESHOOTING #5](TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
+   [#53](TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+10. The driver's deadline for a render's sample call grows with the work for
+    MiniMax H3 and Wan SCAIL, SCAIL-2 and Animate 2, up to six hours.
+    `DGXM_SAMPLE_TIMEOUT` stays the floor, 3600 s unless set, and wins over
+    that cap. A floor you raised on 1.4.0 for long clips still applies to
+    every render, so a hung render holds the queue that long; drop it once
+    the new deadline covers your clips. Above 180 steps the cap gives those
+    families less time than 1.4.0 did, so raise the floor for such a render
+    ([TROUBLESHOOTING #139](TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
+11. `compile_dit` no longer forces stock residency on the families it leaves
+    eager, such as Qwen-Image, Qwen Image 2.1, LTX and Ideogram4, so their
+    slab residency stays available. Worker services keep torch inductor's
+    compile cache in `~/.cache/dgx-monarch/inductor`, so a reboot no longer
+    repeats the autotune; `TORCHINDUCTOR_CACHE_DIR` places it elsewhere
+    ([TROUBLESHOOTING #14](TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+    The Init node's `sync_ulysses` input has no effect on the pinned xfuser
+    0.7.0, though changing it still reruns setup and the identity gate
+    ([Adapters](ADAPTERS.md#what-an-adapter-provides)).
+12. Studio is a supported interface from this release, beside the CLI, the
+    TUI and the ComfyUI panel. Generate now checks the draft and starts the
+    job in one action, and Grids, Fleet and Operations sit under Utilities.
+    The tester's fourth round renamed the Operation select Job category and
+    changed Send to edit, the viewer and the telemetry panel
+    ([Studio](STUDIO.md#working-with-workflows)). The `studio` extra does not
+    change and neither update mode installs it
+    ([Optional Studio companion](#optional-studio-companion)).
 
 ### Upgrading from 1.3.0
 
