@@ -2786,6 +2786,9 @@
     "tests/test_worker_runtime.py": {
       "test_a_cached_pass_on_a_mixed_pair_refuses_instead_of_granting": "50fadbf972b73aed",
       "test_a_fleet_job_with_a_grant_on_a_mixed_pair_refuses": "5b183187e43196dd",
+      "test_a_fleet_pair_names_the_box_by_its_place_not_its_world_one_rank": "b6b2c54bea98aa0b",
+      "test_a_fleet_pair_on_the_drivers_build_keeps_gate_authority": "babca814011eba1b",
+      "test_a_fleet_pair_with_a_missing_report_refuses": "b4df9d8387f6d371",
       "test_a_handle_with_no_setup_reports_yet_makes_no_claim": "a63f86467f1b8275",
       "test_a_pair_on_the_drivers_build_keeps_the_same_context": "c85a5a82a3273118",
       "test_a_report_list_that_misses_a_rank_refuses_and_names_the_silent_box": "5f005e2345c587bb",
