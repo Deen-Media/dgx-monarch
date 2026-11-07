@@ -1530,7 +1530,8 @@ shared config lock, rechecks the inode, bytes, and prior mode, and changes only
 the mode, to `0600`; it reruns doctor only after the receipt is published. If
 the mode change runs but its sync or readback fails, the receipt records the
 step as `unknown` with one change and the run as `partial`, since the file may
-already be private; run `dgxm doctor --repair` again to inspect it.
+already be private; run `dgxm doctor --repair` again to inspect it. A readback
+that still shows the prior mode records the repair as not applied.
 Lock contention refuses and attempts a failed receipt instead of racing another
 cooperating config writer. Network, SSH, packages, services, processes, meshes,
 and power remain manual. `--yes` confirms without a prompt and `--receipt`

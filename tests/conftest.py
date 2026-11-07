@@ -342,11 +342,29 @@ def _refused_ssh(args, kwargs):
     return subprocess.CompletedProcess(args, 255, stdout, stderr)
 
 
+# The unguarded call, for a test that puts its own fake ssh first on PATH and
+# runs the real rsync against it, so nothing leaves the box.
+REAL_SUBPROCESS_RUN = subprocess.run
+
+
+def _remote_shell(args) -> bool:
+    """An ``ssh`` argv, or an ``rsync`` argv that names a remote shell, which
+    rsync would start as ssh to reach the other end."""
+    if not isinstance(args, (list, tuple)) or not args or not isinstance(args[0], str):
+        return False
+    program = os.path.basename(args[0])
+    if program == "ssh":
+        return True
+    return program == "rsync" and any(
+        isinstance(arg, str) and (arg in ("-e", "--rsh") or arg.startswith("--rsh=")
+                                  or (arg.startswith("-e") and not arg.startswith("--")))
+        for arg in args[1:])
+
+
 def _ssh_refusing_run(real, spawned: list[str]):
-    """``subprocess.run`` that records an ssh call and refuses it before dispatch."""
+    """``subprocess.run`` that records a remote-shell call and refuses it before dispatch."""
     def record(args, *rest, **kwargs):
-        first = args[0] if isinstance(args, (list, tuple)) and args else args
-        if isinstance(first, str) and os.path.basename(first) == "ssh":
+        if _remote_shell(args):
             spawned.append(" ".join(map(str, args)))
             return _refused_ssh(args, kwargs)
         return real(args, *rest, **kwargs)
@@ -358,13 +376,18 @@ def _ssh_refusing_run(real, spawned: list[str]):
 def _the_battery_never_shells_out_to_ssh(monkeypatch):
     """Fail a test that spawned ssh instead of standing in for the runner.
 
-    Every fleet path in this repository reaches a worker through
-    ``lifecycle.run_on_host``, which runs ``ssh`` for a host that is not this
-    box. A test that leaves that seam unpatched would send real traffic at the
-    placeholder addresses the battery configures. The guard refuses the call
-    before dispatch: nothing is sent, and the caller sees exit 255, which ssh
-    itself returns when it cannot connect, so no tested path changes. The
-    callers read that as an unobserved probe, so the test fails at teardown.
+    The guard covers every ``ssh`` the battery spawns through
+    ``subprocess.run``, which is how ``lifecycle.run_on_host`` reaches a host
+    that is not this box, and every ``rsync`` there whose argv names a remote
+    shell (``-e`` or ``--rsh``), as the package sync, setup's copy and the
+    release copy do. A test that leaves such a seam unpatched would send real
+    traffic at the placeholder addresses the battery configures. The guard
+    refuses the call before dispatch: nothing is sent, and the caller sees exit
+    255, which ssh itself returns when it cannot connect, so no tested path
+    changes. The callers read that as an unobserved probe or a failed copy, so
+    the test fails at teardown. A remote shell started another way, such as
+    through ``Popen``, is outside it. A test whose own fake ssh stands first on
+    PATH calls ``REAL_SUBPROCESS_RUN`` instead.
 
     It records instead of raising: the attach reads its listener generations
     inside a ``try`` that swallows every exception, so a guard that raised

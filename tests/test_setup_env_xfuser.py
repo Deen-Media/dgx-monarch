@@ -80,14 +80,16 @@ def _torchaudio(home: Path, state: str) -> None:
     site.mkdir()
     if state == "absent":
         return
+    metadata = site / "torchaudio-2.11.1.dist-info"
+    metadata.mkdir()
+    (metadata / "METADATA").write_text("Metadata-Version: 2.1\nName: torchaudio\nVersion: 2.11.1\n")
+    if state == "metadata-only":  # a leftover dist-info with no module
+        return
     package = site / "torchaudio"
     package.mkdir()
     (package / "__init__.py").write_text(
         "" if state == "working" else
         "raise OSError('libtorchaudio.so: undefined symbol: _ZN3c1017RegisterOperators')\n")
-    metadata = site / "torchaudio-2.11.1.dist-info"
-    metadata.mkdir()
-    (metadata / "METADATA").write_text("Metadata-Version: 2.1\nName: torchaudio\nVersion: 2.11.1\n")
 
 
 def _run(
@@ -335,3 +337,17 @@ def test_a_donor_copy_must_import_before_the_layer_reports_done(tmp_path, donor_
         assert result.returncode != 0
         assert "does not import after the copy" in result.stderr
         assert "comfy layer done" not in result.stdout
+
+
+def test_a_leftover_dist_info_with_no_module_reads_absent(tmp_path):
+    """Transformers checks the import system before it imports torchaudio, so a
+    dist-info with no module is never imported and ComfyUI starts: absent."""
+    home, log = _fake_home(tmp_path)
+    _comfy(home, "0.39.2")
+    _torchaudio(home, "metadata-only")
+    result = _run(home, log, fail_probe=False)
+
+    assert result.returncode == 0, result.stderr
+    assert "WARNING: no working torchaudio; this ComfyUI does not list it" in result.stderr
+    assert "is installed but does not import" not in result.stderr
+    assert "comfy layer done" in result.stdout

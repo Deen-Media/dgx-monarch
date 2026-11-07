@@ -207,6 +207,7 @@ def test_every_profile_keeps_native_return_off_and_states_the_qualified_scope(na
     assert resolution.cluster_set["rdma_latent_return"] is False
     note = next(note for note in resolution.notes if note.startswith("Native RDMA latent return"))
     assert "requalif" not in note
-    assert "CPU-staged" in note and "one selected rail" in note
-    for limit in ("GPU zero-copy", "full sampling", "cancellation", "fabric-failure recovery"):
+    assert "CPU-staged" in note and "one selected rail" in note and "one application chunk" in note
+    for limit in ("GPU zero-copy", "full sampling", "fidelity", "cancellation",
+                  "fabric-failure recovery", "performance gain"):
         assert limit in note

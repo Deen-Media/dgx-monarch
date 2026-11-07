@@ -135,8 +135,9 @@ def classify_hardware(observations: Sequence[HardwareObservation]) -> HardwareCl
 # is scoped; no profile turns native return on.
 _NATIVE_RETURN_NOTE = (
     "Native RDMA latent return stays off. Its qualification covers CPU-staged returns "
-    "on one selected rail with one queue pair, not GPU zero-copy, full sampling, "
-    "cancellation or fabric-failure recovery."
+    "on one selected rail with one queue pair and one application chunk, not GPU "
+    "zero-copy, full sampling, fidelity, cancellation, fabric-failure recovery or a "
+    "performance gain."
 )
 
 

@@ -197,6 +197,9 @@ if [ -e "$DESKTOP_FILE" ] || [ -L "$DESKTOP_FILE" ]; then
     grep -qx 'X-DGX-Monarch-Managed=true' "$DESKTOP_FILE" || fail "refusing to replace an unmanaged desktop entry (no X-DGX-Monarch-Managed=true line)"
 fi
 
+# Icon is a string-typed key, so only the string layer applies: double each backslash.
+ICON_VALUE=${ICON//\\/\\\\}
+
 umask 077
 TEMP_FILE=$(mktemp "$APPLICATIONS_DIR/.dgx-monarch.desktop.XXXXXX")
 cleanup() {
@@ -210,7 +213,7 @@ Version=1.0
 Name=DGX Monarch
 Comment=Launch the supervised DGX Monarch ComfyUI driver
 Exec=$EXEC_LINE
-Icon=$ICON
+Icon=$ICON_VALUE
 Terminal=true
 Categories=Graphics;Utility;
 StartupNotify=true

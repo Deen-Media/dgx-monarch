@@ -355,3 +355,37 @@ def test_a_malformed_remote_swap_line_is_unobserved(line):
 
     row = doctor_probes.remote_swap_row("w1", line)
     assert row[0] == doctor._WARN and row[2].startswith("unobserved:")
+
+
+@pytest.mark.parametrize("fabric_line", [
+    "fabric_iface=up rdma_active=unread",       # an RDMA port state file could not be read
+    "fabric_iface=unread rdma_active=2",        # the interface's operstate could not be read
+])
+def test_a_fabric_probe_that_could_not_read_sysfs_is_unobserved(monkeypatch, capsys, fabric_line):
+    """An unreadable sysfs file is no answer, so the fabric row must not FAIL on it."""
+    from dgx_monarch.config import ClusterConfig, HostConfig
+    from test_doctor_hostname_row import _REMOTE_OK, _stub_driver
+
+    _stub_driver(monkeypatch, "10.0.0.1")
+    monkeypatch.setattr(doctor.shutil, "which", lambda _name: "/usr/bin/rsync")
+    monkeypatch.setattr(doctor, "_tcp_probe", lambda *_a, **_kw: False)
+    monkeypatch.setattr(doctor, "passive_worker_health",
+                        lambda *_a, **_kw: {"running": True, "listening": True, "healthy": True})
+    scripts: list[str] = []
+    remote = _REMOTE_OK.replace("fabric_iface=up rdma_active=1", fabric_line)
+
+    def run_on_host(_config, _host, script, **_kwargs):
+        scripts.append(script)
+        return subprocess.CompletedProcess([], 0, remote, "")
+
+    monkeypatch.setattr(doctor, "run_on_host", run_on_host)
+    doctor.run_doctor(ClusterConfig(
+        hosts=(HostConfig(name="worker", address="tcp://10.0.0.2:26600"),),
+        client_bind="tcp://10.0.0.1:0", fabric_profile="generic-roce",
+        transport_security="trusted_fabric", source="test.toml",
+    ))
+    rows = [line for line in capsys.readouterr().out.splitlines() if "worker fabric" in line]
+    assert rows == ["  [WARN] worker fabric: unobserved: that host could not read its interface "
+                    "or RDMA port state in sysfs, so its fabric state is unknown"]
+    probe = next(script for script in scripts if "fabric_iface=" in script)
+    assert 'iface = "unread"' in probe and 'active = "unread"' in probe

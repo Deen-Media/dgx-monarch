@@ -294,3 +294,37 @@ def test_apply_reports_the_mutation_on_its_error(tmp_path: Path, monkeypatch: py
     with pytest.raises(RepairError) as before:
         apply_config_permission_repair(path, plan, confirm=lambda _plan: False)
     assert before.value.applied is False
+
+
+@pytest.mark.parametrize(("lands", "code", "applied"), [
+    (0o644, "config_permissions_not_applied", False),    # the filesystem ignored chmod
+    (0o640, "config_permissions_unconfirmed", True),     # some other mode answered
+])
+def test_a_readback_that_answers_is_judged_by_the_mode_it_shows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, lands: int, code: str, applied: bool
+) -> None:
+    """A readback of the prior mode saw the change not stick, so nothing changed;
+    any other mode leaves the change applied but unconfirmed."""
+    path = _config(tmp_path)
+    plan = inspect_config_permissions(path)
+    (tmp_path / "second").mkdir()
+    second = _config(tmp_path / "second")  # a fresh 0644 file for the receipt run
+    real_fchmod = os.fchmod
+    configs = {path.stat().st_ino, second.stat().st_ino}
+
+    def lands_as(fd: int, mode: int) -> None:
+        # Only the configs: the receipt writer shares the os module.
+        real_fchmod(fd, lands if os.fstat(fd).st_ino in configs else mode)
+
+    monkeypatch.setattr("dgx_monarch.cli.doctor_repair.os.fchmod", lands_as)
+    with pytest.raises(RepairError, match=code) as raised:
+        apply_config_permission_repair(path, plan, confirm=lambda _plan: True)
+    assert raised.value.applied is applied
+    receipt = tmp_path / "receipt.json"
+    ok, _written = run_config_permission_repair(
+        second, assume_yes=True, receipt_path=receipt, output=io.StringIO())
+    assert ok is False
+    step = next(item for item in json.loads(receipt.read_text())["steps"]
+                if item["name"] == "tighten_config_permissions")
+    assert (step["status"], step["counts"]) == (
+        ("unknown", {"changed": 1}) if applied else ("failed", {"changed": 0}))

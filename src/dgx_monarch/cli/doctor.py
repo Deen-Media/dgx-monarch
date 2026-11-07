@@ -459,14 +459,17 @@ print(f"torchmonarch={{tm}} torch={{tv}} comfy={{os.path.isdir(os.path.expanduse
 want = {wanted_iface_literal}
 try:
     iface = open(f"/sys/class/net/{{want}}/operstate").read().strip() if want else "unset"
-except OSError:
+except FileNotFoundError:
     iface = "absent"
+except OSError:
+    iface = "unread"
 active = 0
 for state_path in glob.glob("/sys/class/infiniband/*/ports/*/state"):
     try:
         active += int("ACTIVE" in open(state_path).read())
     except OSError:
-        pass
+        active = "unread"
+        break
 print(f"fabric_iface={{iface}} rdma_active={{active}}")
 {sol_attn_row.PROBE_SOURCE}
 {int8_gemm_row.PROBE_SOURCE}
@@ -506,7 +509,11 @@ EOF
             except ValueError:
                 active_rails = 0
             rdma_expected = config.fabric_profile != "single-node"
-            if iface_state in ("absent", "down", "unknown"):
+            if "unread" in (iface_state, fields.get("rdma_active")):
+                rows.append(_row(_WARN, f"{host.name} fabric",
+                                 "unobserved: that host could not read its interface or RDMA port "
+                                 "state in sysfs, so its fabric state is unknown"))
+            elif iface_state in ("absent", "down", "unknown"):
                 fabric_status = _WARN if active_rails else (_FAIL if rdma_expected else _WARN)
                 fabric_detail = (
                     f"configured socket interface is {iface_state}; {active_rails} ACTIVE RDMA rail(s) "

@@ -133,18 +133,23 @@ sys.exit(0 if m and (int(m[1]), int(m[2])) < (0, 38) else 1)' "$HOME/ComfyUI/com
 
 torchaudio_state() {
   # Print `working`, `absent`, `broken <version> <error class>` (the import
-  # failed while pip's metadata or the import system still finds the
-  # package), or `unknown` when the check itself could not run. Only the last
-  # line counts, in case an import writes to stdout.
+  # failed while the import system still finds the package, which is what
+  # Transformers checks before it imports one), or `unknown` when the check
+  # itself could not run. pip's metadata gives only the version: a leftover
+  # dist-info with no module is absent. Only the last line counts, in case an
+  # import writes to stdout.
   { "$1" -c 'import importlib.metadata as md, importlib.util as iu
 try:
     import torchaudio  # noqa: F401
 except Exception as exc:
-    try:
-        version = md.version("torchaudio")
-    except md.PackageNotFoundError:
-        version = "unknown" if iu.find_spec("torchaudio") is not None else None
-    print("absent" if version is None else f"broken {version} {type(exc).__name__}")
+    if iu.find_spec("torchaudio") is None:
+        print("absent")
+    else:
+        try:
+            version = md.version("torchaudio")
+        except md.PackageNotFoundError:
+            version = "unknown"
+        print(f"broken {version} {type(exc).__name__}")
 else:
     print("working")' 2>/dev/null || echo unknown; } | tail -n 1
 }

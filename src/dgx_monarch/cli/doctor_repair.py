@@ -154,12 +154,16 @@ def apply_config_permission_repair(
     except BaseException:
         os.close(fd)
         raise
-    # The mode changed. Any later failure leaves it applied but unconfirmed.
+    # fchmod returned. A readback that shows the prior mode saw the change not
+    # stick; any other failure leaves it applied but unconfirmed.
     try:
         os.fsync(fd)
         after = os.fstat(fd)
-        if ((after.st_dev, after.st_ino) != (before.st_dev, before.st_ino)
-                or stat.S_IMODE(after.st_mode) != _PRIVATE_FILE_MODE):
+        if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+            raise RepairError("config_permissions_unconfirmed", applied=True)
+        if stat.S_IMODE(after.st_mode) == plan.previous_mode:
+            raise RepairError("config_permissions_not_applied")
+        if stat.S_IMODE(after.st_mode) != _PRIVATE_FILE_MODE:
             raise RepairError("config_permissions_unconfirmed", applied=True)
     except OSError as exc:
         raise RepairError("config_permissions_unconfirmed", applied=True) from exc

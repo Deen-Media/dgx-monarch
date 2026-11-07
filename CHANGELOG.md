@@ -530,7 +530,8 @@
 - `dgxm doctor` reads only a `last` and an `nvidia-smi` that succeed: a failed
   run, or `nvidia-smi`'s own error text, reads unobserved instead of a clean
   boot history or a GPU process. A worker host whose `/proc/swaps` is
-  unreadable or malformed reads unobserved instead of swap off.
+  unreadable or malformed reads unobserved instead of swap off, and one that
+  cannot read its fabric state in sysfs reads unobserved instead of failing.
 - `dgxm doctor`'s `FP8 matmul (actors)` row warns when `fp8_matrix_mult = "on"`
   and a host reports a GB10 GPU, the case MODELS.md documents as unsafe, and
   names those hosts ([TROUBLESHOOTING #141](docs/TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
@@ -549,7 +550,7 @@
   slot, when its site holds anything beside the package.
 - The desktop entry quotes paths for both of the Desktop Entry format's escape
   layers, so a path with a backslash, a quote, a backtick or a dollar sign
-  reaches the launcher unchanged.
+  reaches the launcher unchanged, and the icon path keeps its backslashes.
 - `scripts/setup_env.sh --comfy` stops with the repair when torchaudio is
   installed but does not import, whatever the ComfyUI version, and checks a
   donor copy imports before it reports done.
