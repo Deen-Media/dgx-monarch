@@ -94,7 +94,12 @@ def cohort_runtime(handle: Any) -> dict[str, str]:
     driver = gate_runtime.runtime_build_identity()
     reports = getattr(handle, "worker_capabilities", None)
     if isinstance(reports, list) and reports:
-        text = mismatch(handle, reports, driver)
+        # Setup replies arrive in physical rank order (mesh_setup.dispatch_setup),
+        # and Fleet setup gives every actor rank 0 of world 1, so a report's
+        # position, not its own rank, says which box sent it.
+        physical = [{**report, "rank": position} for position, report in enumerate(reports)
+                    if isinstance(report, dict)]
+        text = mismatch(handle, physical, driver)
         if text is not None:
             raise WorkerRuntimeMismatch(refusal(RefusalClass.PHYSICS, (
                 f"{text} Use one torch and CUDA build on every box: update the box that "

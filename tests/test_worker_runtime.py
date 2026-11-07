@@ -83,6 +83,34 @@ def test_a_report_list_that_misses_a_rank_refuses_and_names_the_silent_box():
         mesh_residency.physical_capability_context(handle)
 
 
+def _fleet_pair(*builds):
+    """A Fleet setup: every actor reports rank 0 of world 1, one per GPU."""
+    handle = _pair(reported=False)
+    handle.worker_capabilities = [
+        {"rank": 0, "world": 1, "host": f"host-{position}", "runtime": build}
+        for position, build in enumerate(builds)]
+    return handle
+
+
+def test_a_fleet_pair_on_the_drivers_build_keeps_gate_authority():
+    """Fleet's world-one ranks are all 0; coverage goes by the report's place
+    in the setup replies, so a matched Fleet pair grants as before."""
+    assert mesh_residency.physical_capability_context(_fleet_pair(DRIVER, DRIVER))["runtime"] == DRIVER
+
+
+def test_a_fleet_pair_names_the_box_by_its_place_not_its_world_one_rank():
+    with pytest.raises(worker_runtime.WorkerRuntimeMismatch,
+                       match=r"the sibling runs torch 0\.0\.2") as raised:
+        mesh_residency.physical_capability_context(_fleet_pair(DRIVER, MOVED))
+    assert "the head runs torch 0.0.1+proven" in str(raised.value)
+
+
+def test_a_fleet_pair_with_a_missing_report_refuses():
+    with pytest.raises(worker_runtime.WorkerRuntimeMismatch,
+                       match="the sibling sent no report of its build"):
+        mesh_residency.physical_capability_context(_fleet_pair(DRIVER))
+
+
 def test_a_handle_with_no_setup_reports_yet_makes_no_claim():
     """Render submit authorizes before it sets up; the dispatch check after
     setup, the Worker's grant check and the ceremony rows answer again."""

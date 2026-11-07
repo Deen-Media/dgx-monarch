@@ -178,13 +178,17 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
         file_ctime_ns=parsed.file_ctime_ns,
     )
 
+    held = [0, 0]  # bytes and tensors kept so far, so each copy checks the cap in constant time
+
     def _keep(tensor: torch.Tensor) -> torch.Tensor:  # the cap bounds copies, not only the record
-        kept = record.resident_bytes + tensor.numel() * tensor.element_size()
-        if kept > _RESIDENT_CAP_BYTES:
+        nbytes = tensor.numel() * tensor.element_size()
+        if held[0] + nbytes > _RESIDENT_CAP_BYTES:
             raise CaptureAborted(
-                f"{record.resident_count + 1} keys ({kept / 2**30:.2f} GiB, over the resident cap) failed "
+                f"{held[1] + 1} keys ({(held[0] + nbytes) / 2**30:.2f} GiB, over the resident cap) failed "
                 "byte-verify against the checkpoint; record discarded, reload contract applies")
-        return tensor.detach().to("cpu").clone()
+        copy = tensor.detach().to("cpu").clone()
+        held[0], held[1] = held[0] + nbytes, held[1] + 1
+        return copy
 
     def _capture_identity_matches(st: os.stat_result) -> bool:
         return record.matches_stat(st)
@@ -195,9 +199,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
             try:
                 path_before = os.stat(base_path)
             except OSError as exc:
-                raise CaptureAborted(
-                    "checkpoint path changed after its header was validated"
-                ) from exc
+                raise CaptureAborted("checkpoint path changed after its header was validated") from exc
             if not _capture_identity_matches(os.fstat(fd)) or not _capture_identity_matches(
                 path_before
             ):
@@ -376,9 +378,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
             try:
                 path_after = os.stat(base_path)
             except OSError as exc:
-                raise CaptureAborted(
-                    "checkpoint path changed while capturing the un-bake record"
-                ) from exc
+                raise CaptureAborted("checkpoint path changed while capturing the un-bake record") from exc
             if not _capture_identity_matches(os.fstat(fd)) or not _capture_identity_matches(
                 path_after
             ):

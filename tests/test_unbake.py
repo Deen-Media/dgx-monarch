@@ -336,6 +336,27 @@ def test_capture_stops_copying_once_the_next_snapshot_would_pass_the_cap(rig, mo
     assert copies == [per_key]
 
 
+def test_capture_keeps_a_running_count_instead_of_resumming_every_snapshot(rig, monkeypatch):
+    """Each copy checks the cap against a running count. Re-summing the record
+    before every copy made capture quadratic in the keys it keeps; now the
+    record's byte sum is read once, for the summary line, however many copy."""
+    model, path, _ = rig
+    with torch.no_grad():
+        for block in model.diffusion_model.blocks:
+            block.wq.weight.data[0, 0] += 1
+    reads: list[int] = []
+    summed = ub.UnbakeRecord.resident_bytes.fget
+
+    def counting(record):
+        reads.append(1)
+        return summed(record)
+
+    monkeypatch.setattr(ub.UnbakeRecord, "resident_bytes", property(counting))
+    record = capture_unbake_record(model, KEYS, path)
+    assert record.resident_count == 2
+    assert len(reads) == 1
+
+
 def test_cast_mapped_key_restores_exactly(tmp_path):
     """Checkpoint stores F32, model runs bf16 (Krea2 keeps 174 tensors F32):
     the mapping records the loader's cast and restore replays it bit-exactly."""
