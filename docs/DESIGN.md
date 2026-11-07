@@ -1228,7 +1228,7 @@ Node contract stability is workflow stability: **NODE_CLASS_MAPPINGS keys,
 input names, and defaults are semver-governed API.** New inputs are optional or
 hidden and go at the end, because ComfyUI stores widget values by position.
 `tests/test_node_contract.py` snapshots the keys, ordered input names, types
-and defaults (`tests/node_input_contract.json`). Ten of the 19 nodes declare a
+and defaults (`tests/node_input_contract.json`). Ten of the 21 nodes declare a
 hidden `UNIQUE_ID`; no node reads its value, but it is part of that contract.
 
 ### 5.8 Progress, logging, observability

@@ -786,7 +786,7 @@ their own status option, and uploads have their own media kinds.
 
 ## Working with workflows
 
-Choose one of the 71 packaged workflows or import a ComfyUI UI workflow/API
+Choose one of the 73 packaged workflows or import a ComfyUI UI workflow/API
 prompt. Supported inputs appear as typed controls; connected inputs remain
 graph connections. The Inputs tab lists the inputs of the workflow's App Mode
 layout, in its order, and a workflow without one opens on All inputs. Each

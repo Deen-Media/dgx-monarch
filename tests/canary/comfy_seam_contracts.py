@@ -150,8 +150,9 @@ The seams, in run order:
  45. lora shape-changing set  the shape test the LoRA shape guard runs, and the
                               control LoRA that widens video_embedder
  46. dynamic prompt asymmetry  CLIP Text Encode's text declares dynamicPrompts and
-                              Text (Multiline)'s value does not, which the
-                              MOSS-Image layout graph's JSON prompt relies on
+                              Text (Multiline)'s value does not, which the JSON
+                              prompts of the MOSS-Image layout and Ideogram 4
+                              graphs rely on
  47. weight-only linear dispatch  the formats that quantize no activation and
                               the layouts they load as, the 2-D reshape the
                               quantized Linear skips for them, and outside
@@ -5552,8 +5553,8 @@ def _assert_lora_shape_changing_set_seam() -> None:
 def _assert_dynamic_prompt_asymmetry_seam() -> None:
     """CLIP Text Encode's text runs the browser's dynamic prompt pass; Text (Multiline)'s value does not.
 
-    The MOSS-Image layout template (tools/gen_templates.py) types its JSON layout
-    into a Text (Multiline) node and wires it to CLIP Text Encode's ``text``,
+    The MOSS-Image layout and Ideogram 4 templates (tools/gen_templates.py) type
+    their JSON into a Text (Multiline) node and wire it to CLIP Text Encode's ``text``,
     because the frontend rewrites ``{a|b}`` braces on Queue in a widget that
     declares ``dynamicPrompts``. A connected input runs no such pass, so the JSON
     reaches the encoder byte for byte only while the primitive's widget declares

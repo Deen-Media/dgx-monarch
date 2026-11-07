@@ -729,14 +729,44 @@ def _tail(sampler_key: str) -> list[dict]:
     ]
 
 
-# Many template notes share these sentences. GATE states the first-render cost.
-# DERIVED marks a graph read off the adapter and the stock node definitions,
-# not replayed from a committed reference render. FRAMES explains the
-# image-batch decode tail on the video graphs. Some notes repeat these words
-# inline instead of using the constant; regenerate and diff after any edit.
-GATE = ("The first render of a new model runs the identity gate, comparing the mesh "
-        "with a stock single-GPU load before producing pixels. Allow a few minutes "
-        "for proof renders. Later renders of the same combination skip the gate.")
+# Many template notes share these sentences. GATE states what the first-use
+# gate compares and what it costs, on a graph a KSampler drives: the ceremony
+# renders on the graph's own mesh and topology (nodes/gate_ceremony.py,
+# nodes/gate_cross_mode.py) and the automatic one runs at most two steps
+# (nodes/auto_gate.py). GATE_CUSTOM replaces it on a Sampler Custom graph,
+# which never reaches the automatic gate (auto_gate_context), and GATE_DUAL on
+# a dual-model graph, which never runs one (maybe_auto_gate). DERIVED marks a
+# graph read off the adapter and the stock node definitions, not replayed from
+# a committed reference render. FRAMES explains the image-batch decode tail on
+# the video graphs. FSDP_RULES states the FSDP launch contract
+# (adapters/fsdp.py, adapters/fsdp_lora_admission.py). Some notes repeat these
+# words inline instead of using the constant; regenerate and diff after any
+# edit. tests/test_template_note_claims.py holds each one to the code. Its
+# AUTO_GATED_KINDS and DUAL_MODEL_AUTO_GATES switches name the renders the
+# first-use gate reaches; GATE_CUSTOM and GATE_DUAL serve only the eight graphs
+# those switches leave out, and the switches flip together with them.
+GATE = ("The first render of a new model, LoRA and residency combination runs the "
+        "identity gate before any pixels, on this graph's mesh and topology: proof "
+        "renders of at most two steps, from a fresh load before and after the swap "
+        "or reload under test, must match bit for bit, and with slab residency on, "
+        "one more render with slab off must match too. Allow a few minutes for these "
+        "two to four proof renders. Later renders of the same combination skip the "
+        "gate.")
+GATE_CUSTOM = ("This graph samples through Sampler Custom (DGX Monarch), which runs no "
+               "automatic identity gate. With auto_gate on first_use, as shipped, each "
+               "render runs with slab and low-RSS residency off, and a *+fsdp preset "
+               "refuses, until an Identity Gate (DGX Monarch) node passes the same "
+               "model, LoRAs, Init settings and topology; after that PASS, renders use "
+               "the residency the Init node asks for.")
+GATE_DUAL = ("Both model slots render with slab and low-RSS residency off, whatever the "
+             "Init node says, and no identity gate runs: a gate proves one model, so it "
+             "cannot vouch for the second slot. With auto_gate on first_use, as shipped, "
+             "a *+fsdp preset refuses this graph for the same reason.")
+FSDP_RULES = ("FSDP shards a bf16 or fp16 file, and an fp8 or int8 file as its stored "
+              "bytes; it refuses block-scaled files such as mxfp8 and nvfp4, and an fp8 "
+              "weight_dtype cast at load. A LoRA on FSDP needs lora_low_rss on, and "
+              "refuses on a comfy-kitchen quantized file (scaled fp8, fp8mixed or int8) "
+              "whatever lora_low_rss says.")
 NO_FIRST_USE_GATE = ("With slab, low-RSS and FSDP disabled, there is nothing for the "
                      "first-use gate to prove, so the first render skips it.")
 DERIVED = ("This graph is derived from the family adapter and stock node definitions, "
@@ -795,6 +825,35 @@ H3_SEPARATE_OUTPUTS = (
     "MiniMax H3 MP4 template."
 )
 
+
+# The Ideogram 4 template's caption: one line of compact JSON, valid against
+# the official caption schema. compositional_deconstruction with background
+# and elements is required, style_description carries aesthetics and
+# lighting and exactly one of photo or art_style, and the photo key order is
+# fixed. bbox is [y_min, x_min, y_max, x_max] over 0 to 1000 from the top
+# left. It sits in Text (Multiline): CLIP Text Encode marks its own text for
+# the browser's dynamic prompt pass, which strips every brace pair on Queue.
+IDEOGRAM_CAPTION = (
+    '{"high_level_description":"A close-up photograph of a '
+    'chalkboard menu sign propped on a wooden bakery counter '
+    'beside a tray of fresh croissants.","style_description":'
+    '{"aesthetics":"warm, rustic, inviting","lighting":"soft '
+    'morning window light from the left with gentle falloff",'
+    '"photo":"50mm, f/2.8, shallow depth of field, eye level",'
+    '"medium":"photograph","color_palette":["#2B2018",'
+    '"#E8D5B7","#C98A3C","#F5EFE6","#6B4A2F"]},'
+    '"compositional_deconstruction":{"background":"A warm '
+    'wooden bakery counter with a softly blurred shelf of bread '
+    'loaves and a copper kettle behind it.","elements":'
+    '[{"type":"text","bbox":[120,180,520,820],"text":"FRESH '
+    'BAKED DAILY","desc":"Hand lettered white chalk capitals on '
+    'a black chalkboard, set in three stacked centered lines '
+    'inside a thin chalk border, with a small wheat sprig drawn '
+    'beneath."},{"type":"obj","bbox":[560,120,940,880],"desc":'
+    '"A shallow metal tray of golden croissants with flaky '
+    'layered crusts, dusted lightly with flour, angled toward '
+    'the camera."}]}}'
+)
 
 TEMPLATES = {
     "dgx-monarch-quickstart": {
@@ -856,12 +915,18 @@ TEMPLATES = {
         "title": "Identity Gate: prove your stack swaps exactly",
         "nodes": [*FLUX_STACK,
             {"key": "note", "type": "Note", "pos": (0, 1), "note":
-             "The Identity Gate renders your workflow twice, once through "
-             "swap-produced weights and once through a fresh stock load, and reports "
-             "PASS or FAIL with the bit-level latent difference. 2 steps are as "
-             "conclusive as 20. You rarely need this node: the first render of "
-             "a new combination runs the gate on its own. This node is the on-demand "
-             "and CI form; strict=true raises on any verdict but PASS."},
+             "The Identity Gate renders your workflow from a fresh load, nudges the "
+             "first LoRA's strength and swaps it back, renders again on the same mesh "
+             "and topology, and reports PASS or FAIL with the largest latent "
+             "difference; with slab residency on, it also renders once with slab off. "
+             "Each proof render runs the steps widget's count, 2 here, as the "
+             "automatic gate does. A PASS means these renders matched bit for bit: a "
+             "finite check of what ran, not a proof for every prompt, size or step "
+             "count. With a KSampler you rarely need this node, because the first "
+             "render of a new combination runs the gate on its own. Sampler Custom "
+             "graphs never do, so this node is how they earn slab and low-RSS "
+             "residency, and it is the CI form; strict=true raises on any verdict but "
+             "PASS."},
             {"key": "lora0", "type": "DGXMonarchLoraLoader", "pos": (2, 0),
              "widgets": {"lora_name": "your_first_lora.safetensors", "strength_model": 0.8},
              "wire": {"model": ("unet", 0)}},
@@ -914,10 +979,7 @@ TEMPLATES = {
              "fp8 checkpoint, so the kernel the Init widget shows is replaced at "
              "dispatch. sageattention must then be installed on every worker, "
              "because a first configure that cannot import it raises instead of "
-             "falling back. The first render of a new model runs the identity gate: "
-             "before any pixels, a few minutes of proof renders check that the mesh "
-             "matches a stock single-GPU load. Later renders of the same combination "
-             "skip it. Expects "
+             "falling back. " + GATE + " Expects "
              "krea2_turbo_fp8_scaled.safetensors in models/diffusion_models, "
              "qwen3vl_4b_bf16.safetensors in models/text_encoders, and "
              "qwen_image_vae.safetensors in models/vae, the VAE the official Krea 2 "
@@ -980,9 +1042,7 @@ TEMPLATES = {
              "are CFG distilled. Comfy caps this DiT at batch 1, so cfg-parallel and "
              "data-parallel refuse; topology=auto asks for sequence-parallel on a "
              "configured pair and single on one box. Connect an image to first_frame "
-             "(and last_frame) to make this a keyframe render. The first render of a "
-             "new model runs the identity gate: before any pixels, a few minutes of "
-             "proof renders check that the mesh matches a stock single-GPU load. "
+             "(and last_frame) to make this a keyframe render. " + GATE + " "
              "Expects "
              "minimax_h3_fl2va_pruned_int8_convrot.safetensors in "
              "models/diffusion_models, qwen3vl_32b_minimax_h3_nvfp4_awq.safetensors in "
@@ -1255,8 +1315,12 @@ TEMPLATES = {
              "the resident model, so it goes through Model Sampling SD3 (DGX "
              "Monarch); the stock patch node cannot take a mesh model. For the "
              "720p tier load wan2.1_i2v_720p_14B_fp8_scaled.safetensors and raise "
-             "the canvas to match, and for the uly2+fsdp capacity preset load the "
-             "file stored in BF16, wan2.1_i2v_480p_14B_bf16.safetensors. The scoped HW "
+             "the canvas to match. The uly2+fsdp capacity preset is for a file too "
+             "large to fit resident, such as the BF16 file, "
+             "wan2.1_i2v_480p_14B_bf16.safetensors, with weight_dtype set to bf16 on "
+             "the loader, since ComfyUI runs Wan in fp16 by default and FSDP refuses a "
+             "bf16 file that loads as fp16; FSDP shards FP8 and INT8 files as stored "
+             "bytes too. The scoped HW "
              "evidence covers the FP8-scaled auto/Ulysses 81-frame path: cold and "
              "warm renders completed, and its decoded one-step probe matched the "
              "local reference exactly. It does not cover this BF16 capacity "
@@ -2057,8 +2121,12 @@ TEMPLATES = {
              "models/text_encoders, clip_vision_h.safetensors in models/clip_vision, "
              "and wan_2.1_vae.safetensors in models/vae; "
              "Wan21-14B-SCAIL-preview_fp8_scaled_mixed.safetensors halves the weights "
-             "resident on each rank if bf16 does not fit, but it gives up the FSDP "
-             "capacity route, which takes bf16 only. 40 steps at cfg 5.0 on a 14B video "
+             "resident on each rank if bf16 does not fit. FSDP admits either file. The "
+             "fp8 one shards as its stored bytes. For the bf16 one, set weight_dtype to "
+             "bf16 on the loader, because ComfyUI runs this family in fp16 by default "
+             "and FSDP refuses a bf16 file that loads as fp16 "
+             "(docs/TROUBLESHOOTING.md #17). FSDP has no hardware test on SCAIL. 40 "
+             "steps at cfg 5.0 on a 14B video "
              "model is a long first render: the lightx2v rank64 step and cfg distill "
              "LoRA runs it in 6 steps at cfg 1.0 with shift 7.0 and dpmpp_2m_sde, "
              "which this graph does not wire because the distilled recipe is not the "
@@ -2293,8 +2361,9 @@ TEMPLATES = {
              "only as far as your track reaches. Only the global expert takes a "
              "Model Sampling SD3 node, because the official graph patches no model "
              "sampling onto the local checkpoint; adding a second one changes the "
-             "local stage's math. Reference Latent typed-refuses on this family, FP8 "
-             "with FSDP is out of scope, and the official Skip Layer Guidance patch "
+             "local stage's math. Reference Latent typed-refuses on this family. FSDP "
+             "admits the FP8 files as stored bytes, with no measured fidelity here. The "
+             "official Skip Layer Guidance patch "
              "cannot be wired here because a mesh model is not a stock MODEL. For "
              "the official fast path, put "
              "lightx2v_I2V_14B_480p_cfg_step_distill_rank64_bf16.safetensors in "
@@ -2441,7 +2510,7 @@ TEMPLATES = {
              "needing a mesh model. The two text-encoder files load through one "
              "Dual CLIP Loader set to type ltxv. Large video latents can come back "
              "over RDMA; that path is off by default and its native leg is NOT RUN / "
-             "HOLD (DESIGN.md 5.6). " + FRAMES + " " + GATE + " Expects "
+             "HOLD (DESIGN.md 5.6). " + FRAMES + " " + GATE_CUSTOM + " Expects "
              "ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors in "
              "models/diffusion_models, gemma_3_12B_it.safetensors plus "
              "ltx-2.3_text_projection_bf16.safetensors in models/text_encoders, and "
@@ -2526,11 +2595,12 @@ TEMPLATES = {
              "a scheduler node, and sampled with euler. This graph runs one pass; "
              "the official graph upsamples the latent and runs the 22B DiT a second "
              "time. The canvas gives 14080 video rows and 126 audio rows, both even, "
-             "so neither stream pads at world 2. Packed data-parallel and FP8 FSDP "
-             "each refuse with a typed refusal, and cfg-parallel is unsupported "
-             "here, so cfg stays 1.0. Describe the soundtrack after Audio: in the "
+             "so neither stream pads at world 2. Packed data-parallel refuses with a "
+             "typed refusal. FSDP admits this FP8 file as stored bytes and passes the "
+             "load checks, but has no passing output comparison. This graph cannot "
+             "use cfg-parallel, so cfg stays 1.0. Describe the soundtrack after Audio: in the "
              "prompt, and quote a line of dialogue to make the model speak it. "
-             + FRAMES + " " + GATE +
+             + FRAMES + " " + GATE_CUSTOM +
              " Expects ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors in "
              "models/diffusion_models, gemma_3_12B_it.safetensors and "
              "ltx-2.3_text_projection_bf16.safetensors in models/text_encoders through "
@@ -2653,7 +2723,7 @@ TEMPLATES = {
              "tested with. The vendor replaced the earlier revision in August 2026 "
              "to align it with the LTX-2.5 checkpoints, so a copy downloaded "
              "before then has a different sha256 and gives different output. "
-             + FRAMES + " " + GATE + " Expects "
+             + FRAMES + " " + GATE_CUSTOM + " Expects "
              "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors in "
              "models/diffusion_models, "
              "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors in "
@@ -2766,7 +2836,7 @@ TEMPLATES = {
              "the image passes through LTXV Preprocess at img_compression 18, and it "
              "runs strength 0.7 in the first of two stages and 1.0 in the second. "
              "This template takes the route the row proves, and one stage wants "
-             "strength 1.0. " + FRAMES + " " + GATE + " Expects the same four files "
+             "strength 1.0. " + FRAMES + " " + GATE_CUSTOM + " Expects the same four files "
              "as the text to video template, from the same gated Hugging Face repo. "
              + DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
@@ -2875,7 +2945,7 @@ TEMPLATES = {
              "stock template will not match at 1.0. Point Load Image at your own "
              "first frame. One guide frame gives 14960 video rows, still even. "
              + FRAMES + " " +
-             GATE + " " + DERIVED},
+             GATE_CUSTOM + " " + DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name":
                          "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot"
@@ -2991,7 +3061,7 @@ TEMPLATES = {
              "and image-to-video graphs ask KSampler Select for euler_ancestral and "
              "get comfy's eta 1.0. Point both Load Image nodes at your own frames. "
              + FRAMES + " " +
-             GATE + " " + DERIVED},
+             GATE_CUSTOM + " " + DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name":
                          "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot"
@@ -3348,11 +3418,9 @@ TEMPLATES = {
              "supply. Pro is the 4096-dim model: if it does not fit resident, set "
              "the Init topology to uly2+fsdp, which shards the weights across the "
              "pair for capacity and takes roughly twice the time. FSDP adds "
-             "capacity, never speed, and LoRA on FSDP is unmeasured for Pro. FSDP "
-             "also needs a checkpoint stored in bf16: the launch contract reads the "
-             "safetensors header on the driver and refuses fp8, int8, fp16 and "
-             "mixed-precision files, so that route needs the bf16 Pro file, not a "
-             "quantized repack. " +
+             "capacity, never speed. " + FSDP_RULES + " Pro passed under explicit "
+             "FSDP with a full render and an exact one-step comparison; LoRA on FSDP "
+             "and quantized Pro files have no FSDP test. " +
              FRAMES + " " + GATE + " Expects "
              "kandinsky5pro_t2v_sft_5s.safetensors in models/diffusion_models, "
              "clip_l.safetensors plus qwen_2.5_vl_7b_fp8_scaled.safetensors in "
@@ -3560,9 +3628,9 @@ TEMPLATES = {
              "against DP2 with a 20-step render; on 2026-10-06 it was "
              "equal to the dp2 output at 1024 and 1040. The bf16 release with the "
              "`uly2+fsdp` preset carries the 2026-07-28 evidence instead. This graph "
-             "ships the resident path, and the FSDP launch contract refuses every "
-             "quantized file, so switching to FSDP means switching to the bf16 "
-             "checkpoint too. " + GATE +
+             "ships the resident path. " + FSDP_RULES + " The launch contract admits "
+             "this fp8mixed file, but only the bf16 release has an FSDP comparison. "
+             + GATE +
              " Expects flux2_dev_fp8mixed.safetensors in "
              "models/diffusion_models, mistral_3_small_flux2_bf16.safetensors in "
              "models/text_encoders, and flux2-vae.safetensors in models/vae. " +
@@ -3630,6 +3698,9 @@ TEMPLATES = {
              "false-positive rate, and the caption is validated against a schema, "
              "so compositional_deconstruction with its background and elements is "
              "required and the key order inside style_description is fixed. The "
+             "JSON sits in Text (Multiline) and reaches CLIP Text Encode through a "
+             "link: typed into CLIP Text Encode's own box, the browser's dynamic "
+             "prompt pass would strip its braces on Queue and send broken JSON. The "
              "official presets drop guidance to 3 for the final polish steps, which "
              "the DGX Monarch guider cannot express, so this template runs the "
              "vendor's constant-guidance mode at cfg 7.0. Sigmas come from the stock "
@@ -3639,9 +3710,7 @@ TEMPLATES = {
              "setting, so output and speed are the same either way. The 24.0 s "
              "against 26.0 s measured with it on (2026-08-25) is one 2-second "
              "polling interval, and both settings read 1-step NRMS 0.069 against "
-             "DP2. A gate verdict covers one sync_ulysses setting, so the first "
-             "render with it off runs its own identity gate before any pixels. "
-             + GATE +
+             "DP2. " + GATE_DUAL +
              " Expects ideogram4_fp8_scaled.safetensors plus "
              "ideogram4_unconditional_fp8_scaled.safetensors in "
              "models/diffusion_models, qwen3vl_8b_fp8_scaled.safetensors in "
@@ -3659,33 +3728,14 @@ TEMPLATES = {
             {"key": "clip", "type": "CLIPLoader", "pos": (0, 2),
              "widgets": {"clip_name": "qwen3vl_8b_fp8_scaled.safetensors",
                          "type": "ideogram4"}},
-            # One line of compact JSON, valid against the official caption schema:
-            # compositional_deconstruction with background and elements is required,
-            # style_description carries aesthetics and lighting and exactly one of
-            # photo or art_style, and the photo key order is fixed. bbox is
-            # [y_min, x_min, y_max, x_max] over 0 to 1000 from the top left.
+            # The caption reaches CLIP Text Encode through a link; IDEOGRAM_CAPTION
+            # says why. `text` is a wired widget: build() gives it a socket after
+            # `clip`, and its widgets_values slot stays empty.
+            {"key": "caption", "type": "PrimitiveStringMultiline", "pos": (0, 3),
+             "widgets": {"value": IDEOGRAM_CAPTION}},
             {"key": "pos", "type": "CLIPTextEncode", "pos": (1, 2),
-             "widgets": {"text":
-                         '{"high_level_description":"A close-up photograph of a '
-                         'chalkboard menu sign propped on a wooden bakery counter '
-                         'beside a tray of fresh croissants.","style_description":'
-                         '{"aesthetics":"warm, rustic, inviting","lighting":"soft '
-                         'morning window light from the left with gentle falloff",'
-                         '"photo":"50mm, f/2.8, shallow depth of field, eye level",'
-                         '"medium":"photograph","color_palette":["#2B2018",'
-                         '"#E8D5B7","#C98A3C","#F5EFE6","#6B4A2F"]},'
-                         '"compositional_deconstruction":{"background":"A warm '
-                         'wooden bakery counter with a softly blurred shelf of bread '
-                         'loaves and a copper kettle behind it.","elements":'
-                         '[{"type":"text","bbox":[120,180,520,820],"text":"FRESH '
-                         'BAKED DAILY","desc":"Hand lettered white chalk capitals on '
-                         'a black chalkboard, set in three stacked centered lines '
-                         'inside a thin chalk border, with a small wheat sprig drawn '
-                         'beneath."},{"type":"obj","bbox":[560,120,940,880],"desc":'
-                         '"A shallow metal tray of golden croissants with flaky '
-                         'layered crusts, dusted lightly with flour, angled toward '
-                         'the camera."}]}}'},
-             "wire": {"clip": ("clip", 0)}},
+             "widgets": {"text": ""},
+             "wire": {"clip": ("clip", 0), "text": ("caption", 0)}},
             {"key": "latent", "type": "EmptyFlux2LatentImage", "pos": (2, 3),
              "widgets": {"width": 1024, "height": 1024, "batch_size": 1}},
             # mu 0.0 with std 1.75 at 20 steps is the vendor's V4_DEFAULT_20 preset.
@@ -4655,9 +4705,11 @@ TEMPLATES = {
              "picks this family from the detected Qwen3 0.6B encoder and lists no "
              "anima entry, and the sampling shift of 3.0 is stored in the checkpoint, so "
              "no model sampling node belongs in this graph. topology=auto runs it on one "
-             "Spark and splits it across the pair once a cluster.toml is configured; an "
-             "FSDP preset typed-refuses here because the llm_adapter never joins the "
-             "sharded collective. " + GATE +
+             "Spark and splits it across the pair once a cluster.toml is configured. "
+             "Under an FSDP preset the llm_adapter, which ComfyUI runs before the "
+             "denoise loop, stays replicated outside the sharded collective; the BF16 "
+             "FSDP and cfg2+fsdp tests matched resident renders, and other files and "
+             "LoRAs have no FSDP test. " + FSDP_RULES + " " + GATE +
              " Expects anima-base-v1.0.safetensors in models/diffusion_models, "
              "qwen_3_06b_base.safetensors in models/text_encoders, and "
              "qwen_image_vae.safetensors in models/vae. " + DERIVED},
@@ -5705,7 +5757,7 @@ def _p_h3_image_note() -> str:
         "images to p-h3-image Conditioning: image_1 is the image to edit and the rest "
         "are references; on hardware an edit on uly2 matched the same edit on one rank, "
         "and no edit has been compared with stock yet. The driver holds the text "
-        "encoder, the upsampler and the VAE beside a 37.7 GiB DiT. " + GATE + " "
+        "encoder, the upsampler and the VAE beside a 37.7 GiB DiT. " + GATE_CUSTOM + " "
         "Expects " + P_H3_DIT["bf16"] + " in models/diffusion_models, "
         + P_H3_ENCODER["bf16"] + " and " + P_H3_UPSAMPLER + " in models/text_encoders, "
         "and " + P_H3_VAE["bf16"] + " in models/vae. " + DERIVED)
@@ -6190,11 +6242,12 @@ APP_MODE = {
         {"size": ("scale.width", "scale.height", "latent.width", "latent.height")},
         _KS, _IMAGE, _UNET),
     "dgx-monarch-flux2-t2i": _layout(*_T2I_ZERO, _FLUX_GUIDANCE),
-    # The negative input stays unconnected, so there is no negative prompt. The
-    # scheduler builds its sigmas for a size that must equal the latent's, and
-    # the second loader holds the unconditional model.
+    # The caption JSON is the prompt; it reaches CLIP Text Encode through a
+    # wire. The negative input stays unconnected, so there is no negative
+    # prompt. The scheduler builds its sigmas for a size that must equal the
+    # latent's, and the second loader holds the unconditional model.
     "dgx-monarch-ideogram4-t2i": _layout(
-        _PROMPT,
+        {"prompt": ("caption.value",)},
         {"size": ("latent.width", "latent.height", "sched.width", "sched.height"),
          "steps": ("sched.steps",)},
         _CUSTOM, {"model": ("unet.unet_name", "uncond.unet_name")}),
