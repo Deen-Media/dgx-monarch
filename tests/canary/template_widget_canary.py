@@ -9,11 +9,21 @@ ComfyUI's nodes.NODE_CLASS_MAPPINGS and this pack's nodes, this canary checks:
 2. Every required input has a link or widget value.
 3. Every supplied input remains declared by the node.
 4. CLIPLoader type values belong to ComfyUI's choices.
-5. CreateVideo bit_depth, color_space and codec remain optional, with values
-   allowed by create_video_enum_errors.
+5. CreateVideo bit_depth, color_space, chroma_subsampling and codec remain
+   optional, with values allowed by create_video_enum_errors, and SaveVideo's
+   format and codec stay among ComfyUI's options (save_video_errors).
 
 Conversion uses benchmark.sweep.convert.convert and object_info_widget_names,
 the same functions used by the live sweep.
+
+The templates follow master. A stock widget that an older ComfyUI this
+project supports lacks is a row in dgx_monarch/stock_widget_drift.py: on a
+ComfyUI without it, the order check puts it back at its place, and the
+conversion drops it only where the template holds its default. The canary
+cannot tell an older ComfyUI from a master that later removed the widget
+(master reports the last release's version), so a removal reads as the older
+case here and the table row needs a look when upstream touches that node
+again.
 """
 
 from __future__ import annotations
@@ -25,6 +35,14 @@ import sys
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
+# Values a template may use: offered by ComfyUI 0.43 and by master. Master's
+# prores and mov are left out because 0.43 lacks them.
+CREATE_VIDEO_CHOICES = {"bit_depth": ("auto", 8, 10),
+                        "color_space": ("sRGB", "HDR", "HDR PQ"),
+                        "chroma_subsampling": ("auto", "444", "422", "420"),
+                        "codec": ("none", "auto", "h264", "av1")}
+SAVE_VIDEO_FORMATS = ("auto", "mp4", "mkv", "webm")
+SAVE_VIDEO_CODECS = ("auto", "h264", "av1")
 COMFY_DIR = Path(os.environ.get("COMFYUI_DIR", "../ComfyUI")).expanduser().resolve()
 TEMPLATE_DIRS = (
     REPO / "example_workflows",
@@ -54,22 +72,60 @@ def clip_loader_type_error(schema: dict, value: object) -> str | None:
     return None
 
 
+def _choices(spec: object) -> list | None:
+    """A combo's offered values, from either declaration shape, else None."""
+    if not isinstance(spec, (list, tuple)) or not spec:
+        return None
+    if isinstance(spec[0], list):
+        return list(spec[0])
+    options = spec[1] if len(spec) > 1 and isinstance(spec[1], dict) else {}
+    values = options.get("options")
+    if isinstance(values, list):
+        return [row.get("key") if isinstance(row, dict) else row for row in values]
+    return None
+
+
 def create_video_enum_errors(schema: dict, inputs: dict) -> list[str]:
-    """Validate the static CreateVideo combos before the queue sees a graph."""
+    """Validate the static CreateVideo combos before the queue sees a graph.
+
+    A value must be one this repo allows and one this ComfyUI offers. A newer
+    widget this ComfyUI lacks reaches here only at a value other than its
+    default, which the template check has already reported, so it also reads
+    as having no choices.
+    """
     errors = []
-    pinned = {"bit_depth": ("auto", 8, 10),
-              "color_space": ("sRGB", "HDR", "HDR PQ"),
-              "codec": ("none", "auto", "h264", "av1")}
-    for name, choices in pinned.items():
+    for name, choices in CREATE_VIDEO_CHOICES.items():
         if name not in inputs:
             continue
         try:
-            schema["optional"][name]
+            offered = _choices(schema["optional"][name])
         except (KeyError, IndexError, TypeError):
             errors.append(f"CreateVideo has no {name} choices")
             continue
         if inputs[name] not in choices:
             errors.append(f"CreateVideo {name} {inputs[name]!r} is not one of {list(choices)!r}")
+        elif offered is not None and inputs[name] not in offered:
+            errors.append(f"CreateVideo {name} {inputs[name]!r} is not offered here: {offered!r}")
+    return errors
+
+
+def save_video_errors(schema: dict, inputs: dict) -> list[str]:
+    """SaveVideo's format, and the codec under it, stay among ComfyUI's options."""
+    errors = []
+    fmt, codec = inputs.get("format"), inputs.get("codec")
+    try:
+        formats = schema["required"]["format"][1]["options"]
+    except (KeyError, IndexError, TypeError):
+        return ["SaveVideo has no format options"]
+    if fmt is None:
+        return errors
+    row = next((row for row in formats if isinstance(row, dict) and row.get("key") == fmt), None)
+    if fmt not in SAVE_VIDEO_FORMATS or row is None:
+        return [f"SaveVideo format {fmt!r} is not one of {list(SAVE_VIDEO_FORMATS)!r} offered here"]
+    if codec is not None:
+        nested = _choices(((row.get("inputs") or {}).get("required") or {}).get("codec"))
+        if codec not in SAVE_VIDEO_CODECS or nested is None or codec not in nested:
+            errors.append(f"SaveVideo codec {codec!r} is not offered under format {fmt!r}: {nested!r}")
     return errors
 
 
@@ -88,6 +144,8 @@ def main() -> None:
     assert templates, f"no templates found under {TEMPLATE_DIRS[0]}"
 
     from benchmark.sweep import convert as sweep_convert
+
+    from dgx_monarch import stock_widget_drift
 
     generator_names = sweep_convert.repo_widget_names(REPO)
     schemas: dict[str, dict] = {}
@@ -129,7 +187,11 @@ def main() -> None:
                     "which this canary treats as frontend-added"
                 )
         generated = [name for name in generated if name not in FRONTEND_WIDGETS]
-        if generated != comfy_names[node_class]:
+        # A newer widget this ComfyUI lacks goes back at its place first, so
+        # an older ComfyUI still checks every other widget's slot
+        # (stock_widget_drift).
+        declared_order = stock_widget_drift.with_newer(node_class, comfy_names[node_class])
+        if generated != declared_order:
             failures.append(
                 f"widget map: {node_class} generated as {generated} but comfy "
                 f"master declares {comfy_names[node_class]}"
@@ -151,6 +213,8 @@ def _check_template(path: Path, names, schemas: dict[str, dict],
                     failures: list[str], finalized_inputs=None) -> set[str]:
     """Convert one template, report what comfy would refuse, and return the classes it places."""
     from benchmark.sweep import convert as sweep_convert
+
+    from dgx_monarch import stock_widget_drift
 
     ui = json.loads(path.read_text())
     label = path.relative_to(REPO)
@@ -175,7 +239,15 @@ def _check_template(path: Path, names, schemas: dict[str, dict],
                     f"{label}: node {node_id} {node_class} leaves required input "
                     f"{name} unset"
                 )
+        newer = stock_widget_drift.missing(node_class, names(node_class))
         for name in sorted(set(node["inputs"]) - valid):
+            if name in newer:
+                failures.append(
+                    f"{label}: node {node_id} {node_class} holds "
+                    f"{node['inputs'][name]!r} for {name}, which this ComfyUI lacks; "
+                    f"a template must hold {newer[name]!r} there"
+                )
+                continue
             failures.append(
                 f"{label}: node {node_id} {node_class} sets {name}, which comfy "
                 "master no longer declares"
@@ -186,6 +258,9 @@ def _check_template(path: Path, names, schemas: dict[str, dict],
                 failures.append(f"{label}: node {node_id} {error}")
         if node_class == "CreateVideo":
             for error in create_video_enum_errors(declared, node["inputs"]):
+                failures.append(f"{label}: node {node_id} {error}")
+        if node_class == "SaveVideo":
+            for error in save_video_errors(declared, node["inputs"]):
                 failures.append(f"{label}: node {node_id} {error}")
     return placed
 

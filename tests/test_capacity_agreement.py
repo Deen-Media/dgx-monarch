@@ -30,7 +30,7 @@ from dataclasses import replace
 
 import pytest
 
-from dgx_monarch import capacity_agreement, consent_pending, consent_store, mesh_safety
+from dgx_monarch import box_names, capacity_agreement, consent_pending, consent_store, mesh_safety
 from dgx_monarch.actor import capacity_quote, worker_capacity
 from dgx_monarch.actor.capacity_quote import RankPrice
 from dgx_monarch.capacity_agreement import (
@@ -83,8 +83,14 @@ def _slab_price(verdict: str, *, avail_gib: float = 53.8, rung: str = "explicit"
         reason="slab_weights=on was requested")
 
 
+def _box(rank: int) -> str:
+    """The plain name collect gives a rank of a pair whose first host is the head."""
+    return box_names.HEAD if rank == 0 else box_names.SIBLING
+
+
 def _answer(rank: int, *prices: RankPrice, host: str = "") -> RankAnswer:
-    return RankAnswer(rank, host or f"box{rank}", tuple(prices), elapsed_s=0.03)
+    return RankAnswer(rank, host or f"box{rank}", tuple(prices), elapsed_s=0.03,
+                      box=_box(rank))
 
 
 def _fits(rank: int, **kwargs) -> RankAnswer:
@@ -102,7 +108,7 @@ def test_a_fleet_that_all_fits_is_admitted_and_recorded(caplog):
     with caplog.at_level("INFO"):
         decide([_fits(0), _fits(1)], 2)
     assert "cross-rank capacity admitted" in caplog.text
-    assert "rank 1=cond:fits/stock_fits" in caplog.text
+    assert "the sibling=cond:fits/stock_fits" in caplog.text
 
 
 def test_world_one_is_a_no_op():
@@ -123,8 +129,9 @@ def test_one_short_rank_refuses_the_whole_fleet_and_names_every_rank():
         decide([_fits(0), _refuses(1)], 2, unet_name="flux2.safetensors")
     text = str(raised.value)
     assert "1 of 2 cannot" in text
-    assert "rank 1 (host box1) priced a stock load of flux2.safetensors" in text
-    assert "rank 0 (host box0) took the stock_fits rung" in text
+    assert "The sibling priced a stock load of flux2.safetensors" in text
+    assert "The head took the stock_fits rung" in text
+    assert "box0" not in text and "box1" not in text
     assert "nothing was loaded on any rank" in text
     assert "What would fit: turn lora_low_rss on" in text
 
@@ -134,23 +141,23 @@ def test_two_short_ranks_are_reported_worst_headroom_first():
         decide([_refuses(0, avail_gib=90.0), _refuses(1, avail_gib=40.0)], 2)
     text = str(raised.value)
     assert "2 of 2 cannot" in text
-    assert text.index("rank 1 (host box1)") < text.index("rank 0 (host box0)")
+    assert text.index("The sibling priced") < text.index("The head priced")
 
 
 def test_a_silent_rank_refuses_and_says_what_the_others_did():
-    silent = RankAnswer(1, "box1", silent="did not answer in time")
+    silent = RankAnswer(1, "box1", silent="did not answer in time", box=box_names.SIBLING)
     with pytest.raises(FleetQuoteUnavailableError) as raised:
         decide([_fits(0), silent], 2)
     text = str(raised.value)
-    assert "rank 1 (host box1) did not answer in time" in text
-    assert "rank 0 answered in 0.03 s" in text
+    assert "and the sibling did not answer in time" in text
+    assert "The head answered in 0.03 s" in text
     assert "the fleet was not torn down" in text
 
 
 def test_a_short_rank_inventory_refuses():
     with pytest.raises(FleetQuoteUnavailableError) as raised:
         decide([_fits(0)], 2)
-    assert "returned 1 answers from ranks [0]" in str(raised.value)
+    assert "returned 1 answers, from the head." in str(raised.value)
 
 
 def test_two_rows_with_the_same_rank_id_refuse():
@@ -190,7 +197,7 @@ def test_a_rank_that_made_no_claim_is_named_rather_than_given_an_empty_rung():
     quiet = RankPrice(verdict="no_claim", rung="", reason="no probe ran here")
     with pytest.raises(FleetCapacityError) as raised:
         decide([_answer(0, quiet), _refuses(1)], 2)
-    assert "rank 0 (host box0) made no claim" in str(raised.value)
+    assert "The head made no claim" in str(raised.value)
 
 
 def test_a_wall_priced_refusal_carries_its_numbers_and_sorts_worst_first():
@@ -211,14 +218,14 @@ def test_a_wall_priced_refusal_carries_its_numbers_and_sorts_worst_first():
             checkpoint_bytes=size, slot="cond",
             reason=f"{rung} cannot hold this checkpoint")
 
-    answers = [RankAnswer(0, "box0", (wall("comfy_managed", 30.0, 44.0),)),
-               RankAnswer(1, "box1", (wall("stock_fits", 12.0, 44.0),))]
+    answers = [RankAnswer(0, "box0", (wall("comfy_managed", 30.0, 44.0),), box=_box(0)),
+               RankAnswer(1, "box1", (wall("stock_fits", 12.0, 44.0),), box=_box(1))]
     with pytest.raises(FleetCapacityError) as raised:
         decide(answers, 2, unet_name="flux2.safetensors")
     text = str(raised.value)
     assert "44.0 GiB" in text and "32.0 GiB short" in text
-    # Worst headroom first: rank 1 is 32 GiB short and rank 0 is 14 GiB short.
-    assert text.index("rank 1") < text.index("rank 0")
+    # Worst headroom first: the sibling is 32 GiB short and the head 14 GiB short.
+    assert text.index("The sibling priced") < text.index("The head priced")
     assert "plus the host copy it is placed from" not in text
 
 
@@ -233,7 +240,7 @@ def test_a_slab_shortfall_carries_its_own_numbers_and_a_remedy():
         decide([_answer(1, _slab_price("refuse")), _fits(0)], 2,
                unet_name="flux2.safetensors")
     text = str(raised.value)
-    assert "rank 1 (host box1) priced a slab load of flux2.safetensors" in text
+    assert "The sibling priced a slab load of flux2.safetensors" in text
     assert "the load needs 64.0 GiB" in text
     assert "a 60.0 GiB file plus a 4.0 GiB floor for the rest of the box" in text
     assert "53.8 GiB of unified memory is available, 10.2 GiB short" in text
@@ -247,7 +254,7 @@ def test_slab_rows_are_ordered_by_the_headroom_they_measured():
         decide([_answer(0, _slab_price("refuse", avail_gib=60.0)),
                 _answer(1, _slab_price("refuse", avail_gib=40.0))], 2)
     text = str(raised.value)
-    assert text.index("rank 1 (host box1)") < text.index("rank 0 (host box0)")
+    assert text.index("The sibling priced") < text.index("The head priced")
 
 
 def test_a_price_taken_over_a_resident_says_so_on_the_card():
@@ -262,7 +269,7 @@ def test_a_price_taken_over_a_resident_says_so_on_the_card():
     with pytest.raises(FleetCapacityError) as raised:
         decide([_fits(0), _answer(1, held)], 2)
     text = str(raised.value)
-    assert "rank 1 (host box1) holds a slab resident in the cond slot" in text
+    assert "the sibling holds a slab resident in the cond slot" in text
     assert "this load reads as a swap" in text
     assert "does not model the drop" in text
 
@@ -288,7 +295,8 @@ def test_silence_is_never_a_stock_load_capacity_error():
     fault inside it would write a capacity verdict for a box that never spoke.
     """
     arms = {
-        "silent": [_fits(0), RankAnswer(1, "box1", silent="did not answer in time")],
+        "silent": [_fits(0), RankAnswer(1, "box1", silent="did not answer in time",
+                                        box=box_names.SIBLING)],
         "short": [_fits(0)],
         "duplicate": [_fits(0), _fits(0)],
         "bytes": [_fits(0), _fits(1, size_bytes=CHECKPOINT_BYTES + 1)],
@@ -353,7 +361,7 @@ def _rescue_answer(rank: int, checkpoint, avail_gib: float) -> RankAnswer:
         measured=dict(fit.measured()), descriptor=descriptor.public(),
         would_load="fresh", checkpoint_bytes=fit.size_bytes, slot="cond")
     return RankAnswer(rank, f"box{rank}", (RankPrice.from_row(row.to_row()),),
-                      elapsed_s=0.02)
+                      elapsed_s=0.02, box=_box(rank))
 
 
 def test_rescue_descriptors_agree_across_ranks(checkpoint):
@@ -376,9 +384,28 @@ def test_rescue_descriptors_agree_across_ranks(checkpoint):
         decide([head, second], 2)
     text = str(raised.value)
     assert "capacity rescue available for flux2_bf16.safetensors" in text
-    assert "rank 0 (host box0) is the leanest" in text
+    assert "Every rank must hold this checkpoint and the head is the leanest" in text
     tag = parse_leading_refusal_tag(text)
     assert tag is not None and tag.guard == "stock_load_preflight" and tag.waivable
+
+
+def test_a_rescue_offer_priced_over_a_resident_says_so_too(checkpoint):
+    """The rescue arm prices against the residents the refusal arm does.
+
+    Ten of the 2026-11-04 rescue offers were priced with flux1-dev still held
+    and never said so, because only the refusal arm named the resident.
+    """
+    head = _rescue_answer(0, checkpoint, 75.2)
+    held = replace(head.quotes[0], would_load="swap",
+                   holds_resident={"cond": "stock", "uncond": None})
+    from dgx_monarch.consent_descriptor import SlabResidencyRescueOffer
+
+    with pytest.raises(SlabResidencyRescueOffer) as raised:
+        decide([replace(head, quotes=(held,)), _rescue_answer(1, checkpoint, 107.0)], 2)
+    text = str(raised.value)
+    assert "the head holds a stock resident in the cond slot" in text
+    assert "does not model the drop" in text
+    assert text.index("does not model the drop") < text.index("Nothing was loaded")
 
 
 def test_the_driver_raised_rescue_reaches_the_panel(checkpoint, monkeypatch):
@@ -483,7 +510,8 @@ def test_a_rank_that_cannot_answer_refuses_without_evicting_the_fleet(failure):
     answers = capacity_agreement.collect(handle, {}, 2)
     with pytest.raises(FleetQuoteUnavailableError) as raised:
         decide(answers, 2)
-    assert "rank 1" in str(raised.value)
+    # No host list is a local fleet: two ranks on this box, named by GPU.
+    assert "GPU 1 on this box" in str(raised.value)
     assert handle.defunct is False
     assert handle.setup_cleanup_state is None
 
@@ -511,10 +539,10 @@ def test_a_reply_cannot_answer_for_a_rank_the_driver_did_not_ask():
                              1: _reply(0, _price("fits"), host="box1")})
     answers = capacity_agreement.collect(handle, {}, 2)
     assert [answer.rank for answer in answers] == [0, 1]
-    assert "rank 0" in answers[1].silent
+    assert answers[1].silent == "answered as another rank"
     with pytest.raises(FleetQuoteUnavailableError) as raised:
         decide(answers, 2)
-    assert "rank 1" in str(raised.value)
+    assert "GPU 1 on this box answered as another rank" in str(raised.value)
 
 
 def test_each_rank_reports_the_wait_it_cost_and_not_the_fleet_total(monkeypatch):
@@ -557,19 +585,28 @@ def _cluster(*names):
         hosts=tuple(types.SimpleNamespace(name=name) for name in names))
 
 
-def test_a_silent_rank_is_named_from_the_driver_host_list():
+@pytest.fixture
+def head_is_first(monkeypatch):
+    """The driver runs on the configured host named "head", read without DNS."""
+    from dgx_monarch import driver_footprint
+
+    monkeypatch.setattr(driver_footprint, "host_is_local", lambda name: name == "head")
+
+
+def test_a_silent_rank_is_named_from_the_driver_host_list(head_is_first):
     """On the 2026-09-03 silent-rank leg a frozen rank refused as "rank 1 (host
-    unnamed)" while the driver held the host list. The rank said nothing, so
-    the name is marked as the driver's own rather than the box's."""
+    unnamed)" while the driver held the host list. The driver names every box,
+    so a rank that said nothing is named as plainly as one that answered."""
     handle = _FakeHandle(2, {0: _reply(0, _price("fits")), 1: TimeoutError("frozen")},
                          config=_cluster("head", "second"))
     answers = capacity_agreement.collect(handle, {}, 2)
-    assert answers[1].configured_host == "second"
+    assert answers[1].box == box_names.SIBLING
     with pytest.raises(FleetQuoteUnavailableError) as raised:
         decide(answers, 2)
     text = str(raised.value)
-    assert "rank 1 (host second as configured) did not answer in time" in text
-    assert "host unnamed" not in text
+    assert "and the sibling did not answer in time" in text
+    assert "The head answered in" in text
+    assert "second" not in text and "rank 1" not in text
 
 
 def test_a_local_fleet_names_the_driver_box_for_a_silent_rank():
@@ -577,34 +614,34 @@ def test_a_local_fleet_names_the_driver_box_for_a_silent_rank():
     handle = _FakeHandle(2, {0: _reply(0, _price("fits")), 1: TimeoutError("frozen")})
     with pytest.raises(FleetQuoteUnavailableError) as raised:
         decide(capacity_agreement.collect(handle, {}, 2), 2)
-    assert "rank 1 (host this box as configured)" in str(raised.value)
-    assert "host unnamed" not in str(raised.value)
+    assert "GPU 1 on this box did not answer in time" in str(raised.value)
 
 
-def test_the_rank_own_host_name_still_wins_over_the_config():
-    """The box speaking about itself outranks the driver's name for it."""
+def test_the_driver_names_every_box_whatever_the_rank_reports(head_is_first):
+    """A box's own host name stays a machine field; the user reads its plain name."""
     handle = _FakeHandle(2, {0: _reply(0, _price("fits"), host="head.local"),
                              1: _reply(1, _price("refuse"), host="second.local")},
                          config=_cluster("head", "second"))
     answers = capacity_agreement.collect(handle, {}, 2)
-    assert [answer.where for answer in answers] == [
-        "rank 0 (host head.local)", "rank 1 (host second.local)"]
+    assert [answer.where for answer in answers] == ["the head", "the sibling"]
+    assert [answer.host for answer in answers] == ["head.local", "second.local"]
 
 
-def test_ranks_map_to_hosts_in_blocks_of_gpus_per_host():
+def test_ranks_map_to_hosts_in_blocks_of_gpus_per_host(head_is_first):
     """Rank i sits on host i // gpus, the order collect slices the mesh in."""
     handle = _FakeHandle(4, dict.fromkeys(range(4), TimeoutError("frozen")),
                          gpus_per_host=2, config=_cluster("head", "second"))
     answers = capacity_agreement.collect(handle, {}, 4)
-    assert [answer.configured_host for answer in answers] == [
-        "head", "head", "second", "second"]
+    assert [answer.where for answer in answers] == [
+        "GPU 0 on the head", "GPU 1 on the head", "GPU 0 on the sibling",
+        "GPU 1 on the sibling"]
 
 
-def test_a_host_list_shorter_than_the_world_names_no_box_it_cannot():
+def test_a_host_list_shorter_than_the_world_names_no_box_it_cannot(head_is_first):
     handle = _FakeHandle(2, {0: TimeoutError("x"), 1: TimeoutError("x")},
                          config=_cluster("head"))
     answers = capacity_agreement.collect(handle, {}, 2)
-    assert answers[1].where == "rank 1 (host unnamed)"
+    assert answers[1].where == box_names.UNLISTED
 
 
 _HELD_KEY = "('m.safetensors', (), (), 'bf16')"
@@ -648,7 +685,7 @@ def test_a_reuse_that_read_nothing_is_not_printed_as_zero_headroom(
     assert (row.measured, row.slab_measured) == (None, None)
     with caplog.at_level("INFO"):
         decide([_answer(0, row), _fits(1)], 2)
-    assert "rank 0=cond:fits/vouched_auto@resident" in caplog.text
+    assert "the head=cond:fits/vouched_auto@resident" in caplog.text
     assert "@0.0GiB" not in caplog.text
 
 
@@ -662,7 +699,7 @@ def test_a_reuse_that_read_its_box_prints_that_reading(caplog, monkeypatch):
     assert row.slab_measured["headroom_gib"] == 48.0
     with caplog.at_level("INFO"):
         decide([_answer(0, row), _fits(1)], 2)
-    assert "rank 0=cond:fits/vouched_auto@48.0GiB" in caplog.text
+    assert "the head=cond:fits/vouched_auto@48.0GiB" in caplog.text
     assert "@resident" not in caplog.text
 
 
@@ -675,7 +712,7 @@ def test_a_priced_row_whose_probe_read_no_availability_says_so(caplog):
         would_load="fresh", checkpoint_bytes=CHECKPOINT_BYTES, reason="slab")
     with caplog.at_level("INFO"):
         decide([_answer(0, blind), _fits(1)], 2)
-    assert "rank 0=cond:fits/explicit@headroom unstated" in caplog.text
+    assert "the head=cond:fits/explicit@headroom unstated" in caplog.text
     assert "@0.0GiB" not in caplog.text
 
 
@@ -696,7 +733,7 @@ def test_a_real_zero_headroom_still_prints_zero(caplog):
                     reason="exactly fits")
     with caplog.at_level("INFO"):
         decide([_answer(0, row), _fits(1)], 2)
-    assert "rank 0=cond:fits/stock_fits@0.0GiB" in caplog.text
+    assert "the head=cond:fits/stock_fits@0.0GiB" in caplog.text
 
 
 class _Store:

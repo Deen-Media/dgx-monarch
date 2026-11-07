@@ -17,7 +17,10 @@ a loop whose units decode independently and that the split can replay:
 Left out on purpose: CogVideoX tiles frames inside its spatial loop, so its
 tiles are not independent; an LTX VAE whose decode draws unseeded noise
 (timestep conditioning or injected noise) has no reproducible reference;
-image VAEs and every unknown class run the reference decode.
+image VAEs and every unknown class run the reference decode. So do two
+MiniMax H3 decoders in ComfyUI 0.44.0 or newer: the Sol-H3-VAE decoder
+(``noncausal``) decodes the whole clip in one pass, with no temporal chunk for
+a Worker, and the p-h3-image VAE (``PH3ImageVAE``) decodes one frame.
 """
 from __future__ import annotations
 
@@ -51,6 +54,7 @@ _CLASSES = {
     "comfy.ldm.lightricks.vae.na_diffusion_decoder.CausalDiffusionVAE": "ltx",
 }
 _HUNYUAN15_DECODER = "comfy.ldm.hunyuan_video.vae_refiner.Decoder"
+_H3_CLASS = "comfy.ldm.minimax.vae.MiniMaxH3VideoVAE"
 _SUPPORTED = ("MiniMax H3, Wan 2.1 and 2.2, HunyuanVideo 1.0 and 1.5 and LTX video VAEs "
               "split (docs/MODELS.md)")
 
@@ -70,7 +74,15 @@ def classify(vae: Any) -> tuple[Family | None, str]:
     if fsm is None:
         return None, "the VAE has no decoder model"
     name = _qualified(type(fsm))
-    if name == "comfy.ldm.minimax.vae.MiniMaxH3VideoVAE":
+    if name != _H3_CLASS and any(_qualified(cls) == _H3_CLASS for cls in type(fsm).__mro__):
+        if name == "comfy.ldm.minimax.vae.PH3ImageVAE" or getattr(vae, "not_video", False):
+            what = "the p-h3-image VAE" if name.endswith(".PH3ImageVAE") else type(fsm).__name__
+            return None, f"{what} decodes single frames, so there is nothing to split"
+        return None, f"no split for {name}, a MiniMax H3 VAE variant: {_SUPPORTED}"
+    if name == _H3_CLASS:
+        if getattr(fsm, "noncausal", False):
+            return None, ("the Sol-H3-VAE decoder decodes the whole clip in one pass, so there "
+                          "are no temporal chunks to split")
         if not getattr(vae, "handles_tiling", False) or getattr(fsm, "decoder", None) is None:
             return None, ("this ComfyUI decodes the MiniMax H3 VAE some other way than its own "
                           "chunked decode, so the split cannot replay it")

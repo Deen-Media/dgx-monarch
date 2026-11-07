@@ -595,19 +595,22 @@ def test_a_recycle_drains_both_homes_of_the_checkpoint_key_space(
 
 
 def test_every_door_that_stops_the_procs_runs_the_drain():
-    """Three sites in nodes/ call the handle's recycle API: the /dgxm/recycle
-    route, the ClearVRAM node at level=recycle, and the abandoned-lease heal in
-    render_submit. A door that skips the drain keeps the memos the others drop,
-    which is this class one level up."""
+    """Three sites in nodes/ call the handle's recycle API: the ClearVRAM node
+    at level=recycle, the abandoned-lease heal in render_submit, and
+    recycle_drain.recycle_and_drain, which the /dgxm/recycle route, the Old
+    model in the way card and its Always flow share. A door that skips the
+    drain keeps the memos the others drop, which is this class one level up.
+    A bare call counts, since recycle_drain drains with its own function."""
     for path in sorted((SRC / "nodes").rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
         for node in ast.walk(tree):
             if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
                 continue
             calls = [
-                call.func.attr for call in ast.walk(node)
+                call.func.attr if isinstance(call.func, ast.Attribute) else call.func.id
+                for call in ast.walk(node)
                 if isinstance(call, ast.Call)
-                and isinstance(call.func, ast.Attribute)
+                and isinstance(call.func, (ast.Attribute, ast.Name))
             ]
             if not {"recycle", "recycle_detailed"}.intersection(calls):
                 continue

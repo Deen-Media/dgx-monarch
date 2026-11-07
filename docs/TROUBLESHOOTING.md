@@ -14,8 +14,8 @@ the error text or symptom; report failures not covered here.
 > by a fresh process also invalidates earlier results for that configuration.
 > Each combination is checked again on first use after an upgrade or source change.
 > A change to the artifact bytes, the ComfyUI commit, the gate protocol, the
-> canonical package-source manifest, or the effective worker, fleet or topology
-> context also needs a fresh proof. Each process reads the source manifest once,
+> canonical package-source manifest, the driver's torch or CUDA build, or the
+> effective worker, fleet or topology context also needs a fresh proof. Each process reads the source manifest once,
 > on first use, and does not watch it: restart the driver and the workers after
 > changing an editable checkout.
 > The check uses two short test renders and compares slab against stock when
@@ -128,7 +128,7 @@ out.
 old actors. A message to one of them comes back to the driver's fault hook as
 undeliverable, and never to the call that sent it, so before 1.2.0 the
 render's cross-rank price request
-([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box))
 waited its whole 30 s deadline and refused with `did not answer in time`,
 naming Reset attached mesh. Now the price wait ends within half a second of
 the first delivery failure that names a fleet host and the mesh the price
@@ -380,6 +380,14 @@ they must never shut down the persistent Worker services.
 **Fix:** `dgxm restart`. The `nccl master port` row of `dgxm doctor` warns when
 the port accepts connections outside a render.
 
+The same port can still be held by the session before yours. On 2026-11-04 a
+driver session started two minutes after the previous one stopped failed
+Worker setup at once with `torch.distributed.DistNetworkError: The server
+socket has failed to listen on any local network address. port: 29905 ...
+EADDRINUSE`, and a split-decode session on 2026-11-03 failed the same way on
+port 29857. Both times a fresh session started later went through. Wait a
+minute and queue again, and run `dgxm restart` if it repeats.
+
 ## 4. `SupervisionError: … process exited with non-zero code`
 
 A worker actor died. The error identifies its endpoint and host. Check the
@@ -416,6 +424,19 @@ uses the same placement charge. The previous 1.3x estimate admitted a load
 that killed a host; measurements and calibration are in
 [VALIDATION.md](VALIDATION.md).
 
+When the UNET loader casts the weight dtype (`weight_dtype` other than
+`default`), the copy the cast builds takes the file's place in that sum, and
+the host copy stays the file's own size. The Worker reads the size of the
+cast copy from the file's header: every 16- or 8-bit float at the new width,
+and a quantized layer's weights, fp32 tensors and integers as they are stored.
+A cast that keeps the width, such as an fp16 file loaded as bf16, costs what
+the uncast load costs: 60.9 GiB for each 26.6 GiB Wan 2.2 14B DiT. A cast
+that widens costs more: a 13.3 GiB fp8 file loaded as bf16 builds a 26.6 GiB
+copy and needs 46.3 GiB. The refusal names the cast copy ("a 13.3 GiB file
+cast to a 26.6 GiB copy"). A header the Worker cannot read is charged the
+file times the new width, the most the cast could build, and the Worker
+journal says so. Before 2026-11-05 a cast load was not priced at all.
+
 **If `capacity rescue available` appears:** open the DGX Monarch sidebar,
 click "Load with slab residency", then queue again. Nothing large has loaded
 at the refusal. [#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)
@@ -446,8 +467,11 @@ quarantine, or insufficient memory even for slab. A session quarantine from an
 identity gate that could not complete names that ceremony; restart ComfyUI to
 clear it. Comfy-managed residency forces slab off and cannot offer this rescue
 ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)).
-A loader `weight_dtype` cast disables this preflight because file size no
-longer predicts resident size. Quarantine overrides consent; only a fresh
+A loader `weight_dtype` cast is priced and refused without a rescue card,
+because a slab load under a cast keeps the cast copy beside the file and saves
+nothing; the refusal says so and names what would fit, and an explicit
+`slab_weights=on` refuses a cast outright. An old model in the way can still
+raise its own card. Quarantine overrides consent; only a fresh
 Identity Gate retest can clear it
 ([#35](#35-identity-gate-reports-errorinconclusive-after-a-prior-pass)).
 After a rescue whose gate returned an unproven INCONCLUSIVE, because stock
@@ -551,9 +575,11 @@ To measure your own selected rail, run the qualifier's `--timing` mode in
 **Symptom (0.1.0 and earlier):** a custom sampler picked in the KSampler
 dropdown (RES4LYF `res_2s`, `res_3s`, …) renders at euler cost and quality;
 multi-stage samplers silently under-compute. **Symptom (current):**
-the render fails typed with "sampler … is not registered with ComfyUI on
-worker host …", or the SamplerCustom path fails deserializing a SAMPLER
-object.
+the render fails typed with "sampler ... is not registered with ComfyUI here",
+or the SamplerCustom path fails deserializing a SAMPLER object. The error
+opens with the box whose Worker lacks it, "On the sibling, actor call
+dgxm_worker.sample failed.", unless the fleet runs on the driver's box alone,
+where "here" is that box.
 
 **Cause:** the pack providing the sampler did not import inside the worker
 procs, so its names never reached the worker's `KSampler.SAMPLERS`, and
@@ -800,6 +826,15 @@ newest 20 reports are kept.
 
 A large `gpu_load` on *every* render indicates eviction instead. Check
 `uma_reserve_gb` pressure and co-resident workloads.
+
+A LoRA added to a bare base on an older build, with `lora_low_rss` off, could
+spend minutes there too, for a different reason: `sample 269.40s (hot-swap
+gpu_load 230.2s)` on the BF16 Wan-Animate 2 memory-saver template (2026-11-05).
+ComfyUI copied the whole model off the GPU before it applied the LoRA. The
+Worker now drops the bare base and loads base and LoRA fresh instead, at the
+same price, and its journal says so: `a LoRA change on <file> would copy the
+model off the GPU first ... so the slot is dropped and base and stack load
+fresh`, followed by an ordinary `load` line.
 
 ## 19. Blank ComfyUI canvas (grid renders, no menu/sidebar) after an update
 
@@ -1903,11 +1938,34 @@ must not be retried merely because the memory remains allocated.
 
 **Symptom:** `DriverFootprintCapacityError` (a `StockLoadCapacityError`)
 refuses before worker RPCs. Render-time messages start
-`driver-side footprint preflight:`; loader messages start
-`driver-side footprint preflight at the loader node:`. The latter carries
+`driver-side footprint preflight:`. Loader messages start with one plain
+sentence, then the budget detail from
+`driver-side footprint preflight at the loader node:` on. The latter carries
 `[dgxm:K]` if a Gate FAIL blocks rescue; ordinary capacity refusals are class C.
+A re-queue whose UNET loader ComfyUI kept from an earlier queue gets the same
+refusal from the sampler, or from Identity Gate (DGX Monarch), which says so
+after its first sentence ("The UNET Loader's output came from an earlier queue,
+so the sampler priced this graph, and the Workers loaded nothing."), and its
+budget detail starts `driver-side footprint preflight at the sampler` or
+`at Identity Gate (DGX Monarch)`.
+For example, the p-h3-image template on one Spark:
 
-**What to do:** follow the reported shortfall and fitting options. For H3,
+```
+[dgxm:C guard=loader_footprint_preflight waivable=1] p-h3-image_bf16.safetensors needs 119.8 GiB on this box and 110.8 GiB is available, 9.0 GiB short. It loads at the first render, beside p-h3-image_text_encoder_bf16.safetensors, p-h3-image_prompt_upsampler_bf16.safetensors and p-h3-image_vae_bf16.safetensors, which this graph loads on the driver first. Nothing was loaded. On disk here, these would fit: p-h3-image_int8_convrot.safetensors (19.8 GiB) or p-h3-image_w4a8.safetensors (12.4 GiB) in place of p-h3-image_bf16.safetensors; ...
+```
+
+**What to do:** follow the reported shortfall and fitting options. A loader
+refusal names what would fit first, each one priced in both windows: files on
+disk here that hold the same model in another precision, in place of the DiT or
+of a driver model; a lazy switch whose other setting skips a model; and on a
+pair, the Init node's topology set to `uly2+fsdp`, which `auto` never picks,
+where the head holds half the DiT, after an Identity Gate PASS on that preset.
+It never names a file this graph would then refuse: a DiT file is named only
+when a graph here names it (the artifact manifest lists it) and none of the
+refusals the driver can read from its header applies, so no INT8 MOSS-Image
+file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file that
+pins an attention kernel off Ulysses and ring (#117). The pair is not offered
+beside a LoRA. For H3,
 try a smaller text encoder, a pruned/quantized DiT, fewer or smaller references,
 a smaller canvas/clip, or more free host memory. Pruned int8/fp8 reference-video
 files are 19.5 GiB versus bf16's 61.7 GiB. For LTX, start with a smaller canvas
@@ -1930,7 +1988,7 @@ admitted DiT load; see [VALIDATION.md](VALIDATION.md).
 
 | Window | Charge and remedy |
 |---|---|
-| `load` | Stock placement peaks near 2.1x checkpoint size, before the driver stack exists. Slab avoids the host copy and may offer rescue. |
+| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists. Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
 | `resident` | Weights plus the graph's future text encoder, VAEs, reference/guide encodes, and declared render activations. If this does not fit, use smaller artifacts or inputs; changing residency cannot remove the stack. |
 
 Rescue is offered only if slab fits both windows
@@ -1941,7 +1999,42 @@ copy; other families include it. H3 activations are described in
 [#56](#56-minimax-h3-render-refused-activation-footprint-preflight).
 
 The loader checks before liveness, topology, or rank effects. It prices the
-pending stack from the prompt graph. An unreadable graph leaves that stack
+pending stack from the prompt graph: text encoders, CLIP Vision, VAEs, and any
+checkpoint or stock UNET the driver loads itself. A model that only the
+unselected branch of an If/Else or Soft Switch with a fixed value reaches, or
+that no output node reaches, never loads and is not charged. When ComfyUI
+already holds models, the price credits only the bytes ComfyUI holds against
+the graph's models, never more, since it cannot tell which files they came
+from; until 2026-11-05 any one held model credited the whole stack. ComfyUI
+does not run a node again while nothing upstream of it changed, so a re-queue in
+the same driver can skip the UNET loader; under `auto` the sampler, or
+Identity Gate (DGX Monarch), then runs this price, for what is not yet held: the
+DiT while its load is pending, and the models beyond what ComfyUI holds, which
+by then include the encoders and any upsampler, counted at their measured
+resident size. A VAE ComfyUI does not hold yet loads for the decode, after the
+DiT, so it is charged in the resident window only. The DiT counts as pending
+after Reset attached mesh, Clear and retry or a Clear VRAM node set to
+`recycle`; after a Worker restart, or a Clear VRAM node at `soft` or `hard`, it
+reads as held, and the render-time estimate below prices it. Encodes have run
+by then, and that estimate prices the activations too. A re-queue whose box is
+short for the upsampler's own load beside a held DiT is not caught: that load
+runs before any DGX Monarch node. On a fresh
+driver the price errs high by the 1.15 encoder ratio and a VAE ComfyUI has not
+yet moved into memory: p-h3-image prices 9.0 GiB short where the hardware ran
+2.0 GiB short, and LTX 2.3 text to video now needs 80.9 GiB where it needed
+65.8. On 2026-11-05, on one Spark with 109.6 GiB free, the p-h3-image
+template refused 4.7 s after the queue with no model loaded, 10.2 GiB short,
+and each way its refusal named but the INT8 ConvRot DiT rendered: the slab
+card, the W4A8 DiT, the W4A8 upsampler beside the BF16 DiT and the switch set
+to false; on the pair,
+`uly2+fsdp` after its Identity Gate PASS. That day a re-queue whose loader
+ComfyUI kept ran no price and rendered only because the box had room, which is
+why the sampler now runs this price. A
+loader `weight_dtype` cast is priced at the copy
+the cast builds, read from the file's header, beside a host copy at the file's
+own width, where the load runs stock, with no slab card; under slab,
+comfy-managed residency or a `*+fsdp` preset the loader makes no claim on a
+cast. An unreadable graph leaves that stack
 unpriced and warns once per family; other estimator failures also admit the
 load. A cleared charge is cached per checkpoint and world for the session.
 Direct headless calls need their own budget
@@ -2057,13 +2150,23 @@ accepting. Tags distinguish capacity (`C`), unproven correctness (`U`), known
 incorrect output (`K`), and physical constraints with no bypass (`P`);
 see DESIGN.md section 5.9.
 
+**The sentence leads the error.** A refusal a Worker raises at the sampler, the
+loader or Identity Gate shows in the prompt error tag first, then its sentence and the card
+it names; the remote traceback is in the ComfyUI log. Before 2026-11-05 the
+error began "Actor call dgxm_worker.sample failed." and the reason sat at the
+end of that traceback. On 2026-11-05 a class K ring-pad refusal and a stock
+wall refusal at the sampler each reached the prompt error that way. A refusal
+that offers a card ends with its machine block,
+`<<<DGXM-CONSENT-V1 {...} DGXM-CONSENT-END>>>`, after the sentence: that is
+for the panel, and the prose before it is the message.
+
 **No button means no panel remedy.** Class C messages can link here without
 offering consent. Follow their "What would fit" clause; all cases below are
 `waivable=0`, and `DGXM_ALLOW_SLAB_RESCUE=1` grants nothing:
 
 | Guard/path | Why no rescue is offered |
 |---|---|
-| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. |
+| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. On a one-Spark fleet on 2026-11-05 this refusal came from the Worker's own wall, which named the box by its host name and said "this host", the one refusal of the `7c3eecb` checks to name a host. Since #147 the Worker says "here"; on the pair the driver opens the sentence with the box's name, and on one box the sentence stands as it is ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)). |
 | `slab_load_preflight` | Slab itself does not fit. The message includes the larger stock estimate, so disabling slab cannot help. |
 | Comfy-managed `stock_load_preflight` | That residency cannot fit and has forced slab off. Turn off `comfy_managed` and follow its reset requirements in [#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) before using slab. |
 
@@ -2097,6 +2200,57 @@ checkpoint the process loads. Slab is currently the only eligible kind, so
 `DGXM_ALLOW_SLAB_RESCUE=1` has the same scope. The panel shows an environment-
 enabled toggle checked and disabled; unset the variable and restart the driver
 to change it. Automatic rescue never grants an accuracy waiver.
+
+**Old model in the way:** when a model loaded earlier still holds the
+memory a load needs, and a clear of the attached mesh would make room on every
+short box, the refusal says "the old model (<name>) is still loaded on the
+head" (or on the sibling, or on this box for a fleet on the driver's box
+alone) and the card is
+titled Old model in the way. Its Clear and retry button resets
+the attached mesh, the same as Reset attached mesh, and writes no memo and no
+ledger row; then queue again, and the load is priced again on fresh Workers.
+Tick Always clear and retry on the card, or the toggle of that name under
+"Consents and waivers", and the driver clears and retries by itself, at most
+once per load. When the price already counted the drop of the model the load
+replaces, the card says instead "The head still holds about N GiB that
+earlier loads left behind" (or the sibling, or this box), since a clear gives
+that back. When a clear would
+not make room, the refusal says so, with the whole price a cleared box would
+need, and offers no card; at the loader it names the window its first sentence
+priced, with the same figure. A model this graph loads, or one the request reuses, is never
+the old model. A card resets only the attached mesh that refused: if that mesh
+is gone, the click answers the card and resets nothing, and any reset answers
+every open card. A one-GPU fleet or a Fleet job, whose Worker prices its own
+load after unloading the old model, says instead that the Worker still holds
+memory a model loaded earlier left behind, and names Reset attached
+mesh. Headless, set `DGXM_ALLOW_CLEAR_RETRY=1` on the driver before
+ComfyUI starts for the Always behavior, or accept the pending card:
+
+```
+curl -s localhost:8191/dgxm/consents            # read `pending`, kind clear-retry
+curl -s -X POST localhost:8191/dgxm/consent \
+  -H 'X-DGXM-Action: consent' -H 'Content-Type: application/json' \
+  -H 'Origin: http://localhost:8191' \
+  -d '{"action":"accept","key":"<key>","id":"<id>"}'
+```
+
+Add `"always":true` to the body to save Always clear and retry with the same
+click. The answer waits for the reset, up to 260 s.
+
+On 2026-11-05 the card, Clear and retry and both forms of Always clear and
+retry ran on the pair and on one box as described here
+([VALIDATION](VALIDATION.md#capacity-checks-2026-11-05)). The card is rarer
+than it was: a load that replaces the stock model in its own slot is priced
+after the Worker drops that model, so qwen-image-t2i after flux1-dev, which
+raised the card that morning with the head held short, refuses later the
+same day without it, saying a clear would not make room. The card still
+comes for a model in the other slot, for memory earlier loads left behind,
+and for a new LoRA on a BF16 base the Workers hold with another
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+
+The Load with slab residency card has one fixed line: its risk reads "Stock
+residency cannot fit this checkpoint on this box" on the pair too, where its
+numbers say "on the head".
 
 **Quarantine always takes precedence.** FAIL applies before residency
 selection, and an explicit stock request remains stock regardless of consent.
@@ -2133,8 +2287,11 @@ write access, then retry the click; no consent was granted.
 
 **Error metadata:** `[dgxm:measured {...}]` contains ledger measurements and
 `<<<DGXM-CONSENT-V1 ... DGXM-CONSENT-END>>>` contains the card descriptor.
-These survive text-only worker exception transport. Follow the prose before
-them; the panel reads the metadata.
+These survive text-only worker exception transport, and the driver reads them
+where it receives the refusal, which is when the card appears. The error the
+samplers, Fleet KSampler, the UNET loaders and Identity Gate raise then drops
+both, so it ends with the prose and the card's sentence; ComfyUI's log keeps
+them on the original error, which that error is raised from.
 
 ## 54. Slab byte-verify certificate mismatch
 
@@ -2357,10 +2514,13 @@ message ends by naming the models and both readings. The step runs at most
 once per render and only when ComfyUI holds a model. It never runs while a
 render is live in this driver: a pipelined submission behind a render in
 flight, a held or abandoned result lease, or a Worker call in flight keeps the
-models, and the refusal says which. It never touches the Workers' residents or
-ComfyUI's cached node outputs, and the cross-rank agreement
-([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-rank))
-still prices a load that replaces a Worker resident with that resident held.
+models, and the refusal says which. On 2026-11-04 a KSampler Pipeline push
+behind two MiniMax H3 renders in flight refused that way, keeping the text
+encoder the renders used. It never touches the Workers' residents or
+ComfyUI's cached node outputs. The cross-rank agreement
+([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box))
+prices a load that replaces a Worker's stock resident after the drop that
+resident's slot takes first, and any other resident as held.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the step off, and the guard
 then refuses on the first reading.
 
@@ -2815,8 +2975,9 @@ alternative, and none of them loads, bakes or quarantines anything.
 There is also one capacity refusal on this path, class C under the usual
 `stock_load_preflight` guard and
 [#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click):
-**`comfy-managed residency cannot load <model> on <host>`**. See "The capacity
-wall it keeps" below.
+**`comfy-managed residency cannot load <model> here`**, which the driver opens
+with the box that refused ("On the sibling, ..."). See "The capacity wall it
+keeps" below.
 
 ### The five bring-up refusals, by first line
 
@@ -3135,6 +3296,34 @@ write lands on. A FAIL is on that list because it never writes `lora_low_rss`
 or `slab_weights` into the graph: each render of the failed combination turns
 both settings off for itself
 ([#67](#67-what-auto_gateoff-costs-and-what-it-does-not), item 2).
+
+**A slab check whose stock comparison cannot load.** With no LoRA stack and
+slab residency engaged, as for Flux 2 and Krea 2 under `slab_weights` auto, the
+check compares a slab render with a stock one, and the stock load needs the
+file, the host copy it is placed from and a floor. On the head the driver's own
+models count against that price: the Flux 2 text encoder alone is 33 GiB.
+Before the comparison gives up, on one Spark or two, the driver unloads the
+models ComfyUI holds on its host, then asks the actors to release their
+allocator caches, and loads the stock reference once more after each. ComfyUI reloads its models when the graph
+next needs them, and the check's conditioning is already encoded. A check that
+then compares reaches its own verdict. One that still cannot load says so:
+
+    WARNING identity gate INCONCLUSIVE (auto_first_use, <model>): the stock
+    reference cannot load here (capacity refusal), so the slab render has
+    nothing to be compared with
+
+and disables both settings for that combination, like any other unfinished
+check, so your render is priced as a stock load. `DGXM_DISABLE_DRIVER_UNLOAD=1`
+turns the unload and the release off here too.
+
+On 2026-11-05 the Flux 2 template ran this way on a fresh pair. The stock
+reference first refused 8.6 GiB short on the head with the text encoder
+loaded; the driver unloaded it, the head went from 65.7 to 98.7 GiB, and the
+reference loaded with 33.4 GiB left at its lowest. The check passed in 41.7 s
+over four proof renders and your render followed. A second queue with a new
+prompt loaded the 33 GB encoder again beside the model the Workers held and
+rendered, with the head at 30.0 GiB at its lowest. After that PASS the render
+ran on stock residency, not slab.
 
 **A check that a class-K guard stopped disables no residency setting.** A check
 renders without accuracy waivers deliberately, so a measured guard such as
@@ -3719,6 +3908,22 @@ reduce the resolution or use a smaller or lower-precision checkpoint.
 Before it refuses, the driver unloads the models ComfyUI holds on the driver
 host and prices again ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)).
 `DGXM_DISABLE_ACTIVATION_PREFLIGHT=1` on the driver is its only bypass.
+
+**ComfyUI also picks each model call's batch per box.** It runs cond and
+uncond as one call only when its estimate of that call, times 1.5, is under the
+box's free memory, so a short box could run them as two calls while the other
+ran one. Under Ulysses, ring, FSDP or cfg-parallel the ranks then wait on
+collectives of different sizes until the sample deadline: no refusal, only a
+stall, with one rank's collectives carrying twice the other's elements. Every
+rank now reads the leanest rank's free memory for that choice, one 8-byte
+exchange per model call, and each box's worker journal says so once per
+process: `cond batch agreement: ComfyUI's cond batch rule reads the leanest
+rank's free memory on every rank`. On 2026-11-05 the Wan 2.2 text-to-video
+template that had stalled 600 s on 2026-11-04 sampled 10 steps per stage with
+the head held near 12 GiB for two minutes of stage 1, lowest 10.6 GiB, and
+the sibling near 68 GiB, with no stall,
+and the exchange's cost was below what one-step samples resolve
+([VALIDATION](VALIDATION.md#evidence-wan-2-2-t2v-high-low)).
 
 **When the short rank holds a slab or an FSDP shard,** read the load lines
 first. Both builds put every weight on the compute device without ComfyUI's own
@@ -4306,6 +4511,12 @@ mid-collective, so clearing it costs one Recycle (sidebar button, or
 **What to look at next.** The first failure in the poisoned worker's journal is
 the real defect; the stall and refusal report its consequences.
 
+**A stall where no rank died.** If both journals show their rank alive and
+waiting, and one rank's collective carries twice the other's elements, the two
+boxes picked different cond batches from their own free memory; where a model
+call is sharded, this release makes every rank take the leanest rank's batch
+([#79](#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
+
 ## 87. A log line says the abandoned-lease wedge healed and the render paid a respawn
 
 **What you see:** after a worker-side crash without a typed refusal, a later
@@ -4607,6 +4818,14 @@ retry reads `automatic FSDP execution denied by the process-local clean-reload
 Gate verdict INCONCLUSIVE`. Restart ComfyUI to clear it, or run the combination
 with `auto_gate=off`.
 
+A render can also meet the FSDP denial with no proof run at all. On 2026-11-05
+a p-h3-image BF16 render on `uly2+fsdp` with no PASS for its combination
+refused at once with `automatic FSDP execution requires an exact clean-reload
+Gate PASS (ledger=unknown, process=None)`. Identity Gate (DGX Monarch) on
+`uly2+fsdp` then wrote `identity gate PASS (explicit): independently loaded
+FSDP shards render bit-identically`, and the same render ran. Run the gate
+node on the FSDP preset first, as the loader's refusal for that model says.
+
 A capacity stop taken during the proof, and the reprice the check runs between
 the baseline render and the reload cycle, both happen after the check unloaded
 your shards. The reprice, and any stop after the baseline render's own load,
@@ -4636,10 +4855,10 @@ Run it at a driver boundary, with no render queued: it reads the open rows
 first and appends after, so a check that passes in between would be
 superseded by a repair row landing later and would have to prove itself again.
 
-## 93. A multi-rank render refuses before any rank loads, and names a rank
+## 93. A multi-rank render refuses before any rank loads, and names a box
 
-**Symptom:** a world-2 render stops with a class C refusal that names one rank
-and its numbers, says a rank did not answer within 30 s, or says a message to
+**Symptom:** a world-2 render stops with a class C refusal that names one box
+and its numbers, says a box did not answer within 30 s, or says a message to
 a rank's Worker actor was undeliverable. No worker journal shows a load
 starting and the refusal quarantines nothing. Except after an undeliverable
 message, the fleet is still up and the next queue dispatches on the same fleet
@@ -4650,10 +4869,21 @@ asks each rank one bounded question on a read-only endpoint that takes no GPU
 lock and mutates nothing, collects the rows, and decides once. The leanest
 answer governs, because the load runs everywhere: a rank that cannot hold the
 model refuses the render for the fleet rather than letting its peers load first
-and meet the refusal sixty seconds in. Five shapes reach the operator:
+and meet the refusal sixty seconds in. The refusal names each box the way
+these docs do: the box the driver runs on is the head and the other is the
+sibling. With more than two boxes, each other box is the sibling at its host
+name, a fleet on the driver's box alone is this box, and a box that runs more
+than one rank adds its GPU ("GPU 1 on the head"). None of the six shapes below
+names a box by rank number or by the address cluster.toml gives it, the
+undeliverable actor included. When the agreement admits and a Worker's own wall
+then refuses the load, the Worker's sentence says "here" and the driver opens
+it with that box: "On the sibling, stock residency cannot load X here: ...".
+Six shapes reach the operator:
 
 * **A rank cannot fit.** The refusal names every refusing rank with its
   numbers, worst headroom first, and the fitting ranks with the residency they selected.
+  A load the loader casts to another weight dtype is priced at the copy the cast
+  builds, and its sentence names that copy beside the file.
   A rank that answered on slab residency is named as such. When the hosts selected
   different residencies, one cause is one host having verified the family for slab residency
   while the other has not.
@@ -4675,17 +4905,51 @@ and meet the refusal sixty seconds in. Five shapes reach the operator:
 * **A rescue is on offer.** One rank needs slab residency and no rank refuses,
   so the ordinary consent card is raised before any rank loads, carrying the
   leanest rescuing rank's numbers.
+* **An old model is in the way.** A short rank still holds a model an earlier
+  render loaded, and a clear of the attached mesh would make room on every
+  short box. The refusal names the old model and its box, and the Old model in
+  the way card offers Clear and retry in place of a slab rescue
+  ([#53](#53-a-render-failed-and-the-panel-is-asking-for-one-click)). The
+  model in the way can be the one you asked for: a new LoRA on a large model
+  loaded earlier with another one, with `lora_low_rss` off. The price credits
+  the copy the Worker holds, but that copy keeps a host copy of every weight
+  its LoRA patches, and the price cannot tell which weights a new LoRA patches,
+  so it credits none of that host copy. Then the card reads "The model loaded
+  earlier (<name>) holds about <N> GiB on the head that this change needs.
+  Clear the Sparks and run again?", and it appears only when a cleared box
+  would hold a fresh load of the model and its LoRA, which costs more than the
+  change. A new strength, a new order or a LoRA removed from the stack it holds
+  reuses that host copy, so the price credits it too, net of the LoRA files the
+  change reads again, and names it ("beside the 30.5 GiB copy of this file and
+  the 30.5 GiB host copy of its patched weights (ComfyUI's backup) the Worker
+  already holds, room for the 0.7 GiB of LoRA files the new stack reads"). Such
+  a change is admitted where it fits, with no card: about 8.7 GiB for the BF16
+  Wan-Animate 2 strength change that needed 38.6.
+  On 2026-11-05, before that credit, a strength change from 1.0 to 0.8 on the
+  BF16 Wan-Animate 2 warm template was refused 13.3 GiB short on the head with
+  the card ("holds about 33.0 GiB on the head"); Clear and retry cleared both
+  Sparks in 4.45 s and the next queue rendered, and with Always clear and
+  retry on, a queue cleared once and rendered.
 * **World 1 is a no op.** The one box prices its own load.
 
 Read the numbers with two limits in mind. Each rank prices against what it
-holds at that moment, so a card can quote a figure taken with the previous
-model still resident, and it says so. The quote does not price shared memory
+holds at that moment. A load that replaces the stock model in its own slot is
+priced after the Worker drops that model, which the Worker does before every
+such load, and the refusal says so: "after the Worker drops flux1-dev, which
+frees at least 22.2 GiB". Any other model is counted as still held, so a card
+can quote a figure taken with it resident, and it says so by name: "the old
+model (flux1-dev) is still loaded on the head". The quote does not price shared memory
 either: a rank holding a weight slab in the other slot, or a slab retained by a
 load that failed, reads as having more available than it has. The rank's row
 records both (`shmem_bytes`, each slot's resident and the retained-slab count)
 and draws no conclusion from them.
 
-**Fix:** when the message names what would fit, start there. For a shortfall,
+**Fix:** when the message names what would fit, start there. When it says an
+old model is still loaded, or that the model loaded earlier holds memory that
+this change needs, and offers Old model in the way, click Clear and retry on that
+card, or Reset attached mesh, then queue again; moving between large models on
+one attached mesh meets this, and so does putting a new LoRA on a BF16 model
+the Workers already hold with another. For another shortfall,
 run the checkpoint slab-resident on every rank, use a pruned or quantized
 artifact, or free unified memory on the short box. For a silent rank, recycle
 the fleet from the DGX Monarch panel, or check that box, then queue again. For
@@ -4709,7 +4973,11 @@ other box's journal names the cause. This box's journal shows its own load
 finishing normally and then the line `rank readiness: this rank loaded`. The
 other box's journal carries `load failed on this rank` and the real cause under
 it. Nothing was sampled. The refusal arrives in seconds, not minutes, and the
-fleet is still up.
+fleet is still up. It opens with the box that raised it, the one that loaded
+cleanly: "On the head, a peer rank could not load ..." means the sibling failed.
+When the failing box's own refusal reaches the driver first, that one is shown
+instead, opened with its box ("On the sibling, stock residency cannot load X
+here: ...").
 
 **Cause:** every rank prices the load before any rank allocates (entry 93), but
 memory moves between that quote and the load. A capacity check can still refuse on one box
@@ -6601,12 +6869,13 @@ families needs stock ComfyUI on one GPU.
 Kromoss) with a LoRA in its stack refuses class P before dispatch, or on
 every Worker while the model loads, with a message that opens "moss_image:
 an INT8 file with a LoRA", names the LoRA, and goes on "rendered far from
-stock ComfyUI on the cluster on 2026-10-21. dgx-monarch bakes the LoRA into
+stock ComfyUI on the cluster on 2026-10-21. dgx-monarch baked the LoRA into
 the quantized weights as stock's classic loader does, and stock with
 DynamicVRAM off rendered the Kromoss INT8 file with its DMD2 LoRA as far from
-its own default, so this release refuses the pair on every topology before
-any weight moves: each one bakes the LoRA the same way, mode=local on one GPU
-included. Render this graph in stock ComfyUI on one GPU instead, with its
+its own default. The Workers now bake stock's cast-time weight instead (#145),
+which no hardware run has measured on this file yet, so this release still
+refuses the pair on every topology before any weight moves, mode=local on one
+GPU included. Render this graph in stock ComfyUI on one GPU instead, with its
 default DynamicVRAM loader, or remove the LoRA; a BF16 file with a LoRA is
 not refused. See docs/TROUBLESHOOTING.md #129."
 
@@ -6620,10 +6889,10 @@ DynamicVRAM loader, stock applies a LoRA at cast time. With DynamicVRAM off
 file in full, bakes the LoRA into the INT8 weights, and renders the same
 graph 0.998 NRMS from its own default at one step and 0.989 at 8 steps;
 without the LoRA the two loaders agree exactly.
-dgx-monarch's store bakes the LoRA the way that classic loader does, and the
-cluster render sits with stock's classic render: both move the latent about
-2.8 NRMS from the render without the LoRA, where every other LoRA path moves
-it about 1.5. Every patched key bakes to within rounding of its exact sum, in
+At the time dgx-monarch's store baked the LoRA the way that classic loader
+does, and the cluster render sat with stock's classic render: both moved the
+latent about 2.8 NRMS from the render without the LoRA, where every other
+LoRA path moved it about 1.5. Every patched key bakes to within rounding of its exact sum, in
 the store and in stock's own bake, so the mechanism inside the classic INT8
 render is still open; the LoRA's delta is 13 to 29 times smaller than the
 noise each INT8 requantization adds. dgx-monarch bakes a LoRA into an INT8
@@ -6640,7 +6909,10 @@ dispatch fix of the same release made INT8 uly2 without a LoRA bit-identical
 to a one-GPU render of the pin-stripped copy and does not change the bake.
 Other families' INT8 ConvRot files share the bake. On 2026-10-21, with
 comfy-kitchen 0.2.39, none of them had a measured INT8 render with a LoRA, and
-they are not refused.
+they are not refused. Since #145 every Worker bakes stock's cast-time weight,
+which a probe found bit-identical to stock's own cast on H3's INT8 ConvRot
+layers; MOSS-Image's INT8 files keep this refusal until a hardware run
+measures a LoRA on them with the new bake.
 
 **Fix:** render the graph in stock ComfyUI on one GPU with its default
 DynamicVRAM loader; with DynamicVRAM off, stock fails the same way. Or remove
@@ -7149,7 +7421,7 @@ is on by default and steps aside for comfy-kitchen's stock CUTLASS kernel, for
 the whole process, when it cannot run. The WARNING names the reason, once per
 process:
 
-- `comfy-kitchen X is not in the validated set (0.2.37, 0.2.40)`: the
+- `comfy-kitchen X is not in the validated set (0.2.37, 0.2.40, 0.2.41)`: the
   installed comfy-kitchen is a release the kernel was not proven exact on.
 - `Python.h is missing for this interpreter (...)`: Triton compiles a small C
   launcher against the headers of the Python that runs ComfyUI or the Worker.
@@ -7236,6 +7508,13 @@ the floor wins over the cap. Every other family, and any render whose rows the
 driver cannot read, keeps the old rule, the larger of the floor and 120 s per
 step, with no cap.
 
+Under MiniMax H3 Context Windows (DGX Monarch) each step runs every window,
+and each window carries the text, keyframe and reference rows again, so the
+driver counts the rows of all the windows. At the node's defaults the 15
+second clip runs four windows of 37 of its 107 latents: 150,838 rows plus
+four times the text rows per step, against 109,062 plus the text rows for
+the whole clip ([#142](#142-a-render-with-minimax-h3-context-windows-dgx-monarch-refuses)).
+
 Measured sampling against the deadline each render now gets (20 steps, CFG
 1, exact attention, pruned INT8 ConvRot, the head capped at 2100 MHz):
 
@@ -7308,10 +7587,12 @@ decode, or one unit of it, on the driver. The line names the reason:
 | `did not come from a VAE loader file`, `outside ComfyUI's vae folders` | no Worker can name the VAE's bytes | load the VAE with Load VAE from `models/vae` |
 | `the mesh is busy or not ready` | another render session held the mesh | queue again once it ends |
 | `one tile`, `one temporal chunk` | the decode has a single unit | none |
+| `the Sol-H3-VAE decoder decodes the whole clip in one pass`, `the p-h3-image VAE decodes single frames` | two MiniMax H3 VAEs in ComfyUI 0.44.0 or newer that this project does not split: one has no temporal chunks, the other decodes one frame ([MODELS](MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av)) | none: it decodes on the driver |
+| `the VAE Compute Dtype node set this VAE to compute in <dtype>` | ComfyUI's VAE Compute Dtype node keeps the weights the loader built and changes only the compute dtype; a Worker builds its VAE in one dtype, so its decode may differ | set the node's dtype to `default`, or drop the node and start ComfyUI with the VAE dtype flag you want, such as `--fp32-vae`, to split |
 
 The WARNING names the rank and its first cause:
 
-- `is not the driver's file` or `not found on host`: copy the driver's VAE
+- `is not the driver's file` or `was not found here`: copy the driver's VAE
   file into that Worker's `models/vae` under the same name.
 - `differs from the driver's` (ComfyUI commit, torch, CUDA, comfy-kitchen or
   VAE class): bring that Worker host to the driver's versions; `dgxm doctor`
@@ -7349,9 +7630,13 @@ matmuls run in FP8 ([MODELS.md](MODELS.md#fp8-compute-paths)):
   process runs with `--fast fp8_matrix_mult`. `manual_cast` dequantizes every
   FP8 weight to BF16 for every matmul: correct output at BF16 speed.
 - Under either of those, the file takes `fp8_ops`, ComfyUI's FP8 matmul path,
-  instead. On GB10 that path renders noise: on 2026-10-31 Qwen-Image 2512 FP8
-  came out as a speckle field on `fp8_ops` in the actors and in the driver
-  alike ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
+  instead. On GB10 that path renders Qwen-Image 2512's file as noise: on
+  2026-10-31 it came out as a speckle field on `fp8_ops` in the actors and in
+  the driver alike, and on 2026-11-03 again on cfg2 and from the loader's
+  `fp8_e4m3fn_fast`. HunyuanImage 2.1's plain FP8 file stayed inside the
+  one-step floor on it, 0.057 against its dequantizing path, so the noise is
+  not every plain FP8 file's, but the path reaches every one of them
+  ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
 - A file with comfy-kitchen metadata runs comfy-kitchen's kernels whatever the
   flags say, and a layer whose record sets `full_precision_matrix_mult`
   dequantizes to BF16. Some fp8_scaled releases set it on every layer.
@@ -7370,8 +7655,8 @@ Worker services started with `dgxm up` log to
 `~/.local/state/dgx-monarch/worker-loop.log` instead.
 
 - `picked fp8_ops for weights stored as float8_e4m3fn`: the path that renders
-  a plain FP8 file as noise on GB10, and a BF16 file cast at load as an image
-  past the fidelity floor. Turn it off: drop `--fast fp8_matrix_mult` from the
+  Qwen-Image 2512's plain FP8 file as noise on GB10, and a BF16 file cast at
+  load as an image past the fidelity floor. Turn it off: drop `--fast fp8_matrix_mult` from the
   ComfyUI command line, take `fp8_matrix_mult = "on"` out of `[worker_args]`,
   and set the loader's weight dtype back to `default`. When a shared
   workflow's loader asks for `fp8_e4m3fn_fast`, `fp8_matrix_mult = "off"`
@@ -7396,3 +7681,248 @@ picked. On 2026-10-31 `fp8_ops` sampled plain FP8 24 to 30 percent faster than
 the dequantizing path and rendered noise, while the Krea2 Turbo fp8_scaled file
 sampled 11 percent faster than BF16 inside the fidelity floor
 ([VALIDATION](VALIDATION.md#fp8-compute-paths)).
+
+## 142. A render with MiniMax H3 Context Windows (DGX Monarch) refuses
+
+**Symptom:** a MiniMax H3 render whose graph carries MiniMax H3 Context
+Windows (DGX Monarch) fails before it samples with a class P refusal that
+names the node, either at the driver before any Worker call or on every rank
+after the load:
+
+```
+[dgxm:P] MiniMax H3 Context Windows (DGX Monarch) needs ComfyUI's MiniMaxH3ContextWindows node, in ComfyUI 0.44.0 or newer, ...
+[dgxm:P] MiniMax H3 Context Windows (DGX Monarch) runs ComfyUI's MiniMax H3 context windows, ... this checkpoint reads as wan. ...
+[dgxm:P] MiniMax H3 Context Windows (DGX Monarch) feeds a two-checkpoint guider's negative model here, ...
+```
+
+**Cause:** the node carries ComfyUI's MiniMax H3 Context Windows (#17425) to
+the Workers, and each Worker applies ComfyUI's own node to its render clone.
+Each window is then one model call on a shorter clip, which sequence
+parallelism splits as it splits a whole clip. Three things stop it:
+
+- A Worker's ComfyUI predates 0.44.0 and has no such node. Rendering on would
+  sample the whole clip at once and report nothing, so the Worker refuses
+  inside its load step, where a peer that has the node refuses too instead of
+  waiting at the first collective.
+- The checkpoint is not MiniMax H3. The stock node cuts windows on H3's
+  17-frame chunks and splits its audio by H3's frame layout, and only the H3
+  forward here is shown to rebuild its packed sequence for each window.
+- The node feeds the negative model of a two-checkpoint guider. The Workers
+  carry windows on the primary model only.
+
+**Fix:**
+
+- Update ComfyUI to 0.44.0 or newer on every host, the driver's included, and
+  restart the Worker services so the actors load it.
+- Use the node with a MiniMax H3 checkpoint only; for another family, remove
+  it.
+- Wire the node on the model the sampler or the guider's positive input takes.
+- A padded window on ring refuses class K, as a padded whole clip does
+  ([#49](#49-minimax-h3-ring2-refused-on-a-padded-packed-sequence)); run Ulysses.
+- The activation preflight still prices the whole clip, so a clip the
+  preflight refuses whole is refused with the node too
+  ([#56](#56-minimax-h3-render-refused-activation-footprint-preflight)).
+
+## 143. Under torch 2.15 an actor dies when it builds its first process group
+
+**Symptom:** under torch 2.15 a render on a mesh fails at Worker setup with
+`Endpoint call dgxm_worker.setup() failed ... proc_agent and all its
+descendants have failed`. The actor's log, in the driver log for a local actor
+or in the Worker journal on a Worker host, ends with:
+
+```
+terminate called after throwing an instance of 'c10::Error'
+  what():  Calling snapshot with backend:cudaMallocAsync is not meaningful. ...
+Exception raised from snapshot at c10/cuda/CUDAMallocAsyncAllocator.cpp:872
+frame #6: c10d::nccl2::ProcessGroupNCCL::detachMemoryHook()
+frame #7: c10d::nccl2::ProcessGroupNCCL::~ProcessGroupNCCL()
+```
+
+**Cause:** torch 2.15 maps the `nccl` backend name to a new implementation,
+`c10d::nccl2`. When it builds a process group, its allocator hook takes a
+snapshot of the CUDA caching allocator without checking which allocator runs.
+ComfyUI's launch settings select cudaMallocAsync, whose snapshot throws by
+design, so the first process group throws before any collective. The throw
+unwinds the half-built group, whose destructor throws again, and the process
+terminates. torch 2.12 ships only the legacy ProcessGroupNCCL, which has no
+such hook, and `TORCH_NCCL_USE_TENSOR_REGISTER_ALLOCATOR_HOOK=0` does not
+reach this path.
+
+**Fix:**
+
+- Update dgx-monarch on the driver and on every Worker host, then restart the
+  Worker services. From this release every actor starts with
+  `TORCH_DIST_USE_NCCL2=0`, which torch 2.15 reads when it is imported and
+  which maps `nccl` back to the legacy ProcessGroupNCCL. torch 2.12 ignores it.
+- Check `dgxm doctor`: its `actor NCCL backend` row reads ok and names the
+  torch the actors import.
+- Do not set the variable by hand. The Worker service clears its environment,
+  the Worker loop drops variables it does not know, and `[fabric.*]` tables in
+  cluster.toml take only `NCCL_`, `GLOO_` and `UCX_` keys, so the launcher is
+  the one place it can come from. On an older release, run torch 2.12 on every
+  host instead.
+- After any torch change, each gated combination runs the identity gate again
+  on its first render, because a PASS names the torch and CUDA build it ran
+  under. When the ledger holds a PASS that differs only in that build, the
+  notice names both builds.
+
+On 2026-11-03 the first torch 2.15 render, a local-actor INT8 cell on the
+head, failed this way. With the
+setting, on 2026-11-05, every actor built its process groups through the
+torch 2.15 ladder, and the 1 GiB all-reduce across both rails ran at about
+99 percent of its torch 2.12 record
+([VALIDATION](VALIDATION.md#torch-2-15)).
+
+## 144. A p-h3-image render or ModelSamplingMiniMaxH3 (DGX Monarch) refuses
+
+**Symptom:** a render fails before it samples with a class P refusal that
+names ModelSamplingMiniMaxH3 (DGX Monarch), either at the driver before any
+Worker call or on every rank after the load:
+
+```
+[dgxm:P] this render samples a MiniMax H3 audio-video latent with one video frame, the image latent PH3ImageConditioning makes for p-h3-image, and nothing in the graph sets the MiniMax H3 shifts. ...
+[dgxm:P] ModelSamplingMiniMaxH3 (DGX Monarch) applies ComfyUI's ModelSamplingMiniMaxH3 node, ... this checkpoint reads as wan. ...
+[dgxm:P] ModelSamplingMiniMaxH3 (DGX Monarch) runs ComfyUI's ModelSamplingMiniMaxH3 node, comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift, which has shipped with MiniMax H3 since ComfyUI 0.30.0, and this Worker's ComfyUI has none: ...
+```
+
+**Cause:** p-h3-image is a MiniMax H3 DiT. Its workflows set both MiniMax H3
+flow shifts to 1.0 through ComfyUI's ModelSamplingMiniMaxH3 node, which
+patches a stock MODEL and cannot connect to a DGX Monarch loader.
+ModelSamplingMiniMaxH3 (DGX Monarch) carries the two widgets to the Workers,
+and each Worker applies ComfyUI's own node to its render clone. Three things
+stop a render:
+
+- The graph samples p-h3-image's image latent, one video frame beside two
+  audio frames, and no MiniMax H3 shift reaches the model. The Workers would
+  sample it at H3's defaults, 12.0 for video and 3.0 for audio, and the image
+  would come out wrong. A MiniMax H3 video latent never has one frame, so this
+  check does not touch an H3 video render. Model Sampling SD3 (DGX Monarch)
+  does not count: the H3 forward reads neither of its values. The driver
+  checks before dispatch, Fleet KSampler (DGX Monarch) included, and every
+  Worker checks again from the loaded model, so a header the driver cannot
+  read still refuses.
+- The node feeds a checkpoint that is not MiniMax H3. The stock node replaces
+  the model's sampling with H3's paired video and audio schedule.
+- A Worker's ComfyUI has no `comfy_extras.nodes_minimax_h3.MiniMaxH3SigmaShift`.
+  The node has shipped with MiniMax H3 since ComfyUI 0.30.0, so this means a
+  ComfyUI without MiniMax H3 support, or a later release that moved or renamed
+  the node. Rendering on would sample at the checkpoint's own shifts, so the
+  Worker refuses inside its load step, where a peer that has the node refuses
+  too instead of waiting at the first collective.
+
+**Fix:**
+
+- Put ModelSamplingMiniMaxH3 (DGX Monarch) between the loader and the guider
+  or sampler, at 1.0 and 1.0 for p-h3-image, as the bundled
+  `dgx-monarch-p-h3-image` template does. A stock graph that queues with
+  ComfyUI's ModelSamplingMiniMaxH3 gets the graph advisor's swap notice
+  ([#63](#63-a-toast-at-queue-time-says-the-workflow-is-missing-dgx-monarch-nodes)).
+- Use the node with a MiniMax H3 or p-h3-image checkpoint only; for another
+  family, remove it.
+- Run every host on a ComfyUI that has the node and restart the Worker
+  services so the actors load it. If a newer ComfyUI moved or renamed it, this
+  release cannot carry the shift on that ComfyUI yet. p-h3-image itself, its
+  conditioning node, text encoder and VAE, needs ComfyUI 0.44.0 or newer.
+
+On 2026-11-05 the first refusal above stopped the BF16 template with the
+shift node removed on one rank, and the same model through Fleet KSampler
+(DGX Monarch) on the pair in 0.3 s, both before any Worker call.
+
+## 145. A LoRA render on a Worker differs from stock ComfyUI
+
+**Symptom:** on a release before this fix, a render with a LoRA on the
+Workers, on any topology and `mode=local` included, does not match stock
+ComfyUI with the same files, LoRA, seed and sampler, while the same graph
+without the LoRA does. On 2026-11-05 the pruned INT8 MiniMax H3 file
+`minimax_h3_fl2va_pruned_int8_convrot` with `p-h3-image_lora_bf16` at 1.0, on
+one rank, read NRMS 0.077 against stock at one step (largest pixel difference
+94 of 255) and 0.257 at 8 steps (249 of 255); without the LoRA the file was
+pixel-identical to stock. BF16 files show it as well: Kromoss with a DMD LoRA
+read one-step NRMS 0.0365 to 0.0635 against stock, and 0.36 to 0.44 at 8
+steps.
+
+**Cause:** stock ComfyUI's default loader, DynamicVRAM, does not merge a LoRA
+when it loads a model. It applies the LoRA when a layer casts its weight for a
+forward: it dequantizes the weight to the forward's compute dtype (BF16 for
+these files), adds the LoRA's change in that dtype, and requantizes a
+quantized weight with stochastic rounding seeded by the module's name. It keeps
+that weight from the first forward on. The Workers loaded through ComfyUI's
+classic patcher, whose bake is the one stock runs only with DynamicVRAM off:
+it converts the weight to ComfyUI's LoRA compute dtype (FP16 on GB10),
+computes the change in FP32, and seeds the rounding from the key with its
+`.weight` suffix. On an INT8 ConvRot weight each requantization adds noise
+five to nine times larger than this LoRA's own change, so the two bakes are
+two draws of that noise. On 2026-11-05 a probe on the head found them apart on
+10 to 15 percent of the INT8 values of each layer, a layer's output 0.011 to
+0.012 NRMS apart, and over the 200 patched INT8 layers that is the image gap.
+On a BF16 weight they round apart on 3 to 4 percent of the values. Neither
+bake loses the LoRA; they differ, and stock's default is the reference. The
+ConvRot rotation is not a cause: both bakes add the LoRA to the unrotated
+weight and rotate again when they requantize.
+
+**Fix:** update. This release bakes the weight stock's cast computes, once,
+on every path that bakes a LoRA: the load at the first sample, the
+`lora_low_rss` merge, both hot swaps and the FSDP shard bake. A Worker logs
+`LoRA bake: stock ComfyUI's cast-time math (its DynamicVRAM default) for
+patched weights on this worker` once when it starts, and the first patched
+key of each kind logs the dtype it used. On 2026-11-05 the probe loaded three
+INT8 ConvRot layers and two BF16 layers of the pruned H3 file with the LoRA
+into ComfyUI's own layer class: the new bake was bit-identical to stock's cast
+on all five, in the INT8 values, the scales and the layer's output, and
+stock's cast gave the same bits in three separate processes. On the Workers
+running the fix, later that day, the same file with the LoRA on one rank was
+pixel-identical to stock at one step and at 8 (NRMS 0.0), and on the pair
+under `auto` (uly2) pixel-identical to one rank; each Worker logged the bake
+lines, its first quantized key dequantized to bf16. The Kromoss DMD LoRAs and
+MOSS-Image's INT8 files have not run on the new bake.
+
+A key stock bakes at load itself keeps ComfyUI's classic bake, as it does in
+stock: a module of 16 KiB or less, a LoRA that resizes the weight, or a
+parameter other than a weight or bias. So does a key where stock's first
+forward uses another weight than the later ones, a weight stored in another
+dtype than the forward or a quantized layer on a full-precision matmul; the
+log names the first such key and why. Comfy-managed residency runs ComfyUI's
+own patcher and was always stock. MOSS-Image's INT8 files keep the #129
+refusal until a hardware run measures a LoRA on them with this bake.
+
+## 146. A Worker keeps a dropped model's host memory, and the next load is priced short
+
+**Symptom:** a Worker loads a model and drops it (the identity gate's ceremony
+drops a model the loader placed before its first proof render; a clear drops a
+model in the way), and the next capacity price on that box comes up short by
+about what the drop should have given back. On torch 2.15.0 the 2026-11-06
+release test refused the Kandinsky 5 Pro video template this way: `the load
+needs 89.9 GiB, a 40.4 GiB file plus the host copy it is placed from, and 83.0
+GiB of unified memory is available, 6.9 GiB short`, on a head that had 98.8
+GiB free when the prompt was queued. The Worker journal shows `loaded
+completely` while the actor's resident memory (VmRSS, sampled once a second)
+is already 17.8 GiB, and the drop a second later gives back the GPU copy and
+nothing else. The same template passed on torch 2.12.0 two days earlier with
+3.1 GiB resident through the placement and 4.5 GiB after the drop.
+
+**Cause:** torch's wheels allocate host memory through a bundled mimalloc,
+which gives freed pages back to the box only at a purge, and a purge runs only
+when the thread that owns them allocates again after the purge delay. A stock
+load frees its host copy as it places weights, the last of those frees come
+just before the load returns, and nothing allocates between them and the next
+price, so the memory still counts as spent. torch 2.15.0 carries mimalloc
+2.5.2, which purges far less than the 2.2.6 in 2.12.0 even on later
+allocations: with flux1-dev placed, the head actor held 15.0 and 16.1 GiB of
+anonymous memory on 2.15.0 against 2.5 GiB on 2.12.0 with the same source and
+ComfyUI (2026-11-05 and 2026-11-06). Most other large files loaded through
+stock residency held more the same way; H3, the slab rows and wan-scail did
+not.
+
+**Fix:** update. The worker loop sets `MIMALLOC_PURGE_DELAY=0` in the
+environment every cluster actor inherits, the driver's launch does the same
+for a local actor, and `scripts/comfy-driver.sh` exports it for the driver,
+so a free on the thread that allocated the memory gives it back at once. A
+value the loop or the driver inherits stands, from a nohup start or your own
+unit; the Worker unit `dgxm update` installs starts from an empty environment. A driver
+started by hand or by your own unit needs the variable too; the Studio guide's
+unit example carries it.
+
+**Check:** each actor's `UMA posture` journal line ends with
+`host_purge_delay=0`. With a model placed, the actor's anonymous memory then
+sits near a fresh actor's floor, a few GiB, and the identity gate's re-price
+after a drop finds the room the loader found.

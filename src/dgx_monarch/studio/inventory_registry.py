@@ -56,7 +56,11 @@ PANEL = {
     "panel.action.dgx_monarch_consent.revoke.onclick": waiver(
         "Studio has no control to revoke an accepted consent; revoke it in the ComfyUI panel."),
     "panel.action.dgx_monarch_consent.box.onchange": waiver(
-        "Studio has no control for the automatic rescue setting (auto_rescue); change it in the ComfyUI panel."),
+        "Studio has no control for the automatic rescue setting (auto_rescue) or for Always clear "
+        "and retry (auto_clear); change them in the ComfyUI panel."),
+    "panel.action.dgx_monarch_consent.always.onchange": waiver(
+        "Studio has no control for the Old model in the way card's Always clear and retry box; "
+        "tick it on the card in the ComfyUI panel."),
 }
 
 TUI = {

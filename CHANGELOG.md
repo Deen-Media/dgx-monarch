@@ -2,7 +2,7 @@
 
 ## [Unreleased]
 
-## [1.5.0] - 2026-11-01
+## [1.5.0] - 2026-11-07
 
 **Upgrading from 1.4.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-140). If a host's
 Workers run from a release slot, use only `dgxm update --verify`
@@ -166,9 +166,217 @@ does not change ([Studio](docs/STUDIO.md)).
   names other text boxes by their node. The prompt box starts taller and grows
   with its text, an empty negative prompt waits behind Add negative prompt on
   Inputs, and raw types such as STRING show only on All inputs ([Studio](docs/STUDIO.md#working-with-workflows)).
+- The UNET loader now prices every model the graph loads on the driver. Under
+  `auto` the DiT loads at the first render, after the driver has loaded the
+  text encoders, VAEs and any prompt upsampler, and the loader's load window
+  used to charge the DiT alone: on 2026-11-05 the BF16 p-h3-image template
+  passed it on one Spark, ran its 18 GB upsampler, and refused at the sampler
+  2.0 GiB short. That window now charges those models too, so the template
+  refuses before anything loads, and the refusal opens with one plain sentence
+  ("p-h3-image_bf16.safetensors needs 119.8 GiB on this box and 110.8 GiB is
+  available, 9.0 GiB short") and names what would fit: the same model in
+  another precision on disk here (the INT8 ConvRot and W4A8 DiT and upsampler
+  files), a switch whose other setting skips a model, and a pair with the Init
+  node's topology set to `uly2+fsdp`, which `auto` never picks, after an
+  Identity Gate PASS on it. It never names a file the graph would then refuse:
+  no INT8 MOSS-Image file beside a LoRA, no W4A8 file on a `*+fsdp` preset, no
+  file that pins an attention kernel off Ulysses and ring, and no DiT file no
+  graph here names. It also offers the Load with slab residency card, whose
+  render of this graph has no hardware record yet. Models ComfyUI already
+  holds are credited up to their size, where any one held model used to credit
+  the whole stack, so a second graph's upsampler is priced too. On a fresh
+  driver the price errs high: LTX 2.3 text to video now needs 80.9 GiB where
+  it needed 65.8. A model only a fixed switch's other branch reaches, or no
+  output node, is no longer charged, so the template with the upsampler
+  switched off loads. MOSS-Image, MOSS-Image Base and Kromoss
+  get the loader's price too, their 19.31 GB encoder included. A loader
+  `weight_dtype` cast, which used to stand the loader's check down whole, is
+  priced there at the copy the cast builds, the figure the Worker's stock
+  price uses, where the load runs stock. A refusal a
+  Worker raises at the sampler, the loader or Identity Gate now opens the prompt error, card
+  sentence included, with the traceback in the log, where the error used to
+  begin "Actor call dgxm_worker.sample failed.". With `slab_weights=on` and no
+  Identity Gate PASS, after a failed authorization, for a second model or on
+  Fleet KSampler, the refusal says the driver ran stock and why, and names the
+  gate where a PASS would help, where it used to ask for `slab_weights=on`. The Old model in
+  the way card's loader text keeps the sentence that turns the preflight off,
+  and its no-room sentence quotes the same window and figure as the lead
+  ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
+  [#53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+- A load that does not fit because a model loaded earlier is still
+  held now says so: "the old model (<name>) is still loaded on <box>". When a
+  clear of the attached mesh would make room on every short box, the panel
+  raises an Old model in the way card whose Clear and retry runs the same reset
+  as Reset attached mesh, then you queue again. Its Always clear and retry
+  checkbox, the toggle of that name under Consents and waivers, or
+  `DGXM_ALLOW_CLEAR_RETRY=1` on the driver lets the driver clear and retry by
+  itself, once per load. The card writes no consent and no ledger row, and the
+  load is priced again on the fresh Workers. Both the cross-rank agreement and
+  the loader's own check raise it, and the agreement's slab rescue card now
+  names a held model too. A one-GPU fleet or a Fleet job, whose Worker prices
+  its own load, names the memory a model loaded earlier left behind and Reset
+  attached mesh instead. On 2026-11-04, 19 of 20 template errors were this
+  case ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- A load whose UNET loader casts the weight dtype is now priced before it
+  loads. The capacity checks used to skip a cast, because file size does not
+  say how big the cast copy is, and admit the load with no figure; on
+  2026-11-05 `dgx-monarch-wan22-t2v`, which casts both DiTs to bf16, loaded its
+  second DiT on a head with 12.2 GiB free and only a test watchdog stopped
+  it. The price now reads the file's header for the size of the copy the cast
+  builds and charges it in place of the file, beside the host copy and the
+  floor, so a short box refuses before anything loads and says what would fit.
+  For a cast that keeps the width, as wan22's fp16 to bf16 does, the figure is
+  the one an uncast load gets (60.9 GiB for each wan22 DiT). A cast load offers
+  no slab rescue, since a slab under a cast keeps the cast copy beside the
+  file; `slab_weights=on` refuses a cast it cannot price, and the explicit
+  stock refusal no longer suggests it. An old model held in the way still
+  raises its card, which now credits a cast model the copy its cast built.
+- A load that replaces the stock model in its own slot is now priced after
+  the Worker drops that model, which it always does first. The agreement used
+  to count both copies; with its cast priced, wan22-t2v's stage 2, a swap over
+  stage 1's DiT, would then refuse at 58.7 GiB available on a fresh pair, and
+  each stage of a warm re-queue would ask for a clear. A LoRA change on the
+  same file is the same credit. A model in the other slot, a slab resident and
+  the arena a stock load keeps still count
+  ([TROUBLESHOOTING #5](docs/TROUBLESHOOTING.md#5-loads-fail--oom-on-uma-boxes-dgx-spark-etc),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- The capacity refusals, the Old model in the way card and the driver's
+  capacity log line name a box as the head (where the driver runs) or the
+  sibling, the way the docs do. Before, one refusal could name the same box by
+  its host name, by the address cluster.toml gives it, and as "rank 0", so on a
+  pair configured by address the card read "is still loaded on" and an
+  address. Now it reads "The old model (flux1-dev) is still loaded on the head
+  and qwen_image_2512_fp8_e4m3fn does not fit beside it. Clear the Sparks and
+  run again?". With more than two boxes each other box is "the sibling at" its
+  host name, and a fleet on the driver's box alone is "this box". The FSDP
+  clean-reload refusal and the refusal for a Worker actor a restart left
+  undeliverable name their boxes the same way, and the loader's charge note
+  says "a Worker on this box" where it said "co-resident rank 0"
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
+  [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
+- A Worker's own refusal names no host either. Its sentence says "here", and
+  the driver opens it with the box that refused: "On the sibling, stock
+  residency cannot load p-h3-image_bf16.safetensors here: the load needs ...".
+  On one box, where the loader card says "this box", it reads "here" with
+  nothing before it. The slab, comfy-managed, rescue and LoRA bake walls read
+  the same way, and so do a model file missing on one box, whose error opens
+  "On the sibling, actor call dgxm_worker.load_model failed." above "model ...
+  was not found here", and a sampler or scheduler one box's ComfyUI lacks. A
+  Fleet job takes the box of the actor it went to, and the Fleet timeline's
+  rows read "the head" and "the sibling" where they read "box 1" and "box 2"
+  ([TROUBLESHOOTING #93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box),
+  [Concepts](docs/CONCEPTS.md#the-machines-and-the-processes)).
+- The error a sampler, Fleet KSampler, a UNET loader or Identity Gate raises for
+  a refusal ends with its sentence and the card's plain words. It no longer
+  ends with the measured numbers and the consent block as JSON: the card is
+  already raised when the driver receives the refusal, and ComfyUI's log keeps
+  both blocks. Studio's Queue row offers no Grant and retry for such a refusal;
+  grant it from Operations, consent apply, which lists the driver's pending
+  requests ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click),
+  [Studio](docs/STUDIO.md#read-a-failure-and-grant-a-consent)).
+- A LoRA change on a BF16 model the Workers already hold, with `lora_low_rss`
+  off as the Wan-Animate 2 BF16 templates set it, no longer stalls, and no
+  longer ends in a refusal with nothing to click. Adding a LoRA to a bare base
+  loads base and LoRA fresh instead of copying the whole model off the GPU
+  first, at the same price: on the memory-saver template that copy took 230 s,
+  and a fresh load of base and LoRA 17 s. And a change refused because the host copy the held LoRA keeps holds the
+  memory now offers the Old model in the way card, "The model loaded earlier
+  (wan_animate_2_bf16) holds about 29.6 GiB on the head that this change needs.
+  Clear the Sparks and run again?", when a cleared box would hold a fresh load.
+  This is the LoRA case of the credit for a load that replaces the stock model
+  in its own slot
+  ([TROUBLESHOOTING #18](docs/TROUBLESHOOTING.md#18-first-lora-change-on-a-quant-model-is-one-time-slow-historical),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- A new strength, a new order or a LoRA removed on a BF16 model the Workers
+  hold with its LoRA, with `lora_low_rss` off, is admitted without a click
+  where it fits. The change reuses ComfyUI's host copy of the patched weights,
+  which the Workers now report, and the price counts it as held, while it
+  still charges the LoRA files the change reads again: on the pair, the
+  Wan-Animate 2 strength change from 1.0 to 0.8 needs about 8.7 GiB where it
+  needed 38.6 GiB and raised Old model in the way. On one Spark the same change
+  took 0.8 GiB, about the LoRA file it reads again, and rendered a fresh load's
+  latent. A LoRA the held stack lacks keeps the old price and the card. And a
+  re-queue whose UNET loader ComfyUI kept from an earlier queue is now priced
+  at the sampler or at Identity Gate (DGX Monarch), by the loader's own price
+  for what is not yet held, so a short box gets the loader's refusal and what
+  would fit, where only the Worker's wall answered before ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
+  [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+
+### Compatibility and verification
+
+- The hardware checks of 2026-11-03 to 05 are in the docs. p-h3-image and
+  Wan 2.2 TI2V 5B are HW: all three p-h3-image DiT files on one rank match
+  stock and on uly2 match one rank, its LoRA route matches stock, and the
+  BF16 template refuses on one Spark before anything loads and renders each
+  way the refusal names but the INT8 ConvRot DiT; at its 20 steps Wan 2.2
+  TI2V on one GPU matches stock and on uly2 matches one GPU. VALIDATION gains
+  the template release
+  test of 2026-11-04 and what #139 fixed, the other 32 FP8 compute cells
+  (HunyuanImage 2.1's plain FP8
+  stays inside the floor on `fp8_ops` and the Ideogram4 fp8_scaled pair does
+  not, against BF16; `fp8_matrix_mult = "on"` stays unsafe), Worker-assisted
+  VAE decode on Wan 2.2 TI2V and both HunyuanVideo VAEs with its fail-open,
+  warm, short-of-memory, 362-frame and Clear VRAM checks, the MiniMax H3
+  context windows, the ComfyUI 0.44.0 rows, the BF16 rescue's other forms,
+  the pipelined unload, the Old model in the way card, the cast and swap
+  credits, and a LoRA change on a held base. The torch 2.15.0 ladder passed
+  steps 1 to 10 on the pair on 2026-11-05 and 06, and this release ships on
+  torch 2.15.0+cu132. Ideogram4's MODELS row now says its fp8_scaled pair
+  reads 0.161 against the BF16 pair, from the file's quantization, and the
+  p-h3-image template's note says what its edit's hardware record shows.
+  Still NOT RUN: the release test on torch 2.15, LTX 2.3's decode split, and
+  a Worker on ComfyUI 0.43 with context windows
+  ([VALIDATION](docs/VALIDATION.md#release-test-2026-11-04),
+  [VALIDATION](docs/VALIDATION.md#torch-2-15),
+  [MODELS](docs/MODELS.md#model-p-h3-image),
+  [MODELS](docs/MODELS.md#model-wan-2-2-ti2v-5b)).
+- comfy-kitchen 0.2.41, the release ComfyUI master now pins, joins the INT8
+  GEMM kernel's validated set, so an install that follows that pin keeps the
+  kernel on instead of running every INT8 linear on CUTLASS with a WARNING.
+  0.2.41 changes no INT8 or W4A8 code, and the kernel's GPU check matched 240
+  of 240 cases on it. The render comparison was not rerun: a release now needs
+  one only when it changes the INT8 path. The comfy canary's comfy-kitchen check, red against ComfyUI
+  master, passes again ([Models](docs/MODELS.md#int8-gemm-kernel),
+  [VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
+- The video templates follow ComfyUI 0.44.0's Create Video, which gained
+  `chroma_subsampling` before `codec` (ComfyUI #17463); they hold its default,
+  `auto`. On ComfyUI 0.43 and older, which lack the widget, this pack's
+  frontend extension restores Create Video by name, and Studio and the sweep
+  converter skip the slot, so `codec` stays `none` there. The comfy canary's
+  template step, red against ComfyUI master since 2026-11-01, passes again,
+  and it now checks Save Video's format and codec against the options the
+  running ComfyUI offers ([MODELS](docs/MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av)).
+- Every actor starts with `TORCH_DIST_USE_NCCL2=0`, so torch 2.15 keeps its
+  legacy NCCL backend, the one torch 2.12 ships. torch 2.15's new `nccl`
+  backend takes an allocator snapshot that ComfyUI's cudaMallocAsync allocator
+  refuses, which ended each actor at its first process group; torch 2.12
+  ignores the setting. `dgxm doctor` gains an `actor NCCL backend` row that
+  names the torch the actors import and checks the setting. Each Gate PASS now
+  also names the driver's torch and CUDA build, so a torch change runs the gate
+  again on each gated combination's first render, and the notice names both
+  builds when only the build moved. A row written before this change carries
+  no build and reads stale. INSTALL now says what the ComfyUI guide's torch
+  2.15.0 changes, gives the import check its commands and notes the torchaudio
+  builds that no longer load against torch 2.12.0+cu132. On 2026-11-05 and 06
+  the torch 2.15 ladder passed on the pair with the setting
+  ([TROUBLESHOOTING #143](docs/TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group),
+  [VALIDATION](docs/VALIDATION.md#torch-2-15),
+  [INSTALL](docs/INSTALL.md#install-from-source)).
 
 ### Rendering
 
+- A LoRA renders as it does in stock ComfyUI. The Workers baked a LoRA with
+  ComfyUI's classic merge, the math stock runs only with DynamicVRAM off,
+  while stock's default applies a LoRA when a layer casts its weight, in the
+  forward's dtype and with requantization seeded by the module's name. The
+  pruned INT8 MiniMax H3 file with the p-h3-image LoRA read NRMS 0.077 against
+  stock at one step and 0.257 at 8 steps, and Kromoss BF16 with a DMD LoRA
+  read 0.0365 to 0.0635 at one step. Every bake now computes the weight stock's cast
+  computes; a probe found it bit-identical to stock on the file's INT8 ConvRot
+  and BF16 layers. MOSS-Image INT8 with a LoRA still refuses (#129) until a
+  hardware run measures it
+  ([TROUBLESHOOTING #145](docs/TROUBLESHOOTING.md#145-a-lora-render-on-a-worker-differs-from-stock-comfyui)).
 - `[worker_args] fp8_matrix_mult` (`"auto"`, `"on"` or `"off"`) chooses whether
   the models the actors build take ComfyUI's FP8 matmul path. ComfyUI's
   `--fast fp8_matrix_mult` reaches only the driver's own loads, because the
@@ -200,8 +408,8 @@ does not change ([Studio](docs/STUDIO.md)).
   output; in the 2026-10-28 and 29 comparison MiniMax H3 and Wan Animate 2
   rendered 16 to 25 percent faster. `[worker_args] int8_gemm = "cutlass"` turns it off in the actors and
   `DGXM_INT8_GEMM=cutlass` in the ComfyUI process. A process without Python.h,
-  Triton or a validated comfy-kitchen release (0.2.37 or 0.2.40) runs CUTLASS
-  and logs one WARNING ([Models](docs/MODELS.md#int8-gemm-kernel),
+  Triton or a validated comfy-kitchen release (0.2.37, 0.2.40 or 0.2.41) runs
+  CUTLASS and logs one WARNING ([Models](docs/MODELS.md#int8-gemm-kernel),
   [TROUBLESHOOTING #138](docs/TROUBLESHOOTING.md#138-the-log-shows-an-int8-gemm-warning-and-int8-renders-run-stock-cutlass)).
   The kernel option's install points ran on hardware, one short render per
   process kind ([VALIDATION](docs/VALIDATION.md#int8-gemm-kernel-comparison-2026-10-28-and-29)).
@@ -266,6 +474,18 @@ does not change ([Studio](docs/STUDIO.md)).
   now gets 200 minutes; other families keep the larger of the floor and 120 s
   per step. Each render logs its deadline and the terms behind it at INFO
   ([TROUBLESHOOTING #139](docs/TROUBLESHOOTING.md#139-a-long-render-fails-with-timeouterror-when-the-sample-deadline-passes)).
+- MiniMax H3 Context Windows (DGX Monarch) carries ComfyUI 0.44.0's MiniMax
+  H3 context windows (#17425) to the Workers. It takes the stock node's
+  widgets, and each Worker applies ComfyUI's own node to its render clone, so
+  each window is one model call on a shorter clip, which Ulysses splits as it
+  splits a whole clip. The sample deadline counts every window's rows. It
+  refuses class P on a Worker whose ComfyUI predates 0.44.0, on another
+  family and on a two-checkpoint guider's negative model. The activation
+  preflight still prices the whole clip. A comfy canary seam holds the stock
+  contract, and no windowed render has run on hardware
+  ([MODELS](docs/MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av),
+  [VALIDATION](docs/VALIDATION.md#minimax-h3-context-windows),
+  [TROUBLESHOOTING #142](docs/TROUBLESHOOTING.md#142-a-render-with-minimax-h3-context-windows-dgx-monarch-refuses)).
 - A capacity-rescue consent now keeps slab residency when stock residency
   cannot load the checkpoint. The identity gate records INCONCLUSIVE with
   `cross_mode=CAPACITY`, takes no lever, and the render proceeds under slab;
@@ -296,6 +516,53 @@ does not change ([Studio](docs/STUDIO.md)).
   ([Models](docs/MODELS.md#worker-assisted-vae-decode),
   [VALIDATION](docs/VALIDATION.md#worker-assisted-vae-decode),
   [TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+- A Wan 2.2 TI2V 5B template, `dgx-monarch-wan22-ti2v.json`, runs the one
+  FP16 checkpoint with the Wan 2.2 VAE at the settings of ComfyUI's own TI2V
+  template: 1280x704, 121 frames at 24 fps, 20 uni_pc steps at cfg 5 and
+  shift 8. auto runs it on uly2. A Load Image wired to `start_image` makes it
+  image to video, and the Wan adapter shards the per-frame timesteps that
+  image brings. Its VAE splits under Worker-assisted VAE decode through VAE
+  Decode (Tiled), and on CPU the real file splits byte-identical to the stock
+  tiled decode. No hardware comparison has run, so the row is impl
+  ([MODELS](docs/MODELS.md#model-wan-2-2-ti2v-5b),
+  [VALIDATION](docs/VALIDATION.md#evidence-wan-2-2-ti2v-5b)).
+- p-h3-image, PrunaAI's 8 MP image model on MiniMax H3 (ComfyUI #17506),
+  runs on the MiniMax H3 adapter: ComfyUI builds its DiT as MiniMax H3. The
+  `dgx-monarch-p-h3-image.json` template follows the vendor's text-to-image
+  workflow on the BF16 DiT, text encoder and VAE, with the prompt upsampler,
+  the 8-step grid and both shifts at 1.0. ModelSamplingMiniMaxH3 (DGX
+  Monarch) carries ComfyUI's ModelSamplingMiniMaxH3 to the Workers, which
+  apply the stock node to the render clone; it refuses class P on another
+  family, and a one-frame image latent that no H3 shift reaches refuses
+  rather than sample at 12.0 and 3.0. The W4A8 file reads as `w4a8`, not
+  `fp8`, and FSDP refuses it. On CPU the H3 sharded forward returns stock's
+  bits on the image graph; no hardware has run it, so the row is impl. Studio
+  names the text that reaches a Basic Guider the prompt. MODELS also
+  documents the Sol-H3-VAE decoder, which decodes on the driver
+  ([MODELS](docs/MODELS.md#model-p-h3-image),
+  [VALIDATION](docs/VALIDATION.md#evidence-p-h3-image),
+  [TROUBLESHOOTING #144](docs/TROUBLESHOOTING.md#144-a-p-h3-image-render-or-modelsamplingminimaxh3-dgx-monarch-refuses)).
+- Worker-assisted VAE decode keeps three ComfyUI 0.44.0 decodes on the
+  driver, with one line each: the Sol-H3-VAE decoder, which decodes the whole
+  clip in one pass, the p-h3-image VAE, which decodes one frame, and a VAE
+  whose compute dtype the VAE Compute Dtype node set, which a Worker cannot
+  build the same way ([TROUBLESHOOTING #140](docs/TROUBLESHOOTING.md#140-a-vae-decode-did-not-split-over-the-workers)).
+  [MODELS](docs/MODELS.md#model-minimax-h3-t2va-fl2va-ref2va-av) says what
+  this project does with ComfyUI 0.44.0's p-h3-image model, Sol-H3-VAE
+  decoder and MiniMax H3 context windows, and
+  [VALIDATION](docs/VALIDATION.md#comfyui-0440-additions) lists the
+  behaviours no hardware has run.
+- Three fixes from the 2026-11-04 release test. The identity gate's stock
+  comparison frees what the driver host can reload before it gives up, so the
+  Flux 2 template renders on a fresh pair instead of refusing with its 33 GiB
+  text encoder on the head ([TROUBLESHOOTING #66](docs/TROUBLESHOOTING.md#66-the-gate-says-inconclusive-on-a-graph-with-no-lora)).
+  A LoRA change on a base a Worker already holds is priced as the in-place
+  swap the store makes, without a second copy of the file, so the Wan-Animate 2
+  memory-saver template no longer refuses under an explicit topology. And
+  where a model call is sharded, every rank batches cond and uncond the way
+  the leanest rank does, so two boxes with different free memory no longer
+  stall on mismatched collectives
+  ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
 
 ### Operations
 
@@ -306,6 +573,11 @@ does not change ([Studio](docs/STUDIO.md)).
 - Worker services keep torch inductor's compile cache in
   `~/.cache/dgx-monarch/inductor`, so `compile_dit` no longer repeats its
   autotune after a reboot; set `TORCHINDUCTOR_CACHE_DIR` to place it elsewhere ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
+- Workers and the driver give freed host memory back at once: the worker
+  loop sets `MIMALLOC_PURGE_DELAY=0` for every cluster actor, the driver's
+  launch for a local actor, and `scripts/comfy-driver.sh` exports it, because torch 2.15.0's bundled mimalloc 2.5.2 purges so late
+  that an actor kept 15 to 18 GiB of host memory after a stock load and the
+  next load was priced short ([TROUBLESHOOTING #146](docs/TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
 
 ## [1.4.0] - 2026-10-28
 

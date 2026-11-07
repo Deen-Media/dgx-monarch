@@ -1,18 +1,18 @@
 {
   "baseline_counts": {
-    "nodes": 19,
-    "workflows": 71
+    "nodes": 21,
+    "workflows": 73
   },
   "counts": {
     "cli_command": 24,
     "cli_option": 102,
     "configuration": 54,
-    "node": 19,
-    "node_input": 129,
-    "panel_action": 7,
+    "node": 21,
+    "node_input": 143,
+    "panel_action": 8,
     "telemetry": 17,
     "tui_action": 9,
-    "workflow": 71
+    "workflow": 73
   },
   "coverage_meaning": "Discovered surfaces with a reviewed Studio view: an operation, a route, an equivalent, a waiver with its reason, or source coverage only. Not a claim of accepted parity.",
   "limitations": [
@@ -9414,6 +9414,82 @@
       "datatype": "node_schema",
       "default": null,
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.DGXMonarchMiniMaxH3ContextWindows",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node schemas from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node",
+      "name": "DGXMonarchMiniMaxH3ContextWindows",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "node_schema",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.DGXMonarchModelSamplingMiniMaxH3",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchModelSamplingMiniMaxH3",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node schemas from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node",
+      "name": "DGXMonarchModelSamplingMiniMaxH3",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "src/dgx_monarch/nodes/model_sampling.py:DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES",
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "node_schema",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "node.DGXMonarchModelSamplingSD3",
       "interfaces": {
         "cli": {
@@ -11395,6 +11471,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchIdentityGate.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchIdentityGate",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchIdentityGate",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/gate_node.py:DGXMonarchIdentityGate.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "Optional ID that `dgxm gate` sets to find this run's report.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -12947,6 +13068,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSampler.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSampler",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSampler",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSampler.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "required input of DGXMonarchKSampler; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": "_sampler_names()",
@@ -13554,6 +13720,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSamplerAdvanced.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSamplerAdvanced",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSamplerAdvanced",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSamplerAdvanced.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "required input of DGXMonarchKSamplerAdvanced; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -14114,6 +14325,51 @@
       "validation": {}
     },
     {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchKSamplerPipeline.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchKSamplerPipeline",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchKSamplerPipeline",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchKSamplerPipeline.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
       "applicability": "required input of DGXMonarchKSamplerPipeline; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": "_sampler_names()",
@@ -14529,6 +14785,435 @@
       "validation": {}
     },
     {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "INT",
+      "default": 124,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.context_length",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "context_length",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "context_length",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "max": 16384,
+        "min": 22,
+        "step": 17
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "INT",
+      "default": 39,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.context_overlap",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "context_overlap",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "context_overlap",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 2,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "min": 5,
+        "step": 17
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "BOOLEAN",
+      "default": true,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.freenoise",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "freenoise",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "freenoise",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 4,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "advanced": true
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": [
+        "pyramid",
+        "relative",
+        "flat",
+        "overlap-linear"
+      ],
+      "datatype": "COMBO",
+      "default": "pyramid",
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.fuse_method",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "fuse_method",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "fuse_method",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 3,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "DGXM_MODEL",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.model",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "model",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "model",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 0,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchMiniMaxH3ContextWindows; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "BOOLEAN",
+      "default": false,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchMiniMaxH3ContextWindows.split_conds_to_windows",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchMiniMaxH3ContextWindows",
+          "input": "split_conds_to_windows",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "split_conds_to_windows",
+      "node": "DGXMonarchMiniMaxH3ContextWindows",
+      "order": 5,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/h3_context_windows.py:DGXMonarchMiniMaxH3ContextWindows.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "advanced": true
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchModelSamplingMiniMaxH3; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "DGXM_MODEL",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchModelSamplingMiniMaxH3.model",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchModelSamplingMiniMaxH3",
+          "input": "model",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "model",
+      "node": "DGXMonarchModelSamplingMiniMaxH3",
+      "order": 0,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/model_sampling.py:DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "required input of DGXMonarchModelSamplingMiniMaxH3; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "FLOAT",
+      "default": 3.0,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchModelSamplingMiniMaxH3.shift_audio",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchModelSamplingMiniMaxH3",
+          "input": "shift_audio",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "shift_audio",
+      "node": "DGXMonarchModelSamplingMiniMaxH3",
+      "order": 2,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/model_sampling.py:DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "max": 100.0,
+        "min": 0.01,
+        "step": 0.01
+      }
+    },
+    {
+      "applicability": "required input of DGXMonarchModelSamplingMiniMaxH3; backend model/topology validation applies.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "FLOAT",
+      "default": 12.0,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchModelSamplingMiniMaxH3.shift_video",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchModelSamplingMiniMaxH3",
+          "input": "shift_video",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "shift_video",
+      "node": "DGXMonarchModelSamplingMiniMaxH3",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "required",
+      "source": "src/dgx_monarch/nodes/model_sampling.py:DGXMonarchModelSamplingMiniMaxH3.INPUT_TYPES",
+      "units": null,
+      "validation": {
+        "max": 100.0,
+        "min": 0.01,
+        "step": 0.01
+      }
+    },
+    {
       "applicability": "required input of DGXMonarchModelSamplingSD3; backend model/topology validation applies.",
       "apply": "Unavailable until an explicit typed adapter advertises this capability.",
       "choice_source": null,
@@ -14897,6 +15582,51 @@
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "schema_source": "source AST + tests/node_input_contract.json",
       "section": "required",
+      "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchSamplerCustom.INPUT_TYPES",
+      "units": null,
+      "validation": {}
+    },
+    {
+      "applicability": "Backend injected hidden graph identity; never an editable user field.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choice_source": null,
+      "choices": null,
+      "datatype": "PROMPT",
+      "default": null,
+      "default_rule": "declared",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "node.input.DGXMonarchSamplerCustom.prompt",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "class_type": "DGXMonarchSamplerCustom",
+          "input": "prompt",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "reason": "Studio reads node inputs from the connected driver's object_info at run time; no closed registry checks this row.",
+          "status": "source_only"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "node_input",
+      "name": "prompt",
+      "node": "DGXMonarchSamplerCustom",
+      "order": 1,
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "schema_source": "source AST + tests/node_input_contract.json",
+      "section": "hidden",
       "source": "src/dgx_monarch/nodes/samplers.py:DGXMonarchSamplerCustom.INPUT_TYPES",
       "units": null,
       "validation": {}
@@ -15827,6 +16557,44 @@
       "datatype": "action",
       "default": null,
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "panel.action.dgx_monarch_consent.always.onchange",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "panel": {
+          "handler": "always.onchange",
+          "status": "available"
+        },
+        "studio": {
+          "reason": "Studio has no control for the Old model in the way card's Always clear and retry box; tick it on the card in the ComfyUI panel.",
+          "status": "not_represented"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "panel_action",
+      "name": "always",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "web/js/dgx_monarch_consent.js:always.onchange",
+      "units": null,
+      "validation": "Owning backend is authoritative; discovery does not execute validation."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "action",
+      "default": null,
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "panel.action.dgx_monarch_consent.box.onchange",
       "interfaces": {
         "cli": {
@@ -15842,7 +16610,7 @@
           "status": "available"
         },
         "studio": {
-          "reason": "Studio has no control for the automatic rescue setting (auto_rescue); change it in the ComfyUI panel.",
+          "reason": "Studio has no control for the automatic rescue setting (auto_rescue) or for Always clear and retry (auto_clear); change them in the ComfyUI panel.",
           "status": "not_represented"
         },
         "tui": {
@@ -18956,7 +19724,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "9926317bffc55fe9633220e735d5daa91c2bd5b15d07bc64a5fe4985ad18c889",
+      "digest": "ec6e6bbdb7a8d99a8e799f20c684eae89758f6001def87a1f73bd6fb64761aee",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-minimax-h3-mp4",
       "interfaces": {
@@ -19193,6 +19961,47 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "example_workflows/dgx-monarch-omnigen2-t2i.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "d2c5942a166c3a4a1b96af2b101a98b1ff5bdfb0a23a57f76625fe7fc5f83676",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-p-h3-image",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-p-h3-image",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-p-h3-image.json",
       "units": null,
       "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
     },
@@ -19530,7 +20339,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "ab9a6a599bb62cb81023b5f4260fa2a7b0c17d882f5241790b4884e6b09fcdc3",
+      "digest": "4bb6a4c209ee01f837357b3bc13bbceb6ec6099f9ea62138a838ad37ce67fffa",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2",
       "interfaces": {
@@ -19571,7 +20380,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "2a907f004d2f4dc9fc61a2d09239c523a67185850845e0f41c162f8f9671b784",
+      "digest": "203a8f873764475f5b137991ac6c248b807ac83d1937baec7d74cb72ec697058",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2-base-quality",
       "interfaces": {
@@ -19612,7 +20421,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "11079e06bd21d407add04247c3611b7e8dc33aed6797c180e623f509cf5abb8e",
+      "digest": "dfe1bae950b39863dab757cba23ea9adae0f75af03e6542282de7ae324162a74",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2-bfloat16-warm",
       "interfaces": {
@@ -19653,7 +20462,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "9acc1357077ad1709953707a72e8d60e11225ca41db4989d0e25bffbb2f96092",
+      "digest": "5d968763e071ac13c0ed1f4363ebef8434d6a3cabd3041486803493c1150ae79",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2-distilled",
       "interfaces": {
@@ -19694,7 +20503,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "5df9fe1dca5917e7669926726c4d36f715c5ad255deb7da823e8ba5d467930d9",
+      "digest": "3338cd0a6e139377f80c462c40bde0ca33c20f84d76839ef574b06b5735a93a1",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wan-animate2-memory-saver",
       "interfaces": {
@@ -20054,6 +20863,47 @@
       "preview": "No generic preview is implied; consult the operation's backend contract.",
       "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
       "source": "example_workflows/dgx-monarch-wan22-t2v.json",
+      "units": null,
+      "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
+    },
+    {
+      "applicability": "Requires the owning backend capability and its runtime validation.",
+      "apply": "Unavailable until an explicit typed adapter advertises this capability.",
+      "choices": null,
+      "datatype": "comfy_workflow",
+      "default": null,
+      "digest": "499efc9873ac6ee9eae11efaedbe32f3788e698cc632d7be1dcd6c6a48cfe384",
+      "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
+      "id": "workflow.dgx-monarch-wan22-ti2v",
+      "interfaces": {
+        "cli": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "nodes": {
+          "representation": "ComfyUI graph import",
+          "status": "available"
+        },
+        "panel": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        },
+        "studio": {
+          "equivalence": "The bundled workflow catalog serves every shipped example.",
+          "method": "GET",
+          "path": "/api/v1/workflows",
+          "status": "route"
+        },
+        "tui": {
+          "reason": "No direct representation discovered.",
+          "status": "unavailable"
+        }
+      },
+      "kind": "workflow",
+      "name": "dgx-monarch-wan22-ti2v",
+      "preview": "No generic preview is implied; consult the operation's backend contract.",
+      "recovery": "Reconcile authoritative state before retry; an unknown outcome is not a failure.",
+      "source": "example_workflows/dgx-monarch-wan22-ti2v.json",
       "units": null,
       "validation": "Resolve every node type, installed asset and required binding against the live driver before execution."
     },

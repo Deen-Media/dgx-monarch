@@ -43,9 +43,10 @@ from ..adoption_evidence import (
 from ..delivery_faults import WorkerDeliveryError
 from ..log import get_logger
 from ..mesh import MeshHandle, mark_defunct_on_supervision_failure
+from ..old_model import OldModelRefusal
 from ..progress import ProgressReceiver
 from ..transfer import pack_latent
-from . import consent_waiver, model_patch_preflight, render_preflight, render_rows
+from . import consent_waiver, model_patch_preflight, old_model_clear, refusal_lead, render_preflight, render_rows
 from .abandoned_heal import HealOutcome, heal_abandoned_wedge_once
 from .gate_identity import (
     authorize_normal_render,
@@ -190,6 +191,13 @@ def submit_render(model: ModelSpec, request: dict, latent: dict, cfg_value: floa
             raise
         return _attempt_after_restart(
             attempt, guards[-1].handle, exc, model, request, latent)
+    except OldModelRefusal as exc:
+        # Always clear and retry: one clear, then one attempt on a fresh fleet,
+        # whose refusal is not caught here.
+        refused = guards[-1].handle or getattr(getattr(model, "mesh", None), "handle", None)
+        if not old_model_clear.clear_for_retry(refused, exc, inherited=inherited):
+            raise
+        return attempt()
 
 
 def _attempt_after_restart(
@@ -314,6 +322,7 @@ def _submit_render_guarded(
         model_patch_preflight.preflight_moss_image_attention_bias(model, request, topo)
         render_preflight.preflight_minimax_h3_topology(model, topo)
         model_patch_preflight.preflight_model_patches(model, topo, request)
+        model_patch_preflight.preflight_h3_sigma_shift(model, request, latent)
         sample_attention = resolve_sample_attention(spec.attention, sage)
         render_preflight.preflight_sol_attention(
             model, topo, sample_attention, handle)
@@ -333,6 +342,8 @@ def _submit_render_guarded(
             resolved_topology=topo,
             resolved_attention=sample_attention,
         )
+        refusal_lead.note_if_slab_dropped(model.mesh.worker_args, authorization.worker_args,
+                                          dual=request.get("uncond_model") is not None)
 
         # A dual-model request is stamped stock whatever any ceremony did,
         # and auto_gate off does not change that, so a blocked ceremony is

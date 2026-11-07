@@ -105,6 +105,18 @@
       "waivable": false
     },
     {
+      "site": "actor/context_windows_render.py::apply::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "actor/context_windows_render.py::assert_supported::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "actor/dm_cfg2_residency.py::ready_or_raise::DualModelLoadDivergenceError#0",
       "class": "P",
       "guard": null,
@@ -1149,6 +1161,24 @@
       "waivable": true
     },
     {
+      "site": "nodes/model_patch_preflight.py::preflight_context_windows::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/model_patch_preflight.py::preflight_h3_sigma_shift::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/model_patch_preflight.py::preflight_h3_sigma_shift::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "nodes/model_patch_preflight.py::preflight_moss_image_attention_bias::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1212,6 +1242,18 @@
       "site": "nodes/render_validation.py::validate_render_topology::PackedDataParallelError#0",
       "class": "P",
       "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "old_model.py::raise_fleet_refusal::OldModelRefusal#0",
+      "class": "C",
+      "guard": "cross_rank_capacity",
+      "waivable": false
+    },
+    {
+      "site": "old_model.py::raise_loader_refusal::LoaderOldModelError#0",
+      "class": "C",
+      "guard": "loader_footprint_preflight",
       "waivable": false
     },
     {

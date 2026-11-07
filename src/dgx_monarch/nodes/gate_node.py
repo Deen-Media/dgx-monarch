@@ -5,6 +5,7 @@ import json
 from typing import Any
 
 from ..constants import MODEL_TYPE, NODE_CATEGORY
+from .refusal_lead import lead_with_refusal
 from .render_preflight import sampler_latent
 from .samplers import _sampler_names, _scheduler_names
 
@@ -59,7 +60,7 @@ class DGXMonarchIdentityGate:
                     },
                 ),
             },
-            "hidden": {"unique_id": "UNIQUE_ID"},
+            "hidden": {"unique_id": "UNIQUE_ID", "prompt": "PROMPT"},
         }
 
     RETURN_TYPES = ("LATENT", "STRING")
@@ -71,6 +72,7 @@ class DGXMonarchIdentityGate:
     def IS_CHANGED(cls, **kwargs):
         return float("nan")
 
+    @lead_with_refusal
     def gate(
         self,
         model: Any,
@@ -85,6 +87,7 @@ class DGXMonarchIdentityGate:
         strict=False,
         run_id="",
         unique_id=None,
+        prompt=None,
     ):
         # Resolve nodes.gate at call time so a monkeypatch of its seams reaches this node.
         from . import gate as runtime
@@ -118,6 +121,10 @@ class DGXMonarchIdentityGate:
                 raise RuntimeError(
                     "DGX Monarch identity gate NOT RUN: " + skip)
             return latent_image, report
+        # A re-queue whose UNET Loader output ComfyUI kept is priced here, as at a sampler.
+        from . import graph_load_price, requeue_price
+
+        requeue_price.price_cached_loader(model, prompt, site=graph_load_price.SITE_GATE)
         result = runtime.run_identity_ceremony(
             model,
             request,

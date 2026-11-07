@@ -330,6 +330,11 @@ def capacity_consent_authorization(
             return None
         log.warning("normal render has no exact Gate PASS for the current %s state; "
                     "forcing stock residency for this dispatch", state)
+        if requested.get("slab_weights") is True:
+            # A stock refusal then names this, not the setting the user made.
+            from .refusal_lead import note_forced_stock
+
+            note_forced_stock(state)
         return None
     log.warning("normal render has no exact Gate PASS for the current %s state; a "
                 "capacity-rescue consent keeps slab residency for this dispatch (the "

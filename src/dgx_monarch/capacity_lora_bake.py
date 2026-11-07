@@ -20,6 +20,7 @@ from __future__ import annotations
 import os
 import re
 from collections.abc import Callable, Mapping
+from typing import Any
 
 from .safetensors_header import DTYPE_BITS, TensorDescriptor, read_safetensors_header
 
@@ -214,21 +215,167 @@ def swap_credit_bytes(held: object, request_key: str, size_bytes: int, context: 
     the quote still priced it as a swap. Explicit slab_weights=on and a pending
     slab retry reload, so they get none. Evidence: docs/VALIDATION.md, the LoRA bake section.
     """
-    import ast
-
     if (context or {}).get("would_load") != "swap" or slab_weights != "auto":  # WOULD_LOAD_SWAP
         return 0
-    if not isinstance(held, dict) or held.get("residency") != "stock":
-        return 0
-    try:
-        mine, theirs = ast.literal_eval(request_key), ast.literal_eval(held.get("request_key") or "")
-    except (ValueError, SyntaxError):
-        return 0
-    # (*base_key, lora_signature, quant): the same base checkpoint, any stack.
-    if not (isinstance(mine, tuple) and isinstance(theirs, tuple) and len(mine) > 2
-            and mine[:-2] == theirs[:-2] and mine[-1] == theirs[-1]):
+    if not _same_base_stock_resident(held, request_key):
         return 0
     return max(int(size_bytes), 0)
 
 
-__all__ = ["lora_bake_bytes", "patched_base_keys", "swap_credit_bytes"]
+def _keys(held: object, request_key: str) -> tuple[tuple, tuple] | None:
+    """This request's key and the slot's, parsed, for a stock resident; else None."""
+    import ast
+
+    if not isinstance(held, dict) or held.get("residency") != "stock":
+        return None
+    try:
+        mine, theirs = ast.literal_eval(request_key), ast.literal_eval(held.get("request_key") or "")
+    except (ValueError, SyntaxError):
+        return None
+    ok = isinstance(mine, tuple) and isinstance(theirs, tuple) and len(mine) > 2 and len(theirs) > 2
+    return (mine, theirs) if ok else None
+
+
+def _same_base_stock_resident(held: object, request_key: str) -> bool:
+    """Whether the slot holds a stock copy of this request's base, whatever its stack."""
+    keys = _keys(held, request_key)
+    # (*base_key, lora_signature, quant): the same base checkpoint, any stack.
+    return keys is not None and keys[0][:-2] == keys[1][:-2] and keys[0][-1] == keys[1][-1]
+
+
+def _names(signature: object) -> set[str] | None:
+    """The LoRA files a stack signature ``((name, strength), ...)`` names, or None."""
+    if not isinstance(signature, tuple) or not all(
+            isinstance(entry, tuple) and entry and isinstance(entry[0], str) for entry in signature):
+        return None
+    return {entry[0] for entry in signature}
+
+
+def held_backup_credit(held: object, request_key: str, size_bytes: int) -> int:
+    """The host copy ComfyUI's backup holds that this LoRA change re-applies from, or 0.
+
+    The Worker reports the backup's host bytes, a lower bound, only for the state
+    measured on 2026-11-05 (``actor/worker_capacity._backup_bytes``). The held stack
+    patched every weight a stack of its own files patches, so a change to such a
+    stack (a strength, an order, a LoRA removed) swaps in place from that copy and
+    places again only what the backup lacks, 3.8 MiB for the distill LoRA's base.
+    E3's 0.8 GiB was the 0.69 GiB LoRA file read again plus the patch temporaries,
+    which the price charges beside this credit. A file the held stack lacks gets
+    nothing, since the store may reload, which keeps the backup through the fresh
+    load. Never more than the host copy the stock price charges.
+    """
+    from .capacity_fit import STOCK_PLACEMENT_RATIO
+
+    reported = held.get("backup_bytes") if isinstance(held, dict) else None
+    keys = _keys(held, request_key)
+    if (keys is None or not isinstance(reported, int) or isinstance(reported, bool)
+            or reported <= 0):
+        return 0
+    mine, theirs = _names(keys[0][-2]), _names(keys[1][-2])
+    if mine is None or not theirs or not mine <= theirs:
+        return 0
+    return min(reported, int(STOCK_PLACEMENT_RATIO * max(int(size_bytes), 0)))
+
+
+def stack_file_bytes(stack: object) -> int | None:
+    """The bytes of a stack's LoRA files, from ``(lora_stack, resolve_lora_path)``, or None.
+
+    The Worker reads each LoRA through the pread backend into anonymous memory on
+    every in-place change (``ModelStore._build_active``), so a backup credit is net
+    of them. A file it cannot find or size reads as unknown.
+    """
+    try:
+        entries: Any
+        resolve: Any
+        entries, resolve = stack  # type: ignore[misc]
+        return sum(int(os.path.getsize(resolve(str(entry["name"])))) for entry in entries or ())
+    except Exception:
+        return None
+
+
+def credit_hot_swap(fit: Any, held: object, request_key: str, context: dict | None,
+                    slab_weights: object, stack: object = None) -> Any:
+    """The stock price of a LoRA change the store makes in place, with the held copy credited.
+
+    The quote reads such a change as a swap and would price a whole stock load
+    beside the base the slot already holds. The store does not load it again:
+    ``store_bake.swaps_in_place`` says it keeps the base and re-applies the
+    stack, which places at most the host copy of the weights the stack patches.
+    So the file's own copy is credited and the host copy and the floor stay
+    charged. Measured on 2026-11-04 on the head, the INT8 Wan-Animate 2 hot swap
+    on a freshly loaded base took about 16 GiB of the box's free memory, 22.1 GiB
+    priced this way, and its one-step sample about 10 GiB more; the BF16 file was
+    refused at 69.1 GiB against 61.8 GiB available, where this price is 38.6 GiB.
+    The Worker's own ladder never applies the credit (``store_residency.resolve``
+    passes no snapshot), so a change that falls back to a fresh load is priced
+    whole there. An explicit ``slab_weights=on`` drops a stock
+    resident before it loads, so it gets no credit. A change the store makes by
+    dropping this copy and loading fresh (``store_bake.copies_off_the_gpu``)
+    keeps it: the drop returns the copy, and its wall prices the load whole. A
+    change to a stack of the held stack's own files is also credited the backup
+    the Worker reports (``held_backup_credit``), net of its own LoRA files
+    (``stack_file_bytes``); ``credit_bytes`` carries both credits, so a clear is
+    still weighed against the price a cleared box pays (``old_model``).
+    """
+    from dataclasses import replace
+
+    if ((context or {}).get("would_load") != "swap" or slab_weights is True  # WOULD_LOAD_SWAP
+            or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None
+            or not isinstance(held, dict) or held.get("swaps_in_place") is not True
+            or not _same_base_stock_resident(held, request_key)):
+        return fit
+    # The copy the slot holds: the file's size, or a cast's own. The store may drop
+    # it and load fresh (store_bake.copies_off_the_gpu), so a cast is credited no
+    # more than the lower bound the Worker reports for it (credit_stock_swap's
+    # figure), and nothing when it reports none; the price's cast figure is an
+    # upper bound.
+    held_bytes = int(getattr(fit, "resident_bytes", fit.size_bytes))
+    if int(getattr(fit, "cast_bytes", 0) or 0) > 0:
+        reported = held.get("resident_bytes")
+        if isinstance(reported, int) and not isinstance(reported, bool) and reported > 0:
+            held_bytes = min(held_bytes, reported)
+        else:
+            held_bytes = 0
+    if held_bytes <= 0:
+        return fit
+    # ComfyUI's backup of the held stack's weights, where this change re-applies from it,
+    # net of the new stack's own files; none when they cannot be sized or cost as much.
+    files = stack_file_bytes(stack)
+    backup = 0 if int(getattr(fit, "cast_bytes", 0) or 0) > 0 or files is None else held_backup_credit(
+        held, request_key, fit.size_bytes)
+    if files is None or backup <= files:
+        backup = files = 0
+    credited = replace(fit, credit_bytes=held_bytes + backup - files, backup_bytes=backup,
+                       stack_bytes=files)
+    return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
+
+
+def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
+    """The stock price of a load that replaces the slot's own stock resident.
+
+    The store never holds both copies. A stack change on the same file keeps
+    the base (``credit_hot_swap``, the LoRA case of this credit), and every
+    other swap drops the slot before it loads (``actor/store_load.fresh_load``).
+    A drop of a stock resident returns its GPU copy in-process: on 2026-11-05
+    the head rose from 58.7 to 88.5 GiB, and from 57.9 to 88.5, as the store
+    dropped a 26.6 GiB bf16-cast Wan 2.2 DiT. So that copy is credited, the file
+    or a lower bound of a cast's own, as the quote endpoint reports it in the
+    slot's snapshot entry (``actor/worker_capacity._resident_bytes``) when the
+    entry still describes the resident those figures were read from; the arena
+    a stock load retains is not. A slab, comfy-managed or FSDP resident, and a slot whose
+    load or cleanup is in flight, are priced as held.
+    """
+    from dataclasses import replace
+
+    held_bytes = held.get("resident_bytes") if isinstance(held, dict) else None
+    if (getattr(fit, "credit_bytes", 0) > 0 or (context or {}).get("would_load") != "swap"
+            or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None
+            or not isinstance(held, dict) or held.get("residency") != "stock"
+            or not isinstance(held_bytes, int) or isinstance(held_bytes, bool) or held_bytes <= 0):
+        return fit
+    credited = replace(fit, credit_bytes=held_bytes, dropped=str(held.get("resident_name") or "a model"))
+    return replace(credited, fits=credited.required_bytes <= credited.avail_bytes)
+
+
+__all__ = ["credit_hot_swap", "credit_stock_swap", "held_backup_credit", "lora_bake_bytes",
+           "patched_base_keys", "stack_file_bytes", "swap_credit_bytes"]

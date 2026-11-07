@@ -1129,7 +1129,7 @@ def test_the_slab_card_names_the_partial_load_regime(monkeypatch):
     from dgx_monarch.actor import store_slab_admit
 
     fit = _price_against(monkeypatch, _M1_FILE_BYTES, _M1_HOLD64_AVAIL)
-    text = store_slab_admit.card(fit, "flux2-dev.safetensors", "this host")
+    text = store_slab_admit.card(fit, "flux2-dev.safetensors")
     assert "a 60.0 GiB file plus a 5.0 GiB floor for the rest of the box" in text
     assert "ComfyUI stops keeping a model whole and offloads part of the weights" in text
     # The card's stock figure is the stock wall's own price, floor included;
@@ -1150,7 +1150,7 @@ def test_a_reserve_smaller_than_the_absolute_floor_is_named_as_outranked(monkeyp
     gib = 1 << 30
     fit = _price_against(monkeypatch, 60 * gib, 40 * gib, reserve_bytes=4 * gib)
     assert fit.floor_bytes == capacity_fit.ABSOLUTE_HOST_FLOOR_BYTES
-    text = store_slab_admit.card(fit, "big.safetensors", "this host",
+    text = store_slab_admit.card(fit, "big.safetensors",
                                  reserve_bytes=4 * gib)
     assert "plus a 5.0 GiB floor for the rest of the box, above the 4.0 GiB" in text
     assert "this host reserves (uma_reserve_gb), which it outranks" in text
@@ -1172,14 +1172,14 @@ def test_a_reserve_the_absolute_floor_outranks_is_still_named(monkeypatch):
     gib = 1 << 30
     fit = _price_against(monkeypatch, 4 * gib, 6 * gib, reserve_bytes=10 * gib)
     assert fit.floor_bytes == capacity_fit.ABSOLUTE_HOST_FLOOR_BYTES
-    text = store_slab_admit.card(fit, "small.safetensors", "this host",
+    text = store_slab_admit.card(fit, "small.safetensors",
                                  reserve_bytes=10 * gib)
     assert "plus a 5.0 GiB floor for the rest of the box, above the 10.0 GiB" in text
     assert "which the arena cap clipped" in text
     # A host with no reserve set says nothing about one.
     plain = _price_against(monkeypatch, 4 * gib, 6 * gib)
     assert "uma_reserve_gb" not in store_slab_admit.card(
-        plain, "small.safetensors", "this host")
+        plain, "small.safetensors")
 
 
 def _write_minimal_safetensors(path, tensors: dict) -> None:
@@ -1296,7 +1296,7 @@ def test_the_bake_backstop_refuses_typed_before_the_bake_runs(monkeypatch):
     monkeypatch.setattr(_ms, "mem_available_bytes", lambda: 5 << 30)
 
     with pytest.raises(StockLoadCapacityError, match="LoRA bake"):
-        store_slab_admit.admit_bake(active, "m.safetensors", "this host")
+        store_slab_admit.admit_bake(active, "m.safetensors")
 
 
 def test_the_bake_backstop_admits_a_patch_set_that_fits(monkeypatch):
@@ -1310,7 +1310,7 @@ def test_the_bake_backstop_admits_a_patch_set_that_fits(monkeypatch):
     from dgx_monarch import mesh_safety as _ms
     monkeypatch.setattr(_ms, "mem_available_bytes", lambda: 100 << 30)
 
-    store_slab_admit.admit_bake(active, "m.safetensors", "this host")  # no raise
+    store_slab_admit.admit_bake(active, "m.safetensors")  # no raise
 
 
 def test_the_bake_backstop_charges_the_floor_the_slab_price_charged(monkeypatch):
@@ -1327,11 +1327,11 @@ def test_the_bake_backstop_charges_the_floor_the_slab_price_charged(monkeypatch)
     active = types.SimpleNamespace(model=_FakeModel(), patches={"w": []})
     # 7 GiB free: enough over the 5 GiB absolute floor, short of a 12 GiB reserve.
     monkeypatch.setattr(_ms, "mem_available_bytes", lambda: 7 << 30)
-    store_slab_admit.admit_bake(active, "m.safetensors", "host")  # the absolute floor fits
+    store_slab_admit.admit_bake(active, "m.safetensors")  # the absolute floor fits
     floor = capacity_fit.slab_floor_bytes(40 << 30, 12 << 30)
     assert floor == 12 << 30
     with pytest.raises(StockLoadCapacityError, match="the bake did not run"):
-        store_slab_admit.admit_bake(active, "m.safetensors", "host", floor)
+        store_slab_admit.admit_bake(active, "m.safetensors", floor)
 
 
 def test_the_bake_backstop_makes_no_claim_on_a_stub_active(monkeypatch):
@@ -1340,4 +1340,4 @@ def test_the_bake_backstop_makes_no_claim_on_a_stub_active(monkeypatch):
     from dgx_monarch.actor import store_slab_admit
 
     monkeypatch.setattr(_ms, "mem_available_bytes", lambda: 1)  # would refuse if it priced
-    store_slab_admit.admit_bake(types.SimpleNamespace(model="STUB"), "m.safetensors", "host")
+    store_slab_admit.admit_bake(types.SimpleNamespace(model="STUB"), "m.safetensors")

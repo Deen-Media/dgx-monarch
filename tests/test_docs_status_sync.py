@@ -68,6 +68,7 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "MOSS-Image SFT"): ("moss_image", "HW"),
     ("image", "MOSS-Image Base"): ("moss_image", "HW"),
     ("image", "Kromoss"): ("moss_image", "HW"),
+    ("image", "p-h3-image"): ("minimax_h3", "HW"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),
@@ -89,6 +90,7 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("video", "Wan 2.1 (t2v)"): ("wan", "HW"),
     ("video", "Wan 2.2 (t2v, high/low)"): ("wan", "HW"),
     ("video", "Wan 2.2 (i2v)"): ("wan", "HW"),
+    ("video", "Wan 2.2 TI2V 5B"): ("wan", "HW"),
     ("video", "Wan 2.1 (i2v)"): ("wan", "HW"),
     ("video", "Wan FlowRVS"): ("wan", "HW"),
     ("video", "Wan Bernini-R"): ("wan", "HW"),
@@ -214,6 +216,18 @@ _REQUIRED_DETAIL_EVIDENCE: dict[
         "VALIDATION.md",
         '<a id="evidence-wan-animate-2"></a>',
         ("INT8", "BF16", "identical rank latents"),
+    ),
+    "p-h3-image": (
+        "VALIDATION.md",
+        '<a id="evidence-p-h3-image"></a>',
+        ("PASS for all three files", "pixel-identical to stock",
+         "minimax_h3 USP injected: 50 blocks, sp=2", "NRMS 0.0)"),
+    ),
+    "Wan 2.2 TI2V 5B": (
+        "VALIDATION.md",
+        '<a id="evidence-wan-2-2-ti2v-5b"></a>',
+        ("20 steps", "121 of 121 pixel-identical", "table row 50",
+         "correlation 0.9999"),
     ),
 }
 _DETAIL_STATUS_RE = re.compile(
@@ -660,6 +674,7 @@ def test_hw_warning_exempt_families_are_explicitly_reviewed() -> None:
         f"review code and this contract together, got {sorted(code)}"
     )
     statuses = _doc_family_statuses()
+    # Wan 2.2 TI2V 5B passed its 20-step comparisons on 2026-11-04.
     assert statuses["wan"] == {"HW"} and "wan" not in code
     assert statuses["wan_scail"] == {"HW"} and "wan_scail" not in code
     assert statuses["wan_dancer"] == {"HW"} and "wan_dancer" not in code
@@ -671,6 +686,8 @@ def test_hw_warning_exempt_families_are_explicitly_reviewed() -> None:
     # The 2026-08-04 campaign exercised the former time_shift_slope
     # contract; the carried-audio ODE change demoted the row on 2026-08-06,
     # and the 2026-08-07 re-gate ladder repromoted it (docs/VALIDATION.md).
+    # p-h3-image, a MiniMax H3 DiT, passed its runbook cells 1 to 3 for all
+    # three DiT files on 2026-11-05.
     assert statuses["minimax_h3"] == {"HW"} and "minimax_h3" not in code
 
 
@@ -846,6 +863,12 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Kandinsky5-Video Pro", "uly"): ("scoped", "FSDP validated"),
     ("MiniMax H3 (t2va/fl2va/ref2va AV)", "uly"): (
         "granted", "2026-08-07 carried-audio scope, NRMS 0.000 per stream"),
+    ("p-h3-image", "uly"): (
+        "granted", "2026-11-05 BF16, INT8 ConvRot and W4A8 uly2 pixel-identical to one "
+        "rank, and one rank to stock, at one step and 2912 square"),
+    ("Wan 2.2 TI2V 5B", "uly"): (
+        "granted", "2026-11-04 uly2 pixel-identical to one GPU for text and image to "
+        "video, and one GPU to stock for text to video, 121 of 121 frames at 20 steps"),
 }
 
 # Cells that must read constrained (_CONSTRAINED_MARK): FSDP cells whose

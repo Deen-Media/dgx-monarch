@@ -311,8 +311,8 @@ def load_diffusion_model_slab(path: str, model_options: dict, loader,
         if fit.applies and not fit.fits:
             raise StockLoadCapacityError(refusal(
                 RefusalClass.CAPACITY, f"stock residency cannot load {unet_name or os.path.basename(path)}: the load needs "
-                f"{fit.required_gib} GiB (a {fit.size_gib} GiB file, the host copy it is placed from and the "
-                f"host floor) and only {fit.avail_gib} GiB of unified memory is available. Slab residency cannot "
+                f"{fit.required_gib} GiB ({fit.terms}) and only {fit.avail_gib} GiB of unified memory is "
+                "available. Slab residency cannot "
                 "help: the slab loader cannot represent this checkpoint's dtype, so it fell back to a stock load, "
                 "and no capacity consent can change that. What would fit: more free unified memory on this host, "
                 "or a pruned or quantized artifact.", guard="stock_load_preflight", waivable=False)) from load_exc
@@ -506,10 +506,11 @@ def _apply_worker_args(worker_args: dict) -> None:
         -1 if worker_args.get("disable_pinned_memory")
         else _MEMORY_BASELINE["MAX_PINNED_MEMORY"])
     # comfy's import-time "pinned N / M streams" lines are both overwritten
-    # above and nothing else records the result; log the final UMA posture.
-    log.info("UMA posture: streams=%s pinned=%s smart_memory=%s reserve=%.1fGiB",
-             mm.NUM_STREAMS, mm.MAX_PINNED_MEMORY,
-             not mm.DISABLE_SMART_MEMORY, mm.EXTRA_RESERVED_VRAM / 2**30)
+    # above; log the final UMA posture and the mimalloc purge delay (cli/worker_process_env).
+    log.info("UMA posture: streams=%s pinned=%s smart_memory=%s reserve=%.1fGiB "
+             "host_purge_delay=%s", mm.NUM_STREAMS, mm.MAX_PINNED_MEMORY,
+             not mm.DISABLE_SMART_MEMORY, mm.EXTRA_RESERVED_VRAM / 2**30,
+             os.environ.get("MIMALLOC_PURGE_DELAY", "default"))
 
 
 def resolve_model_path(kind: str, name: str) -> str:
@@ -517,15 +518,14 @@ def resolve_model_path(kind: str, name: str) -> str:
 
     Model files are referenced by name so each host resolves against its own
     models directory; the requirement is the same relative layout on all hosts.
+    A missing file says "here"; the driver names the box (worker_box.py).
     """
     import folder_paths
 
     path = folder_paths.get_full_path(kind, name)
     if path is None:
-        import socket
-
         raise FileNotFoundError(
-            f"model {name!r} (kind {kind!r}) not found on host {socket.gethostname()}. "
+            f"model {name!r} (kind {kind!r}) was not found here. "
             "Cluster renders need the model present on every worker host under the same name."
         )
     return path

@@ -16,7 +16,7 @@ from .. import attention_pins, fp8_compute, lora_quant_guard, residency_mode
 from ..compile_policy import compile_dit_blocks_slab, compile_dit_is_known_noop
 from ..constants import TRANSITION_LOAD
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error
-from . import load_fault, store_detect, store_identity, store_residency
+from . import actor_footprint, load_fault, store_detect, store_identity, store_residency
 
 
 def fresh_load(
@@ -68,6 +68,9 @@ def fresh_load(
     # store no setup has touched, and it hides a missing copy rather than
     # raising over it, so the routing tests pin the figure that arrives here.
     reserve_bytes = int(float(getattr(store, "uma_reserve_gb", 0.0) or 0.0) * (1 << 30))
+    # Before the drop and the placement: the old-model card's arena is measured
+    # from this process's first reading (actor_footprint.py).
+    actor_footprint.note_first_load()
     store._drop(slot)
     t0 = time.perf_counter()
     path = fsdp_preflight_path or resolve_model_path(
@@ -263,10 +266,9 @@ def fresh_load(
                     # bake runs.
                     from .. import capacity_fit
                     from . import store_slab_admit
-                    from .rescue_offer import host_name
 
                     size = os.path.getsize(path) if os.path.exists(path) else 0
-                    store_slab_admit.admit_bake(active, unet_name, host_name(),
+                    store_slab_admit.admit_bake(active, unet_name,
                                                 capacity_fit.slab_floor_bytes(size, reserve_bytes))
                 unbake_record = _merge_and_free(active, base_path=path)
         if slab is not None:

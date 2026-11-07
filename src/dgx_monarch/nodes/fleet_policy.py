@@ -142,6 +142,11 @@ def _fleet_worker_policy(spec: ModelSpec, handle) -> _FleetAuthorization:
         "lora_low_rss=off until an exact PASS exists",
         state,
     )
+    if requested.get("slab_weights") is True:
+        # A stock refusal then names this, not the setting the user made.
+        from .refusal_lead import note_forced_stock
+
+        note_forced_stock(state)
     return _FleetAuthorization(
         {**requested, "slab_weights": False, "lora_low_rss": False},
         model_request,

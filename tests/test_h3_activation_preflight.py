@@ -2327,9 +2327,10 @@ def test_the_budget_clause_names_activations_only_when_it_charged_them(
     printed rather than lost to the first arm."""
     claim = "render activations this graph has not spent yet"
     # No canvas node, so no activation term, and a budget low enough that the
-    # SETTLED window is the one that refuses.
+    # SETTLED window is the one that refuses. Slab residency places no host
+    # copy, so the load window fits and the settled window is the worst one.
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(57 * _GIB))
-    silent = _refuse_loader(_Mesh(), UNET_NAME,
+    silent = _refuse_loader(_Mesh({"slab_weights": True}), UNET_NAME,
                             _h3_graph(CONFIG_B, canvas_node=False))
     if f"at the {loader_preflight.WINDOW_SETTLED} window" not in silent:
         pytest.fail(f"fixture drift: this arm must refuse at the settled "
@@ -2343,7 +2344,7 @@ def test_the_budget_clause_names_activations_only_when_it_charged_them(
     loader_preflight.reset_memos()
     monkeypatch.setattr(loader_graph, "_comfy_has_loaded_models", lambda: True)
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: int(50 * _GIB))
-    credited = _refuse_loader(_Mesh(), UNET_NAME, _h3_graph(CONFIG_B))
+    credited = _refuse_loader(_Mesh({"slab_weights": True}), UNET_NAME, _h3_graph(CONFIG_B))
     reason = loader_graph.credited_terms(_terms(_h3_graph(CONFIG_B))).credit_reason
     if not reason:
         pytest.fail("fixture drift: this arm must exercise the credit path")

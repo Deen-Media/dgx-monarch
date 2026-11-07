@@ -15,7 +15,9 @@ only when slab can run safely; otherwise a capacity refusal names the blocker.
 ``resolve`` is a wrapper: ``capacity_quote.price`` holds the arithmetic and the
 rung vocabulary, and the raises stay here, so each refusal keeps its site and
 sentence. The rest of this module is what the driver never needs: the
-operator's text, the wire tail and the store's own evidence.
+operator's text, the wire tail and the store's own evidence. Each wall says
+"here", never a host: a Worker does not know which box the driver runs on, so
+the driver puts the box ahead of the sentence (``worker_box.py``).
 
 The module itself imports neither torch nor ComfyUI, so it stays CPU-testable.
 Mixed worker and driver versions fail closed because an unknown consent
@@ -37,7 +39,7 @@ from ..mesh_safety import StockLoadCapacityError
 from ..refusal import PanelAction, RefusalClass, refusal, untagged
 from ..residency_mode import PINNED_STAGING_FACTOR
 from ..transfer_utils import failure_summary, safe_call
-from . import capacity_quote, store_slab_admit
+from . import actor_footprint, capacity_quote, store_slab_admit
 
 # One home for the rung words and the shared price helpers; a caller that
 # spells them ``store_residency.X`` resolves the same object.
@@ -148,18 +150,18 @@ def resolve(
         # card. A raise here would take the bare branch below, which drops the
         # managed card's staging cause, fixes and entry pointer.
         if row.use_slab and slab_fit is not None:
-            store_slab_admit.admit(slab_fit, unet_name, _host(),
-                                   reserve_bytes=reserve_bytes)
+            store_slab_admit.admit(slab_fit, unet_name, reserve_bytes=reserve_bytes,
+                                   tail=actor_footprint.block_clause(row.slab_measured))
         if row.blocker is not None and fit is not None:
             raise StockLoadCapacityError(refusal(
                 RefusalClass.CAPACITY, _no_rescue_text(unet_name, fit, row.blocker),
                 guard=RESCUE_GUARD, waivable=False,
                 troubleshooting=_TROUBLESHOOTING) + _wire_tail(fit, None))
-        # The FSDP rung. Its own check built this sentence and this wrapper
-        # re-raises it under the same class and guard, so the operator meets one
-        # refusal with one boundary named, not an echo of another module's tag.
+        # The FSDP rung, or explicit slab under a cast. Its own check built this
+        # sentence and this wrapper re-raises it under the same class and guard, so
+        # the operator meets one refusal with one boundary named, not an echo.
         raise StockLoadCapacityError(refusal(
-            RefusalClass.CAPACITY, untagged(row.reason),
+            RefusalClass.CAPACITY, untagged(row.reason) + actor_footprint.block_clause(row.measured),
             guard=RESCUE_GUARD, waivable=False))
     if row.verdict == capacity_quote.VERDICT_RESCUE and fit is not None:
         raise SlabResidencyRescueOffer(refusal(
@@ -197,7 +199,8 @@ def _stock_fit(row: capacity_quote.RankPrice) -> StockFit | None:
         return None
     return StockFit(bool(block["fits"]), bool(block["applies"]),
                     int(block["checkpoint_bytes"]), block["mem_available_bytes"],
-                    "" if block["applies"] else row.reason)
+                    "" if block["applies"] else row.reason,
+                    cast_bytes=int(block.get("cast_bytes") or 0))
 
 
 def _slab_fit(row: capacity_quote.RankPrice) -> SlabFit | None:
@@ -215,13 +218,12 @@ def _slab_fit(row: capacity_quote.RankPrice) -> SlabFit | None:
 def _no_rescue_text(unet_name: str, fit: StockFit, blocker: tuple[str, str]) -> str:
     why, options = blocker
     return (
-        f"stock residency cannot load {unet_name} on {_host()}: the load needs "
-        f"{fit.required_gib} GiB (a {fit.size_gib} GiB file, the host copy it is placed "
-        f"from and the host floor) and only {fit.avail_gib} GiB of unified memory is "
-        f"available, so it would be killed out of memory. Slab rescue is unavailable here "
+        f"stock residency cannot load {unet_name} here: the load needs "
+        f"{fit.required_gib} GiB ({fit.terms}) and only {fit.avail_gib} GiB of unified "
+        f"memory is available, so it would be killed out of memory. Slab rescue is unavailable here "
         f"because {why}. What would fit: {options}. This refusal is capacity-protective "
         "(class C, StockLoadCapacityError family); nothing was loaded and nothing was quarantined."
-    )
+    ) + actor_footprint.ladder_clause(fit.required_bytes, fit.avail_bytes)
 
 
 def _rescue_offer_text(descriptor: ConsentDescriptor, fit: StockFit,
@@ -233,14 +235,14 @@ def _rescue_offer_text(descriptor: ConsentDescriptor, fit: StockFit,
     """
     clause = f" {cold_memo}" if cold_memo else ""
     return (
-        f"capacity rescue available for {descriptor.unet_name} on {_host()}: stock residency "
+        f"capacity rescue available for {descriptor.unet_name} here: stock residency "
         f"needs {fit.required_gib} GiB of unified memory for a {fit.size_gib} GiB file and "
         f"only {fit.avail_gib} GiB is available, so the stock load would be killed out of "
         f"memory. Zero-copy slab residency fits this checkpoint, and "
         f"{consent_descriptor.EVIDENCE_BYTE_VERIFIED}.{clause} This refusal is "
         "capacity-protective (StockLoadCapacityError family); nothing was loaded and "
         "nothing was quarantined."
-    )
+    ) + actor_footprint.ladder_clause(fit.required_bytes, fit.avail_bytes)
 
 
 def _wire_tail(fit: StockFit, descriptor: ConsentDescriptor | None) -> str:
@@ -304,7 +306,7 @@ def preload_capacity_check(
                 path, model_options, reserve_bytes=reserve_bytes,
                 lora_stack=lora_stack if lora_low_rss else None,
                 resolve_lora_path=resolve_lora_path or default_resolve_lora_path),
-            unet_name, _host(), reserve_bytes=reserve_bytes)
+            unet_name, reserve_bytes=reserve_bytes)
         return
     if decision.rung != RUNG_COMFY_MANAGED:
         if fsdp_launch:
@@ -344,9 +346,7 @@ def preload_capacity_check(
                 raise StockLoadCapacityError(refusal(
                     RefusalClass.CAPACITY,
                     f"stock residency cannot load {unet_name}: the load needs "
-                    f"{fit.required_gib} GiB including the host copy it is placed from and the "
-                    f"{capacity_fit.ABSOLUTE_HOST_FLOOR_BYTES / 2**30:.1f} GiB host floor, "
-                    f"but only {fit.avail_gib} GiB is available.",
+                    f"{fit.required_gib} GiB ({fit.terms}), but only {fit.avail_gib} GiB is available.",
                     guard=RESCUE_GUARD, waivable=False) + _wire_tail(fit, None))
             return
         preflight(path, unet_name, model_options)
@@ -386,7 +386,7 @@ def preload_capacity_check(
     )
     raise StockLoadCapacityError(refusal(
         RefusalClass.CAPACITY,
-        f"comfy-managed residency cannot load {unet_name} on {_host()}: the checkpoint "
+        f"comfy-managed residency cannot load {unet_name} here: the checkpoint "
         f"is {size / 2 ** 30:.1f} GiB and only {avail / 2 ** 30:.1f} GiB of unified "
         f"memory is available, {(required - avail) / 2 ** 30:.1f} GiB short of what this "
         f"load needs. {staging}. What would fit: free unified memory on this host (drop "

@@ -373,10 +373,10 @@ def test_the_exchange_is_the_first_collective_of_the_render():
     """Nothing collective may run between the load and the exchange.
 
     A rank already inside another collective when its peer reaches this one
-    would deadlock at the exchange. On the topologies this covers,
-    ``partial_load_guard`` owns the only ``dist`` collective in the package
-    outside the FSDP and ring-attention paths, and the sampler reaches it after
-    this exchange.
+    would deadlock at the exchange. On the topologies this covers, outside the
+    FSDP and ring-attention paths, ``partial_load_guard`` and the cond batch
+    agreement own the package's only ``dist`` collectives, and the sampler
+    reaches both after this exchange.
     """
     import ast
 
@@ -384,9 +384,12 @@ def test_the_exchange_is_the_first_collective_of_the_render():
                    "broadcast", "reduce", "reduce_scatter", "gather", "scatter",
                    "send", "recv", "monitored_barrier"}
     # Exempt by design: the guard the exchange runs ahead of; ring attention,
-    # which runs inside the sampler after the exchange; and every FSDP file,
-    # since an FSDP fleet takes no exchange.
-    exempt = {"actor/partial_load_guard.py", "adapters/wan_ring_attention.py"}
+    # which runs inside the sampler after the exchange; the cond batch
+    # agreement, which runs inside the sampler's model calls, after
+    # ``rank_readiness.exchange_ready`` in ``run_sample`` and after the guard;
+    # and every FSDP file, since an FSDP fleet takes no exchange.
+    exempt = {"actor/partial_load_guard.py", "adapters/wan_ring_attention.py",
+              "actor/cond_batch_agreement.py"}
 
     def _is_distributed(func: ast.Attribute) -> bool:
         target = func.value

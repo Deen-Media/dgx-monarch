@@ -105,6 +105,11 @@ def call_all_bound(
             handle, endpoint_name, send, setup_token=setup_token)
         value_mesh = handle._await_or_evict(future, timeout_s)
     except BaseException as exc:
+        # The box the Worker's error came from, ahead of its own words, before
+        # any reader below sees them (worker_box.py).
+        from . import worker_box
+
+        worker_box.name(exc, handle)
         # A worker-raised consent offer becomes a panel card here, on the one
         # driver frame that holds every load, gate-leg and sigma refusal.
         # Local import: only this exception branch reaches the observer.
@@ -309,6 +314,7 @@ def verify_request_artifacts(
             "world": physical["physical_world"],
             "hosts": physical["hosts"],
             "gpus_per_host": physical["gpus_per_host"],
+            "runtime": physical["runtime"],
             "topology_preset": policy.get("topology_preset"),
             "attention": policy.get("attention"),
             "sync_ulysses": policy.get("sync_ulysses"),
@@ -344,8 +350,14 @@ def verify_request_artifacts(
         if "hosts" in list(handle.workers.extent.labels):
             coords["hosts"] = worker_index // handle.gpus_per_host
         worker = handle.workers.slice(**coords)
-        result = handle._await_or_evict(
-            worker.artifact_identity.call_one(specs), timeout_s=120)
+        try:
+            result = handle._await_or_evict(
+                worker.artifact_identity.call_one(specs), timeout_s=120)
+        except BaseException as exc:
+            from . import worker_box
+
+            worker_box.name(exc, handle, worker_index)
+            raise
         results = [result]
     mesh_safety.assert_artifact_parity(results, expected)
     request["_dgxm_artifact_sets"] = expected

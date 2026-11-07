@@ -554,7 +554,7 @@ Description=ComfyUI driver with DGX Monarch
 
 [Service]
 WorkingDirectory=/home/user/ComfyUI
-Environment=CUDA_CACHE_MAXSIZE=4294967296 CUDA_MODULE_LOADING=LAZY OMP_NUM_THREADS=16
+Environment=CUDA_CACHE_MAXSIZE=4294967296 CUDA_MODULE_LOADING=LAZY OMP_NUM_THREADS=16 MIMALLOC_PURGE_DELAY=0
 Environment=TRITON_PTXAS_PATH=/usr/local/cuda/bin/ptxas DGXM_CLUSTER_TOML=/home/user/.config/dgx-monarch/cluster.toml
 UnsetEnvironment=NCCL_P2P_DISABLE NCCL_PROTO
 ExecStart=/home/user/monarch-env/bin/python /home/user/ComfyUI/main.py --listen 127.0.0.1 --port 8188 --disable-pinned-memory --disable-async-offload --reserve-vram 2 --bf16-vae --bf16-text-enc --dont-upcast-attention --disable-auto-launch
@@ -806,8 +806,9 @@ allow selecting the same file again after a success or error.
 
 The prompt boxes read Prompt and Negative prompt. The inputs chosen under
 Ordered prompt styles take those roles; otherwise the graph decides: the text
-that reaches a sampler's `positive` input is the prompt, and the text that
-reaches its `negative` input is the negative prompt. A node that encodes both
+that reaches a sampler's `positive` input, or the one `conditioning` input of
+a Basic Guider, is the prompt, and the text that reaches its `negative` input
+is the negative prompt. A node that encodes both
 texts, such as Qwen Image 2.1's, gives each the role its input name says. When
 several boxes share a role, each adds its input name or its node. Any other
 multi-line text box, and a text box whose input name another one repeats, reads
@@ -1220,7 +1221,12 @@ The classes are those of
 [DESIGN.md section 5.9](DESIGN.md#59-refusal-taxonomy-what-a-typed-refusal-is-allowed-to-do):
 P physics, C capacity-protective, U unproven correctness and K known-wrong math.
 Any other message shows its error code and its first sentence. When the message
-names the driver's panel and headless remedy, the status line shows it. Expand
+names the driver's panel and headless remedy, the status line shows it. When a
+model loaded earlier is in the way, the message says which old model
+is still loaded on which box, and its remedy names the ComfyUI panel's Old
+model in the way card and its Clear and retry button, or Reset attached mesh,
+then queue again. Studio has no control for either, so clear the attached mesh
+in the ComfyUI panel, then retry the job. Expand
 the Queue row for the full text, the guard, the error code and a link to the
 docs/TROUBLESHOOTING.md entry the message cites. The link opens that page, so
 find the entry by its number. When the companion shortens a long message it
@@ -1231,9 +1237,15 @@ shows a 64 pixel thumbnail of the job's newest final output when the snapshot
 holds one, and nothing when it does not. The preview downloads once the row
 scrolls within 200 pixels of the visible area.
 
-A refusal that a consent can clear carries a consent request. The status line
-and the Queue row then show its reason and the label of the ComfyUI panel button
-that grants it, with a Grant and retry button. That button opens Operations with
+A refusal that a consent can clear names the ComfyUI panel button that grants
+it. The samplers, Fleet KSampler, the UNET loaders and Identity Gate end the
+error with that sentence and drop the machine consent block
+([DESIGN.md section 5.9](DESIGN.md#59-refusal-taxonomy-what-a-typed-refusal-is-allowed-to-do)),
+so for those the status line shows the remedy and no consent request: open
+Operations and choose consent apply, which lists the driver's pending requests.
+A recorded error that still carries a consent request, such as one from an
+older driver, shows its reason and the label of the ComfyUI panel button that
+grants it, with a Grant and retry button. That button opens Operations with
 consent apply chosen and its key and id empty, beside the request's model, kind
 and consent id. Review it: with one pending request the review selects it, and
 with several it lists each one with its consent id. Studio says whether the

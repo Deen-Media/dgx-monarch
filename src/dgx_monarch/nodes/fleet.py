@@ -41,6 +41,7 @@ from .fleet_policy import (
 from .fleet_policy import (
     _FleetAuthorization as _FleetAuthorization,
 )
+from .refusal_lead import lead_with_refusal
 from .render_preflight import (
     latent_without_topology_metadata as _latent_without_topology_metadata,
 )
@@ -248,6 +249,7 @@ class DGXMonarchFleetKSampler:
     FUNCTION = "fleet"
     CATEGORY = NODE_CATEGORY
 
+    @lead_with_refusal
     def fleet(self, model, clip, negative, latent_image, prompts, noise_seed,
               steps, cfg, sampler_name, scheduler, positive=None, unique_id=None):
         # INPUT_IS_LIST: every arg arrives as a list; widgets are 1-element.
@@ -261,6 +263,7 @@ class DGXMonarchFleetKSampler:
         source_latent = dict(latent_image[0])
         consent_waiver.validate_inherited_stamps(source_latent)
         latent = _latent_without_topology_metadata(source_latent)
+        model_patch_preflight.preflight_h3_sigma_shift(spec, {}, latent)  # and the H3 shift (#144)
         prompts_text = prompts[0]
         base_seed, steps_n = int(noise_seed[0]), int(steps[0])
         cfg_v = float(cfg[0])

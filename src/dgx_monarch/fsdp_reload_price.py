@@ -35,7 +35,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any
 
-from . import mesh_safety
+from . import box_names, mesh_safety
 from .adapters.fsdp import fsdp_required_bytes
 from .loader_options import weight_dtype_from_options
 from .log import get_logger
@@ -85,6 +85,8 @@ class ReloadPrice:
     # The leanest rank's resident shard pool, which the proof drops before
     # this load. Last, so the positional constructors keep their meaning.
     credit_bytes: int = 0
+    # The leanest rank in plain words (box_names.py), for the refusal's sentence.
+    box: str = ""
 
     @staticmethod
     def no_claim(reason: str) -> ReloadPrice:
@@ -261,8 +263,10 @@ def price_fsdp_clean_reload(handle: Any, model_request: Mapping[str, Any]) -> Re
     rank, available, credit = leanest
     kind = checkpoint_kind(str(model_request.get("unet_name") or ""))
     required = fsdp_required_bytes(size, world, kind)
+    labels = box_names.fleet_labels(handle, int(world)) if isinstance(world, int) else []
     price = ReloadPrice(True, required <= available + credit, size, required,
-                        available, rank, credit_bytes=credit)
+                        available, rank, credit_bytes=credit,
+                        box=labels[rank] if 0 <= rank < len(labels) else "")
     # Log both outcomes. If the price logged only on a refusal, a price that
     # fits would look like one that made no claim, and the per-rank numbers
     # would exist only for proofs that failed. Keep the text up to "leaving"
@@ -342,7 +346,7 @@ def operator_sentence(
         RefusalClass.CAPACITY,
         f"the FSDP clean-reload proof for {unet_name} needs one more load of "
         f"the {price.checkpoint_gib:.1f} GiB checkpoint, about "
-        f"{price.required_gib:.1f} GiB, but rank {price.rank} reports only "
+        f"{price.required_gib:.1f} GiB, but {price.box or 'the leanest box'} reports only "
         f"{price.mem_available_gib:.1f} GiB of unified memory available plus "
         f"{price.credit_gib:.1f} GiB of resident shards the proof drops first. "
         f"{middle}{counted}"

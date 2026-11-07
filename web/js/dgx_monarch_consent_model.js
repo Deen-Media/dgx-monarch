@@ -131,6 +131,10 @@ export function consentPanelModel(state = {}, ui = {}) {
         // so the checkbox shows the effective state and says who set it.
         autoRescueEnv: Boolean(payload.auto_rescue_env),
         autoRescueBusy: Boolean(plainObject(own(busy, "#auto_rescue")).busy),
+        // Always clear and retry, with DGXM_ALLOW_CLEAR_RETRY as its headless form.
+        autoClear: Boolean(payload.auto_clear) || Boolean(payload.auto_clear_env),
+        autoClearEnv: Boolean(payload.auto_clear_env),
+        autoClearBusy: Boolean(plainObject(own(busy, "#auto_clear")).busy),
         hasPayload: Boolean(state.payload),
     };
 }

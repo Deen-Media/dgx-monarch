@@ -159,6 +159,17 @@ The seams, in run order:
                               3-D activation whose strides chain, the
                               dequantizing expand for one whose strides do
                               not, and mm for both behind the pack's wrapper
+ 48. minimax h3 context windows  the stock node's widgets and frame map, the
+                              handler its execute puts on a clone and the
+                              static schedule it runs, and one model call per
+                              window on a shorter packed clip whose payload
+                              layout is absent, names another clip, or is the
+                              one the window's guides build, so the sharded
+                              forward never keeps a stale one; before ComfyUI
+                              0.44.0 the node is absent and the seam says so
+ 49. lazy switch              the If/Else and Soft Switch inputs and the branch
+                              check_lazy_status evaluates for a fixed choice,
+                              which the loader-side wall prices and no other
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -2012,6 +2023,38 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
         f"bytes for a {width}x{height} guide where the measured probe prices "
         f"{want}"
     )
+
+
+def _assert_lazy_switch_seam() -> None:
+    """The branch the loader-side wall prices behind a switch is the one comfy runs.
+
+    p-h3-image's template feeds its prompt upsampler, an 18 GiB driver model,
+    through If/Else Switch, and with the switch false comfy never loads it
+    (2026-11-05). The wall skips the branch a literal switch does not select
+    (``nodes/graph_live.py``); this seam holds that choice against each
+    switch's own schema and its ``check_lazy_status``.
+    """
+    from comfy_extras import nodes_logic
+
+    from dgx_monarch.nodes import graph_live
+
+    for cls in (nodes_logic.SwitchNode, nodes_logic.SoftSwitchNode):
+        schema = cls.define_schema()
+        assert schema.node_id in graph_live.SWITCH_CLASSES, (
+            f"lazy switch seam: {schema.node_id!r} is not a switch the wall reads")
+        inputs = {item.id: item for item in schema.inputs}
+        assert {"switch", "on_false", "on_true"} <= set(inputs), (
+            f"lazy switch seam: {schema.node_id} inputs are {sorted(inputs)}")
+        assert inputs["on_false"].lazy and inputs["on_true"].lazy, (
+            f"lazy switch seam: {schema.node_id} evaluates both branches")
+        for choice in (True, False):
+            node = {"class_type": schema.node_id,
+                    "inputs": {"switch": choice, "on_false": ["1", 0], "on_true": ["2", 0]}}
+            skipped = graph_live.skipped_branch(node)
+            wanted = cls.check_lazy_status(switch=choice, on_false=None, on_true=None)
+            assert wanted and skipped not in wanted and skipped in ("on_false", "on_true"), (
+                f"lazy switch seam: at switch={choice} comfy evaluates {wanted} and "
+                f"the wall skips {skipped}")
 
 
 class _H3Nested:
@@ -5644,6 +5687,128 @@ def _assert_weight_only_linear_dispatch_seam() -> None:
             del QuantizedTensor.__torch_dispatch__
 
 
+def _minimax_h3_window_calls(handler, wire, *, guides: bool):
+    """Run the stock handler over a packed 107-latent H3 clip; return each model call."""
+    from types import SimpleNamespace
+
+    import comfy.conds
+    import comfy.ldm.minimax.model
+    import comfy.model_base
+    import comfy.utils
+    import torch
+
+    from dgx_monarch import h3_rows
+
+    latent_t, lat_h, lat_w, text_len = 107, 4, 6, 9
+    audio_t = h3_rows.audio_t_for_frames(h3_rows.frames_for_latent_t(latent_t))
+    x_in, shapes = comfy.utils.pack_latents(
+        [torch.zeros(1, 48, latent_t, lat_h, lat_w), torch.zeros(1, 64, 2, audio_t)])
+    keyframes = [{"resolved_frame_index": 0, "latent": torch.zeros(1, 48, 5, lat_h, lat_w)}] if guides else []
+    layout = comfy.ldm.minimax.model.PackedLayout(text_len, latent_t, lat_h, lat_w, audio_t,
+                                                   keyframes=keyframes or None)
+    payload = {"layout": layout, "keyframes": keyframes, "audio_scale": 1.0, "seed": 0}
+    cond = [{"model_conds": {"latent_shapes": comfy.conds.CONDConstant(shapes),
+                             "minimax_payload": comfy.conds.CONDConstant(payload)}}]
+    model = comfy.model_base.MiniMaxH3.__new__(comfy.model_base.MiniMaxH3)
+    torch.nn.Module.__init__(model)
+    model.latent_format = SimpleNamespace(temporal_downscale_ratio=4)
+    calls = []
+
+    def calc_cond_batch(_model, conds, x, _timestep, options):
+        model_conds = conds[0][0]["model_conds"]
+        video, audio = comfy.utils.unpack_latents(x, model_conds["latent_shapes"].cond)
+        calls.append((video.shape[2], audio.shape[-1], model_conds["minimax_payload"].cond,
+                      options["transformer_options"].get("context_window")))
+        return [torch.zeros_like(x)]
+
+    sigmas = torch.tensor([1.0, 0.0])
+    handler.execute(calc_cond_batch, model, [cond], x_in, sigmas[:1],
+                    {"transformer_options": {"sample_sigmas": sigmas}})
+    return calls, (text_len, latent_t, lat_h, lat_w, audio_t)
+
+
+def _assert_minimax_h3_context_windows_seam() -> None:
+    """ComfyUI's MiniMax H3 Context Windows node, which the DGX Monarch carrier applies as is.
+
+    The Worker runs the node's own ``execute`` on the render clone
+    (actor/context_windows_render.py), the carrier node copies its widgets, and
+    the sample deadline counts its static schedule (h3_context_windows.py), so
+    all three are a contract. Windows are cut above the forward: each must reach
+    the model as one ordinary call on a shorter packed clip, with the window in
+    the options and a payload whose layout is absent, names another clip, or is
+    the one the window's own guides build. The sharded H3 forward keeps a
+    layout only on an exact signature match and rebuilds it otherwise, so a
+    kept layout must be the rebuilt one.
+    """
+    try:
+        from comfy_extras.nodes_context_windows import MiniMaxH3ContextWindowsNode
+    except ImportError:
+        print("seam note: minimax h3 context windows: this ComfyUI predates the node (0.44.0 added it)")
+        return
+    import comfy.ldm.minimax.model
+    import comfy.model_patcher
+    import torch
+
+    from dgx_monarch import h3_context_windows as windows
+
+    inputs = {item.id: item for item in MiniMaxH3ContextWindowsNode.define_schema().inputs}
+    assert list(inputs) == ["model", "context_length", "context_overlap", "fuse_method", "freenoise",
+                            "split_conds_to_windows"], f"minimax h3 context windows seam: inputs are {list(inputs)}"
+    for name, bounds in (("context_length", windows.CONTEXT_LENGTH), ("context_overlap", windows.CONTEXT_OVERLAP)):
+        item = inputs[name]
+        assert (item.default, item.min, item.max, item.step) == (
+            bounds["default"], bounds["min"], bounds.get("max"), bounds["step"]), (
+            f"minimax h3 context windows seam: {name} is now {item.default} in [{item.min}, {item.max}] "
+            f"by {item.step}")
+    assert tuple(inputs["fuse_method"].options) == windows.FUSE_METHODS, (
+        f"minimax h3 context windows seam: fuse methods are {inputs['fuse_method'].options}")
+    assert (inputs["fuse_method"].default, inputs["freenoise"].default,
+            inputs["split_conds_to_windows"].default) == (
+        windows.FUSE_DEFAULT, windows.FREENOISE_DEFAULT, windows.SPLIT_CONDS_DEFAULT), (
+        "minimax h3 context windows seam: a default moved")
+    assert tuple(comfy.ldm.minimax.model.FRAME_PER_TOKEN) == windows.FRAME_PER_TOKEN, (
+        "minimax h3 context windows seam: the frame map the audio windows follow moved")
+
+    cpu = torch.device("cpu")
+    patcher = comfy.model_patcher.ModelPatcher(torch.nn.Module(), load_device=cpu, offload_device=cpu)
+    wire = windows.normalize_context_windows({
+        "context_length": 124, "context_overlap": 39, "fuse_method": "pyramid", "freenoise": True,
+        "split_conds_to_windows": False})
+    assert wire is not None
+    windowed = MiniMaxH3ContextWindowsNode.execute(patcher, 124, 39, "pyramid", True)[0]
+    assert windowed is not patcher and "context_handler" not in patcher.model_options, (
+        "minimax h3 context windows seam: execute no longer patches a clone")
+    handler = windowed.model_options["context_handler"]
+    assert (handler.context_length, handler.context_overlap, handler.dim) == (
+        *windows.latent_window_settings(wire), 2), (
+        f"minimax h3 context windows seam: the handler is now {handler.context_length}/"
+        f"{handler.context_overlap} on dim {handler.dim}")
+    for latent_t in range(1, 160):
+        assert handler.context_schedule.func(latent_t, handler, {}) == windows.latent_windows(latent_t, wire), (
+            f"minimax h3 context windows seam: the schedule for {latent_t} latents moved")
+
+    for guides in (True, False):
+        calls, (text_len, latent_t, lat_h, lat_w, audio_t) = _minimax_h3_window_calls(handler, wire, guides=guides)
+        expected = windows.latent_windows(latent_t, wire)
+        assert [getattr(call[3], "index_list", None) for call in calls] == expected, (
+            "minimax h3 context windows seam: the model calls no longer follow the windows one each")
+        for (video_t, audio_frames, payload, _window), index in zip(calls, expected, strict=True):
+            assert (video_t, audio_frames) == (len(index), windows.audio_span(index, latent_t, audio_t)), (
+                f"minimax h3 context windows seam: window {index[0]} reached the model as "
+                f"{video_t} video and {audio_frames} audio latents")
+            layout = payload.get("layout")
+            if layout is None or layout.signature != (text_len, video_t, lat_h, lat_w, audio_frames):
+                continue  # the forward rebuilds it from this window's payload
+            fresh = comfy.ldm.minimax.model.PackedLayout(
+                text_len, video_t, lat_h, lat_w, audio_frames,
+                keyframes=payload.get("keyframes") or None, refs=payload.get("refs"))
+            assert layout.segments == fresh.segments and all(
+                torch.equal(getattr(layout, name), getattr(fresh, name))
+                for name in ("position_ids", "img_update", "audio_update")), (
+                f"minimax h3 context windows seam: window {index[0]} carries a layout the sharded forward "
+                "would keep, and it is not the one the window's own guides build")
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -5692,6 +5857,8 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("lora shape-changing set", _assert_lora_shape_changing_set_seam),
     ("dynamic prompt asymmetry", _assert_dynamic_prompt_asymmetry_seam),
     ("weight-only linear dispatch", _assert_weight_only_linear_dispatch_seam),
+    ("minimax h3 context windows", _assert_minimax_h3_context_windows_seam),
+    ("lazy switch", _assert_lazy_switch_seam),
 )
 
 

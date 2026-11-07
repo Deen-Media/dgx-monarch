@@ -106,6 +106,21 @@ def test_a_different_decode_environment_is_declined(monkeypatch, comfy_stub):
     assert reply["reason"] == "torch '2.12.0+cu132' differs from the driver's '2.11.0'"
 
 
+@pytest.mark.parametrize("flag", ["noncausal", "not_video"])
+def test_a_one_pass_minimax_h3_vae_declines_a_chunk(monkeypatch, comfy_stub, flag):
+    """A Sol-H3-VAE decoder or a p-h3-image VAE has no chunk for a rank to decode."""
+    held = _held()
+    if flag == "noncausal":
+        held.vae.first_stage_model.noncausal = True
+    else:
+        held.vae.not_video = True
+    monkeypatch.setattr(vae_decode, "_resident", lambda worker, spec: (held, False))
+    reply = vae_decode.run(_worker(), _request(kind="h3_chunk", output_dtype=None))
+    assert reply["ok"] is False and "has no chunk to decode" in reply["reason"]
+    # A tile of the tiled-loop families never reads these flags.
+    assert vae_decode.run(_worker(), _request())["ok"] is True
+
+
 def test_a_unit_that_does_not_fit_is_declined(monkeypatch, comfy_stub):
     held = _held()
     held.vae.memory_used_decode = lambda shape, dtype: 30 << 30

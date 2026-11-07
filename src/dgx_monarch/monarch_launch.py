@@ -6,11 +6,16 @@ import sys
 from dataclasses import replace
 from typing import Any
 
-from .cli.worker_process_env import worker_environment_key_allowed
+from .cli.worker_process_env import (
+    HOST_ALLOCATOR_PURGE_DEFAULT,
+    HOST_ALLOCATOR_PURGE_ENV,
+    worker_environment_key_allowed,
+)
 from .monarch_policy import MonarchPolicy, encode_policy, policy_environment
 from .runtime_provenance import SOURCE_ONLY_PYCACHE_PREFIX
 
 NATIVE_ENV = "DGXM_MONARCH_NATIVE_ENABLED"
+LEGACY_NCCL_ENV = {"TORCH_DIST_USE_NCCL2": "0"}
 # Resolve only the configured interpreter's leading ~/ on the destination host.
 # All values travel as argv; none are evaluated as shell source.
 _REMOTE_EXEC = 'py=$1; shift; case "$py" in "~/"*) py="$HOME/${py#??}";; esac; exec "$py" "$@"'
@@ -26,21 +31,33 @@ def worker_policy_args(config: Any, host: Any) -> list[str]:
     return args
 
 
+def actor_environment(config: Any, host: str) -> dict[str, str | None]:
+    """The explicit variables every actor starts with, local or remote; None unsets one."""
+    environment: dict[str, str | None] = dict(policy_environment(config.monarch, host))
+    if not config.monarch.diagnostics.otlp_endpoint:
+        # An older coordinator may export logs. Remove its endpoint before
+        # native child startup when this actor policy disables export.
+        environment["OTEL_EXPORTER_OTLP_ENDPOINT"] = None
+    environment[NATIVE_ENV] = "1" if config.rdma_latent_return else "0"
+    environment["DGXM_DRIVER"] = os.environ.get("DGXM_DRIVER")
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    environment["PYTHONPYCACHEPREFIX"] = SOURCE_ONLY_PYCACHE_PREFIX
+    # torch 2.15 maps "nccl" to its nccl2 backend, whose allocator hook takes a
+    # caching-allocator snapshot that cudaMallocAsync refuses, so the first
+    # process group aborts the actor (TROUBLESHOOTING #143). torch reads this
+    # at import, so only the start environment can pin the legacy backend that
+    # 2.12 ships; older torch ignores it.
+    environment.update(LEGACY_NCCL_ENV)
+    return environment
+
+
 def actor_bootstrap_command(config: Any, use_cluster: bool):
     """Return a per-Point command; remote source/executable stay host-owned."""
     def command(point: Any):
         from monarch._rust_bindings.monarch_hyperactor.host_mesh import BootstrapCommand
 
         host = config.hosts[point["hosts"]].name if use_cluster else ""
-        environment: dict[str, str | None] = dict(policy_environment(config.monarch, host))
-        if not config.monarch.diagnostics.otlp_endpoint:
-            # An older coordinator may export logs. Remove its endpoint before
-            # native child startup when this actor policy disables export.
-            environment["OTEL_EXPORTER_OTLP_ENDPOINT"] = None
-        environment[NATIVE_ENV] = "1" if config.rdma_latent_return else "0"
-        environment["DGXM_DRIVER"] = os.environ.get("DGXM_DRIVER")
-        environment["PYTHONDONTWRITEBYTECODE"] = "1"
-        environment["PYTHONPYCACHEPREFIX"] = SOURCE_ONLY_PYCACHE_PREFIX
+        environment = actor_environment(config, host)
         if use_cluster:
             # Worker startup already filters its environment. Inherit its managed
             # source and private runtime directories, never the controller's.
@@ -51,6 +68,9 @@ def actor_bootstrap_command(config: Any, use_cluster: bool):
 
         local: dict[str, str | None] = {name: os.environ[name] for name in os.environ
                  if worker_environment_key_allowed(name)}
+        # The worker loop gives cluster actors the host allocator's purge delay;
+        # a local actor takes the driver's value, or the same default.
+        local.setdefault(HOST_ALLOCATOR_PURGE_ENV, HOST_ALLOCATOR_PURGE_DEFAULT)
         local.update(environment)
         from importlib.metadata import distribution
 

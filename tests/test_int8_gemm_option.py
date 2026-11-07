@@ -302,11 +302,11 @@ def test_an_unknown_value_runs_stock_cutlass_with_one_warning(option, lines):
 
 
 def test_the_validated_set_is_the_recorded_one():
-    assert vendored.VALIDATED_KITCHEN == ("0.2.37", "0.2.40")
+    assert vendored.VALIDATED_KITCHEN == ("0.2.37", "0.2.40", "0.2.41")
     assert int8_gemm.VALIDATED_KITCHEN is vendored.VALIDATED_KITCHEN
 
 
-@pytest.mark.parametrize("version", ["0.2.41", "0.2.36", None])
+@pytest.mark.parametrize("version", ["0.2.42", "0.2.36", None])
 def test_an_unvalidated_comfy_kitchen_keeps_stock_cutlass_with_one_warning(option, lines, monkeypatch, version):
     monkeypatch.setattr(vendored, "kitchen_version", lambda: version)
     top, cuda, real, _calls, _ = _stub_kitchen()
@@ -317,7 +317,7 @@ def test_an_unvalidated_comfy_kitchen_keeps_stock_cutlass_with_one_warning(optio
     assert option.calls == []
     shown = version or "without version metadata"
     assert lines == [("WARNING", f"INT8 GEMM: comfy-kitchen {shown} is not in the validated set "
-                                 "(0.2.37, 0.2.40); stock CUTLASS for this process")]
+                                 "(0.2.37, 0.2.40, 0.2.41); stock CUTLASS for this process")]
 
 
 def test_missing_python_headers_keep_stock_cutlass_with_one_warning(option, lines, monkeypatch):

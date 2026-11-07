@@ -2,15 +2,17 @@
 
 Two probes read one set of measurements through ``mesh_safety``:
 ``stock_load_fit`` prices a cudaMalloc load at the file plus the host copy it
-is placed from, ``slab_load_fit`` prices slab residency at the file plus a capped
-floor, both of them over ``ABSOLUTE_HOST_FLOOR_BYTES``, and a skipped probe
-claims nothing either way. The FSDP shard-build and comfy-managed prices live
+is placed from, a loader dtype cast at the copy the cast builds instead of the
+file (``cast_resident_bytes``), ``slab_load_fit`` prices slab residency at the
+file plus a capped floor, all of them over ``ABSOLUTE_HOST_FLOOR_BYTES``, and a
+skipped probe claims nothing either way. The FSDP shard-build and comfy-managed prices live
 here too, both over that same floor. ``adapters/fsdp`` re-exports the first, so
 worker preflights and identity-check reloads use the same estimate;
 ``driver_footprint`` keeps its own, lower shard-build factor.
 """
 from __future__ import annotations
 
+import math
 import os
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -18,11 +20,15 @@ from dataclasses import dataclass
 from . import mesh_safety, residency_mode
 from .capacity_floor import ABSOLUTE_HOST_FLOOR_BYTES as ABSOLUTE_HOST_FLOOR_BYTES
 from .capacity_lora_bake import lora_bake_bytes as _lora_bake_bytes
+from .log import get_logger
 from .safetensors_header import (
     SafetensorsHeaderError,
     UnsupportedSafetensorsDtypeError,
     read_safetensors_header,
 )
+from .stock_words import hot_swap_sentence as hot_swap_sentence
+from .stock_words import stock_second_term as stock_second_term
+from .stock_words import stock_terms as stock_terms
 
 # Both probes stay in ``gate_audit_vocab.MEASURED_PROBES`` so their measurements
 # can support a capacity-certified ledger row.
@@ -40,10 +46,11 @@ PROBE_SLAB_LOAD_FIT = "worker_slab_load"
 # is False on a sharded topology, so an FSDP rank takes no slab at all.
 SLAB_VOUCHED_FAMILIES = frozenset({"krea2", "flux2"})
 
-_SKIP_DTYPE_CAST = "a loader dtype cast changes the resident size"
+log = get_logger(__name__)
+
 _SKIP_DISCRETE = "the CUDA device is not integrated (host memory does not bound capacity)"
 _SKIP_NO_MEMINFO = "kernel MemAvailable is unreadable here"
-_SKIP_SLAB_DTYPE_CAST = (
+SKIP_SLAB_DTYPE_CAST = (
     "a loader dtype cast adds a second shared-memory arena, the annex, whose "
     "size this probe does not measure"
 )
@@ -68,10 +75,35 @@ class StockFit:
     size_bytes: int
     avail_bytes: int | None
     skipped_reason: str = ""
+    # The copy of this file the slot already holds when a LoRA change keeps the
+    # base in place (capacity_lora_bake.credit_hot_swap); appended last so every
+    # positional construction keeps its meaning.
+    credit_bytes: int = 0
+    # The copy a loader dtype cast builds (``cast_resident_bytes``); 0 is no cast.
+    cast_bytes: int = 0
+    # The slot's resident a swap credit drops first (credit_stock_swap); "" is in place.
+    dropped: str = ""
+    # The part of ``credit_bytes`` that is ComfyUI's backup of the held stack's weights.
+    backup_bytes: int = 0
+    # The new stack's own LoRA files, which a backup credit is net of: the Worker reads
+    # them again into anonymous memory on every in-place change.
+    stack_bytes: int = 0
 
     @property
     def size_gib(self) -> float:
         return round(self.size_bytes / (1 << 30), 1)
+
+    @property
+    def resident_bytes(self) -> int:
+        """The copy the load leaves on the device: the cast's, or the file's."""
+        return int(self.cast_bytes) if self.cast_bytes > 0 else int(self.size_bytes)
+
+    @property
+    def terms(self) -> str:
+        """What the price charges, as every stock refusal prints it in brackets."""
+        cast = f" cast to a {gib(self.cast_bytes)} GiB copy" if self.cast_bytes > 0 else ""
+        return (f"a {self.size_gib} GiB file{cast}, the host copy it is placed from and the "
+                f"{gib(ABSOLUTE_HOST_FLOOR_BYTES)} GiB host floor")
 
     @property
     def avail_gib(self) -> float | None:
@@ -82,7 +114,8 @@ class StockFit:
         """The load-path transient the verdict compares against."""
         if not self.applies:
             return int(self.size_bytes)
-        return stock_required_bytes(self.size_bytes)
+        return (stock_required_bytes(self.size_bytes, self.cast_bytes)
+                - max(int(self.credit_bytes), 0))
 
     @property
     def required_gib(self) -> float:
@@ -95,7 +128,20 @@ class StockFit:
         return round((self.avail_bytes - self.required_bytes) / (1 << 30), 1)
 
     def measured(self) -> dict[str, object]:
-        """The consent card's and the v9 ledger's block: bytes for the schema, GiB to read."""
+        """The consent card's and the v9 ledger's block: bytes for the schema, GiB to read.
+
+        ``credit_bytes`` appears only on a credited price and ``cast_bytes`` only
+        on a cast, so every other block keeps the keys the ledger and the cards
+        already read.
+        """
+        credit: dict[str, object] = (
+            {"credit_bytes": int(self.credit_bytes)} if self.credit_bytes > 0 else {})
+        if self.cast_bytes > 0:
+            credit.update(cast_bytes=int(self.cast_bytes), cast_gib=gib(self.cast_bytes))
+        if self.dropped and self.credit_bytes > 0:
+            credit["dropped"] = self.dropped
+        if self.backup_bytes > 0:
+            credit.update(backup_bytes=int(self.backup_bytes), stack_bytes=int(self.stack_bytes))
         return {
             "probe": PROBE_STOCK_LOAD_FIT,
             "checkpoint_bytes": int(self.size_bytes),
@@ -110,6 +156,7 @@ class StockFit:
             "headroom_gib": self.headroom_gib,
             "fits": bool(self.fits),
             "applies": bool(self.applies),
+            **credit,
         }
 
 
@@ -212,9 +259,83 @@ STOCK_PLACEMENT_RATIO = 1.1
 STOCK_LOAD_TRANSIENT_FACTOR = 1.0 + STOCK_PLACEMENT_RATIO
 
 
-def stock_required_bytes(size_bytes: int) -> int:
-    """The file, the host copy it is placed from, and the absolute host floor."""
-    return int(size_bytes * STOCK_LOAD_TRANSIENT_FACTOR) + ABSOLUTE_HOST_FLOOR_BYTES
+def stock_required_bytes(size_bytes: int, cast_bytes: int = 0) -> int:
+    """The file, the host copy it is placed from, and the absolute host floor.
+
+    Under a loader dtype cast the device copy is the cast's (``cast_bytes``)
+    and the host copy is still the file at its own widths, read before the
+    cast, so the price moves by what the cast adds to or saves on the file. A
+    cast that keeps the width prices exactly what an uncast load prices.
+    """
+    cast_delta = int(cast_bytes) - int(size_bytes) if cast_bytes > 0 else 0
+    return int(size_bytes * STOCK_LOAD_TRANSIENT_FACTOR) + ABSOLUTE_HOST_FLOOR_BYTES + cast_delta
+
+
+# Bytes per element of each target a loader cast names
+# (``actor/store_detect._to_comfy_model_options``). An unknown target takes the
+# widest float ComfyUI builds a model in, so a name this table lacks prices high.
+_CAST_WIDTHS = {"bfloat16": 2, "bf16": 2, "float16": 2, "fp16": 2, "half": 2,
+                "float32": 4, "fp32": 4, "float": 4}
+_WIDEST_CAST = 4
+# Floats ComfyUI builds at the cast's dtype. F32 and F64 are left out: ComfyUI
+# keeps some fp32 islands live through a cast (docs/DESIGN.md section 5.4), so
+# they are charged no less than their stored size. Integer, boolean, packed
+# four-bit and exponent-only scale tensors are quantized payloads and scales,
+# which a cast never touches.
+_CASTABLE = frozenset({"F16", "BF16", "F8_E4M3", "F8_E4M3FNUZ", "F8_E5M2", "F8_E5M2FNUZ"})
+_WIDE_FLOATS = frozenset({"F32", "F64"})
+# A layer ComfyUI loads through its quantized operations keeps its stored
+# payload under a cast. Every quantized format on the tested boxes (fp8mixed,
+# fp8 scaled, int8 convrot, nvfp4, mxfp8) names such a layer with one of these.
+_QUANT_MARKERS = (".weight_scale", ".scale_weight", ".comfy_quant")
+
+
+def cast_width(dtype: object) -> int:
+    """Bytes per element of a cast's target, without importing torch."""
+    itemsize = getattr(dtype, "itemsize", None)
+    if isinstance(itemsize, int) and not isinstance(itemsize, bool) and itemsize > 0:
+        return itemsize
+    name = str(dtype).removeprefix("torch.").lower()
+    if name.startswith(("float8", "fp8")):
+        return 1
+    return _CAST_WIDTHS.get(name, _WIDEST_CAST)
+
+
+def cast_resident_bytes(path: str, dtype: object, *, lower: bool = False) -> int:
+    """The device copy a load cast to ``dtype`` builds, read from the header.
+
+    The price's upper bound: every float tensor of 16 or 8 bits at the target
+    width, F32 and F64 at no less than their stored size, everything else, a
+    quantized layer whole, as stored. An unreadable header (not safetensors, an
+    unknown dtype, a damaged file) prices the file times the target width, since
+    no castable element is narrower than a byte. ``lower`` gives the bound a
+    swap credit takes instead: every float at the smaller of its stored and cast
+    size, so it never exceeds the file or the copy, and nothing for a header it
+    cannot read, because the credit must not exceed what the drop returns.
+    """
+    width = cast_width(dtype)
+    size = os.path.getsize(path) if os.path.exists(path) else 0
+    try:
+        tensors = read_safetensors_header(path).tensors
+    except (OSError, SafetensorsHeaderError) as exc:
+        log.warning("the cast price could not read the header of %s (%s); %s",
+                    os.path.basename(path), type(exc).__name__, "crediting nothing" if lower
+                    else f"charging the widest copy the cast could build, {gib(size * width)} GiB")
+        return 0 if lower else size * width
+    quantized = {name[: -len(marker)] for name in tensors for marker in _QUANT_MARKERS
+                 if name.endswith(marker)}
+    total = 0
+    for name, tensor in tensors.items():
+        cast = math.prod(tensor.shape) * width
+        if tensor.dtype not in _CASTABLE | _WIDE_FLOATS:
+            total += tensor.nbytes
+        elif lower:
+            total += min(tensor.nbytes, cast)
+        elif name.rpartition(".")[0] in quantized:
+            total += tensor.nbytes
+        else:
+            total += cast if tensor.dtype in _CASTABLE else max(tensor.nbytes, cast)
+    return total
 
 
 # What kills an FSDP load is anonymous commit, not warm page cache. The build
@@ -286,17 +407,22 @@ def managed_required_bytes(size: int, pinned_staging: bool) -> int:
 
 
 def stock_load_fit(path: str, model_options: dict) -> StockFit:
-    """Measure whether stock residency can hold ``path`` on this host."""
-    if model_options.get("dtype") is not None:
-        return StockFit(True, False, 0, None, _SKIP_DTYPE_CAST)
+    """Measure whether stock residency can hold ``path`` on this host.
+
+    A loader dtype cast is priced at the copy it builds (``cast_resident_bytes``)
+    in place of the file. It made no claim until 2026-11-05, when a cast load
+    was admitted on a head with 12.2 GiB available that this price charges 60.9.
+    """
     if not mesh_safety.gpu_is_integrated():
         return StockFit(True, False, 0, None, _SKIP_DISCRETE)
     size = os.path.getsize(path) if os.path.exists(path) else 0
     avail = mesh_safety.mem_available_bytes()
     if avail is None:
         return StockFit(True, False, size, None, _SKIP_NO_MEMINFO)
-    fit = StockFit(True, True, size, avail)
-    return StockFit(fit.required_bytes <= avail, True, size, avail)
+    dtype = model_options.get("dtype")
+    cast = cast_resident_bytes(path, dtype) if dtype is not None else 0
+    fit = StockFit(True, True, size, avail, cast_bytes=cast)
+    return StockFit(fit.required_bytes <= avail, True, size, avail, cast_bytes=cast)
 
 
 def slab_floor_bytes(size: int, reserve_bytes: int | None) -> int:
@@ -323,7 +449,7 @@ def slab_load_fit(path: str, model_options: dict, *, reserve_bytes: int | None =
     other misses.
     """
     if model_options.get("dtype") is not None:
-        return SlabFit(True, False, 0, None, 0, _SKIP_SLAB_DTYPE_CAST)
+        return SlabFit(True, False, 0, None, 0, SKIP_SLAB_DTYPE_CAST)
     if not mesh_safety.gpu_is_integrated():
         return SlabFit(True, False, 0, None, 0, _SKIP_DISCRETE)
     if not path.lower().endswith((".safetensors", ".sft")):

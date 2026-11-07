@@ -323,16 +323,17 @@ class ModelStore:
 
         if stored is not None and stored.base_key == base_key and not self.lora_low_rss \
                 and not stored.base_baked:
-            # Hot-swap (clone the pristine base, re-apply loras). Skipped in
-            # low_rss: _merge_and_free consumed the base (baked, backup freed), so
-            # it cannot be re-cloned, and a base baked under an earlier low_rss
-            # policy stays unclonable after the policy flips. A stack change then
-            # falls through to a full reload from disk (exact), the low_rss recovery
-            # contract when lazy un-bake is unavailable (an unsupported or ambiguous
-            # quantized encoding, failed capture, or checkpoint changed on disk).
-            return store_bake.hot_swap_transition(
+            # Hot-swap (clone the pristine base, re-apply loras), or None when the
+            # swap would copy the model off the GPU first: then a fresh load.
+            # Skipped in low_rss: _merge_and_free consumed the base (baked, backup
+            # freed), so it cannot be re-cloned, even after the policy flips. A
+            # stack change then falls through to a full reload from disk (exact),
+            # the low_rss recovery contract when lazy un-bake is unavailable.
+            result = store_bake.hot_swap_transition(
                 self, stored, slot, unet_name, lora_stack, base_key, requested_identity,
                 request_artifact_identity=request_artifact_identity, logger=log)
+            if result is not None:
+                return result
 
         # Release ensure's local pin before dropping the old slot: USP injection
         # creates a model reference cycle, so a live local would defeat _drop's
@@ -362,8 +363,8 @@ class ModelStore:
     def _build_active(self, base_patcher, lora_stack: list[dict] | None):
         """Clone the pristine base and apply the lora stack.
 
-        Uses comfy's own lora merge math (fp32 intermediates + stochastic
-        rounding), matching stock semantics (DESIGN.md §5.5). In
+        Each bake of these patches takes stock's cast-time weight where it
+        has one (actor/lora_cast_time.py, DESIGN.md §5.5). In
         low-RSS mode the build is the same; the caller then bakes to GPU
         and frees the backup via _merge_and_free (the residency saving), so the
         rendered weights are identical whether low_rss is on or off.
@@ -484,6 +485,7 @@ class ModelStore:
                 "quant": stored.quant_kind,
                 **stored.precision_evidence.public(),
                 "loras": list(stored.lora_sig),
+                "swaps_in_place": store_bake.swaps_in_place(stored, self.lora_low_rss),
                 **store_residency.describe(stored),
             }
 

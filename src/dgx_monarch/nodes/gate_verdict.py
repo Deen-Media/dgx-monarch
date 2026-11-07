@@ -15,6 +15,9 @@ from typing import Any
 from ..transfer_utils import safe_call
 from .gate_ceremony import CeremonyEvidence
 
+# What a rank's swap cycle reports with no LoRA stack (actor/gate_cycle.py).
+NO_STACK_CYCLE_REASON = "no lora stack: lazy swap is not applicable"
+
 
 def publish_ceremony_verdict(
     *,
@@ -83,13 +86,20 @@ def publish_ceremony_verdict(
             verdict = "PASS" if identical else "INCONCLUSIVE"
             reasons = ([] if identical else [*reasons,
                 "same-residency repeat diverged despite a passing cross-residency comparison"])
-        elif cross_mode["verdict"] in ("ERROR", "CAPACITY") and verdict == "PASS":
+        elif cross_mode["verdict"] in ("ERROR", "CAPACITY") and (
+                verdict == "PASS" or (verdict == "INCONCLUSIVE" and not lazy_swap_applicable)):
             # An unavailable or incomplete stock reference can only ever be
-            # INCONCLUSIVE. CAPACITY explains why; it grants nothing.
+            # INCONCLUSIVE. CAPACITY explains why; it grants nothing. With no
+            # lazy swap to prove, the cross leg is the whole proof, so its
+            # failure is the reason, not the swap cycle's "not applicable".
             verdict = "INCONCLUSIVE"
             if not slab_proof.error:
+                if not lazy_swap_applicable:
+                    reasons = [reason for reason in reasons
+                               if reason != NO_STACK_CYCLE_REASON]
                 reasons = [*reasons,
-                           "stock reference cannot load here (capacity refusal)"
+                           "the stock reference cannot load here (capacity refusal), "
+                           "so the slab render has nothing to be compared with"
                            if cross_mode["verdict"] == "CAPACITY"
                            else "cross-residency reference leg failed"]
 

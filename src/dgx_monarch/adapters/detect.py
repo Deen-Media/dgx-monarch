@@ -82,13 +82,7 @@ _ZIMAGE_L2P_ABSENT = ("dec_net.",)
 # Image: 3584, 64), first dimensions only, because 4-bit exports halve the second.
 _MAGE_FLOW_WIDTHS = {"txt_norm.weight": 2560, "proj_out.weight": 128}
 
-_PREFIXES = (
-    "model.diffusion_model.",
-    "diffusion_model.",
-    "model.model.",
-    "net.",
-    "model.",
-)
+_PREFIXES = ("model.diffusion_model.", "diffusion_model.", "model.model.", "net.", "model.")
 def model_base_touchpoints(adapters: Iterable[object]) -> tuple[str, ...]:
     """Return broad and exact `comfy.model_base` names without a registry cycle."""
     names: dict[str, None] = {}
@@ -233,6 +227,9 @@ def detect_quant_from_header(keys: list[str], header: dict) -> str:
         return "fp8"
     tensors = header.get("__tensors__", {})
     dtypes = {info.get("dtype", "") for info in tensors.values() if isinstance(info, dict)}
+    # ComfyUI's asym_w4a8_int8: int4 codes packed in I8, F8 group scales in `weight_s_rel`.
+    if "I8" in dtypes and any(k.endswith(".weight_s_rel") for k in stripped):
+        return "w4a8"
     if any(dt.startswith("F8") or dt == "F4" for dt in dtypes):
         return "fp8"
     if "I8" in dtypes:

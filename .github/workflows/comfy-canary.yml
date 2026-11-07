@@ -27,6 +27,7 @@ on:
       # The comfy module guard in conftest.py runs under every pytest step.
       - "tests/conftest.py"
       - "tests/test_bake_equivalence.py"
+      - "tests/test_lora_cast_time.py"
       - "tests/test_comfy_seam_contracts.py"
       - "tests/test_int8_linear_layout.py"
       - "tests/test_slab_hook_canary.py"
@@ -50,6 +51,10 @@ on:
       - "tests/test_moss_image_support.py"
       - "tests/test_moss_image_skip_end_to_end.py"
       - "tests/test_skip_layer_guidance_comfy.py"
+      - "tests/test_h3_context_windows_comfy.py"
+      - "tests/test_h3_sigma_shift_comfy.py"
+      - "tests/test_p_h3_image_comfy_exactness.py"
+      - "tests/test_wan22_ti2v_templates.py"
       - "tests/test_lora_shape_guard.py"
       - "tests/test_mage_flow_comfy_differential.py"
       - "tests/test_qwen_image21_adapter.py"
@@ -61,6 +66,7 @@ on:
       - "tests/test_compile_surface.py"
       - "tests/test_int8_gemm_kitchen_version.py"
       - "tests/test_vae_decode_split_comfy.py"
+      - "tests/test_cond_batch_agreement.py"
       - "tests/test_fp8_paths_tool.py"
       # No step runs these files, but the files the steps run import them. The
       # pad-exclusion file holds the Ernie, FLUX.3, Hunyuan, Ideogram4, Lens and
@@ -170,6 +176,12 @@ jobs:
         env:
           COMFY_DIR: ../ComfyUI
         run: python tests/canary/bake_equivalence_canary.py
+      # The cast-time LoRA bake against comfy.ops' own cast (#145): the keys it
+      # leaves to the classic bake, the installed patcher and the lazy swap's verify.
+      - name: Cast-time LoRA bake vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+        run: pytest -q tests/test_lora_cast_time.py
       - name: Slab hook surfaces vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
@@ -325,6 +337,25 @@ jobs:
           tests/test_skip_layer_guidance_comfy.py
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
+      # The MiniMax H3 context-window carrier installs ComfyUI's node on the
+      # render clone, and the deadline counts the windows ComfyUI's handler runs.
+      - name: MiniMax H3 context-window carrier vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_h3_context_windows_comfy.py
+      # ModelSamplingMiniMaxH3 (DGX Monarch) applies ComfyUI's shift node on the
+      # render clone, and p-h3-image's one-frame graph through the H3 sharded
+      # forward gives stock's bits at world 1.
+      - name: MiniMax H3 shift carrier and p-h3-image forward vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_h3_sigma_shift_comfy.py tests/test_p_h3_image_comfy_exactness.py
+      # The Wan 2.2 TI2V 5B start image gives per-frame timesteps; the Wan
+      # sequence-parallel forward must hand every token stock's on one rank.
+      - name: Wan 2.2 TI2V per-frame timesteps vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_wan22_ti2v_templates.py
       # compile_dit compiles a top-level blocks list only, and the no-op family
       # list lets the others keep slab residency. Read each family's DiT class
       # from comfy's source, without importing it, to catch a renamed list.
@@ -340,6 +371,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_vae_decode_split_comfy.py
+      # Each rank picks its cond batch from its own box's free memory in
+      # ComfyUI's calc_cond_batch; two Gloo ranks with the agreement must take
+      # the leanest rank's batch. The regular CI job has no ComfyUI, so it skips.
+      - name: Cond batch agreement vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_cond_batch_agreement.py
       # The INT8 GEMM kernel runs only on the comfy-kitchen releases it was
       # proven exact against. Fail when ComfyUI's requirements or the installed
       # package move past that set, so it is re-validated (docs/MODELS.md)
@@ -381,6 +419,7 @@ jobs:
           pytest -q
           tests/test_comfy_seam_contracts.py
           tests/test_bake_equivalence.py
+          tests/test_lora_cast_time.py
           tests/test_slab_hook_canary.py
           tests/test_lens_comfy_exactness.py
           tests/test_lens_text_projections.py
@@ -406,6 +445,10 @@ jobs:
           tests/test_moss_image_comfy_exactness.py
           tests/test_moss_image_parity.py
           tests/test_skip_layer_guidance_comfy.py
+          tests/test_h3_context_windows_comfy.py
+          tests/test_h3_sigma_shift_comfy.py
+          tests/test_p_h3_image_comfy_exactness.py
+          tests/test_wan22_ti2v_templates.py
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
           tests/test_vae_decode_split_comfy.py

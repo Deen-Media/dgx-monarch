@@ -12,7 +12,16 @@ from types import ModuleType
 from typing import Any
 
 from ..model_sampling import normalize_model_sampling
-from . import dm_cfg2_residency, guidance_render, latent_outputs, rank_readiness, store_fsdp, worker_env
+from . import (
+    context_windows_render,
+    dm_cfg2_residency,
+    guidance_render,
+    latent_outputs,
+    model_sampling_render,
+    rank_readiness,
+    store_fsdp,
+    worker_env,
+)
 from .cancellation import raise_if_sample_cancelled
 
 
@@ -296,6 +305,9 @@ def run_sample(
             pins, worker.topology, family=getattr(resident, "family", None),
             alone=int(getattr(worker, "world", 0) or 0) < 2,
             pinned_by=request["uncond_model"]["unet_name"] if dm2_slot == "uncond" else None)
+        # Class P, inside the guard: whether this ComfyUI has the stock node is a host fact.
+        context_windows_render.assert_supported(request, getattr(resident, "family", None))
+        model_sampling_render.assert_supported(request, getattr(resident, "family", None))
         if worker.topology.get("ring", 1) > 1:
             # cuDNN Ring prepares here, inside the load guard, before the exchange.
             worker._attn.prepare_native_attention()
@@ -383,6 +395,7 @@ def run_sample(
 
     render_patcher = model_sampling_render_clone(patcher, primary_sampling)
     render_patcher = guidance_render.apply_skip_layer_guidance(render_patcher, request, worker)
+    render_patcher = context_windows_render.apply(render_patcher, request)
     render_uncond_patcher = (
         model_sampling_render_clone(uncond_patcher, uncond_sampling)
         if uncond_patcher is not None else None

@@ -243,7 +243,7 @@ def test_remote_rank0_is_charged_no_weight_term():
     estimate = _estimate(DIT_REF2VA_BF16, MEM_AUTO_DISPATCH, co_resident=False)
     if estimate.weight_bytes != 0:
         pytest.fail("a remote rank 0 must contribute no weight term")
-    if "not on the driver host" not in estimate.notes["weights"]:
+    if "the first Worker is on another box" not in estimate.notes["weights"]:
         pytest.fail(f"the omission must be stated: {estimate.notes['weights']}")
 
 

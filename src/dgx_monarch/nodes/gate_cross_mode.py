@@ -1,10 +1,24 @@
-"""Cross-residency reference leg for the identity gate."""
+"""Cross-residency reference leg for the identity gate.
+
+The stock reference loads the checkpoint the way stock residency does, with
+the host copy it is placed from, so it can need far more room than the slab
+legs before it. The driver's own models count against that price on the head,
+the Flux 2 text encoder alone 33 GiB, and ComfyUI reloads every one of them on
+demand; the ceremony's conditioning is already encoded. So when the reference
+leg meets a capacity refusal, typed or a Worker's own refusal wrapped as
+remote text, the driver frees what it can get back
+(``driver_unload.check_with_unload``: ComfyUI's models on this host, then the
+actors' allocator caches) and tries the leg once more. Only the last answer
+counts. Measured 2026-11-04: Flux 2 fp8mixed on a fresh pair priced 74.3 GiB
+against 63.0 GiB on the head with the encoder loaded, a box that read 97.5
+GiB before the graph ran.
+"""
 from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from typing import Any
 
-from .. import first_render
+from .. import driver_unload, first_render
 from ..fsdp_reload_price import capacity_classification
 from ..gate_audit import fold_rank_certificates, parse_measured
 
@@ -56,16 +70,31 @@ def run_cross_residency_reference(
             handle.call_all("unload", timeout_s=600)
             stock_model = runtime["_model_with_worker_overrides"](
                 ceremony_model, {"slab_weights": False}, handle=handle)
-            candidate = transaction_render(
-                stock_model,
-                bind_request(
-                    runtime["copy_transaction"](frozen_request),
-                    artifact_binding,
-                ),
-                runtime["copy_transaction"](frozen_latent),
-                cfg_value=cfg_value,
-                steps_hint=steps_hint,
-            )
+            rendered: list[dict] = []
+
+            def stock_reference() -> None:
+                # A capacity refusal loads nothing on any rank, so the leg can
+                # run again from the same frozen transaction.
+                rendered[:] = [transaction_render(
+                    stock_model,
+                    bind_request(
+                        runtime["copy_transaction"](frozen_request),
+                        artifact_binding,
+                    ),
+                    runtime["copy_transaction"](frozen_latent),
+                    cfg_value=cfg_value,
+                    steps_hint=steps_hint,
+                )]
+
+            # On one Spark, and after an admitted quote on two, the Worker's own
+            # ladder refuses inside the actor and the refusal arrives as remote
+            # text, so the leg counts it by the classifier the except below uses.
+            driver_unload.check_with_unload(
+                [stock_reference], handle=handle,
+                subject="the identity gate's stock reference render",
+                is_refusal=lambda exc: (driver_unload.is_capacity_refusal(exc)
+                                        or runtime["is_stock_load_capacity_error"](exc)))
+            candidate = rendered[0]
             cross_reference_latent = candidate
         samples = candidate["samples"]
     except Exception as exc:

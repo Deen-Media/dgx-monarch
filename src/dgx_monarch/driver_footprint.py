@@ -121,15 +121,20 @@ class DriverStackProfile:
 
 DRIVER_STACK_FAMILIES: dict[str, DriverStackProfile] = {
     # H3 options omit multi-host splitting: Ulysses and Ring replicate the
-    # weights. FSDP, which does not, has admitted the bf16 release through the
-    # fp32-islands profile since 2026-08-26, but its one render (2026-09-09,
-    # docs/VALIDATION.md) had no reference comparison, so it is not offered here.
+    # weights. FSDP does not, and the loader refusal names a pair's uly2+fsdp
+    # preset, with its Identity Gate step, wherever that price fits
+    # (nodes/graph_load_price); p-h3-image's BF16 uly2+fsdp render matched
+    # resident uly2 pixel for pixel on 2026-11-05.
     "minimax_h3": DriverStackProfile(
         family="minimax_h3",
         ref_extras_keys=("minimax_refs", "minimax_keyframes"),
         fitting_options=(SMALLER_TE, PRUNED_DIT, FEWER_REFS, FREE_MEMORY),
-        dit_note="the pruned int8 and fp8 reference-to-video artifacts are "
-                 "19.5 GiB each against bf16's 61.7",
+        # One row for both models ComfyUI builds as MiniMaxH3: H3 video and
+        # p-h3-image (docs/MODELS.md), so the note names each one's files.
+        dit_note="for MiniMax H3 video, the pruned int8 and fp8 reference-to-video "
+                 "artifacts are 19.5 GiB each against bf16's 61.7; for p-h3-image, "
+                 "the int8_convrot DiT is 19.8 GiB and the w4a8 DiT 12.4 GiB against "
+                 "bf16's 37.7",
     ),
     # LTX prices two token streams rather than reference blocks, so it declares
     # no ref_extras_keys: the row charge arrives from ltx25_activation through
@@ -142,6 +147,15 @@ DRIVER_STACK_FAMILIES: dict[str, DriverStackProfile] = {
         dit_note="the int8-convrot 22B artifact is 20.0 GiB against bf16's "
                  "39.1, and its gemma4 text encoder is 14.3 GiB at int8 "
                  "against 24.5 at bf16",
+    ),
+    # MOSS-Image, its Base and Kromoss: no reference or activation rows, but the
+    # 18.0 GiB encoder is the largest file their graphs load on the driver.
+    "moss_image": DriverStackProfile(
+        family="moss_image",
+        ref_extras_keys=(),
+        fitting_options=(SMALLER_TE, PRUNED_DIT, FREE_MEMORY),
+        dit_note="the int8_convrot DiT is 5.0 GiB against bf16's 9.5, and the "
+                 "Qwen3.5-9B encoder is 9.1 GiB at int8_convrot against 18.0 at bf16",
     ),
 }
 
@@ -236,14 +250,14 @@ def estimate_driver_footprint(
     sharded = co_resident and not weights_resident and int(fsdp_world) >= 2
     share = fsdp_shard_build_share(fsdp_world) if sharded else 1.0
     if not co_resident:
-        notes["weights"] = "rank 0 is not on the driver host, not charged"
+        notes["weights"] = "the first Worker is on another box, not charged"
     elif weights_resident:
         notes["weights"] = "already loaded, inside this MemAvailable reading"
     elif sharded:
         charged_weights = fsdp_shard_build_bytes(
             file_bytes, fsdp_world)
         notes["weights"] = (
-            f"co-resident rank 0, FSDP shard build: this rank holds "
+            f"a Worker on this box, FSDP shard build: it holds "
             f"{fsdp_shard_fraction(fsdp_world):.2f} of the "
             f"{_gib(file_bytes)} GiB file at world {int(fsdp_world)}, charged "
             f"at {FSDP_SHARD_BUILD_FACTOR:.2f}x that shard plus a "
@@ -254,7 +268,7 @@ def estimate_driver_footprint(
         # cost of 0.87x (docs/VALIDATION.md, 2026-08-04): one leg is too few to
         # apply that ratio, and with no catchable OOM the high side is safer.
         charged_weights = file_bytes
-        notes["weights"] = "co-resident rank 0, not yet loaded"
+        notes["weights"] = "a Worker on this box, not yet loaded"
     arena = 0
     if charged_weights and sharded:
         notes["arena"] = residency_mode.arena_omitted_note(

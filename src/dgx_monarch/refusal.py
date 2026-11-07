@@ -109,10 +109,12 @@ GUARDS: Final[dict[str, GuardSpec]] = {
         RefusalClass.CAPACITY,
         False,
         "rescue-slab",
-        "cross-rank capacity agreement, read before any rank allocates: no card, "
-        "because no consent makes a refusing rank fit and one refusing rank refuses "
-        "the whole fleet; when no rank refuses, the rescue offer goes out under the "
-        "waivable stock guard, priced at the leanest rank that slab would fit",
+        "cross-rank capacity agreement, read before any rank allocates: no consent "
+        "card, because no consent makes a refusing rank fit and one refusing rank "
+        "refuses the whole fleet; when no rank refuses, the rescue offer goes out under "
+        "the waivable stock guard, priced at the leanest rank that slab would fit. When "
+        "a clear would make room for an old model in the way, its card goes out under "
+        "this guard unwaived, since a reset passes no guard (old_model.py)",
     ),
     "slab_lora_bake_preflight": GuardSpec(
         RefusalClass.CAPACITY,
@@ -379,6 +381,28 @@ def untagged(text: str) -> str:
     if parse_leading_refusal_tag(text) is None:
         return text
     return text.split("] ", 1)[-1]
+
+
+# Which rank raised an error: one machine line a Worker in a fleet of more than
+# one rank adds (actor/failure.py), because Monarch's wrapper carries no rank.
+# The driver reads it to name the box and removes it (worker_box.py), so no
+# user reads the number. No class letter follows the colon, so no tag parser
+# here, in Studio or in job_observations reads it as a tag.
+RANK_MARK: Final = "[dgxm:rank {rank}]"
+_RANK_RE: Final = re.compile(r"\n?\[dgxm:rank (\d{1,4})\]")
+
+
+def mark_rank(text: str, rank: int) -> str:
+    """``text`` with the line that says which rank raised it."""
+    return f"{text}\n{RANK_MARK.format(rank=int(rank))}"
+
+
+def read_rank(text: str) -> tuple[str, int | None]:
+    """``text`` without its rank lines, and the rank the last one names."""
+    found = _RANK_RE.findall(text)
+    if not found:
+        return text, None
+    return _RANK_RE.sub("", text), int(found[-1])
 
 
 def is_waivable(text: str) -> bool:
