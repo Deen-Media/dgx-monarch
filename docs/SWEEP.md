@@ -527,9 +527,10 @@ never ran. Two signals say the rig, not the cell, is the answer: a recycle the
 driver refuses twice in a row (`http 503`), and a driver message naming a fleet
 no attach can replace or a transport a partial bring-up poisoned. These end the
 session too: a clear graph or leg, the waived retry among them, whose queue
-will not drain, a prompt submission whose response is lost, a recycle still
-rate limited after three tries, and a transport probe that cannot open the
-session's mesh. The runner writes the reason into `run_summary_<session>.json`
+will not drain, a cache reset before a waived, resident or probe leg that does
+not leave the queue idle, a prompt submission whose response is lost, a
+recycle still rate limited after three tries, and a transport probe that
+cannot open the session's mesh. The runner writes the reason into `run_summary_<session>.json`
 beside the records and exits non-zero, so the shell around it can restart the
 driver and the worker loops. Restarting both is what clears it. A
 session-close recycle that does not answer `ok` also exits non-zero, with its

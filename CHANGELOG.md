@@ -538,8 +538,10 @@
 ### Development
 
 - The sweep runner ends the session when a waived retry's queue will not
-  clear, as it already did after every other leg, so the next cell's reset no
-  longer queues a clear graph behind a prompt that may still be running
+  clear, as it already did after every other leg, and when the cache reset
+  before a waived, resident or probe leg leaves the queue busy or gets no
+  answer. The next leg or the next cell's reset no longer queues behind work
+  that may still be running, and such a record re-runs on resume
   ([SWEEP](docs/SWEEP.md#5-reading-results)).
 - A session-close recycle that does not answer `ok` makes the sweep runner
   exit non-zero, and `run_summary_<session>.json` names its answer under

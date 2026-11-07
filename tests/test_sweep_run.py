@@ -380,7 +380,7 @@ def test_a_cold_leg_that_passed_never_survives_a_waived_leg_that_crashed(
     monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
     monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
     monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
-    monkeypatch.setattr(run, "free_cache", lambda driver: "freed")
+    monkeypatch.setattr(run, "free_cache", lambda driver: "idle")
     monkeypatch.setattr(run, "grant_pending_consent", lambda driver, cell: {"granted": True})
     config = {"driver": "http://fake", "out_dir": out, "comfy_dir": tmp_path,
               "sibling": "", "mem_floor_gib": 0.0, "reference": {"nrms_floor": 0.10}}
@@ -539,7 +539,7 @@ def _quiet_rig(monkeypatch) -> None:
     monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
     monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
     monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
-    monkeypatch.setattr(run, "free_cache", lambda driver: "freed")
+    monkeypatch.setattr(run, "free_cache", lambda driver: "idle")
     monkeypatch.setattr(run.time, "sleep", lambda seconds: None)
 
 
@@ -594,6 +594,70 @@ def test_a_waived_retry_whose_queue_would_not_clear_ends_the_session(
     assert record["legs"]["waived"]["drain"] == drained
     assert record["verdict"] == "FINDING" and run.wedged_answer(record)
     assert not (out / "cells" / "after2.json").exists()
+
+
+@pytest.mark.parametrize(("leg", "busted"), [
+    ("waived", "still busy"),
+    ("resident", "still busy"),
+    ("probe", "still busy"),
+    ("probe", "ConnectionRefusedError: [Errno 111] Connection refused"),
+])
+def test_a_cache_reset_that_leaves_the_queue_busy_ends_the_session(
+        monkeypatch, tmp_path, leg, busted):
+    # free_cache waits for the queue to go idle before a waived, resident or
+    # probe leg. One that is still busy, or that the driver did not answer,
+    # leaves work the next leg would queue behind, the same unsettled queue
+    # an undrained leg leaves. The leg must not be queued.
+    out = tmp_path / "out"
+    (out / "graphs").mkdir(parents=True)
+    (out / "graphs" / "t.json").write_text(json.dumps({}))
+    cell = {"id": "abc123", "template": "t", "session": "cluster", "preset": "uly2",
+            "mode": "cluster", "attention": "TORCH_FLASH", "label": "render",
+            "waiver": False, "waiver_guards": [], "levers": {}, "loras": [],
+            "unets": {}, "auto_gate": "first_use", "gpus_per_host": 0, "batch": 1,
+            "batch_toggled": False, "batch_node": "", "capacity_risk": False,
+            "probe": False, "audio": False, "timeout_s": 10,
+            "reference": {"kind": "none", "bar": "reference"}}
+    rendered = {"status": {"completed": True}}
+    answers = [(2.0, rendered, "", "p-cold"), (2.0, rendered, "", "p-warm")]
+    if leg == "waived":
+        cell.update(label="refuse:K", waiver=True, waiver_guards=["ring_pad"], preset="ring2")
+        answers = [(2.0, {"status": {"status_str": "error", "messages": [
+            ["execution_error", {"exception_message": "[dgxm:K] ring pad rows"}]]}}, "", "p-cold")]
+    elif leg == "resident":
+        cell["reference"] = {"kind": "resident-leg", "preset": "uly2", "bar": "bit-identical"}
+    else:
+        cell["probe"] = True
+        cell["reference"] = {"kind": "cell", "cell": "ref456", "bar": "step-nrms",
+                             "probe_steps": 1}
+    answers.append((2.0, rendered, "", f"p-{leg}"))
+    pending = iter(answers)
+    queued: list[str] = []
+
+    def queue(driver, graph, client_id, timeout_s):
+        answer = next(pending)
+        queued.append(answer[3])
+        return answer
+
+    monkeypatch.setattr(run, "Sampler", _FakeSampler)
+    monkeypatch.setattr(run, "queue_and_wait", queue)
+    monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
+    monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
+    monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
+    monkeypatch.setattr(run, "free_cache", lambda driver: busted)
+    monkeypatch.setattr(run, "grant_pending_consent", lambda driver, cell: {"granted": True})
+    config = {"driver": "http://fake", "out_dir": out, "comfy_dir": tmp_path,
+              "sibling": "", "mem_floor_gib": 0.0, "reference": {"nrms_floor": 0.10}}
+    args = type("Args", (), {"timeout_s": 0.0})()
+    with pytest.raises(SessionWedged, match=re.escape(
+            f"abc123 {leg}: the cache reset before this leg did not settle ({busted})")):
+        run.run_cell(cell, config, {}, "client", args)
+    assert f"p-{leg}" not in queued
+    # The record is on disk, says which leg went unqueued, and re-runs on resume.
+    record = json.loads((out / "cells" / "abc123.json").read_text())
+    assert record["cache_bust"] == {leg: busted} and leg not in record["legs"]
+    assert record["verdict"] == "FINDING"
+    assert run.wedged_answer(record) == f"the cache reset before the {leg} leg answered {busted}"
 
 
 def _close_failure(kind: str):
@@ -1857,7 +1921,7 @@ def test_a_card_no_cell_grants_is_dismissed_so_the_next_grant_finds_one(monkeypa
     monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
     monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
     monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
-    monkeypatch.setattr(run, "free_cache", lambda driver: "freed")
+    monkeypatch.setattr(run, "free_cache", lambda driver: "idle")
     config = {"driver": "http://fake", "out_dir": out, "comfy_dir": tmp_path,
               "sibling": "", "mem_floor_gib": 0.0, "reference": {"nrms_floor": 0.10}}
     args = type("Args", (), {"timeout_s": 0.0})()

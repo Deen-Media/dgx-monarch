@@ -484,6 +484,18 @@ def queue_wedge(cell: dict, leg: str, leg_record: dict) -> str:
     return f"{cell['id']} {leg}: the queue would not clear ({drained})"
 
 
+def cache_wedge(cell: dict, leg: str, busted: str) -> str:
+    """Why the cache reset before this leg ends the session, or "" when it settled.
+
+    free_cache answers "idle" once the queue is empty after the reset. "still
+    busy" leaves work this leg would queue behind, and a transport error leaves
+    the queue unknown, the same two answers queue_wedge ends a session on.
+    """
+    if busted == "idle":
+        return ""
+    return f"{cell['id']} {leg}: the cache reset before this leg did not settle ({busted})"
+
+
 def waived_guard_used(record: dict, cell: dict, leg: str) -> str | None:
     """The listed class-K guard spent by this prompt's rendered leg, if any."""
     guards = set(cell.get("waiver_guards") or ())
@@ -1067,7 +1079,10 @@ def run_cell(cell: dict, config: dict, pin: dict, client_id: str, args,
         # Never before the warm leg: the reset unloads every model too, which
         # would make the warm wall a second cold one. Its seed shift is enough.
         if leg not in ("cold", "warm"):
-            record.setdefault("cache_bust", {})[leg] = free_cache(driver)
+            record.setdefault("cache_bust", {})[leg] = busted = free_cache(driver)
+            if wedged := cache_wedge(cell, leg, busted):
+                record["findings"].append(f"{leg} leg not queued: {wedged}")
+                break
         try:
             record["legs"][leg] = leg_record = run_leg(
                 cell, config, client_id, leg, patched, prefix, timeout, sampled, out)
@@ -1094,7 +1109,10 @@ def run_cell(cell: dict, config: dict, pin: dict, client_id: str, args,
                     record["consent_dismissed"] = dismiss_pending_consent(driver)
                 break
             record["consent"] = grant_pending_consent(driver, cell)
-            record.setdefault("cache_bust", {})["waived"] = free_cache(driver)
+            record.setdefault("cache_bust", {})["waived"] = busted = free_cache(driver)
+            if wedged := cache_wedge(cell, "waived", busted):
+                record["findings"].append(f"waived leg not queued: {wedged}")
+                break
             waived_prefix = f"sweep_{cell['id']}_waived"
             record["legs"]["waived"] = waived = run_leg(
                 cell, config, client_id, "waived",
@@ -1467,8 +1485,9 @@ def wedged_answer(done: dict) -> str:
     scored as, and it re-runs (the krea2 cfg2 records the 2026-09-02 wedge left
     behind). The signals are the runner's own, so a session that ends on one
     and a record that carries one cannot disagree: the two driver messages no
-    reset clears, a leg whose queue would not drain, and a replacement the
-    driver refused, which leaves the cell answering on the fleet before it.
+    reset clears, a leg whose queue would not drain, a cache reset that left
+    the queue busy before a leg, and a replacement the driver refused, which
+    leaves the cell answering on the fleet before it.
     """
     for name, leg in (done.get("legs") or {}).items():
         text = f"{leg.get('message', '')}\n{leg.get('exception_type', '')}"
@@ -1476,6 +1495,9 @@ def wedged_answer(done: dict) -> str:
             return f"the {name} leg answered {hit!r}, which no reset clears"
         if leg.get("drain", "drained") != "drained":
             return f"the {name} leg queue would not clear ({leg['drain']})"
+    for name, busted in (done.get("cache_bust") or {}).items():
+        if busted != "idle":
+            return f"the cache reset before the {name} leg answered {busted}"
     for name in ("reset", "floor_reset"):
         if (done.get(name) or {}).get("recycle") == RECYCLE_BUSY:
             return f"the {name} recycle answered {RECYCLE_BUSY}, so the old fleet stayed"

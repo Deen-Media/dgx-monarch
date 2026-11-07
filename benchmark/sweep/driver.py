@@ -375,7 +375,9 @@ def free_cache(driver: str, bounded_s: float = 120.0) -> str:
     unload_models cannot turn that off because server.py sets that flag only
     when it is true. The next leg therefore loads cold, so the runner never
     calls this before the warm leg, whose moved seed misses the cache instead.
-    The flag is read at the end of a loop turn, hence the wait.
+    The flag is read at the end of a loop turn, hence the wait. The answer is
+    "idle", "still busy" or the transport error; run_cell ends the session on
+    anything but "idle" (run.cache_wedge).
     """
     try:
         post(f"{driver}/free", {"free_memory": True}, timeout=60)
