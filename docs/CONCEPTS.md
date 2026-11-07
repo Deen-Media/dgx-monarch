@@ -252,7 +252,9 @@ stock-residency reference; automatic family detection can add another proof
 render. A gate run costs two to four short proof renders.
 
 **Auto-gating.** The first render of a new model, residency and LoRA
-combination runs the gate automatically.
+combination runs the gate automatically, through any DGX Monarch sampler. A
+dual-model render proves both of its models in one gate run, and that verdict
+covers only the pair.
 
 **The ledger.** Where verdicts live (`output/dgxm_gate_ledger.jsonl`). Each
 contextual `PASS`, `INCONCLUSIVE`, or `RETESTING` row is keyed to bounded

@@ -3,11 +3,9 @@
 The gate: the first-use gate compares renders on the graph's own mesh and
 topology, never a stock single-GPU load (nodes/gate_ceremony.py,
 nodes/gate_cross_mode.py). Which renders reach it is set by the two switches
-below, AUTO_GATED_KINDS and DUAL_MODEL_AUTO_GATES: today a KSampler render
-does, a Sampler Custom render does not and dispatches on stock residency until
-a PASS (auto_gate.auto_gate_context, gate_identity.authorize_normal_render),
-and a dual-model render never does and always dispatches on stock residency
-(auto_gate.maybe_auto_gate). Each graph's Note must say the sentence for its
+below, AUTO_GATED_KINDS and DUAL_MODEL_AUTO_GATES: since 1.5 every sampler
+kind does (auto_gate.auto_gate_context), and a dual-model render proves both of
+its models (nodes/gate_dual.py). Each graph's Note must say the sentence for its
 own sampler.
 
 FSDP: the launch contract shards bf16, fp16, fp8 and int8 files and refuses
@@ -73,16 +71,13 @@ def test_each_sampler_node_sends_the_request_kind_this_table_names():
 
 
 # ---- Which renders reach the first-use gate -------------------------------
-# These two switches hold what the runtime gates today, and every claim in this
-# section reads them. Extending first-use gating to the Sampler Custom and
-# dual-model graphs is one change here: add "custom" to AUTO_GATED_KINDS and set
-# DUAL_MODEL_AUTO_GATES to True. The code pins then require the gate to reach
-# those requests, and the Note and doc checks require the eight graphs to carry
-# GATE in place of GATE_CUSTOM and GATE_DUAL (tools/gen_templates.py, used only
-# by those graphs), the Identity Gate Note to drop its Sampler Custom sentence,
-# and MODELS.md and TROUBLESHOOTING.md to drop the lines below.
-AUTO_GATED_KINDS = frozenset({"ksampler", "ksampler_advanced"})
-DUAL_MODEL_AUTO_GATES = False
+# These two switches hold what the runtime gates, and every claim in this
+# section reads them. Since 1.5 both are on: the code pins require the gate to
+# reach Sampler Custom and dual-model requests, the eight graphs those used to
+# leave out carry GATE, the Identity Gate Note has no Sampler Custom sentence,
+# and MODELS.md and TROUBLESHOOTING.md hold none of the lines below.
+AUTO_GATED_KINDS = frozenset({"ksampler", "ksampler_advanced", "custom"})
+DUAL_MODEL_AUTO_GATES = True
 # Doc sentences that hold only while a switch is off, with the switch they follow.
 NO_GATE_SENTENCES = (
     ("custom", "example_workflows/dgx-monarch-identity-gate.json",
@@ -172,6 +167,22 @@ def test_a_no_gate_sentence_stands_only_while_its_switch_is_off(switch, name, se
     text = " ".join(line.lstrip("> ") for line in text.split("\n"))
     present = sentence in " ".join(text.split())
     assert present is not _switch_on(switch), (name, sentence)
+
+
+def test_the_dual_graph_names_the_placements_its_proof_cannot_run_on():
+    """cfg2 renders stock and *+fsdp refuses under first_use (nodes/gate_dual.py)."""
+    from dgx_monarch.nodes import gate_dual
+    from dgx_monarch.topology import Topology
+
+    sentence = gen_templates.GATE_DUAL_PLACEMENTS
+    assert gate_dual.skip_reason(Topology(cfg=2, world=2), {}) == gate_dual.CFG_PARALLEL_REASON
+    assert "cfg2" in sentence and "stock residency" in sentence
+    assert gate_dual.skip_reason(Topology(ulysses=2, fsdp=True, world=2), {}) == gate_dual.FSDP_REASON
+    assert "*+fsdp preset refuses" in sentence
+    assert gate_dual.skip_reason(Topology(ulysses=2, world=2), {}) is None
+    for path in SHIPPED:
+        doc = _doc(path)
+        assert (sentence in _note(doc)) is _dual(doc), path.stem
 
 
 # ---- What the gate compares --------------------------------------------------

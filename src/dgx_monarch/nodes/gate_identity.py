@@ -280,8 +280,12 @@ def model_with_worker_overrides(
 
 
 def model_for_request(model, request: dict):
-    """Use a stock-policy clone for dual-model requests, without graph mutation."""
-    if model is None or request.get("uncond_model") is None:
+    """Use a stock-policy clone for a dual-model request with auto_gate off.
+
+    Under first_use, authorization decides: a dual PASS, stock, or the FSDP refusal.
+    """
+    if (model is None or request.get("uncond_model") is None
+            or getattr(model.mesh, "auto_gate", "off") == "first_use"):
         return model
     worker_args = model.mesh.worker_args
     if (worker_args.get("lora_low_rss") is False
@@ -324,6 +328,11 @@ def capture(model, uncond_model_request: dict | None = None) -> tuple[
         "uncond_model_request": copy.deepcopy(uncond_request),
         "artifact_sets": copy.deepcopy(artifact_sets),
     }
+    if uncond_request is not None:  # a dual proof's rows bind both slots
+        from ..gate_dual_identity import dual_artifact_signature, dual_combo_key
+
+        key = dual_combo_key(model_request, uncond_request)
+        artifacts = dual_artifact_signature(artifact_sets)
     return model_request, key, identity, artifacts, binding
 
 
@@ -356,25 +365,16 @@ def authorize_normal_render(
     fsdp_proof_required = topology_requires_fsdp_proof(resolved_topology, model_request.get("loras"))
     fsdp_lora = topology_resolves_fsdp(resolved_topology) and not fsdp_proof_required
 
-    # A Gate ceremony proves exactly one model, so a dual-model render dispatches with
-    # both residency levers off, or refuses under automatic FSDP. Never let a primary-only
-    # PASS grant its second slot, even when the caller skipped model_for_request.
+    # Only a dual PASS, keyed on both slots, can grant a dual-model render its
+    # residency (nodes/gate_dual.py); a primary-only PASS never reaches it.
     if uncond_model_request is not None:
-        if (
-            (fsdp_proof_required or fsdp_lora)
-            and not gate_active
-            and getattr(model.mesh, "auto_gate", "off") == "first_use"
-        ):
-            raise FsdpGateProofError(
-                "automatic FSDP execution is unavailable for a dual-model "
-                "request because the clean-reload Gate proves one model only"
-            )
-        return NormalRenderAuthorization(
-            {**requested, "slab_weights": False, "lora_low_rss": False},
-            model_request,
-            None,
-            "stock",
-        )
+        from .gate_dual import authorize_dual
+
+        return authorize_dual(
+            model, handle, uncond_model_request, requested=requested,
+            model_request=model_request, effective=effective, gate_active=gate_active,
+            session_verdict=session_verdict, resolved_topology=resolved_topology,
+            resolved_attention=resolved_attention)
 
     if ((not fleet_policy_is_risky(model_request, effective)
             and not fsdp_proof_required)

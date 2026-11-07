@@ -50,8 +50,9 @@ GATE_REMEDY = ("run Identity Gate (DGX Monarch) on this model with slab_weights=
                "graph whose stock reference fits the box that refused, for example with an optional "
                "driver model such as a prompt upsampler switched off, then queue the render "
                "again, or ")
-# The state a dual-model render notes: the gate proves one model, so no PASS
-# can authorize slab for it and the remedy names none.
+# The state a dual-model render on a cfg-parallel topology notes: each rank
+# holds one of its two models, so the gate cannot prove it there, no PASS can
+# authorize slab for it, and the remedy names none (nodes/gate_dual.py).
 DUAL_MODEL = "two models"
 
 # The machine blocks a refusal carries after its sentence: the measured numbers
@@ -103,8 +104,9 @@ def forced_stock_text(text: str, state: str) -> str:
     """The stock refusal with the real cause and remedy in place of the setting."""
     lead = "Slab residency was not used, although the Init node sets slab_weights=on: "
     if state == DUAL_MODEL:
-        cause = (f"{lead}a render with two models runs on stock residency, because the "
-                 "Identity Gate proves one model at a time.")
+        cause = (f"{lead}a render with two models on a cfg-parallel topology runs on stock "
+                 "residency, because each rank holds one of the two models and the identity "
+                 "gate cannot swap-test the model a rank does not hold.")
         remedy = ""
     else:
         cause = (f"{lead}this combination has no Identity Gate PASS for its current state "

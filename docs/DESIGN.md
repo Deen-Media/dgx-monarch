@@ -334,11 +334,21 @@ Gate authority needs every rank on the driver's build: the driver refuses a
 PASS lookup, a ceremony or a grant on a pair whose reports differ or lack the
 build, naming each box's torch and CUDA, and each Worker refuses a normal or
 Fleet grant whose build is not its own (`worker_runtime.py`). The context still
-names one build, so a pair that matches keeps its PASS rows. A Gate
-ceremony proves exactly one model, so dual-model requests are forced onto
-complete stock residency while driver and worker artifact preflight still bind
-both model slots. Driver preflight, worker preflight, and post-adoption checks
-all re-derive the applicable snapshot. Each normal request is explicitly
+names one build, so a pair that matches keeps its PASS rows. A dual-model
+render is proven as one unit. Its ceremony renders the dual request itself, runs a swap cycle on each slot that
+carries a LoRA stack, and writes its verdict under a combination key and an
+artifact digest that name both slots (`gate_dual_identity.py`). A single-model
+PASS therefore never grants a dual render, and a dual PASS never grants a render
+of either model alone; the dual grant binds both artifact sets, and the Worker
+recomputes both before it accepts one. Where that proof cannot run, a dual render
+keeps complete stock residency (`nodes/gate_dual.py`). On a cfg-parallel
+topology each rank holds one of the two models and cannot cycle the other. Under
+FSDP the clean-reload proof reloads one slot, so automatic FSDP refuses a dual
+request. Comfy-managed residency has no two-model proof. With `auto_gate=off` a
+dual render also stays stock: it has no residency without its proof. Driver and
+worker artifact preflight bind both model slots in every case. Driver
+preflight, worker preflight, and post-adoption checks all re-derive the
+applicable snapshot. Each normal request is explicitly
 stamped `required`, `stock`, `operator_off`, or `gate_internal`, so an absent
 or stale grant cannot inherit risky defaults.
 Before an explicit or automatic ceremony can retest old authority, one fsynced
@@ -1214,7 +1224,11 @@ Category **"DGX Monarch"**. The node surface is small by design:
   specs the workers build against their resident models.
 - `DGXMonarchIdentityGate`: runs one ceremony on demand and writes its verdict
   row; `auto_gate=first_use` runs the same ceremony before a new combination's
-  first render, and `dgxm gate` drives it from the CLI (§6.1).
+  first render through any sampler node, and `dgxm gate` drives it from the CLI
+  (§6.1). A Sampler Custom proof replays the request's own guider, SAMPLER and
+  NOISE objects on the first two steps of its sigma schedule
+  (`nodes/gate_proof_request.py`); a one-sigma schedule renders nothing to
+  compare and runs no proof.
 - `DGXMonarchStatus` / `DGXMonarchClearVRAM`: ops nodes. ClearVRAM returns its
   STRING status at slot 0 and, when a LATENT is connected, passes it through
   slot 1 only after cleanup. With `level=recycle`, the latent is withheld
@@ -1683,6 +1697,24 @@ has no stock to fall back to, so there the refusal answers the render, and an
 explicit Gate node raises it. The no-LoRA FSDP proof keeps its own clean-reload
 price.
 
+**A placement the ceremony would drop is not made.** The ceremony's first leg
+must come from a clean load from the file, so it unloads every rank first. With
+an explicit topology the UNET loader would otherwise place the model at node
+execution and the ceremony would drop it a moment later and load the file again
+(issue #157, a 40.4 GiB file placed twice on 2026-11-06). The loader therefore
+leaves the load to the ceremony's first proof render when a ceremony will run
+before the graph's first render (`nodes/loader_gate_defer.py`). It reads the
+prompt from the loader to the nodes that render its model, collects the LoRA
+stack on the way, and asks what the first-use gate would do for each one; an
+Identity Gate node always defers it. Any doubt keeps the eager load: a Fleet
+consumer, a node the walk does not know, a linked LoRA widget, a projected
+capacity-rescue consent, or an error. No trust claim changes: the ceremony
+still unloads every rank and loads its first leg from the file, now once, and a
+loader-time placement never stands in for that leg. The loader's own price and the render site's credit for an
+explicit preset are unchanged; the deferred load comes where the ceremony's
+reload came before, after the driver stack, and the Worker's load-time
+capacity check prices it.
+
 **Two windows, not one sum.** The loader checks two peaks separately. The
 transient window covers loading against MemAvailable minus the reserve: a
 stock load uses about 2.1x the artifact size while host and device copies
@@ -1710,7 +1742,8 @@ to place. The refusal leads with one plain sentence, the figures inside its
 first 200 characters, and then names what would fit, each tried in both
 windows: same-stem files on disk here in place of the DiT or a driver model, a
 switch whose other setting skips a model, and a pair with the Init node's
-topology set to `uly2+fsdp`, with its Identity Gate step. **A remedy is never
+topology set to `uly2+fsdp`, whose first render runs the gate's clean-reload
+proof. **A remedy is never
 one the graph would refuse.** A DiT file is named only when a graph here names
 it (the artifact manifest lists it), its kind is one every topology here runs,
 and none of the refusals the driver can read before a load applies: the LoRA

@@ -14,6 +14,7 @@ from typing import Any
 
 from ..transfer_utils import safe_call
 from .gate_ceremony import CeremonyEvidence
+from .gate_proof_request import report_fields
 
 # What a rank's swap cycle reports with no LoRA stack (actor/gate_cycle.py).
 NO_STACK_CYCLE_REASON = "no lora stack: lazy swap is not applicable"
@@ -122,11 +123,7 @@ def publish_ceremony_verdict(
         "inconclusive_reasons": reasons,
         "latents_identical": identical,
         "max_abs_latent_diff": max_diff,
-        "seed": frozen_request.get("noise_seed"),
-        "steps": frozen_request.get("steps"),
-        "cfg": frozen_request.get("cfg"),
-        "sampler": frozen_request.get("sampler_name"),
-        "scheduler": frozen_request.get("scheduler"),
+        **report_fields(frozen_request),
         "wall_s": round(_time.perf_counter() - t0, 1),
         "time": time.strftime("%Y-%m-%d %H:%M:%S"),
         "cross_mode": cross_mode,
@@ -202,7 +199,6 @@ def publish_ceremony_verdict(
                       "(max latent diff %s) for %s.",
                       origin, max_diff, model.unet_name)
         from .. import residency_mode
-        from .gate_quarantine_scope import combination_label
 
         # The next dispatch of this combination turns comfy_managed off for
         # the whole Init node (nodes/render_quarantine), so say so here too.
@@ -212,7 +208,7 @@ def publish_ceremony_verdict(
                   "ledger keeps the FAIL for later sessions. Renders of this combination use comfy's stock "
                   "path where one exists; a live comfy_managed worker refuses them until a mesh reset. Report "
                   "this with your comfy commit and dgxm status.", " + ".join(levers),
-                  combination_label(model),
+                  f"{model.unet_name} (combination {key})",  # a dual proof's own key
                   " The next dispatch of this combination turns comfy_managed off for the whole Init node."
                   if managed else "")
         quarantined = runtime["_model_with_worker_overrides"](model, quarantined_args, handle=handle)

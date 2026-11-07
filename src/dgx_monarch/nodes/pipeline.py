@@ -308,7 +308,8 @@ class RenderPipeline:
         # the ceremony never saw would lose its ceremony too.
         common._restore_requested_levers(model)
         if model is not None and common.auto_gate_required(
-                model, request.get("kind", ""), latent, cfg_value):
+                model, request.get("kind", ""), latent, cfg_value,
+                *(() if request.get("uncond_model") is None else (request["uncond_model"],))):
             while self._inflight:
                 self._collect_oldest()
             # The identity ceremony runs its own direct render. Yield this

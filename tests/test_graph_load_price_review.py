@@ -182,7 +182,7 @@ def test_fleet_notes_the_stock_it_forces(monkeypatch):
 
 @pytest.mark.parametrize("requested,dispatched,dual,noted", [
     (True, False, False, "unknown"),      # a failed authorization
-    (True, False, True, "two models"),    # a dual-model render
+    (True, False, True, "two models"),    # a dual-model render on cfg2
     ("auto", False, False, None),         # nothing was asked for
     (True, True, False, None),            # nothing was forced
 ])
@@ -203,7 +203,8 @@ def test_every_stock_fallback_of_a_render_is_noted(requested, dispatched, dual, 
 def test_a_dual_model_refusal_names_its_cause_and_no_gate(monkeypatch):
     text = refusal_lead.forced_stock_text(_worker_stock_refusal(monkeypatch),
                                           refusal_lead.DUAL_MODEL)
-    assert "a render with two models runs on stock residency" in text
+    assert "a render with two models on a cfg-parallel topology runs on stock residency" in text
+    assert "cannot swap-test the model a rank does not hold" in text
     assert "Identity Gate (DGX Monarch) on this model" not in text
     assert "set slab_weights=on" not in text and parse_refusal_tag(text) is not None
 
