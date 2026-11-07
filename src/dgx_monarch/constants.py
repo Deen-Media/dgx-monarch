@@ -26,3 +26,9 @@ DEFAULT_RDMA_MIN_BYTES = 8 * 2**20  # 8 MiB
 TRANSITION_REUSE = "reuse"
 TRANSITION_HOT_SWAP = "hot-swap"
 TRANSITION_LOAD = "load"
+
+# The driver answers POST /dgxm/recycle, and a consent accept that clears the
+# old model first, within this many seconds (nodes/routes.py). Studio waits a
+# margin longer for those two routes (studio/comfy.py), so a slow reset that
+# succeeds is read as the driver's answer, not as a lost one.
+RECYCLE_HTTP_DEADLINE_S = 260.0

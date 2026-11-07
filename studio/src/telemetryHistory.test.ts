@@ -86,6 +86,61 @@ test('sample times are bounded by the companion clock, not a browser clock behin
     'without a companion time the browser clock still bounds samples',
   );
 });
+test('a Worker or rail clock ahead of the companion cannot block its later points', () => {
+  // Review D14: the driver clock is valid, the Worker host and its rail counters run an hour ahead,
+  // and then the Worker clock is corrected.
+  const host = 1_792_522_000,
+    ahead = 3600;
+  const rail: MetricDefinition = {
+    ...metric,
+    id: 'host.rail.rx',
+    source: 'rails.*.rx_bytes',
+    aggregation: 'per_host_per_rail_rate',
+  };
+  const sample = (time: number, skew: number, bytes: number) => ({
+    state: 'connected',
+    observed_at: time + 0.1,
+    sample: {
+      t: time,
+      driver_host: { host: 'head', t: time, gpu: { power_w: 100 } },
+      workers: [
+        {
+          host: {
+            host: 'sibling',
+            t: time + skew,
+            gpu: { power_w: time - host },
+            rails_t: time + skew,
+            rails: { rail0: { rx_bytes: bytes } },
+          },
+        },
+      ],
+    },
+  });
+  let history = appendTelemetry([], sample(host, 0, 0), [metric, rail]);
+  history = appendTelemetry(history, sample(host + 1, ahead, 1e9), [metric, rail]);
+  history = appendTelemetry(history, sample(host + 2, 0, 2e9), [metric, rail]);
+  history = appendTelemetry(history, sample(host + 3, 0, 4e9), [metric, rail]);
+  const series = (id: string) => history.find((row) => row.id === id)!.points;
+  assert.deepEqual(
+    series('sibling:host.gpu.power').map((point) => point.time - host),
+    [0, 2, 3],
+    'the future Worker point is refused and the corrected points arrive',
+  );
+  assert.deepEqual(
+    series('sibling/rail0:host.rail.rx').map((point) => [point.time - host, point.value]),
+    [
+      [0, null],
+      [2, 1],
+      [3, 2],
+    ],
+    'a rail stamp ahead of the companion is refused and the rate spans the accepted points',
+  );
+  assert.deepEqual(
+    series('head:host.gpu.power').map((point) => point.time - host),
+    [0, 1, 2, 3],
+    "the driver's own host keeps every sample",
+  );
+});
 test('the slab chart records a known zero unless the Worker report could hide a slab', () => {
   const slab: MetricDefinition = {
     id: 'host.memory.slab',

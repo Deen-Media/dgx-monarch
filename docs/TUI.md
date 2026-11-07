@@ -189,7 +189,8 @@ attach it unreviewed to a public bug report. Redact it to the narrow evidence
 needed, or use the private security-reporting path when disclosure is
 sensitive. Recording writes require one owner-held, non-symlink regular file
 with mode `0600`; an existing target that does not meet these requirements is
-refused. The run block and render label follow the selected tick. The
+refused. The run block and render label follow the selected tick, also once
+the one-hour history is full and new ticks push old ones out. The
 dashboard retains the latest 4,096 events and refreshes existing entries when
 the route resends them, without marking unchanged events as new.
 
