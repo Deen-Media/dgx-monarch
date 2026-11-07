@@ -242,3 +242,16 @@ def test_anima_keeps_its_adapter_replicated_and_its_note_says_so():
                                   "dgx-monarch-anima-t2i"])
 def test_the_fsdp_guidance_notes_carry_the_launch_rules(name):
     assert gen_templates.FSDP_RULES in _note(_doc(ROOT / "example_workflows" / f"{name}.json"))
+
+
+@pytest.mark.parametrize("name", ["dgx-monarch-wan-scail", "dgx-monarch-wan21-i2v"])
+def test_a_wan_bf16_file_under_fsdp_is_told_to_load_as_bf16(name):
+    # ComfyUI runs the Wan 2.1 family in fp16 by default, so a bf16 file loads
+    # as fp16 and FSDP's launch check reads that kind, not the file's, and
+    # refuses the mismatch (docs/TROUBLESHOOTING.md #17).
+    from dgx_monarch.actor.store_detect import _combine_checkpoint_and_live_kinds
+
+    assert _combine_checkpoint_and_live_kinds("bf16", "fp16") == "fp16"
+    assert _combine_checkpoint_and_live_kinds("bf16", "bf16") == "bf16"
+    note = " ".join(_note(_doc(ROOT / "example_workflows" / f"{name}.json")).split())
+    assert re.search(r"weight_dtype (set )?to bf16 on (the )?loader", note)
