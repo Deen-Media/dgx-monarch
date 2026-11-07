@@ -45,8 +45,10 @@ registerHooks({
     return next(specifier, context);
   },
 });
+// Each node gets a serial when it is made, so a test can tell a kept button from a rebuilt one.
+let made = 0;
 class Node {
-  constructor(tag) { Object.assign(this, { tag, children: [], style: {}, textContent: '' }); }
+  constructor(tag) { Object.assign(this, { tag, children: [], style: {}, textContent: '', serial: ++made }); }
   appendChild(child) { this.children.push(...(child.tag === '#fragment' ? child.children : [child])); return child; }
   replaceChildren(...nodes) { this.children = []; for (const node of nodes) this.appendChild(node); }
 }
@@ -78,7 +80,10 @@ for (const step of steps) {
   await settle();
   const { pending, active } = consentZones();
   // Read the zones before any click: a click re-renders them whatever the poll did.
-  const shown = { pending: text(pending), active: text(active) };
+  const shown = { pending: text(pending), active: text(active), buttons: {} };
+  for (const [name, zone] of [['pending', pending], ['active', active]])
+    for (const node of walk(zone).filter((node) => node.tag === 'button'))
+      shown.buttons[`${name}:${node.textContent}`] = node.serial;
   const sent = posted.length;
   if (step.click) {
     const zone = step.click.zone === 'active' ? active : pending;
@@ -124,6 +129,9 @@ def test_a_replaced_pending_card_submits_the_new_id():
     ])
     assert "Load a_checkpoint.safetensors with slab residency" in first["pending"]
     assert replaced["posted"] == [{"action": "accept", "key": KEY, "id": "p-new"}]
+    # The replaced card is a new node, so its button closes over the new id.
+    button = "pending:Load with slab residency"
+    assert replaced["buttons"][button] != first["buttons"][button]
 
 
 def test_a_replaced_card_dismisses_the_new_id_and_shows_new_server_text():
@@ -148,9 +156,12 @@ def test_a_regranted_active_row_shows_and_revokes_the_new_grant():
 
 def test_an_unchanged_poll_keeps_the_live_nodes():
     """The signature still holds a button across idle polls, so a click is never lost mid-press."""
-    _first, same = _run_panel([
-        {"payload": _payload([card("p-1")])},
-        {"payload": _payload([card("p-1")]),
+    first, same = _run_panel([
+        {"payload": _payload([card("p-1")], [grant("c-1", "panel")])},
+        {"payload": _payload([card("p-1")], [grant("c-1", "panel")]),
          "click": {"zone": "pending", "label": "Load with slab residency"}},
     ])
+    # The poll before the click kept every button node: the same objects, not rebuilt copies.
+    assert first["buttons"] and same["buttons"] == first["buttons"]
+    assert set(first["buttons"]) >= {"pending:Load with slab residency", "pending:Dismiss", "active:Revoke"}
     assert same["posted"] == [{"action": "accept", "key": KEY, "id": "p-1"}]
