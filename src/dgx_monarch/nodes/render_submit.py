@@ -335,6 +335,7 @@ def _submit_render_guarded(
             handle,
             resolved_topology=topo,
             resolved_attention=sample_attention,
+            uncond=request.get("uncond_model"),
         ) or model
         authorization = authorize_normal_render(
             model, handle, uncond_model_request=request.get("uncond_model"),

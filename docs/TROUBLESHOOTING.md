@@ -2007,7 +2007,7 @@ admitted DiT load; see [VALIDATION.md](VALIDATION.md).
 
 | Window | Charge and remedy |
 |---|---|
-| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists, unless the first render runs the identity gate, whose first proof render then loads it. Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
+| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists, unless the first render runs the identity gate, whose first proof render then loads it (a graph with a BasicScheduler (DGX Monarch) still loads at the loader). Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
 | `resident` | Weights plus the graph's future text encoder, VAEs, reference/guide encodes, and declared render activations. If this does not fit, use smaller artifacts or inputs; changing residency cannot remove the stack. |
 
 Rescue is offered only if slab fits both windows
@@ -2850,7 +2850,9 @@ one-time stages before your render samples: NCCL bring-up, a cold NVMe weight
 load, and the identity gate's 2-4 short test renders. With an explicit topology
 the UNET loader leaves the load to the gate's first test render when the gate
 will run, so the file loads once; before 1.5 the loader placed it, the gate
-dropped it, and the first test render loaded it again. The callout at the top of
+dropped it, and the first test render loaded it again. A graph with a
+BasicScheduler (DGX Monarch) still loads it twice: the scheduler loads the
+model to compute its sigmas before the gate runs. The callout at the top of
 this file says what makes a combination new. Every release invalidates earlier
 PASS results, so the first render after an upgrade repeats the gate.
 
@@ -2902,7 +2904,9 @@ first render runs the check over the dual render itself: both models from a
 fresh load, a swap cycle on each one that carries a LoRA stack, and the same
 renders compared bit for bit. Its verdict covers only that pair of models, so a
 PASS for the conditional model alone never grants the dual render, and the
-dual PASS never grants a render of either model alone. Two placements cannot
+dual PASS never grants a render of either model alone. A FAIL recorded for the
+pair, or for the conditional model alone, turns slab and low-RSS residency off
+for the dual render, and the log names which key failed. Two placements cannot
 run the check. On cfg2 each rank holds one of the two models and cannot cycle
 the other, so the render runs on stock residency and the log says why. On a
 `*+fsdp` preset the clean-reload proof reloads one model, so under

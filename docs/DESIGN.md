@@ -340,7 +340,10 @@ runs a swap cycle on each slot that carries a LoRA stack, and writes its
 verdict under a combination key and an artifact digest that name both slots (`gate_dual_identity.py`). A single-model
 PASS therefore never grants a dual render, and a dual PASS never grants a render
 of either model alone; the dual grant binds both artifact sets, and the Worker
-recomputes both before it accepts one. Where that proof cannot run, a dual render
+recomputes both before it accepts one. At dispatch a dual render reads two FAIL
+keys, the pair's own and its conditional model's single key, and either FAIL
+turns its levers off: a FAIL on that model alone is the same model on the same
+residency path (`nodes/render_quarantine.py`). Where that proof cannot run, a dual render
 keeps complete stock residency (`nodes/gate_dual.py`). On a cfg-parallel
 topology each rank holds one of the two models and cannot cycle the other. Under
 FSDP the clean-reload proof reloads one slot, so automatic FSDP refuses a dual
@@ -1708,7 +1711,10 @@ prompt from the loader to the nodes that render its model, collects the LoRA
 stack on the way, and asks what the first-use gate would do for each one; an
 Identity Gate node always defers it. Any doubt keeps the eager load: a Fleet
 consumer, a node the walk does not know, a linked LoRA widget, a projected
-capacity-rescue consent, or an error. No trust claim changes: the ceremony
+capacity-rescue consent, or an error. A BasicScheduler (DGX Monarch) also keeps
+it: the scheduler loads the model on the Workers to compute its sigmas before
+any ceremony, and the model sampling object it reads comes from a loaded
+model, so a graph with one still loads the file twice. No trust claim changes: the ceremony
 still unloads every rank and loads its first leg from the file, now once, and a
 loader-time placement never stands in for that leg. The loader's own price and
 the render site's credit for an explicit preset are unchanged; the deferred load comes where the ceremony's

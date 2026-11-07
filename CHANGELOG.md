@@ -416,15 +416,20 @@
   models, a dual render keeps stock residency. On a `*+fsdp` preset it still
   refuses under `auto_gate=first_use`, now because the clean-reload proof
   reloads one model, and comfy-managed residency still refuses it. A dual check
-  that cannot finish turns slab and low-RSS off for that pair alone ([TROUBLESHOOTING #61](docs/TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
+  that cannot finish turns slab and low-RSS off for that pair alone, and a FAIL
+  recorded for the pair or for its conditional model turns them off for the
+  dual render ([TROUBLESHOOTING #61](docs/TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
 - A model on an explicit topology loads once when its first render runs the
   identity gate. The UNET loader placed it on every rank, the gate dropped it
   a moment later, and the first proof render loaded the file again: about half
-  a minute to a minute and a second pass over the file per rank, and on 2026-11-06 a capacity
+  a minute to a minute and a second pass over the file per rank, and on
+  2026-11-06 a capacity
   refusal for the Kandinsky 5 Pro template, priced while the first copy's host
   memory still counted. The loader now leaves the load to the gate's first
-  proof render when the gate will run. The gate, its verdict and the render are
-  unchanged ([TROUBLESHOOTING #61](docs/TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
+  proof render when the gate will run. A graph with a BasicScheduler (DGX
+  Monarch) still loads twice, because the scheduler loads the model to compute
+  its sigmas before the gate; no shipped template uses one. The gate, its
+  verdict and the render are unchanged ([TROUBLESHOOTING #61](docs/TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
 - A LoRA renders as it does in stock ComfyUI. The Workers baked a LoRA with
   ComfyUI's classic merge, the math stock runs only with DynamicVRAM off,
   while stock's default applies a LoRA when a layer casts its weight, in the

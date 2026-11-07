@@ -297,3 +297,13 @@ def test_a_dual_guider_whose_other_chain_reaches_no_loader_keeps_the_eager_load(
         prompt[guider]["inputs"]["model_negative"] = ["60", 0]
     loaders.DGXMonarchUNETLoader().load(model.mesh, model.unet_name, prompt=prompt, unique_id="3")
     assert seen["placed"] == [("load_model", model.unet_name)] and seen["deferred"] == []
+
+
+def test_a_basic_scheduler_keeps_the_eager_load(pro_loader):
+    """compute_sigmas loads the model itself before the ceremony; deferring saves nothing."""
+    model, seen = pro_loader
+    prompt = _api(PRO)
+    prompt["70"] = {"class_type": "DGXMonarchBasicScheduler",
+                    "inputs": {"model": ["4", 0], "scheduler": "beta", "steps": 8, "denoise": 1.0}}
+    _load(model, prompt)
+    assert seen["placed"] == [("load_model", UNET)] and seen["deferred"] == []

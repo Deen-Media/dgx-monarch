@@ -11,9 +11,10 @@ inside the first proof render, and the gate's trust is unchanged.
 The decision reads the prompt from the loader to the nodes that render its
 model, collecting the LoRA stack on the way, and asks what the first-use gate
 (``auto_gate.maybe_auto_gate``) would do for each one. It defers only when a
-ceremony will run. Any doubt keeps the eager load: a Fleet consumer, a node
-this walk does not know, a linked LoRA widget, a chain that reaches no loader,
-or any error. A wrong prediction costs nothing extra either way: an unneeded
+ceremony will run. Any doubt keeps the eager load: a Fleet consumer, a
+BasicScheduler (DGX Monarch), which loads the model itself before the
+ceremony, a node this walk does not know, a linked LoRA widget, a chain that
+reaches no loader, or any error. A wrong prediction costs nothing extra either way: an unneeded
 deferral moves the load to the first render, and a missed one is the double
 load this module removes.
 """
@@ -46,8 +47,10 @@ _GATED = frozenset({
 })
 # Its explicit ceremony unloads every rank at its baseline, whatever the ledger says.
 _EXPLICIT_GATE = "DGXMonarchIdentityGate"
-# Loads the model itself when nothing is resident, and gates nothing.
-_NEUTRAL = frozenset({"DGXMonarchBasicScheduler"})
+# Loads the model itself to compute its sigmas (``compute_sigmas`` calls
+# ``store_fsdp.ensure``) before any ceremony, which then drops that load: a
+# deferral saves nothing there, so such a graph keeps the eager load.
+_LOADS_ITSELF = frozenset({"DGXMonarchBasicScheduler"})
 
 
 def ceremony_drops_load(spec: Any, handle: Any, prompt: object, unique_id: object) -> bool:
@@ -114,7 +117,9 @@ def _endpoints(nodes, live, loader: str) -> list[tuple[str, str, list[tuple[str,
                 pending.append((key, stack))
             elif (kind in _GATED or kind == _EXPLICIT_GATE) and name in ("model", "model_negative"):
                 found.append((key, name, stack))
-            elif kind not in _NEUTRAL:
+            elif kind in _LOADS_ITSELF:
+                raise LookupError(f"{kind} loads the model itself before the ceremony")
+            else:
                 raise LookupError(f"{kind} consumes the model")  # Fleet, or a node this walk does not know
     return found
 
