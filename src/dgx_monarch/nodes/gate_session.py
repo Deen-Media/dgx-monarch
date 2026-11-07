@@ -114,7 +114,7 @@ def run_identity_ceremony(
                     # writing them into the graph would take them from every
                     # other checkpoint on the same Init node.
                     runtime["_force_stock_quarantine"](
-                        model, handle, timeout_s=600)
+                        model, handle, timeout_s=600, uncond=request.get("uncond_model"))
                 return result
         except BaseException as exc:
             # A settled refusal keeps its own class here too: the ceremony
@@ -145,7 +145,8 @@ def run_identity_ceremony(
                 try:
                     with session.activate():
                         runtime["_force_stock_quarantine"](
-                            model, handle, timeout_s=600, cause=exc)
+                            model, handle, timeout_s=600, cause=exc,
+                            uncond=request.get("uncond_model"))
                 except BaseException as quarantine_exc:
                     previous = primary
                     primary, cause = reconcile_error(

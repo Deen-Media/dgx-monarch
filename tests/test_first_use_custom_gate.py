@@ -120,7 +120,7 @@ def test_a_lora_on_the_p_h3_image_route_earns_a_pass_and_a_residency_grant(
         model.unet_name, model.options, [lora_name])
 
 
-def test_a_custom_render_on_an_fsdp_preset_reaches_the_clean_reload_proof(
+def test_a_custom_render_on_an_fsdp_preset_requires_the_clean_reload_proof(
     monkeypatch, tmp_path,
 ):
     """It used to refuse at authorization with no proof run (TROUBLESHOOTING, the FSDP entry)."""
@@ -133,6 +133,16 @@ def test_a_custom_render_on_an_fsdp_preset_reaches_the_clean_reload_proof(
     context = common._auto_gate_context(model, "custom", latent, 1.0)
 
     assert context is not None and token_requires_fsdp_proof(context[1])
+    assert common.auto_gate_required(model, "custom", latent, 1.0) is True
+
+
+def test_a_custom_render_under_comfy_managed_residency_reaches_the_gate(monkeypatch, tmp_path):
+    """Refusal 6 tells the user to render once with auto_gate=first_use; that now reaches it."""
+    graph = doc(TEMPLATES / "dgx-monarch-p-h3-image.json")
+    mesh_rig(monkeypatch, tmp_path, no_material_rows(), [])
+    model = graph_model(graph, widgets={"comfy_managed": "on"})
+    latent = {"samples": torch.zeros(1, 4, 8, 8)}
+    assert common._auto_gate_context(model, "custom", latent, 1.0) is not None
     assert common.auto_gate_required(model, "custom", latent, 1.0) is True
 
 

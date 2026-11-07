@@ -180,19 +180,20 @@ def test_fleet_notes_the_stock_it_forces(monkeypatch):
     assert seen == [False, "unknown"]
 
 
-@pytest.mark.parametrize("requested,dispatched,dual,noted", [
-    (True, False, False, "unknown"),      # a failed authorization
-    (True, False, True, "two models"),    # a dual-model render on cfg2
-    ("auto", False, False, None),         # nothing was asked for
-    (True, True, False, None),            # nothing was forced
+@pytest.mark.parametrize("requested,dispatched,state,noted", [
+    (True, False, "unknown", "unknown"),                       # a failed authorization
+    (True, False, refusal_lead.DUAL_MODEL, "two models"),     # a dual-model render on cfg2
+    (True, False, refusal_lead.DUAL_UNPROVEN, "two models, no dual PASS"),  # no dual PASS yet
+    ("auto", False, "unknown", None),                         # nothing was asked for
+    (True, True, "unknown", None),                            # nothing was forced
 ])
-def test_every_stock_fallback_of_a_render_is_noted(requested, dispatched, dual, noted):
+def test_every_stock_fallback_of_a_render_is_noted(requested, dispatched, state, noted):
     seen = []
 
     @refusal_lead.lead_with_refusal
     def render():
         refusal_lead.note_if_slab_dropped({"slab_weights": requested},
-                                          {"slab_weights": dispatched}, dual=dual)
+                                          {"slab_weights": dispatched}, state=state)
         seen.append(refusal_lead.forced_stock_state())
 
     render()
@@ -205,6 +206,16 @@ def test_a_dual_model_refusal_names_its_cause_and_no_gate(monkeypatch):
                                           refusal_lead.DUAL_MODEL)
     assert "a render with two models on a cfg-parallel topology runs on stock residency" in text
     assert "cannot swap-test the model a rank does not hold" in text
+    assert "Identity Gate (DGX Monarch) on this model" not in text
+    assert "set slab_weights=on" not in text and parse_refusal_tag(text) is not None
+
+
+def test_an_unproven_dual_render_names_a_remedy_that_can_work(monkeypatch):
+    """The Identity Gate node proves one model, so its PASS would not grant the pair."""
+    text = refusal_lead.forced_stock_text(_worker_stock_refusal(monkeypatch),
+                                          refusal_lead.DUAL_UNPROVEN)
+    assert "this pair of models has no dual identity-gate PASS" in text
+    assert "so its first-use identity gate proves both models" in text
     assert "Identity Gate (DGX Monarch) on this model" not in text
     assert "set slab_weights=on" not in text and parse_refusal_tag(text) is not None
 

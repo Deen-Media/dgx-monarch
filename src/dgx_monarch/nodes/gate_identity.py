@@ -204,7 +204,7 @@ def fleet_residency_capability_context(
     }
 
 
-def quarantine_unproven_paths(model, cause: BaseException | None = None) -> None:
+def quarantine_unproven_paths(model, cause: BaseException | None = None, uncond: dict | None = None) -> None:
     """Disable residency optimizations that lack a completed identity proof.
 
     ``unproven_quarantine_levers`` preserves two supported exceptions: a LoRA-free
@@ -219,11 +219,11 @@ def quarantine_unproven_paths(model, cause: BaseException | None = None) -> None
     from .consent_rescue import unproven_quarantine_levers
     from .gate_quarantine_scope import write_scoped_quarantine
 
-    write_scoped_quarantine(model, unproven_quarantine_levers(model), cause)
+    write_scoped_quarantine(model, unproven_quarantine_levers(model), cause, uncond)
 
 
 def force_stock_quarantine(model, handle, timeout_s: float = 600.0,
-                           cause: BaseException | None = None) -> list:
+                           cause: BaseException | None = None, uncond: dict | None = None) -> list:
     """Publish both graph levers off and push that complete policy fail-closed.
 
     A measured class K abort keeps every lever the graph asked for, so there
@@ -234,7 +234,7 @@ def force_stock_quarantine(model, handle, timeout_s: float = 600.0,
     from ..delivery_faults import WorkerDeliveryError
     from .gate_quarantine_scope import measured_abort_guard
 
-    quarantine_unproven_paths(model, cause)
+    quarantine_unproven_paths(model, cause, uncond)
     if measured_abort_guard(cause) is not None or isinstance(cause, WorkerDeliveryError):
         return []
     from ..mesh import MeshHandle

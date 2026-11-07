@@ -66,6 +66,15 @@ def stock_by_rule(request: dict, topology: Any) -> bool:
     return request.get("uncond_model") is not None and _cfg_degree(topology) > 1
 
 
+def forced_stock_state(request: dict, topology: Any) -> str:
+    """The state a stock dispatch notes (``refusal_lead``): why it could not keep slab."""
+    from .refusal_lead import DUAL_MODEL, DUAL_UNPROVEN
+
+    if request.get("uncond_model") is None:
+        return "unknown"
+    return DUAL_MODEL if stock_by_rule(request, topology) else DUAL_UNPROVEN
+
+
 def refuse_unprovable(model: Any, latent: dict, cfg_value: float, handle: Any) -> None:
     """Raise before any ceremony side effect when the gate cannot prove this dual render."""
     from .common import _resolve_topology_for_latent
@@ -213,7 +222,7 @@ def _dual_grant(model, handle, uncond, requested, model_request, effective, sess
     log.warning("dual-model render has no exact Gate PASS for the current %s state; forcing "
                 "stock residency for this dispatch", lookup.state)
     if requested.get("slab_weights") is True:
-        from .refusal_lead import note_forced_stock
+        from .refusal_lead import DUAL_UNPROVEN, note_forced_stock
 
-        note_forced_stock(lookup.state)
+        note_forced_stock(DUAL_UNPROVEN)  # an Identity Gate node's PASS would not grant it
     return None

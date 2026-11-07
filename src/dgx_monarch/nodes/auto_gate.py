@@ -194,7 +194,7 @@ def auto_gate_context(
                     "identity gate previously FAILED for %s; no ceremony runs, and "
                     "its dispatch renders with the guarded residency levers off for "
                     "that combination in this capability context",
-                    combination_label(model),
+                    combination_label(model, uncond_model),
                 )
         return state, gate_verdict_token(
             key, artifacts.current, commit, capability_context)
@@ -471,7 +471,7 @@ def maybe_auto_gate(
         safe_call(log.warning,
                   "identity gate skipped for %s, and this render runs on stock "
                   "residency; the next request of this combination meets the "
-                  "same check: %s", combination_label(model), stop)
+                  "same check: %s", combination_label(model, uncond), stop)
         return gate_inconclusive.CAPACITY_STOP_DISPATCH_VERDICT
     except Exception as exc:
         from .consent_waiver import ceremony_abort_reason, settle_aborted_ceremony

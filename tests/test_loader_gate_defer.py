@@ -265,3 +265,35 @@ def test_both_ideogram_loaders_defer_on_first_use_and_load_once_vouched(
     _persist(tmp_path, model, "PASS", "known", uncond=uncond.request_dict())
     loaders.DGXMonarchUNETLoader().load(model.mesh, model.unet_name, prompt=prompt, unique_id="3")
     assert seen["placed"] == [("load_model", model.unet_name)]
+
+
+def test_a_lookup_error_keeps_the_eager_load(pro_loader, monkeypatch):
+    model, seen = pro_loader
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("the ledger cannot be read")
+
+    monkeypatch.setattr(common, "_auto_gate_context", broken)
+    _load(model, _api(PRO))
+    assert seen["placed"] == [("load_model", UNET)] and seen["deferred"] == []
+
+
+@pytest.mark.parametrize("other", ["missing", "unknown"])
+def test_a_dual_guider_whose_other_chain_reaches_no_loader_keeps_the_eager_load(
+    monkeypatch, tmp_path, other,
+):
+    graph = doc(IDEOGRAM)
+    handle, _topology, _dispatched = mesh_rig(monkeypatch, tmp_path, no_material_rows(), [])
+    seen = _loader_rig(monkeypatch, handle)
+    model = graph_model(graph)
+    prompt = _api(IDEOGRAM)
+    guider = next(key for key, entry in prompt.items()
+                  if entry["class_type"] == "DGXMonarchDualModelGuider")
+    if other == "missing":
+        prompt[guider]["inputs"]["model_negative"] = ["999", 0]
+    else:
+        prompt["60"] = {"class_type": "SomeoneElsesModelNode",
+                        "inputs": {"model": prompt[guider]["inputs"]["model_negative"]}}
+        prompt[guider]["inputs"]["model_negative"] = ["60", 0]
+    loaders.DGXMonarchUNETLoader().load(model.mesh, model.unet_name, prompt=prompt, unique_id="3")
+    assert seen["placed"] == [("load_model", model.unet_name)] and seen["deferred"] == []

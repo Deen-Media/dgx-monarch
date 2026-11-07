@@ -335,9 +335,9 @@ PASS lookup, a ceremony or a grant on a pair whose reports differ or lack the
 build, naming each box's torch and CUDA, and each Worker refuses a normal or
 Fleet grant whose build is not its own (`worker_runtime.py`). The context still
 names one build, so a pair that matches keeps its PASS rows. A dual-model
-render is proven as one unit. Its ceremony renders the dual request itself, runs a swap cycle on each slot that
-carries a LoRA stack, and writes its verdict under a combination key and an
-artifact digest that name both slots (`gate_dual_identity.py`). A single-model
+render is proven as one unit. Its ceremony renders the dual request itself,
+runs a swap cycle on each slot that carries a LoRA stack, and writes its
+verdict under a combination key and an artifact digest that name both slots (`gate_dual_identity.py`). A single-model
 PASS therefore never grants a dual render, and a dual PASS never grants a render
 of either model alone; the dual grant binds both artifact sets, and the Worker
 recomputes both before it accepts one. Where that proof cannot run, a dual render
@@ -1710,8 +1710,8 @@ Identity Gate node always defers it. Any doubt keeps the eager load: a Fleet
 consumer, a node the walk does not know, a linked LoRA widget, a projected
 capacity-rescue consent, or an error. No trust claim changes: the ceremony
 still unloads every rank and loads its first leg from the file, now once, and a
-loader-time placement never stands in for that leg. The loader's own price and the render site's credit for an
-explicit preset are unchanged; the deferred load comes where the ceremony's
+loader-time placement never stands in for that leg. The loader's own price and
+the render site's credit for an explicit preset are unchanged; the deferred load comes where the ceremony's
 reload came before, after the driver stack, and the Worker's load-time
 capacity check prices it.
 

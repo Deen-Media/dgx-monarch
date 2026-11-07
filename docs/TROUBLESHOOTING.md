@@ -3457,7 +3457,8 @@ gets under `first_use`. So, with `auto_gate=off` on a single-model render:
    so with `off` both residency settings stay off for it whatever the widget
    says. Under `first_use` its first render proves both models, and a PASS
    gives it the settings the Init node asks for, except on cfg2, where it
-   renders stock, and on a `*+fsdp` preset, where it refuses ([#61](#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
+   renders stock, on a `*+fsdp` preset, where it refuses, and under
+   comfy-managed residency, which refuses it (refusal 6 in [#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)) ([#61](#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
 
 **Not the capacity route.** For a checkpoint only slab residency can fit, use
 the capacity rescue: a card, a consent, and a ledger row that records the

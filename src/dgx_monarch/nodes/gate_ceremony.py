@@ -445,7 +445,7 @@ def gather_ceremony_evidence(
                       "(%r); residency levers unchanged", exc)
         if handle is not None and not fsdp_proof_scope and not sol_waiver_abort:
             try:
-                runtime["_force_stock_quarantine"](model, handle, cause=exc)
+                runtime["_force_stock_quarantine"](model, handle, cause=exc, uncond=request.get("uncond_model"))
             except BaseException as cleanup_exc:
                 safe_call(runtime["log"].error,
                           "identity-gate stock quarantine failed while preserving "

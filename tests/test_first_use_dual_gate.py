@@ -225,19 +225,38 @@ def test_a_dual_render_the_gate_cannot_prove_runs_no_ceremony(
     assert granted.residency_mode == "stock" and granted.residency_grant is None
 
 
-def test_cfg_parallel_dual_stock_names_its_cause():
+@pytest.mark.parametrize(("request_", "topology", "state"), [
+    ({"uncond_model": {"unet_name": "u"}}, Topology(cfg=2, world=2), refusal_lead.DUAL_MODEL),
+    ({"uncond_model": {"unet_name": "u"}}, Topology(ulysses=2, world=2),
+     refusal_lead.DUAL_UNPROVEN),
+    ({}, Topology(ulysses=2, world=2), "unknown"),
+])
+def test_a_stock_dual_dispatch_names_its_own_cause(request_, topology, state):
+    """cfg2 can never prove the pair; elsewhere the pair's own first use can."""
+    from dgx_monarch.nodes.gate_dual import forced_stock_state
+
     assert refusal_lead.forced_stock_state() is None
 
     @refusal_lead.lead_with_refusal
     def render():
-        from dgx_monarch.nodes.gate_dual import stock_by_rule
-
-        request = {"uncond_model": {"unet_name": "u"}}
         refusal_lead.note_if_slab_dropped(
             {"slab_weights": True}, {"slab_weights": False},
-            dual=stock_by_rule(request, Topology(cfg=2, world=2)))
-        assert refusal_lead.forced_stock_state() == refusal_lead.DUAL_MODEL
-        assert not stock_by_rule(request, Topology(ulysses=2, world=2))
+            state=forced_stock_state(request_, topology))
+        assert refusal_lead.forced_stock_state() == state
+
+    render()
+
+
+def test_an_unproven_dual_grant_notes_the_dual_remedy(monkeypatch, tmp_path):
+    graph = doc(IDEOGRAM)
+    handle, topology, _dispatched = mesh_rig(monkeypatch, tmp_path, no_material_rows(), [])
+    model = graph_model(graph, widgets={"slab_weights": "on"})
+    uncond = uncond_model(graph, model).request_dict()
+
+    @refusal_lead.lead_with_refusal
+    def render():
+        assert _authorize(model, handle, uncond, topology).residency_mode == "stock"
+        assert refusal_lead.forced_stock_state() == refusal_lead.DUAL_UNPROVEN
 
     render()
 
@@ -357,3 +376,37 @@ def test_a_runtime_mismatch_refuses_a_dual_grant_instead_of_running_stock(monkey
     monkeypatch.setattr(gate_identity, "gate_capability_context", mismatch)
     with pytest.raises(WorkerRuntimeMismatch):
         _authorize(model, handle, uncond, topology)
+
+
+def test_an_unproven_dual_ceremony_quarantines_the_pair_not_its_conditional_model(
+    monkeypatch, tmp_path, caplog,
+):
+    """An aborted proof touches only its own combination; a dual proof's is the pair."""
+    import logging
+
+    from dgx_monarch.nodes import gate_quarantine_scope
+
+    gate_quarantine_scope.reset_quarantine_scope()
+    graph = doc(IDEOGRAM)
+    latent = torch.zeros(1, 4, 8, 8)
+    fell_back = cycle_rows(conclusive=False, family="ideogram4", slab_active=False,
+                           certificate=None, reason="swaps fell back to reload",
+                           transitions={"load": "load", "nudge": "load", "back": "load"})
+    _handle, _topology, dispatched = mesh_rig(
+        monkeypatch, tmp_path, no_material_rows(), [latent.clone() for _ in range(4)],
+        uncond_rows=fell_back)
+    model = graph_model(graph)
+    uncond = uncond_model(graph, model, loras=[("negative-style.safetensors", 0.5)])
+    dual_key = dual_combo_key(model.request_dict(), uncond.request_dict())
+
+    with caplog.at_level(logging.ERROR):
+        queue(graph, model, uncond)
+    assert rows(tmp_path, REPORTS)[-1]["verdict"] == "INCONCLUSIVE"
+    assert model.mesh.worker_args["slab_weights"] is False  # the pair's quarantine
+    assert any(f"(combination {dual_key})" in record.getMessage()
+               for record in caplog.records if "could not complete" in record.getMessage())
+
+    queue(graph, model)  # the conditional model alone, through the same Init node
+    assert "slab_weights" not in dispatched[-1]["worker_args"]
+    assert "lora_low_rss" not in dispatched[-1]["worker_args"]
+    gate_quarantine_scope.reset_quarantine_scope()

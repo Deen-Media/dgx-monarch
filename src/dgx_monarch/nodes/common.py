@@ -328,12 +328,12 @@ def run_render(model: ModelSpec, request: dict, latent: dict, cfg_value: float |
     # user render, not to nested first-use Gate legs before it. An earlier
     # combination's aborted ceremony proved nothing about this one, so this
     # combination starts from the levers the graph asked for.
-    _restore_requested_levers(model)
+    _restore_requested_levers(model, request.get("uncond_model"))
     with _suspend_adoption_context():
         gate_result = _maybe_auto_gate(
             model, request, latent, cfg_value, steps_hint)
     if gate_result not in gate_inconclusive.NO_QUARANTINE_VERDICTS:
-        _quarantine_unproven_paths(model)
+        _quarantine_unproven_paths(model, uncond=request.get("uncond_model"))
     handoff = PendingRenderHandoff()
     try:
         pending = submit_render(

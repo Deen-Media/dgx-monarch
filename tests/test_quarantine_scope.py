@@ -522,7 +522,7 @@ def test_every_render_path_restores_before_it_reads_the_risk():
         ("samplers.py", "if auto_gate_required("),
     ):
         source = (SRC / "nodes" / module).read_text()
-        assert (source.index("_restore_requested_levers(model)")
+        assert (source.index("_restore_requested_levers(model")
                 < source.index(marker)), module
 
 

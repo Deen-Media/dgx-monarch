@@ -287,7 +287,7 @@ copied from historical evidence.
    defunct because no stock-residency equivalent exists in the same topology.
    The claim,
    clone, and pre-verdict drift check are enforced at
-   [`gate_session.py:20-178`](../src/dgx_monarch/nodes/gate_session.py#L20-L178 "anchor:run_identity_ceremony"),
+   [`gate_session.py:20-179`](../src/dgx_monarch/nodes/gate_session.py#L20-L179 "anchor:run_identity_ceremony"),
    [`gate_identity.py:264-279`](../src/dgx_monarch/nodes/gate_identity.py#L264-L279 "anchor:model_with_worker_overrides"), and
    [`gate_ceremony.py:101-363`](../src/dgx_monarch/nodes/gate_ceremony.py#L101-L363 "anchor:gather_ceremony_evidence"); policy
    drift is covered by
@@ -604,7 +604,8 @@ copied from historical evidence.
     inherits primary-only evidence, and one the dual proof cannot reach
     (cfg-parallel, FSDP, comfy-managed or `auto_gate=off`) is stamped complete
     stock residency
-    ([`gate_dual.py:126-164`](../src/dgx_monarch/nodes/gate_dual.py#L126-L164 "anchor:authorize_dual")). Driver and
+    ([`gate_dual.py:135-173`](../src/dgx_monarch/nodes/gate_dual.py#L135-L173 "anchor:authorize_dual"), [`test_first_use_dual_gate.py:108-141`](../tests/test_first_use_dual_gate.py#L108-L141 "anchor:test_a_conditional_lora_earns_a_dual_pass_and_a_grant_the_worker_accepts"), and
+    [`test_first_use_dual_gate.py:144-175`](../tests/test_first_use_dual_gate.py#L144-L175 "anchor:test_the_worker_refuses_a_dual_grant_that_does_not_bind_both_slots")). Driver and
     worker preflight re-derive the bound values, while every normal request
     explicitly selects `required`, `stock`, `operator_off`, `gate_internal`, or
     `capacity_consent`; a missing/stale grant cannot fall through to risky auto
@@ -617,7 +618,7 @@ copied from historical evidence.
     Authorization, setup binding, driver validation, and
     worker revalidation are
     [`gate_identity.py:343-482`](../src/dgx_monarch/nodes/gate_identity.py#L343-L482 "anchor:authorize_normal_render"),
-    [`render_submit.py:250-488`](../src/dgx_monarch/nodes/render_submit.py#L250-L488 "anchor:_submit_render_guarded"),
+    [`render_submit.py:250-487`](../src/dgx_monarch/nodes/render_submit.py#L250-L487 "anchor:_submit_render_guarded"),
     [`mesh_residency.py:96-161`](../src/dgx_monarch/mesh_residency.py#L96-L161 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:253-397`](../src/dgx_monarch/mesh_residency.py#L253-L397 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"), and
@@ -833,7 +834,7 @@ copied from historical evidence.
   boundaries are
   [`gate_identity.py:282-296`](../src/dgx_monarch/nodes/gate_identity.py#L282-L296 "anchor:model_for_request"),
   [`gate_identity.py:343-482`](../src/dgx_monarch/nodes/gate_identity.py#L343-L482 "anchor:authorize_normal_render"),
-  [`render_submit.py:250-488`](../src/dgx_monarch/nodes/render_submit.py#L250-L488 "anchor:_submit_render_guarded"),
+  [`render_submit.py:250-487`](../src/dgx_monarch/nodes/render_submit.py#L250-L487 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"),
   [`worker_authorization.py:5-57`](../src/dgx_monarch/actor/worker_authorization.py#L5-L57 "anchor:verify_sample_artifact_authorization"), and
   [`worker_authorization.py:101-111`](../src/dgx_monarch/actor/worker_authorization.py#L101-L111 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
@@ -981,7 +982,7 @@ copied from historical evidence.
   [`gate_ceremony.py:335-460`](../src/dgx_monarch/nodes/gate_ceremony.py#L335-L460 "anchor:gather_ceremony_evidence"),
   [`gate_ceremony.py:192-231`](../src/dgx_monarch/nodes/gate_ceremony.py#L192-L231 "anchor:gather_ceremony_evidence"),
   [`fsdp_reload_price.py:242-283`](../src/dgx_monarch/fsdp_reload_price.py#L242-L283 "anchor:price_fsdp_clean_reload") and
-  [`gate_session.py:20-178`](../src/dgx_monarch/nodes/gate_session.py#L20-L178 "anchor:run_identity_ceremony"),
+  [`gate_session.py:20-179`](../src/dgx_monarch/nodes/gate_session.py#L20-L179 "anchor:run_identity_ceremony"),
   [`gate_fsdp.py:179-235`](../src/dgx_monarch/nodes/gate_fsdp.py#L179-L235 "anchor:cleanup_aborted_fsdp_proof"),
   [`gate_fsdp.py:241-264`](../src/dgx_monarch/nodes/gate_fsdp.py#L241-L264 "anchor:cleanup_rejected_fsdp_pass"), and
   [`auto_gate.py:285-493`](../src/dgx_monarch/nodes/auto_gate.py#L285-L493 "anchor:maybe_auto_gate"), covered by
