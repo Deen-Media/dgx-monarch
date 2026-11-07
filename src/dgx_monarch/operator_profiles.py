@@ -131,6 +131,15 @@ def classify_hardware(observations: Sequence[HardwareObservation]) -> HardwareCl
     return "homogeneous_uma"
 
 
+# The ledger's selected-rail qualification (docs/VALIDATION.md, Native RDMA)
+# is scoped; no profile turns native return on.
+_NATIVE_RETURN_NOTE = (
+    "Native RDMA latent return stays off. Its qualification covers CPU-staged returns "
+    "on one selected rail with one queue pair, not GPU zero-copy, full sampling, "
+    "cancellation or fabric-failure recovery."
+)
+
+
 def resolve_profile(
     name: str = "balanced",
     *,
@@ -164,21 +173,21 @@ def resolve_profile(
         worker_unset = ()
         notes = (
             "Uses stock residency on every hardware class.",
-            "Native RDMA latent return stays off until it requalifies on torchmonarch 0.7.0 or newer.",
+            _NATIVE_RETURN_NOTE,
         )
     elif profile == "balanced" and hardware == "homogeneous_uma":
         worker_set = {}
         worker_unset = _RESIDENCY_KEYS
         notes = (
             "Removes both residency keys, so the worker's model-aware defaults decide them.",
-            "Native RDMA latent return stays off until it requalifies on torchmonarch 0.7.0 or newer.",
+            _NATIVE_RETURN_NOTE,
         )
     elif profile == "balanced":
         worker_set = {"lora_low_rss": False, "slab_weights": False}
         worker_unset = ()
         notes = (
             f"Uses stock residency because the hardware class is {hardware}.",
-            "Native RDMA latent return stays off until it requalifies on torchmonarch 0.7.0 or newer.",
+            _NATIVE_RETURN_NOTE,
         )
     else:
         if hardware != "homogeneous_uma":
@@ -192,7 +201,7 @@ def resolve_profile(
         notes = (
             "Enables low-RSS loading and slab residency for a verified homogeneous UMA fleet.",
             "This is an expert profile; it may need a fresh identity-gate proof.",
-            "Native RDMA latent return stays off until it requalifies on torchmonarch 0.7.0 or newer.",
+            _NATIVE_RETURN_NOTE,
         )
 
     _validate_emission(cluster_set, worker_set, worker_unset)

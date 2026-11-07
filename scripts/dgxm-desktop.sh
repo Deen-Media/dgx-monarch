@@ -53,12 +53,17 @@ resolve_executable() {
     printf '%s/%s\n' "$parent" "$base"
 }
 
+# A Desktop Entry Exec value goes through two escape layers, in this order on
+# read: the string value type's escapes (\\ is one backslash), then the Exec
+# quoting rules (inside quotes, \" \` \$ \\ are literal). So escape for Exec
+# first, then double every backslash: a literal backslash is written as four.
 desktop_quote() {
     local value=$1
     value=${value//\\/\\\\}
     value=${value//\"/\\\"}
     value=${value//\`/\\\`}
     value=${value//\$/\\\$}
+    value=${value//\\/\\\\}
     value=${value//%/%%}
     printf '"%s"' "$value"
 }

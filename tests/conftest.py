@@ -326,31 +326,52 @@ def _isolate_service_telemetry(monkeypatch):
     monkeypatch.setattr(services, "snapshot", lambda: {"state": "unavailable"})
 
 
+def _refused_ssh(args, kwargs):
+    """What ssh returns when it cannot connect, exit 255 with no output, sent nowhere.
+
+    Output streams follow the call's own capture and text options, and
+    ``check=True`` raises ``CalledProcessError`` as the real call would.
+    """
+    text = any(kwargs.get(key) for key in ("text", "universal_newlines", "encoding", "errors"))
+    empty = "" if text else b""
+    captured = bool(kwargs.get("capture_output"))
+    stdout = empty if captured or kwargs.get("stdout") is subprocess.PIPE else None
+    stderr = empty if captured or kwargs.get("stderr") is subprocess.PIPE else None
+    if kwargs.get("check"):
+        raise subprocess.CalledProcessError(255, args, stdout, stderr)
+    return subprocess.CompletedProcess(args, 255, stdout, stderr)
+
+
+def _ssh_refusing_run(real, spawned: list[str]):
+    """``subprocess.run`` that records an ssh call and refuses it before dispatch."""
+    def record(args, *rest, **kwargs):
+        first = args[0] if isinstance(args, (list, tuple)) and args else args
+        if isinstance(first, str) and os.path.basename(first) == "ssh":
+            spawned.append(" ".join(map(str, args)))
+            return _refused_ssh(args, kwargs)
+        return real(args, *rest, **kwargs)
+
+    return record
+
+
 @pytest.fixture(autouse=True)
 def _the_battery_never_shells_out_to_ssh(monkeypatch):
     """Fail a test that spawned ssh instead of standing in for the runner.
 
     Every fleet path in this repository reaches a worker through
     ``lifecycle.run_on_host``, which runs ``ssh`` for a host that is not this
-    box. A test that leaves that seam unpatched sends real traffic at the
-    placeholder addresses the battery configures. It usually passes anyway,
-    because ssh exits 255 at once and the callers read a failed probe as
-    unobserved, so nothing in the run says what happened.
+    box. A test that leaves that seam unpatched would send real traffic at the
+    placeholder addresses the battery configures. The guard refuses the call
+    before dispatch: nothing is sent, and the caller sees exit 255, which ssh
+    itself returns when it cannot connect, so no tested path changes. The
+    callers read that as an unobserved probe, so the test fails at teardown.
 
     It records instead of raising: the attach reads its listener generations
     inside a ``try`` that swallows every exception, so a guard that raised
     would be absorbed by the code it is guarding and the test would still pass.
     """
     spawned: list[str] = []
-    real = subprocess.run
-
-    def record(args, *rest, **kwargs):
-        first = args[0] if isinstance(args, (list, tuple)) and args else args
-        if isinstance(first, str) and os.path.basename(first) == "ssh":
-            spawned.append(" ".join(map(str, args)))
-        return real(args, *rest, **kwargs)
-
-    monkeypatch.setattr(subprocess, "run", record)
+    monkeypatch.setattr(subprocess, "run", _ssh_refusing_run(subprocess.run, spawned))
     yield
     assert not spawned, (
         "this test spawned ssh; patch the host runner seam it reaches "

@@ -986,3 +986,40 @@ def test_reading_the_release_never_spends_the_note_the_poison_text_needs(
     mesh_teardown.publish_creation_block(handle, "cleanup unconfirmed")
     assert "worker processes were gone" in handle.replacement_blocked
     assert mesh_teardown.released_predecessor_recently() is False
+
+
+def test_an_unlisted_proc_root_with_no_ledger_keeps_the_dirty_latch(monkeypatch, tmp_path):
+    """A local scan that could not list procfs is no proof that the workers are gone.
+
+    With no useful ledger, a failed listing used to count zero actors, zero
+    unreadable processes and zero live rows, which folds to gone and released
+    the replacement latch. It must answer unknown and leave the latch set.
+    """
+    import errno
+    import os
+
+    from dgx_monarch.cli import proc_identity
+    from test_actor_reaper import SELF_PID, UID, make_proc, make_proc_root
+
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100)
+    real_listdir = os.listdir
+
+    def listdir(path="."):
+        if os.fspath(path) == str(root):
+            raise PermissionError(errno.EACCES, "Permission denied", str(root))
+        return real_listdir(path)
+
+    monkeypatch.setattr(proc_identity.os, "listdir", listdir)
+    handle = _latched(monkeypatch)
+
+    def scanner():
+        return actor_reaper.liveness(
+            proc_root=str(root), ledger_file=str(tmp_path / "no-ledger.json"),
+            uid=UID, self_pid=SELF_PID)
+
+    assert mesh_liveness.try_release(handle, scanner=scanner) is False
+    assert handle._liveness_evidence.answer == mesh_liveness.UNKNOWN
+    assert handle.replacement_blocked is not None
+    assert mesh_teardown.block_cause(handle) == mesh_teardown.TAG_STOP_TIMEOUT_AFTER_DEATH
+    assert handle.teardown_complete is not True

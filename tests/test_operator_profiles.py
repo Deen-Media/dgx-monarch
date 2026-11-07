@@ -191,3 +191,22 @@ def test_resolution_representation_is_deterministic():
         "graph_recommendations",
         "notes",
     ]
+
+
+@pytest.mark.parametrize(("name", "hardware"), [
+    ("safe", "homogeneous_uma"), ("balanced", "homogeneous_uma"),
+    ("balanced", "discrete"), ("advanced", "homogeneous_uma"),
+])
+def test_every_profile_keeps_native_return_off_and_states_the_qualified_scope(name: str, hardware: str):
+    """The ledger holds a scoped selected-rail, CPU-staged qualification on 0.7.0.
+
+    The note must not say native return awaits requalification, and it must
+    name what that qualification does not cover (docs/VALIDATION.md, Native RDMA).
+    """
+    resolution = resolve_profile(name, hardware_class=hardware)
+    assert resolution.cluster_set["rdma_latent_return"] is False
+    note = next(note for note in resolution.notes if note.startswith("Native RDMA latent return"))
+    assert "requalif" not in note
+    assert "CPU-staged" in note and "one selected rail" in note
+    for limit in ("GPU zero-copy", "full sampling", "cancellation", "fabric-failure recovery"):
+        assert limit in note

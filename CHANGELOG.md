@@ -257,6 +257,10 @@
 
 ### Compatibility and verification
 
+- docs/CAMPAIGN_COLUMNS.md types `legs.probe.message` and
+  `legs.resident.message` as text: their values open with a plain `[dgxm:...]`
+  tag and are not JSON arrays. A column now types as JSON only when every value
+  parses as one ([CAMPAIGN_COLUMNS](docs/CAMPAIGN_COLUMNS.md)).
 - The hardware checks of 2026-11-03 to 05 are in the docs. p-h3-image and
   Wan 2.2 TI2V 5B are HW: all three p-h3-image DiT files on one rank match
   stock and on uly2 match one rank, its LoRA route matches stock, and the
@@ -512,6 +516,46 @@
   `~/.cache/dgx-monarch/inductor`, so `compile_dit` no longer repeats its
   autotune after a reboot; set `TORCHINDUCTOR_CACHE_DIR` to place it elsewhere ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
 
+- After a worker death and a timed-out stop, a host whose process table
+  cannot be listed answers unknown and keeps the replacement latch. It used to
+  count nothing and answer gone, which released the latch. `dgxm reap` and the
+  lifecycle sweeps report such a host as unaccounted for, and doctor's orphan
+  row says unobserved ([TROUBLESHOOTING #87](docs/TROUBLESHOOTING.md#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)).
+- `dgxm doctor`'s Worker service row reads unobserved, not FAIL, when the host
+  answered but could not tell whether the loop runs or listens, so doctor exits
+  75 and `dgxm update --verify` keeps the new release instead of restoring the
+  old one. A listener check whose `awk` is missing or fails reads unknown, not
+  closed, so auto-heal no longer restarts a running fleet on it
+  ([TROUBLESHOOTING #1](docs/TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout)).
+- `dgxm doctor` reads only a `last` and an `nvidia-smi` that succeed: a failed
+  run, or `nvidia-smi`'s own error text, reads unobserved instead of a clean
+  boot history or a GPU process. A worker host whose `/proc/swaps` is
+  unreadable or malformed reads unobserved instead of swap off.
+- `dgxm doctor`'s `FP8 matmul (actors)` row warns when `fp8_matrix_mult = "on"`
+  and a host reports a GB10 GPU, the case MODELS.md documents as unsafe, and
+  names those hosts ([TROUBLESHOOTING #141](docs/TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
+- `dgxm doctor --repair` records a mode change that ran but could not be
+  confirmed as `unknown` with one change, in a `partial` receipt, instead of
+  saying nothing changed ([INSTALL](docs/INSTALL.md#operator-receipts)).
+- `/dgxm/metrics` writes each series once on a host with more than one GPU:
+  the GPU series and the Worker actor's counters carry `worker_index`, and the
+  memory and rail series appear once per host ([CLUSTER](docs/CLUSTER.md#metrics-reference)).
+- An actor ledger whose actor list is not a list reads as corrupt and empty,
+  and a row with an infinite, NaN or fractional pid or start time is dropped,
+  instead of raising out of the liveness check and the sweep.
+- `dgxm setup` accepts the same `--artifact` twice: the plan it prints and the
+  plan it validates now count the paths once.
+- `dgxm setup`'s cleanup of a reserved release slot refuses, and keeps the
+  slot, when its site holds anything beside the package.
+- The desktop entry quotes paths for both of the Desktop Entry format's escape
+  layers, so a path with a backslash, a quote, a backtick or a dollar sign
+  reaches the launcher unchanged.
+- `scripts/setup_env.sh --comfy` stops with the repair when torchaudio is
+  installed but does not import, whatever the ComfyUI version, and checks a
+  donor copy imports before it reports done.
+- Setup profiles say what native return's qualification covers, CPU-staged
+  returns on one selected rail, and what it does not, instead of saying it
+  awaits requalification; they keep it off.
 - Workers and the driver give freed host memory back at once: the worker
   loop sets `MIMALLOC_PURGE_DELAY=0` for every cluster actor, the driver's
   launch for a local actor, and `scripts/comfy-driver.sh` exports it, because torch 2.15.0's bundled mimalloc 2.5.2 purges so late

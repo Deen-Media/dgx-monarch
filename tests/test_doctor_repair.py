@@ -222,3 +222,75 @@ def test_cli_repair_refuses_while_a_config_writer_holds_the_lock(
     assert payload["status"] == "failed"
     assert "config_repair_lock_unavailable" in receipt.read_text()
     assert "config_repair_lock_unavailable" in output.getvalue()
+
+
+@pytest.mark.parametrize("failure", ["fsync", "fstat"])
+def test_a_failure_after_the_mode_change_is_recorded_as_applied_but_unconfirmed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """fchmod already changed the file, so the receipt must not say nothing changed.
+
+    The step reads unknown with changed=1, the run stays unsuccessful, and the
+    operator is told to inspect again rather than that the repair was not applied.
+    """
+    path = _config(tmp_path)
+    receipt = tmp_path / "unconfirmed.json"
+    real_fchmod, real_fsync, real_fstat = os.fchmod, os.fsync, os.fstat
+    # Only the config inode fails, after its mode changed: the receipt writer
+    # shares the os module and can reuse the closed descriptor's number.
+    config_inode = path.stat().st_ino
+    mutated: list[bool] = []
+
+    def config_after_mutation(fd: int) -> bool:
+        return bool(mutated) and real_fstat(fd).st_ino == config_inode
+
+    def recording_fchmod(fd: int, mode: int) -> None:
+        real_fchmod(fd, mode)
+        mutated.append(True)
+
+    def broken(fd: int) -> None:
+        if config_after_mutation(fd):
+            raise OSError(5, "Input/output error")
+        real_fsync(fd)
+
+    def fstat_after_mutation(fd: int) -> os.stat_result:
+        if config_after_mutation(fd):
+            raise OSError(5, "Input/output error")
+        return real_fstat(fd)
+
+    monkeypatch.setattr("dgx_monarch.cli.doctor_repair.os.fchmod", recording_fchmod)
+    if failure == "fsync":
+        monkeypatch.setattr("dgx_monarch.cli.doctor_repair.os.fsync", broken)
+    else:
+        monkeypatch.setattr("dgx_monarch.cli.doctor_repair.os.fstat", fstat_after_mutation)
+    output = io.StringIO()
+    ok, written = run_config_permission_repair(
+        path, assume_yes=True, receipt_path=receipt, output=output
+    )
+
+    assert ok is False
+    assert written == receipt
+    assert path.stat().st_mode & 0o777 == 0o600
+    payload = json.loads(receipt.read_text())
+    step = next(item for item in payload["steps"] if item["name"] == "tighten_config_permissions")
+    assert step["status"] == "unknown"
+    assert step["counts"] == {"changed": 1}
+    assert payload["status"] == "partial"
+    assert "not applied" not in receipt.read_text()
+    assert "config_permissions_unconfirmed" in output.getvalue()
+
+
+def test_apply_reports_the_mutation_on_its_error(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    path = _config(tmp_path)
+    plan = inspect_config_permissions(path)
+
+    def broken(_fd: int) -> None:
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr("dgx_monarch.cli.doctor_repair.os.fsync", broken)
+    with pytest.raises(RepairError, match="config_permissions_unconfirmed") as raised:
+        apply_config_permission_repair(path, plan, confirm=lambda _plan: True)
+    assert raised.value.applied is True
+    with pytest.raises(RepairError) as before:
+        apply_config_permission_repair(path, plan, confirm=lambda _plan: False)
+    assert before.value.applied is False

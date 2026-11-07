@@ -560,6 +560,9 @@ EOF
     # Sol-attn requires sequence parallelism. The early return above excludes
     # configless, single-rank runs from this mesh-wide installation check.
     rows.append(_row(*sol_attn_row.doctor_row(sol_install)))
+    # The sol probe's `cap=` field is each host's GPU compute capability.
+    rows.append(_row(*fp8_matmul_row.doctor_row(
+        config, {host: fields.get("cap", "unknown") for host, fields in sol_install.items()})))
     # One INT8 GEMM row per host: what that Worker venv's actors can run. Never FAIL.
     rows.extend(_row(*row) for row in int8_gemm_row.host_rows(config, int8_gemm))
 
@@ -571,38 +574,14 @@ def _spark_health_rows(config: ClusterConfig | None) -> list[dict]:
     """Rows this box can check on itself. docs/TROUBLESHOOTING.md, "The Spark failure catalog",
     describes the GB10 failure modes among them."""
     import glob
-    import subprocess
     import sys
 
     rows: list[dict] = []
     multi_host = bool(config and len(config.hosts) > 1)
     rdma_expected = bool(multi_host and config and config.fabric_profile != "single-node")
 
-    # Unexpected shutdowns. The Spark power-delivery fault hard-resets the box
-    # and logs nothing; what it leaves is a reboot record with no shutdown
-    # record before it.
-    try:
-        out = subprocess.run(["last", "-Fxn30", "shutdown", "reboot"],
-                             capture_output=True, text=True, timeout=10).stdout
-        events = [line.split()[0] for line in out.splitlines() if line.strip()
-                  and line.split()[0] in ("reboot", "shutdown")]
-        # walk newest-first: every reboot should be preceded (below it) by a shutdown
-        crashes = 0
-        for i, ev in enumerate(events):
-            if ev == "reboot" and (i + 1 >= len(events) or events[i + 1] != "shutdown"):
-                crashes += 1
-        if crashes > 1:  # the oldest reboot in the window often lacks its pair
-            rows.append(_row(_WARN, "unexpected shutdowns",
-                             f"{crashes - 1} reboot(s) without a clean shutdown in the last 30 boot records. "
-                             "On a Spark this matches the power-delivery fault, a hard power-off that logs nothing. "
-                             "Doctor runs no load test, so it cannot tell if the GPU stayed stuck at a low clock; "
-                             "a stuck GPU needs a cold power cycle, not a reboot (TROUBLESHOOTING, PD-stuck state)"))
-        else:
-            rows.append(_row(_OK, "unexpected shutdowns", "none in recent boot records"))
-    except Exception:
-        rows.append(_row(_WARN, "unexpected shutdowns",
-                         "unobserved: the `last` boot-record probe did not complete, so the "
-                         "crash history is unknown. Read it by hand: `last -Fx shutdown reboot`"))
+    # Unexpected shutdowns: reboot records with no clean shutdown before them.
+    rows.append(_row(*doctor_probes.boot_record_row()))
 
     # Check safe_open's backend parameter: 0.8.0rc0 passes a simple version
     # check but lacks it, causing TypeError on model load.
@@ -706,7 +685,9 @@ def _spark_health_rows(config: ClusterConfig | None) -> list[dict]:
 
     # Without python3.x-dev headers Sage/Triton JIT builds fail and the INT8 GEMM kernel runs CUTLASS.
     rows.append(_row(*doctor_probes.python_headers_row()))
-    rows.extend(_row(*row) for row in (int8_gemm_row.local_row_for(config), fp8_matmul_row.doctor_row(config)))
+    rows.append(_row(*int8_gemm_row.local_row_for(config)))
+    if config is None or not config.hosts:  # with hosts, it reads their GPUs after the host loop
+        rows.append(_row(*fp8_matmul_row.doctor_row(config)))
 
     # The Spark fan curve tracks CPU load, so the community-identified 'temp6'
     # board sensor can sit at 90 C+ without a ramp. `hwmon.py` reads the
@@ -717,22 +698,8 @@ def _spark_health_rows(config: ClusterConfig | None) -> list[dict]:
     except Exception as exc:
         rows.append(_row(_WARN, "board hotspots", f"probe unavailable ({exc!r})"))
 
-    # On unified memory every other GPU process shares the render pool. The
-    # row only lists them.
-    try:
-        out = subprocess.run(
-            ["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory",
-             "--format=csv,noheader"], capture_output=True, text=True, timeout=5).stdout
-        procs = [line.strip() for line in out.splitlines() if line.strip()]
-        if procs:
-            rows.append(_row(_OK, "co-resident GPU procs",
-                             f"{len(procs)}: " + "; ".join(p[:60] for p in procs[:4])))
-        else:
-            rows.append(_row(_OK, "co-resident GPU procs", "none"))
-    except Exception:
-        rows.append(_row(_WARN, "co-resident GPU procs",
-                         "unobserved: the `nvidia-smi` compute-app query did not complete, so "
-                         "who else shares the render pool is unknown"))
+    # On unified memory every other GPU process shares the render pool.
+    rows.append(_row(*doctor_probes.coresident_gpu_row()))
 
     # A worker actor that outlived its client holds its retained pool until it
     # exits: render pool nobody can reclaim on unified memory

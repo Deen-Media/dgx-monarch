@@ -136,11 +136,20 @@ def kind(values: list[str]) -> str:
         return "int"
     if all(re.fullmatch(r"-?(\d+(\.\d*)?|\.\d+)(e-?\d+)?|nan|inf", v) for v in present):
         return "float"
-    if all(v.startswith("[") for v in present):
+    # A refusal message opens with a plain `[dgxm:...]` tag, so a leading
+    # bracket is not enough: every value must parse as that container.
+    if all(isinstance(_json_value(v), list) for v in present):
         return "JSON array"
-    if all(v.startswith("{") for v in present):
+    if all(isinstance(_json_value(v), dict) for v in present):
         return "JSON object"
     return "text"
+
+
+def _json_value(text: str) -> object:
+    try:
+        return json.loads(text)
+    except ValueError:
+        return None
 
 
 def render_columns(campaigns: dict[str, list[Row]]) -> str:

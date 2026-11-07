@@ -1923,8 +1923,10 @@ identity-gate context, as any `[worker_args]` key does
 ([CLUSTER](CLUSTER.md#worker_args-optional)). Because ComfyUI picks the class
 when it builds a model, a changed value drops each actor's resident models, and
 the next render loads them again. The `FP8 matmul (actors)` row of
-`dgxm doctor` shows the value, `dgxm status` prints it when the file sets the
-key, and `dgxm status --json` always carries it.
+`dgxm doctor` shows the value. For `"on"` it warns where a host reports a GB10
+GPU, compute capability 12.1, and names those hosts; with no capability answer
+it says unobserved. `dgxm status` prints the value when the file sets the key,
+and `dgxm status --json` always carries it.
 
 **Read the log.** Every model ComfyUI builds, in the driver and in each actor,
 logs one INFO line that starts `FP8 compute:`. It names the class ComfyUI

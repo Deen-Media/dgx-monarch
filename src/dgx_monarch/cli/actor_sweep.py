@@ -11,7 +11,7 @@ import shlex
 from collections.abc import Callable
 from typing import Any
 
-from . import actor_reaper
+from . import actor_reaper, proc_identity
 
 SWEEP_TIMEOUT_S = 45
 
@@ -142,7 +142,12 @@ def reap_command(config: Any, *, dry_run: bool = False, grace_s: float = 0.0) ->
             config, host, runner=lifecycle.run_on_host,
             grace_s=grace_s, dry_run=dry_run)
     if not any(lifecycle._is_local(host) for host in hosts):
-        summary = actor_reaper.run_sweep(grace_s=grace_s, dry_run=dry_run)
+        try:
+            summary = actor_reaper.run_sweep(grace_s=grace_s, dry_run=dry_run)
+        except proc_identity.ProcListingError as exc:
+            print(f"  local: actor sweep FAILED (cannot list the process table: {exc}), so "
+                  "stray actor processes on this host are unaccounted for")
+            return False
         print(f"  local: actor sweep {actor_reaper.summary_fields(summary)}")
         ok = ok and (dry_run or not summary["left"])
     return ok

@@ -4,18 +4,22 @@ Doctor and ``dgxm status`` show what cluster.toml asks of the actors. Neither
 attaches a mesh or reads a running process, so neither sees the operations
 class a build picked: the ``FP8 compute:`` line that every model build logs, in
 the driver log and in each Worker journal, names that
-(``src/dgx_monarch/fp8_compute.py``). The setting is never wrong in itself, so
-the row never warns.
+(``src/dgx_monarch/fp8_compute.py``). The row warns in one case only, the one
+MODELS.md documents as unsafe: ``"on"`` where a host reports a GB10 GPU,
+compute capability 12.1, read from ``nvidia-smi`` by doctor's per-host probe.
 """
 from __future__ import annotations
 
-from collections.abc import Mapping
+import subprocess
+from collections.abc import Callable, Mapping
 
 from ..fp8_compute import AUTO, OFF, ON, WORKER_ARG, setting
-from .probe_certainty import OK
+from .probe_certainty import OK, WARN
 
 NAME = "FP8 matmul (actors)"
 ENTRY = "docs/TROUBLESHOOTING.md #141"
+MODELS_ENTRY = "docs/MODELS.md#fp8-on-gb10"
+GB10_CAPABILITY = "12.1"
 _MEANING = {
     AUTO: ("the actors pass ComfyUI's fp8_optimizations only where a loader's weight_dtype is "
            "fp8_e4m3fn_fast, as stock ComfyUI does without --fast"),
@@ -31,14 +35,56 @@ def _worker_args(config: object) -> Mapping[str, object] | None:
     return args if isinstance(args, Mapping) else None
 
 
-def doctor_row(config: object) -> tuple[str, str, str]:
-    """One (status, name, detail) row for the actors, from doctor's config."""
+def local_capability() -> str:
+    """This box's GPU compute capability as ``nvidia-smi`` prints it, or ``unknown``."""
+    try:
+        result = subprocess.run(["nvidia-smi", "--query-gpu=compute_cap", "--format=csv,noheader"],
+                                capture_output=True, text=True, timeout=15)
+    except Exception:
+        return "unknown"
+    fields = result.stdout.split() if result.returncode == 0 else []
+    return fields[0] if fields else "unknown"
+
+
+def _known(capability: str) -> bool:
+    parts = capability.split(".")
+    return len(parts) == 2 and all(part.isdigit() for part in parts)
+
+
+def doctor_row(
+    config: object, caps: Mapping[str, str] | None = None, *,
+    probe: Callable[[], str] = local_capability,
+) -> tuple[str, str, str]:
+    """One (status, name, detail) row for the actors, from doctor's config.
+
+    ``caps`` maps each host to the compute capability its probe reported. With
+    none, as in local mode, the row reads this box, and only for ``"on"``.
+    """
     mode, source = setting(_worker_args(config))
-    return (OK, NAME, f"{WORKER_ARG}={mode} from {source}: {_MEANING[mode]}. A checkpoint with "
-                      "comfy-kitchen quantization metadata runs comfy-kitchen's kernels whatever this "
-                      "says, and ComfyUI's own --fast flags reach only the driver's loads. Doctor reads "
-                      "cluster.toml, not a running process: the `FP8 compute:` line each model build "
-                      f"logs names the class ComfyUI picked ({ENTRY})")
+    plain = (OK, NAME, f"{WORKER_ARG}={mode} from {source}: {_MEANING[mode]}. A checkpoint with "
+                       "comfy-kitchen quantization metadata runs comfy-kitchen's kernels whatever this "
+                       "says, and ComfyUI's own --fast flags reach only the driver's loads. Doctor reads "
+                       "cluster.toml, not a running process: the `FP8 compute:` line each model build "
+                       f"logs names the class ComfyUI picked ({ENTRY})")
+    if mode != ON:
+        return plain
+    caps = {"this box": probe()} if caps is None else caps
+    gb10 = sorted(host for host, cap in caps.items() if cap == GB10_CAPABILITY)
+    if gb10:
+        return (WARN, NAME, f"{WORKER_ARG}=on from {source}, and a GPU is GB10 (compute capability "
+                            f"12.1) on {', '.join(gb10)}. There every plain FP8 checkpoint the actors "
+                            "build takes fp8_ops, which MODELS.md documents as unsafe on GB10: "
+                            "Qwen-Image 2512's plain FP8 file rendered noise, though HunyuanImage 2.1's "
+                            "stayed inside the floor, so not every plain FP8 file is affected. A checkpoint "
+                            "with comfy-kitchen quantization metadata and a BF16 checkpoint compute as "
+                            f"before. Leave the key out for auto ({MODELS_ENTRY})")
+    blind = sorted(host for host, cap in caps.items() if not _known(cap))
+    if blind or not caps:
+        return (WARN, NAME, f"unobserved: {WORKER_ARG}=on from {source}, and "
+                            f"{', '.join(blind) or 'no host'} reported no GPU compute capability, so "
+                            "this row cannot say whether the setting meets the case MODELS.md documents "
+                            f"as unsafe on GB10 ({MODELS_ENTRY})")
+    return plain
 
 
 def status_fields(config: object) -> dict[str, str]:

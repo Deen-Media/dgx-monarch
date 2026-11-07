@@ -229,6 +229,10 @@
       "test_uniform_seq_lengths_passes_and_ragged_rejects": "1ab8a9f775eeec9a",
       "test_usp_binds_forward": "15f8d3525ee2fc29"
     },
+    "tests/test_campaign_columns_types.py": {
+      "test_a_container_type_needs_every_value_to_parse_as_that_container": "6f3f33faafabe877",
+      "test_the_committed_message_columns_read_as_text": "fc90fa03e92471a8"
+    },
     "tests/test_campaign_stats.py": {
       "test_a_rerun_on_the_same_records_is_byte_identical": "99142167ed501d38",
       "test_check_passes_on_fresh_output_and_fails_on_drift": "59ac8cc1054c2d54",
@@ -1993,7 +1997,7 @@
     "tests/test_refusal_classes.py": {
       "test_class_rules_hold_at_every_classified_site": "60083cb5fef4c937",
       "test_classified_refusal_sites_match_the_ledger": "386d376b22f06694",
-      "test_every_declared_exception_is_classified_as_refusal_or_not": "dbfad9c2e868099c",
+      "test_every_declared_exception_is_classified_as_refusal_or_not": "8e395d620b7d8477",
       "test_every_waivable_guard_message_names_the_panel_and_the_env_fallback": "28e23825921f635e",
       "test_guard_vocabulary_agrees_with_the_frozen_ledger_vocabulary": "9525b2023313c356",
       "test_guard_vocabulary_is_claimed_or_explicitly_reserved": "7a7f9af70bf2452a",

@@ -138,8 +138,10 @@ interface for Worker-service lifecycle and setup.
 `scripts/setup_env.sh` is a developer-lab helper, not the portable installer.
 It creates or changes `~/monarch-env`, assumes `~/ComfyUI`, selects a fixed
 Torch/CUDA build, and for a ComfyUI before v0.38.0, which still needs
-torchaudio, can copy it from a donor environment. Its rerun can change
-packages already installed there. Do not run it against a user's
+torchaudio, can copy it from a donor environment. A torchaudio that is
+installed but does not import stops it with the repair, whatever the ComfyUI
+version, because Transformers imports an installed torchaudio. Its rerun can
+change packages already installed there. Do not run it against a user's
 working environment as part of agent onboarding.
 
 Use [INSTALL.md](../docs/INSTALL.md) for dependency installation and

@@ -37,7 +37,9 @@ setup_comfy_layer() {
   # a compatible torchaudio build, so copy one from DGXM_TORCHAUDIO_DONOR (the
   # tested donor build is 2.11.0+cu132 with torch 2.12), and refuse a missing
   # donor rather than leave that ComfyUI unable to start. A newer ComfyUI only
-  # gets a warning when torchaudio is missing.
+  # gets a warning when torchaudio is missing. A torchaudio that is installed
+  # but does not import is never treated as missing: Transformers imports an
+  # installed torchaudio, so the helper stops with the repair instead.
   local PY="$HOME/monarch-env/bin/python"
   local P="$HOME/monarch-env/bin/pip"
   local SP XFUSER_WHEELS TORCH_CONSTRAINT TORCH_DIST_VERSION
@@ -80,9 +82,30 @@ m = re.search(r"__version__\s*=\s*[\x27\x22](\d+)\.(\d+)", text)
 sys.exit(0 if m and (int(m[1]), int(m[2])) < (0, 38) else 1)' "$HOME/ComfyUI/comfyui_version.py"; then
     NEEDS_TORCHAUDIO=1
   fi
-  if [ "$NEEDS_TORCHAUDIO" = 0 ] && ! "$PY" -c "import torchaudio" 2>/dev/null; then
+  local AUDIO
+  AUDIO="$(torchaudio_state "$PY")"
+  if [ "$AUDIO" = unknown ]; then
+    echo "FAIL: the torchaudio check did not run in ~/monarch-env; repair that interpreter first" >&2
+    return 1
+  fi
+  if [ "${AUDIO%% *}" = broken ]; then
+    # Read the state word, the installed version and the import error class.
+    # shellcheck disable=SC2086
+    set -- $AUDIO
+    if [ "$NEEDS_TORCHAUDIO" = 0 ] || [ -z "$TORCHAUDIO_DONOR" ]; then
+      local AUDIO_NAME="torchaudio $2"
+      [ "$2" != unknown ] || AUDIO_NAME="a torchaudio package with no pip metadata"
+      echo "FAIL: $AUDIO_NAME is installed but does not import ($3) against torch $TORCH_DIST_VERSION." >&2
+      echo "      Transformers imports an installed torchaudio, so ComfyUI's import chain breaks." >&2
+      echo "      Remove it with ~/monarch-env/bin/pip uninstall torchaudio, or install a build" >&2
+      echo "      that loads against this torch; a ComfyUI before v0.38.0 can take one from" >&2
+      echo "      DGXM_TORCHAUDIO_DONOR instead" >&2
+      return 1
+    fi
+  fi
+  if [ "$AUDIO" = absent ] && [ "$NEEDS_TORCHAUDIO" = 0 ]; then
     echo "WARNING: no working torchaudio; this ComfyUI does not list it (v0.38.0 and later need none), so the donor step is skipped" >&2
-  elif ! "$PY" -c "import torchaudio" 2>/dev/null; then
+  elif [ "$AUDIO" != working ]; then
     local DONOR_PY="$TORCHAUDIO_DONOR/bin/python"
     local DONOR_SP=""
     if [ -n "$TORCHAUDIO_DONOR" ] && [ -x "$DONOR_PY" ]; then
@@ -92,6 +115,12 @@ sys.exit(0 if m and (int(m[1]), int(m[2])) < (0, 38) else 1)' "$HOME/ComfyUI/com
       "$P" uninstall -q -y torchaudio 2>/dev/null || true
       cp -r "$DONOR_SP/torchaudio" "$DONOR_SP"/torchaudio-*.dist-info "$SP/"
       echo "torchaudio copied from $TORCHAUDIO_DONOR"
+      AUDIO="$(torchaudio_state "$PY")"
+      if [ "$AUDIO" != working ]; then
+        echo "FAIL: torchaudio from DGXM_TORCHAUDIO_DONOR does not import after the copy ($AUDIO);" >&2
+        echo "      choose a donor whose torchaudio loads against torch $TORCH_DIST_VERSION" >&2
+        return 1
+      fi
     else
       echo "FAIL: no working torchaudio (as of 2026-07-02, the cu132 index served only torchaudio 2.2.0 for aarch64)" >&2
       echo "      set DGXM_TORCHAUDIO_DONOR to a venv with a torch-2.12-compatible" >&2
@@ -100,6 +129,24 @@ sys.exit(0 if m and (int(m[1]), int(m[2])) < (0, 38) else 1)' "$HOME/ComfyUI/com
     fi
   fi
   echo "comfy layer done on $(hostname)"
+}
+
+torchaudio_state() {
+  # Print `working`, `absent`, `broken <version> <error class>` (the import
+  # failed while pip's metadata or the import system still finds the
+  # package), or `unknown` when the check itself could not run. Only the last
+  # line counts, in case an import writes to stdout.
+  { "$1" -c 'import importlib.metadata as md, importlib.util as iu
+try:
+    import torchaudio  # noqa: F401
+except Exception as exc:
+    try:
+        version = md.version("torchaudio")
+    except md.PackageNotFoundError:
+        version = "unknown" if iu.find_spec("torchaudio") is not None else None
+    print("absent" if version is None else f"broken {version} {type(exc).__name__}")
+else:
+    print("working")' 2>/dev/null || echo unknown; } | tail -n 1
 }
 
 WANT_COMFY=0
@@ -149,7 +196,7 @@ if [ "$WANT_WORKER" = 1 ]; then
     printf '%s\n' 'cat > "$XFUSER_BUILDER" <<'\''PY'\'''
     cat -- "$XFUSER_BUILDER"
     printf '%s\n' 'PY'
-    declare -f setup_base setup_comfy_layer
+    declare -f setup_base setup_comfy_layer torchaudio_state
     printf '%s\n' 'setup_base' \
       "if [ \"\$WANT_COMFY\" = 1 ]; then setup_comfy_layer; fi"
   } | ssh "${SSH_ARGS[@]}" -- "$SIB" bash -s

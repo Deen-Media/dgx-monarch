@@ -168,6 +168,11 @@ def _metrics_text(telemetry: dict) -> str:
     poll = telemetry.get("status_poll")
     poll_stale = "status_poll" in telemetry and (
         not isinstance(poll, dict) or poll.get("fresh") is not True)
+    # A host with several GPUs runs one rank per GPU, and every rank reports
+    # its host. Rank-local readings carry worker_index; host-wide ones are
+    # written once per host, from the first rank that names it, so no series
+    # identity repeats.
+    hosts_written: set[str] = set()
     for ordinal, worker in enumerate(workers[:_MAX_METRIC_WORKERS]):
         if not isinstance(worker, dict):
             continue
@@ -185,10 +190,18 @@ def _metrics_text(telemetry: dict) -> str:
         host = host_stats.get("host")
         gpu_value = host_stats.get("gpu")
         gpu = gpu_value if isinstance(gpu_value, dict) else {}
+        rank = {"host": host, "worker_index": ordinal}
+        metric("gpu_util_pct", gpu.get("util_pct"), **rank)
+        metric("gpu_power_w", gpu.get("power_w"), **rank)
+        memory_value = worker.get("memory")
+        memory = memory_value if isinstance(memory_value, dict) else {}
+        metric("swap_verify_failures", memory.get("swap_verify_failures"), **rank)
+        metric("unbake_file_backed_gib", memory.get("unbake_file_backed_gib"), **rank)
+        if str(host) in hosts_written:
+            continue
+        hosts_written.add(str(host))
         mem_value = host_stats.get("mem_gib")
         mem = mem_value if isinstance(mem_value, dict) else {}
-        metric("gpu_util_pct", gpu.get("util_pct"), host=host)
-        metric("gpu_power_w", gpu.get("power_w"), host=host)
         metric("mem_available_gib", mem.get("MemAvailable"), host=host)
         rails_value = host_stats.get("rails")
         rails = rails_value if isinstance(rails_value, dict) else {}
@@ -201,8 +214,4 @@ def _metrics_text(telemetry: dict) -> str:
                    host=host, rail=device)
             metric("rail_tx_bytes_total", counters.get("tx_bytes"),
                    host=host, rail=device)
-        memory_value = worker.get("memory")
-        memory = memory_value if isinstance(memory_value, dict) else {}
-        metric("swap_verify_failures", memory.get("swap_verify_failures"), host=host)
-        metric("unbake_file_backed_gib", memory.get("unbake_file_backed_gib"), host=host)
     return "\n".join(lines) + "\n"

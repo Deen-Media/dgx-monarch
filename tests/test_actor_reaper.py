@@ -8,6 +8,7 @@ procfs contents.
 """
 from __future__ import annotations
 
+import errno
 import json
 import os
 import signal
@@ -967,3 +968,117 @@ def test_the_liveness_flag_signals_nothing_and_prints_one_line(monkeypatch, caps
     lines = capsys.readouterr().out.splitlines()
     assert len(lines) == 1
     assert json.loads(lines[0]) == {"schema": 1, "asked": [LOOP_ADDRESS]}
+
+
+def _refuse_listing(monkeypatch, root: Path, code: int) -> None:
+    """Fail every listing of this proc root the way a denied or failing procfs does."""
+    real_listdir = os.listdir
+
+    def listdir(path="."):
+        if os.fspath(path) == str(root):
+            raise OSError(code, os.strerror(code))
+        return real_listdir(path)
+
+    monkeypatch.setattr(pi.os, "listdir", listdir)
+
+
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EIO])
+def test_a_proc_root_that_cannot_be_listed_is_never_an_empty_host(tmp_path, monkeypatch, code):
+    """An unlisted process table counted nothing, so no caller may read it as zero.
+
+    The live actor below would have answered alive. A liveness scan, a sweep
+    and the doctor's orphan scan must each fail instead of reporting none.
+    """
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100)
+    missing = str(tmp_path / "no-ledger.json")
+    _refuse_listing(monkeypatch, root, code)
+
+    with pytest.raises(pi.ProcListingError):
+        liveness(root, ledger_file=missing)
+    with pytest.raises(pi.ProcListingError):
+        sweep(root, ledger_file=missing)
+    with pytest.raises(pi.ProcListingError):
+        actor_reaper.orphan_report(proc_root=str(root), ledger_file=missing,
+                                   uid=UID, self_pid=SELF_PID)
+
+
+def test_the_liveness_command_exits_nonzero_with_no_line_when_procfs_is_unlisted(
+    monkeypatch, capsys,
+):
+    def unlisted(**_kwargs):
+        raise pi.ProcListingError(errno.EACCES, "Permission denied", "/proc")
+
+    monkeypatch.setattr(actor_reaper, "liveness", unlisted)
+    assert actor_reaper.main(["--liveness"]) != 0
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "process table" in captured.err
+
+
+def test_the_tracker_keeps_its_rows_when_procfs_is_unlisted(tmp_path, monkeypatch):
+    """The tracker only adds rows from what it sees, so an unlisted tick adds none.
+
+    It still publishes the loop record and keeps the live rows it had.
+    """
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4100, ppid=4000, starttime=900, argv=LOOP_ARGV, env=SPAWNER_ENV)
+    make_proc(root, 4101, ppid=4100)
+    path = str(tmp_path / "actor-procs.json")
+    first = actor_ledger.tick(LOOP_ADDRESS, loop_pid=4100, proc_root=str(root), path=path, now=10.0)
+    assert [row["pid"] for row in first["actors"]] == [4101]
+    _refuse_listing(monkeypatch, root, errno.EIO)
+    second = actor_ledger.tick(LOOP_ADDRESS, loop_pid=4100, proc_root=str(root), path=path, now=20.0)
+    assert [row["pid"] for row in second["actors"]] == [4101]
+    assert second["loop"]["pid"] == 4100
+
+
+@pytest.mark.parametrize("actors", [1, "rows", {"pid": 4101}, True])
+def test_a_ledger_whose_actor_list_is_not_a_list_reads_as_corrupt(tmp_path, actors):
+    """Valid JSON with the wrong shape is corrupt state: read it as empty, never raise."""
+    root = make_proc_root(tmp_path)
+    path = tmp_path / "actor-procs.json"
+    path.write_text(json.dumps({"version": 1, "boot_id": "boot-abc", "written_at": 5.0,
+                                "loop": None, "actors": actors}))
+    ledger = actor_ledger.read_ledger(str(path), proc_root=str(root))
+    assert ledger == actor_ledger.empty_ledger("boot-abc")
+    assert liveness(root, ledger_file=str(path))["ledger_rows_alive"] == 0
+
+
+def test_infinite_or_fractional_ledger_numbers_drop_the_row_and_never_overflow(tmp_path):
+    """json reads Infinity and NaN, and int(inf) raises OverflowError, which the
+    corrupt-row fallback used to miss. A non-integral pid names no process."""
+    root = make_proc_root(tmp_path)
+    make_proc(root, 4101, ppid=4100)
+    inf, nan = float("inf"), float("nan")
+    path = write_ledger(tmp_path, [
+        {"pid": inf, "starttime": 1000},
+        {"pid": 4101, "starttime": -inf},
+        {"pid": 4101.5, "starttime": 1000},
+        {"pid": 4101, "starttime": nan},
+        {"pid": 4101, "starttime": 1000, "loop_pid": inf, "loop_starttime": nan,
+         "first_seen": inf, "last_seen": -inf, "orphan_since": inf},
+    ], loop={"pid": inf, "starttime": 900}, written_at=inf)
+    ledger = actor_ledger.read_ledger(path, proc_root=str(root))
+    assert [(row["pid"], row["starttime"]) for row in ledger["actors"]] == [(4101, 1000)]
+    row = ledger["actors"][0]
+    assert (row["loop_pid"], row["loop_starttime"]) == (0, 0)
+    assert (row["first_seen"], row["last_seen"], row["orphan_since"]) == (0.0, 0.0, None)
+    assert ledger["written_at"] == 0.0
+    answer = liveness(root, ledger_file=path)
+    assert answer["ledger_rows_alive"] == 1
+    assert answer["loop_alive"] is None
+    assert answer["ledger_age_s"] == -1.0
+
+
+def test_reap_reports_a_local_box_whose_process_table_cannot_be_listed(monkeypatch, capsys):
+    from dgx_monarch.cli import actor_sweep
+
+    def unlisted(**_kwargs):
+        raise pi.ProcListingError(errno.EIO, "Input/output error", "/proc")
+
+    monkeypatch.setattr(actor_reaper, "run_sweep", unlisted)
+    assert actor_sweep.reap_command(None) is False
+    out = capsys.readouterr().out
+    assert "local: actor sweep FAILED (cannot list the process table" in out
+    assert "unaccounted for" in out
