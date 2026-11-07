@@ -1149,6 +1149,10 @@ def test_seam_b_carries_a_granted_rescue_consent_into_the_quote(monkeypatch):
     assert sent[0]["rescue_consent"] == {"id": "abc"}
 
 
+# The loader node whose model the sampler in ``_dp2_graph`` takes.
+_DP2_LOADER = "2"
+
+
 def _dp2_graph(batch, latent_class="EmptyLatentImage", link=True):
     return {
         "8": {"class_type": latent_class,
@@ -1167,7 +1171,8 @@ def _dp2_mesh(preset="dp2", world=2, defunct=False):
 
 def test_an_indivisible_literal_batch_refuses_class_p_at_the_loader():
     with pytest.raises(ValueError) as raised:
-        render_validation.preflight_graph_batch_divides_dp(_dp2_mesh(), _dp2_graph(1))
+        render_validation.preflight_graph_batch_divides_dp(
+            _dp2_mesh(), _dp2_graph(1), _DP2_LOADER)
     text = str(raised.value)
     tag = parse_leading_refusal_tag(text)
     assert tag is not None and tag.refusal_class.value == "P"
@@ -1177,7 +1182,8 @@ def test_an_indivisible_literal_batch_refuses_class_p_at_the_loader():
 
 
 def test_a_divisible_literal_batch_makes_no_claim():
-    render_validation.preflight_graph_batch_divides_dp(_dp2_mesh(), _dp2_graph(2))
+    render_validation.preflight_graph_batch_divides_dp(
+        _dp2_mesh(), _dp2_graph(2), _DP2_LOADER)
 
 
 @pytest.mark.parametrize("mesh,prompt", [
@@ -1194,7 +1200,7 @@ def test_a_divisible_literal_batch_makes_no_claim():
 def test_uncertain_evidence_makes_no_claim_at_the_loader(mesh, prompt):
     """No claim costs nothing here: the render submit still holds the real
     tensor and answers the same question with it."""
-    render_validation.preflight_graph_batch_divides_dp(mesh, prompt)
+    render_validation.preflight_graph_batch_divides_dp(mesh, prompt, _DP2_LOADER)
 
 
 def test_both_indivisible_batch_sites_print_one_message():
@@ -1212,7 +1218,8 @@ def test_both_indivisible_batch_sites_print_one_message():
     tag = parse_leading_refusal_tag(submit)
     assert tag is not None and tag.refusal_class.value == "P"
     with pytest.raises(ValueError) as loader_raised:
-        render_validation.preflight_graph_batch_divides_dp(_dp2_mesh(), _dp2_graph(1))
+        render_validation.preflight_graph_batch_divides_dp(
+            _dp2_mesh(), _dp2_graph(1), _DP2_LOADER)
     assert str(loader_raised.value) == submit
 
 
@@ -1226,5 +1233,5 @@ def test_the_batch_answer_lands_above_the_footprint_card(loader_rig, monkeypatch
     with pytest.raises(ValueError, match="not divisible by 2"):
         DGXMonarchUNETLoader().load(
             _mesh(loader_rig.handle, preset="dp2"), "flux2.safetensors",
-            prompt=_dp2_graph(1))
+            unique_id=_DP2_LOADER, prompt=_dp2_graph(1))
     assert loader_rig.events == []

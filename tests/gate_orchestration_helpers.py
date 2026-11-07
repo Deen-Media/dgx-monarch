@@ -10,6 +10,7 @@ import dgx_monarch.nodes.common as common
 import dgx_monarch.nodes.gate as gate_mod
 import dgx_monarch.runtime_provenance as runtime_provenance
 from dgx_monarch.actor import model_store as model_store_mod
+from dgx_monarch.gate_runtime import runtime_build_identity
 from dgx_monarch.mesh_setup import SetupToken
 from dgx_monarch.nodes import gate_process_state
 
@@ -108,6 +109,7 @@ def _cross_mode_rig(
                         "world": world,
                         "setup_generation": args[0],
                         "source_manifest_sha256": self.provenance_source,
+                        "runtime": runtime_build_identity(),
                     }
                     for rank in range(world)
                 ]

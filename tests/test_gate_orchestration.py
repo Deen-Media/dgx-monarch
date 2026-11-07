@@ -15,6 +15,7 @@ import dgx_monarch.nodes.render_submit as submit_mod
 import dgx_monarch.nodes.samplers as samplers
 import dgx_monarch.runtime_provenance as runtime_provenance
 from dgx_monarch.actor import model_store as model_store_mod
+from dgx_monarch.gate_runtime import runtime_build_identity
 from dgx_monarch.mesh import MeshHandle
 from dgx_monarch.mesh_setup import SetupToken
 from dgx_monarch.nodes import gate_process_state
@@ -350,6 +351,7 @@ def test_canonical_failure_quarantines_and_persists(monkeypatch, tmp_path):
                     "source_manifest_sha256": (
                         runtime_provenance.cached_dgx_source_manifest_sha256()
                     ),
+                    "runtime": runtime_build_identity(),
                 }]
             if method == "gate_swap_cycle":
                 return [{"rank": 0, "world": 1, "setup_generation": 4,
@@ -441,6 +443,7 @@ def test_ceremony_freezes_nested_request_and_latent_for_every_render(
                     "source_manifest_sha256": (
                         runtime_provenance.cached_dgx_source_manifest_sha256()
                     ),
+                    "runtime": runtime_build_identity(),
                 }]
             if method == "gate_swap_cycle":
                 return [{"rank": 0, "world": 1, "setup_generation": 4,
@@ -3522,6 +3525,7 @@ def test_default_provenance_attestor_rejects_incomplete_or_mixed_cohort_preproof
                 "world": 2,
                 "setup_generation": 4,
                 "source_manifest_sha256": handle.provenance_source,
+                "runtime": runtime_build_identity(),
             }
             for rank in range(2)
         ]
@@ -3572,6 +3576,7 @@ def test_default_provenance_rpc_failure_never_publishes_a_terminal_row(
             "world": 1,
             "setup_generation": generation,
             "source_manifest_sha256": handle.provenance_source,
+            "runtime": runtime_build_identity(),
         }]
 
     handle.provenance_response = provenance
@@ -3607,6 +3612,7 @@ def test_post_provenance_source_mismatch_cannot_publish_a_terminal_row(
             "source_manifest_sha256": (
                 handle.provenance_source if call == 1 else "0" * 64
             ),
+            "runtime": runtime_build_identity(),
         }]
 
     handle.provenance_response = provenance
@@ -3636,6 +3642,7 @@ def test_post_provenance_rejects_setup_generation_drift_before_publication(
             "world": 1,
             "setup_generation": generation,
             "source_manifest_sha256": handle.provenance_source,
+            "runtime": runtime_build_identity(),
         }]
 
     handle.provenance_response = provenance
@@ -3726,6 +3733,7 @@ def test_post_provenance_malformed_row_cannot_publish_a_terminal_row(
             "world": 1,
             "setup_generation": generation,
             "source_manifest_sha256": handle.provenance_source,
+            "runtime": runtime_build_identity(),
         }]
 
     handle.provenance_response = provenance

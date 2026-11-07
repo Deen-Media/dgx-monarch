@@ -21,6 +21,9 @@ def verify_sample_artifact_authorization(
     assert_request_artifact_binding(request, local_artifacts)
     assert_normal_render_residency_mode(
         request, dict(getattr(worker, "_active_worker_args", {})))
+    from .. import gate_runtime
+
+    local_runtime = gate_runtime.runtime_build_identity()  # a grant must name this rank's own build
     if (request.get("_dgxm_fleet_job")
             or request.get("_dgxm_fleet_residency_grant") is not None):
         from ..mesh_safety import assert_fleet_residency_grant
@@ -30,6 +33,7 @@ def verify_sample_artifact_authorization(
             local_artifacts,
             effective_worker_args=dict(getattr(worker, "_active_worker_args", {})),
             rank_world=int(worker.world or 0),
+            local_runtime=local_runtime,
         )
     if request.get("_dgxm_normal_residency_grant") is not None:
         from ..mesh_safety import assert_normal_render_residency_grant
@@ -41,6 +45,7 @@ def verify_sample_artifact_authorization(
             rank_world=int(worker.world or 0),
             setup_generation=getattr(worker, "_setup_generation", None),
             worker_topology=dict(getattr(worker, "topology", {}) or {}),
+            local_runtime=local_runtime,
         )
     expected = request.get("_dgxm_artifact_sets")
     if expected is None or local_artifacts != expected:

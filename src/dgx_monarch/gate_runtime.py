@@ -17,14 +17,15 @@ RUNTIME_FIELD = "runtime"
 
 
 def runtime_build_identity() -> dict[str, str]:
-    """The torch and CUDA build this driver imported.
+    """The torch and CUDA build this process imported.
 
-    Local actors start from the driver's interpreter, and doctor's
-    ``torch version match`` row holds every Worker host to the driver's torch
-    (DESIGN.md section 6.3), so this names the build every rank of a proof ran.
-    The NCCL library is left out: torch reports only its build-time NCCL, which
-    the torch version already fixes, and the library an actor loads is unknown
-    to the driver before dispatch; doctor's ``NCCL library`` row compares it.
+    On the driver it is the build a capability context names. Every rank
+    reports its own through this function, and Gate authority needs each to
+    match the driver's (worker_runtime.py), so the context names the build
+    every rank of a proof ran. The NCCL library is left out: torch reports
+    only its build-time NCCL, which the torch version already fixes, and the
+    library an actor loads is unknown to the driver before dispatch; doctor's
+    ``NCCL library`` row compares it.
     """
     import torch
 

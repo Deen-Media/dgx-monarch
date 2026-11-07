@@ -211,6 +211,7 @@ def provenance_baseline_impl(
             or not 0 <= rank < world):
         raise RuntimeError("provenance baseline requires published rank/world metadata")
 
+    from .. import gate_runtime
     from ..telemetry import event_sequence
 
     if artifact_manifest is None:
@@ -220,6 +221,8 @@ def provenance_baseline_impl(
             "topology": dict(worker.topology),
             "setup_generation": actual_generation,
             "source_manifest_sha256": source_manifest_sha256(),
+            # The Gate ceremony holds every rank to the driver's build (worker_runtime.py).
+            "runtime": gate_runtime.runtime_build_identity(),
             "event_seq": event_sequence(),
         }
 
@@ -247,6 +250,7 @@ def provenance_baseline_impl(
         "topology": dict(worker.topology),
         "setup_generation": actual_generation,
         "source_manifest_sha256": dgx_provenance["source_manifest_sha256"],
+        "runtime": gate_runtime.runtime_build_identity(),
         "setup_provenance": stored[1],
         "post_provenance": runtime_provenance,
         # Capture last so earlier GPU-queue work precedes this watermark.

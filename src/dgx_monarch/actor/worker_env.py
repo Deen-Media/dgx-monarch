@@ -5,7 +5,7 @@ import os
 import socket
 import time
 
-from .. import fp8_compute
+from .. import fp8_compute, gate_runtime
 from ..accuracy_waiver import RESULT_KEY as _ACCURACY_WAIVER_RESULT_KEY
 from ..log import get_logger
 from ..transfer import LatentReturn
@@ -447,6 +447,7 @@ def setup_info(worker) -> dict:
         # rank-asymmetric selection before dispatch. A raise inside a
         # collective on one rank only abandons the lease and strands its peers.
         "sol_attn": sol_attn_available(),
+        "runtime": gate_runtime.runtime_build_identity(),  # Gate authority needs the driver's (worker_runtime.py)
         "sp_rank": get_sequence_parallel_rank(),
         "cfg_rank": get_classifier_free_guidance_rank(),
         "dp_rank": get_data_parallel_rank(),

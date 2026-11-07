@@ -532,12 +532,17 @@ family-specific remediation.
 ## 8. Version skew between hosts
 
 **Symptom:** doctor row `torchmonarch=…; version skew vs driver pin`, a
-failing `torch version match: skew across hosts` row, or pickling errors
-mid-attach.
+failing `torch version match: skew across hosts` row, pickling errors
+mid-attach, or a render refused with `Gate authority needs every box on the
+driver's torch build`, which names each box's torch and CUDA. A Worker can
+refuse the same way in its own words: `this Worker runs torch ...`.
 
 **Fix:** For a torch-version mismatch, install the same torch/CUDA build in
 the driver and every worker environment; doctor treats the skew as a failure
-because serialized objects and distributed kernels cross that boundary.
+because serialized objects and distributed kernels cross that boundary. A Gate
+PASS names the build it was proven under, so a risky render on a mixed pair
+refuses rather than reuse a proof no box ran; once the builds match, the PASS
+rows recorded on a matched pair apply again.
 `dgxm update` uses `--no-deps`, so it does not replace torch.
 For torchmonarch skew on plain source directories, run `dgxm update`
 (synchronize the repo's exact pin with `--no-deps`, install/sync dgx-monarch
@@ -743,14 +748,20 @@ stays at 1 whatever the batch widget says, so only the last two fixes apply
 there; see [the Kroma notes](MODELS.md#model-kroma).
 
 The same refusal also appears at the loader node, before anything loads,
-whenever the graph states a literal batch on an empty-latent node ComfyUI
-ships, including the Flux 2, Chroma Radiance, Hunyuan Image and HunyuanVideo
-1.5 latents. It is class P at both places, with one message: no consent and no
-extra memory changes what a batch of 1 can be split into, so no card appears,
-and a graph that is both over budget and batch indivisible is told about the
-batch rather than offered a rescue it cannot use. A batch wired from another
-node, or one the loader cannot read as a literal, gets its answer at render
-submit from the real tensor. The MiniMax H3 audio+video latent states no batch
+whenever a sampler that takes this loader's model, directly or through the
+dgx-monarch nodes that hand a model on (LoRA, model sampling, Skip Layer
+Guidance, H3 context windows, the Qwen Image 2.1 cache or a guider), reads a
+literal batch from an empty-latent node ComfyUI ships, including the Flux 2, Chroma
+Radiance, Hunyuan Image and HunyuanVideo 1.5 latents. It is class P at both
+places, with one message: no consent and no extra memory changes what a batch
+of 1 can be split into, so no card appears, and a graph that is both over
+budget and batch indivisible is told about the batch rather than offered a
+rescue it cannot use. The Fleet KSampler runs one world-one job per GPU, so
+its batch never splits and the loader never refuses it, and a branch on
+another loader answers to that loader alone. A batch wired from another node,
+one the loader cannot read as a literal, or a sampler the loader cannot tie
+to its model (a switch or a third-party node in between) gets its answer at
+render submit from the real tensor. The MiniMax H3 audio+video latent states no batch
 at all; the packed-latent rule refuses its packed shape above dp1 instead.
 
 ## 17. FSDP load refused: LoRA or non-bf16 checkpoint
@@ -6438,6 +6449,10 @@ scales.
 
 ## 121. A FLUX.3 checkpoint fails to load on ComfyUI older than 0.41.0
 
+This entry also covers the opposite case, a ComfyUI newer than this release
+supports, which refuses a sharded FLUX.3 render at load; the last paragraph
+says what to do.
+
 **Symptom:** a FLUX.3 Image Klein template is refused before it runs:
 ComfyUI's prompt check reports `Value not in list` for the CLIPLoader type
 `flux3`. A graph that loads a `flux3_image_klein_*` file another way stops at
@@ -6461,6 +6476,12 @@ ComfyUI. Every other family keeps working on the older ComfyUI meanwhile.
 Every Gate PASS goes stale with the ComfyUI change, so each combination runs
 its first-use Gate again
 ([#114](#114-every-combination-runs-its-first-use-gate-again-after-an-update)).
+
+A ComfyUI newer than this release supports can refuse a sharded FLUX.3 render
+at load, class P, saying a block's forward no longer reads its
+`modulated_norm` global: render with a topology without sequence parallelism,
+such as `single` (mode=local, gpus_per_host=1), until a dgx-monarch release
+supports that ComfyUI.
 
 ## 122. Studio refuses a stale review or cannot display a complete library catalog
 

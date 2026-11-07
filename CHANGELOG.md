@@ -642,6 +642,30 @@
   the leanest rank does, so two boxes with different free memory no longer
   stall on mismatched collectives
   ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
+- A data-parallel render keeps its progress bar and stall guard alive until
+  the last group finishes. Each group's result leader sends its own done, and
+  the driver stopped reading at the first one, so a slower group's steps were
+  dropped and a gap longer than `DGXM_SAMPLE_STALL_TIMEOUT_S` marked a healthy
+  mesh stalled ([TROUBLESHOOTING #86](docs/TROUBLESHOOTING.md#86-a-render-error-says-the-fleet-stalled-or-a-worker-refuses-with-a-poisoned-cuda-context)).
+- The loader's early batch check reads only the samplers that take its model.
+  A dp2 mesh feeding the Fleet KSampler with a batch of one, or a batch-one
+  branch on another loader, no longer refuses a valid load; a sampler the
+  check cannot tie to the loader gets its answer at render submit
+  ([TROUBLESHOOTING #16](docs/TROUBLESHOOTING.md#16-single-preset-refuses-because-the-latent-batch-does-not-divide-dp)).
+- Chroma's cfg2 trim removes only the equalizer's hard padding. A custom
+  conditioning whose attention mask carries a finite bias on some text tokens
+  keeps those tokens and its mask, as a one-GPU render does; before, the trim
+  dropped them and the mask.
+- Gate authority holds every box to the driver's torch and CUDA build. Each
+  Worker reports its build at setup and in the Gate ceremony's provenance, and
+  checks a grant's build against its own. A pair on two builds refuses a risky
+  render and names each box's build, where before a Worker recreated with only
+  a new torch reused a PASS proven under the old one. A matched pair keeps its
+  PASS rows ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
+- A sharded FLUX.3 render refuses at load, class P, when the installed
+  ComfyUI's block no longer reads the norm global the parity route binds; it
+  used to warn and render with a possible bf16 difference. A topology
+  without sequence parallelism, such as `single`, still renders ([TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
 
 ### Development
 

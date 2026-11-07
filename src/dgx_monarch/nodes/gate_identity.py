@@ -11,6 +11,7 @@ from ..gate_ledger import ArtifactSetSignature, gate_verdict_token
 from ..log import get_logger
 from ..mesh_safety import FLEET_RESIDENCY_CAPABILITY, physical_capability_context
 from ..transfer_utils import safe_call
+from ..worker_runtime import WorkerRuntimeMismatch
 
 # Both re-exported for nodes/gate_verdict, which reads them at call time as
 # runtime["_gate_identity"].<name> through the nodes/gate namespace.
@@ -460,7 +461,7 @@ def authorize_normal_render(
             model, requested, model_request, identity, key, context, lookup, token, process_verdict)
         if consented is not None:
             return consented
-    except FsdpGateProofError:
+    except (FsdpGateProofError, WorkerRuntimeMismatch):
         raise
     except Exception as exc:
         if fsdp_proof_required or fsdp_lora:

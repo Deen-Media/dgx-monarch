@@ -195,7 +195,7 @@ class DGXMonarchUNETLoader:
         # footprint card, and ensure_live healing or spawning a fleet.
         loader_preflight.preflight_upstream_gated_artifact(unet_name)
         # This runs above the footprint card; preflight_graph_batch_divides_dp says why.
-        render_validation.preflight_graph_batch_divides_dp(mesh, prompt)
+        render_validation.preflight_graph_batch_divides_dp(mesh, prompt, unique_id)
         # Above the footprint card, which would otherwise offer slab residency
         # where slab is not a lever (see preflight_comfy_managed_topology).
         loader_preflight.preflight_comfy_managed_topology(mesh)

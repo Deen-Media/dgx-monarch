@@ -1,9 +1,9 @@
 """Proof-cohort source attestation for the identity Gate."""
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
 
-from .. import mesh_setup, runtime_provenance
+from .. import mesh_setup, runtime_provenance, worker_runtime
 
 
 class GateProvenanceError(RuntimeError):
@@ -17,7 +17,7 @@ class GateProvenanceError(RuntimeError):
 
 
 class ProofCohortAttestor:
-    """Bracket one ceremony with exact all-rank package-source evidence."""
+    """Bracket one ceremony with exact all-rank package-source and torch-build evidence."""
 
     def __init__(self, observer: Any = None) -> None:
         self._observer = observer
@@ -64,6 +64,10 @@ class ProofCohortAttestor:
             **mesh_setup.token_kwargs(token),
         )
         self._validate_rows(rows, world, token.generation, source, boundary)
+        # Source alone is not the runtime: a Worker can change its torch on its own.
+        mismatch = worker_runtime.mismatch(handle, cast(list, rows))
+        if mismatch is not None:
+            raise GateProvenanceError(f"Gate {boundary} provenance: {mismatch} {worker_runtime.FIX_TEXT}")
         if boundary == "pre":
             self._setup_token, self._world, self._source = identity
         if self._observer is not None:
