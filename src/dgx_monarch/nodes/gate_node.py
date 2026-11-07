@@ -29,8 +29,10 @@ class DGXMonarchIdentityGate:
                         "default": 2,
                         "min": 1,
                         "max": 10000,
-                        "tooltip": "Identity does not depend on the step count: 2 steps "
-                        "gate as conclusively as 20 and finish sooner.",
+                        "tooltip": "Steps per proof render. The automatic gate runs 2, "
+                        "which finishes sooner. A PASS shows that these renders matched "
+                        "bit for bit: a finite check of the steps that ran, not of every "
+                        "prompt, size or step count.",
                     },
                 ),
                 "cfg": (
