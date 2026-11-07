@@ -393,12 +393,12 @@
   and 1.9 to 3.3 times one rank's
   ([VALIDATION](docs/VALIDATION.md#h3-capacity)).
 - The MiniMax H3 activation preflight is refitted to five hardware points and
-  Config A's measured use: it charges each rank an 11.0 GiB floor, 129,024
-  bytes per row on the rank and 73,728 per row of the whole sequence, in place
-  of 1,032,192 bytes per row on the rank with no floor. On the pair it admits
-  the 15 second clip's second request in a session and the gate's slab path,
-  which the old charge of 60.1 GiB per rank refused against the 17.6 GiB the
-  render measured. The one-rank BF16 shape that the 2026-08-05 kill made a
+  Config A's measured use: it charges each rank an 11.0 GiB floor and 129,024
+  bytes per row on the rank, in place of 1,032,192 bytes per row with no
+  floor, and keeps 73,728 bytes per row of the whole sequence. On the pair it
+  admits the 15 second clip's second request in a session and the gate's slab
+  path, which the old charge of 60.1 GiB per rank refused against the 17.6 GiB
+  the render measured. The one-rank BF16 shape that the 2026-08-05 kill made a
   refusal rendered on 2026-10-31 beside the driver, holding 5.5 GiB, so the
   preflight now admits it, and it admits the 15 second clip on one Spark with
   36.7 GiB to spare. Each completed render clears by 6.5 GiB or more, and the
@@ -448,9 +448,12 @@
   cannot load the checkpoint. The identity gate records INCONCLUSIVE with
   `cross_mode=CAPACITY`, takes no lever, and the render proceeds under slab.
   On 2026-10-30, before this change, the 61.7 GiB MiniMax H3 BF16 file was
-  refused under stock; on 2026-10-31 and 11-04 it rendered on the pair and on
-  one Spark under each consent form
-  ([VALIDATION](docs/VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)). `DGXM_ALLOW_SLAB_RESCUE=1`, `DGXM_AUTO_RESCUE=1` and the Auto-allow
+  refused under stock. Since the change it has rendered on one Spark under
+  `DGXM_AUTO_RESCUE=1` (2026-10-31), and on the pair and on one Spark under
+  `DGXM_ALLOW_SLAB_RESCUE=1` and under the panel's card (2026-11-04). The pair
+  under `DGXM_AUTO_RESCUE=1` and the Auto-allow toggle have no render record
+  ([VALIDATION](docs/VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
+  `DGXM_ALLOW_SLAB_RESCUE=1`, `DGXM_AUTO_RESCUE=1` and the Auto-allow
   toggle give the same consent record as the panel click. The panel now lists
   the rescue card a refusal offers after such a verdict or after an update, and
   a Worker's rescue offer becomes that card when the driver holds no rank

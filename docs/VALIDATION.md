@@ -2129,10 +2129,13 @@ too, so their times are not render times and no row above changes.
 | cfg2 | NRMS 0.116, over the floor | NRMS 0.085, under the floor, not identical |
 
 cfg2 renders differently from one GPU in both readings, with a largest pixel
-difference of 255. Other cfg2 records that differ from one GPU, such as the
-equal-length pairs on Chroma, Kroma, FLUX.3 Klein Base and MOSS-Image, read
-under the floor ([cfg2 crossover rows](#campaign-k-cfg2)); SCAIL-2's reading
-without a LoRA is over it, so the family refuses cfg-parallel from this release
+difference of 255. Other cfg2 records differ from one GPU too: the measured
+equal-length pairs on Chroma BF16, Kroma, FLUX.3 Klein Base and MOSS-Image SFT
+read under the floor ([cfg2 crossover rows](#campaign-k-cfg2)), while PixelDiT
+BF16 ([PixelDiT and PiD](#evidence-pixeldit-pid)) and Chroma NVFP4
+([Chroma](#evidence-chroma)) read over it; PixelDiT refuses cfg2, and Chroma
+NVFP4 runs it only under a waiver. SCAIL-2's reading without a LoRA is over
+it too, so the family refuses cfg-parallel from this release
 ([TROUBLESHOOTING #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
 The ring2 cell with the LoRA rendered its cold and warm legs in both of two
 sessions and refused its probe leg class C both times: the cross-rank

@@ -483,13 +483,14 @@ not make it safe to publish.
 
 Measured results take a separate path. [BENCHMARKS.md](BENCHMARKS.md),
 [VALIDATION.md](VALIDATION.md) and the campaign exports publish the render
-times, memory readings, clock posture and hardware class of hand runs. A
-reviewer reads each record before it is committed, the report and export
+times, memory readings, clock posture and hardware class of hand runs.
+Each record must be reviewed before it is committed, the report and export
 generators redact private identifiers, and the tracked-tree scan runs on the
 result
 ([Diagnostics, reports, and repository artifacts](#diagnostics-reports-and-repository-artifacts)).
-That path does not widen what a gate conclusion may carry, and it publishes no
-credentials, raw logs, host names or private addresses.
+That path does not widen what a gate conclusion may carry, and it publishes
+no credentials, raw logs, host names, private addresses, usernames, private
+absolute paths, GPU UUIDs or process identifiers.
 
 ### Worker process environment
 
@@ -596,8 +597,8 @@ key filenames, and its allowlist covers only explicit fictional fixtures
 These controls cover benchmark publication and committed repository content.
 They are the path for measured results that
 [GitHub Actions to trusted hardware](#github-actions-to-trusted-hardware)
-keeps out of a gate conclusion: reviewed timings and memory readings may be
-published here.
+keeps out of a gate conclusion: reviewed render times, memory readings,
+clock posture and hardware class may be published here.
 Report redaction is not a general secret scrubber: it preserves model and LoRA
 filenames, sizes, mtimes, sampled signatures, matrix settings, prompts, and
 other free text, and it does not sanitize console errors. The tracked-tree

@@ -7361,8 +7361,9 @@ cell with the LoRA carries no fidelity reading
 ([VALIDATION](VALIDATION.md#wan-scail2-degree-2-probe-2026-10-28)).
 Splitting the conditional and unconditional passes across the ranks renders
 SCAIL-2 differently from stock's batched call, over the floor without a LoRA.
-Other cfg2 records that differ from one GPU, such as the equal-length pairs on
-Chroma, Kroma, FLUX.3 Klein Base and MOSS-Image, read under it
+Other cfg2 records differ from one GPU too: the equal-length pairs measured on
+Chroma BF16, Kroma, FLUX.3 Klein Base and MOSS-Image SFT read under the floor,
+and PixelDiT BF16 and Chroma NVFP4 read over it
 ([VALIDATION](VALIDATION.md#campaign-k-cfg2)). The cause is not isolated, so
 the family refuses cfg-parallel the way PixelDiT does, through the adapter's
 `cfg_parallel_supported`, on SCAIL Preview too, which shares the forward and
