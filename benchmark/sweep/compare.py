@@ -149,6 +149,9 @@ def audio_line(audio: dict) -> str:
     """One line for an audio compare, for the record's notes and the report."""
     if audio.get("error"):
         return f"not compared: {audio['error']}"
+    if "candidate" not in audio:  # written before the compare kept each file's shape
+        return (f"envelope correlation {audio.get('envelope_correlation')} "
+                f"({audio.get('candidate_file')}); shape not recorded")
     first = (audio.get("candidate") or [{}])[0]
     shape = (f"{audio.get('files')} file(s), the first {first.get('channels')} channel(s) "
              f"at {first.get('rate')} Hz for {first.get('seconds')} s")

@@ -339,7 +339,6 @@ def test_a_query_length_neither_call_owns_refuses(monkeypatch, comfy_leaves):
               double_cls=_ThirdCall)
 
 
-
 def test_a_refusing_rank_error_wins_over_its_peer_broken_barrier(monkeypatch, comfy_leaves):
     """Rank 1 refuses while rank 0 waits in a collective: drive raises the refusal.
 
@@ -360,6 +359,7 @@ def test_a_refusing_rank_error_wins_over_its_peer_broken_barrier(monkeypatch, co
     with pytest.raises(base.UnsupportedModelError, match="neither the joint"):
         drive(monkeypatch, 4, (3, 3), world=WORLD, pure_ulysses=True, strict=False,
               double_cls=_RankOneThirdCall)
+
 
 @pytest.mark.parametrize("pure_ulysses", [True, False])
 def test_the_double_block_override_carries_the_build_marker(monkeypatch, pure_ulysses):

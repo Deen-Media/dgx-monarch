@@ -11,6 +11,7 @@ import argparse
 import copy
 import ctypes
 import hashlib
+import http.client
 import json
 import shlex
 import subprocess
@@ -1081,7 +1082,8 @@ def run_cell(cell: dict, config: dict, pin: dict, client_id: str, args,
         if leg not in ("cold", "warm"):
             record.setdefault("cache_bust", {})[leg] = busted = free_cache(driver)
             if wedged := cache_wedge(cell, leg, busted):
-                record["findings"].append(f"{leg} leg not queued: {wedged}")
+                record["findings"].append(
+                    f"{leg} leg not queued: the cache reset before it answered {busted}")
                 break
         try:
             record["legs"][leg] = leg_record = run_leg(
@@ -1111,7 +1113,8 @@ def run_cell(cell: dict, config: dict, pin: dict, client_id: str, args,
             record["consent"] = grant_pending_consent(driver, cell)
             record.setdefault("cache_bust", {})["waived"] = busted = free_cache(driver)
             if wedged := cache_wedge(cell, "waived", busted):
-                record["findings"].append(f"waived leg not queued: {wedged}")
+                record["findings"].append(
+                    f"waived leg not queued: the cache reset before it answered {busted}")
                 break
             waived_prefix = f"sweep_{cell['id']}_waived"
             record["legs"]["waived"] = waived = run_leg(
@@ -1624,11 +1627,14 @@ def close_recycle(driver: str) -> str:
 
     Anything but "ok" may leave the fleet up when the operator stops the
     driver, so main writes the answer into the summary and exits non-zero on
-    it. The cell records stand: the cleanup failed, not the cells.
+    it. The cell records stand: the cleanup failed, not the cells. recycle
+    already answers a transport error or an unreadable response as a string;
+    this is the last answer before the exit, so it catches those too, beside
+    the rate limit that outlasted its retries.
     """
     try:
         return recycle(driver)
-    except (SessionWedged, OSError) as exc:
+    except (SessionWedged, OSError, ValueError, http.client.HTTPException) as exc:
         return f"{type(exc).__name__}: {exc}"
 
 
@@ -1670,7 +1676,8 @@ def main(argv: list[str] | None = None) -> int:
     cooldown = config["cooldown_s"] if args.cooldown_s is None else args.cooldown_s
     watch = SessionWatch(config["driver"], config["attach_pace_s"])
     summary: dict = {"session": args.session, "pin": pin, "runnable": len(runnable),
-                     "ran": 0, "wedged": "", "rejected_templates": [], "close_recycle": "",
+                     "ran": 0, "wedged": "", "rejected_templates": [],
+                     "open_recycle": "", "close_recycle": "",
                      "blocked": len(pruned.get("blocked_on_crashed_reference") or [])}
     print(f"{len(runnable)} runnable cells in the {args.session} session; pin {pin}")
     if any(cell.get("audio") for cell in runnable) and not audio_compare_available():
@@ -1682,7 +1689,10 @@ def main(argv: list[str] | None = None) -> int:
     # value, and that latch outlives every graph.
     if runnable:
         try:
-            answer = recycle(config["driver"])
+            # Any answer but a rate limit that outlasts its retries comes back
+            # as a string, an unreadable response included, and is kept. One
+            # that is not "ok" goes on to the probe, which decides.
+            summary["open_recycle"] = answer = recycle(config["driver"])
             watch.recycled(answer)
             print(f"session open recycle: {answer}", flush=True)
             print("transport probe: "

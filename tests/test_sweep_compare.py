@@ -199,3 +199,10 @@ def test_the_report_lists_audio_apart_from_the_pixel_columns():
     # A session with no audio leg still prints the section, empty.
     quiet = report.render(report.build([record("im0003", None)], "cluster"))
     assert quiet.split("## audio comparisons", 1)[1].endswith("\n- none\n")
+
+
+def test_a_record_written_before_the_shapes_were_kept_still_reads():
+    # A resumed rig-local record may hold only the old keys.
+    old = {"envelope_correlation": 0.93, "envelope_points": 46,
+           "candidate_file": "cand.flac", "reference_file": "ref.flac"}
+    assert compare.audio_line(old) == "envelope correlation 0.93 (cand.flac); shape not recorded"

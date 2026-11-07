@@ -7,6 +7,7 @@ for expressions the AST walk cannot resolve.
 from __future__ import annotations
 
 import ast
+import http.client
 import json
 import re
 import time
@@ -198,7 +199,12 @@ def recycle(driver: str, attempts: int = 3) -> str:
     """Replace the worker fleet. The 429 is retried: a recycle that never runs
     leaves the old process and its latched bootstrap, so a rate limit that
     outlasts every retry ends the session instead of letting the next cell run
-    on the old fleet."""
+    on the old fleet.
+
+    Every other failure is the answer, as a string, so each caller (the session
+    open and close and every reset) records it: an HTTP status, a transport
+    error, or a response it cannot read (a body that is not JSON, or one cut
+    short), which is not "ok" either."""
     for attempt in range(attempts):
         try:
             post(f"{driver}/dgxm/recycle", {}, action_headers(driver, "recycle"), timeout=300)
@@ -208,7 +214,7 @@ def recycle(driver: str, attempts: int = 3) -> str:
                 return f"http {exc.code}"
             if attempt + 1 < attempts:
                 time.sleep(float(exc.headers.get("Retry-After") or 2))
-        except OSError as exc:
+        except (OSError, ValueError, http.client.HTTPException) as exc:
             return f"{type(exc).__name__}: {exc}"
     raise SessionWedged(f"the recycle stayed rate limited over {attempts} attempts, so the "
                         "next cell would run on the old fleet and its latched bootstrap")

@@ -131,9 +131,10 @@ def _run_ranks(target, collective: _SimulatedUSP) -> None:
     """Run target(rank) for both ranks and raise the first rank's own error.
 
     Each rank's exception is kept, and the first aborts the collective so the
-    peer leaves its gather. Both threads are joined before this returns, so a
-    caller restoring hooks in ``finally`` does so after no rank can read them.
-    The threads are daemons: one that never returns cannot hold the
+    peer leaves its gather. Both threads are joined before this returns,
+    except a thread still stuck after the abort, which is a daemon and is
+    reported; a caller restoring hooks in ``finally`` otherwise does so after
+    no rank can read them. Being daemons, the threads cannot hold the
     interpreter open after the test has failed.
     """
     errors: dict[int, BaseException] = {}

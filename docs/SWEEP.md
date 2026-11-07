@@ -348,9 +348,10 @@ Stop the driver only after the run exits. The runner recycles the fleet at
 session close, because a driver killed with a live mesh strands its actors and
 the next session's first render waits in a collective until the stall guard
 evicts it. If that recycle does not answer `ok`, the session summary's
-`close_recycle` names what it answered and the runner exits non-zero. The
-fleet may still be up, so restart the driver and the worker loops before the
-next session. The cell records stand.
+`close_recycle` names what it answered and the runner exits non-zero. A
+response the runner cannot read, a body that is not JSON or one cut short,
+is such an answer. The fleet may still be up, so restart the driver and the
+worker loops before the next session. The cell records stand.
 
 **What re-runs.** A resume keeps a record when all of these match: the ComfyUI
 commit, the digest of the runtime source under `src/dgx_monarch`, torch, NCCL
@@ -561,7 +562,9 @@ says so.
 
 **Fleet recycles.** The runner replaces the fleet at session open, on every
 template change, whenever the comfy-managed lever moves, after any cell that
-did not render, and at session close. A cold leg that crashes with a type in
+did not render, and at session close. The summary keeps the session-open
+answer under `open_recycle`; one that is not `ok` goes on to the transport
+probe, which decides whether the session runs. A cold leg that crashes with a type in
 `RECOVERABLE_CRASHES` gets one retry on a new fleet. If that recycle does not
 answer `ok`, the runner skips the retry and records why. Only a rendered cell
 can leave its fleet standing: a refusal that arrives after the weights are on

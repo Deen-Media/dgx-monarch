@@ -5,6 +5,7 @@ not how it is fetched. run.SessionWatch says why a wedged session must end.
 """
 from __future__ import annotations
 
+import http.client
 import io
 import json
 import re
@@ -674,6 +675,11 @@ def _close_failure(kind: str):
             raise urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
         if kind == "oserror":
             raise ConnectionRefusedError(111, "Connection refused")
+        if kind == "html":
+            # A 200 whose body is not JSON: post's json.loads raises.
+            return json.loads("<html>")
+        if kind == "truncated":
+            raise http.client.IncompleteRead(b"")
         raise urllib.error.HTTPError(url, 429, "Too Many Requests", {"Retry-After": "0"}, None)
 
     return post, calls
@@ -683,6 +689,8 @@ def _close_failure(kind: str):
     ("503", "http 503"),
     ("oserror", "ConnectionRefusedError: [Errno 111] Connection refused"),
     ("429", "SessionWedged: the recycle stayed rate limited over 3 attempts"),
+    ("html", "JSONDecodeError: Expecting value"),
+    ("truncated", "IncompleteRead: IncompleteRead(0 bytes read)"),
 ])
 def test_a_failed_session_close_recycle_is_written_and_exits_non_zero(
         monkeypatch, tmp_path, kind, answer):
@@ -717,6 +725,52 @@ def test_a_failed_session_close_recycle_is_written_and_exits_non_zero(
     assert summary["ran"] == 1 and summary["wedged"] == ""
     record = json.loads((out / "cells" / "aaa111.json").read_text())
     assert record["verdict"] == "PASS"
+
+
+def test_an_unreadable_session_open_recycle_is_written_and_the_session_goes_on(
+        monkeypatch, tmp_path):
+    # A non-JSON body at the open recycle used to raise out of main before any
+    # summary was written. It is the open recycle's answer now: kept in the
+    # summary, and the transport probe decides whether the session runs.
+    from benchmark.sweep import driver
+
+    cell = {"id": "aaa111", "template": "t", "session": "cluster", "sampled_out": False,
+            "label": "render", "klass": "image", "levers": {}, "preset": "auto",
+            "mode": "cluster", "attention": "TORCH_FLASH", "waiver": False,
+            "waiver_guards": [], "reference": {"kind": "none", "bar": "reference"}}
+    config = _session_config(tmp_path, [cell])
+    calls: list[str] = []
+
+    def post(url, body, headers=None, timeout=120.0):
+        calls.append(url)
+        return json.loads("<html>") if len(calls) == 1 else {}
+
+    _quiet_rig(monkeypatch)
+    monkeypatch.setattr(driver, "post", post)
+    monkeypatch.setattr(run, "run_cell", lambda *args, **kwargs: {
+        "observed": "render", "verdict": "PASS", "findings": [], "legs": {}})
+    assert run.main(["--config", str(config), "--session", "cluster"]) == 0
+    summary = json.loads((tmp_path / "out" / "run_summary_cluster.json").read_text())
+    assert summary["open_recycle"].startswith("JSONDecodeError: Expecting value")
+    assert summary["close_recycle"] == "ok" and summary["ran"] == 1
+
+
+def _cut_short(*args, **kwargs):
+    """A response that ends before its declared length."""
+    raise http.client.IncompleteRead(b"")
+
+
+@pytest.mark.parametrize(("raised", "answer"), [
+    (lambda *args, **kwargs: json.loads("<html>"), "JSONDecodeError: Expecting value"),
+    (_cut_short, "IncompleteRead: IncompleteRead(0 bytes read)"),
+])
+def test_a_recycle_whose_response_cannot_be_read_answers_it(monkeypatch, raised, answer):
+    # Every reset records recycle's answer, so an unreadable response must be
+    # an answer, not an exception that ends the runner from inside a cell.
+    from benchmark.sweep import driver
+
+    monkeypatch.setattr(driver, "post", raised)
+    assert driver.recycle("http://fake").startswith(answer)
 
 
 def test_a_session_close_recycle_that_answers_ok_keeps_exit_zero(monkeypatch, tmp_path):
