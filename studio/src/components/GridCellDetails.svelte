@@ -60,8 +60,8 @@
         'GET',
         readExactJSON,
       );
-      if (jobId) await loadOutputs(null, 1);
       detail = writeExactJSON(record);
+      if (jobId) await loadOutputs(null, 1);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {

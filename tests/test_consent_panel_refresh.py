@@ -96,6 +96,11 @@ def _run_panel(steps: list[dict]) -> list[dict]:
     node = shutil.which("node")
     if node is None:  # pragma: no cover - environment dependent
         pytest.skip("node not installed; consent panel check skipped")
+    probe = subprocess.run([node, "--input-type=module", "-e",
+                            "import('node:module').then((m) => process.exit(m.registerHooks ? 0 : 1))"],
+                           capture_output=True, timeout=30, check=False)
+    if probe.returncode != 0:  # pragma: no cover - environment dependent
+        pytest.skip("node lacks module.registerHooks (Node 22.15 or later); consent panel check skipped")
     result = subprocess.run(
         [node, "--input-type=module", "-e", DRIVER, json.dumps(steps), PANEL.as_uri()],
         capture_output=True, text=True, timeout=60, check=False,
@@ -137,7 +142,7 @@ def test_a_regranted_active_row_shows_and_revokes_the_new_grant():
         {"payload": _payload(active=[grant("c-new", "auto")]),
          "click": {"zone": "active", "label": "Revoke"}},
     ])
-    assert "rescue-slab · b.safetensors · auto" in regranted["active"]
+    assert "rescue-slab \u00b7 b.safetensors \u00b7 auto" in regranted["active"]
     assert regranted["posted"] == [{"action": "revoke", "key": GRANT, "id": "c-new"}]
 
 

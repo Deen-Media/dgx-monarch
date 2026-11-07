@@ -305,6 +305,8 @@ class StoryTrack:
     def view(self, ticks: list, upto: int | None) -> RunStory:
         """Return run phases through ring index ``upto`` (-1 is newest), or live state for None."""
         if upto is None or not ticks:
+            # Live again: drop the folded ticks, which a full ring may since have evicted.
+            self._window = None
             return self.live
         window = ticks[: len(ticks) + upto + 1]
         cached = self._window

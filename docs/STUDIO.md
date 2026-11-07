@@ -1117,10 +1117,11 @@ submission lists its outputs; View shows one, and Compare sets it as the
 comparison for the output in view. The value fields start empty. Validate every
 cell stays disabled until the draft has a workflow, Axis A names an input and
 each chosen axis holds a JSON array with at least one value; the line beside the
-button names what is missing. It also stays disabled while an axis value, or the
-base seed of an incrementing grid, is a whole number above 9007199254740991,
-which the browser would send rounded, so the grid would run other seeds than
-the ones typed; the line names each such axis value by its digits.
+button names what is missing. It also stays disabled while an axis value is a
+whole number outside -9007199254740991 to 9007199254740991, or the base seed of
+an incrementing grid is above 9007199254740991. The browser would send such a
+number rounded, so the grid would run other seeds than the ones typed. The line
+names each such axis value by its digits.
 
 Grids opens on what a grid does, a worked example and a first comparison to
 try. In the example, steps [20, 30, 40] on Axis A and cfg [3.5, 5] on Axis B

@@ -278,9 +278,10 @@
   such a field used to drop out of the table
   ([Studio](docs/STUDIO.md#working-with-workflows)).
 - Studio's Validate every cell stays off, and the line beside it says why,
-  while a grid axis value or the base seed of an incrementing grid is a whole
-  number above 9007199254740991. The browser would have sent it rounded, so
-  the grid ran other seeds than the ones typed
+  while a grid axis value is a whole number outside -9007199254740991 to
+  9007199254740991, or the base seed of an incrementing grid is above
+  9007199254740991. The browser would have sent it rounded, so the grid ran
+  other seeds than the ones typed
   ([Studio](docs/STUDIO.md#working-with-workflows)).
 - In `dgxm top`, a paused or scrubbed view shows the run story of its own tick
   once the one-hour history is full. Before, pausing again at the same place

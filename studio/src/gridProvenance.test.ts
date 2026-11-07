@@ -30,21 +30,25 @@ const cellCode = await componentFunctions('./components/GridCellDetails.svelte',
   'exportCell',
 ]);
 /** The shipped Inspect full submission and Export cell handlers of one grid cell. */
-function cell(client: unknown, ids: { jobId?: string; previewId?: string }) {
+function cell(
+  client: unknown,
+  ids: { jobId?: string; previewId?: string },
+  loadOutputs = async () => {},
+) {
   return new Function(
     'client',
     'jobId',
     'previewId',
     'readExactJSON',
     'writeExactJSON',
+    'loadOutputs',
     `'use strict';
     let detail = '', error = '', busy = false;
     const downloads = [];
     const exportText = (text, name) => downloads.push([name, text]);
-    const loadOutputs = async () => {};
     ${cellCode}
     return async () => { await inspect(); exportCell(); return { detail, error, downloads }; };`,
-  )(client, ids.jobId, ids.previewId, readExactJSON, writeExactJSON);
+  )(client, ids.jobId, ids.previewId, readExactJSON, writeExactJSON, loadOutputs);
 }
 
 const gridCode = await componentFunctions('./views/Grids.svelte', ['exportGrid']);
@@ -92,6 +96,12 @@ test('Inspect full submission shows and exports adjacent unsafe integers and the
     ['/jobs/job-1', true],
     ['/jobs/previews/preview-1', true],
   ]);
+  // A failed outputs page keeps the record it read on screen, beside the error.
+  const failing = await cell(client, { jobId: 'job-1' }, async () => {
+    throw new Error('Outputs unavailable');
+  })();
+  assert.equal(failing.error, 'Outputs unavailable');
+  assert.ok(failing.detail.includes('9007199254740993'));
 });
 
 test('Export complete preview and Export manifest and outcomes keep every digit', async () => {
@@ -243,14 +253,18 @@ test('Validate every cell refuses, by its digits, a value this browser would sen
   const ready = { axisA: '8.seed', axisB: '', valuesA: '[20, 30]', valuesB: '' };
   const blocker = (change: Record<string, unknown>) =>
     gridState.validateBlocker(true, { ...ready, ...change });
-  assert.equal(blocker({ valuesA: '[9007199254740991, 1]' }), '');
+  assert.equal(blocker({ valuesA: '[9007199254740991, -9007199254740991, 1]' }), '');
+  assert.match(
+    blocker({ valuesA: '[-9007199254740993]' }),
+    /^Axis A holds -9007199254740993, a whole number outside -9007199254740991 to 9007199254740991,/,
+  );
   assert.equal(
     blocker({ valuesA: '[9007199254740993]' }),
-    'Axis A holds 9007199254740993, a whole number above 9007199254740991 that this browser cannot send exactly. Use a smaller value.',
+    'Axis A holds 9007199254740993, a whole number outside -9007199254740991 to 9007199254740991, which this browser cannot send exactly. Use a value inside that range.',
   );
   assert.equal(
     blocker({ axisB: '8.cfg', valuesB: `[9007199254740992, 9007199254740993, ${UINT64_MAX}]` }),
-    `Axis B holds 9007199254740992, 9007199254740993 and ${UINT64_MAX}, whole numbers above 9007199254740991 that this browser cannot send exactly. Use smaller values.`,
+    `Axis B holds 9007199254740992, 9007199254740993 and ${UINT64_MAX}, whole numbers outside -9007199254740991 to 9007199254740991, which this browser cannot send exactly. Use values inside that range.`,
   );
   // The Base seed box holds a plain number, so a typed seed above 2**53 - 1 is already rounded.
   const typed = Number('9007199254740993');
@@ -283,7 +297,7 @@ test('Validate every cell refuses, by its digits, a value this browser would sen
   });
   const button = body.slice(body.lastIndexOf('<button', body.indexOf('Validate every cell')));
   assert.match(button.slice(0, button.indexOf('>')), /disabled/);
-  assert.match(visibleText(body), /Axis A holds 9007199254740993, a whole number above/);
+  assert.match(visibleText(body), /Axis A holds 9007199254740993, a whole number outside/);
   // Validate every cell itself checks the same, so nothing rounded is ever sent.
   for (const change of [{ axisA: '8.seed', valuesA: '[9007199254740993]' }, { baseSeed: typed }]) {
     const sent: string[] = [];

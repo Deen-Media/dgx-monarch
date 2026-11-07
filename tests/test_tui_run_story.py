@@ -349,6 +349,8 @@ def test_a_full_ring_folds_again_after_resume_and_pause():
     again = track.view(list(ring), -1)
     assert [leg.seconds for leg in again.story().legs] == [30.0]
     assert track.view(list(ring), -1) is again  # still one fold while the ring holds still
+    assert track.view(list(ring), None) is track.live
+    assert track._window is None  # live again: the folded ticks are let go
     # An equal-length list of other ticks folds again too, whatever the cursor.
     replaced = [dict(tick) for tick in run.ticks[:2]]
     assert [leg.seconds for leg in track.view(replaced, -1).story().legs] == [10.0]
