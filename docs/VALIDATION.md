@@ -441,10 +441,11 @@ watchdog on both hosts. Seven templates are skipped, because they need inputs
 a user supplies: the two LoRA templates, `dgx-monarch-identity-gate.json` and
 `dgx-monarch-lora-low-rss.json`, and five whose demo inputs are not in the
 test's ComfyUI input folder (`qwen-image21-edit-mask-rgba`,
-`qwen-image21-edit-rgba`, `wan-flowrvs`, `wan-scail2` and `wandancer`). Every
-pass ran ComfyUI `8a98ecf58` (v0.44.0 code) and torch 2.12.0+cu132, with the
-head's 2100 MHz cap applied once and its unit off; no pass sampled the SM
-clock under load. The sibling ran uncapped.
+`qwen-image21-edit-rgba`, `wan-flowrvs`, `wan-scail2` and `wandancer`). The
+three passes of 2026-11-04 ran ComfyUI `8a98ecf58` (v0.44.0 code) and torch
+2.12.0+cu132, and the two passes of 2026-11-06 and 07 the same ComfyUI on torch
+2.15.0+cu132, each with the head's 2100 MHz cap applied once and its unit off;
+no pass sampled the SM clock under load. The sibling ran uncapped.
 
 | pass | dev | rendered | error | skipped | how it ended |
 |---|---|---|---|---|---|
@@ -485,8 +486,35 @@ the INT8 Wan-Animate 2 template took 100.1 s against pass 3's 240.1 s
 ([Wan-Animate 2](#evidence-wan-animate-2)). Each of those cells ran alone,
 not as part of a pass.
 
-**NOT RUN:** the whole pass again on the release commit and the torch it
-ships, and the seven skipped templates.
+**The pass on the shipping build (2026-11-06 and 07).** On dev `79bb47e`, the
+last code change of this release (the release branch adds its version string
+and these records), with ComfyUI `8a98ecf58` and torch 2.15.0+cu132, the whole
+pass ran again from 23:38 on 2026-11-06 to 02:38 on 2026-11-07: 66 success,
+0 error, 7 skipped, the same seven. A pass on `7c3eecb` and torch 2.15.0 at
+08:13 on 2026-11-06 had read 65 success, 1 error and 7 skipped: the error was
+`dgx-monarch-kandinsky5-video-pro`, refused at the identity gate's re-price,
+89.9 GiB against 83.0 GiB, 6.9 GiB short, because the actor still held the
+host copy of the file the loader had placed and the stale gate dropped
+([TROUBLESHOOTING #146](TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
+On `79bb47e` that row renders in 150.1 s and every other row kept its status.
+The head's lowest MemAvailable over the pass was 19.6 GiB, against 12.1 GiB at
+08:13. Over the 65 rows both passes rendered, wall times read 5346 s against
+5171 s, +3.4 percent, of which +210 s is `dgx-monarch-kroma-t2i` (290.1 s
+against 80.0 s): its gate ran the same three proof renders, and the stock
+load for the comparison took 234.1 s where it had taken 22.9 s, the only one
+of 67 first loads over 60 s. The sibling's copy of that load finished in
+under 80 s, the journals and the kernel log show nothing for those minutes,
+and the same load ran in 13.4 s on a fresh fleet and 12.4 s after a slab load
+on the idle rig at 07:23 ([host memory after a load](#host-memory-2026-11-06)).
+It is recorded as a one-off the records do not explain. Without that row the
+pass is 0.7 percent faster; the harness reads walls in 5 s steps, and the
+first-use gate ran for 44 templates in this pass and 45 in the 08:13 pass,
+since each deploy makes every combination stale. Records:
+`out/vetting_2026-11-03/acceptance_v4_purge/` (`results_acceptance.tsv`, one
+JSON per template, the 1 Hz traces of both hosts, `compare_v3_v4.txt`); the
+08:13 pass in `out/vetting_2026-11-03/acceptance_v3_torch215/`.
+
+**NOT RUN:** the seven skipped templates.
 
 ## Comparison method
 
@@ -3322,7 +3350,9 @@ passed at 08:11 on 2026-11-06. The rows below cite the passing runs.
 | 10. Sol | `dgxm sol-smoke --idle-maintenance` exits 0 | PASS: exit 0, the dense kernel control on `cute_sm120` at relative L2 0.00298337 on both hosts, the figure of 2026-10-11. It runs no render and says nothing of sparse-attention or model accuracy |
 | 11. The way back | after the switch back to torch 2.12, doctor shows no new FAIL row, and a combination this release proved under torch 2.12 reads PASS again without a new gate | NOT RUN: the commands were printed and not run, because the release ships on torch 2.15; the torch 2.12 environment stays parked on both hosts |
 
-**NOT RUN on torch 2.15:** the [template release test](#release-test-2026-11-04) on the release commit.
+**The release test on torch 2.15:** the whole pass on dev `79bb47e`, the last
+code change of this release, read 66 success, 0 error and 7 skipped on
+2026-11-06 and 07 ([template release test](#release-test-2026-11-04)).
 
 ## Memory calibration
 
@@ -3528,6 +3558,57 @@ priced the driver's models for such a queue; the sampler now runs the
 loader's price for them
 ([TROUBLESHOOTING #52](TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render)),
 which no hardware run has checked yet.
+
+<a id="host-memory-2026-11-06"></a>
+
+### Host memory after a load (2026-11-06)
+
+These ran on the pair on dev `79bb47e` with ComfyUI `8a98ecf58` and torch
+2.15.0+cu132, one step at seed 1031 on uly2 from fresh fleets, with the head's
+2100 MHz cap applied once and its unit off, SM 2093 MHz under load, and the
+sibling uncapped; a 1 Hz reader on each host logged MemAvailable and every GPU
+process's anonymous, file and shared resident memory. They check the fix of
+[TROUBLESHOOTING #146](TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short),
+which sets `MIMALLOC_PURGE_DELAY=0` for every actor and the driver.
+
+| template | result | wall | head MemAvailable at submit, at the end, lowest | head actor anonymous memory: fresh, peak during placement, after the render | sibling actor after |
+|---|---|---|---|---|---|
+| kandinsky5-video-pro | rendered | 364.3 s | 110.6, 51.2, 24.3 GiB | 0.50, 77.5, 1.82 GiB | 1.80 GiB |
+| flux1-t2i, then a second queue | rendered | 48.0 s, then 2.0 s | 110.7, 66.6, 58.2 GiB | 0.45, 45.5, 1.95 GiB | 1.96 GiB |
+| wan-scail | rendered | 176.2 s | 110.7, 52.9, 39.5 GiB | 0.47, 62.6, 1.94 GiB | 1.92 GiB |
+| wan-animate2-bfloat16-warm, a BF16 base plus its LoRA | rendered | 132.1 s | 110.5, 25.4, 19.7 GiB | 0.49, 61.7, 33.92 GiB | 33.91 GiB |
+
+Every actor's `UMA posture` line on both hosts ended with `host_purge_delay=0`.
+In each session the actor's anonymous memory fell back under 4 GiB within 3
+to 6 s of its peak, as the placement finished, and sat at 1.8 to 1.95 GiB
+through the render and after it, a fresh actor's floor being about 0.5 GiB;
+with flux1-dev placed, the head actor had held 15.0 and 16.1 GiB on torch
+2.15.0 before the fix (2026-11-06) and 2.5 GiB on torch 2.12.0 (2026-11-05).
+The peak during the placement, about 1.8 times the file, is the host copy the
+loader reads and places from, which the loader's price charges; the fix does
+not change it. The kandinsky5-video-pro cell is the 08:13 pass's error path:
+the head journal shows the file loaded twice, the loader placed it, the stale
+identity gate dropped it, and proof render 1 loaded it again, and the re-price
+that had read 83.0 GiB against 89.9 GiB admitted the load with 11.0 GiB to
+spare; the gate recorded INCONCLUSIVE, nothing to gate on a stock template,
+and the render completed. The reload itself is the loader-time placement
+meeting the first-use ceremony, a separate inefficiency. The Wan-Animate 2 row
+keeps 33.9 GiB after the load on each box, the figure of torch 2.12 on
+2026-11-05: ComfyUI's backup of the patched BF16 weights for the held base
+plus LoRA, which the held-backup credit prices, not the allocator.
+
+**The kroma-t2i load, checked twice (2026-11-07).** After the
+[release test](#release-test-2026-11-04)'s one slow load, the same file loaded
+through explicit stock residency on a fresh fleet in 13.4 s (the render
+38.0 s) and, after a slab load of it in 11.3 s (the render 34.0 s), again in
+12.4 s (the render 18.0 s), the actor at 1.8 GiB after each; the pass's
+234.1 s was not reproduced. Records: `out/rss_retention_2026-11-06/`
+(`kandinsky/K1`, `flux/F1`, `wan/W1`, `wan/L1`, `kroma/X1`, `kroma/X2`,
+`REPORT_purge_legs.md`), with the sessions before the fix in `flux/R1b` and
+`flux/R1c`, the allocator tests of 2026-11-06 under
+`out/vetting_2026-11-03/rss_retention_2026-11-06/`, and the environment repair
+that preceded the deploy under `env_repair/`
+([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
 
 ## FSDP calibration
 

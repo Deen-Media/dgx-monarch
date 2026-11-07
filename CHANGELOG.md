@@ -325,8 +325,10 @@ does not change ([Studio](docs/STUDIO.md)).
   torch 2.15.0+cu132. Ideogram4's MODELS row now says its fp8_scaled pair
   reads 0.161 against the BF16 pair, from the file's quantization, and the
   p-h3-image template's note says what its edit's hardware record shows.
-  Still NOT RUN: the release test on torch 2.15, LTX 2.3's decode split, and
-  a Worker on ComfyUI 0.43 with context windows
+  The release test on torch 2.15 ran on 2026-11-06 and 07 on the last code
+  change of this release: 66 of 66 rendered templates passed, the seven
+  skipped in every pass for want of inputs. Still NOT RUN: LTX 2.3's decode split
+  and a Worker on ComfyUI 0.43 with context windows
   ([VALIDATION](docs/VALIDATION.md#release-test-2026-11-04),
   [VALIDATION](docs/VALIDATION.md#torch-2-15),
   [MODELS](docs/MODELS.md#model-p-h3-image),
@@ -578,6 +580,15 @@ does not change ([Studio](docs/STUDIO.md)).
   launch for a local actor, and `scripts/comfy-driver.sh` exports it, because torch 2.15.0's bundled mimalloc 2.5.2 purges so late
   that an actor kept 15 to 18 GiB of host memory after a stock load and the
   next load was priced short ([TROUBLESHOOTING #146](docs/TROUBLESHOOTING.md#146-a-worker-keeps-a-dropped-models-host-memory-and-the-next-load-is-priced-short)).
+  On 2026-11-06 the head actor held 1.8 to 1.95 GiB after the
+  kandinsky5-video-pro, flux1-dev and wan-scail loads, against 15 to 16 GiB
+  before, the kandinsky re-price admitted with 11.0 GiB to spare, and the
+  release test rendered 66 of 66 templates
+  ([VALIDATION](docs/VALIDATION.md#host-memory-2026-11-06)).
+- A verified update that stops with "foreign distribution inventory is
+  ambiguous" names a package whose pip RECORD lists bytecode outside
+  site-packages, from an install under `PYTHONPYCACHEPREFIX`; reinstall that
+  package without the prefix ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-verified-update-refuses-foreign-distribution-inventory-is-ambiguous)).
 
 ## [1.4.0] - 2026-10-28
 
