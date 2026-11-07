@@ -15,9 +15,10 @@ export async function fullJob(client: StudioClient, id: string, candidate?: Job)
 
 /**
  * The full record with every whole number above 2**53 - 1 exact, as a BigInt, for the actions
- * that write or load its values: the gallery's copies and export, and reuse. It is the same
- * request as fullJob's, token, timeout and refusals included, read by readExactJSON. Other
- * readers keep fullJob, whose plain numbers JSON.stringify can write.
+ * that write, load or compare its values: the gallery's copies and export, reuse and the
+ * comparison's differences. It is the same request as fullJob's, token, timeout and refusals
+ * included, read by readExactJSON. Other readers keep fullJob, whose plain numbers
+ * JSON.stringify can write.
  */
 export async function exactJob(client: StudioClient, id: string): Promise<Job> {
   const path = `/jobs/${encodeURIComponent(id)}`;

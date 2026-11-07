@@ -34,6 +34,7 @@ import threading
 import time
 from collections.abc import Mapping
 
+from ..constants import RECYCLE_HTTP_DEADLINE_S
 from ..log import get_logger
 from . import recycle_guard
 from .action_security import _action_request_allowed, _recycle_request_allowed
@@ -68,8 +69,8 @@ _TELEMETRY_CACHE_LOCK = threading.Lock()
 _TELEMETRY_TIMEOUT_S = 30.0
 # POST /dgxm/recycle: recycle_detailed() bounds the sequential group teardown
 # and ProcMesh stop at 180 s. The other 80 s keep this HTTP deadline from
-# racing a slow but legitimate internal resolution.
-_RECYCLE_TIMEOUT_S = 260.0
+# racing a slow but legitimate internal resolution. Studio reads the same value.
+_RECYCLE_TIMEOUT_S = RECYCLE_HTTP_DEADLINE_S
 _RECYCLE_MIN_INTERVAL_S = 1.0
 _RECYCLE_RATE_LOCK = threading.Lock()
 # Process lifetime, one global write gate: reset ownership is driver-wide.

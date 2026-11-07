@@ -241,3 +241,38 @@ def test_always_clear_and_retry_reports_its_effective_state():
     assert busy["autoClear"] is False and busy["autoClearBusy"] is True
     assert stored["autoRescue"] is False
 
+
+
+def _signatures(fixtures: list[dict]) -> list[str]:
+    node = shutil.which("node")
+    if node is None:  # pragma: no cover - environment dependent
+        pytest.skip("node not installed; JS model check skipped")
+    driver = (
+        f"import {{ consentPanelModel, consentSignature }} from {json.dumps(MODEL.as_uri())};\n"
+        f"const fixtures = JSON.parse({json.dumps(json.dumps(fixtures))});\n"
+        "const out = fixtures.map((f) => consentSignature(consentPanelModel(f.state, f.ui), f.ui.busy));\n"
+        "process.stdout.write(JSON.stringify(out));\n"
+    )
+    result = subprocess.run([node, "--input-type=module", "-e", driver],
+                            capture_output=True, text=True, timeout=60, check=False)
+    if result.returncode != 0:  # pragma: no cover - surfaced only on a real break
+        raise AssertionError(f"node driver failed: {result.stderr.strip()}")
+    return json.loads(result.stdout)
+
+
+def test_the_render_signature_follows_server_ids_and_holds_still_when_nothing_changed():
+    """Review F5: a card or grant replaced under the same key and count must re-render."""
+    active = {"key": "k-1", "id": "c-1", "kind": "rescue-slab", "artifact": "a.safetensors",
+              "consent_source": "panel", "stale": False}
+
+    def state(card, grant):
+        return {"state": {"payload": {"pending": [card], "active": [grant]}}, "ui": {"now": 1000, "busy": {}}}
+    base, again, new_card, new_grant, new_text = _signatures([
+        state(CARD, active),
+        state(dict(CARD), dict(active)),
+        state({**CARD, "id": "p-1f2e3d4c5b6a"}, active),
+        state(CARD, {**active, "id": "c-2", "consent_source": "auto"}),
+        state({**CARD, "numbers": "needs 70.1 GiB, 44.2 GiB available"}, active),
+    ])
+    assert again == base
+    assert len({base, new_card, new_grant, new_text}) == 4

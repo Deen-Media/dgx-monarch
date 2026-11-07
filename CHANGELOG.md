@@ -271,6 +271,43 @@
   Notes no longer say FSDP refuses fp8, int8 or fp16 files or that Anima's
   adapter makes it refuse; the Flux 2, Kandinsky 5 Pro and Anima Notes state
   the FSDP launch and LoRA rules, and each keeps its own hardware limits.
+- Studio waits up to 280 s for actors recycle and consent apply, 20 s past the
+  260 s the driver allows an attached-mesh reset, so a reset that takes longer
+  than 20 s records the driver's receipt instead of unknown. Other driver
+  requests still wait 20 s, and a lost answer still records unknown
+  ([Studio](docs/STUDIO.md#install-and-start)).
+- The ComfyUI panel rebuilds a consent card or an active grant that the driver
+  replaced under the same key and count, so Accept, Dismiss and Revoke send the
+  id the driver serves now, and the card shows the driver's current text.
+  Before, after another tab dismissed a card and the render raised it again,
+  the first Accept in the first tab was refused
+  ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+- When Studio cannot cancel a running job because the driver has no
+  prompt-specific route, every request that joined the cancellation stays
+  unspent, as the first one did. Before, a second request that joined while the
+  first waited for the driver replayed as not found
+  ([TROUBLESHOOTING #124](docs/TROUBLESHOOTING.md#124-studio-refuses-a-submission-retry-upload-cancellation-operation-or-update)).
+- Studio's grid cell Inspect full submission and Export cell, and the grid
+  exports, keep every digit of a whole number above 9007199254740991, such as
+  the third seed of an incrementing grid that starts at 9007199254740991. The
+  parameter differences under a comparison tell two such seeds one apart, and
+  compare a field nested deeper than 12 levels as one value and say so, where
+  such a field used to drop out of the table
+  ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Studio's Validate every cell stays off, and the line beside it says why,
+  while a grid axis value is a whole number outside -9007199254740991 to
+  9007199254740991, or the base seed of an incrementing grid is above
+  9007199254740991. The browser would have sent it rounded, so the grid ran
+  other seeds than the ones typed
+  ([Studio](docs/STUDIO.md#working-with-workflows)).
+- In `dgxm top`, a paused or scrubbed view shows the run story of its own tick
+  once the one-hour history is full. Before, pausing again at the same place
+  could show the story from the earlier pause ([TUI](docs/TUI.md#record-and-replay)).
+- Studio's metric history leaves out a reading whose host or rail clock runs
+  more than 5 s ahead of the companion's, as it already left out such a sample.
+  Before, one Worker clock ahead of the driver put a future point in that
+  host's chart and hid every corrected point until real time caught up
+  ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 
 ### Compatibility and verification
 
@@ -605,6 +642,35 @@
   the leanest rank does, so two boxes with different free memory no longer
   stall on mismatched collectives
   ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
+
+### Development
+
+- The sweep runner ends the session when a waived retry's queue will not
+  clear, as it already did after every other leg, and when the cache reset
+  before a waived, resident or probe leg leaves the queue busy or gets no
+  answer. The next leg or the next cell's reset no longer queues behind work
+  that may still be running, and such a record re-runs on resume
+  ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- A session-close recycle that does not answer `ok` makes the sweep runner
+  exit non-zero, and `run_summary_<session>.json` names its answer under
+  `close_recycle`. The cell records stand. A recycle whose response cannot be
+  read, a body that is not JSON or one cut short, is such an answer at session
+  open, at close and at every reset, instead of ending the runner without a
+  summary ([SWEEP](docs/SWEEP.md#4-running-a-scoped-sweep)).
+- The sweep's audio compare reads every audio file of both legs and keeps each
+  file's sample rate, channel count and length. Legs that differ in file
+  count, rate, channels or length read CHECK instead of correlating what they
+  share, and so does a file soundfile cannot decode, which used to end the
+  session. The report lists audio results in a section of their own, and
+  envelope correlation, which no calibrated threshold backs, changes no
+  verdict ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- The comfy canary's MageFlow two-rank test stops at once when one rank fails,
+  reports that rank's error and leaves no rank thread behind. The cond-batch
+  agreement test kills and reaps every child process it started when a rank
+  fails or times out. The Boogu key-order test reports a refusing rank's own
+  error, not the broken barrier its peer was left with. The dual-model cfg
+  test now hands its gather a non-contiguous view, so it fails if the
+  production conversion goes.
 
 ## [1.4.0] - 2026-10-28
 
