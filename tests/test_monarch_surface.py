@@ -330,6 +330,43 @@ def test_comparator_blocks_private_ownership_field_drift():
     )
 
 
+_FAILED_OWNERSHIP = (
+    {"outcome": "probe_error", "exception_type": "builtins.AttributeError",
+     "message": "ProcMesh has no attribute '_host_mesh'"},
+    {"outcome": "observed", "host_inner_identity": False, "host_proc_meshes_empty": True,
+     "host_proc_meshes_type": "builtins.list", "proc_host_identity": True},
+    {"outcome": "observed", "host_inner_identity": True, "host_proc_meshes_empty": False,
+     "host_proc_meshes_type": "builtins.list", "proc_host_identity": True},
+    {"outcome": "observed", "host_inner_identity": True, "host_proc_meshes_empty": True,
+     "host_proc_meshes_type": "builtins.list", "proc_host_identity": False},
+    {"outcome": "observed", "host_inner_identity": "true", "host_proc_meshes_empty": True,
+     "host_proc_meshes_type": "builtins.list", "proc_host_identity": True},
+)
+
+
+@pytest.mark.parametrize("observation", _FAILED_OWNERSHIP)
+def test_two_fresh_reports_with_the_same_failed_ownership_probe_do_not_compare_clean(observation):
+    # The latest-versus-pin step compares two fresh snapshots, so a probe that
+    # fails the same way in both shows no drift; each snapshot must fail alone.
+    baseline, candidate = _snapshot("0.7.0"), _snapshot("0.7.1")
+    for snapshot in (baseline, candidate):
+        snapshot["semantics"]["mesh_factory_private_ownership"] = copy.deepcopy(observation)
+    assert any("mesh_factory_private_ownership" in blocker
+               for blocker in snapshot_blockers(baseline))
+    comparison = compare_snapshots(baseline, candidate)
+    assert not comparison.compatible
+    assert any(blocker.startswith("baseline: semantic probe mesh_factory_private_ownership")
+               for blocker in comparison.blockers)
+    assert any(blocker.startswith("candidate: semantic probe mesh_factory_private_ownership")
+               for blocker in comparison.blockers)
+
+
+def test_a_snapshot_without_the_ownership_probe_is_blocked():
+    snapshot = _snapshot()
+    del snapshot["semantics"]["mesh_factory_private_ownership"]
+    assert "semantic probe mesh_factory_private_ownership: absent" in snapshot_blockers(snapshot)
+
+
 @pytest.mark.parametrize("get_raises", [False, True])
 def test_future_probe_observes_get_on_returned_future(get_raises):
     sent = []

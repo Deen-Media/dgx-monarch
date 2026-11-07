@@ -1088,15 +1088,18 @@ with no matching bind.
 **Symptom:** the weekly/manual `torchmonarch-canary` workflow fails its final
 gate. Its `torchmonarch-surface-*` artifact contains exact-pin and latest-stable
 JSON snapshots, install logs, comparison JSON, and Markdown reports. A failure
-names a missing/incompatible dotted Monarch surface or an event-loop semantic
-change.
+names a missing/incompatible dotted Monarch surface, an event-loop semantic
+change, or `semantic probe mesh_factory_private_ownership`.
 
 **Cause:** either the installed exact pin no longer matches the checked pin
 snapshot, latest stable changed a production call shape, or raw `PythonTask` /
 public `Future.get()` active-asyncio behavior changed. The workflow treats
 semantic drift as review-required even when it might be an improvement,
 because dgx-monarch's off-loop and bounded-wait paths are built on the old
-behavior.
+behavior. The ownership probe blocks a snapshot on its own: unless it observes
+the private HostMesh and ProcMesh identity fields that `mesh_factory` reads to
+find the ProcMesh it spawned, that snapshot fails, even when the pin and
+latest stable fail it the same way and so show no drift.
 
 **Fix:** inspect `checked-pin-report.md` first. If it fails, reproduce the exact
 pin before trusting the latest comparison. Then inspect
