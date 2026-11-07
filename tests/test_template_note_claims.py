@@ -1,13 +1,14 @@
 """What a template Note says about the identity gate and FSDP matches the code.
 
-The gate: a KSampler render of a risky combination runs the first-use gate,
-which compares renders on the graph's own mesh and topology, never a stock
-single-GPU load (nodes/gate_ceremony.py, nodes/gate_cross_mode.py). A custom
-sampler render runs no automatic gate, and without a PASS it dispatches on
-stock residency (auto_gate.auto_gate_context, gate_identity.authorize_normal_render).
-A dual-model render runs no gate either and always dispatches on stock
-residency (auto_gate.maybe_auto_gate). Each graph's Note must say the sentence
-for its own sampler.
+The gate: the first-use gate compares renders on the graph's own mesh and
+topology, never a stock single-GPU load (nodes/gate_ceremony.py,
+nodes/gate_cross_mode.py). Which renders reach it is set by the two switches
+below, AUTO_GATED_KINDS and DUAL_MODEL_AUTO_GATES: today a KSampler render
+does, a Sampler Custom render does not and dispatches on stock residency until
+a PASS (auto_gate.auto_gate_context, gate_identity.authorize_normal_render),
+and a dual-model render never does and always dispatches on stock residency
+(auto_gate.maybe_auto_gate). Each graph's Note must say the sentence for its
+own sampler.
 
 FSDP: the launch contract shards bf16, fp16, fp8 and int8 files and refuses
 block-scaled ones (adapters/fsdp.py), a LoRA there needs lora_low_rss and a
@@ -71,6 +72,39 @@ def test_each_sampler_node_sends_the_request_kind_this_table_names():
         assert f'"kind": "{kind}"' in source, name
 
 
+# ---- Which renders reach the first-use gate -------------------------------
+# These two switches hold what the runtime gates today, and every claim in this
+# section reads them. Extending first-use gating to the Sampler Custom and
+# dual-model graphs is one change here: add "custom" to AUTO_GATED_KINDS and set
+# DUAL_MODEL_AUTO_GATES to True. The code pins then require the gate to reach
+# those requests, and the Note and doc checks require the eight graphs to carry
+# GATE in place of GATE_CUSTOM and GATE_DUAL (tools/gen_templates.py, used only
+# by those graphs), the Identity Gate Note to drop its Sampler Custom sentence,
+# and MODELS.md and TROUBLESHOOTING.md to drop the lines below.
+AUTO_GATED_KINDS = frozenset({"ksampler", "ksampler_advanced"})
+DUAL_MODEL_AUTO_GATES = False
+# Doc sentences that hold only while a switch is off, with the switch they follow.
+NO_GATE_SENTENCES = (
+    ("custom", "example_workflows/dgx-monarch-identity-gate.json",
+     "Sampler Custom graphs never do, so this node is how they earn slab and low-RSS residency"),
+    ("custom", "docs/TROUBLESHOOTING.md",
+     "Single-model custom samplers require the explicit Identity Gate node."),
+    ("dual", "docs/TROUBLESHOOTING.md",
+     "Dual-model custom requests are always dispatched with both residency optimizations off"),
+    ("dual", "docs/MODELS.md", "This dual-model graph runs no identity gate"),
+)
+
+
+def _switch_on(name: str) -> bool:
+    return "custom" in AUTO_GATED_KINDS if name == "custom" else DUAL_MODEL_AUTO_GATES
+
+
+def _auto_gated(doc: dict) -> bool:
+    """Whether a render of this graph reaches the first-use gate under the switches above."""
+    kinds = {REQUEST_KIND[name] for name in _samplers(doc)}
+    return bool(kinds & AUTO_GATED_KINDS) and (DUAL_MODEL_AUTO_GATES or not _dual(doc))
+
+
 def _gate_rig(monkeypatch):
     """A first_use Init whose levers are risky; ensure_live marks that the kind check passed."""
     class PastTheKindCheck(Exception):
@@ -84,37 +118,63 @@ def _gate_rig(monkeypatch):
     return SimpleNamespace(mesh=mesh, loras=({"name": "lora"},), unet_name="m.safetensors"), PastTheKindCheck
 
 
-def test_a_custom_sampler_request_never_reaches_the_first_use_gate(monkeypatch):
+@pytest.mark.parametrize("kind", sorted(REQUEST_KIND.values()))
+def test_the_first_use_gate_reaches_exactly_the_switched_kinds(monkeypatch, kind):
     model, past = _gate_rig(monkeypatch)
-    assert auto_gate.auto_gate_context(model, "custom") is None
-    for kind in ("ksampler", "ksampler_advanced"):
+    if kind in AUTO_GATED_KINDS:
         with pytest.raises(past):
             auto_gate.auto_gate_context(model, kind)
+    else:
+        assert auto_gate.auto_gate_context(model, kind) is None
 
 
-def test_a_dual_model_request_runs_no_ceremony_and_renders_stock(monkeypatch):
-    model, _past = _gate_rig(monkeypatch)
+def test_a_dual_model_request_follows_its_switch(monkeypatch):
+    model, past = _gate_rig(monkeypatch)
     request = {"kind": "custom", "uncond_model": {"unet_name": "u.safetensors"}}
-    assert auto_gate.maybe_auto_gate(model, request, {}, 7.0, 20) == "DUAL_MODEL_STOCK"
+    try:
+        verdict = auto_gate.maybe_auto_gate(model, request, {}, 7.0, 20)
+    except past:
+        verdict = None  # it went on to read the gate context
+    if DUAL_MODEL_AUTO_GATES:
+        assert verdict != "DUAL_MODEL_STOCK"
+    else:
+        assert verdict == "DUAL_MODEL_STOCK"
 
 
 @pytest.mark.parametrize("path", SHIPPED, ids=lambda path: path.stem)
 def test_a_note_states_the_gate_its_own_sampler_gets(path):
     doc = _doc(path)
-    note, kinds = _note(doc), {REQUEST_KIND[name] for name in _samplers(doc)}
-    if _dual(doc):
-        assert gen_templates.GATE_DUAL in note
-        assert gen_templates.GATE not in note and gen_templates.GATE_CUSTOM not in note
-    elif kinds == {"custom"}:
-        assert gen_templates.GATE_CUSTOM in note
-        assert gen_templates.GATE not in note
+    note = _note(doc)
+    custom = getattr(gen_templates, "GATE_CUSTOM", None)
+    dual = getattr(gen_templates, "GATE_DUAL", None)
+    kinds = {REQUEST_KIND[name] for name in _samplers(doc)}
+    if _auto_gated(doc) or not kinds:
+        # Gated, or no listed sampler (Fleet, the Identity Gate graph): neither sentence.
+        assert not [text for text in (custom, dual) if text and text in note]
+    elif _dual(doc):
+        assert dual and dual in note
+        assert gen_templates.GATE not in note and not (custom and custom in note)
     else:
-        assert gen_templates.GATE_CUSTOM not in note and gen_templates.GATE_DUAL not in note
-    # The automatic gate is promised only where a KSampler sends the render.
+        assert custom and custom in note
+        assert gen_templates.GATE not in note
+    # The automatic gate is promised only where a render reaches it.
     if "runs the identity gate" in note or gen_templates.GATE in note:
-        assert kinds & {"ksampler", "ksampler_advanced"} and not _dual(doc)
+        assert _auto_gated(doc)
 
 
+@pytest.mark.parametrize(("switch", "name", "sentence"), NO_GATE_SENTENCES,
+                         ids=lambda value: str(value)[:24])
+def test_a_no_gate_sentence_stands_only_while_its_switch_is_off(switch, name, sentence):
+    text = (ROOT / name).read_text(encoding="utf-8")
+    if name.endswith(".json"):
+        text = _note(json.loads(text))
+    # Blockquote markers would split a sentence that wraps inside one.
+    text = " ".join(line.lstrip("> ") for line in text.split("\n"))
+    present = sentence in " ".join(text.split())
+    assert present is not _switch_on(switch), (name, sentence)
+
+
+# ---- What the gate compares --------------------------------------------------
 @pytest.mark.parametrize("path", SHIPPED, ids=lambda path: path.stem)
 def test_no_note_describes_the_gate_as_a_single_gpu_comparison_or_unbounded(path):
     note = _note(_doc(path))

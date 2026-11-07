@@ -741,7 +741,10 @@ def _tail(sampler_key: str) -> list[dict]:
 # the video graphs. FSDP_RULES states the FSDP launch contract
 # (adapters/fsdp.py, adapters/fsdp_lora_admission.py). Some notes repeat these
 # words inline instead of using the constant; regenerate and diff after any
-# edit. tests/test_template_note_claims.py holds each one to the code.
+# edit. tests/test_template_note_claims.py holds each one to the code. Its
+# AUTO_GATED_KINDS and DUAL_MODEL_AUTO_GATES switches name the renders the
+# first-use gate reaches; GATE_CUSTOM and GATE_DUAL serve only the eight graphs
+# those switches leave out, and the switches flip together with them.
 GATE = ("The first render of a new model, LoRA and residency combination runs the "
         "identity gate before any pixels, on this graph's mesh and topology: proof "
         "renders of at most two steps, from a fresh load before and after the swap "
