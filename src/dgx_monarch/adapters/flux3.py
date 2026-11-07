@@ -90,9 +90,10 @@ def refuse_unroutable_blocks(blocks) -> None:
             RefusalClass.PHYSICS,
             f"flux3: this ComfyUI's {', '.join(changed)}.forward no longer reads its "
             "modulated_norm global, so the fused-norm parity route cannot bind and the "
-            "sharded forward cannot show that it computes what one GPU computes. Use "
-            "topology 'single' (mode=local with gpus_per_host=1), or a dgx-monarch "
-            "release that supports this ComfyUI (docs/TROUBLESHOOTING.md #121).",
+            "sharded forward cannot show that it computes what one GPU computes. Use a "
+            "topology without sequence parallelism, such as 'single' (mode=local with "
+            "gpus_per_host=1), or a dgx-monarch release that supports this ComfyUI "
+            "(docs/TROUBLESHOOTING.md #121).",
         ))
 
 

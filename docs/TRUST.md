@@ -553,8 +553,8 @@ copied from historical evidence.
    `slab_weights` remains risky even without a LoRA stack, and the sequential
    and pipeline paths prove or quarantine before submission. Risk selection and
    ordering are
-   [`auto_gate.py:70-191`](../src/dgx_monarch/nodes/auto_gate.py#L70-L191 "anchor:auto_gate_context"),
-   [`auto_gate.py:271-484`](../src/dgx_monarch/nodes/auto_gate.py#L271-L484 "anchor:maybe_auto_gate"), and
+   [`auto_gate.py:71-192`](../src/dgx_monarch/nodes/auto_gate.py#L71-L192 "anchor:auto_gate_context"),
+   [`auto_gate.py:272-485`](../src/dgx_monarch/nodes/auto_gate.py#L272-L485 "anchor:maybe_auto_gate"), and
    [`pipeline.py:282-367`](../src/dgx_monarch/nodes/pipeline.py#L282-L367 "anchor:_push_bound").
    LoRA-less slab gating and submit ordering are covered by
    [`test_gate_orchestration.py:1057-1104`](../tests/test_gate_orchestration.py#L1057-L1104 "anchor:test_low_rss_off_does_not_suppress_slab_gate"),
@@ -929,8 +929,8 @@ copied from historical evidence.
   ([`gate_inconclusive.py:265-265`](../src/dgx_monarch/nodes/gate_inconclusive.py#L265-L265 "anchor:remember_kind")).
   This is enforced at
   [`common.py:306-384`](../src/dgx_monarch/nodes/common.py#L306-L384 "anchor:run_render"),
-  [`auto_gate.py:201-268`](../src/dgx_monarch/nodes/auto_gate.py#L201-L268 "anchor:auto_gate_required"),
-  [`auto_gate.py:271-484`](../src/dgx_monarch/nodes/auto_gate.py#L271-L484 "anchor:maybe_auto_gate"), and
+  [`auto_gate.py:202-269`](../src/dgx_monarch/nodes/auto_gate.py#L202-L269 "anchor:auto_gate_required"),
+  [`auto_gate.py:272-485`](../src/dgx_monarch/nodes/auto_gate.py#L272-L485 "anchor:maybe_auto_gate"), and
   [`pipeline.py:282-367`](../src/dgx_monarch/nodes/pipeline.py#L282-L367 "anchor:_push_bound"), with
   coverage in
   [`test_gate_orchestration.py:733-757`](../tests/test_gate_orchestration.py#L733-L757 "anchor:test_inconclusive_auto_gate_retries_only_after_context_changes"),

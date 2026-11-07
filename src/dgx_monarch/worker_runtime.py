@@ -38,6 +38,9 @@ def build_words(runtime: object) -> str:
     return f"torch {runtime.get('torch', 'unknown')} with CUDA {runtime.get('cuda', 'unknown')}"
 
 
+_NO_REPORT = "sent no report of its build"
+
+
 def _box_phrase(runtime: object) -> str:
     if isinstance(runtime, dict):
         return f"runs {build_words(runtime)}"
@@ -49,7 +52,8 @@ def mismatch(handle: Any, rows: Iterable[object], driver: dict | None = None) ->
 
     ``rows`` are per-rank replies that carry ``rank`` and, from this release,
     ``runtime``. A row without a usable rank reads as a box the config does not
-    list, so it still counts.
+    list, so it still counts, and a rank of the world with no row at all is a
+    mismatch too: missing identity never authorizes.
     """
     driver = gate_runtime.runtime_build_identity() if driver is None else driver
     replies: list[dict] = [row for row in rows if isinstance(row, dict)]
@@ -66,6 +70,11 @@ def mismatch(handle: Any, rows: Iterable[object], driver: dict | None = None) ->
         phrase = _box_phrase(runtime)
         if phrase not in found.setdefault(box, []):
             found[box].append(phrase)
+    seen = {row.get("rank") for row in replies}
+    for rank in (rank for rank in range(world) if rank not in seen):
+        differs = True
+        if _NO_REPORT not in found.setdefault(boxes[rank], []):
+            found[boxes[rank]].append(_NO_REPORT)
     if not differs:
         return None
     each = "; ".join(f"{box} {' and '.join(phrases)}" for box, phrases in found.items())

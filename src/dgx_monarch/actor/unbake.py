@@ -347,6 +347,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                     layer_conf=conf,
                     full_precision_mm_config=recorded_full_precision,
                 )
+                record.quant[key] = spec  # before its copies, so the cap counts them
                 for comp_name, comp in comps.items():
                     if comp_name == "comfy_quant" or comp is None:
                         continue
@@ -364,7 +365,6 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                         spec.components[comp_name] = ft
                     else:
                         spec.resident[comp_name] = _keep(comp)
-                record.quant[key] = spec
 
             for key in keys:
                 tensor = live_tensor(model, key)

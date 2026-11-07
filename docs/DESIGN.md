@@ -2449,6 +2449,8 @@ dgx-monarch/
 │   ├── mesh_attach.py         # transport enable, the pre-dial id gate, heal
 │   │                          #   and the in-process retry
 │   ├── worker_proc_id.py      # per-start Worker proc id: derive, dial, refuse
+│   ├── worker_runtime.py      # each rank's torch/CUDA build against the
+│   │                          #   driver's, the rule Gate authority holds
 │   ├── delivery_faults.py     # the fault hook's delivery failures and the price
 │   │                          #   wait that ends on one (stdlib leaf)
 │   ├── restart_reattach.py    # the render's re-attach after every Worker loop
@@ -2508,8 +2510,6 @@ dgx-monarch/
 │   │                          #   and why the rest do not
 │   ├── vae_decode_env.py      # what a Worker's decode shares with the
 │   │                          #   driver's: compared, or adopted for the decode
-│   ├── worker_runtime.py      # each rank's torch/CUDA build against the
-│   │                          #   driver's, the rule Gate authority holds
 │   ├── vae_decode_remote.py   # the per-unit RPC, its wire shape and the VAE's
 │   │                          #   file identity
 │   ├── vae_decode_telemetry.py # one INFO line per decode, the fallback

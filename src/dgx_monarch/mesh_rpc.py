@@ -275,7 +275,9 @@ def verify_request_artifacts(
     mesh_safety.assert_normal_render_residency_mode(
         request, active_worker_args)
     if request.get("_dgxm_fleet_job") or residency_grant is not None:
-        expected_context = {
+        # A stock job carries no grant, so it needs no Gate context: a pair on
+        # two builds loses Gate authority, not stock residency (worker_runtime.py).
+        expected_context = None if residency_grant is None else {
             "capability": mesh_safety.FLEET_RESIDENCY_CAPABILITY,
             "rank_world": 1,
             "worker_args": active_worker_args,

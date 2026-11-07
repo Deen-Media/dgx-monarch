@@ -556,8 +556,8 @@
   PASS rows ([TROUBLESHOOTING #8](docs/TROUBLESHOOTING.md#8-version-skew-between-hosts)).
 - A sharded FLUX.3 render refuses at load, class P, when the installed
   ComfyUI's block no longer reads the norm global the parity route binds; it
-  used to warn and render with a possible bf16 difference. Topology `single`
-  still renders ([TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
+  used to warn and render with a possible bf16 difference. A topology
+  without sequence parallelism, such as `single`, still renders ([TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
 
 ## [1.4.0] - 2026-10-28
 

@@ -6439,6 +6439,10 @@ scales.
 
 ## 121. A FLUX.3 checkpoint fails to load on ComfyUI older than 0.41.0
 
+This entry also covers the opposite case, a ComfyUI newer than this release
+supports, which refuses a sharded FLUX.3 render at load; the last paragraph
+says what to do.
+
 **Symptom:** a FLUX.3 Image Klein template is refused before it runs:
 ComfyUI's prompt check reports `Value not in list` for the CLIPLoader type
 `flux3`. A graph that loads a `flux3_image_klein_*` file another way stops at
@@ -6465,8 +6469,9 @@ its first-use Gate again
 
 A ComfyUI newer than this release supports can refuse a sharded FLUX.3 render
 at load, class P, saying a block's forward no longer reads its
-`modulated_norm` global: render with topology `single` (mode=local,
-gpus_per_host=1) until a dgx-monarch release supports that ComfyUI.
+`modulated_norm` global: render with a topology without sequence parallelism,
+such as `single` (mode=local, gpus_per_host=1), until a dgx-monarch release
+supports that ComfyUI.
 
 ## 122. Studio refuses a stale review or cannot display a complete library catalog
 

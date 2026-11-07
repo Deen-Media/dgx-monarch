@@ -951,7 +951,7 @@
       "test_wave_supervision_publication_cannot_replace_collect_failure": "69c2704ff344b5cc"
     },
     "tests/test_flux3_adaln_parity.py": {
-      "test_a_block_comfyui_changed_refuses_class_p_before_anything_binds": "ff99f6307fe4775c",
+      "test_a_block_comfyui_changed_refuses_class_p_before_anything_binds": "4e82bcdbb95a4003",
       "test_a_forward_that_reads_no_norm_global_runs_unrouted": "742e640cd41088c5",
       "test_a_norm_call_no_span_carries_raises_instead_of_passing_through": "09cc445d309e3d63",
       "test_a_piece_of_stocks_size_is_handed_to_the_op_as_it_is": "e0b54386714bb0cf",
@@ -2509,6 +2509,7 @@
       "test_the_families_that_shard_text_apart_are_the_flux_family_adapters": "1a99ab84e8121532",
       "test_the_fleet_resets_after_an_infra_outcome_not_only_on_a_template_change": "78b0a11f1a838ef1",
       "test_the_fsdp_proof_abort_is_read_as_a_refusal_not_a_crash": "af2828b328206d54",
+      "test_the_hoisted_batch_check_runs_the_drivers_preflight_with_the_loaders_id": "2fcfdaf5d3636854",
       "test_the_measured_flux2_fp8mixed_boundary_is_not_a_generic_size_rule": "70a03997b740dfac",
       "test_the_moss_image_files_split_into_one_stem_per_checkpoint": "34075fdc2f7b991f",
       "test_the_nccl_pin_falls_back_to_the_build_when_the_library_will_not_answer": "39c089ca2386add3",
@@ -2774,14 +2775,18 @@
     },
     "tests/test_worker_runtime.py": {
       "test_a_cached_pass_on_a_mixed_pair_refuses_instead_of_granting": "50fadbf972b73aed",
+      "test_a_fleet_job_with_a_grant_on_a_mixed_pair_refuses": "5b183187e43196dd",
       "test_a_handle_with_no_setup_reports_yet_makes_no_claim": "a63f86467f1b8275",
       "test_a_pair_on_the_drivers_build_keeps_the_same_context": "c85a5a82a3273118",
+      "test_a_report_list_that_misses_a_rank_refuses_and_names_the_silent_box": "5f005e2345c587bb",
       "test_a_report_that_lacks_the_build_refuses_too": "c6135ea9c912f56d",
       "test_a_sibling_on_another_build_refuses_gate_authority_naming_each_box": "3d9e20c85584fe96",
+      "test_a_stock_fleet_job_on_a_mixed_pair_still_dispatches": "365b6340cb5b18bf",
       "test_each_rank_reports_its_build_at_setup": "8fa4549c5ec4a150",
       "test_every_capability_context_refuses_the_mixed_pair": "2b090af876bcefc2",
       "test_fleet_refuses_the_mixed_pair_too": "9d831b553abee47a",
       "test_the_ceremony_attests_every_ranks_build_before_any_proof": "5004f481b8402457",
+      "test_the_first_use_auto_gate_refuses_the_mixed_pair_instead_of_going_stock": "ad0446467fb31561",
       "test_the_persisted_quarantine_read_does_not_hide_the_mixed_pair": "c834b9e3d1c8b60f"
     }
   }

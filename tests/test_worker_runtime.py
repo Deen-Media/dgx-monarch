@@ -74,6 +74,15 @@ def test_a_report_that_lacks_the_build_refuses_too():
         mesh_residency.physical_capability_context(_pair(DRIVER, None))
 
 
+def test_a_report_list_that_misses_a_rank_refuses_and_names_the_silent_box():
+    """Defence in depth beside each Worker's own grant check: a rank of the
+    world that sent no setup report at all does not count as a match."""
+    handle = _pair(DRIVER)
+    with pytest.raises(worker_runtime.WorkerRuntimeMismatch,
+                       match="the sibling sent no report of its build"):
+        mesh_residency.physical_capability_context(handle)
+
+
 def test_a_handle_with_no_setup_reports_yet_makes_no_claim():
     """Render submit authorizes before it sets up; the dispatch check after
     setup, the Worker's grant check and the ceremony rows answer again."""
@@ -235,3 +244,89 @@ def test_the_persisted_quarantine_read_does_not_hide_the_mixed_pair(monkeypatch,
         render_quarantine._enforce_persisted_quarantine(
             model, handle, resolved_topology=Topology(ulysses=2, world=2),
             resolved_attention="TORCH_FLASH")
+
+
+def _first_use_model(monkeypatch, tmp_path, preset):
+    """The default first-use auto gate's lookup, with a PASS in the ledger."""
+    import dgx_monarch.gate_ledger as ledger_mod
+    import dgx_monarch.nodes.gate as gate_mod
+    from dgx_monarch.nodes import auto_gate, common
+    from dgx_monarch.nodes.common import MeshSpec, ModelSpec
+
+    class _Ledger:
+        def __init__(self, _directory):
+            pass
+
+        def lookup_with_integrity(self, *_args):
+            return ledger_mod.GateLedgerLookup("pass", {"verdict": "PASS"}, True)
+
+    monkeypatch.setattr(ledger_mod, "GateLedger", _Ledger)
+    monkeypatch.setattr(gate_mod, "_ledger_dir", lambda: str(tmp_path))
+    monkeypatch.setattr(gate_mod, "_combo_of", lambda _model: (
+        "k", ledger_mod.artifact_set_signature(["model-sig"])))
+    monkeypatch.setattr(common, "ensure_live", lambda handle: handle)
+    # The KSampler's lookup without a latent, so the explicit preset resolves
+    # the topology and the runtime check is what answers.
+    monkeypatch.setattr(common, "_auto_gate_context", lambda model, kind, _latent, cfg: (
+        auto_gate.auto_gate_context(model, kind, None, cfg)))
+    handle = _pair(DRIVER, MOVED)
+    handle.defunct = False
+    handle.effective_worker_args = lambda requested: dict(requested)
+    return ModelSpec(
+        mesh=MeshSpec(handle=handle, topology_preset=preset, attention="TORCH_FLASH",
+                      sync_ulysses=False, worker_args={}, auto_gate="first_use"),
+        unet_name="model.safetensors")
+
+
+@pytest.mark.parametrize("preset", ["uly2", "uly2+fsdp"])
+def test_the_first_use_auto_gate_refuses_the_mixed_pair_instead_of_going_stock(
+        monkeypatch, tmp_path, preset):
+    """The Init node's default path. Swallowed, the refusal became an ERROR
+    verdict, a session quarantine and a quiet stock render; under FSDP it was
+    rewrapped without the box names or the fix."""
+    from dgx_monarch.nodes import auto_gate
+
+    model = _first_use_model(monkeypatch, tmp_path, preset)
+    with pytest.raises(worker_runtime.WorkerRuntimeMismatch, match="the sibling runs"):
+        auto_gate.auto_gate_required(model, "ksampler")
+    with pytest.raises(worker_runtime.WorkerRuntimeMismatch, match="the sibling runs") as raised:
+        auto_gate.maybe_auto_gate(model, {"kind": "ksampler"}, {}, 1.0, 2)
+    assert "Use one torch and CUDA build on every box" in str(raised.value)
+    assert model.mesh.worker_args == {}
+
+
+def _fleet_dispatch_handle(monkeypatch):
+    from dgx_monarch import mesh_safety
+    from dgx_monarch.actor import model_store
+
+    monkeypatch.setattr(model_store, "request_artifact_identity",
+                        lambda name, loras: {"digest": "d", "comfy": "c", "artifacts": []})
+    monkeypatch.setattr(mesh_safety, "assert_artifact_parity", lambda results, expected: None)
+    handle = _pair(DRIVER, MOVED)
+    handle.setup_generation = 3
+    handle.active_worker_args = {"slab_weights": False, "lora_low_rss": False}
+    worker = SimpleNamespace(artifact_identity=SimpleNamespace(call_one=lambda specs: "future"))
+    handle.workers = SimpleNamespace(
+        extent=SimpleNamespace(labels=["hosts", "gpus"]), slice=lambda **_kw: worker)
+    handle._await_or_evict = lambda future, timeout_s: {"ok": True}
+    return handle
+
+
+def test_a_stock_fleet_job_on_a_mixed_pair_still_dispatches(monkeypatch):
+    """Option 1 takes Gate authority away from a mixed pair, not stock
+    residency: a Fleet job with no grant builds no Gate context."""
+    from dgx_monarch import mesh_rpc
+
+    handle = _fleet_dispatch_handle(monkeypatch)
+    request = {"model": {"unet_name": "m.safetensors", "loras": []}, "_dgxm_fleet_job": True}
+    mesh_rpc.verify_request_artifacts(handle, request, worker_index=1)
+
+
+def test_a_fleet_job_with_a_grant_on_a_mixed_pair_refuses(monkeypatch):
+    from dgx_monarch import mesh_rpc
+
+    handle = _fleet_dispatch_handle(monkeypatch)
+    request = {"model": {"unet_name": "m.safetensors", "loras": []}, "_dgxm_fleet_job": True,
+               "_dgxm_fleet_residency_grant": {"capability_context": {}}}
+    with pytest.raises(worker_runtime.WorkerRuntimeMismatch, match="the sibling runs"):
+        mesh_rpc.verify_request_artifacts(handle, request, worker_index=1)

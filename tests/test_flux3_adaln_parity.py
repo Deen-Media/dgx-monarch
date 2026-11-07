@@ -332,7 +332,8 @@ def test_a_block_comfyui_changed_refuses_class_p_before_anything_binds():
     tag = parse_leading_refusal_tag(text)
     assert tag is not None and tag.refusal_class is RefusalClass.PHYSICS
     assert "_NoNormBlock.forward no longer reads its modulated_norm global" in text
-    assert "topology 'single'" in text and "release that supports this ComfyUI" in text
+    assert "a topology without sequence parallelism, such as 'single'" in text
+    assert "release that supports this ComfyUI" in text
     sharded = [*model.content_mode_blocks["image"], *model.single_blocks]
     assert not any("forward" in vars(block) for block in sharded)
     assert "_forward" not in vars(model)
