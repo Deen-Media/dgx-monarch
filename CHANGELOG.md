@@ -556,8 +556,10 @@
   verdict ([SWEEP](docs/SWEEP.md#5-reading-results)).
 - The comfy canary's MageFlow two-rank test and the cond-batch agreement test
   stop at once when one rank fails, report that rank's error, and leave no
-  thread or child process behind. The dual-model cfg test now hands its gather
-  a non-contiguous view, so it fails if the production conversion goes.
+  thread or child process behind. The Boogu key-order test reports a refusing
+  rank's own error, not the broken barrier its peer was left with. The
+  dual-model cfg test now hands its gather a non-contiguous view, so it fails
+  if the production conversion goes.
 
 ## [1.4.0] - 2026-10-28
 
