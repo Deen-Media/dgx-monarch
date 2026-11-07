@@ -711,7 +711,7 @@ def test_auto_markers_and_refusals_match_runtime_contract() -> None:
     zimage = _markdown_cells(
         lines[_row_index(lines, "Z-Image latent")]
     )
-    assert "cfg2 requires equal-token prompts" in zimage[7]
+    assert "cfg2 trims prompts of unequal token counts, but only equal-token prompts were compared" in zimage[7]
 
     ideogram = _markdown_cells(lines[_row_index(lines, "Ideogram4")])
     assert "Explicit cfg2 splits the two checkpoints" in ideogram[7]
@@ -736,6 +736,7 @@ _MODE_COLUMN = {"cfg2": 2, "uly": 3, "ring": 4, "fsdp": 5}
 _AUTO_MARK = "★"
 _PENDING_MARK = "⏳"
 _CONSTRAINED_MARK = "🔒"
+_REFUSED_MARK = "✗"
 
 # Megapixel probes that straddle every crossover boundary in AUTO_TABLE, so a
 # row that only selects cfg2 below 1.2 MP is seen as well as one that only
@@ -1044,6 +1045,41 @@ def test_documented_typed_refusals_read_as_constrained_cells() -> None:
         for (model, mode), reason in _TYPED_REFUSAL.items()
         if _CONSTRAINED_MARK not in rows[model][_MODE_COLUMN[mode]]
     ]
+    assert not failures, "\n".join(failures)
+
+
+def test_cfg_parallel_refusing_adapters_read_refused_in_the_matrix() -> None:
+    """A family whose every adapter refuses cfg-parallel shows the refused mark.
+
+    ``cfg_parallel_supported = False`` without the dual-model grant makes the
+    Worker raise class P at any cfg degree above 1, for every artifact, which
+    the legend marks _REFUSED_MARK; ``n/a`` would say the mode runs. Derived
+    from the adapter registry, so a newly refusing family cannot keep ``n/a``.
+    """
+    from dgx_monarch.adapters import ADAPTERS
+
+    by_family: dict[str, list] = {}
+    for adapter in ADAPTERS:
+        by_family.setdefault(adapter.family, []).append(adapter)
+    refusing = {
+        family for family, adapters in by_family.items()
+        if all(not getattr(a, "cfg_parallel_supported", True)
+               and not getattr(a, "dual_model_cfg_supported", False) for a in adapters)
+    }
+    assert refusing, "no adapter refuses cfg-parallel; the check would test nothing"
+    rows = _support_matrix_rows()
+    checked = []
+    failures = []
+    for (_section, model), (family, _status) in _SUPPORT_ROW_CONTRACT.items():
+        if family not in refusing:
+            continue
+        checked.append(model)
+        cell = rows[model][_MODE_COLUMN["cfg2"]]
+        if cell != _REFUSED_MARK:
+            failures.append(
+                f"{model}: family {family!r} refuses cfg-parallel for every artifact, "
+                f"so its cfg2 cell must read {_REFUSED_MARK}, found {cell!r}")
+    assert checked, "no matrix row maps to a cfg-parallel-refusing family"
     assert not failures, "\n".join(failures)
 
 

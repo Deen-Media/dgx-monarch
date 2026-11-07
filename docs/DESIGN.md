@@ -50,7 +50,7 @@ The runtime provides:
 |---|---|
 | Standing infrastructure | one `worker_loop` process per host; ComfyUI is the client |
 | Failure surfacing | typed `SupervisionError`, fail-fast handling for known-dead actors, and `MeshFailure` telemetry |
-| Recovery granularity | per-actor respawn on the live mesh |
+| Recovery granularity | a supervision failure retires the whole fleet and the next Init or render brings up a fresh one; an endpoint error keeps the live fleet |
 | Big-tensor transport | actor messaging plus size-gated, default-off one-sided RDMA (§5.6) |
 | Cluster bring-up | `dgxm` CLI, config file, and preflight doctor |
 | Topology selection | benchmark-seeded auto mode (§5.4) |
@@ -148,7 +148,7 @@ the documented matrix, quality-gate, and N/A contracts.
 
 | Capability | Decision | Rationale |
 |---|---|---|
-| Monarch mesh and actor lifecycle | **retain** | per-actor respawn and typed supervision are validated (§5.1) |
+| Monarch mesh and actor lifecycle | **retain** | typed supervision is validated, and a supervision failure retires the whole fleet for a fresh one (§5.1) |
 | GPU worker surface (load, sample, options) | **retain** | typed endpoint contract in §5.2 |
 | Request-key reuse and LoRA hot-swap | **retain** | avoids unnecessary checkpoint reloads (§5.5) |
 | Keyed idempotent patches | **retain** | repeated graph execution must not stack wrappers |
@@ -2838,8 +2838,11 @@ Every milestone must satisfy this checklist:
    timeouts and typed errors wherever possible.
 2. **LoRA changes avoid base reloads.** Re-rendering a changed LoRA stack does
    not reload the base checkpoint.
-3. **Recovery is scoped.** One dead actor does not discard the fleet's warm
-   state.
+3. **Recovery retires the whole fleet.** A supervision failure evicts the
+   fleet, and the next Init or render brings up a fresh one; an endpoint error
+   leaves the live fleet and its warm state in place. A Worker loop that
+   restarted beyond Monarch's message delivery timeout still needs a fresh
+   driver (§5.1).
 4. **The default topology is benchmark-seeded.** Auto mode logs the row it took
    and why. A row seeded from a sibling family, a scope the table records as
    unmeasured, and the unknown-family fallback each say so in that reason.
