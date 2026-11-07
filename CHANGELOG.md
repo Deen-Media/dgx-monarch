@@ -254,6 +254,42 @@
   for what is not yet held, so a short box gets the loader's refusal and what
   would fit, where only the Worker's wall answered before ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- Studio waits up to 280 s for actors recycle and consent apply, 20 s past the
+  260 s the driver allows an attached-mesh reset, so a reset that takes longer
+  than 20 s records the driver's receipt instead of unknown. Other driver
+  requests still wait 20 s, and a lost answer still records unknown
+  ([Studio](docs/STUDIO.md#install-and-start)).
+- The ComfyUI panel rebuilds a consent card or an active grant that the driver
+  replaced under the same key and count, so Accept, Dismiss and Revoke send the
+  id the driver serves now, and the card shows the driver's current text.
+  Before, after another tab dismissed a card and the render raised it again,
+  the first Accept in the first tab was refused
+  ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+- When Studio cannot cancel a running job because the driver has no
+  prompt-specific route, every request that joined the cancellation stays
+  unspent, as the first one did. Before, a second request that joined while the
+  first waited for the driver replayed as not found
+  ([TROUBLESHOOTING #124](docs/TROUBLESHOOTING.md#124-studio-refuses-a-submission-retry-upload-cancellation-operation-or-update)).
+- Studio's grid cell Inspect full submission and Export cell, and the grid
+  exports, keep every digit of a whole number above 9007199254740991, such as
+  the third seed of an incrementing grid that starts at 9007199254740991. The
+  parameter differences under a comparison tell two such seeds one apart, and
+  compare a field nested deeper than 12 levels as one value and say so, where
+  such a field used to drop out of the table
+  ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Studio's Validate every cell stays off, and the line beside it says why,
+  while a grid axis value or the base seed of an incrementing grid is a whole
+  number above 9007199254740991. The browser would have sent it rounded, so
+  the grid ran other seeds than the ones typed
+  ([Studio](docs/STUDIO.md#working-with-workflows)).
+- In `dgxm top`, a paused or scrubbed view shows the run story of its own tick
+  once the one-hour history is full. Before, pausing again at the same place
+  could show the story from the earlier pause ([TUI](docs/TUI.md#record-and-replay)).
+- Studio's metric history leaves out a reading whose host or rail clock runs
+  more than 5 s ahead of the companion's, as it already left out such a sample.
+  Before, one Worker clock ahead of the driver put a future point in that
+  host's chart and hid every corrected point until real time caught up
+  ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 
 ### Compatibility and verification
 

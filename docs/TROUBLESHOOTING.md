@@ -6673,7 +6673,8 @@ refuses Workers that run from release slots. A driver service must serve the
   For `library_limit`, export one project at a time, or move records into
   another project.
 - For `cancellation_scope`, wait for the running job to finish, or interrupt it
-  from ComfyUI; Studio kept the cancellation intent and its key unspent.
+  from ComfyUI; Studio kept the cancellation intent and every key that joined
+  it unspent.
 - For `driver_service_identity`, pass the `--driver` origin the unit serves,
   or select the unit that runs that driver.
 - When `dgxm studio up`, `down` or `token --rotate` is stopping or restarting

@@ -10,6 +10,8 @@ same contract the aggregator reads.
 """
 from __future__ import annotations
 
+from collections import deque
+
 import pytest
 
 from dgx_monarch import first_render, telemetry
@@ -329,6 +331,27 @@ def test_a_scrubbed_cursor_reads_the_story_its_own_tick_knew():
     assert at_image.live_label(image) == "render"
     assert _labels(at_image.story()) == ["gate setup", "gate proof 1", "render"]
     assert track.view(recording, -2) is at_image  # one fold per cursor position
+
+
+def test_a_full_ring_folds_again_after_resume_and_pause():
+    """Review D13: a full ring keeps its length, so the paused view keys on the ticks it folds."""
+    track = StoryTrack()
+    run = _Run(track)
+    run.render(10.0)
+    ring = deque(run.ticks, maxlen=len(run.ticks))
+    paused = track.view(list(ring), -1)
+    assert [leg.seconds for leg in paused.story().legs] == [10.0]
+    # Resume: a later render pushes every old tick out of the full ring.
+    run.idle(5.0)
+    run.render(30.0)
+    ring.extend(run.ticks[-2:])
+    assert len(ring) == 2
+    again = track.view(list(ring), -1)
+    assert [leg.seconds for leg in again.story().legs] == [30.0]
+    assert track.view(list(ring), -1) is again  # still one fold while the ring holds still
+    # An equal-length list of other ticks folds again too, whatever the cursor.
+    replaced = [dict(tick) for tick in run.ticks[:2]]
+    assert [leg.seconds for leg in track.view(replaced, -1).story().legs] == [10.0]
 
 
 def test_the_leg_list_is_capped():

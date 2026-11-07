@@ -1,7 +1,8 @@
 <script lang="ts">
   import type { StudioClient } from '../api';
   import type { Artifact } from '../contracts';
-  import { exportJSON } from '../files';
+  import { readExactJSON, writeExactJSON } from '../exactJson';
+  import { exportText } from '../files';
   let {
     client,
     previewId,
@@ -15,7 +16,9 @@
     onview: (artifact: Artifact) => void;
     oncompare: (artifact: Artifact) => void;
   } = $props();
-  let detail = $state<unknown>(),
+  // The cell's full record as text, with every digit of each whole number: a seed above
+  // 2**53 - 1 shows and exports exactly as the companion recorded it.
+  let detail = $state(''),
     error = $state(''),
     busy = $state(false),
     outputs = $state<Artifact[]>([]);
@@ -49,17 +52,24 @@
     busy = true;
     error = '';
     try {
-      detail = await client.request(
+      const record = await client.request(
         jobId
           ? `/jobs/${encodeURIComponent(jobId)}`
           : `/jobs/previews/${encodeURIComponent(previewId!)}`,
+        undefined,
+        'GET',
+        readExactJSON,
       );
       if (jobId) await loadOutputs(null, 1);
+      detail = writeExactJSON(record);
     } catch (cause) {
       error = cause instanceof Error ? cause.message : String(cause);
     } finally {
       busy = false;
     }
+  }
+  function exportCell() {
+    exportText(detail, `grid-cell-${jobId ?? previewId}.json`);
   }
 </script>
 
@@ -69,10 +79,8 @@
 {#if error}<p class="error">{error}</p>{/if}
 {#if detail}<details open>
     <summary>Requested and effective settings, topology, workflow and outcome</summary>
-    <pre>{JSON.stringify(detail, null, 2)}</pre>
-    <button onclick={() => exportJSON(detail, `grid-cell-${jobId ?? previewId}.json`)}
-      >Export cell</button
-    >
+    <pre>{detail}</pre>
+    <button onclick={exportCell}>Export cell</button>
   </details>{/if}
 {#each outputs as artifact}<div class="workflow-actions">
     <span>{artifact.filename}</span><button onclick={() => onview(artifact)}>View</button><button

@@ -1,13 +1,14 @@
 <script lang="ts">
   import type { Artifact, Job } from '../contracts';
   import type { StudioClient } from '../api';
-  import { parameterDifferences } from '../gallery';
-  import { comparableSubmission, fullJob } from '../jobProvenance';
+  import { COMPARE_DEPTH, differenceText, parameterDifferences } from '../gallery';
+  import { comparableSubmission, exactJob } from '../jobProvenance';
   import { keyedRecord } from '../keyedRecord.svelte';
   let { left, right, client }: { left: Artifact; right: Artifact; client: StudioClient } = $props();
   // Submissions are immutable, so the pair loads once per pair of job ids, not once per poll.
+  // Exact records keep seeds above 2**53 - 1 apart, so adjacent seeds still show as a difference.
   const pair = keyedRecord<Job[]>(
-    (key) => Promise.all(key.split('\n').map((id) => fullJob(client, id))),
+    (key) => Promise.all(key.split('\n').map((id) => exactJob(client, id))),
     () => ({ id: `${left.job_id}\n${right.job_id}` }),
   );
   const differences = $derived(
@@ -18,7 +19,6 @@
         )
       : [],
   );
-  const text = (value: unknown) => (value === undefined ? 'Not recorded' : JSON.stringify(value));
 </script>
 
 <details class="comparison-details">
@@ -36,11 +36,16 @@
         <thead><tr><th>Field</th><th>{left.filename}</th><th>{right.filename}</th></tr></thead
         ><tbody
           >{#each differences as row}<tr
-              ><td>{row.key}</td><td>{text(row.left)}</td><td>{text(row.right)}</td></tr
+              ><td>{row.key}{row.whole ? ' (compared as one value)' : ''}</td><td
+                >{differenceText(row.left)}</td
+              ><td>{differenceText(row.right)}</td></tr
             >{/each}</tbody
         >
       </table>
     </div>
+    {#if differences.some((row) => row.whole)}<p>
+        Fields nested deeper than {COMPARE_DEPTH} levels are compared as one value.
+      </p>{/if}
     {#if !differences.length}<p>Recorded submissions match.</p>{/if}
   {/if}
 </details>

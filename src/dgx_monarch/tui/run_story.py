@@ -14,6 +14,7 @@ on a second gate notice, or on a render outside the current identity check.
 from __future__ import annotations
 
 import math
+import operator
 import re
 from dataclasses import dataclass, replace
 
@@ -276,13 +277,16 @@ class StoryTrack:
     """Maintain live run phases and a separate view for paused playback.
 
     Consume one sample per poll. Cache the paused view through the cursor until
-    its position or the history length changes, keeping run phases and render
-    labels aligned with the other panels.
+    the ticks it folds change, keeping run phases and render labels aligned with
+    the other panels. A full ring keeps its length while new ticks push old ones
+    out, so neither the cursor nor the length can say when that happens.
     """
 
     def __init__(self) -> None:
         self.live = RunStory()
-        self._key: tuple[int, int] | None = None
+        # The tick objects the cached view folded. Holding them keeps each one
+        # alive, so a new tick can never pass for a folded one.
+        self._window: list | None = None
         self._folded = RunStory()
         self.last_error: str | None = None
 
@@ -302,10 +306,11 @@ class StoryTrack:
         """Return run phases through ring index ``upto`` (-1 is newest), or live state for None."""
         if upto is None or not ticks:
             return self.live
-        key = (upto, len(ticks))
-        if key != self._key:
+        window = ticks[: len(ticks) + upto + 1]
+        cached = self._window
+        if cached is None or len(cached) != len(window) or not all(map(operator.is_, window, cached)):
             folded = RunStory()
-            for tick in ticks[: len(ticks) + upto + 1]:
+            for tick in window:
                 folded.observe(tick)
-            self._key, self._folded = key, folded
+            self._window, self._folded = window, folded
         return self._folded
