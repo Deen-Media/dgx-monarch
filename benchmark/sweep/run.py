@@ -22,7 +22,7 @@ from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
 from typing import NamedTuple
 
-from .compare import audio_compare_available, compare_outputs, frames_for
+from .compare import audio_compare_available, audio_line, compare_outputs, frames_for
 from .convert import set_probe_steps
 from .driver import (
     GraphRejected,
@@ -471,6 +471,19 @@ def run_leg(cell: dict, config: dict, client_id: str, leg: str, patched: dict,
     return record
 
 
+def queue_wedge(cell: dict, leg: str, leg_record: dict) -> str:
+    """Why this leg ends the session, or "" when its queue settled.
+
+    run_leg drains a prompt that timed out or lost its poll. One that will not
+    drain may still be running, and anything queued next waits behind it, so
+    run_cell asks this after every leg it queues, the waived retry included.
+    """
+    drained = leg_record.get("drain", "drained")
+    if drained == "drained":
+        return ""
+    return f"{cell['id']} {leg}: the queue would not clear ({drained})"
+
+
 def waived_guard_used(record: dict, cell: dict, leg: str) -> str | None:
     """The listed class-K guard spent by this prompt's rendered leg, if any."""
     guards = set(cell.get("waiver_guards") or ())
@@ -648,12 +661,19 @@ def _fidelity(record: dict, cell: dict, output_dir: Path, floor: float,
         record["findings"].append(
             f"step-nrms {fidelity['nrms']} over the {floor} floor against "
             f"{fidelity.get('reference_file', 'the reference')}")
-    if not fidelity.get("error") and (audio := (fidelity.get("audio") or {}).get("error")):
+    audio = fidelity.get("audio") or {}
+    if not fidelity.get("error") and audio.get("error"):
         # The frames compared and the audio did not. A one-step probe on an
         # audio template can render near silence, which no envelope
-        # correlates, so this is an unproven measurement (CHECK), never a
-        # fault, and carries the `reference compare: ` prefix that says so.
-        record["findings"].append(f"reference compare: audio envelope: {audio}")
+        # correlates, and two legs whose files differ in count, rate, channels
+        # or length share no envelope to correlate. Each is an unproven
+        # measurement (CHECK), never a fault, and carries the
+        # `reference compare: ` prefix that says so.
+        record["findings"].append(f"reference compare: audio envelope: {audio['error']}")
+    elif "envelope_correlation" in audio:
+        # No calibrated audio threshold exists, so the number scores nothing;
+        # it rides as a note, apart from the pixel bar above.
+        record["notes"].append(f"audio: {audio_line(audio)}; no audio threshold applies")
     if out is not None and (split := cfg_split_note(record, cell, out)):
         # A cfg cell that never split renders the right pixels on both ranks,
         # so no fidelity bar can see it; only the wall shows it.
@@ -1058,8 +1078,7 @@ def run_cell(cell: dict, config: dict, pin: dict, client_id: str, args,
             record["rejection"] = str(exc)[:2000]
             record["findings"].append(record["rejection"])
             break
-        if leg_record.get("drain", "drained") != "drained":
-            wedged = f"{cell['id']} {leg}: the queue would not clear ({leg_record['drain']})"
+        if wedged := queue_wedge(cell, leg, leg_record):
             break
         if leg != "cold":
             continue
@@ -1089,6 +1108,10 @@ def run_cell(cell: dict, config: dict, pin: dict, client_id: str, args,
                 record["findings"].append(
                     f"waiver {'granted' if granted else 'not granted'}, "
                     f"the render still {waived['outcome']}")
+            # The same settlement check as every planned leg: a retry that timed
+            # out or lost its poll and would not drain leaves a prompt the next
+            # cell's reset would queue its clear graph behind.
+            if (wedged := queue_wedge(cell, "waived", waived)) or not rendered:
                 break
     record["ledger_rows"], _end = ledger_rows_since(ledger, offset)
     record["journal"] = {host or "head": journal_lines(host, started) for host in hosts}
@@ -1574,6 +1597,19 @@ def block_crashed_dependents(out: Path, cells: list[dict], pin: dict,
     return written
 
 
+def close_recycle(driver: str) -> str:
+    """The session-close recycle's answer: "ok", or what stopped it.
+
+    Anything but "ok" may leave the fleet up when the operator stops the
+    driver, so main writes the answer into the summary and exits non-zero on
+    it. The cell records stand: the cleanup failed, not the cells.
+    """
+    try:
+        return recycle(driver)
+    except (SessionWedged, OSError) as exc:
+        return f"{type(exc).__name__}: {exc}"
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m benchmark.sweep.run",
@@ -1612,7 +1648,7 @@ def main(argv: list[str] | None = None) -> int:
     cooldown = config["cooldown_s"] if args.cooldown_s is None else args.cooldown_s
     watch = SessionWatch(config["driver"], config["attach_pace_s"])
     summary: dict = {"session": args.session, "pin": pin, "runnable": len(runnable),
-                     "ran": 0, "wedged": "", "rejected_templates": [],
+                     "ran": 0, "wedged": "", "rejected_templates": [], "close_recycle": "",
                      "blocked": len(pruned.get("blocked_on_crashed_reference") or [])}
     print(f"{len(runnable)} runnable cells in the {args.session} session; pin {pin}")
     if any(cell.get("audio") for cell in runnable) and not audio_compare_available():
@@ -1724,10 +1760,9 @@ def main(argv: list[str] | None = None) -> int:
     # Release the mesh before the operator stops the driver: a driver killed
     # with a live mesh strands its actors and the next session's first render
     # spins in a collective until the stall guard evicts it.
-    try:
-        print(f"session close recycle: {recycle(config['driver'])}", flush=True)
-    except (SessionWedged, OSError) as exc:
-        print(f"session close recycle failed: {exc}", flush=True)
+    if runnable:
+        summary["close_recycle"] = close_recycle(config["driver"])
+        print(f"session close recycle: {summary['close_recycle']}", flush=True)
     if rejected:
         path = out / f"run_rejected_{args.session}.json"
         path.write_text(json.dumps(rejected, indent=2))
@@ -1735,7 +1770,8 @@ def main(argv: list[str] | None = None) -> int:
               f"{sum(len(ids) for ids in rejected.values())} cells skipped; names in {path}")
     summary["rejected_templates"] = sorted(rejected)
     print(f"session summary in {write_summary(out, args.session, summary)}")
-    return 1 if (summary["wedged"] or rejected) else 0
+    closed = summary["close_recycle"] in ("", "ok")
+    return 1 if (summary["wedged"] or rejected or not closed) else 0
 
 
 if __name__ == "__main__":

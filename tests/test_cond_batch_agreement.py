@@ -111,21 +111,65 @@ def _env() -> dict:
     return os.environ | {"PYTHONPATH": f"{COMFY_DIR}:{SRC}", "CUDA_VISIBLE_DEVICES": ""}
 
 
-def _ranks(tmp_path, frees_gib, pin):
+def _ranks(tmp_path, frees_gib, pin, child_source=_CHILD, timeout_s=240.0):
+    """Run one child per rank and return their answers, rank order.
+
+    A rank that fails, or outlives the timeout (``communicate`` kills nothing
+    when it raises TimeoutExpired), would leave its peer at the Gloo
+    rendezvous or in a collective. So every child this harness started and
+    that is still running is killed and reaped on the way out, by its own
+    handle, whatever ended the loop.
+    """
     import json
 
     init_file = str(tmp_path / "gloo-init")
     children = [subprocess.Popen(
-        [sys.executable, "-c", _CHILD, str(rank), str(len(frees_gib)), init_file,
+        [sys.executable, "-c", child_source, str(rank), str(len(frees_gib)), init_file,
          str(free), "pin" if pin else "stock"],
         env=_env(), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
         for rank, free in enumerate(frees_gib)]
-    answers = []
-    for child in children:
-        out, err = child.communicate(timeout=240)
-        assert child.returncode == 0, err[-4000:]
-        answers.append(json.loads(out.strip().splitlines()[-1]))
-    return sorted(answers, key=lambda answer: answer["rank"])
+    try:
+        answers = []
+        for child in children:
+            out, err = child.communicate(timeout=timeout_s)
+            assert child.returncode == 0, err[-4000:]
+            answers.append(json.loads(out.strip().splitlines()[-1]))
+        return sorted(answers, key=lambda answer: answer["rank"])
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.communicate()
+
+
+# A stand-in rank for the harness's own cleanup: rank 0 fails at once or hangs,
+# and rank 1 waits the way a peer at the rendezvous does.
+_STUCK_PEER = """
+import sys, time
+if sys.argv[1] == "0" and sys.argv[5] == "stock":
+    sys.exit(3)
+time.sleep(120)
+"""
+
+
+@pytest.mark.parametrize(("pin", "timeout_s", "raised"), [
+    (False, 240.0, AssertionError),  # rank 0 exits non-zero
+    (True, 1.0, subprocess.TimeoutExpired),  # rank 0 outlives the timeout
+])
+def test_a_failed_rank_leaves_no_child_running(monkeypatch, tmp_path, pin, timeout_s, raised):
+    started: list[subprocess.Popen] = []
+    popen = subprocess.Popen
+
+    class Recorded(popen):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            started.append(self)
+
+    monkeypatch.setattr(subprocess, "Popen", Recorded)
+    with pytest.raises(raised):
+        _ranks(tmp_path, [1.0, 1.0], pin=pin, child_source=_STUCK_PEER, timeout_s=timeout_s)
+    assert len(started) == 2
+    assert [child.returncode is None for child in started] == [False, False]
 
 
 def test_comfy_batches_cond_and_uncond_by_each_box_free_memory(tmp_path):

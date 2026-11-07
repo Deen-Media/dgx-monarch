@@ -519,6 +519,157 @@ def test_a_wedged_session_writes_its_reason_and_exits_non_zero(monkeypatch, tmp_
     assert summary["runnable"] == 1
 
 
+def _session_config(tmp_path, cells: list[dict]) -> Path:
+    """An out dir holding these cells, and a config that names it."""
+    out = tmp_path / "out"
+    (out / "graphs").mkdir(parents=True)
+    (out / "graphs" / "t.json").write_text(json.dumps({}))
+    (out / "cells.jsonl").write_text("\n".join(json.dumps(cell) for cell in cells) + "\n")
+    config = tmp_path / "sweep.toml"
+    config.write_text(f'out_dir = "{out}"\ncomfy_dir = "{tmp_path}"\n')
+    return config
+
+
+def _quiet_rig(monkeypatch) -> None:
+    """Every rig read a session makes around its cells, answered locally."""
+    monkeypatch.setattr(run, "session_pin", lambda config: {})
+    monkeypatch.setattr(run.SessionWatch, "mesh_block", lambda self: {})
+    monkeypatch.setattr(run, "probe_transport", lambda *args, **kwargs: "cluster")
+    monkeypatch.setattr(run, "Sampler", _FakeSampler)
+    monkeypatch.setattr(run, "frames_for", lambda output_dir, prefix: [])
+    monkeypatch.setattr(run, "wait_for_memory", lambda *args, **kwargs: {"cleared": True})
+    monkeypatch.setattr(run, "journal_lines", lambda host, since: [])
+    monkeypatch.setattr(run, "free_cache", lambda driver: "freed")
+    monkeypatch.setattr(run.time, "sleep", lambda seconds: None)
+
+
+@pytest.mark.parametrize(("state", "drained"), [
+    ("timeout", "still busy"),
+    ("poll transport TimeoutError: timed out", "ConnectionRefusedError: [Errno 111] refused"),
+])
+def test_a_waived_retry_whose_queue_would_not_clear_ends_the_session(
+        monkeypatch, tmp_path, state, drained):
+    # The cold leg refuses the class K its waiver admits, the card is granted,
+    # and the waived retry times out or loses its poll, then will not drain.
+    # Every planned leg ends the session on that; the waived retry must too,
+    # before the next cell's reset queues a clear graph behind the stuck one.
+    base = {"template": "t", "session": "cluster", "sampled_out": False, "klass": "image",
+            "mode": "cluster", "attention": "TORCH_FLASH", "levers": {}, "loras": [],
+            "unets": {}, "auto_gate": "first_use", "gpus_per_host": 0, "batch": 1,
+            "batch_toggled": False, "batch_node": "", "capacity_risk": False,
+            "probe": False, "audio": False, "timeout_s": 10,
+            "reference": {"kind": "none", "bar": "reference"}}
+    waived = {**base, "id": "waive1", "preset": "ring2", "label": "refuse:K",
+              "waiver": True, "waiver_guards": ["ring_pad"]}
+    after = {**base, "id": "after2", "preset": "auto", "label": "render",
+             "waiver": False, "waiver_guards": []}
+    config = _session_config(tmp_path, [waived, after])
+    refused = {"status": {"status_str": "error", "messages": [
+        ["execution_error", {"exception_message": "[dgxm:K] ring pad rows"}]]}}
+    answers = iter([(2.0, refused, "", "p1"), (10.0, None, state, "p2")])
+    queued: list[str] = []
+
+    def queue(driver, graph, client_id, timeout_s):
+        answer = next(answers)
+        queued.append(answer[3])
+        return answer
+
+    _quiet_rig(monkeypatch)
+    monkeypatch.setattr(run, "recycle", lambda driver: "ok")
+    monkeypatch.setattr(run, "queue_and_wait", queue)
+    monkeypatch.setattr(run, "drain", lambda driver, prompt_id: drained)
+    monkeypatch.setattr(run, "grant_pending_consent", lambda driver, cell: {"granted": True})
+    monkeypatch.setattr(run, "reset_fleet", lambda *args, **kwargs: pytest.fail(
+        "a reset queued a clear graph behind a queue that would not clear"))
+    assert run.main(["--config", str(config), "--session", "cluster"]) == 1
+    # Nothing queued after the waived retry: no reset, no next cell.
+    assert queued == ["p1", "p2"]
+    out = tmp_path / "out"
+    summary = json.loads((out / "run_summary_cluster.json").read_text())
+    assert summary["wedged"] == (f"[waive1] waive1 waived: the queue would not clear "
+                                 f"({drained})")
+    assert summary["ran"] == 0
+    # The record is on disk with the leg that wedged, so a resume re-runs it.
+    record = json.loads((out / "cells" / "waive1.json").read_text())
+    assert record["legs"]["waived"]["drain"] == drained
+    assert record["verdict"] == "FINDING" and run.wedged_answer(record)
+    assert not (out / "cells" / "after2.json").exists()
+
+
+def _close_failure(kind: str):
+    """A driver.post whose first recycle answers and whose second fails as named."""
+    import urllib.error
+
+    calls: list[str] = []
+
+    def post(url, body, headers=None, timeout=120.0):
+        calls.append(url)
+        if len(calls) == 1:
+            return {}
+        if kind == "503":
+            raise urllib.error.HTTPError(url, 503, "Service Unavailable", {}, None)
+        if kind == "oserror":
+            raise ConnectionRefusedError(111, "Connection refused")
+        raise urllib.error.HTTPError(url, 429, "Too Many Requests", {"Retry-After": "0"}, None)
+
+    return post, calls
+
+
+@pytest.mark.parametrize(("kind", "answer"), [
+    ("503", "http 503"),
+    ("oserror", "ConnectionRefusedError: [Errno 111] Connection refused"),
+    ("429", "SessionWedged: the recycle stayed rate limited over 3 attempts"),
+])
+def test_a_failed_session_close_recycle_is_written_and_exits_non_zero(
+        monkeypatch, tmp_path, kind, answer):
+    # The last cell rendered, and the recycle that releases the mesh before
+    # the operator stops the driver did not answer ok. The cell result stands,
+    # and the session says the fleet may still be live.
+    from benchmark.sweep import driver
+
+    cell = {"id": "aaa111", "template": "t", "session": "cluster", "sampled_out": False,
+            "label": "render", "klass": "image", "levers": {}, "preset": "auto",
+            "mode": "cluster", "attention": "TORCH_FLASH", "waiver": False,
+            "waiver_guards": [], "reference": {"kind": "none", "bar": "reference"}}
+    config = _session_config(tmp_path, [cell])
+    out = tmp_path / "out"
+    post, calls = _close_failure(kind)
+
+    def rendered(cell, config, pin, client_id, args, reset=None, watch=None):
+        record = {"cell": cell, "observed": "render", "verdict": "PASS", "findings": [],
+                  "legs": {"cold": {"outcome": "render"}}}
+        run.write_record(out, cell["id"], record)
+        return record
+
+    _quiet_rig(monkeypatch)
+    monkeypatch.setattr(driver, "post", post)
+    monkeypatch.setattr(driver.time, "sleep", lambda seconds: None)
+    monkeypatch.setattr(run, "run_cell", rendered)
+    assert run.main(["--config", str(config), "--session", "cluster"]) == 1
+    assert all(url.endswith("/dgxm/recycle") for url in calls)
+    summary = json.loads((out / "run_summary_cluster.json").read_text())
+    assert summary["close_recycle"].startswith(answer)
+    # The cell's own result is kept apart from the cleanup.
+    assert summary["ran"] == 1 and summary["wedged"] == ""
+    record = json.loads((out / "cells" / "aaa111.json").read_text())
+    assert record["verdict"] == "PASS"
+
+
+def test_a_session_close_recycle_that_answers_ok_keeps_exit_zero(monkeypatch, tmp_path):
+    cell = {"id": "aaa111", "template": "t", "session": "cluster", "sampled_out": False,
+            "label": "render", "klass": "image", "levers": {}, "preset": "auto",
+            "mode": "cluster", "attention": "TORCH_FLASH", "waiver": False,
+            "waiver_guards": [], "reference": {"kind": "none", "bar": "reference"}}
+    config = _session_config(tmp_path, [cell])
+    _quiet_rig(monkeypatch)
+    monkeypatch.setattr(run, "recycle", lambda driver: "ok")
+    monkeypatch.setattr(run, "run_cell", lambda *args, **kwargs: {
+        "observed": "render", "verdict": "PASS", "findings": [], "legs": {}})
+    assert run.main(["--config", str(config), "--session", "cluster"]) == 0
+    summary = json.loads((tmp_path / "out" / "run_summary_cluster.json").read_text())
+    assert summary["close_recycle"] == "ok" and summary["ran"] == 1
+
+
 def _fidelity_cell(**over) -> dict:
     cell = {"id": "abc123", "audio": False, "probe": False, "probe_reason": "",
             "reference": {"kind": "cell", "cell": "ref456",

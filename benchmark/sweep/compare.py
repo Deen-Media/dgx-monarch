@@ -3,7 +3,9 @@
 Compare decoded PNG arrays: ComfyUI embeds prompt graphs in PNG metadata, so
 file hashes can differ even when pixels match. Compare every video frame in
 filename order. Unequal frame counts produce an error and an unproven
-comparison (CHECK), not a fidelity finding.
+comparison (CHECK), not a fidelity finding. Audio follows the same rule: every
+file is read, and a different file count, sample rate, channel count or length
+is an error, not a correlation over what the two legs share.
 """
 from __future__ import annotations
 
@@ -51,14 +53,32 @@ def compare_frames(candidate: list[Path], reference: list[Path]) -> dict:
             "candidate_file": candidate[0].name, "reference_file": reference[0].name}
 
 
-def _envelope(path: Path):
+def _read_audio(path: Path):
+    """One file's samples as frames by channels, and the shape the compare keeps."""
     import numpy as np
     import soundfile
 
-    data, _rate = soundfile.read(str(path), always_2d=True)
-    mono = np.abs(np.asarray(data, dtype=np.float64).mean(axis=1))
-    usable = (mono.size // ENVELOPE_WINDOW) * ENVELOPE_WINDOW
-    return mono if usable == 0 else mono[:usable].reshape(-1, ENVELOPE_WINDOW).mean(axis=1)
+    data, rate = soundfile.read(str(path), always_2d=True)
+    samples = np.asarray(data, dtype=np.float64)
+    frames, channels = samples.shape
+    return samples, {"file": path.name, "rate": int(rate), "channels": int(channels),
+                     "frames": int(frames), "seconds": round(frames / rate, 3) if rate else 0.0}
+
+
+def _envelope(channel):
+    """Mean absolute amplitude over each ENVELOPE_WINDOW samples of one channel."""
+    magnitude = abs(channel)
+    usable = (magnitude.size // ENVELOPE_WINDOW) * ENVELOPE_WINDOW
+    return magnitude if usable == 0 else magnitude[:usable].reshape(-1, ENVELOPE_WINDOW).mean(axis=1)
+
+
+def _shape_mismatch(mine: dict, theirs: dict) -> str:
+    """The first shape two paired files differ in, or ""."""
+    for key, name in (("rate", "sample rate"), ("channels", "channels"), ("frames", "samples")):
+        if mine[key] != theirs[key]:
+            return (f"{mine['file']} {name} {mine[key]} != reference "
+                    f"{theirs['file']} {theirs[key]}")
+    return ""
 
 
 def audio_compare_available() -> bool:
@@ -71,24 +91,71 @@ def audio_compare_available() -> bool:
 
 
 def compare_audio(candidate: list[Path], reference: list[Path]) -> dict:
-    """Envelope correlation between the first audio file of each leg."""
+    """Every audio file of both legs: its shape, and envelope correlation per channel.
+
+    Files pair in the order comfy numbered them. Each keeps its rate, channel
+    count and sample frames. A different file count, or a pair whose rate,
+    channels or length differ, is an error: a shorter exact prefix, the same
+    samples at another rate or a channel mix each correlate at 1.0 against
+    audio that differs. On equal shapes each channel of each pair is
+    correlated on its own and the lowest is the number; ``identical`` says
+    every sample matched. A channel constant in both legs and equal adds no
+    correlation; one constant in only one leg, or no channel to correlate at
+    all, is "too short or too quiet". The correlation is not a calibrated
+    fidelity threshold (docs/SWEEP.md section 5), so nothing scores on it.
+    """
     if not candidate or not reference:
         return {"error": f"missing audio ({len(candidate)} vs {len(reference)})"}
     try:
         import numpy as np
 
-        left, right = _envelope(candidate[0]), _envelope(reference[0])
+        mine = [_read_audio(path) for path in candidate]
+        theirs = [_read_audio(path) for path in reference]
     except ImportError:
         return {"error": "soundfile is not installed on this rig"}
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
+        # soundfile raises LibsndfileError, a RuntimeError, on a file it cannot decode.
         return {"error": f"{type(exc).__name__}: {exc}"}
-    span = min(left.size, right.size)
-    left, right = left[:span], right[:span]
-    if span < 2 or left.std() == 0 or right.std() == 0:
-        return {"error": "audio too short or too quiet to correlate"}
-    return {"envelope_correlation": round(float(np.corrcoef(left, right)[0, 1]), 6),
-            "envelope_points": int(span),
-            "candidate_file": candidate[0].name, "reference_file": reference[0].name}
+    result: dict = {"files": len(mine), "reference_files": len(theirs),
+                    "candidate": [shape for _, shape in mine],
+                    "reference": [shape for _, shape in theirs]}
+    if len(mine) != len(theirs):
+        return {**result, "error": f"audio file count {len(mine)} != reference {len(theirs)}"}
+    pairs = [(left, right) for (left, _), (right, _) in zip(mine, theirs, strict=True)]
+    for (_, left), (_, right) in zip(mine, theirs, strict=True):
+        if why := _shape_mismatch(left, right):
+            return {**result, "error": why}
+    result["identical"] = all(np.array_equal(left, right) for left, right in pairs)
+    correlations: list[float] = []
+    points: list[int] = []
+    for left, right in pairs:
+        for channel in range(left.shape[1]):
+            mine_column, their_column = left[:, channel], right[:, channel]
+            flat = mine_column.size == 0 or mine_column.min() == mine_column.max()
+            if flat and np.array_equal(mine_column, their_column):
+                continue
+            first, second = _envelope(mine_column), _envelope(their_column)
+            if first.size < 2 or first.std() == 0 or second.std() == 0:
+                return {**result, "error": "audio too short or too quiet to correlate"}
+            correlations.append(float(np.corrcoef(first, second)[0, 1]))
+            points.append(int(first.size))
+    if not correlations:
+        return {**result, "error": "audio too short or too quiet to correlate"}
+    return {**result, "envelope_correlation": round(min(correlations), 6),
+            "envelope_points": min(points), "channels_correlated": len(correlations)}
+
+
+def audio_line(audio: dict) -> str:
+    """One line for an audio compare, for the record's notes and the report."""
+    if audio.get("error"):
+        return f"not compared: {audio['error']}"
+    first = (audio.get("candidate") or [{}])[0]
+    shape = (f"{audio.get('files')} file(s), the first {first.get('channels')} channel(s) "
+             f"at {first.get('rate')} Hz for {first.get('seconds')} s")
+    if audio.get("identical"):
+        return f"identical samples; {shape}"
+    return (f"lowest channel envelope correlation {audio.get('envelope_correlation')} over "
+            f"{audio.get('channels_correlated')} channel(s); {shape}")
 
 
 def compare_outputs(output_dir: Path, candidate: str, reference: str,

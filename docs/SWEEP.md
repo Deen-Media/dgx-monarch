@@ -347,7 +347,10 @@ setsid nohup python -m benchmark.sweep.run --config <cfg> --session cluster \
 Stop the driver only after the run exits. The runner recycles the fleet at
 session close, because a driver killed with a live mesh strands its actors and
 the next session's first render waits in a collective until the stall guard
-evicts it.
+evicts it. If that recycle does not answer `ok`, the session summary's
+`close_recycle` names what it answered and the runner exits non-zero. The
+fleet may still be up, so restart the driver and the worker loops before the
+next session. The cell records stand.
 
 **What re-runs.** A resume keeps a record when all of these match: the ComfyUI
 commit, the digest of the runtime source under `src/dgx_monarch`, torch, NCCL
@@ -394,8 +397,9 @@ A typed refusal the matrix predicted is a PASS. No PASS survives a finding
 filed against the same cell: the findings list is the defect list. Two kinds
 of line report something unproven rather than a fault, and those read CHECK: a
 reference compare the harness could not make (no reference record, a reference
-rendered on another build, missing or unequal frames, an audio envelope it
-could not correlate) and a warm leg the execution cache may have served. An
+rendered on another build, missing or unequal frames, audio files that differ
+in count, sample rate, channel count or length, an audio envelope it could not
+correlate) and a warm leg the execution cache may have served. An
 FSDP cell whose resident twin does not render keeps its verdict, with the
 reason in its notes and no fidelity number.
 
@@ -447,6 +451,18 @@ moves on that `use` row alone. A cell labelled anything but `render` or
 `refuse:K`, or lacking that evidence, keeps its ordinary bar; a
 `bit-identical` bar never moves.
 
+**Audio.** An audio cell's compare reads every audio file each leg saved, in
+the order comfy numbered them, and keeps each file's sample rate, channel count
+and length in the fidelity block. Two legs that differ in any of these, or in
+file count, are not compared, and the line reads CHECK: a shorter exact prefix,
+the same samples at another rate or a mix of channels would each correlate
+perfectly against audio that differs. On equal shapes the compare correlates
+the loudness envelope of each channel of each file on its own, keeps the
+lowest, and says whether every sample matched. Envelope correlation is not a
+calibrated fidelity threshold, and none is defined for audio yet, so the
+number never changes a verdict. It rides in the record's notes and in the
+report's audio section, apart from the pixel bars above.
+
 **What a step-nrms number contains above cfg 1.0.** The probe scores the latent
 one step produces, which is the cfg combination of the cond legs, so the number
 carries each leg at its cfg weight. At cfg 1.0 the combination is the positive
@@ -490,9 +506,10 @@ it over a record that already resumes.
 row per cell with the cell id, template, preset, kernel, label, observed
 answer, per-leg outcomes, cold and warm times, the fidelity numbers, the frame count and
 the verdict, then the findings, then the floorless measurements under their own
-headings. The report is redacted; generation fails if a private value remains.
-The per-cell records are not redacted: they carry the driver address and are
-keyed by host name, so they stay rig-local.
+headings, then each audio comparison under its own heading. The report is
+redacted; generation fails if a private value remains. The per-cell records
+are not redacted: they carry the driver address and are keyed by host name,
+so they stay rig-local.
 
 **Comparing two output directories.** Cell ids are a digest of the cell's own
 definition, so the same cell has the same id in every output directory, and
@@ -509,12 +526,15 @@ seconds, so a runner that kept going would file findings against cells that
 never ran. Two signals say the rig, not the cell, is the answer: a recycle the
 driver refuses twice in a row (`http 503`), and a driver message naming a fleet
 no attach can replace or a transport a partial bring-up poisoned. These end the
-session too: a clear graph or leg whose queue will not drain, a prompt
-submission whose response is lost, a recycle still rate limited after three
-tries, and a transport probe that cannot open the session's mesh. The runner
-writes the reason into `run_summary_<session>.json` beside the records and
-exits non-zero, so the shell around it can restart the driver and the worker
-loops. Restarting both is what clears it.
+session too: a clear graph or leg, the waived retry among them, whose queue
+will not drain, a prompt submission whose response is lost, a recycle still
+rate limited after three tries, and a transport probe that cannot open the
+session's mesh. The runner writes the reason into `run_summary_<session>.json`
+beside the records and exits non-zero, so the shell around it can restart the
+driver and the worker loops. Restarting both is what clears it. A
+session-close recycle that does not answer `ok` also exits non-zero, with its
+answer in the summary's `close_recycle` beside the cell counts; no cell record
+changes.
 
 ## 6. Rig rules
 
