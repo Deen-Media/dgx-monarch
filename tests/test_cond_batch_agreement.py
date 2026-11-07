@@ -116,19 +116,21 @@ def _ranks(tmp_path, frees_gib, pin, child_source=_CHILD, timeout_s=240.0):
 
     A rank that fails, or outlives the timeout (``communicate`` kills nothing
     when it raises TimeoutExpired), would leave its peer at the Gloo
-    rendezvous or in a collective. So every child this harness started and
-    that is still running is killed and reaped on the way out, by its own
-    handle, whatever ended the loop.
+    rendezvous or in a collective, and so would a later rank that never
+    launched. So every child this harness started and that is still running
+    is killed and reaped on the way out, by its own handle, whatever ended the
+    launch or the loop.
     """
     import json
 
     init_file = str(tmp_path / "gloo-init")
-    children = [subprocess.Popen(
-        [sys.executable, "-c", child_source, str(rank), str(len(frees_gib)), init_file,
-         str(free), "pin" if pin else "stock"],
-        env=_env(), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        for rank, free in enumerate(frees_gib)]
+    children: list[subprocess.Popen] = []
     try:
+        for rank, free in enumerate(frees_gib):
+            children.append(subprocess.Popen(
+                [sys.executable, "-c", child_source, str(rank), str(len(frees_gib)),
+                 init_file, str(free), "pin" if pin else "stock"],
+                env=_env(), text=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE))
         answers = []
         for child in children:
             out, err = child.communicate(timeout=timeout_s)
@@ -170,6 +172,34 @@ def test_a_failed_rank_leaves_no_child_running(monkeypatch, tmp_path, pin, timeo
         _ranks(tmp_path, [1.0, 1.0], pin=pin, child_source=_STUCK_PEER, timeout_s=timeout_s)
     assert len(started) == 2
     assert [child.returncode is None for child in started] == [False, False]
+
+
+def test_a_failed_second_launch_still_reaps_the_first_rank(monkeypatch, tmp_path):
+    """The box cannot start the second rank: the first, already waiting for
+    its peer, is killed and reaped rather than left behind."""
+    started: list[subprocess.Popen] = []
+    popen = subprocess.Popen
+
+    class FailsSecond(popen):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs):
+            if started:
+                raise BlockingIOError(11, "Resource temporarily unavailable")
+            super().__init__(*args, **kwargs)
+            started.append(self)
+
+    monkeypatch.setattr(subprocess, "Popen", FailsSecond)
+    try:
+        with pytest.raises(BlockingIOError):
+            # pin makes rank 0 of the stub wait, as a peer at the rendezvous does.
+            _ranks(tmp_path, [1.0, 1.0], pin=True, child_source=_STUCK_PEER)
+        assert len(started) == 1
+        assert started[0].returncode is not None
+    finally:
+        # Only this test's own child, by its handle, if the harness left it.
+        for child in started:
+            if child.poll() is None:
+                child.kill()
+                child.communicate()
 
 
 def test_comfy_batches_cond_and_uncond_by_each_box_free_memory(tmp_path):
