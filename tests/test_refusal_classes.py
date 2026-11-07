@@ -131,6 +131,9 @@ NOT_REFUSAL_CLASSES = frozenset({
     "GateAuditError",
     "ProfileRefusal",
     "PriorTeardownUnknownError",
+    # An unlisted proc root (cli/proc_identity.py): an IO fault that makes a
+    # liveness or sweep answer unknown, never a model or capacity refusal.
+    "ProcListingError",
     "ReleaseLayoutError",
     "RepairError",
     "SetupCliInputError",

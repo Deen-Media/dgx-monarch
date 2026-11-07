@@ -329,3 +329,69 @@ def test_object_info_has_its_own_published_budget():
                 await client.request("GET", "/object_info")
             assert caught.value.code == "driver_response_limit"
     asyncio.run(scenario())
+
+
+def test_maintenance_routes_wait_past_the_driver_deadline_and_reads_do_not():
+    """Review F4: each route's bound, read from the request the client actually makes."""
+    from dgx_monarch.nodes import consent_routes, routes
+    from dgx_monarch.studio import comfy
+
+    async def scenario():
+        async def answer(request):
+            return web.json_response({"ok": True})
+
+        routes_table = [("POST", "/dgxm/recycle", answer), ("POST", "/dgxm/consent", answer),
+                        ("GET", "/dgxm/consents", answer), ("GET", "/queue", answer),
+                        ("POST", "/prompt", answer), ("POST", "/free", answer)]
+        async with driver(*routes_table) as client:
+            seen = {}
+            original = client.session.request
+
+            def recording(method, url, **kwargs):
+                seen[(method, url.removeprefix(client.origin))] = kwargs["timeout"].total
+                return original(method, url, **kwargs)
+            client.session.request = recording
+            for method, path, _handler in routes_table:
+                await client.request(method, path, {} if method == "POST" else None)
+        return seen
+
+    seen = asyncio.run(scenario())
+    long = routes._RECYCLE_TIMEOUT_S + comfy.MAINTENANCE_MARGIN_S
+    assert seen == {("POST", "/dgxm/recycle"): long, ("POST", "/dgxm/consent"): long,
+                    ("GET", "/dgxm/consents"): 20.0, ("GET", "/queue"): 20.0,
+                    ("POST", "/prompt"): 20.0, ("POST", "/free"): 20.0}
+    # One deadline for the reset and for a clear-and-retry accept, read from the same value.
+    assert comfy.RECYCLE_HTTP_DEADLINE_S == routes._RECYCLE_TIMEOUT_S
+    assert comfy.MAINTENANCE_MARGIN_S >= 10.0
+    assert long > consent_routes._ACTION_TIMEOUT_S
+
+
+def test_a_slow_reset_is_the_driver_answer_and_only_a_lost_one_is_unknown(monkeypatch):
+    """The same contract on a scaled clock: reads 0.3 s, the reset deadline 0.6 s plus 0.6 s."""
+    from dgx_monarch.studio import comfy
+
+    monkeypatch.setattr(comfy, "REQUEST_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(comfy, "RECYCLE_HTTP_DEADLINE_S", 0.6)
+    monkeypatch.setattr(comfy, "MAINTENANCE_MARGIN_S", 0.6)
+    delay = {"/dgxm/recycle": 0.5, "/queue": 0.5}
+
+    async def scenario():
+        def slow(path):
+            async def handler(request):
+                await asyncio.sleep(delay[path])
+                return web.json_response({"ok": True, "status": "recycled"})
+            return handler
+
+        async with driver(("POST", "/dgxm/recycle", slow("/dgxm/recycle")),
+                          ("GET", "/queue", slow("/queue"))) as client:
+            # Longer than any read may take, inside the driver's reset deadline: the driver's answer.
+            assert await client.request("POST", "/dgxm/recycle", {}) == {"ok": True, "status": "recycled"}
+            with pytest.raises(StudioError) as read:
+                await client.request("GET", "/queue")
+            assert read.value.code == "driver_unknown"
+            # Past the deadline and its margin the answer is lost, so the outcome stays unknown.
+            delay["/dgxm/recycle"] = 1.5
+            with pytest.raises(StudioError) as lost:
+                await client.request("POST", "/dgxm/recycle", {})
+            assert lost.value.code == "driver_unknown"
+    asyncio.run(scenario())

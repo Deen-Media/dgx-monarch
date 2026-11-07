@@ -201,3 +201,73 @@ def test_latch_series_follow_the_published_snapshot():
     assert "dgxm_native_return_latched 1" in result
     assert "dgxm_native_return_fault_count 2" in result
     assert "peer detail" not in result
+
+
+def _series_identity(line: str) -> str:
+    """The metric name and its label set, which Prometheus requires to be unique."""
+    return line.rsplit(" ", 1)[0]
+
+
+def test_two_ranks_on_one_host_emit_unique_series_and_keep_both_gpu_readings():
+    """A multi-GPU host runs one rank per GPU, and each rank reports its own GPU.
+
+    Host-wide readings (memory, rails) appear once per host; rank-local ones
+    (GPU, the actor's memory counters) carry the rank's worker_index.
+    """
+    def rank(index: int, util: int, power: float) -> dict:
+        return {
+            "rank": index,
+            "host": {
+                "host": "box", "gpu": {"util_pct": util, "power_w": power},
+                "mem_gib": {"MemAvailable": 80.0 - index},
+                "rails": {"mlx5_0": {"rx_bytes": 10 + index, "tx_bytes": 20 + index}},
+            },
+            "memory": {"swap_verify_failures": index, "unbake_file_backed_gib": 1.5 * index},
+        }
+
+    text = _metrics_text({"workers": [rank(0, 91, 40.0), rank(1, 7, 12.5)],
+                          "status_poll": {"fresh": True}})
+    lines = [line for line in text.splitlines() if line]
+    identities = [_series_identity(line) for line in lines]
+    assert len(identities) == len(set(identities)), sorted(
+        identity for identity in identities if identities.count(identity) > 1)
+    assert 'dgxm_gpu_util_pct{host="box",worker_index="0"} 91' in lines
+    assert 'dgxm_gpu_util_pct{host="box",worker_index="1"} 7' in lines
+    assert 'dgxm_gpu_power_w{host="box",worker_index="1"} 12.5' in lines
+    assert 'dgxm_swap_verify_failures{host="box",worker_index="1"} 1' in lines
+    assert 'dgxm_unbake_file_backed_gib{host="box",worker_index="1"} 1.5' in lines
+    # The first rank's host-wide reading stands for the host, once.
+    assert [line for line in lines if line.startswith("dgxm_mem_available_gib")] == [
+        'dgxm_mem_available_gib{host="box"} 80.0']
+    assert [line for line in lines if line.startswith("dgxm_rail_rx_bytes_total")] == [
+        'dgxm_rail_rx_bytes_total{host="box",rail="mlx5_0"} 10']
+
+
+def test_ranks_on_two_hosts_each_keep_their_host_wide_readings():
+    workers = [{"host": {"host": name, "mem_gib": {"MemAvailable": value}}}
+               for name, value in (("head", 70.0), ("sibling", 60.0))]
+    text = _metrics_text({"workers": workers})
+    assert 'dgxm_mem_available_gib{host="head"} 70.0' in text
+    assert 'dgxm_mem_available_gib{host="sibling"} 60.0' in text
+
+
+def test_a_rank_without_a_host_reading_leaves_it_to_the_next_rank_on_that_host():
+    """The first rank's missing reading must not hide the second rank's valid one,
+    and the reading still appears once."""
+    workers = [
+        {"host": {"host": "box", "gpu": {"util_pct": 5}, "mem_gib": {},
+                  "rails": {"mlx5_0": {"rx_bytes": 11}}}},
+        {"host": {"host": "box", "gpu": {"util_pct": 6}, "mem_gib": {"MemAvailable": 70.0},
+                  "rails": {"mlx5_0": {"rx_bytes": 12, "tx_bytes": 22}, "mlx5_1": {"rx_bytes": 3}}}},
+    ]
+    lines = [line for line in _metrics_text({"workers": workers}).splitlines() if line]
+    identities = [_series_identity(line) for line in lines]
+    assert len(identities) == len(set(identities))
+    assert [line for line in lines if line.startswith("dgxm_mem_available_gib")] == [
+        'dgxm_mem_available_gib{host="box"} 70.0']
+    rails = sorted(line for line in lines if line.startswith("dgxm_rail_"))
+    assert rails == [
+        'dgxm_rail_rx_bytes_total{host="box",rail="mlx5_0"} 11',
+        'dgxm_rail_rx_bytes_total{host="box",rail="mlx5_1"} 3',
+        'dgxm_rail_tx_bytes_total{host="box",rail="mlx5_0"} 22',
+    ]

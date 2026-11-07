@@ -327,3 +327,106 @@ def test_partial_policy_arguments_never_claim_worker_ownership():
     for suffix in (' --runtime-policy', ' --native-rdma', ' --runtime-policy x===',
                    ' --runtime-policy x/y', ' --runtime-policy x --foreign'):
         assert re.search(loop_regex(host), base + suffix) is None
+
+
+def _reply(process: str, listener: str):
+    def runner(*_args, **_kwargs):
+        return subprocess.CompletedProcess(
+            [], 0, f"MODE=systemd\nPROCESS={process}\nLISTENER={listener}\n", "")
+    return runner
+
+
+@pytest.mark.parametrize(("process", "listener"), [
+    ("unknown", "listening"),     # pgrep faulted while the port listens
+    ("running", "unknown"),       # the loop runs and the table was unreadable
+])
+def test_a_host_that_answered_without_a_verdict_is_unobserved_through_to_the_update(
+    process: str, listener: str,
+):
+    """The transport worked, but the host observed neither half definitely.
+
+    The doctor row must say unobserved and stay critical, doctor must exit 75,
+    and the verified update must keep the target instead of restoring the prior
+    release.
+    """
+    from dgx_monarch.cli import probe_certainty
+    from dgx_monarch.cli.update_transaction import UpdateRequest, execute_verified_update
+    from dgx_monarch.cli.update_worker_lifecycle import operation_from_exit
+    from test_update_transaction import FakeOps
+
+    config, host = _config()
+    health = passive_worker_health(config, host, runner=_reply(process, listener))
+    assert health["healthy"] is None and health["error"] is None
+    row = worker_service_row("w1", host.address, health)
+    assert row[0] == "WARN" and row[3:] == ("unobserved", True)
+
+    rows = [probe_certainty.probe_row(*row)]
+    failures = sum(1 for item in rows if item["status"] == probe_certainty.FAIL)
+    code = probe_certainty.exit_code(rows, failures)
+    assert code == probe_certainty.UNKNOWN_EXIT
+
+    ops = FakeOps()
+    ops.doctor_result = operation_from_exit(code)
+    result = execute_verified_update(UpdateRequest(assume_yes=True), ops)
+    assert result.code == "doctor_unknown"
+    assert "compensate" not in ops.events
+    assert ops.events.count("start_no_sync") == 1
+
+
+def _script_stdout(tmp_path, config, host, *, pgrep_exit: int, awk_exit: int | None) -> str:
+    """Run the real emitted script; ``awk_exit`` None keeps the system awk."""
+    bindir = tmp_path / "bin"
+    bindir.mkdir(exist_ok=True)
+    pgrep = bindir / "pgrep"
+    pgrep.write_text(f"#!/bin/sh\nexit {pgrep_exit}\n")
+    pgrep.chmod(0o755)
+    if awk_exit is not None:
+        awk = bindir / "awk"
+        awk.write_text(f"#!/bin/sh\necho 'awk: fatal: cannot run' >&2\nexit {awk_exit}\n")
+        awk.chmod(0o755)
+    result = subprocess.run(
+        ["/bin/sh", "-c", _emitted_script(config, host)],
+        capture_output=True, text=True, timeout=30,
+        env={"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path)},
+    )
+    assert result.returncode == 0, result.stderr
+    return result.stdout
+
+
+@pytest.mark.parametrize("awk_exit", [1, 2, 126, 127])
+def test_a_listener_probe_that_failed_is_unknown_not_a_closed_port(tmp_path, awk_exit: int):
+    """A missing or faulting awk observed nothing about the port.
+
+    It must not turn a running loop into a definite failure in the doctor row,
+    nor land the host in the fleet's dead list, which authorizes a restart.
+    """
+    from dgx_monarch.cli.worker_health import passive_unhealthy_workers
+
+    config, host = _config()
+    stdout = _script_stdout(tmp_path, config, host, pgrep_exit=0, awk_exit=awk_exit)
+    assert "LISTENER=unknown" in stdout, stdout
+
+    def runner(*_args, **_kwargs):
+        return subprocess.CompletedProcess([], 0, stdout, "")
+
+    row = worker_service_row("w1", host.address, passive_worker_health(config, host, runner=runner))
+    assert row[0] == "WARN" and row[3:] == ("unobserved", True)
+    fleet = passive_unhealthy_workers(config, runner=runner, deadline=float("inf"))
+    assert fleet.dead == () and fleet.unobserved == (host.address,)
+
+
+def test_a_listener_table_without_the_endpoint_is_still_an_observed_closed_port(tmp_path):
+    """The real awk read the whole table and found no LISTEN row: that is an answer."""
+    from dgx_monarch.cli.worker_health import passive_unhealthy_workers
+
+    config, host = _config()
+    stdout = _script_stdout(tmp_path, config, host, pgrep_exit=0, awk_exit=None)
+    assert "LISTENER=not_listening" in stdout, stdout
+
+    def runner(*_args, **_kwargs):
+        return subprocess.CompletedProcess([], 0, stdout, "")
+
+    row = worker_service_row("w1", host.address, passive_worker_health(config, host, runner=runner))
+    assert row[0] == "FAIL" and row[3:] == ("", False)
+    fleet = passive_unhealthy_workers(config, runner=runner, deadline=float("inf"))
+    assert fleet.dead == (host.address,) and fleet.unobserved == ()

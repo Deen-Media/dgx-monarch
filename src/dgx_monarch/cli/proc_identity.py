@@ -75,12 +75,23 @@ def _read_bytes(path: str) -> bytes | None:
         return None
 
 
+class ProcListingError(OSError):
+    """The proc root could not be listed, so no process was counted.
+
+    An empty list would read as a host with no processes, and a liveness
+    answer built on it would say gone.
+    """
+
+
 def iter_pids(proc_root: str = PROC_ROOT) -> list[int]:
-    """Every numeric entry under the proc root, ascending."""
+    """Every numeric entry under the proc root, ascending.
+
+    Raises ``ProcListingError`` when the root cannot be listed.
+    """
     try:
         names = os.listdir(proc_root)
-    except OSError:
-        return []
+    except OSError as exc:
+        raise ProcListingError(exc.errno, exc.strerror, proc_root) from exc
     return sorted(int(name) for name in names if name.isdigit())
 
 

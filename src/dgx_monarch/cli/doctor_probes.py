@@ -1,8 +1,11 @@
-"""Read swap state, check SageAttention and each host's system Python for ``dgxm doctor``.
+"""Read swap, boot records and GPU co-residents, check SageAttention and each
+host's system Python for ``dgxm doctor``.
 
 The remote swap probe emits prefixed lines in doctor's per-host heredoc. The
 Sage kernel probe checks the same ``nvidia-smi`` process list as the
-co-resident GPU row and skips when another GPU process is observed.
+co-resident GPU row and skips when another GPU process is observed. A command
+that exits non-zero, or prints what its query cannot print, observed nothing:
+its row says unobserved rather than an empty history or an idle GPU.
 
 The system Python probe runs on each host as its own shell command, apart
 from the heredoc, so its row still appears when the Worker venv is broken.
@@ -48,22 +51,26 @@ SWAP_LINE_PREFIX = "swap_kib="
 
 # Substituted into doctor.py's per-host f-string, like sol_attn_row.PROBE_SOURCE.
 # It is a plain string, so its own f-string braces reach the child as written.
-SWAP_PROBE_SOURCE = """try:
+# An unreadable file prints swap_kib=unread and a size it cannot read
+# swap_kib=malformed, so neither reads as swap off.
+SWAP_PROBE_SOURCE = """_swap_state = "ok"
+try:
     with open("/proc/swaps") as _swf:
         _swap_lines = _swf.read().splitlines()[1:]
 except OSError:
-    _swap_lines = []
+    _swap_lines, _swap_state = [], "unread"
 _swap_kib = 0
 _swap_paths = []
 for _sl in _swap_lines:
     _sp = _sl.split()
     if len(_sp) >= 3:
         _swap_paths.append(_sp[0])
-        try:
+        if _sp[2].isdigit():
             _swap_kib += int(_sp[2])
-        except ValueError:
-            pass
-print(f"swap_kib={_swap_kib} swap_paths={','.join(_swap_paths) or 'none'}")"""
+        else:
+            _swap_state = "malformed"
+_swap_field = _swap_kib if _swap_state == "ok" else _swap_state
+print(f"swap_kib={_swap_field} swap_paths={','.join(_swap_paths) or 'none'}")"""
 
 # Prints the interpreter's version, then exits 1 when it is older than the
 # helpers need. It holds no single quote, so shlex.join quotes it as one word.
@@ -127,10 +134,16 @@ def remote_swap_row(host_name: str, line: str) -> tuple[str, str, str]:
     if not line:
         return (WARN, name, "unobserved: the swap probe did not answer")
     fields = dict(tok.split("=", 1) for tok in line.split() if "=" in tok)
-    try:
-        kib = int(fields.get("swap_kib", "0"))
-    except ValueError:
-        kib = 0
+    kib_field = fields.get("swap_kib", "")
+    unknown = "so whether swap is on there is unknown"
+    if kib_field == "unread":
+        return (WARN, name, f"unobserved: /proc/swaps was unreadable on that host, {unknown}")
+    if kib_field == "malformed":
+        return (WARN, name, f"unobserved: /proc/swaps on that host held a size the probe "
+                            f"could not read, {unknown}")
+    if not kib_field.isdigit():
+        return (WARN, name, f"unobserved: the swap probe printed a malformed line, {unknown}")
+    kib = int(kib_field)
     paths_field = fields.get("swap_paths", "none")
     paths = [] if paths_field in ("none", "") else paths_field.split(",")
     if not paths or kib <= 0:
@@ -173,6 +186,70 @@ def system_python_row(
     reason = tail[-1] if tail else "no output"
     return (FAIL, name, f"{SYSTEM_PYTHON} exited {result.returncode}: {reason}. "
                         f"The Worker lifecycle helpers need {SYSTEM_PYTHON}; see docs/CLUSTER.md")
+
+
+_LAST_BY_HAND = "Read it by hand: `last -Fx shutdown reboot`"
+_GPU_APP_LINE = re.compile(r"\d+,[^,].*,.+")
+_CO_RESIDENT = "co-resident GPU procs"
+_POOL_UNKNOWN = "so who else shares the render pool is unknown"
+
+
+def boot_record_row() -> tuple[str, str, str]:
+    """`(status, name, detail)` for unexpected shutdowns, from `last`'s boot records.
+
+    The Spark power-delivery fault hard-resets the box and logs nothing; what
+    it leaves is a reboot record with no shutdown record before it. Only a
+    `last` that exits 0 is a reading: one that fails prints nothing or an
+    error, and either would otherwise read as a clean history.
+    """
+    name = "unexpected shutdowns"
+    try:
+        result = subprocess.run(["last", "-Fxn30", "shutdown", "reboot"],
+                                capture_output=True, text=True, timeout=10)
+    except Exception:
+        return (WARN, name, "unobserved: the `last` boot-record probe did not complete, so "
+                            f"the crash history is unknown. {_LAST_BY_HAND}")
+    if result.returncode != 0:
+        return (WARN, name, f"unobserved: `last` exited {result.returncode}, so the crash "
+                            f"history is unknown. {_LAST_BY_HAND}")
+    events = [line.split()[0] for line in (result.stdout or "").splitlines()
+              if line.strip() and line.split()[0] in ("reboot", "shutdown")]
+    # Newest first: every reboot should have a shutdown below it.
+    crashes = sum(1 for i, event in enumerate(events) if event == "reboot"
+                  and (i + 1 >= len(events) or events[i + 1] != "shutdown"))
+    if crashes > 1:  # the oldest reboot in the window often lacks its pair
+        return (WARN, name,
+                f"{crashes - 1} reboot(s) without a clean shutdown in the last 30 boot records. "
+                "On a Spark this matches the power-delivery fault, a hard power-off that logs nothing. "
+                "Doctor runs no load test, so it cannot tell if the GPU stayed stuck at a low clock; "
+                "a stuck GPU needs a cold power cycle, not a reboot (TROUBLESHOOTING, PD-stuck state)")
+    return (OK, name, "none in recent boot records")
+
+
+def coresident_gpu_row() -> tuple[str, str, str]:
+    """`(status, name, detail)` listing the other GPU processes on this box.
+
+    On unified memory every other GPU process shares the render pool. The row
+    only lists them. A query that exits non-zero, or prints a line that is not
+    `pid, name, memory`, such as nvidia-smi's own failure text, observed nothing.
+    """
+    try:
+        result = subprocess.run(
+            ["nvidia-smi", "--query-compute-apps=pid,process_name,used_memory",
+             "--format=csv,noheader"], capture_output=True, text=True, timeout=5)
+    except Exception:
+        return (WARN, _CO_RESIDENT, "unobserved: the `nvidia-smi` compute-app query did not "
+                                    f"complete, {_POOL_UNKNOWN}")
+    if result.returncode != 0:
+        return (WARN, _CO_RESIDENT, f"unobserved: `nvidia-smi` exited {result.returncode}, "
+                                    f"{_POOL_UNKNOWN}")
+    procs = [line.strip() for line in (result.stdout or "").splitlines() if line.strip()]
+    if any(_GPU_APP_LINE.fullmatch(line.replace(", ", ",")) is None for line in procs):
+        return (WARN, _CO_RESIDENT, "unobserved: `nvidia-smi` printed a line that names no "
+                                    f"compute process, {_POOL_UNKNOWN}")
+    if procs:
+        return (OK, _CO_RESIDENT, f"{len(procs)}: " + "; ".join(p[:60] for p in procs[:4]))
+    return (OK, _CO_RESIDENT, "none")
 
 
 def gpu_busy() -> bool | None:

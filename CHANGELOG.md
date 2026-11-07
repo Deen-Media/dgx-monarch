@@ -271,9 +271,50 @@
   Notes no longer say FSDP refuses fp8, int8 or fp16 files or that Anima's
   adapter makes it refuse; the Flux 2, Kandinsky 5 Pro and Anima Notes state
   the FSDP launch and LoRA rules, and each keeps its own hardware limits.
+- Studio waits up to 280 s for actors recycle and consent apply, 20 s past the
+  260 s the driver allows an attached-mesh reset, so a reset that takes longer
+  than 20 s records the driver's receipt instead of unknown. Other driver
+  requests still wait 20 s, and a lost answer still records unknown
+  ([Studio](docs/STUDIO.md#install-and-start)).
+- The ComfyUI panel rebuilds a consent card or an active grant that the driver
+  replaced under the same key and count, so Accept, Dismiss and Revoke send the
+  id the driver serves now, and the card shows the driver's current text.
+  Before, after another tab dismissed a card and the render raised it again,
+  the first Accept in the first tab was refused
+  ([TROUBLESHOOTING #53](docs/TROUBLESHOOTING.md#53-a-render-failed-and-the-panel-is-asking-for-one-click)).
+- When Studio cannot cancel a running job because the driver has no
+  prompt-specific route, every request that joined the cancellation stays
+  unspent, as the first one did. Before, a second request that joined while the
+  first waited for the driver replayed as not found
+  ([TROUBLESHOOTING #124](docs/TROUBLESHOOTING.md#124-studio-refuses-a-submission-retry-upload-cancellation-operation-or-update)).
+- Studio's grid cell Inspect full submission and Export cell, and the grid
+  exports, keep every digit of a whole number above 9007199254740991, such as
+  the third seed of an incrementing grid that starts at 9007199254740991. The
+  parameter differences under a comparison tell two such seeds one apart, and
+  compare a field nested deeper than 12 levels as one value and say so, where
+  such a field used to drop out of the table
+  ([Studio](docs/STUDIO.md#working-with-workflows)).
+- Studio's Validate every cell stays off, and the line beside it says why,
+  while a grid axis value is a whole number outside -9007199254740991 to
+  9007199254740991, or the base seed of an incrementing grid is above
+  9007199254740991. The browser would have sent it rounded, so the grid ran
+  other seeds than the ones typed
+  ([Studio](docs/STUDIO.md#working-with-workflows)).
+- In `dgxm top`, a paused or scrubbed view shows the run story of its own tick
+  once the one-hour history is full. Before, pausing again at the same place
+  could show the story from the earlier pause ([TUI](docs/TUI.md#record-and-replay)).
+- Studio's metric history leaves out a reading whose host or rail clock runs
+  more than 5 s ahead of the companion's, as it already left out such a sample.
+  Before, one Worker clock ahead of the driver put a future point in that
+  host's chart and hid every corrected point until real time caught up
+  ([Studio](docs/STUDIO.md#workspace-controls-and-media)).
 
 ### Compatibility and verification
 
+- docs/CAMPAIGN_COLUMNS.md types `legs.probe.message` and
+  `legs.resident.message` as text: their values open with a plain `[dgxm:...]`
+  tag and are not JSON arrays. A column now types as JSON only when every value
+  parses as one ([CAMPAIGN_COLUMNS](docs/CAMPAIGN_COLUMNS.md)).
 - The hardware checks of 2026-11-03 to 05 are in the docs. p-h3-image and
   Wan 2.2 TI2V 5B are HW: all three p-h3-image DiT files on one rank match
   stock and on uly2 match one rank, its LoRA route matches stock, and the
@@ -538,6 +579,47 @@
   `~/.cache/dgx-monarch/inductor`, so `compile_dit` no longer repeats its
   autotune after a reboot; set `TORCHINDUCTOR_CACHE_DIR` to place it elsewhere ([TROUBLESHOOTING #14](docs/TROUBLESHOOTING.md#14-first-render-pauses-9-s-with-compile_dit-on)).
 
+- After a worker death and a timed-out stop, a host whose process table
+  cannot be listed answers unknown and keeps the replacement latch. It used to
+  count nothing and answer gone, which released the latch. `dgxm reap` and the
+  lifecycle sweeps report such a host as unaccounted for, and doctor's orphan
+  row says unobserved ([TROUBLESHOOTING #87](docs/TROUBLESHOOTING.md#87-a-log-line-says-the-abandoned-lease-wedge-healed-and-the-render-paid-a-respawn)).
+- `dgxm doctor`'s Worker service row reads unobserved, not FAIL, when the host
+  answered but could not tell whether the loop runs or listens, so doctor exits
+  75 and `dgxm update --verify` keeps the new release instead of restoring the
+  old one. A listener check whose `awk` is missing or fails reads unknown, not
+  closed, so auto-heal no longer restarts a running fleet on it
+  ([TROUBLESHOOTING #1](docs/TROUBLESHOOTING.md#1-attach-fails-with-mesh_attach_config_timeout)).
+- `dgxm doctor` reads only a `last` and an `nvidia-smi` that succeed: a failed
+  run, or `nvidia-smi`'s own error text, reads unobserved instead of a clean
+  boot history or a GPU process. A worker host whose `/proc/swaps` is
+  unreadable or malformed reads unobserved instead of swap off, and one that
+  cannot read its fabric state in sysfs reads unobserved instead of failing.
+- `dgxm doctor`'s `FP8 matmul (actors)` row warns when `fp8_matrix_mult = "on"`
+  and a host reports a GB10 GPU, the case MODELS.md documents as unsafe, and
+  names those hosts ([TROUBLESHOOTING #141](docs/TROUBLESHOOTING.md#141-fp8-renders-run-no-faster-than-bf16)).
+- `dgxm doctor --repair` records a mode change that ran but could not be
+  confirmed as `unknown` with one change, in a `partial` receipt, instead of
+  saying nothing changed ([INSTALL](docs/INSTALL.md#operator-receipts)).
+- `/dgxm/metrics` writes each series once on a host with more than one GPU:
+  the GPU series and the Worker actor's counters carry `worker_index`, and the
+  memory and rail series appear once per host ([CLUSTER](docs/CLUSTER.md#metrics-reference)).
+- An actor ledger whose actor list is not a list reads as corrupt and empty,
+  and a row with an infinite, NaN or fractional pid or start time is dropped,
+  instead of raising out of the liveness check and the sweep.
+- `dgxm setup` accepts the same `--artifact` twice: the plan it prints and the
+  plan it validates now count the paths once.
+- `dgxm setup`'s cleanup of a reserved release slot refuses, and keeps the
+  slot, when its site holds anything beside the package.
+- The desktop entry quotes paths for both of the Desktop Entry format's escape
+  layers, so a path with a backslash, a quote, a backtick or a dollar sign
+  reaches the launcher unchanged, and the icon path keeps its backslashes.
+- `scripts/setup_env.sh --comfy` stops with the repair when torchaudio is
+  installed but does not import, whatever the ComfyUI version, and checks a
+  donor copy imports before it reports done.
+- Setup profiles say what native return's qualification covers, CPU-staged
+  returns on one selected rail, and what it does not, instead of saying it
+  awaits requalification; they keep it off.
 - Workers and the driver give freed host memory back at once: the worker
   loop sets `MIMALLOC_PURGE_DELAY=0` for every cluster actor, the driver's
   launch for a local actor, and `scripts/comfy-driver.sh` exports it, because torch 2.15.0's bundled mimalloc 2.5.2 purges so late
@@ -584,6 +666,35 @@
   ComfyUI's block no longer reads the norm global the parity route binds; it
   used to warn and render with a possible bf16 difference. A topology
   without sequence parallelism, such as `single`, still renders ([TROUBLESHOOTING #121](docs/TROUBLESHOOTING.md#121-a-flux3-checkpoint-fails-to-load-on-comfyui-older-than-0410)).
+
+### Development
+
+- The sweep runner ends the session when a waived retry's queue will not
+  clear, as it already did after every other leg, and when the cache reset
+  before a waived, resident or probe leg leaves the queue busy or gets no
+  answer. The next leg or the next cell's reset no longer queues behind work
+  that may still be running, and such a record re-runs on resume
+  ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- A session-close recycle that does not answer `ok` makes the sweep runner
+  exit non-zero, and `run_summary_<session>.json` names its answer under
+  `close_recycle`. The cell records stand. A recycle whose response cannot be
+  read, a body that is not JSON or one cut short, is such an answer at session
+  open, at close and at every reset, instead of ending the runner without a
+  summary ([SWEEP](docs/SWEEP.md#4-running-a-scoped-sweep)).
+- The sweep's audio compare reads every audio file of both legs and keeps each
+  file's sample rate, channel count and length. Legs that differ in file
+  count, rate, channels or length read CHECK instead of correlating what they
+  share, and so does a file soundfile cannot decode, which used to end the
+  session. The report lists audio results in a section of their own, and
+  envelope correlation, which no calibrated threshold backs, changes no
+  verdict ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- The comfy canary's MageFlow two-rank test stops at once when one rank fails,
+  reports that rank's error and leaves no rank thread behind. The cond-batch
+  agreement test kills and reaps every child process it started when a rank
+  fails or times out. The Boogu key-order test reports a refusing rank's own
+  error, not the broken barrier its peer was left with. The dual-model cfg
+  test now hands its gather a non-contiguous view, so it fails if the
+  production conversion goes.
 
 ## [1.4.0] - 2026-10-28
 

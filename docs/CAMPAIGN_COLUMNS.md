@@ -224,7 +224,7 @@ Records with a value, per export: stable_source_2026-09, sweep349_2026-09, follo
 | `legs.probe.cached_seeded` | JSON array | 913 / 218 / 3 | Leg field as the runner wrote it. |
 | `legs.probe.exception_type` | text | 6 / 0 / 0 | Exception class the leg ended on, empty for a render. |
 | `legs.probe.frames` | int | 913 / 940 / 3 | PNG frames the leg saved. |
-| `legs.probe.message` | JSON array | 6 / 0 / 0 | The leg's error or refusal text, scrubbed: its last 8000 characters, or its first 2000 in records made before the runner change of 2026-09-03. |
+| `legs.probe.message` | text | 6 / 0 / 0 | The leg's error or refusal text, scrubbed: its last 8000 characters, or its first 2000 in records made before the runner change of 2026-09-03. |
 | `legs.probe.outcome` | text | 913 / 940 / 3 | What the leg did: render, refuse:<class> (refuse:untyped for an untagged refusal), crash, timeout, or cell-error (a harness error). |
 | `legs.probe.prefix` | text | 913 / 940 / 3 | Leg field as the runner wrote it. |
 | `legs.probe.waiver_run_ids` | JSON array | 0 / 0 / 3 | Leg field as the runner wrote it. |
@@ -232,7 +232,7 @@ Records with a value, per export: stable_source_2026-09, sweep349_2026-09, follo
 | `legs.resident.cached_seeded` | JSON array | 445 / 11 / 3 | Leg field as the runner wrote it. |
 | `legs.resident.exception_type` | text | 3 / 9 / 3 | Exception class the leg ended on, empty for a render. |
 | `legs.resident.frames` | int | 445 / 453 / 3 | PNG frames the leg saved. |
-| `legs.resident.message` | JSON array | 3 / 9 / 3 | The leg's error or refusal text, scrubbed: its last 8000 characters, or its first 2000 in records made before the runner change of 2026-09-03. |
+| `legs.resident.message` | text | 3 / 9 / 3 | The leg's error or refusal text, scrubbed: its last 8000 characters, or its first 2000 in records made before the runner change of 2026-09-03. |
 | `legs.resident.outcome` | text | 445 / 453 / 3 | What the leg did: render, refuse:<class> (refuse:untyped for an untagged refusal), crash, timeout, or cell-error (a harness error). |
 | `legs.resident.prefix` | text | 445 / 453 / 3 | Leg field as the runner wrote it. |
 | `legs.resident.waiver_run_ids` | JSON array | 0 / 0 / 3 | Leg field as the runner wrote it. |
