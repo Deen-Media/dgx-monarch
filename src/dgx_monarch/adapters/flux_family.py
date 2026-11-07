@@ -58,11 +58,15 @@ def _chroma_cfg_pad_trim(context: torch.Tensor, attention_mask):
     dropping the bias hands stock's forward exactly the unpadded, maskless
     tensors a one-GPU call for that cond builds.
 
-    A mask with a nonzero image column, or a text zone that is not a clean
-    prefix, is not this construction (a conditioning that ships its own
-    attention_mask skips the equalizer, sampling.py "already ships its own")
-    and is returned unchanged. A batch whose rows disagree on the real length
-    cannot be trimmed to one shape and is refused.
+    Pad is a hard sentinel, at or below float16's minimum: ComfyUI casts the
+    equalizer's cond-dtype minimum to the model dtype (-inf from float32 in
+    bfloat16), and attention gives any such key exactly zero weight, so the
+    trim is the same math. A finite bias such as a custom producer's soft
+    mask attenuates real tokens and is no pad. Such a mask, a nonzero image
+    column, or a text zone that is not zeros then pad is not this construction
+    (a conditioning that ships its own attention_mask skips the equalizer,
+    sampling.py "already ships its own") and is returned unchanged. A batch
+    whose rows disagree on the real length cannot be trimmed and is refused.
     """
     if attention_mask is None:
         return context, None
@@ -71,9 +75,10 @@ def _chroma_cfg_pad_trim(context: torch.Tensor, attention_mask):
     if bias.shape[-1] < text_len:
         return context, attention_mask
     text_zone, image_zone = bias[:, :text_len], bias[:, text_len:]
-    if image_zone.numel() and bool((image_zone != 0).any()):
-        return context, attention_mask
     real = text_zone == 0
+    if (image_zone.numel() and bool((image_zone != 0).any())) or not bool(
+            (real | (text_zone <= torch.finfo(torch.float16).min)).all()):
+        return context, attention_mask
     lengths = real.sum(dim=1)
     is_prefix = real == (
         torch.arange(text_len, device=real.device).unsqueeze(0) < lengths.unsqueeze(1)

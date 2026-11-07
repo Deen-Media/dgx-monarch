@@ -12,6 +12,7 @@ import sys
 from typing import Any, NoReturn
 
 from ..transfer_utils import raise_with_distinct_cause, reconcile_error, safe_call
+from ..worker_runtime import WorkerRuntimeMismatch
 from . import gate_process_state as _state
 from .gate_capacity_stop import CeremonyCapacityStop
 from .gate_fsdp import (
@@ -188,8 +189,8 @@ def auto_gate_context(
                 )
         return state, gate_verdict_token(
             key, artifacts.current, commit, capability_context)
-    except FsdpGateProofError:
-        raise
+    except (FsdpGateProofError, WorkerRuntimeMismatch):
+        raise  # two torch builds hold no Gate authority; the user sees which (worker_runtime.py)
     except Exception as exc:
         if fsdp_proof_required:
             raise FsdpGateProofError(
@@ -218,8 +219,8 @@ def auto_gate_required(
     try:
         context = _auto_gate_context(
             model, request_kind, latent, cfg_value)
-    except FsdpGateProofError:
-        raise
+    except (FsdpGateProofError, WorkerRuntimeMismatch):
+        raise  # two torch builds hold no Gate authority; the user sees which (worker_runtime.py)
     except PACKED_TOPOLOGY_REFUSALS:
         raise
     except Exception as exc:
@@ -451,8 +452,8 @@ def maybe_auto_gate(
                 _raise_cleanup_cancellation(
                     active_primary, active_cleanup_error,
                     "auto-gate active-context restoration was interrupted")
-    except FsdpGateProofError:
-        raise
+    except (FsdpGateProofError, WorkerRuntimeMismatch):
+        raise  # two torch builds hold no Gate authority; the user sees which (worker_runtime.py)
     except PACKED_TOPOLOGY_REFUSALS:
         raise
     except CeremonyCapacityStop as stop:

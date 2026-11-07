@@ -934,10 +934,13 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
     # no consent can change an indivisible batch. It reads the literal batch out
     # of the graph the way the driver does, so a latent source the driver
     # cannot price makes no claim here either (2026-09-04: cell 2b172a2d45c8
-    # scored FINDING for its label while the runtime answered class P).
-    if topo.dp > 1 and (found := _guard(preflight_graph_batch_divides_dp,
-                                        loader_mesh(cell["preset"], world),
-                                        batch_graph(cell, facts))):
+    # scored FINDING for its label while the runtime answered class P). Each
+    # loader node passes its own id, so the check prices only its samplers.
+    graph = batch_graph(cell, facts)
+    loaders = [key for key, node in graph.items() if node.get("class_type") in UNET_CLASSES]
+    if topo.dp > 1 and (found := next(filter(None, (
+            _guard(preflight_graph_batch_divides_dp, loader_mesh(cell["preset"], world), graph, key)
+            for key in loaders)), None)):
         return found, "guard", False, guards
     if topo.fsdp and (found := _guard(validate_fsdp_launch_quant,
                                       cell["launch_quant"] or "unknown")):

@@ -164,7 +164,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
     Plain keys map when shape and sampled bytes match, at the file's dtype or
     after a cast to the live one. Quantized keys need one checkpoint binding
     whose quantization metadata matches the live layer. Unmatched tensors and
-    components stay as CPU snapshots; excess resident memory aborts capture.
+    components stay as CPU snapshots; a copy past the resident cap aborts capture.
     """
     header, metadata, parsed = read_safetensors_header(
         base_path, want_metadata=True, want_identity=True
@@ -178,8 +178,17 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
         file_ctime_ns=parsed.file_ctime_ns,
     )
 
-    def _keep(tensor: torch.Tensor) -> torch.Tensor:
-        return tensor.detach().to("cpu").clone()
+    held = [0, 0]  # bytes and tensors kept so far, so each copy checks the cap in constant time
+
+    def _keep(tensor: torch.Tensor) -> torch.Tensor:  # the cap bounds copies, not only the record
+        nbytes = tensor.numel() * tensor.element_size()
+        if held[0] + nbytes > _RESIDENT_CAP_BYTES:
+            raise CaptureAborted(
+                f"{held[1] + 1} keys ({(held[0] + nbytes) / 2**30:.2f} GiB, over the resident cap) failed "
+                "byte-verify against the checkpoint; record discarded, reload contract applies")
+        copy = tensor.detach().to("cpu").clone()
+        held[0], held[1] = held[0] + nbytes, held[1] + 1
+        return copy
 
     def _capture_identity_matches(st: os.stat_result) -> bool:
         return record.matches_stat(st)
@@ -190,9 +199,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
             try:
                 path_before = os.stat(base_path)
             except OSError as exc:
-                raise CaptureAborted(
-                    "checkpoint path changed after its header was validated"
-                ) from exc
+                raise CaptureAborted("checkpoint path changed after its header was validated") from exc
             if not _capture_identity_matches(os.fstat(fd)) or not _capture_identity_matches(
                 path_before
             ):
@@ -342,6 +349,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                     layer_conf=conf,
                     full_precision_mm_config=recorded_full_precision,
                 )
+                record.quant[key] = spec  # before its copies, so the cap counts them
                 for comp_name, comp in comps.items():
                     if comp_name == "comfy_quant" or comp is None:
                         continue
@@ -359,7 +367,6 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                         spec.components[comp_name] = ft
                     else:
                         spec.resident[comp_name] = _keep(comp)
-                record.quant[key] = spec
 
             for key in keys:
                 tensor = live_tensor(model, key)
@@ -371,9 +378,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
             try:
                 path_after = os.stat(base_path)
             except OSError as exc:
-                raise CaptureAborted(
-                    "checkpoint path changed while capturing the un-bake record"
-                ) from exc
+                raise CaptureAborted("checkpoint path changed while capturing the un-bake record") from exc
             if not _capture_identity_matches(os.fstat(fd)) or not _capture_identity_matches(
                 path_after
             ):
@@ -382,11 +387,6 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                 )
     finally:
         drop_file_cache(base_path)
-    if record.resident_bytes > _RESIDENT_CAP_BYTES:
-        raise CaptureAborted(
-            f"{record.resident_count} keys ({record.resident_bytes / 2**30:.2f} GiB, over the resident "
-            "cap) failed byte-verify against the checkpoint; record discarded, reload contract applies"
-        )
     if record.resident_count:
         names = list(record.resident)
         names += [f"{k}::{c}" for k, spec in record.quant.items() for c in spec.resident]

@@ -150,6 +150,10 @@ def _mesh(preset="dp2", world=2):
     return mesh
 
 
+# The loader node every sampler below takes its model from.
+LOADER_ID = "2"
+
+
 def _prompt(latent_class, batch):
     """The API prompt shape the loader node hands the check."""
     return {
@@ -165,7 +169,7 @@ def test_a_newly_priced_class_refuses_an_indivisible_batch_at_the_loader(latent_
     """Unpriced, each of these loads the whole checkpoint before the sampler refuses."""
     with pytest.raises(ValueError) as raised:
         render_validation.preflight_graph_batch_divides_dp(
-            _mesh(), _prompt(latent_class, 1))
+            _mesh(), _prompt(latent_class, 1), LOADER_ID)
     text = str(raised.value)
     tag = parse_leading_refusal_tag(text)
     assert tag is not None and tag.refusal_class.value == "P"
@@ -175,7 +179,7 @@ def test_a_newly_priced_class_refuses_an_indivisible_batch_at_the_loader(latent_
 @pytest.mark.parametrize("latent_class", NEWLY_PRICED)
 def test_a_newly_priced_class_admits_a_divisible_batch(latent_class):
     render_validation.preflight_graph_batch_divides_dp(
-        _mesh(), _prompt(latent_class, 2))
+        _mesh(), _prompt(latent_class, 2), LOADER_ID)
 
 
 def test_qwen21_fixed_batch_one_refuses_at_the_loader_only_from_its_latent_output():
@@ -183,35 +187,35 @@ def test_qwen21_fixed_batch_one_refuses_at_the_loader_only_from_its_latent_outpu
     prompt["8"]["inputs"] = {"resolution": 1024}
     prompt["9"]["inputs"]["latent_image"] = ["8", 2]
     with pytest.raises(ValueError, match="latent batch 1 is not divisible by 2"):
-        render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt)
+        render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt, LOADER_ID)
 
     # Output zero is positive conditioning, not a sampling latent.
     prompt["9"]["inputs"]["latent_image"] = ["8", 0]
-    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt)
+    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt, LOADER_ID)
 
     # A batch_size input on this node makes no claim: the guard does not assume
     # batch one for a schema it has not been taught.
     prompt["9"]["inputs"]["latent_image"] = ["8", 2]
     prompt["8"]["inputs"]["batch_size"] = ["other", 0]
-    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt)
+    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt, LOADER_ID)
 
 
 def test_wan_animate2_reads_only_a_literal_batch_size_from_its_latent_output():
     prompt = _prompt("WanAnimate2ToVideo", 1)
     prompt["9"]["inputs"]["latent_image"] = ["8", 2]
     with pytest.raises(ValueError, match="latent batch 1 is not divisible by 2"):
-        render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt)
+        render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt, LOADER_ID)
 
     prompt["8"]["inputs"]["batch_size"] = 2
-    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt)
+    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt, LOADER_ID)
 
     prompt["8"]["inputs"]["batch_size"] = ["other", 0]
-    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt)
+    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt, LOADER_ID)
 
     # Output zero is positive conditioning, never the Animate2 latent.
     prompt["8"]["inputs"]["batch_size"] = 1
     prompt["9"]["inputs"]["latent_image"] = ["8", 0]
-    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt)
+    render_validation.preflight_graph_batch_divides_dp(_mesh(), prompt, LOADER_ID)
 
 
 def test_the_unpriced_class_still_makes_no_claim_at_the_loader():
@@ -220,4 +224,5 @@ def test_the_unpriced_class_still_makes_no_claim_at_the_loader():
         _mesh(), {"8": {"class_type": "EmptyMiniMaxH3LatentAV",
                         "inputs": {"width": 1344, "height": 768, "length": 124}},
                   "9": {"class_type": "DGXMonarchKSampler",
-                        "inputs": {"latent_image": ["8", 0]}}})
+                        "inputs": {"model": [LOADER_ID, 0], "latent_image": ["8", 0]}}},
+        LOADER_ID)

@@ -12,6 +12,9 @@ from .log import get_logger
 
 log = get_logger(__name__)
 
+# The owner's close, a key no leader sends: a leader's done is its own group's.
+_CLOSE = "dgxm_progress_close"
+
 
 def _thread_started(thread: threading.Thread) -> bool:
     """Whether this thread got far enough through start() to join.
@@ -31,16 +34,22 @@ class ProgressReceiver:
     Each result leader (one per data-parallel group, actor/sampling.py
     is_result_leader) sends {"step": int, "total": int} per denoise step, then
     {"done": True}. A leader given a one-element custom sigma schedule returns
-    before sampling and sends neither. The pump stops at the first done.
+    before sampling and sends neither. One leader's done says nothing about
+    the other groups, which run on without a barrier, so the pump drains until
+    the owner closes the receiver and every message keeps the stall guard's
+    stamp fresh. ``leaders`` lets an owner that knows its leader count stop
+    the pump at the last done: Fleet passes 1, because a world-one job has one.
     """
 
     def __init__(self, total_steps: int, on_step=None, on_cancel=None, *,
-                 track_render: bool = False, step_token: object | None = None):
+                 track_render: bool = False, step_token: object | None = None,
+                 leaders: int | None = None):
         # Channel.open waits for __enter__ so a caller can publish this receiver
         # into its cleanup guard before the first channel or thread side effect.
         self.port = None
         self._receiver: Any = None
         self._total = total_steps
+        self._leaders = leaders
         # Fleet submits outside render_submit/PendingRender, so it opts in
         # to receiver-owned telemetry lifetime. Other callers keep theirs.
         if track_render and step_token is not None:
@@ -91,15 +100,23 @@ class ProgressReceiver:
                 pbar = None
 
         def pump():
+            done = 0
             while True:
                 try:
                     msg = self._receiver.recv().get(timeout=3600)
                 except Exception as exc:
                     log.warning("progress stream ended abnormally: %r", exc)
                     return
-                self._last_activity = time.monotonic()
-                if not isinstance(msg, dict) or msg.get("done"):
+                if isinstance(msg, dict) and msg.get(_CLOSE):
                     return
+                self._last_activity = time.monotonic()
+                if not isinstance(msg, dict):
+                    continue
+                if msg.get("done"):
+                    done += 1
+                    if self._leaders is not None and done >= self._leaders:
+                        return
+                    continue
                 try:  # telemetry tap (dgxm top): never allowed to break the bar
                     from .telemetry import render_progress
 
@@ -137,17 +154,17 @@ class ProgressReceiver:
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        # A leader's {"done": True} ends the pump; a leader that dies, hangs, fails
-        # or returns before sampling (a zero-step custom schedule) or cannot send
-        # never delivers it. The driver holds the port too, so send the sentinel
-        # here, or each such render leaks a thread blocked up to the 3600 s recv
-        # timeout. Never block teardown.
+        # Only the owner's close ends a pump that counts no leaders, and a
+        # leader that dies, hangs, fails or returns before sampling (a zero-step
+        # custom schedule) never sends its done. The driver holds the port too,
+        # so send the close here, or each render leaks a thread blocked up to
+        # the 3600 s recv timeout. Never block teardown.
         cleanup_error: BaseException | None = None
         try:
             self._closed.set()
             if self.port is not None:
                 try:
-                    self.port.send({"done": True})
+                    self.port.send({_CLOSE: True})
                 except Exception:
                     pass
             if self._thread is not None and _thread_started(self._thread):

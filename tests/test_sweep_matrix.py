@@ -461,6 +461,28 @@ def test_a_dp_cell_whose_batch_does_not_split_takes_the_class_the_driver_raises(
     assert split["batch_toggled"] and split["label"] == "render"
 
 
+def test_the_hoisted_batch_check_runs_the_drivers_preflight_with_the_loaders_id(
+        tmp_path, monkeypatch):
+    # The driver's check prices only the samplers that take the calling
+    # loader's model, so the mirror must pass the loader's node id; without it
+    # the check makes no claim and the fallback alone would label the cell.
+    calls: list[tuple] = []
+    real = matrix.preflight_graph_batch_divides_dp
+
+    def spy(mesh, graph, loader_id=None):
+        calls.append((loader_id, graph.get(str(loader_id), {}).get("class_type")))
+        return real(mesh, graph, loader_id)
+
+    monkeypatch.setattr(matrix, "preflight_graph_batch_divides_dp", spy)
+    config = _rig(tmp_path)
+    config.update(image_presets=["dp2"], video_presets=["auto"])
+    cells, _pruned, _unmatched = matrix.build_cells(config)
+    hoisted = _pick(cells, "krea2", "dp2", artifact_quant="bf16", batch="1")
+    assert (hoisted["label"], hoisted["basis"]) == ("refuse:P", "guard")
+    assert ("2", "DGXMonarchUNETLoader") in calls
+    assert all(loader_id is not None for loader_id, _class in calls)
+
+
 def test_the_adapter_refuses_at_the_load_before_the_cfg_one_shortcut(tmp_path):
     # A family with no cfg-parallel support refuses when the worker binds its
     # adapter; the cfg 1.0 wrapper only trips later, at the sampler.

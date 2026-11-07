@@ -1629,6 +1629,29 @@ def test_readable_denied_ledger_verdicts_keep_their_reason_without_a_grant(
     assert consent_pending.pending_cards() == []
 
 
+@pytest.mark.parametrize("decision_name", ["_UNKNOWN_QUERY", "_FAILED"])
+def test_a_load_window_quarantine_refusal_names_the_binding_window_and_footprint(
+        monkeypatch, decision_name):
+    """A quarantine refusal explains the window that binds. This keyframes
+    graph fits its resident window and is short at the load window, so the
+    refusal must name the load window and its stock host copy, not the
+    resident window, whose numbers fit and would read as a false refusal."""
+    from dgx_monarch.nodes import consent_quarantine, consent_rescue
+
+    decision = getattr(consent_quarantine, decision_name)
+    monkeypatch.setattr(
+        consent_rescue, "quarantine_decision_for_load", lambda *_args: decision)
+
+    message = _refuse(
+        _Mesh(), FL2VA_BF16, prompt=_graph(dit=FL2VA_BF16, refs="keyframes"))
+
+    arena_gib = round(capacity_fit.STOCK_PLACEMENT_RATIO * DIT_FL2VA_BF16 / _GIB, 1)
+    assert decision.reason in message
+    assert f"at the {loader_preflight.WINDOW_TRANSIENT} window" in message
+    assert f"stock host copy {arena_gib} GiB" in message
+    assert f"at the {loader_preflight.WINDOW_SETTLED} window" not in message
+
+
 def test_a_proven_ledger_fail_remains_the_only_class_k_loader_refusal(monkeypatch):
     """A current identity-gate FAIL is measured wrongness, not uncertainty."""
     from dgx_monarch.nodes import consent_quarantine, consent_rescue

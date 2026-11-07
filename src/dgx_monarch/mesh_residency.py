@@ -19,9 +19,13 @@ NORMAL_RENDER_RESIDENCY_CAPABILITY = "normal_render_residency"
 
 
 def physical_capability_context(handle) -> dict:
-    """Physical/config identity and the driver's torch build, shared by grants and preflight."""
-    from .gate_runtime import runtime_build_identity
+    """Physical/config identity and the driver's torch build, shared by grants and preflight.
+
+    The build is the driver's once every rank's setup report agrees with it;
+    a pair whose reports differ refuses here (worker_runtime.cohort_runtime).
+    """
     from .monarch_policy_io import trust_config_fingerprint
+    from .worker_runtime import cohort_runtime
 
     config = getattr(handle, "config", None)
     return {
@@ -32,7 +36,7 @@ def physical_capability_context(handle) -> dict:
         "physical_world": int(getattr(handle, "world", 0) or 0),
         "hosts": int(getattr(handle, "n_hosts", 0) or 0),
         "gpus_per_host": int(getattr(handle, "gpus_per_host", 0) or 0),
-        "runtime": runtime_build_identity(),
+        "runtime": cohort_runtime(handle),
     }
 
 
@@ -163,13 +167,15 @@ def assert_fleet_residency_grant(
     effective_worker_args: dict,
     expected_context: dict | None = None,
     rank_world: int = 1,
+    local_runtime: dict | None = None,
 ) -> bool:
     """Validate a risky fleet request's exact artifact/context grant.
 
     The driver passes ``expected_context`` to bind physical/config identity as
     well as policy.  Workers cannot reconstruct driver config paths, but still
     bind the same grant to their current raw effective policy, world-1 setup,
-    request combo, and freshly sampled local artifact identity.
+    request combo, freshly sampled local artifact identity and, through
+    ``local_runtime``, their own torch and CUDA build.
     """
     runtime = _compat_runtime()
     grant = request.get("_dgxm_fleet_residency_grant")
@@ -236,6 +242,9 @@ def assert_fleet_residency_grant(
     if tuple(grant.get("gate_token") or ()) != expected_token:
         raise RuntimeError(
             "fleet residency grant token does not match its artifact/context payload")
+    from .worker_runtime import assert_grant_runtime  # adapters import this module's callers
+
+    assert_grant_runtime(context, local_runtime)
     return True
 
 
@@ -250,8 +259,13 @@ def assert_normal_render_residency_grant(
     setup_key: tuple | None = None,
     worker_args_key: tuple | None = None,
     worker_topology: dict | None = None,
+    local_runtime: dict | None = None,
 ) -> bool:
-    """Validate an exact first-use Gate grant for a normal risky render."""
+    """Validate an exact first-use Gate grant for a normal risky render.
+
+    A Worker passes ``local_runtime``, its own torch and CUDA build, which the
+    grant's context must name.
+    """
     runtime = _compat_runtime()
     grant = request.get("_dgxm_normal_residency_grant")
     if grant is None:
@@ -371,4 +385,7 @@ def assert_normal_render_residency_grant(
         raise RuntimeError(
             "normal-render residency grant token does not match its artifact/context payload"
         )
+    from .worker_runtime import assert_grant_runtime  # adapters import this module's callers
+
+    assert_grant_runtime(context, local_runtime)
     return True

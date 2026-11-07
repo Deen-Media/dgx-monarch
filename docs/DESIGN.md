@@ -328,9 +328,13 @@ change math, residency or transport, leaving out `auto_heal`, `ssh_key`,
 `[worker_args]` keys (`config_schema.DRIVER_ONLY_KEYS`)
 (`monarch_policy_io.trust_config_fingerprint`). Every capability context also
 names the driver's torch and CUDA build (`gate_runtime.runtime_build_identity`),
-because a PASS proven under one torch says nothing about another; `dgxm doctor`
-holds every Worker host to the driver's torch (section 6.3), so that build is
-the one every rank ran. A Gate
+because a PASS proven under one torch says nothing about another. Each rank
+reports its own build in its setup reply and in each Gate provenance row, and
+Gate authority needs every rank on the driver's build: the driver refuses a
+PASS lookup, a ceremony or a grant on a pair whose reports differ or lack the
+build, naming each box's torch and CUDA, and each Worker refuses a normal or
+Fleet grant whose build is not its own (`worker_runtime.py`). The context still
+names one build, so a pair that matches keeps its PASS rows. A Gate
 ceremony proves exactly one model, so dual-model requests are forced onto
 complete stock residency while driver and worker artifact preflight still bind
 both model slots. Driver preflight, worker preflight, and post-adoption checks
@@ -2297,7 +2301,8 @@ Skills call `dgxm` rather than reimplementing operations.
 ### 6.3 Versioning and compatibility policy
 
 - semver; `dgxm doctor` enforces matching Monarch and Torch versions across
-  hosts.
+  hosts, and Gate authority refuses a pair whose torch or CUDA builds differ
+  (section 5.2).
 - torchmonarch is pinned and bumped with a changelog entry per bump; the
   developer skill documents the introspection-first upgrade process.
 - xFuser is pinned to the local `0.7.0+dgxm.npuimport1` compatibility wheel
@@ -2444,6 +2449,8 @@ dgx-monarch/
 │   ├── mesh_attach.py         # transport enable, the pre-dial id gate, heal
 │   │                          #   and the in-process retry
 │   ├── worker_proc_id.py      # per-start Worker proc id: derive, dial, refuse
+│   ├── worker_runtime.py      # each rank's torch/CUDA build against the
+│   │                          #   driver's, the rule Gate authority holds
 │   ├── delivery_faults.py     # the fault hook's delivery failures and the price
 │   │                          #   wait that ends on one (stdlib leaf)
 │   ├── restart_reattach.py    # the render's re-attach after every Worker loop
