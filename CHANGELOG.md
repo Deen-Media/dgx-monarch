@@ -254,6 +254,23 @@
   for what is not yet held, so a short box gets the loader's refusal and what
   would fit, where only the Worker's wall answered before ([TROUBLESHOOTING #52](docs/TROUBLESHOOTING.md#52-driver-side-footprint-preflight-refused-a-render),
   [#93](docs/TROUBLESHOOTING.md#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)).
+- The Ideogram 4 template keeps its JSON caption in a Text (Multiline) node
+  wired to CLIP Text Encode. Typed into CLIP Text Encode's own box, the
+  browser's dynamic prompt pass stripped every brace pair on Queue, so a
+  browser render sent broken JSON while API submissions, the sweep and Studio
+  sent the caption as written. App Mode and Studio show the caption as the
+  prompt field ([MODELS](docs/MODELS.md#model-ideogram4)).
+- Template Notes describe the identity gate as it runs: proof renders of at
+  most two steps on the graph's own mesh and topology, before and after the
+  swap or reload under test, plus one with slab off when slab is on, never a
+  stock single-GPU load. The LTX and p-h3-image graphs, which sample through
+  Sampler Custom, now say they run no automatic gate and render with slab and
+  low-RSS off until an Identity Gate PASS, and the dual-model Ideogram 4 graph
+  says it always renders that way. The Identity Gate's Note and steps tooltip
+  call a PASS a finite check instead of saying 2 steps prove as much as 20.
+  Notes no longer say FSDP refuses fp8, int8 or fp16 files or that Anima's
+  adapter makes it refuse; the Flux 2, Kandinsky 5 Pro and Anima Notes state
+  the FSDP launch and LoRA rules, and each keeps its own hardware limits.
 
 ### Compatibility and verification
 
@@ -331,6 +348,15 @@
   says how reviewed timings reach the benchmark records while a gate
   conclusion carries none ([MODELS](docs/MODELS.md#support-matrix),
   [DESIGN](docs/DESIGN.md#11-release-quality-bar)).
+- The torchmonarch canary blocks each snapshot whose private ownership probe
+  fails, so a pin and a latest stable that fail it the same way no longer
+  compare clean ([TROUBLESHOOTING #27](docs/TROUBLESHOOTING.md#27-torchmonarch-canary-reports-compatibility-or-semantic-drift)).
+  The comfy canary's template widget check also fails a template whose
+  dynamicPrompts widget holds text the browser would rewrite on Queue.
+- README, STUDIO, STUDIO_ACCEPTANCE and DESIGN give the inventory's current
+  counts, 73 workflows, 21 nodes and 143 declared inputs, and a test ties them
+  to the generated inventory. The acceptance record adds the browser round of
+  2026-11-03 and keeps the gaps it did not repeat.
 
 ### Rendering
 
