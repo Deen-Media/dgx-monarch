@@ -12,6 +12,10 @@ ComfyUI's nodes.NODE_CLASS_MAPPINGS and this pack's nodes, this canary checks:
 5. CreateVideo bit_depth, color_space, chroma_subsampling and codec remain
    optional, with values allowed by create_video_enum_errors, and SaveVideo's
    format and codec stay among ComfyUI's options (save_video_errors).
+6. No widget that ComfyUI marks dynamicPrompts holds text the browser would
+   rewrite on Queue (dynamic_prompt_errors). The API path keeps that text, so
+   such a graph would render one prompt from the browser and another from the
+   API, the sweep and Studio.
 
 Conversion uses benchmark.sweep.convert.convert and object_info_widget_names,
 the same functions used by the live sweep.
@@ -31,7 +35,10 @@ from __future__ import annotations
 import asyncio
 import json
 import os
+import random
+import re
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parents[2]
@@ -126,6 +133,93 @@ def save_video_errors(schema: dict, inputs: dict) -> list[str]:
         nested = _choices(((row.get("inputs") or {}).get("required") or {}).get("codec"))
         if codec not in SAVE_VIDEO_CODECS or nested is None or codec not in nested:
             errors.append(f"SaveVideo codec {codec!r} is not offered under format {fmt!r}: {nested!r}")
+    return errors
+
+
+# The frontend's dynamic prompt pass, ported from processDynamicPrompt in
+# comfyui_frontend_package 1.57.6 (formatUtil). Its Comfy.DynamicPrompts
+# extension runs it on Queue over every widget whose input spec sets
+# dynamicPrompts to true, and the API prompt takes the result. Comments go
+# first; then every unescaped `{` opens a choice block that ends at its
+# matching `}`, and one `|`-separated option replaces the block, braces and
+# all, recursively. A block with no `|` keeps its text but loses its braces, so
+# a JSON object loses every brace pair. `\{`, `\}` and `\|` lose their
+# backslash. JavaScript's `.` stops at these four line ends, and reading past
+# the end of the text gives "undefined", which the escape keeps.
+_DYNAMIC_PROMPT_COMMENT = re.compile(r"/\*[\s\S]*?\*/|//[^\n\r\u2028\u2029]*")
+_DYNAMIC_PROMPT_ESCAPE = re.compile(r"\\([{}|])")
+
+
+def process_dynamic_prompt(text: str,
+                           choose: Callable[[list[str]], str] = random.choice) -> str:
+    """What the browser sends for one dynamicPrompts widget holding ``text``."""
+    text = _DYNAMIC_PROMPT_COMMENT.sub("", text)
+    pos = 0
+
+    def escape() -> str:
+        nonlocal pos
+        char = text[pos] if pos < len(text) else "undefined"
+        pos += 1
+        return "\\" + char
+
+    def choice_block() -> str:
+        nonlocal pos
+        options: list[str] = []
+        current, depth = "", 0
+        while pos < len(text):
+            char = text[pos]
+            pos += 1
+            if char == "\\":
+                current += escape()
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                if not depth:
+                    break
+                depth -= 1
+            elif char == "|" and not depth:
+                options.append(current)
+                current = ""
+                continue
+            current += char
+        options.append(current)
+        return process_dynamic_prompt(choose(options), choose)
+
+    out: list[str] = []
+    while pos < len(text):
+        char = text[pos]
+        pos += 1
+        out.append(escape() if char == "\\" else choice_block() if char == "{" else char)
+    return _DYNAMIC_PROMPT_ESCAPE.sub(r"\1", "".join(out))
+
+
+def dynamic_prompt_widgets(schema: dict) -> list[str]:
+    """The inputs this schema marks for the browser's dynamic prompt pass."""
+    names = []
+    for section in ("required", "optional"):
+        for name, spec in (schema.get(section) or {}).items():
+            if (isinstance(spec, (list, tuple)) and len(spec) > 1
+                    and isinstance(spec[1], dict) and spec[1].get("dynamicPrompts") is True):
+                names.append(name)
+    return names
+
+
+def dynamic_prompt_errors(schema: dict, inputs: dict) -> list[str]:
+    """A dynamicPrompts widget value the browser would send changed.
+
+    A wired input arrives as a link, never as its widget's text, so only a
+    string value counts. An unescaped `{`, a comment, an escaped brace or bar,
+    or a trailing backslash changes the text whichever option the pass picks,
+    and nothing else changes it, so one pass decides it.
+    """
+    errors = []
+    for name in dynamic_prompt_widgets(schema):
+        value = inputs.get(name)
+        if isinstance(value, str) and process_dynamic_prompt(value) != value:
+            errors.append(
+                f"{name} holds text the browser's dynamic prompt pass rewrites on Queue "
+                f"({value[:40]!r}); feed it from Text (Multiline) through a link")
     return errors
 
 
@@ -262,6 +356,8 @@ def _check_template(path: Path, names, schemas: dict[str, dict],
         if node_class == "SaveVideo":
             for error in save_video_errors(declared, node["inputs"]):
                 failures.append(f"{label}: node {node_id} {error}")
+        for error in dynamic_prompt_errors(schemas[node_class], node["inputs"]):
+            failures.append(f"{label}: node {node_id} {node_class} {error}")
     return placed
 
 
