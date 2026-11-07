@@ -28,6 +28,7 @@ from .. import residency_mode
 from ..log import get_logger
 from ..mesh import MeshHandle
 from ..topology import Topology
+from ..worker_runtime import WorkerRuntimeMismatch
 from .gate_identity import model_with_worker_overrides
 from .gate_quarantine_scope import combination_label
 
@@ -135,6 +136,8 @@ def _enforce_persisted_quarantine(
         digest = artifacts if isinstance(artifacts, str) else artifacts.current
         session_fail = state != "fail" and _process_gate_verdict(
             gate_verdict_token(key, digest, commit, context)) == "FAIL"
+    except WorkerRuntimeMismatch:
+        raise  # a pair on two torch builds is the user's to fix, not a lookup failure
     except Exception as exc:
         # A prior auto-gate lookup may already have observed sticky FAIL.  A
         # transient/corrupt second read cannot be treated as permission to

@@ -313,11 +313,11 @@ def test_failed_ceremony_replaces_the_sticky_toast_and_closes_the_window(
 def test_progress_bracket_counts_a_proof_leg(monkeypatch, sent):
     from monarch.actor import Channel
 
-    from dgx_monarch.progress import ProgressReceiver
+    from dgx_monarch.progress import _CLOSE, ProgressReceiver
 
     class Future:
         def get(self, timeout=None):
-            return {"done": True}
+            return {_CLOSE: True}
 
     class Receiver:
         def recv(self):

@@ -164,7 +164,7 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
     Plain keys map when shape and sampled bytes match, at the file's dtype or
     after a cast to the live one. Quantized keys need one checkpoint binding
     whose quantization metadata matches the live layer. Unmatched tensors and
-    components stay as CPU snapshots; excess resident memory aborts capture.
+    components stay as CPU snapshots; a copy past the resident cap aborts capture.
     """
     header, metadata, parsed = read_safetensors_header(
         base_path, want_metadata=True, want_identity=True
@@ -178,7 +178,12 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
         file_ctime_ns=parsed.file_ctime_ns,
     )
 
-    def _keep(tensor: torch.Tensor) -> torch.Tensor:
+    def _keep(tensor: torch.Tensor) -> torch.Tensor:  # the cap bounds copies, not only the record
+        kept = record.resident_bytes + tensor.numel() * tensor.element_size()
+        if kept > _RESIDENT_CAP_BYTES:
+            raise CaptureAborted(
+                f"{record.resident_count + 1} keys ({kept / 2**30:.2f} GiB, over the resident cap) failed "
+                "byte-verify against the checkpoint; record discarded, reload contract applies")
         return tensor.detach().to("cpu").clone()
 
     def _capture_identity_matches(st: os.stat_result) -> bool:
@@ -382,11 +387,6 @@ def capture_unbake_record(model: Any, keys, base_path: str) -> UnbakeRecord:
                 )
     finally:
         drop_file_cache(base_path)
-    if record.resident_bytes > _RESIDENT_CAP_BYTES:
-        raise CaptureAborted(
-            f"{record.resident_count} keys ({record.resident_bytes / 2**30:.2f} GiB, over the resident "
-            "cap) failed byte-verify against the checkpoint; record discarded, reload contract applies"
-        )
     if record.resident_count:
         names = list(record.resident)
         names += [f"{k}::{c}" for k, spec in record.quant.items() for c in spec.resident]

@@ -311,6 +311,31 @@ def test_resident_over_cap_aborts(rig, monkeypatch):
         capture_unbake_record(model, KEYS, path)
 
 
+def test_capture_stops_copying_once_the_next_snapshot_would_pass_the_cap(rig, monkeypatch):
+    """The cap bounds the copies capture makes, not only the record it keeps:
+    the first snapshot fits, the second would pass the cap, so capture aborts
+    before it copies the second."""
+    model, path, _ = rig
+    with torch.no_grad():
+        for block in model.diffusion_model.blocks:
+            block.wq.weight.data[0, 0] += 1
+    per_key = 8 * 8 * torch.bfloat16.itemsize
+    monkeypatch.setattr(ub, "_RESIDENT_CAP_BYTES", per_key + per_key // 2)
+    copies: list[int] = []
+    clone = torch.Tensor.clone
+
+    def counting_clone(self, *args, **kwargs):
+        out = clone(self, *args, **kwargs)
+        if tuple(self.shape) == (8, 8):
+            copies.append(out.numel() * out.element_size())
+        return out
+
+    monkeypatch.setattr(torch.Tensor, "clone", counting_clone)
+    with pytest.raises(CaptureAborted, match="over the resident cap"):
+        capture_unbake_record(model, KEYS, path)
+    assert copies == [per_key]
+
+
 def test_cast_mapped_key_restores_exactly(tmp_path):
     """Checkpoint stores F32, model runs bf16 (Krea2 keeps 174 tensors F32):
     the mapping records the loader's cast and restore replays it bit-exactly."""

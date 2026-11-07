@@ -98,8 +98,17 @@ class _Modulation(torch.nn.Module):
         return (_ModulationOut(vec),)
 
 
+def modulated_norm(x, *_args, **_kwargs):
+    """The module global stock's Block.forward reads; the parity route wraps it."""
+    return x
+
+
 class _Block(torch.nn.Module):
-    """Records its rows, spans, rotary rows, block keys and the attention's pad rows."""
+    """Records its rows, spans, rotary rows, block keys and the attention's pad rows.
+
+    Like stock's, its forward reads the module global ``modulated_norm``, so
+    the fused-norm parity route binds it (adapters/flux3_adaln_parity.py).
+    """
 
     num_heads = HEADS
 
@@ -111,6 +120,7 @@ class _Block(torch.nn.Module):
 
     def forward(self, x, spans, pe, transformer_options=None):
         transformer_options = transformer_options or {}
+        assert callable(modulated_norm)  # read, never called: the stand-in normalizes nothing
         override = transformer_options.get("optimized_attention_override")
         self.log.append({
             "block": self.name, "rows": x.shape[1], "pe": pe.shape[1],

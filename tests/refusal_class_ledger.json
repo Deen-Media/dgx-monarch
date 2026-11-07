@@ -483,6 +483,12 @@
       "waivable": false
     },
     {
+      "site": "adapters/flux3.py::refuse_unroutable_blocks::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/flux3.py::require_sample_sigmas::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1282,6 +1288,12 @@
     },
     {
       "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "worker_runtime.py::cohort_runtime::WorkerRuntimeMismatch#0",
       "class": "P",
       "guard": null,
       "waivable": false

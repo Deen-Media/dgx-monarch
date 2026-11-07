@@ -399,8 +399,9 @@ class DGXMonarchFleetKSampler:
                         authorization.residency_grant)
                 render_id = request["_dgxm_render_id"]
                 consent_waiver.stamp_request(request, spec, Topology(world=1), 1, render_id)
+                # A world-one job has one result leader, so its done ends the stream.
                 progress = ProgressReceiver(
-                    steps_n, on_step=on_step(i), track_render=True,
+                    steps_n, on_step=on_step(i), track_render=True, leaders=1,
                     on_cancel=lambda rid=render_id: handle.cancel_sample(rid, wait=False))
                 progress.__enter__()
                 future = mesh_setup.prepare_sample(handle, setup_token)

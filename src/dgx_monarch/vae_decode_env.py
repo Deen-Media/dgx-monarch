@@ -156,15 +156,43 @@ def _resolve(binding: dict[str, Any], registry: dict[str, Any]) -> Any:
     raise Decline(f"attention {name!r} cannot be found on this host")
 
 
+_PRECISION = "float32_matmul_precision"
+
+
 def _set_flag(name: str, value: Any) -> None:
     import torch
 
-    if name == "float32_matmul_precision":
+    if name == _PRECISION:
         torch.set_float32_matmul_precision(value)
     elif name.startswith("cudnn."):
         setattr(torch.backends.cudnn, name.split(".", 1)[1], value)
     elif name.startswith("cuda.matmul."):
         setattr(torch.backends.cuda.matmul, name.rsplit(".", 1)[1], value)
+
+
+def _apply_flags(wanted: dict[str, Any]) -> None:
+    """Set ``wanted``, the float32 matmul precision last.
+
+    ``cuda.matmul.allow_tf32`` is a legacy alias of that precision. On torch
+    2.12 and later, writing the alias after the precision, even the value it
+    already reads, mixes the legacy and new state and the precision getter
+    raises. Written last, the precision sets every backend at once and the
+    alias reads the value that precision implies.
+    """
+    for name, value in wanted.items():
+        if name != _PRECISION:
+            _set_flag(name, value)
+    if _PRECISION in wanted:
+        _set_flag(_PRECISION, wanted[_PRECISION])
+
+
+def _unread_flags(wanted: dict[str, Any]) -> list[str]:
+    """The flags of ``wanted`` that do not read back, every one when torch cannot say."""
+    try:
+        now = backend_flags()
+    except Exception:
+        return sorted(wanted)
+    return [name for name, value in wanted.items() if now.get(name) != value]
 
 
 @contextmanager
@@ -188,18 +216,18 @@ def adopted(fsm: Any, driver: dict[str, Any]) -> Iterator[None]:
     here = backend_flags()
     flags = {name: value for name, value in dict(driver.get("flags") or {}).items()
              if name in here and here[name] != value}
-    undo: list[tuple[str, Any, Any]] = []
+    saved = {name: here[name] for name in flags}
+    undo: list[tuple[Any, str, Any]] = []
     try:
-        for name, value in flags.items():
-            undo.append(("flag", name, here[name]))
-            _set_flag(name, value)
+        _apply_flags(flags)
+        unread = _unread_flags(flags)
+        if unread:
+            raise Decline(f"this host does not hold the driver's torch flags {', '.join(unread)}")
         for target, attribute, value in plans:
-            undo.append(("attr", (target, attribute), getattr(target, attribute)))
+            undo.append((target, attribute, getattr(target, attribute)))
             setattr(target, attribute, value)
         yield
     finally:
-        for kind, where, old in reversed(undo):
-            if kind == "flag":
-                _set_flag(where, old)
-            else:
-                setattr(where[0], where[1], old)
+        for target, attribute, old in reversed(undo):
+            setattr(target, attribute, old)
+        _apply_flags(saved)

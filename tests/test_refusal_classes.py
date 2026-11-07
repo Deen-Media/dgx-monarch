@@ -84,6 +84,10 @@ REFUSAL_CLASSES = frozenset({
     # (delivery_faults.py, restart_reattach.py, issue #47). Class C on the same
     # guard and, like a silent rank, a liveness fault, never a capacity verdict.
     "WorkerDeliveryError",
+    # A pair whose ranks do not all run the driver's torch and CUDA build holds
+    # no Gate authority (worker_runtime.py). Class P: no consent makes a proof
+    # on one build vouch for another, and the message names the fix.
+    "WorkerRuntimeMismatch",
 })
 
 # Declared exceptions that are not user-facing model/capacity refusals: control

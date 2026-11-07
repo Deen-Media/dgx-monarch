@@ -148,6 +148,55 @@ def test_parent_loss_defers_to_a_client_that_is_still_renewing():
     assert verdict.trigger == actor_lifetime.PARENT_LOSS
 
 
+def _expired_lease() -> tuple[actor_lifetime.ActorLifetime, actor_lifetime.Verdict]:
+    state = _lifetime()
+    state.observe(now=0.0, ppid=100)
+    state.renew(actor_lifetime.REAP_GRACE_S, now=0.0)
+    verdict = state.observe(now=actor_lifetime.REAP_GRACE_S, ppid=100)
+    assert verdict is not None and verdict.trigger == actor_lifetime.LEASE_EXPIRY
+    return state, verdict
+
+
+@pytest.mark.parametrize("late_lease", [actor_lifetime.REAP_GRACE_S, 0.0, "junk"])
+def test_expiry_is_terminal_at_the_tick_that_observes_it(late_lease):
+    """The tick that returns a verdict is the terminal point. A renewal, or a
+    cancel, that lands between that tick and the exit changes nothing: the
+    process exits, and the reap state does not pretend the late call took."""
+    state, verdict = _expired_lease()
+    deadline = state.deadline
+    state.renew(late_lease, now=actor_lifetime.REAP_GRACE_S + 1.0)
+    assert state.deadline == deadline
+    assert state.armed and not state.disabled
+    # A repeated tick reports the same claimed verdict until the exit runs.
+    assert state.observe(now=actor_lifetime.REAP_GRACE_S + 2.0, ppid=100) == verdict
+    exits: list[int] = []
+    assert state.fire(verdict, sink=io.StringIO(), exit_hook=exits.append) is True
+    assert exits == [actor_lifetime.REAP_EXIT_CODE]
+
+
+def test_parent_loss_is_terminal_at_the_tick_that_observes_it():
+    state = _lifetime()
+    state.observe(now=0.0, ppid=100)
+    state.observe(now=1.0, ppid=1)
+    verdict = state.observe(now=1.0 + actor_lifetime.PARENT_LOSS_GRACE_S, ppid=1)
+    assert verdict is not None and verdict.trigger == actor_lifetime.PARENT_LOSS
+    state.renew(actor_lifetime.REAP_GRACE_S, now=2.0 + actor_lifetime.PARENT_LOSS_GRACE_S)
+    assert not state.armed and state.deadline is None
+    exits: list[int] = []
+    assert state.fire(verdict, sink=io.StringIO(), exit_hook=exits.append) is True
+    assert exits == [actor_lifetime.REAP_EXIT_CODE]
+
+
+def test_a_renewal_before_the_deadline_tick_still_holds_the_reaper_off():
+    """Only a tick that returns a verdict is terminal: a renewal that lands
+    before it moves the deadline as it always did."""
+    state = _lifetime()
+    state.observe(now=0.0, ppid=100)
+    state.renew(actor_lifetime.REAP_GRACE_S, now=0.0)
+    state.renew(actor_lifetime.REAP_GRACE_S, now=actor_lifetime.REAP_GRACE_S - 1.0)
+    assert state.observe(now=actor_lifetime.REAP_GRACE_S, ppid=100) is None
+
+
 def test_fire_writes_exactly_one_marker_line_naming_pid_and_trigger():
     state = _lifetime()
     sink = io.StringIO()

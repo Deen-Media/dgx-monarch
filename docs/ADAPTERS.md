@@ -140,9 +140,13 @@ shipped pair read 0.09 bf16 and 0.16 fp8 against one GPU before its trim and
 adds the forward: `ChromaAdapter.inject_cfg_pad_forward` reads the real length
 off the driver's own bias, its zero prefix rather than the context's content,
 then trims the context and drops the bias before stock's `_forward` runs, so
-stock gets the unpadded, maskless shape a true single-GPU call would carry. A
-batch whose rows disagree on that length refuses rather than guessing one
-shape for all of them.
+stock gets the unpadded, maskless shape a true single-GPU call would carry. It
+trims only hard padding: each text entry must be 0 or at or below float16's
+minimum, which every value the driver's bias takes after ComfyUI casts it to
+the model dtype satisfies, and which attention weights at exactly zero. A
+custom mask with a finite bias on some text tokens keeps its tokens and its
+mask. A batch whose rows disagree on that length refuses rather than guessing
+one shape for all of them.
 
 An adapter may also define `prepare_base_model(base_model)`. The worker calls
 it from `_inject_for_topology` on every load path (resident, the dual-model
@@ -1029,9 +1033,11 @@ than stacks on a repeat call.
    for the first call, the stock span for each later one), runs once, and
    keeps the rank's rows. The op is row-local, so those rows are stock's bits
    whatever row count comfy-kitchen branches on. The class, its module and
-   the early blocks are untouched, and a stock block that stops reading that
-   global runs unrouted with one warning, which the CPU exactness test turns
-   into a failure. Every shard
+   the early blocks are untouched. A stock block that stops reading that global
+   is a block ComfyUI changed, and nobody has measured its sharded math, so a
+   sharded render refuses class P at inject before any block binds, as
+   MOSS-Image refuses a tree it does not recognize; the CPU exactness test
+   names the change in CI. Every shard
    chunk is made contiguous, since the block writes its gated residual in
    place and stock's kernels read contiguous rows. Ids shard with the same pad
    and chunk as their tokens and embed locally through stock's `rope`. The
