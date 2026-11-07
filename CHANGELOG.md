@@ -598,6 +598,35 @@
   stall on mismatched collectives
   ([TROUBLESHOOTING #79](docs/TROUBLESHOOTING.md#79-a-cross-spark-render-refuses-because-the-ranks-disagree-about-weight-residency)).
 
+### Development
+
+- The sweep runner ends the session when a waived retry's queue will not
+  clear, as it already did after every other leg, and when the cache reset
+  before a waived, resident or probe leg leaves the queue busy or gets no
+  answer. The next leg or the next cell's reset no longer queues behind work
+  that may still be running, and such a record re-runs on resume
+  ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- A session-close recycle that does not answer `ok` makes the sweep runner
+  exit non-zero, and `run_summary_<session>.json` names its answer under
+  `close_recycle`. The cell records stand. A recycle whose response cannot be
+  read, a body that is not JSON or one cut short, is such an answer at session
+  open, at close and at every reset, instead of ending the runner without a
+  summary ([SWEEP](docs/SWEEP.md#4-running-a-scoped-sweep)).
+- The sweep's audio compare reads every audio file of both legs and keeps each
+  file's sample rate, channel count and length. Legs that differ in file
+  count, rate, channels or length read CHECK instead of correlating what they
+  share, and so does a file soundfile cannot decode, which used to end the
+  session. The report lists audio results in a section of their own, and
+  envelope correlation, which no calibrated threshold backs, changes no
+  verdict ([SWEEP](docs/SWEEP.md#5-reading-results)).
+- The comfy canary's MageFlow two-rank test stops at once when one rank fails,
+  reports that rank's error and leaves no rank thread behind. The cond-batch
+  agreement test kills and reaps every child process it started when a rank
+  fails or times out. The Boogu key-order test reports a refusing rank's own
+  error, not the broken barrier its peer was left with. The dual-model cfg
+  test now hands its gather a non-contiguous view, so it fails if the
+  production conversion goes.
+
 ## [1.4.0] - 2026-10-28
 
 **Upgrading from 1.3.0.** Follow [INSTALL](docs/INSTALL.md#upgrading-from-130): the first update runs the 1.3.0
