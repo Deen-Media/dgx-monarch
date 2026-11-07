@@ -941,8 +941,11 @@ removed.
 ### Optional dashboard and Worker services
 
 Install the final safetensors release (>= 0.8.0), not a pre-release. ComfyUI
-brings safetensors in, and `0.8.0rc0` satisfies `>= 0.8.0` but lacks the pread
-backend; the `safetensors pread` doctor row checks this and names the fix.
+brings safetensors in, and diffusers 0.38.0, which xFuser pulls in, requires
+`safetensors>=0.8.0-rc.0`, which `0.8.0rc0` satisfies; a check of only the
+first two version numbers also reads it as 0.8. That pre-release lacks the
+pread backend. The `safetensors pread` doctor row looks for the backend
+parameter itself and names the fix.
 
 Offer the optional dgxm TUI during the initial setup questions, alongside the
 launch-script choice. If accepted, prefer one combined install with the `tui`
@@ -1209,8 +1212,8 @@ Read this before the first update from 1.2.0, in this order. An install on
    ([changelog](../CHANGELOG.md),
    [VALIDATION](VALIDATION.md#evidence-moss-image-sft)).
 9. Add the optional `[studio]` table to cluster.toml only after the driver
-   and every checkout that reads the file run this release, and when no render
-   runs. Releases before this one refuse a cluster.toml that holds it
+   and every checkout that reads the file run 1.3.0 or newer, and when no
+   render runs. Releases before 1.3.0 refuse a cluster.toml that holds it
    ([Optional Studio companion](#optional-studio-companion)).
 10. Run the driver and the Workers on the same release. `dgxm doctor` fails
     the `worker release version` row of a host whose release slot carries
@@ -1309,10 +1312,10 @@ activation prompt, and
 `--receipt` selects an absolute path for the sanitized receipt. None of them
 bypasses an activity, source, config, dependency, or ownership guard.
 
-Releases before this one refuse a cluster.toml that holds the optional
+Releases before 1.3.0 refuse a cluster.toml that holds the optional
 `[studio]` table, in every reader of the file, so update every checkout that
 reads it first. Add the `[studio]` table to cluster.toml only after the driver
-has restarted on this release, and when no render runs. If
+has restarted on 1.3.0 or newer, and when no render runs. If
 `dgxm studio up` installed the Studio service, run `dgxm studio up` again after
 an update; the service keeps running the code it started with until it
 restarts.

@@ -253,10 +253,10 @@ without one.
 
 Adding the table has three consequences:
 
-1. Deploy order. Releases before this one refuse a cluster.toml that holds
+1. Deploy order. Releases before 1.3.0 refuse a cluster.toml that holds
    `[studio]`, in every reader: the CLI, the driver's Init node, mesh setup,
    service observations, the TUI and Studio's management actions. Add the
-   table only after every checkout that reads the file runs this release and
+   table only after every checkout that reads the file runs 1.3.0 or newer and
    the driver has restarted on it, and when no render runs.
 2. A byte edit retires the fleet. In cluster mode the Init node fingerprints
    the file's bytes on every Queue, and any byte change, a comment included,

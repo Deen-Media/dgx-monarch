@@ -242,5 +242,7 @@ def test_links_to_the_cluster_studio_section_name_its_heading():
 
 def test_install_update_commands_state_the_deploy_order_for_the_studio_table():
     section = INSTALL.read_text().split("\n### Update commands\n", 1)[1].split("\n### ", 1)[0]
-    assert ("Add the `[studio]` table to cluster.toml only after the driver has restarted on this release, "
-            "and when no render runs.") in _flat(section)
+    flat = _flat(section)
+    assert "Releases before 1.3.0 refuse a cluster.toml that holds the optional `[studio]` table" in flat
+    assert ("Add the `[studio]` table to cluster.toml only after the driver has restarted on 1.3.0 or newer, "
+            "and when no render runs.") in flat
