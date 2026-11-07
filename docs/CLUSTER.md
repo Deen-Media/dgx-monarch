@@ -290,8 +290,8 @@ position in the telemetry `workers` list counting from 0. Host series carry,
 as `host`, the host name each actor reports. On a host with more than one GPU
 each rank reports its own GPU, so the GPU series and the Worker actor's own
 counters also carry `worker_index`, and the memory and rail series, which
-describe the whole host, appear once per host. No two lines share a series
-name and label set.
+describe the whole host, appear once per host, from the first rank with a
+reading for each. No two lines share a series name and label set.
 
 | Series | Labels | Value |
 | --- | --- | --- |

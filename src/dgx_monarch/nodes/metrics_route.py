@@ -121,17 +121,18 @@ def _latch_metrics(metric: Callable, block: object, *, stale: bool) -> None:
 def _metrics_text(telemetry: dict) -> str:
     lines = []
 
-    def metric(name, value, **labels):
+    def metric(name, value, **labels) -> bool:
+        """Write one line; False when the value is missing or not finite."""
         if isinstance(value, bool):
             value = int(value)
         if not isinstance(value, (int, float)):
-            return
+            return False
         try:
             finite = math.isfinite(float(value))
         except OverflowError:
-            return
+            return False
         if not finite:
-            return
+            return False
         rendered = ",".join(
             f'{key}="{_prometheus_label(item)}"'
             for key, item in labels.items()
@@ -140,6 +141,7 @@ def _metrics_text(telemetry: dict) -> str:
             f"dgxm_{name}{{{rendered}}} {value}"
             if rendered else f"dgxm_{name} {value}"
         )
+        return True
 
     render_value = telemetry.get("render", {})
     render = render_value if isinstance(render_value, dict) else {}
@@ -169,10 +171,15 @@ def _metrics_text(telemetry: dict) -> str:
     poll_stale = "status_poll" in telemetry and (
         not isinstance(poll, dict) or poll.get("fresh") is not True)
     # A host with several GPUs runs one rank per GPU, and every rank reports
-    # its host. Rank-local readings carry worker_index; host-wide ones are
-    # written once per host, from the first rank that names it, so no series
-    # identity repeats.
-    hosts_written: set[str] = set()
+    # its host. Rank-local readings carry worker_index. A host-wide series is
+    # written once, from the first rank that has a valid reading for it, so a
+    # rank that could not read one leaves it to the next and none repeats.
+    host_series: set[tuple[str, ...]] = set()
+
+    def host_metric(name, value, **labels) -> None:
+        identity = (name, *(str(item) for item in labels.values()))
+        if identity not in host_series and metric(name, value, **labels):
+            host_series.add(identity)
     for ordinal, worker in enumerate(workers[:_MAX_METRIC_WORKERS]):
         if not isinstance(worker, dict):
             continue
@@ -197,12 +204,9 @@ def _metrics_text(telemetry: dict) -> str:
         memory = memory_value if isinstance(memory_value, dict) else {}
         metric("swap_verify_failures", memory.get("swap_verify_failures"), **rank)
         metric("unbake_file_backed_gib", memory.get("unbake_file_backed_gib"), **rank)
-        if str(host) in hosts_written:
-            continue
-        hosts_written.add(str(host))
         mem_value = host_stats.get("mem_gib")
         mem = mem_value if isinstance(mem_value, dict) else {}
-        metric("mem_available_gib", mem.get("MemAvailable"), host=host)
+        host_metric("mem_available_gib", mem.get("MemAvailable"), host=host)
         rails_value = host_stats.get("rails")
         rails = rails_value if isinstance(rails_value, dict) else {}
         for device, counters in islice(
@@ -210,8 +214,8 @@ def _metrics_text(telemetry: dict) -> str:
         ):
             if not isinstance(counters, dict):
                 continue
-            metric("rail_rx_bytes_total", counters.get("rx_bytes"),
-                   host=host, rail=device)
-            metric("rail_tx_bytes_total", counters.get("tx_bytes"),
-                   host=host, rail=device)
+            host_metric("rail_rx_bytes_total", counters.get("rx_bytes"),
+                        host=host, rail=device)
+            host_metric("rail_tx_bytes_total", counters.get("tx_bytes"),
+                        host=host, rail=device)
     return "\n".join(lines) + "\n"

@@ -249,3 +249,25 @@ def test_ranks_on_two_hosts_each_keep_their_host_wide_readings():
     text = _metrics_text({"workers": workers})
     assert 'dgxm_mem_available_gib{host="head"} 70.0' in text
     assert 'dgxm_mem_available_gib{host="sibling"} 60.0' in text
+
+
+def test_a_rank_without_a_host_reading_leaves_it_to_the_next_rank_on_that_host():
+    """The first rank's missing reading must not hide the second rank's valid one,
+    and the reading still appears once."""
+    workers = [
+        {"host": {"host": "box", "gpu": {"util_pct": 5}, "mem_gib": {},
+                  "rails": {"mlx5_0": {"rx_bytes": 11}}}},
+        {"host": {"host": "box", "gpu": {"util_pct": 6}, "mem_gib": {"MemAvailable": 70.0},
+                  "rails": {"mlx5_0": {"rx_bytes": 12, "tx_bytes": 22}, "mlx5_1": {"rx_bytes": 3}}}},
+    ]
+    lines = [line for line in _metrics_text({"workers": workers}).splitlines() if line]
+    identities = [_series_identity(line) for line in lines]
+    assert len(identities) == len(set(identities))
+    assert [line for line in lines if line.startswith("dgxm_mem_available_gib")] == [
+        'dgxm_mem_available_gib{host="box"} 70.0']
+    rails = sorted(line for line in lines if line.startswith("dgxm_rail_"))
+    assert rails == [
+        'dgxm_rail_rx_bytes_total{host="box",rail="mlx5_0"} 11',
+        'dgxm_rail_rx_bytes_total{host="box",rail="mlx5_1"} 3',
+        'dgxm_rail_tx_bytes_total{host="box",rail="mlx5_0"} 22',
+    ]
