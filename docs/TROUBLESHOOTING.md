@@ -7098,9 +7098,9 @@ preflight takes more than 60 seconds, `up` exits 75 and installs nothing.
 - Config: Studio reads cluster.toml only when it is a regular file you own
   that no other account can write, and `up` writes no file found in the
   working directory into a service. A file without `[[hosts]]` only prints a
-  note. Releases before this one refuse a cluster.toml that holds `[studio]`,
+  note. Releases before 1.3.0 refuse a cluster.toml that holds `[studio]`,
   so an older checkout that reads the same file (the driver, a Worker host or
-  the TUI) fails until it runs this release.
+  the TUI) fails until it runs 1.3.0 or newer.
 - Driver origin: a fresh state directory needs `[studio] driver` or
   `--driver`. A state directory bound to another origin refuses with the
   store's message and two more lines, the second of which is the `mv`
@@ -7392,8 +7392,11 @@ with and without the LoRA; ring2 was byte-identical without it, and the ring2
 cell with the LoRA carries no fidelity reading
 ([VALIDATION](VALIDATION.md#wan-scail2-degree-2-probe-2026-10-28)).
 Splitting the conditional and unconditional passes across the ranks renders
-SCAIL-2 differently from stock's batched call, where every other family with
-a cfg2 record renders bit-identical. The cause is not isolated, so
+SCAIL-2 differently from stock's batched call, over the floor without a LoRA.
+Other cfg2 records differ from one GPU too: the equal-length pairs measured on
+Chroma BF16, Kroma, FLUX.3 Klein Base and MOSS-Image SFT read under the floor,
+and PixelDiT BF16 and Chroma NVFP4 read over it
+([VALIDATION](VALIDATION.md#campaign-k-cfg2)). The cause is not isolated, so
 the family refuses cfg-parallel the way PixelDiT does, through the adapter's
 `cfg_parallel_supported`, on SCAIL Preview too, which shares the forward and
 has no cfg2 record. A four-Spark owner reported on 2026-10-27 that SCAIL-2

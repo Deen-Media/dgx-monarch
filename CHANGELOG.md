@@ -335,8 +335,9 @@
   torch 2.15.0+cu132. Ideogram4's MODELS row now says its fp8_scaled pair
   reads 0.161 against the BF16 pair, from the file's quantization, and the
   p-h3-image template's note says what its edit's hardware record shows.
-  Still NOT RUN: the release test on torch 2.15, LTX 2.3's decode split, and
-  a Worker on ComfyUI 0.43 with context windows
+  Still NOT RUN: the release test on torch 2.15, LTX 2.3's decode split, a
+  Worker on ComfyUI 0.43 with context windows, every layout at world 4 and the
+  full sweep runbook
   ([VALIDATION](docs/VALIDATION.md#release-test-2026-11-04),
   [VALIDATION](docs/VALIDATION.md#torch-2-15),
   [MODELS](docs/MODELS.md#model-p-h3-image),
@@ -373,6 +374,21 @@
   ([TROUBLESHOOTING #143](docs/TROUBLESHOOTING.md#143-under-torch-215-an-actor-dies-when-it-builds-its-first-process-group),
   [VALIDATION](docs/VALIDATION.md#torch-2-15),
   [INSTALL](docs/INSTALL.md#install-from-source)).
+- The docs now say what the code does where an outside review of 2026-11-05
+  found them wrong. The support matrix marks cfg2 refused for PixelDiT / PiD,
+  Wan SCAIL Preview and Wan SCAIL2, whose adapters refuse it class P for every
+  file, and says Z-Image's cfg2 trims unequal prompts though only equal-token
+  prompts were compared. DESIGN says a supervision failure retires the whole
+  fleet, as the runtime does. INSTALL, Studio and
+  [TROUBLESHOOTING #132](docs/TROUBLESHOOTING.md#132-dgxm-studio-up-refuses-or-the-always-on-studio-does-not-start)
+  name 1.3.0 as the first release that reads `[studio]`. The INT8 GEMM records
+  give the measured 0.92 to 1.20 range at 1024 rows and call the H3 audio
+  difference a likely decode effect, not a finding; the SCAIL-2 cfg2 record
+  drops its claim that every other family's cfg2 is bit-identical; INSTALL
+  names the specifier that admits safetensors `0.8.0rc0`; and THREAT_MODEL
+  says how reviewed timings reach the benchmark records while a gate
+  conclusion carries none ([MODELS](docs/MODELS.md#support-matrix),
+  [DESIGN](docs/DESIGN.md#11-release-quality-bar)).
 - The torchmonarch canary blocks each snapshot whose private ownership probe
   fails, so a pin and a latest stable that fail it the same way no longer
   compare clean ([TROUBLESHOOTING #27](docs/TROUBLESHOOTING.md#27-torchmonarch-canary-reports-compatibility-or-semantic-drift)).
@@ -440,34 +456,27 @@
   the one-hour sample timeout cut off a first attempt. A single RTX 5090's
   reported 8.6 minutes for the same clip stays beside them
   ([BENCHMARKS](docs/BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)).
-  The activation charge is 2.7 to 2.9 times the measured activation on the
-  pair and 4.7 to 4.8 times on one rank, with no constant changed, and a BF16
-  capacity rescue on the pair ends refused with no card
+  The activation charge runs 1.4 to 2.2 times the pair's measured activation
+  and 1.9 to 3.3 times one rank's
   ([VALIDATION](docs/VALIDATION.md#h3-capacity)).
-- The MiniMax H3 activation preflight charges each rank a fixed 7.5 GiB floor
-  plus 634,368 bytes per row on the rank, fitted to four hardware points, in
-  place of 1,032,192 bytes per row with no floor. On the pair it now admits
-  the 15 second clip's second request in a session and the gate's slab path,
-  which the old charge of 60.1 GiB per rank refused against the 17.6 GiB the
-  render measured; one Spark still refuses the clip, 11.2 GiB short
-  ([VALIDATION](docs/VALIDATION.md#h3-capacity),
-  [TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
-- The MiniMax H3 activation preflight is refitted again, to five hardware
-  points and Config A's measured use: it charges each rank an 11.0 GiB floor,
-  129,024 bytes per row on the rank and 73,728 per row of the whole sequence,
-  in place of the 7.5 GiB floor and 634,368 bytes above. The one-rank BF16
-  shape that the 2026-08-05 kill made a refusal rendered on 2026-10-31 beside
-  the driver, holding 5.5 GiB, so the preflight now admits it, and it admits
-  the 15 second clip on one Spark with 36.7 GiB to spare. Each completed
-  render clears by 6.5 GiB or more, and the charge stays above what every
-  measured render used
+- The MiniMax H3 activation preflight is refitted to five hardware points and
+  Config A's measured use: it charges each rank an 11.0 GiB floor and 129,024
+  bytes per row on the rank, in place of 1,032,192 bytes per row with no
+  floor, and keeps 73,728 bytes per row of the whole sequence. On the pair it
+  admits the 15 second clip's second request in a session and the gate's slab
+  path, which the old charge of 60.1 GiB per rank refused against the 17.6 GiB
+  the render measured. The one-rank BF16 shape that the 2026-08-05 kill made a
+  refusal rendered on 2026-10-31 beside the driver, holding 5.5 GiB, so the
+  preflight now admits it, and it admits the 15 second clip on one Spark with
+  36.7 GiB to spare. Each completed render clears by 6.5 GiB or more, and the
+  charge stays above what every measured render used
   ([VALIDATION](docs/VALIDATION.md#h3-capacity),
   [TROUBLESHOOTING #56](docs/TROUBLESHOOTING.md#56-minimax-h3-render-refused-activation-footprint-preflight)).
 - The refitted price passed its hardware checks on 2026-10-31 with both
   driver preflights on. The 15 second MiniMax H3 clip rendered on one Spark
   in both layouts: one rank on the sibling alone in 99:31, and one rank on
-  the head beside the driver in 105:51, where the fit before refused it at
-  the loader. The 61.7 GiB BF16 file rendered at 5 seconds as one rank beside
+  the head beside the driver in 105:51, where the earlier charge refused it
+  at the loader. The 61.7 GiB BF16 file rendered at 5 seconds as one rank beside
   the driver through the capacity rescue in 22:30
   ([VALIDATION](docs/VALIDATION.md#activation-across-clip-lengths-measured-2026-10-29-and-30),
   [BENCHMARKS](docs/BENCHMARKS.md#minimax-h3-speed-and-memory-by-clip-length-2026-10-29-to-2026-10-30-head-capped)).
@@ -504,9 +513,14 @@
   [TROUBLESHOOTING #142](docs/TROUBLESHOOTING.md#142-a-render-with-minimax-h3-context-windows-dgx-monarch-refuses)).
 - A capacity-rescue consent now keeps slab residency when stock residency
   cannot load the checkpoint. The identity gate records INCONCLUSIVE with
-  `cross_mode=CAPACITY`, takes no lever, and the render proceeds under slab;
-  on 2026-10-30 the 61.7 GiB MiniMax H3 bf16 file was refused under stock
-  instead. `DGXM_ALLOW_SLAB_RESCUE=1`, `DGXM_AUTO_RESCUE=1` and the Auto-allow
+  `cross_mode=CAPACITY`, takes no lever, and the render proceeds under slab.
+  On 2026-10-30, before this change, the 61.7 GiB MiniMax H3 BF16 file was
+  refused under stock. Since the change it has rendered on one Spark under
+  `DGXM_AUTO_RESCUE=1` (2026-10-31), and on the pair and on one Spark under
+  `DGXM_ALLOW_SLAB_RESCUE=1` and under the panel's card (2026-11-04). The pair
+  under `DGXM_AUTO_RESCUE=1` and the Auto-allow toggle have no render record
+  ([VALIDATION](docs/VALIDATION.md#bf16-capacity-rescue-2026-10-30-a-recorded-limitation)).
+  `DGXM_ALLOW_SLAB_RESCUE=1`, `DGXM_AUTO_RESCUE=1` and the Auto-allow
   toggle give the same consent record as the panel click. The panel now lists
   the rescue card a refusal offers after such a verdict or after an update, and
   a Worker's rescue offer becomes that card when the driver holds no rank

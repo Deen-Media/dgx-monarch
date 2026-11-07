@@ -751,9 +751,10 @@ GEMM throughput across M on the families' own linears, same box and cap
 | h3 attn-out (5376 x 5376) | 0.96 | 1.45 | 1.84 | 1.78 | 100.2 | 178.6 |
 | h3 mlp-out (5376 x 14336) | 1.20 | 1.71 | 1.69 | 1.68 | 103.5 | 173.8 |
 
-Below 4096 rows the two routes are within 8 percent of each other either way,
-the worst reading 0.92 on the Ideogram4 qkv linear at 1024 rows; from 4096 rows
-up the kernel is at or above CUTLASS on every shape but one reading (Ideogram4
+At 1024 rows, the only point listed below 4096, the kernel ran at 0.92 to
+1.20 times CUTLASS: 8 percent slower at worst, on the Ideogram4 qkv linear, and
+20 percent faster at best, on the H3 mlp-out linear. From 4096 rows up the
+kernel is at or above CUTLASS on every shape but one reading (Ideogram4
 adaln at 8192 rows, 0.96), and from 6144 rows up CUTLASS loses more than half
 its throughput on the wide linears while the Triton kernel holds about 175 TOPS.
 

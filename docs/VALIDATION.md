@@ -2129,8 +2129,13 @@ too, so their times are not render times and no row above changes.
 | cfg2 | NRMS 0.116, over the floor | NRMS 0.085, under the floor, not identical |
 
 cfg2 renders differently from one GPU in both readings, with a largest pixel
-difference of 255, where every other family with a cfg2 record renders
-bit-identical, so the family refuses cfg-parallel from this release
+difference of 255. Other cfg2 records differ from one GPU too: the measured
+equal-length pairs on Chroma BF16, Kroma, FLUX.3 Klein Base and MOSS-Image SFT
+read under the floor ([cfg2 crossover rows](#campaign-k-cfg2)), while PixelDiT
+BF16 ([PixelDiT and PiD](#evidence-pixeldit-pid)) and Chroma NVFP4
+([Chroma](#evidence-chroma)) read over it; PixelDiT refuses cfg2, and Chroma
+NVFP4 runs it only under a waiver. SCAIL-2's reading without a LoRA is over
+it too, so the family refuses cfg-parallel from this release
 ([TROUBLESHOOTING #136](TROUBLESHOOTING.md#136-a-scail-or-scail-2-render-refuses-cfg2-and-ring-beyond-world-2)).
 The ring2 cell with the LoRA rendered its cold and warm legs in both of two
 sessions and refused its probe leg class C both times: the cross-rank
@@ -2631,8 +2636,13 @@ decoded samples for audio:
   for frame identical.
 - Audio: 9 of 12 tracks sample-identical. The three that differ are MiniMax H3
   tracks, in legs whose frames are identical, by at most 1e-3 of full scale and
-  in different legs each time. That is the audio decode, not the GEMM: a kernel
-  difference would move the latents and the frames with them.
+  in different legs each time. The audio decode is the likely source, but this
+  comparison saved no audio latents, and audio is its own output beside the
+  frames, so identical frames do not rule out a kernel difference in the audio
+  stream. On 2026-11-04 identical H3 audio latents decoded to FLAC tracks that
+  differed by up to 1.4e-3 of full scale
+  ([MiniMax H3 context windows](#minimax-h3-context-windows)), which fits that
+  reading without proving it for this run.
 - Harness verdicts matched between the passes (PASS, or CHECK where a family's
   single-GPU INT8 reference is refused under the checkpoint pin and the uly2 cell
   has nothing to compare against: FLUX.3 Klein, MOSS-Image, Kromoss).
@@ -2648,9 +2658,10 @@ Triton kernel"): 16 to 25 percent faster on MiniMax H3 and Wan Animate 2, 5 to
 Krea2, Qwen Image 2.1 and the small turbo stills. The harness times at 2 s granularity. A first stock pass had read
 Krea2 on one GPU at 86 s against 94 s under the kernel; the stock re-render
 read 94 s, so that was run-to-run variance, not the kernel. At the GEMM level
-the two routes are within 8 percent of each other either way below 4096 rows
-(the worst reading 0.92 on the Ideogram4 qkv linear at 1024 rows), the kernel
-is at or above CUTLASS from 4096 rows up on every shape but one reading
+the kernel ran at 0.92 to 1.20 times CUTLASS at 1024 rows, the only point the
+BENCHMARKS table lists below 4096: 8 percent slower at worst, on the Ideogram4
+qkv linear, and 20 percent faster at best, on the H3 mlp-out linear. From 4096
+rows up it is at or above CUTLASS on every shape but one reading
 (Ideogram4 adaln at 8192 rows, 0.96), and from 6144 rows up CUTLASS falls to 37
 to 55 percent of its peak while the Triton kernel holds about 175 TOPS. The
 small-M losses sit on calls that are a small share of a render, and no measured
@@ -3165,7 +3176,7 @@ VAE Decode, as the decode check does.
 | cell | settings | a pass shows | status |
 |---|---|---|---|
 | one rank | Init `mode=local`, `gpus_per_host=1`, beside the driver on the head | the actor log shows `Using context windows: Context length 37 with overlap 12 for 107 frames.` and `Context window 1/4` to `4/4` on each step; the driver's deadline line counts 150,838 rows plus four times the prompt's text rows, against 109,062 plus one times them unwindowed; the render completes | PASS: the four windows (frames 0-36, 25-61, 50-86 and 70-106 of 107) on each of the 20 steps and on each proof-render step, a deadline line for 152,442 packed rows (150,838 plus four times 401 text rows), and 362 PNG frames and a FLAC saved. The prompt took 3990.7 s, 3085.4 s of it sampling (about 154 s per step); the first-use gate's two proof renders, INCONCLUSIVE with nothing to gate, took 637.4 s. The head's lowest MemAvailable was 56.6 GiB |
-| the pair | topology `uly2` | the same actor lines on both ranks, both ranks report identical latents, all 362 PNG frames are identical to the one-rank cell, and the audio latent is identical | PASS: the same four windows on both ranks on every step, `cross-rank latent identity: 2 comparisons across 1 DP groups bit-identical`, the video and audio latents those of the one-rank cell, and 362 of 362 frames pixel-identical to it. The prompt took 2080.4 s, 1799.8 s of it sampling (about 90 s per step); lowest MemAvailable 48.8 GiB on the head and 76.3 GiB on the sibling. The FLAC is not sample-identical to the one-rank cell's: 18 of 964,800 samples differ, by at most 1.4e-3 of full scale. Both audio latents are identical, so that is the driver's audio decode, the noise the [INT8 GEMM kernel comparison](#int8-gemm-kernel-comparison-2026-10-28-and-29) records, not the windows |
+| the pair | topology `uly2` | the same actor lines on both ranks, both ranks report identical latents, all 362 PNG frames are identical to the one-rank cell, and the audio latent is identical | PASS: the same four windows on both ranks on every step, `cross-rank latent identity: 2 comparisons across 1 DP groups bit-identical`, the video and audio latents those of the one-rank cell, and 362 of 362 frames pixel-identical to it. The prompt took 2080.4 s, 1799.8 s of it sampling (about 90 s per step); lowest MemAvailable 48.8 GiB on the head and 76.3 GiB on the sibling. The FLAC is not sample-identical to the one-rank cell's: 18 of 964,800 samples differ, by at most 1.4e-3 of full scale. Both audio latents are identical, so that is the driver's audio decode, not the windows; the [INT8 GEMM kernel comparison](#int8-gemm-kernel-comparison-2026-10-28-and-29) saw H3 track differences of the same size |
 | ring | topology `ring2` | a window whose packed total is odd refuses class K with the H3 ring-pad text before any block runs; otherwise the render completes with identical latents on both ranks | PASS: the first window's total was odd, and both ranks refused class K with the ring-pad text at its entry, inside the gate's first proof render and again in the render, with the waiver card offered; no rank sampled, and the prompt ended in 30 s |
 | an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#142) and no rank waits out the group timeout | NOT RUN: it needs a Worker on ComfyUI 0.43 |
 
