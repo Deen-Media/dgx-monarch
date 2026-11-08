@@ -182,20 +182,25 @@ def test_krea2_auto_world3_batch1_stays_pure_ring():
 
 
 def test_cfg_row_never_folds_into_an_unvalidated_composite():
-    """Chroma bf16 at 1.0 MP, CFG 4, world 4, batch 1: table row 20 gives
+    """Chroma bf16 at 1.0 MP, CFG 4, world 4, batch 1, on a prompt pair whose
+    text rows differ (row 20's scope since 2026-11-07): table row 20 gives
     cfg2+dp2. Neither fold may run: the evidence covers pure cfg2 and pure
     uly2, never uly2+cfg2, and ring2+cfg2 is the same composite with the other
     kernel (refused since 2026-08-20). auto refuses and names the presets that
     tile the world; uly2+cfg2 is among them, because a typed preset is the
-    operator's choice."""
+    operator's choice. An untagged pair never reaches row 20, so it takes the
+    uly2 fallback, a pure sequence-parallel row, and folds no cfg composite."""
     from dgx_monarch.adapters.base import UnsupportedModelError
     from dgx_monarch.topology import choose_auto_topology
 
     with pytest.raises(UnsupportedModelError) as excinfo:
-        choose_auto_topology("chroma", "bf16", 1.0, world=4, cfg_value=4.0, batch_size=1)
+        choose_auto_topology("chroma", "bf16", 1.0, world=4, cfg_value=4.0, batch_size=1,
+                             pair_differs=True)
     message = str(excinfo.value)
     assert "cfg-plus-sequence" in message
     assert "uly2+cfg2" in message
+    untagged = choose_auto_topology("chroma", "bf16", 1.0, world=4, cfg_value=4.0, batch_size=1)
+    assert untagged.rule.row == 99 and untagged.topology.cfg == 1
 
 
 def test_family_without_an_exact_fold_grant_keeps_the_ring_fold():

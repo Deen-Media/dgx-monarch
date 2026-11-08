@@ -23,6 +23,7 @@ import torch
 
 from ..log import get_logger
 from ..refusal import RefusalClass, refusal
+from .adaln_parity_blocks import bind_blocks, bind_flux_norm_parity, with_norm_rows
 from .attention_patches import assert_usp_attention_patches_safe
 from .base import (
     Adapter,
@@ -159,9 +160,9 @@ class ChromaAdapter(Adapter):
             # Each rank contributes [txt_local, img_local] to the gathered
             # sequence, so the pad rows of both segments are named in that
             # order. The set is fixed in the override when it is built.
-            usp_opts = joint_double_options(transformer_options, attn, _family_drop_rows(
+            usp_opts = with_norm_rows(joint_double_options(transformer_options, attn, _family_drop_rows(
                 pad_vouched, [(txt_orig_len, txt.shape[1]), (img_orig_len, img.shape[1])]),
-                ctx, txt.shape[1], img.shape[1])
+                ctx, txt.shape[1], img.shape[1]), txt=txt_orig_len, img=img_orig_len)
             blocks_replace = patches_replace.get("dit", {})
             usp_opts["total_blocks"] = len(self.double_blocks)
             usp_opts["block_type"] = "double"
@@ -217,8 +218,8 @@ class ChromaAdapter(Adapter):
             # sequence, in an options dict of its own (one dict cannot carry two
             # drop sets). img_slice keeps stock's [txt, img] split of the full
             # stream (chroma/model.py), though the block tensors are shards.
-            single_opts = usp_options(transformer_options, attn, drop_rows=_family_drop_rows(
-                pad_vouched, [(joint_orig_len, img.shape[1])]))
+            single_opts = with_norm_rows(usp_options(transformer_options, attn, drop_rows=_family_drop_rows(
+                pad_vouched, [(joint_orig_len, img.shape[1])])), joint=joint_orig_len)
             single_opts["img_slice"] = [txt_len_full, joint_orig_len]
             single_opts["total_blocks"] = len(self.single_blocks)
             single_opts["block_type"] = "single"
@@ -264,10 +265,10 @@ class ChromaAdapter(Adapter):
             return img
 
         self.bind(diffusion_model, "forward_orig", usp_forward_orig)
-        log.info(
-            "chroma USP injected: %d double + %d single blocks, sp=%d",
-            len(diffusion_model.double_blocks), len(diffusion_model.single_blocks), ctx.topology_sp,
-        )
+        bind_blocks((*diffusion_model.double_blocks, *diffusion_model.single_blocks),
+                    bind_flux_norm_parity, family)
+        log.info("chroma USP injected: %d double + %d single blocks, sp=%d",
+                 len(diffusion_model.double_blocks), len(diffusion_model.single_blocks), ctx.topology_sp)
 
     def inject_cfg_pad_forward(self, diffusion_model) -> None:
         """Remove the CFG equalizer's padding and mask before stock attention.
@@ -409,9 +410,9 @@ class FluxAdapter(Adapter):
             else:
                 pe_double = None
             # Pads sit in rank-major [txt_local, img_local]; pure Ulysses restores stock order.
-            usp_opts = joint_double_options(transformer_options, attn, _family_drop_rows(
+            usp_opts = with_norm_rows(joint_double_options(transformer_options, attn, _family_drop_rows(
                 pad_vouched, [(txt_orig_len, txt.shape[1]), (img_orig_len, img.shape[1])]),
-                ctx, txt.shape[1], img.shape[1])
+                ctx, txt.shape[1], img.shape[1]), txt=txt_orig_len, img=img_orig_len)
 
             vec_orig = vec
             if self.params.global_modulation:
@@ -485,8 +486,8 @@ class FluxAdapter(Adapter):
 
             # As in ChromaAdapter: the pads are a tail, in options of their
             # own, and img_slice keeps stock's full-stream [txt, img] split.
-            single_opts = usp_options(transformer_options, attn, drop_rows=_family_drop_rows(
-                pad_vouched, [(joint_orig_len, img.shape[1])]))
+            single_opts = with_norm_rows(usp_options(transformer_options, attn, drop_rows=_family_drop_rows(
+                pad_vouched, [(joint_orig_len, img.shape[1])])), joint=joint_orig_len)
             single_opts["img_slice"] = [txt_len_full, joint_orig_len]
             single_opts["total_blocks"] = len(self.single_blocks)
             single_opts["block_type"] = "single"
@@ -526,11 +527,10 @@ class FluxAdapter(Adapter):
             return img
 
         self.bind(diffusion_model, "forward_orig", usp_forward_orig)
-        log.info(
-            "%s USP injected: %d double + %d single blocks, sp=%d",
-            self.family, len(diffusion_model.double_blocks),
-            len(diffusion_model.single_blocks), ctx.topology_sp,
-        )
+        bind_blocks((*diffusion_model.double_blocks, *diffusion_model.single_blocks),
+                    bind_flux_norm_parity, family)
+        log.info("%s USP injected: %d double + %d single blocks, sp=%d", self.family,
+                 len(diffusion_model.double_blocks), len(diffusion_model.single_blocks), ctx.topology_sp)
 
 
 class Flux2Adapter(FluxAdapter):

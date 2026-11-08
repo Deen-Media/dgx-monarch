@@ -49,7 +49,7 @@ def test_a_finished_render_retains_model_steps_wall_and_end_stamp():
 
 _FACTS = ("topology", "auto_row", "megapixels", "quant", "attention", "sec_per_step",
           "family", "cfg", "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch",
-          "sample_s", "mean_step_s",
+          "pair_differs", "sample_s", "mean_step_s",
           # The kernels the model pins per block, beside "attention" (issue #30).
           "attention_pins", "attention_pins_ran", "attention_pins_dropped",
           # A re-attach inside the render after a Worker restart (issue #47).

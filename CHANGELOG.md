@@ -398,6 +398,28 @@
 
 ### Rendering
 
+- uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
+  fused-norm call of their sharded blocks to the rows one GPU normalizes, as
+  FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its
+  kernel by a call's rows, and at 512 square a rank's call fell on the other
+  side of that switch: on 2026-11-07 uly2 there read one-step NRMS 0.006 to
+  0.062 against one GPU, while the shipped 1024 square stayed bit-identical.
+  Sizes below about 1024 square are expected to match one GPU exactly now; a
+  hardware re-read is pending
+  ([fused AdaLN switch](docs/VALIDATION.md#fused-adaln-switch-other-families)).
+- `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP and on Chroma
+  below 1.64 MP only when the prompt and the negative encode to different text
+  rows, as on the shipped graphs, and Ulysses for an equal pair. One GPU folds
+  an equal pair into one batch-2 call, which cfg2's two calls do not
+  reproduce: on 2026-11-07 such pairs read one-step NRMS 0.014 to 0.042
+  against one GPU on Anima and Boogu, and no full schedule matched, while the
+  shipped pairs stayed bit-identical; Chroma BF16 had read NRMS 0.034 on an
+  equal pair. The sampler nodes tag the pair on the latent, and the render's
+  telemetry records it as `pair_differs`. Explicit `cfg2` on an equal pair
+  still renders. At world 4 an equal pair on these rows no longer refuses at
+  batch 1: it takes the family's Ulysses row, folded into `uly2+ring2`, and
+  at batch 2 `uly2+dp2`
+  ([cfg2 rows](docs/VALIDATION.md#campaign-k-equal-pairs)).
 - Sampler Custom renders run the first-use identity gate, as KSampler renders
   do. The six LTX graphs and p-h3-image used to render on stock residency until
   someone ran the Identity Gate node, and refused on a `*+fsdp` preset. Now the

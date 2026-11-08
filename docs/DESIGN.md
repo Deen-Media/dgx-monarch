@@ -488,9 +488,23 @@ full normalization work. MOSS-Image applies it, through the same
 (`adapters/moss_image_seams.py`), with the rank's window at the front of the
 filled call; its head norm runs after the gather, on stock's rows. Its fused
 q and k norm and RoPE runs unfilled, because on 2026-10-20 comfy-kitchen
-0.2.39 returned stock's bits for that op on every rank's window. The other
-families that call comfy-kitchen's `adaln` or `rms_adaln` on sharded rows
-are unchecked
+0.2.39 returned stock's bits for that op on every rank's window. Flux 1,
+Flux 2, Chroma and LongCat, through the Flux-family forward, and Qwen Image
+2.1 apply it to every `adaln` call of their sharded blocks
+(`adapters/adaln_parity_blocks.py`): on 2026-11-07 uly2 at 512 square read
+one-step NRMS 0.006 to 0.062 against one GPU on Flux 1, Flux 2, Chroma and
+Qwen Image 2.1, while their shipped 1024 square read bit-identical. LongCat,
+and Radiance through Chroma's forward, take the route unmeasured. A block
+whose stock forward stops reading the norm global runs unfilled, and the
+Worker log names it. That path read bit-identical at the shipped sizes and
+off one GPU at 512 square, as every render did before the route, so it does
+not refuse as FLUX.3 does, whose unfilled path missed at shipped sizes. Wan
+2.1 read bit-identical at every size measured, so it runs unfilled. LTX 2.3
+read off one GPU at every size, the shipped one included, where every call
+holds far more than 1024 rows, so the switch does not explain it and its
+calls run unfilled until a probe finds the cause (VALIDATION.md).
+HunyuanVideo 1.5 runs the same Flux blocks in its own sharded forward,
+unfilled and unchecked
 ([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
 
 Ranks must also agree on each model call's batch. ComfyUI's
@@ -588,6 +602,30 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   excludes Kroma, which `topology_cfg_evidence.checkpoint_variant` recognizes
   by the merge record in its header, so a Kroma file keeps row 12; one saved
   without that record reads as Krea2 (VALIDATION.md);
+- a cfg record can be scoped to prompt pairs whose text rows differ. One GPU
+  runs such a pair as two batch-1 calls, which cfg2's per-cond dispatch
+  reproduces, and folds a pair of equal rows into one batch-2 call, which
+  cfg2's two batch-1 calls do not. Anima row 47 and Boogu row 79 were measured
+  on their templates' pairs, whose rows differ; on 2026-11-07, with the first
+  Spark capped, two pairs of equal rows read off one GPU on both rows (one-step
+  NRMS 0.014 to 0.042, no full schedule matching), so those two records grant
+  only a pair the sampler node tagged. Chroma rows 20 and 19 take the same
+  scope: their pair was the shipped one, whose rows differ, and a BF16 pair of
+  equal rows read NRMS 0.034 on cfg2. The tag (`cfg_pair.text_rows_differ`)
+  needs one plain conditioning entry a side whose text tensors differ in rows.
+  It rides on the latent beside the cfg++ tag, so every site that resolves
+  the render's topology, the Gate capability context included, reads the
+  same one, and the wire drops it. An equal pair, a combined, masked or
+  timed conditioning, a Sampler Custom graph whose guider has no negative,
+  and the dual-model guider with a second model wired stay untagged and take
+  each family's Ulysses row (Chroma below 1.2 MP, which has none, the uly2
+  fallback). The rule holds because all three families' text is a
+  `CONDRegular` (Chroma's through Flux's `extra_conds`), which never folds
+  rows that differ, and canary seam 50 (`pair-scoped text conds`) holds that
+  premise against the installed ComfyUI; a family whose text is a
+  `CONDCrossAttn` folds some unequal lengths too
+  (`cfg_dispatch.cross_attn_pair_folds`), so its records would need that rule
+  before they could take the scope (VALIDATION.md);
 - sage auto-on only for fp8 + USP at high res;
 - FSDP only when the model does not fit resident (capacity mode), never for speed;
 - every auto decision logs its row and reason, for example
@@ -2916,7 +2954,9 @@ Every milestone must satisfy this checklist:
   and faster than uly2 at every measured size of each new band: Chroma BF16,
   FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from 1.2 to
   1.77 MP (row 68), Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15), and
-  Boogu FP8 and Anima BF16 below 1.2 MP (rows 79 and 47). Each upper band
+  Boogu FP8 and Anima BF16 below 1.2 MP (rows 79 and 47; since 2026-11-07
+  these and Chroma's rows 20 and 19 take only a prompt pair whose text rows
+  differ). Each upper band
   ends at the largest size measured; the two lower bands follow rows 20 and 28
   and rest on one size, 1.05 MP. Krea2 INT8 cfg2 was exact but ran 0.97x to
   1.08x against uly2, so it kept Ulysses; LongCat cfg2 above 1.2 MP was not

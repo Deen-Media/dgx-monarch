@@ -157,7 +157,9 @@ neither holds load or gate time. The auto facts are `auto_row`, `family`,
 `quant`, `megapixels`, `cfg`, `keeps_uncond` (whether the sampler keeps the
 negative pass at CFG 1, as the cfg++ samplers do), `evidence_row` (the record
 that admitted cfg2), `skipped_cfg_row` (a cfg row auto passed over for want of
-evidence) and `batch`. A preset leaves them null, and a one-GPU render has no
+evidence), `batch` and `pair_differs` (whether the prompt and the negative
+encode to different text rows, which the Anima, Boogu and Chroma cfg2 rows
+need). A preset leaves them null, and a one-GPU render has no
 `auto_row`. When the render re-attached after a Worker restart, `reattach`
 reads `restart_reattach` and `reattach_s` gives the re-attach seconds; both
 are null otherwise. The pin fields `attention_pins`, `attention_pins_ran` and

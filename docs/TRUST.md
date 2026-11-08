@@ -815,7 +815,7 @@ copied from historical evidence.
    the automatic path is
    [`auto_gate.py:146-151`](../src/dgx_monarch/nodes/auto_gate.py#L146-L151 "anchor:auto_gate_context"),
    and the node's NOT RUN branch is
-   [`gate_node.py:110-122`](../src/dgx_monarch/nodes/gate_node.py#L110-L122 "anchor:gate"),
+   [`gate_node.py:111-123`](../src/dgx_monarch/nodes/gate_node.py#L111-L123 "anchor:gate"),
    covered by `tests/test_accuracy_waivers.py` and `tests/test_sol_attention.py`.
 
 ## Grant paths

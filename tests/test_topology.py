@@ -96,7 +96,8 @@ def test_a_cfg_pp_sampler_keeps_the_cfg_row_at_cfg_one():
     dropped = choose_auto_topology("krea2", "fp8", 1.5, 2, cfg_value=1.0)
     assert dropped.topology.describe() == "uly2" and dropped.rule.row == 11
     assert "cfg++" not in dropped.reason
-    chroma = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=1.0, keeps_uncond=True)
+    chroma = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=1.0, keeps_uncond=True,
+                                  pair_differs=True)
     assert chroma.topology.cfg == 2 and chroma.rule.row == 20
 
 
@@ -106,7 +107,8 @@ def test_the_cfg_one_note_still_fires_for_a_plain_sampler():
     plain = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=1.0)
     assert plain.topology.describe() == "uly2" and plain.rule.row == 99
     assert "chroma at cfg 1.0 skips cfg-parallel rows" in plain.reason
-    kept = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=1.0, keeps_uncond=True)
+    kept = choose_auto_topology("chroma", "bf16", 1.05, 2, cfg_value=1.0, keeps_uncond=True,
+                                  pair_differs=True)
     assert "skips cfg-parallel rows" not in kept.reason
 
 
@@ -432,7 +434,11 @@ _WORLD_TWO_AUTO_ROWS = "a1a0738c21f59124e6004a1f7eba20fe46526b892b1e9863b9e2db75
 
 
 def _auto_rows(world: int) -> list[str]:
-    """Each sampled auto decision at this world, as one sortable line each."""
+    """Each sampled auto decision at this world, as one sortable line each.
+
+    A pair whose text rows differ (the sampler's tag) adds a line marked
+    ``|pair1``; untagged lines read as before the tag existed.
+    """
     families = sorted({rule.family for rule in AUTO_TABLE} | {"unknown"})
     rows = []
     for family in families:
@@ -440,13 +446,14 @@ def _auto_rows(world: int) -> list[str]:
             for megapixels in (0.26, 0.79, 1.05, 1.19, 1.5, 2.4, 8.0):
                 for cfg in (1.0, 3.5):
                     for batch in (1, 2):
-                        decision = choose_auto_topology(
-                            family, quant, megapixels, world,
-                            cfg_value=cfg, batch_size=batch)
-                        rows.append(
-                            f"{family}|{quant}|{megapixels}|{cfg}|{batch}="
-                            f"{decision.topology.describe()}|row{decision.rule.row}"
-                            f"|sage{int(decision.sage)}")
+                        for pair in (False, True):
+                            decision = choose_auto_topology(
+                                family, quant, megapixels, world,
+                                cfg_value=cfg, batch_size=batch, pair_differs=pair)
+                            rows.append(
+                                f"{family}|{quant}|{megapixels}|{cfg}|{batch}="
+                                f"{decision.topology.describe()}|row{decision.rule.row}"
+                                f"|sage{int(decision.sage)}" + ("|pair1" if pair else ""))
     return rows
 
 
@@ -455,7 +462,7 @@ def test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy():
     megapixels, cfg and batch value in the _auto_rows grid, so a policy change
     is a reviewed digest edit."""
     digest = hashlib.sha256("\n".join(_auto_rows(2)).encode()).hexdigest()
-    assert digest == "0e1859769980eccae3cf64c8dcf5b0c7075171bb01c59a54d1b22b1c674f12e9"
+    assert digest == "9eb40ed83b0984ed266616ba721c2a5711461a66eb9485d7db8d43732e20325f"
 
 
 def test_auto_never_resolves_cfg_plus_sequence():
@@ -478,7 +485,8 @@ def test_leftover_dp_on_a_cfg_row_refuses_instead_of_folding(world: int):
     # Folding the leftover dp here would build ringN+cfg2, a composite no
     # AUTO_TABLE row names; both worlds resolved it before 2026-08-20.
     with pytest.raises(UnsupportedModelError) as excinfo:
-        choose_auto_topology("chroma", "bf16", 1.0, world, cfg_value=3.5, batch_size=1)
+        choose_auto_topology("chroma", "bf16", 1.0, world, cfg_value=3.5, batch_size=1,
+                             pair_differs=True)
     message = str(excinfo.value)
     assert "[dgxm:K]" in message
     assert "There is no waiver for this refusal" in message
@@ -487,7 +495,7 @@ def test_leftover_dp_on_a_cfg_row_refuses_instead_of_folding(world: int):
 
 def test_the_auto_refusal_names_presets_that_tile_the_world():
     with pytest.raises(UnsupportedModelError) as excinfo:
-        choose_auto_topology("chroma", "bf16", 1.0, 4, cfg_value=3.5, batch_size=1)
+        choose_auto_topology("chroma", "bf16", 1.0, 4, cfg_value=3.5, batch_size=1, pair_differs=True)
     message = str(excinfo.value)
     for preset in ("uly4", "ring4", "uly2+cfg2"):
         assert preset in message
@@ -510,7 +518,7 @@ def test_the_escape_list_keeps_the_cfg_composite_and_says_who_owns_it():
     a typed preset on the operator; auto still refuses to derive it.
     """
     with pytest.raises(UnsupportedModelError) as excinfo:
-        choose_auto_topology("chroma", "bf16", 1.0, 4, cfg_value=3.5, batch_size=1)
+        choose_auto_topology("chroma", "bf16", 1.0, 4, cfg_value=3.5, batch_size=1, pair_differs=True)
     message = str(excinfo.value)
     assert "uly2+cfg2" in message
     assert "the operator's choice" in message
@@ -520,7 +528,7 @@ def test_the_escape_list_keeps_the_cfg_composite_and_says_who_owns_it():
 
 
 def test_a_divisible_batch_still_keeps_dp_on_a_cfg_row():
-    decision = choose_auto_topology("chroma", "bf16", 1.0, 4, cfg_value=3.5, batch_size=2)
+    decision = choose_auto_topology("chroma", "bf16", 1.0, 4, cfg_value=3.5, batch_size=2, pair_differs=True)
     assert decision.topology.describe() == "cfg2+dp2"
 
 

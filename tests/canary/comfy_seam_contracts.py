@@ -171,6 +171,11 @@ The seams, in run order:
  49. lazy switch              the If/Else and Soft Switch inputs and the branch
                               check_lazy_status evaluates for a fixed choice,
                               which the loader-side wall prices and no other
+ 50. pair-scoped text conds   the CONDRegular text Flux (so Chroma), Omnigen2
+                              (so Boogu) and Anima publish, which never folds
+                              rows that differ, and Anima's 512-row pad keyed
+                              on inference mode, the premise of the pair tag
+                              the Chroma, Anima and Boogu cfg2 rows read
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -2024,6 +2029,41 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
         f"bytes for a {width}x{height} guide where the measured probe prices "
         f"{want}"
     )
+
+
+def _assert_pair_scoped_text_conds_seam() -> None:
+    """The premise of the cfg pair tag: rows that differ never fold on one GPU.
+
+    Chroma rows 20 and 19, Anima row 47 and Boogu row 79 grant cfg2 only to a
+    prompt pair the sampler tagged as differing in text rows
+    (``dgx_monarch.cfg_pair``). That reading holds because Flux's
+    ``extra_conds``, which Chroma inherits, Omnigen2's, which Boogu inherits,
+    and Anima's publish the text as a ``CONDRegular``, which concatenates only
+    at equal shape, and because Anima pads its text to 512 rows only under
+    inference mode, which a Worker's sampling thread is not in. A switch to
+    ``CONDCrossAttn``, which folds some unequal lengths, or a pad outside
+    inference mode would let a tagged pair fold on one GPU while auto grants
+    cfg2, the defect issue #52 closes.
+    """
+    import comfy.conds
+    import comfy.model_base as mb
+    import torch
+
+    wrap = "out['c_crossattn'] = comfy.conds.CONDRegular(cross_attn)"
+    for klass in (mb.Flux, mb.Omnigen2, mb.Anima):
+        assert wrap in inspect.getsource(klass.extra_conds), (
+            f"pair-scoped text conds seam: {klass.__name__}.extra_conds no longer wraps "
+            "the text as a CONDRegular, so rows that differ may fold (cfg_pair)")
+    assert "extra_conds" not in vars(mb.Boogu), (
+        "pair-scoped text conds seam: Boogu overrides extra_conds")
+    assert "super().extra_conds" in inspect.getsource(mb.Chroma.extra_conds), (
+        "pair-scoped text conds seam: Chroma.extra_conds no longer builds on Flux's")
+    anima = inspect.getsource(mb.Anima.extra_conds)
+    assert "torch.is_inference_mode_enabled()" in anima, (
+        "pair-scoped text conds seam: Anima's 512-row text pad no longer keys on inference mode")
+    short, long, same = (comfy.conds.CONDRegular(torch.zeros(1, rows, 4)) for rows in (5, 7, 5))
+    assert not short.can_concat(long) and short.can_concat(same), (
+        "pair-scoped text conds seam: CONDRegular now concatenates text of different rows")
 
 
 def _assert_lazy_switch_seam() -> None:
@@ -5860,6 +5900,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("weight-only linear dispatch", _assert_weight_only_linear_dispatch_seam),
     ("minimax h3 context windows", _assert_minimax_h3_context_windows_seam),
     ("lazy switch", _assert_lazy_switch_seam),
+    ("pair-scoped text conds", _assert_pair_scoped_text_conds_seam),
 )
 
 

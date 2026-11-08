@@ -709,6 +709,8 @@ Cfg2 comparisons of the shipped 100/28-token prompt pair at
 MXFP8 and INT8 ConvRot. Trimming cfg padding before the stock forward keeps
 its original unmasked call. Equal-length prompts take a different path:
 BF16 cfg2 read NRMS 0.034 because stock batches both conditions together.
+Since 2026-11-07 rows 20 and 19 grant only a pair whose text rows differ, so
+auto keeps Ulysses for an equal pair ([equal pairs](#campaign-k-equal-pairs)).
 
 BF16 pure Ulysses matched same-build local references at 1024 and
 1536 for 100/28 and 44/44 prompts, and across 26-step controls including
@@ -1860,7 +1862,10 @@ Explicit BF16 cfg2 at 1024, with 102/36-token prompts, matched
 one-GPU probes on Flash, cuDNN and SAGE_AUTO: 12.0 seconds warm versus 20.0
 single. Three cfg2+FSDP and twelve Ulysses+FSDP records matched their
 resident legs. Since 2026-10-14 auto takes cfg2 for BF16 below 1.2 MP
-(row 47, [Campaign K](#campaign-k-cfg2)) and Ulysses elsewhere.
+(row 47, [Campaign K](#campaign-k-cfg2)) and Ulysses elsewhere. Since
+2026-11-07 row 47 takes only a pair whose text rows differ: a pair of equal
+rows read one-step NRMS 0.015 to 0.042 on cfg2 against one GPU, and no full
+schedule matched ([equal pairs](#campaign-k-equal-pairs)).
 
 <a id="evidence-boogu"></a>
 
@@ -1871,7 +1876,10 @@ controls after the instruct text layers used the full row set. The shipped
 probe also matched one GPU, with 36.0/50.0 second warm times. Stored-byte FSDP matched resident output.
 Unequal cfg2 prompts dispatch whole conditions independently; no padding is
 used. The cfg2 comparison read 0.000, with 26.0 seconds warm versus
-50.1 single. Equal-prompt timing after that repair remains unmeasured.
+50.1 single. On 2026-11-07 a pair of equal text rows, which folds onto the
+slice path, read one-step NRMS 0.014 to 0.025 on FP8 cfg2 against one GPU and
+full-schedule NRMS up to 0.279, so row 79 takes only a pair whose text rows
+differ ([equal pairs](#campaign-k-equal-pairs)).
 
 <a id="evidence-pixeldit-pid"></a>
 
@@ -1905,7 +1913,12 @@ also exercised a Video Lite LoRA, whose warm bake matched a fresh session.
 ### LTX 2.3 T2V
 
 FP8-scaled auto/Ulysses completed cold and warm 121-frame renders;
-the decoded one-step probe matched its local reference exactly. Native RDMA
+the decoded one-step probe matched its local reference exactly. At the
+latent, uly2 at the shipped 1280x704x121 differs from a one-GPU render on
+dgx-monarch `a76e967`: one-step NRMS 0.0116, max abs 0.041, on 2026-11-07,
+under the 0.10 floor but not identical, and 0.0125 to 0.0137 at 512 square; the
+fused AdaLN switch does not explain it
+([fused AdaLN switch](#fused-adaln-switch-other-families)). Native RDMA
 latent return for this LTX workload is separate and remains NOT RUN / HOLD.
 
 <a id="evidence-ltx-2-3-i2v-av-packed"></a>
@@ -2573,31 +2586,134 @@ lists every cell's walls, speedups and fidelity.
   became automatic rows: 15 for Krea2 FP8 and BF16 from 1.2 to 2.36 MP, 19 for
   Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP, 68 for Qwen-Image FP8 from
   1.2 to 1.77 MP, and 79 for Boogu FP8 and 47 for Anima BF16 below 1.2 MP.
+  Since 2026-11-07, rows 79 and 47, and Chroma's rows 20 and 19, grant only a
+  prompt pair whose text rows differ ([equal pairs](#campaign-k-equal-pairs)).
   Each record grants only the precisions that read bit-identical and beat
   uly2 at every measured size in its band. Kandinsky5 Lite image met that bar
   at 1024, but its image and video checkpoints share one family, so it has no
   row.
 
 Not measured: MXFP8 and NVFP4 Krea2 files, Chroma
-FP8-scaled and Radiance above 1024, Qwen-Image Edit-2511, equal prompt pairs on Krea2, Boogu
-and Anima, which fold onto the slice path, and world 4. Each can still reach a cfg2 row
+FP8-scaled and Radiance above 1024, Qwen-Image Edit-2511, equal prompt pairs on Krea2,
+which fold onto the slice path, and world 4. Each can still reach a cfg2 row
 through a shared family and precision class: MXFP8 and
 NVFP4 Krea2 files reach row 15 (in September, RAW NVFP4 cfg2 read 1-step NRMS
 0.0113), Chroma FP8-scaled and Radiance reach row 19, an Edit-2511 FP8 file
-would reach row 68, and an equal pair takes the slice path on rows 15, 79 and 47.
+would reach row 68, and an equal pair takes the slice path on row 15.
 Kroma BF16 was measured on 2026-10-16 and row 15 excludes it
 ([Kroma cfg2](#kroma-cfg2)).
 Where an equal pair was measured, the slice path stayed under the floor but
 did not match one GPU: Chroma BF16 read NRMS 0.034 ([Chroma](#evidence-chroma)),
 FLUX.3 Klein Base 0.009 to 0.031
-([FLUX.3 Klein Base](#evidence-flux-3-klein-base)), Kroma BF16 0.009 to 0.011 and
+([FLUX.3 Klein Base](#evidence-flux-3-klein-base)), Kroma BF16 0.009 to 0.011,
 MOSS-Image SFT with its skip off 0.023 to 0.026
-([MOSS-Image SFT](#evidence-moss-image-sft)).
+([MOSS-Image SFT](#evidence-moss-image-sft)), and Anima BF16 0.015 to 0.042 and
+Boogu FP8 0.014 to 0.025 ([equal pairs](#campaign-k-equal-pairs)).
+
+<a id="campaign-k-equal-pairs"></a>
+
+**Equal prompt pairs on rows 47 and 79, 2026-11-07, dgx-monarch `a76e967`,
+ComfyUI `8a98ecf58`, torch 2.15.0+cu132.** Issue #52 asked whether the Anima
+and Boogu grants, measured on each template's pair, hold for a pair whose text
+rows are equal, which one GPU folds into one batch-2 call where cfg2 makes two
+batch-1 calls. `benchmark/run_matrix.py` ran in cluster mode on both Sparks,
+one process per cell, with the settings of Campaign K's cells
+`a09-anima-1024` (row 47, anima-base-v1.0 BF16, 30 steps, CFG 4) and
+`a08-boogu-fp8-1024` (row 79, the fp8_scaled file, 25 steps, CFG 4): 1024
+square, seed 42, one repeat, and the reference from batch row 0 of a
+same-build dp2 render of batch 2. The first Spark was capped, its SM clock
+peaking at 2093 MHz in every cell; the second was uncapped. Each row kept the
+template's negative and ran three positives: the template's own (`unequal`),
+the negative's text (`eqsame`), and another text that ComfyUI's tokenizers
+encode to the negative's rows (`eqdiff`: 31 Qwen3 and 36 T5 rows on Anima, 66
+Qwen3-VL rows on Boogu, where the empty negative takes the tokenizer's drop
+template). Walls are warm sampler medians without text encoding or decode.
+
+| Row, pair | cfg2 full schedule against one GPU (max abs, NRMS) | cfg2 one step (max abs, NRMS) | One GPU / cfg2 full wall |
+|---|---|---|---|
+| 47 Anima, `unequal` | Identical | Identical | 22.43 / 12.93 s |
+| 47 Anima, `eqsame` | 0.0404, 0.0047 | 0.0662, 0.0150 | 26.87 / 16.35 s |
+| 47 Anima, `eqdiff` | 2.4671, 0.0401 | 0.3575, 0.0419 | 22.21 / 13.39 s |
+| 79 Boogu FP8, `unequal` | Identical | Identical | 50.37 / 27.38 s |
+| 79 Boogu FP8, `eqsame` | 8.7038, 0.2785 | 0.1082, 0.0137 | 61.75 / 34.84 s |
+| 79 Boogu FP8, `eqdiff` | 3.7493, 0.0770 | 0.4652, 0.0252 | 50.24 / 27.47 s |
+
+Every equal-pair latent differed from the reference in all but one of its
+262144 elements, or in all of them, over the full schedule. The one-step
+readings stay under the 0.10 floor, so these are measured results, not
+refusals, but they miss the
+[cfg2 row bar](DESIGN.md#54-topology--auto-mode), which needs cfg2
+bit-identical to one GPU. The template pairs stayed bit-identical on this
+build. Rows 47 and 79 therefore grant only a pair whose text rows differ:
+the sampler node tags the latent when the positive's and the negative's text
+tensors differ in rows, and an equal or unread pair takes rows 48 and 78
+(uly2). Chroma's rows 20 and 19 take the same scope on its earlier equal-pair
+reading (BF16 NRMS 0.034, [Chroma](#evidence-chroma)): its text is a
+`CONDRegular`, as Anima's and Boogu's are, so rows that differ never fold on
+one GPU, and an equal pair takes the uly2 fallback below 1.2 MP and rows 21
+and 22 above it. Explicit `cfg2` on an equal pair still renders. The records are
+`out/review_round_2026-11-07/c10_cfg2/` in the validation tree: one cell file
+each, the saved latents, the token counts, both Workers' journals and the
+first Spark's clock trace.
 At world 4 a batch-1 render on a cfg row refuses class K. An evidence record
 has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
 under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength
 of the two regimes measured. A Sampler Custom graph names no sampler, so at
 CFG 1 it keeps Ulysses.
+
+<a id="fused-adaln-switch-other-families"></a>
+
+## Fused AdaLN kernel switch in other families (2026-11-07)
+
+The FLUX.3 probe of 2026-10-16 found comfy-kitchen's fused AdaLN taking one
+kernel for calls of 1024 kernel rows or fewer and another above
+([FLUX.3 Klein](#evidence-flux-3-klein)). Issue #54 asked whether the other
+families that call `adaln` or `rms_adaln` on sharded rows meet it. On ComfyUI
+`8a98ecf58` those are Flux 1, Flux 2, Chroma, Radiance and HunyuanVideo 1.5
+(through `modulated_norm` in `flux/layers.py`), Qwen Image 2.1, Wan 2.1 and LTX
+2.3; MOSS-Image and FLUX.3 already fill their calls. Radiance and HunyuanVideo
+1.5 did not run, nor did SeedVR, which has no adapter and no shipped template. Each leg rendered a shipped template twice at one step, seed
+1031, on dgx-monarch `a76e967`, torch 2.15.0+cu132, both Sparks: Init dp2 at
+batch 2, whose batch row 0 is the one-GPU reference, and Init uly2 at batch 1,
+both with the automatic gate off and stock residency (Flux 2 with slab
+residency, because its 33.0 GiB file does not fit a stock load beside its host
+copy). A true one-GPU render (`mode=local`, `gpus_per_host=1`) of Flux 1 at 512
+square and LTX 2.3 at 1280x704x121 and 512x512x57 equalled the dp2 row 0 bit for
+bit. The first Spark was capped, its SM clock peaking at 2093 MHz; the second
+was uncapped. The table compares saved latents.
+
+| Family, template | Size | uly2 against one GPU (max abs, NRMS, elements differing) |
+|---|---|---|
+| Flux 1, `flux1-t2i` | 1024 square (shipped) | Identical |
+| Flux 1 | 512 square | 0.1298, 0.0064, 36260 of 65536 |
+| Flux 2, `flux2-t2i` (FP8-mixed) | 1024 square (shipped) | Identical |
+| Flux 2 | 512 square | 0.0938, 0.0116, 106517 of 131072 |
+| Chroma, `chroma-t2i` (FP8-mixed) | 1024 square (shipped) | Identical |
+| Chroma | 512 square | 0.6058, 0.0620, 59833 of 65536 |
+| Qwen Image 2.1, `qwen-image21-t2i` (BF16) | 1024 square (shipped) | Identical |
+| Qwen Image 2.1 | 512 square | 0.1738, 0.0060, 40275 of 65536 |
+| Wan 2.1, `wan-t2v` (14B FP8) | 832x480x81 (shipped) | Identical |
+| Wan 2.1 | 512x512x81 | Identical |
+| Wan 2.1 | 512x512x5 (1024 rows a rank) | Identical |
+| LTX 2.3, `ltx-t2v` (22B distilled FP8) | 1280x704x121 (shipped) | 0.0410, 0.0116, 1193521 of 1802240 |
+| LTX 2.3 | 512x512x121 | 0.0430, 0.0125, 370741 of 524288 |
+| LTX 2.3 | 512x512x57 (1024 rows a rank) | 0.0488, 0.0137, 190595 of 262144 |
+
+Flux 1, Flux 2, Chroma and Qwen Image 2.1 match one GPU at their shipped size
+and miss at 512 square, the switch's pattern: at 512 square a single block's
+joint call is 1536 rows on one GPU and 768 on a rank, and Qwen Image 2.1's
+prefix-plus-target call crosses the same line. The four text-to-image
+templates measured ship at 1024 square, so none is affected; the Qwen Image
+2.1 edit templates follow their input's size and did not run. From this release their sharded
+blocks fill each fused-norm call to stock's rows
+([parity rule](DESIGN.md#53-attention-adapters)); a hardware re-read of the
+512-square cells is pending. Wan 2.1 matches everywhere, the size built to meet
+the switch included: its CFG 5 folds cond and uncond into one batch-2 call, so a
+rank's call holds 2048 kernel rows there. LTX 2.3 differs at every size, the
+shipped one included, where a rank's call holds 7040 rows, far over the switch,
+so the switch does not explain it and its blocks are not filled; the cause is
+not identified. The records are `out/review_round_2026-11-07/c09_adaln/` in the
+validation tree.
 
 ## INT8 GEMM kernel comparison (2026-10-28 and 29)
 

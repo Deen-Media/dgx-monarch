@@ -189,6 +189,7 @@ def choose_auto_topology(
     batch_size: int = 1,
     keeps_uncond: bool = False,
     variant: str | None = None,
+    pair_differs: bool = False,
 ) -> AutoDecision:
     """Resolve ``auto`` and log the selected row and rationale.
 
@@ -196,7 +197,9 @@ def choose_auto_topology(
     says the sampler keeps the unconditional pass there
     (``sampler_keeps_uncond_at_cfg1``), and skips any cfg row with no passing
     evidence (topology_cfg_evidence), including a row whose record excludes the
-    checkpoint ``variant`` (``checkpoint_variant``). ``fits_resident=False``
+    checkpoint ``variant`` (``checkpoint_variant``) and a row whose record
+    covers only prompt pairs of different text rows when ``pair_differs``
+    does not say this render's pair is one (``cfg_pair``). ``fits_resident=False``
     adds FSDP for capacity. Spare ranks use data parallel only when the batch
     divides evenly; otherwise a pure sequence-parallel row folds them in, and
     a cfg row raises UnsupportedModelError.
@@ -219,7 +222,8 @@ def choose_auto_topology(
         if (rule.topology.get("cfg", 1) != 1 and cfg_value is not None
                 and abs(cfg_value - 1.0) < 1e-6 and not keeps_uncond):
             continue  # cfg-parallel has no uncond pass to parallelize at cfg 1.0
-        if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(rule, quant_kind, variant):
+        if rule.topology.get("cfg", 1) != 1 and not cfg_row_is_eligible(
+                rule, quant_kind, variant, pair_differs):
             skipped_cfg = rule
             continue
         chosen = rule
@@ -245,6 +249,10 @@ def choose_auto_topology(
                 detail = f"was measured on this {variant} checkpoint and does not grant it"
             elif record.quants and quant_kind not in record.quants:
                 detail = f"has no passing {quant_kind} result"
+            elif record.pairs == "unequal" and not pair_differs:
+                # The clause the Ulysses-row branch below appends, word for word.
+                detail = ("was measured on prompt pairs whose text rows differ, and this "
+                          "pair's rows are equal or unread")
             else:
                 detail = "has no passing in-band speed-and-fidelity result"
             note = (f"cfg2 table row {skipped_cfg.row} {detail}; uly2 is the "
@@ -276,6 +284,10 @@ def choose_auto_topology(
         if excluded is not None and variant in excluded.excludes:
             note = (f"{note}; cfg2 table row {excluded.row} was measured on this "
                     f"{variant} checkpoint and does not grant it")
+        elif excluded is not None and excluded.permits(skipped_cfg, quant_kind, variant, True):
+            # Only the pair kept the row: say so, as the variant clause does.
+            note = (f"{note}; cfg2 table row {excluded.row} was measured on prompt pairs "
+                    "whose text rows differ, and this pair's rows are equal or unread")
 
     topo_kwargs = dict(chosen.topology)
     if not fits_resident:

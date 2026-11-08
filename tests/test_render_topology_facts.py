@@ -30,7 +30,8 @@ from dgx_monarch.nodes.resolved_topology import (
 )
 from dgx_monarch.topology import Topology
 
-_AUDIT = ("family", "cfg", "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch")
+_AUDIT = ("family", "cfg", "keeps_uncond", "evidence_row", "skipped_cfg_row", "batch",
+          "pair_differs")
 _NO_FACTS = {"auto_row": None, "megapixels": None, "quant": None, **dict.fromkeys(_AUDIT)}
 
 
@@ -63,11 +64,12 @@ def test_auto_carries_its_row_quant_and_exact_megapixels(monkeypatch):
     assert "table row 74" in reason and "lens fp8 at 1.81 MP" in reason
     assert resolved.facts == TopologyFacts(
         row=74, quant="fp8", megapixels=1344 * 1344 / 1e6, family="lens", cfg=4.0,
-        keeps_uncond=False, evidence_row=None, skipped_cfg_row=None, batch=1)
+        keeps_uncond=False, evidence_row=None, skipped_cfg_row=None, batch=1,
+        pair_differs=False)
     assert telemetry_facts(resolved) == {
         "auto_row": 74, "megapixels": 1.806, "quant": "fp8", "family": "lens",
         "cfg": 4.0, "keeps_uncond": False, "evidence_row": None,
-        "skipped_cfg_row": None, "batch": 1}
+        "skipped_cfg_row": None, "batch": 1, "pair_differs": False}
 
 
 def test_the_recorded_quant_is_the_one_the_table_matched(monkeypatch):
@@ -90,7 +92,7 @@ def test_world_one_names_no_table_row(monkeypatch):
     assert telemetry_facts(resolved) == {
         "auto_row": None, "megapixels": 1.806, "quant": "fp8", "family": "lens",
         "cfg": 4.0, "keeps_uncond": False, "evidence_row": None,
-        "skipped_cfg_row": None, "batch": 1}
+        "skipped_cfg_row": None, "batch": 1, "pair_differs": False}
 
 
 def test_a_cfg_pp_latent_records_the_flag_and_the_evidence_row(monkeypatch):
@@ -105,6 +107,28 @@ def test_a_cfg_pp_latent_records_the_flag_and_the_evidence_row(monkeypatch):
     assert (facts["auto_row"], facts["evidence_row"], facts["skipped_cfg_row"]) == (15, 15, None)
     assert (facts["family"], facts["cfg"], facts["keeps_uncond"], facts["batch"]) == (
         "krea2", 1.0, True, 1)
+
+
+@pytest.mark.parametrize(("family", "quant", "row", "fallback"),
+                         [("anima", "bf16", 47, 48), ("boogu", "fp8", 79, 78)])
+def test_the_pair_tag_decides_a_pair_scoped_row_and_is_recorded(monkeypatch, family, quant,
+                                                                 row, fallback):
+    # Issue #52: rows 47 and 79 grant cfg2 only to a pair whose text rows
+    # differ, which the sampler node tags on the latent; untagged, auto takes
+    # the family's Ulysses row and records the cfg row it skipped.
+    _header_stubs(monkeypatch, family, quant, 8)
+    samples = torch.zeros(1, 16, 128, 128)
+    tagged = {"samples": samples, common.CFG_PAIR_DIFFERS_METADATA_KEY: True}
+    resolved = common._resolve_topology_for_latent(_model(), tagged, 4.0, 2)
+    assert resolved[0].describe() == "cfg2" and f"table row {row}" in resolved[2]
+    facts = telemetry_facts(resolved)
+    assert (facts["auto_row"], facts["evidence_row"], facts["pair_differs"]) == (row, row, True)
+    resolved = common._resolve_topology_for_latent(_model(), {"samples": samples}, 4.0, 2)
+    assert resolved[0].describe() == "uly2" and f"table row {fallback}" in resolved[2]
+    assert "this pair's rows are equal or unread" in resolved[2]
+    facts = telemetry_facts(resolved)
+    assert (facts["auto_row"], facts["skipped_cfg_row"], facts["pair_differs"]) == (
+        fallback, row, False)
 
 
 def test_an_ungranted_kind_records_the_cfg_row_it_skipped(monkeypatch):
