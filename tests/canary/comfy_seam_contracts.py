@@ -171,6 +171,11 @@ The seams, in run order:
  49. lazy switch              the If/Else and Soft Switch inputs and the branch
                               check_lazy_status evaluates for a fixed choice,
                               which the loader-side wall prices and no other
+ 50. ltx stock-row parity     the globals LTX's blocks reach the fused AdaLN and
+                              the text cross-attention AdaLN by, every fused
+                              AdaLN and gate call a block makes landing on the
+                              stock-row route, and the paired rope helper the
+                              self-attention calls
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -5810,6 +5815,111 @@ def _assert_minimax_h3_context_windows_seam() -> None:
                 "would keep, and it is not the one the window's own guides build")
 
 
+def _assert_ltx_stock_row_parity_seam() -> None:
+    """What the LTX stock-row parity route (adapters/ltx_parity.py) binds in stock's blocks.
+
+    Under sequence parallelism the route launches comfy-kitchen's fused AdaLN at its stream's
+    stock row count and the per-head gate projection at stock's rows and positions. It reaches
+    the norm through the ``comfy`` global of ``BasicAVTransformerBlock.forward``,
+    ``BasicTransformerBlock.forward`` and ``apply_cross_attention_adaln``, and the text cross
+    attention through the ``apply_cross_attention_adaln`` global. Pinned on a tiny real LTXAV
+    block with gated attention and cross-attention AdaLN: ``unroutable`` finds nothing changed;
+    with a geometry three rows past the block's real rows active, every ``ck.rms_adaln`` call and
+    every gate call the block makes arrives at that stock count, so no call bypasses the route;
+    and ``CrossAttention.forward`` still pairs q and k through ``apply_rotary_emb_qk``, the call
+    the patched self-attention mirrors.
+    """
+    import comfy.ldm.lightricks.av_model as av
+    import comfy.ldm.lightricks.model as ltx_model
+    import comfy.ops
+    import comfy.quant_ops
+    import torch
+
+    from dgx_monarch.adapters import ltx_parity
+    from dgx_monarch.adapters.flux3_adaln_parity import loads_global
+
+    assert hasattr(ltx_model, "apply_rotary_emb_qk") and loads_global(
+        ltx_model.CrossAttention.forward, "apply_rotary_emb_qk"), (
+        "ltx stock-row parity seam: CrossAttention.forward no longer pairs rope through "
+        "apply_rotary_emb_qk")
+    torch.manual_seed(50)
+    v_dim, a_dim, rows, a_rows, extra = 16, 8, 6, 4, 3
+    block = av.BasicAVTransformerBlock(
+        v_dim=v_dim, a_dim=a_dim, v_heads=2, a_heads=1, vd_head=8, ad_head=8,
+        v_context_dim=v_dim, a_context_dim=a_dim, apply_gated_attention=True,
+        cross_attention_adaln=True, dtype=torch.float32, device="cpu",
+        operations=comfy.ops.disable_weight_init)
+    for parameter in block.parameters():
+        torch.nn.init.normal_(parameter, mean=0.0, std=0.05)
+    changed = ltx_parity.unroutable([block], ltx_model.apply_cross_attention_adaln)
+    assert not changed, f"ltx stock-row parity seam: {changed} no longer read the routed globals"
+    assert ltx_parity.unroutable(
+        [ltx_model.BasicTransformerBlock(v_dim, 2, 8, context_dim=v_dim, cross_attention_adaln=True,
+                                         dtype=torch.float32, device="cpu",
+                                         operations=comfy.ops.disable_weight_init)],
+        ltx_model.apply_cross_attention_adaln) == [], (
+        "ltx stock-row parity seam: BasicTransformerBlock.forward no longer reads the routed globals")
+
+    seen: dict = {"adaln": [], "gates": []}
+    saved_adaln = comfy.quant_ops.ck.rms_adaln
+    linear_cls = comfy.ops.disable_weight_init.Linear
+    saved_linear = linear_cls.forward
+    gates = {id(getattr(block, name).to_gate_logits): stream
+             for name, stream in ltx_parity.GATE_STREAMS}
+
+    def adaln(x, scale, shift, *args, **kwargs):
+        seen["adaln"].append(x.shape[1])
+        return saved_adaln(x, scale, shift, *args, **kwargs)
+
+    def linear(self, x, *args, **kwargs):
+        if id(self) in gates:
+            seen["gates"].append((gates[id(self)], x.shape[1]))
+        return saved_linear(self, x, *args, **kwargs)
+
+    def rotation(n, heads):
+        angles = torch.rand(1, n, heads, 4)
+        cos, sin = angles.cos(), angles.sin()
+        return (torch.stack((cos, -sin, sin, cos), dim=-1).reshape(1, n, heads, 4, 2, 2), True)
+
+    def emb(width):
+        return torch.randn(1, 1, width) * 0.1
+
+    comfy.quant_ops.ck.rms_adaln, linear_cls.forward = adaln, linear
+    try:
+        state = ltx_parity.StockRows()
+        ltx_parity.bind_stock_row_parity(_one_block_model(block), state)
+        compressed = av.CompressedTimestep
+        streams = {ltx_parity.VIDEO: ltx_parity.ShardRows(rows + extra, rows),
+                   ltx_parity.AUDIO: ltx_parity.ShardRows(a_rows + extra, a_rows)}
+        with torch.no_grad(), state.sharded(streams):
+            block((torch.randn(1, rows, v_dim), torch.randn(1, a_rows, a_dim)),
+                  v_context=torch.randn(1, 3, v_dim), a_context=torch.randn(1, 3, a_dim),
+                  v_timestep=compressed(emb(9 * v_dim), 4), a_timestep=emb(9 * a_dim),
+                  v_pe=rotation(rows, 2), a_pe=rotation(a_rows, 1),
+                  v_cross_pe=rotation(rows, 1), a_cross_pe=rotation(a_rows, 1),
+                  v_cross_scale_shift_timestep=compressed(emb(4 * v_dim), 4),
+                  a_cross_scale_shift_timestep=emb(4 * a_dim),
+                  v_cross_gate_timestep=compressed(emb(v_dim), 4), a_cross_gate_timestep=emb(a_dim),
+                  transformer_options={}, v_prompt_timestep=emb(2 * v_dim),
+                  a_prompt_timestep=emb(2 * a_dim))
+    finally:
+        comfy.quant_ops.ck.rms_adaln, linear_cls.forward = saved_adaln, saved_linear
+    stock_of = {ltx_parity.VIDEO: rows + extra, ltx_parity.AUDIO: a_rows + extra}
+    assert seen["adaln"] and set(seen["adaln"]) <= set(stock_of.values()), (
+        f"ltx stock-row parity seam: a fused AdaLN call bypassed the route ({seen['adaln']})")
+    assert sorted({stream for stream, _ in seen["gates"]}) == [ltx_parity.AUDIO, ltx_parity.VIDEO], (
+        "ltx stock-row parity seam: the block no longer gates both streams")
+    assert all(n == stock_of[stream] for stream, n in seen["gates"]), (
+        f"ltx stock-row parity seam: a gate call bypassed the route ({seen['gates']})")
+
+
+def _one_block_model(block):
+    """A stand-in diffusion model holding one block, as ``bind_stock_row_parity`` reads it."""
+    import types
+
+    return types.SimpleNamespace(transformer_blocks=[block])
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -5860,6 +5970,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("weight-only linear dispatch", _assert_weight_only_linear_dispatch_seam),
     ("minimax h3 context windows", _assert_minimax_h3_context_windows_seam),
     ("lazy switch", _assert_lazy_switch_seam),
+    ("ltx stock-row parity", _assert_ltx_stock_row_parity_seam),
 )
 
 

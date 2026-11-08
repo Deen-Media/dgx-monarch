@@ -401,6 +401,17 @@
 
 ### Rendering
 
+- LTX under sequence parallelism runs the two row-count-keyed calls in each
+  block, comfy-kitchen's fused AdaLN and the per-head gate projection, at one
+  GPU's row count, and the sharded self-attention applies RoPE through the call
+  stock makes. On 2026-11-07 LTX 2.3 on uly2 read one-step latent NRMS 0.012 to
+  0.014 against one GPU at every geometry tried, under the 0.10 floor but not
+  identical, where Wan 2.1 on the same build was identical; an op probe traced
+  it to the gate projection at every geometry and the fused AdaLN at 1024 rows
+  a rank, on torch 2.15 and 2.12 alike. Each rank now does
+  stock's row count of work for those two calls. A ComfyUI whose LTX blocks no
+  longer read the globals this binds refuses a sharded render at load, class P,
+  and canary seam 50 names the change ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-3-t2v)).
 - A LoRA renders as it does in stock ComfyUI. The Workers baked a LoRA with
   ComfyUI's classic merge, the math stock runs only with DynamicVRAM off,
   while stock's default applies a LoRA when a layer casts its weight, in the

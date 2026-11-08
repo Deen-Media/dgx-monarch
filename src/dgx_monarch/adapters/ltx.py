@@ -42,6 +42,11 @@ shortfall and each patched attention is told which gathered rows are synthetic
 and drops them (adapters/usp_pad_exclusion.py). Two of the four are cross
 attentions reading one stream's queries against the other's keys, so they
 carry both row sets.
+
+The two row-count-keyed kernels in a block, comfy-kitchen's fused AdaLN and the
+narrow per-head gate projection, launch at stock's row count while the block
+loop runs (adapters/ltx_parity.py), and the patched self-attention applies RoPE
+through the call stock makes, so a rank's rows round as one GPU rounds them.
 """
 from __future__ import annotations
 
@@ -59,6 +64,9 @@ from .base import (
     shard_seq,
     sp_gather,
 )
+from .ltx_parity import AUDIO as _AUDIO_STREAM
+from .ltx_parity import VIDEO as _VIDEO_STREAM
+from .ltx_parity import ShardRows, StockRows, bind_stock_row_parity
 from .stock_attention import bind_stock_attention, stock_attention_options
 
 log = get_logger(__name__)
@@ -66,7 +74,7 @@ log = get_logger(__name__)
 # The wrapper's private channel to the patched attentions: comfy hands one
 # transformer_options to every attention in a block (BasicAVTransformerBlock.forward).
 _PAD_ROWS_KEY = "_dgxm_ltx_pad_rows"
-VIDEO, AUDIO = "video", "audio"
+VIDEO, AUDIO = _VIDEO_STREAM, _AUDIO_STREAM
 
 # The two comfy.model_base classes this adapter binds, matched exactly: an
 # unvetted LTXV/LTXAV subclass raises typed instead of binding.
@@ -216,8 +224,6 @@ def _make_usp_cross_attention(attn, queries: str = VIDEO, keys: str | None = Non
             # shard is exact; a mask is ignored here as stock ignores it.
             out = self.to_v(x)
         else:
-            from comfy.ldm.lightricks.model import apply_rotary_emb
-
             if mask is not None and not isinstance(mask, _GuideBias):
                 raise UnsupportedModelError(_ATTENTION_BIAS_REFUSAL)
             q = self.q_norm(self.to_q(x))
@@ -225,8 +231,7 @@ def _make_usp_cross_attention(attn, queries: str = VIDEO, keys: str | None = Non
             k = self.k_norm(self.to_k(kv_src))
             v = self.to_v(kv_src)
             if pe is not None:
-                q = apply_rotary_emb(q, pe)
-                k = apply_rotary_emb(k, pe if k_pe is None else k_pe)
+                q, k = _stock_rope(q, k, pe, k_pe)
 
             groups = mask.groups if isinstance(mask, _GuideBias) else None
             pads = transformer_options.get(_PAD_ROWS_KEY) or {}
@@ -244,6 +249,26 @@ def _make_usp_cross_attention(attn, queries: str = VIDEO, keys: str | None = Non
         return self.to_out(out)
 
     return usp_cross_attention
+
+
+def _stock_rope(q, k, pe, k_pe):
+    """RoPE through the call stock's ``CrossAttention.forward`` makes for these operands.
+
+    Stock pairs q and k in one ``apply_rotary_emb_qk`` call when they share a payload and a
+    shape, and rotates each alone otherwise; a ComfyUI from before the paired helper rotates
+    each alone always.
+    """
+    import comfy.ldm.lightricks.model as model
+
+    paired = getattr(model, "apply_rotary_emb_qk", None)
+    if paired is not None and k_pe is None and q.shape == k.shape:
+        return paired(q, k, pe)
+    return model.apply_rotary_emb(q, pe), model.apply_rotary_emb(k, pe if k_pe is None else k_pe)
+
+
+def _stream(stock: int, local: torch.Tensor) -> ShardRows:
+    """A stream sharded on dim 1: stock's rows a sample, and this rank's."""
+    return ShardRows(stock=int(stock), local=int(local.shape[1]))
 
 
 class LTXAdapter(Adapter):
@@ -275,6 +300,9 @@ class LTXAdapter(Adapter):
         usp_self = _make_usp_cross_attention(ctx.usp_attention)
         stock_process_blocks = type(diffusion_model)._process_transformer_blocks
         family = self.family
+        # Refuses before any bind when stock's blocks no longer read the routed globals.
+        rows = StockRows()
+        bind_stock_row_parity(diffusion_model, rows)
 
         def usp_process_blocks(self, x, context, attention_mask, timestep, pe,
                                transformer_options={}, self_attention_mask=None, **kwargs):
@@ -290,12 +318,13 @@ class LTXAdapter(Adapter):
             if timestep is not None and torch.is_tensor(timestep) and timestep.ndim == 3 and timestep.shape[1] > 1:
                 timestep, _ = shard_seq(timestep, dim=1)
 
-            x = stock_process_blocks(
-                self, x, context, attention_mask, timestep, pe,
-                transformer_options=stock_attention_options(
-                    {**transformer_options, _PAD_ROWS_KEY: pad_rows}),
-                self_attention_mask=guide_bias, **kwargs,
-            )
+            with rows.sharded({VIDEO: _stream(orig_len, x)}):
+                x = stock_process_blocks(
+                    self, x, context, attention_mask, timestep, pe,
+                    transformer_options=stock_attention_options(
+                        {**transformer_options, _PAD_ROWS_KEY: pad_rows}),
+                    self_attention_mask=guide_bias, **kwargs,
+                )
             return sp_gather(x, orig_len, dim=1)
 
         for block in diffusion_model.transformer_blocks:
@@ -313,6 +342,9 @@ class LTXAdapter(Adapter):
         video_to_audio = _make_usp_cross_attention(ctx.usp_attention, AUDIO, VIDEO)
         stock_process_blocks = type(diffusion_model)._process_transformer_blocks
         family = self.family
+        # Refuses before any bind when stock's blocks no longer read the routed globals.
+        rows = StockRows()
+        gates = bind_stock_row_parity(diffusion_model, rows)
 
         def shard_maybe_compressed(ts):
             """Per-token shard for plain tensors and CompressedTimestep.
@@ -385,13 +417,17 @@ class LTXAdapter(Adapter):
                 ]
             timestep = [v_ts, a_ts, cross_ts, timestep[3], timestep[4]]
 
-            out = stock_process_blocks(
-                self, [vx, ax], context, attention_mask, timestep,
-                [(v_pe, av_cross_v), (a_pe, av_cross_a)],
-                transformer_options=stock_attention_options(
-                    {**transformer_options, _PAD_ROWS_KEY: pad_rows}),
-                self_attention_mask=guide_bias, **kwargs,
-            )
+            streams = {VIDEO: _stream(v_orig, vx)}
+            if has_audio:
+                streams[AUDIO] = _stream(a_orig, ax)
+            with rows.sharded(streams):
+                out = stock_process_blocks(
+                    self, [vx, ax], context, attention_mask, timestep,
+                    [(v_pe, av_cross_v), (a_pe, av_cross_a)],
+                    transformer_options=stock_attention_options(
+                        {**transformer_options, _PAD_ROWS_KEY: pad_rows}),
+                    self_attention_mask=guide_bias, **kwargs,
+                )
             vx, ax = out[0], out[1]
             vx = sp_gather(vx, v_orig, dim=1)
             if has_audio:
@@ -414,5 +450,5 @@ class LTXAdapter(Adapter):
             for block in getattr(getattr(diffusion_model, name, None), "transformer_1d_blocks", ()):
                 bind_stock_attention(block.attn1, "ltx text connector attention")
         self.bind(diffusion_model, "_process_transformer_blocks", usp_process_blocks)
-        log.info("ltxav USP injected: %d blocks, sp=%d",
-                 len(diffusion_model.transformer_blocks), ctx.topology_sp)
+        log.info("ltxav USP injected: %d blocks, %d gates at stock rows, sp=%d",
+                 len(diffusion_model.transformer_blocks), gates, ctx.topology_sp)

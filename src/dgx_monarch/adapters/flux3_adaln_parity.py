@@ -54,8 +54,9 @@ def at_stock_rows(op: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor,
 
     ``x`` is ``[B, n, D]``. Zero rows after the piece fill the call to stock's
     size, so the launch holds stock's ``B * stock_rows`` kernel rows, and the
-    result keeps the piece's ``n`` rows. The result has the strides of a fresh
-    ``[B, n, D]`` tensor, as stock's own output does, at every batch. At batch
+    result keeps the piece's ``n`` rows at the op's own width (a norm keeps D;
+    LTX's gate projection returns one column a head). The result has the strides
+    of a fresh ``[B, n, width]`` tensor, as stock's own output does, at every batch. At batch
     1 the kept rows are a prefix of the call, and torch counts that prefix as
     contiguous, so ``.contiguous()`` would return it with the call's leading
     stride. A linear after it then cannot fold the rows into one matrix:
@@ -70,7 +71,9 @@ def at_stock_rows(op: Callable[[torch.Tensor], torch.Tensor], x: torch.Tensor,
     call = x.new_empty(batch, stock_rows, width)
     call[:, :rows].copy_(x)
     call[:, rows:].zero_()
-    return op(call)[:, :rows].reshape(batch * rows, width).view(batch, rows, width)
+    kept = op(call)[:, :rows]
+    out_width = kept.shape[-1]
+    return kept.reshape(batch * rows, out_width).view(batch, rows, out_width)
 
 
 def loads_global(forward: Callable[..., Any], name: str) -> bool:

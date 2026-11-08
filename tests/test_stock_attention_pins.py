@@ -419,6 +419,9 @@ class _FakeLtx(torch.nn.Module):
 def test_ltx_text_cross_attention_and_connectors_drop_the_pin(stubs, av):
     stubs.setitem(sys.modules, "comfy.ldm.lightricks.av_model", types.SimpleNamespace(
         CompressedTimestep=type("CompressedTimestep", (), {})))
+    # The fake blocks carry no ComfyUI block code for the stock-row parity route to read;
+    # tests/test_ltx_comfy_exactness.py runs the route on real blocks.
+    stubs.setattr(ltx, "bind_stock_row_parity", lambda model, rows: 0)
     video, audio = _seeded(1, 6, DIM, seed=8), _seeded(1, 3, DIM, seed=9)
     context = _seeded(1, 4, DIM, seed=10)
     pe = (torch.zeros(1, 6, 1, 1, 2, 2), "split")

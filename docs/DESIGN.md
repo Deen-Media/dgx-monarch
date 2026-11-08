@@ -475,7 +475,19 @@ full normalization work. MOSS-Image applies it, through the same
 (`adapters/moss_image_seams.py`), with the rank's window at the front of the
 filled call; its head norm runs after the gather, on stock's rows. Its fused
 q and k norm and RoPE runs unfilled, because on 2026-10-20 comfy-kitchen
-0.2.39 returned stock's bits for that op on every rank's window. The other
+0.2.39 returned stock's bits for that op on every rank's window. LTX applies
+it, through the same `at_stock_rows`, to every `rms_adaln` call of its
+sharded blocks, the text cross attention's included, each filled to its
+stream's stock rows, and to the per-head gate projection, a GEMM one column
+a head wide (`adapters/ltx_parity.py`). On 2026-11-07 LTX 2.3 on uly2 read
+one-step latent NRMS 0.012 to 0.014 against one GPU at every geometry tried,
+where Wan 2.1 on the same build was bit-identical, and an op probe found the
+gate projection rounding tens of thousands of a rank's outputs differently
+from stock's call at every LTX geometry, on cuBLAS 13.4.0.1 and 13.4.1.3
+alike, and the fill exact with the rank's rows at the front, as
+`at_stock_rows` places them, as it was with the rows at their stock offset.
+`at_stock_rows` keeps the op's own output width, so the gate's one column a
+head comes back as stock's does. The other
 families that call comfy-kitchen's `adaln` or `rms_adaln` on sharded rows
 are unchecked
 ([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
