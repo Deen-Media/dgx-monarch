@@ -334,11 +334,24 @@ Gate authority needs every rank on the driver's build: the driver refuses a
 PASS lookup, a ceremony or a grant on a pair whose reports differ or lack the
 build, naming each box's torch and CUDA, and each Worker refuses a normal or
 Fleet grant whose build is not its own (`worker_runtime.py`). The context still
-names one build, so a pair that matches keeps its PASS rows. A Gate
-ceremony proves exactly one model, so dual-model requests are forced onto
-complete stock residency while driver and worker artifact preflight still bind
-both model slots. Driver preflight, worker preflight, and post-adoption checks
-all re-derive the applicable snapshot. Each normal request is explicitly
+names one build, so a pair that matches keeps its PASS rows. A dual-model
+render is proven as one unit. Its ceremony renders the dual request itself,
+runs a swap cycle on each slot that carries a LoRA stack, and writes its
+verdict under a combination key and an artifact digest that name both slots (`gate_dual_identity.py`). A single-model
+PASS therefore never grants a dual render, and a dual PASS never grants a render
+of either model alone; the dual grant binds both artifact sets, and the Worker
+recomputes both before it accepts one. At dispatch a dual render reads two FAIL
+keys, the pair's own and its conditional model's single key, and either FAIL
+turns its levers off: a FAIL on that model alone is the same model on the same
+residency path (`nodes/render_quarantine.py`). Where that proof cannot run, a dual render
+keeps complete stock residency (`nodes/gate_dual.py`). On a cfg-parallel
+topology each rank holds one of the two models and cannot cycle the other. Under
+FSDP the clean-reload proof reloads one slot, so automatic FSDP refuses a dual
+request. Comfy-managed residency has no two-model proof. With `auto_gate=off` a
+dual render also stays stock: it has no residency without its proof. Driver and
+worker artifact preflight bind both model slots in every case. Driver
+preflight, worker preflight, and post-adoption checks all re-derive the
+applicable snapshot. Each normal request is explicitly
 stamped `required`, `stock`, `operator_off`, or `gate_internal`, so an absent
 or stale grant cannot inherit risky defaults.
 Before an explicit or automatic ceremony can retest old authority, one fsynced
@@ -475,21 +488,34 @@ full normalization work. MOSS-Image applies it, through the same
 (`adapters/moss_image_seams.py`), with the rank's window at the front of the
 filled call; its head norm runs after the gather, on stock's rows. Its fused
 q and k norm and RoPE runs unfilled, because on 2026-10-20 comfy-kitchen
-0.2.39 returned stock's bits for that op on every rank's window. LTX applies
-it, through the same `at_stock_rows`, to every `rms_adaln` call of its
-sharded blocks, the text cross attention's included, each filled to its
+0.2.39 returned stock's bits for that op on every rank's window. Flux 1,
+Flux 2, Chroma and LongCat, through the Flux-family forward, and Qwen Image
+2.1 apply it to every `adaln` call of their sharded blocks
+(`adapters/adaln_parity_blocks.py`): on 2026-11-07 uly2 at 512 square read
+one-step NRMS 0.006 to 0.062 against one GPU on Flux 1, Flux 2, Chroma and
+Qwen Image 2.1, while their shipped 1024 square read bit-identical. LongCat,
+and Radiance through Chroma's forward, take the route unmeasured. A block
+whose stock forward stops reading the norm global runs unfilled, and the
+Worker log names it. That path read bit-identical at the shipped sizes and
+off one GPU at 512 square, as every render did before the route, so it does
+not refuse as FLUX.3 does, whose unfilled path missed at shipped sizes. Wan
+2.1 read bit-identical at every size measured, so it runs unfilled. LTX
+applies it, through the same `at_stock_rows`, to every `rms_adaln` call of
+its sharded blocks, the text cross attention's included, each filled to its
 stream's stock rows, and to the per-head gate projection, a GEMM one column
 a head wide (`adapters/ltx_parity.py`). On 2026-11-07 LTX 2.3 on uly2 read
 one-step latent NRMS 0.012 to 0.014 against one GPU at every geometry tried,
-where Wan 2.1 on the same build was bit-identical, and an op probe found the
-gate projection rounding tens of thousands of a rank's outputs differently
-from stock's call at every LTX geometry, on cuBLAS 13.4.0.1 and 13.4.1.3
-alike, and the fill exact with the rank's rows at the front, as
-`at_stock_rows` places them, as it was with the rows at their stock offset.
-`at_stock_rows` keeps the op's own output width, so the gate's one column a
-head comes back as stock's does. The other
-families that call comfy-kitchen's `adaln` or `rms_adaln` on sharded rows
-are unchecked
+the shipped one included, where every call holds far more than 1024 rows,
+and an op probe found the cause: the gate projection rounded tens of
+thousands of a rank's outputs differently from stock's call at every LTX
+geometry, on cuBLAS 13.4.0.1 and 13.4.1.3 alike, and the fused AdaLN did so
+at 1024 rows a rank only. The fill was exact with the rank's rows at the
+front, as `at_stock_rows` places them, as it was with the rows at their
+stock offset. `at_stock_rows` keeps the op's own output width, so the gate's
+one column a head comes back as stock's does. Like FLUX.3's, LTX's unfilled
+path missed at the shipped size, so a block that stops reading the routed
+globals refuses a sharded render. HunyuanVideo 1.5 runs the same Flux blocks
+in its own sharded forward, unfilled and unchecked
 ([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
 
 Ranks must also agree on each model call's batch. ComfyUI's
@@ -587,6 +613,30 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   excludes Kroma, which `topology_cfg_evidence.checkpoint_variant` recognizes
   by the merge record in its header, so a Kroma file keeps row 12; one saved
   without that record reads as Krea2 (VALIDATION.md);
+- a cfg record can be scoped to prompt pairs whose text rows differ. One GPU
+  runs such a pair as two batch-1 calls, which cfg2's per-cond dispatch
+  reproduces, and folds a pair of equal rows into one batch-2 call, which
+  cfg2's two batch-1 calls do not. Anima row 47 and Boogu row 79 were measured
+  on their templates' pairs, whose rows differ; on 2026-11-07, with the first
+  Spark capped, two pairs of equal rows read off one GPU on both rows (one-step
+  NRMS 0.014 to 0.042, no full schedule matching), so those two records grant
+  only a pair the sampler node tagged. Chroma rows 20 and 19 take the same
+  scope: their pair was the shipped one, whose rows differ, and a BF16 pair of
+  equal rows read NRMS 0.034 on cfg2. The tag (`cfg_pair.text_rows_differ`)
+  needs one plain conditioning entry a side whose text tensors differ in rows.
+  It rides on the latent beside the cfg++ tag, so every site that resolves
+  the render's topology, the Gate capability context included, reads the
+  same one, and the wire drops it. An equal pair, a combined, masked or
+  timed conditioning, a Sampler Custom graph whose guider has no negative,
+  and the dual-model guider with a second model wired stay untagged and take
+  each family's Ulysses row (Chroma below 1.2 MP, which has none, the uly2
+  fallback). The rule holds because all three families' text is a
+  `CONDRegular` (Chroma's through Flux's `extra_conds`), which never folds
+  rows that differ, and canary seam 50 (`pair-scoped text conds`) holds that
+  premise against the installed ComfyUI; a family whose text is a
+  `CONDCrossAttn` folds some unequal lengths too
+  (`cfg_dispatch.cross_attn_pair_folds`), so its records would need that rule
+  before they could take the scope (VALIDATION.md);
 - sage auto-on only for fp8 + USP at high res;
 - FSDP only when the model does not fit resident (capacity mode), never for speed;
 - every auto decision logs its row and reason, for example
@@ -1226,7 +1276,11 @@ Category **"DGX Monarch"**. The node surface is small by design:
   specs the workers build against their resident models.
 - `DGXMonarchIdentityGate`: runs one ceremony on demand and writes its verdict
   row; `auto_gate=first_use` runs the same ceremony before a new combination's
-  first render, and `dgxm gate` drives it from the CLI (§6.1).
+  first render through any sampler node, and `dgxm gate` drives it from the CLI
+  (§6.1). A Sampler Custom proof replays the request's own guider, SAMPLER and
+  NOISE objects on the first two steps of its sigma schedule
+  (`nodes/gate_proof_request.py`); a one-sigma schedule renders nothing to
+  compare and runs no proof.
 - `DGXMonarchStatus` / `DGXMonarchClearVRAM`: ops nodes. ClearVRAM returns its
   STRING status at slot 0 and, when a LATENT is connected, passes it through
   slot 1 only after cleanup. With `level=recycle`, the latent is withheld
@@ -1695,6 +1749,27 @@ has no stock to fall back to, so there the refusal answers the render, and an
 explicit Gate node raises it. The no-LoRA FSDP proof keeps its own clean-reload
 price.
 
+**A placement the ceremony would drop is not made.** The ceremony's first leg
+must come from a clean load from the file, so it unloads every rank first. With
+an explicit topology the UNET loader would otherwise place the model at node
+execution and the ceremony would drop it a moment later and load the file again
+(issue #157, a 40.4 GiB file placed twice on 2026-11-06). The loader therefore
+leaves the load to the ceremony's first proof render when a ceremony will run
+before the graph's first render (`nodes/loader_gate_defer.py`). It reads the
+prompt from the loader to the nodes that render its model, collects the LoRA
+stack on the way, and asks what the first-use gate would do for each one; an
+Identity Gate node always defers it. Any doubt keeps the eager load: a Fleet
+consumer, a node the walk does not know, a linked LoRA widget, a projected
+capacity-rescue consent, or an error. A BasicScheduler (DGX Monarch) also keeps
+it: the scheduler loads the model on the Workers to compute its sigmas before
+any ceremony, and the model sampling object it reads comes from a loaded
+model, so a graph with one still loads the file twice. No trust claim changes: the ceremony
+still unloads every rank and loads its first leg from the file, now once, and a
+loader-time placement never stands in for that leg. The loader's own price and
+the render site's credit for an explicit preset are unchanged; the deferred load comes where the ceremony's
+reload came before, after the driver stack, and the Worker's load-time
+capacity check prices it.
+
 **Two windows, not one sum.** The loader checks two peaks separately. The
 transient window covers loading against MemAvailable minus the reserve: a
 stock load uses about 2.1x the artifact size while host and device copies
@@ -1722,7 +1797,8 @@ to place. The refusal leads with one plain sentence, the figures inside its
 first 200 characters, and then names what would fit, each tried in both
 windows: same-stem files on disk here in place of the DiT or a driver model, a
 switch whose other setting skips a model, and a pair with the Init node's
-topology set to `uly2+fsdp`, with its Identity Gate step. **A remedy is never
+topology set to `uly2+fsdp`, whose first render runs the gate's clean-reload
+proof. **A remedy is never
 one the graph would refuse.** A DiT file is named only when a graph here names
 it (the artifact manifest lists it), its kind is one every topology here runs,
 and none of the refusals the driver can read before a load applies: the LoRA
@@ -2889,7 +2965,9 @@ Every milestone must satisfy this checklist:
   and faster than uly2 at every measured size of each new band: Chroma BF16,
   FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from 1.2 to
   1.77 MP (row 68), Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15), and
-  Boogu FP8 and Anima BF16 below 1.2 MP (rows 79 and 47). Each upper band
+  Boogu FP8 and Anima BF16 below 1.2 MP (rows 79 and 47; since 2026-11-07
+  these and Chroma's rows 20 and 19 take only a prompt pair whose text rows
+  differ). Each upper band
   ends at the largest size measured; the two lower bands follow rows 20 and 28
   and rest on one size, 1.05 MP. Krea2 INT8 cfg2 was exact but ran 0.97x to
   1.08x against uly2, so it kept Ulysses; LongCat cfg2 above 1.2 MP was not

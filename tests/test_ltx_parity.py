@@ -66,7 +66,7 @@ def test_a_call_of_another_row_count_refuses_class_p():
         at_stream_rows(_row_local, torch.randn(1, 5, 3), ShardRows(8, 4), "gate projection")
     assert parse_refusal_tag(str(raised.value)).refusal_class is RefusalClass.PHYSICS
     assert "carried 5 rows where this rank holds 4" in str(raised.value)
-    assert "canary seam 50" in str(raised.value)
+    assert "canary seam 51" in str(raised.value)
 
 
 def test_stock_rows_live_only_inside_the_block_loop_and_on_one_thread():
@@ -207,7 +207,7 @@ def test_bind_refuses_before_binding_anything_on_a_changed_block(monkeypatch):
     model = types.SimpleNamespace(transformer_blocks=[good, changed])
     with pytest.raises(UnsupportedModelError) as raised:
         ltx_parity.bind_stock_row_parity(model, StockRows())
-    assert "Changed.forward" in str(raised.value) and "canary seam 50" in str(raised.value)
+    assert "Changed.forward" in str(raised.value) and "canary seam 51" in str(raised.value)
     assert "forward" not in vars(good), "a block was bound before the refusal"
 
 

@@ -311,20 +311,22 @@ class GPUWorker(RDMAHandoffMixin, FsdpGateCycleMixin, CancellableSampleMixin, Va
     @concurrent_endpoint
     async def gate_swap_cycle(self, unet_name: str, options: dict | None = None,
                               lora_stack: list | None = None,
-                              expected_artifact_identity: dict | None = None) -> dict:
+                              expected_artifact_identity: dict | None = None,
+                              slot: str = "cond") -> dict:
         weight_dtype_from_options(options)
         async with self._gpu_lock:
             return await self._on_gpu(
                 self._gate_swap_cycle_impl, unet_name, options, lora_stack,
-                expected_artifact_identity)
+                expected_artifact_identity, slot)
 
     @cleanup_on_failure
     def _gate_swap_cycle_impl(self, unet_name: str, options: dict | None = None,
                               lora_stack: list | None = None,
-                              expected_artifact_identity: dict | None = None) -> dict:
+                              expected_artifact_identity: dict | None = None,
+                              slot: str = "cond") -> dict:
         from .gate_cycle import run
 
-        return run(self, unet_name, options, lora_stack, expected_artifact_identity)
+        return run(self, unet_name, options, lora_stack, expected_artifact_identity, slot)
 
     @concurrent_endpoint
     async def unload(self) -> dict:

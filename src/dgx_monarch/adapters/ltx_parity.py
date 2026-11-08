@@ -26,7 +26,7 @@ fused-norm route reaches stock's block code through its ``comfy`` global, with a
 whose ``quant_ops.ck.rms_adaln`` is the filled call and every other name stock's own, and
 through the module global ``apply_cross_attention_adaln``, which the block's text cross
 attention calls for both streams. Topologies without sequence parallelism never bind. Canary
-seam 50 (ltx stock-row parity) holds the globals this reads.
+seam 51 (ltx stock-row parity) holds the globals this reads.
 """
 from __future__ import annotations
 
@@ -69,7 +69,7 @@ def refuse_unplanned_call(detail: str) -> NoReturn:
         f"ltx: {detail} inside the sharded block loop, so ComfyUI changed the LTX block. This "
         "release launches each row-count-keyed call at stock's row count and cannot show that "
         "a call it does not know computes what one GPU computes. Use an updated dgx-monarch, "
-        "or topology 'single' (mode=local with gpus_per_host=1); canary seam 50 (ltx "
+        "or topology 'single' (mode=local with gpus_per_host=1); canary seam 51 (ltx "
         "stock-row parity) names the change.",
     ))
 
@@ -86,7 +86,7 @@ def refuse_unroutable(changed: list[str]) -> NoReturn:
         "parity route binds, so the sharded forward cannot launch the fused AdaLN at stock's "
         "row count and cannot show that it computes what one GPU computes. Use topology "
         "'single' (mode=local with gpus_per_host=1), or a dgx-monarch release that supports "
-        "this ComfyUI; canary seam 50 (ltx stock-row parity) names the change.",
+        "this ComfyUI; canary seam 51 (ltx stock-row parity) names the change.",
     ))
 
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+from ..cfg_pair import text_rows_differ
 from ..constants import MODEL_TYPE, NODE_CATEGORY
 from .refusal_lead import lead_with_refusal
 from .render_preflight import sampler_latent
@@ -132,7 +133,7 @@ class DGXMonarchIdentityGate:
             request,
             # Tagged as the samplers tag it, so this proof binds the topology
             # a later render of the same sampler resolves.
-            sampler_latent(latent_image, sampler_name),
+            sampler_latent(latent_image, sampler_name, text_rows_differ(positive, negative)),
             float(cfg),
             int(steps),
             origin="explicit",

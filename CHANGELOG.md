@@ -129,8 +129,8 @@
   available, 9.0 GiB short") and names what would fit: the same model in
   another precision on disk here (the INT8 ConvRot and W4A8 DiT and upsampler
   files), a switch whose other setting skips a model, and a pair with the Init
-  node's topology set to `uly2+fsdp`, which `auto` never picks, after an
-  Identity Gate PASS on it. It never names a file the graph would then refuse:
+  node's topology set to `uly2+fsdp`, which `auto` never picks, whose first
+  render runs the gate's clean-reload proof. It never names a file the graph would then refuse:
   no INT8 MOSS-Image file beside a LoRA, no W4A8 file on a `*+fsdp` preset, no
   file that pins an attention kernel off Ulysses and ring, and no DiT file no
   graph here names. It also offers the Load with slab residency card, whose
@@ -263,10 +263,7 @@
 - Template Notes describe the identity gate as it runs: proof renders of at
   most two steps on the graph's own mesh and topology, before and after the
   swap or reload under test, plus one with slab off when slab is on, never a
-  stock single-GPU load. The LTX and p-h3-image graphs, which sample through
-  Sampler Custom, now say they run no automatic gate and render with slab and
-  low-RSS off until an Identity Gate PASS, and the dual-model Ideogram 4 graph
-  says it always renders that way. The Identity Gate's Note and steps tooltip
+  stock single-GPU load. The Identity Gate's Note and steps tooltip
   call a PASS a finite check instead of saying 2 steps prove as much as 20.
   Notes no longer say FSDP refuses fp8, int8 or fp16 files or that Anima's
   adapter makes it refuse; the Flux 2, Kandinsky 5 Pro and Anima Notes state
@@ -401,6 +398,15 @@
 
 ### Rendering
 
+- uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
+  fused-norm call of their sharded blocks to the rows one GPU normalizes, as
+  FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its
+  kernel by a call's rows, and at 512 square a rank's call fell on the other
+  side of that switch: on 2026-11-07 uly2 there read one-step NRMS 0.006 to
+  0.062 against one GPU, while the shipped 1024 square stayed bit-identical.
+  Sizes below about 1024 square are expected to match one GPU exactly now; a
+  hardware re-read is pending
+  ([fused AdaLN switch](docs/VALIDATION.md#fused-adaln-switch-other-families)).
 - LTX under sequence parallelism runs the two row-count-keyed calls in each
   block, comfy-kitchen's fused AdaLN and the per-head gate projection, at one
   GPU's row count, and the sharded self-attention applies RoPE through the call
@@ -411,7 +417,52 @@
   a rank, on torch 2.15 and 2.12 alike. Each rank now does
   stock's row count of work for those two calls. A ComfyUI whose LTX blocks no
   longer read the globals this binds refuses a sharded render at load, class P,
-  and canary seam 50 names the change ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-3-t2v)).
+  and canary seam 51 names the change ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-3-t2v)).
+- `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP and on Chroma
+  below 1.64 MP only when the prompt and the negative encode to different text
+  rows, as on the shipped graphs, and Ulysses for an equal pair. One GPU folds
+  an equal pair into one batch-2 call, which cfg2's two calls do not
+  reproduce: on 2026-11-07 such pairs read one-step NRMS 0.014 to 0.042
+  against one GPU on Anima and Boogu, and no full schedule matched, while the
+  shipped pairs stayed bit-identical; Chroma BF16 had read NRMS 0.034 on an
+  equal pair. The sampler nodes tag the pair on the latent, and the render's
+  telemetry records it as `pair_differs`. Explicit `cfg2` on an equal pair
+  still renders. At world 4 an equal pair on these rows no longer refuses at
+  batch 1: it takes the family's Ulysses row, folded into `uly2+ring2`, and
+  at batch 2 `uly2+dp2`
+  ([cfg2 rows](docs/VALIDATION.md#campaign-k-equal-pairs)).
+- Sampler Custom renders run the first-use identity gate, as KSampler renders
+  do. The six LTX graphs and p-h3-image used to render on stock residency until
+  someone ran the Identity Gate node, and refused on a `*+fsdp` preset. Now the
+  first render of a new combination runs the check on its own call: the same
+  guider, sampler, noise and seed, on the first two steps of its sigma schedule.
+  It records the verdict, the render follows, and later renders skip the check.
+  A graph with no LoRA, whose family slab residency does not cover, records
+  INCONCLUSIVE with nothing to compare, as a KSampler graph does; a LoRA,
+  explicit slab, comfy-managed residency or a `*+fsdp` preset gets a real
+  comparison ([TROUBLESHOOTING #61](docs/TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
+- A dual-model render (Ideogram 4) runs the first-use gate over both of its
+  models. The proof is the dual render itself, and its PASS binds both
+  checkpoints and LoRA stacks under a combination key of its own, so it grants
+  only that pair and a single-model PASS never grants it; the Worker checks
+  both before it uses the grant. On cfg2, where each rank holds one of the two
+  models, a dual render keeps stock residency. On a `*+fsdp` preset it still
+  refuses under `auto_gate=first_use`, now because the clean-reload proof
+  reloads one model, and comfy-managed residency still refuses it. A dual check
+  that cannot finish turns slab and low-RSS off for that pair alone, and a FAIL
+  recorded for the pair or for its conditional model turns them off for the
+  dual render ([TROUBLESHOOTING #61](docs/TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
+- A model on an explicit topology loads once when its first render runs the
+  identity gate. The UNET loader placed it on every rank, the gate dropped it
+  a moment later, and the first proof render loaded the file again: about half
+  a minute to a minute and a second pass over the file per rank, and on
+  2026-11-06 a capacity
+  refusal for the Kandinsky 5 Pro template, priced while the first copy's host
+  memory still counted. The loader now leaves the load to the gate's first
+  proof render when the gate will run. A graph with a BasicScheduler (DGX
+  Monarch) still loads twice, because the scheduler loads the model to compute
+  its sigmas before the gate; no shipped template uses one. The gate, its
+  verdict and the render are unchanged ([TROUBLESHOOTING #61](docs/TROUBLESHOOTING.md#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
 - A LoRA renders as it does in stock ComfyUI. The Workers baked a LoRA with
   ComfyUI's classic merge, the math stock runs only with DynamicVRAM off,
   while stock's default applies a LoRA when a layer casts its weight, in the

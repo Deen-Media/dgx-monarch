@@ -59,6 +59,7 @@ on:
       - "tests/test_mage_flow_comfy_differential.py"
       - "tests/test_qwen_image21_adapter.py"
       - "tests/test_qwen_image21_prefix_cache.py"
+      - "tests/test_adaln_parity_blocks.py"
       - "tests/test_qwen_text_projections.py"
       - "tests/test_render_memory_price.py"
       - "tests/test_wan_variants.py"
@@ -304,6 +305,15 @@ jobs:
         env:
           COMFY_DIR: ../ComfyUI
         run: pytest -q tests/test_qwen_image21_adapter.py tests/test_qwen_image21_prefix_cache.py
+      # The fused-norm parity route (issue #54): the installed Flux-family and
+      # Qwen Image 2.1 blocks still read the norm globals it keys on, a bound
+      # real Flux block launches at stock's rows with stock's output, and two
+      # Gloo ranks launch every Qwen Image 2.1 norm at stock's rows.
+      - name: Flux-family and Qwen Image 2.1 fused-norm parity vs comfy master (CPU)
+        env:
+          COMFY_DIR: ../ComfyUI
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_adaln_parity_blocks.py
       - name: Wan Animate 2 native forward vs comfy master (CPU)
         env:
           COMFY_DIR: ../ComfyUI
@@ -438,6 +448,7 @@ jobs:
           tests/test_flux3_cond_branch.py
           tests/test_qwen_image21_adapter.py
           tests/test_qwen_image21_prefix_cache.py
+          tests/test_adaln_parity_blocks.py
           tests/test_wan_variants.py
           tests/test_int8_linear_layout.py
           tests/test_render_memory_price.py

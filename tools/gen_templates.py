@@ -730,12 +730,12 @@ def _tail(sampler_key: str) -> list[dict]:
 
 
 # Many template notes share these sentences. GATE states what the first-use
-# gate compares and what it costs, on a graph a KSampler drives: the ceremony
-# renders on the graph's own mesh and topology (nodes/gate_ceremony.py,
+# gate compares and what it costs, on every graph a DGX Monarch sampler drives,
+# Sampler Custom and the dual-model guider included: the ceremony renders on the
+# graph's own mesh and topology (nodes/gate_ceremony.py,
 # nodes/gate_cross_mode.py) and the automatic one runs at most two steps
-# (nodes/auto_gate.py). GATE_CUSTOM replaces it on a Sampler Custom graph,
-# which never reaches the automatic gate (auto_gate_context), and GATE_DUAL on
-# a dual-model graph, which never runs one (maybe_auto_gate). DERIVED marks a
+# (nodes/gate_proof_request.py). GATE_DUAL_PLACEMENTS adds, on a dual-model
+# graph, the two placements where its proof cannot run (nodes/gate_dual.py). DERIVED marks a
 # graph read off the adapter and the stock node definitions, not replayed from
 # a committed reference render. FRAMES explains the image-batch decode tail on
 # the video graphs. FSDP_RULES states the FSDP launch contract
@@ -743,8 +743,7 @@ def _tail(sampler_key: str) -> list[dict]:
 # words inline instead of using the constant; regenerate and diff after any
 # edit. tests/test_template_note_claims.py holds each one to the code. Its
 # AUTO_GATED_KINDS and DUAL_MODEL_AUTO_GATES switches name the renders the
-# first-use gate reaches; GATE_CUSTOM and GATE_DUAL serve only the eight graphs
-# those switches leave out, and the switches flip together with them.
+# first-use gate reaches.
 GATE = ("The first render of a new model, LoRA and residency combination runs the "
         "identity gate before any pixels, on this graph's mesh and topology: proof "
         "renders of at most two steps, from a fresh load before and after the swap "
@@ -752,16 +751,11 @@ GATE = ("The first render of a new model, LoRA and residency combination runs th
         "one more render with slab off must match too. Allow a few minutes for these "
         "two to four proof renders. Later renders of the same combination skip the "
         "gate.")
-GATE_CUSTOM = ("This graph samples through Sampler Custom (DGX Monarch), which runs no "
-               "automatic identity gate. With auto_gate on first_use, as shipped, each "
-               "render runs with slab and low-RSS residency off, and a *+fsdp preset "
-               "refuses, until an Identity Gate (DGX Monarch) node passes the same "
-               "model, LoRAs, Init settings and topology; after that PASS, renders use "
-               "the residency the Init node asks for.")
-GATE_DUAL = ("Both model slots render with slab and low-RSS residency off, whatever the "
-             "Init node says, and no identity gate runs: a gate proves one model, so it "
-             "cannot vouch for the second slot. With auto_gate on first_use, as shipped, "
-             "a *+fsdp preset refuses this graph for the same reason.")
+GATE_DUAL_PLACEMENTS = ("The gate proves both models together, and its verdict covers only "
+                        "this pair. It cannot run on cfg2, where each rank holds one of the "
+                        "two models, so a cfg2 render uses stock residency; and with auto_gate "
+                        "on first_use, as shipped, a *+fsdp preset refuses this graph, "
+                        "because the clean-reload proof reloads one model.")
 FSDP_RULES = ("FSDP shards a bf16 or fp16 file, and an fp8 or int8 file as its stored "
               "bytes; it refuses block-scaled files such as mxfp8 and nvfp4, and an fp8 "
               "weight_dtype cast at load. A LoRA on FSDP needs lora_low_rss on, and "
@@ -922,11 +916,9 @@ TEMPLATES = {
              "Each proof render runs the steps widget's count, 2 here, as the "
              "automatic gate does. A PASS means these renders matched bit for bit: a "
              "finite check of what ran, not a proof for every prompt, size or step "
-             "count. With a KSampler you rarely need this node, because the first "
-             "render of a new combination runs the gate on its own. Sampler Custom "
-             "graphs never do, so this node is how they earn slab and low-RSS "
-             "residency, and it is the CI form; strict=true raises on any verdict but "
-             "PASS."},
+             "count. You rarely need this node, because the first render of a new "
+             "combination runs the gate on its own, through any DGX Monarch sampler. "
+             "It is the CI form: strict=true raises on any verdict but PASS."},
             {"key": "lora0", "type": "DGXMonarchLoraLoader", "pos": (2, 0),
              "widgets": {"lora_name": "your_first_lora.safetensors", "strength_model": 0.8},
              "wire": {"model": ("unet", 0)}},
@@ -2510,7 +2502,7 @@ TEMPLATES = {
              "needing a mesh model. The two text-encoder files load through one "
              "Dual CLIP Loader set to type ltxv. Large video latents can come back "
              "over RDMA; that path is off by default and its native leg is NOT RUN / "
-             "HOLD (DESIGN.md 5.6). " + FRAMES + " " + GATE_CUSTOM + " Expects "
+             "HOLD (DESIGN.md 5.6). " + FRAMES + " " + GATE + " Expects "
              "ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors in "
              "models/diffusion_models, gemma_3_12B_it.safetensors plus "
              "ltx-2.3_text_projection_bf16.safetensors in models/text_encoders, and "
@@ -2600,7 +2592,7 @@ TEMPLATES = {
              "load checks, but has no passing output comparison. This graph cannot "
              "use cfg-parallel, so cfg stays 1.0. Describe the soundtrack after Audio: in the "
              "prompt, and quote a line of dialogue to make the model speak it. "
-             + FRAMES + " " + GATE_CUSTOM +
+             + FRAMES + " " + GATE +
              " Expects ltx-2.3-22b-distilled_transformer_only_fp8_scaled.safetensors in "
              "models/diffusion_models, gemma_3_12B_it.safetensors and "
              "ltx-2.3_text_projection_bf16.safetensors in models/text_encoders through "
@@ -2723,7 +2715,7 @@ TEMPLATES = {
              "tested with. The vendor replaced the earlier revision in August 2026 "
              "to align it with the LTX-2.5 checkpoints, so a copy downloaded "
              "before then has a different sha256 and gives different output. "
-             + FRAMES + " " + GATE_CUSTOM + " Expects "
+             + FRAMES + " " + GATE + " Expects "
              "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot.safetensors in "
              "models/diffusion_models, "
              "gemma4-12b-with-proj-ltx-2.5-comfy-int8-convrot.safetensors in "
@@ -2836,7 +2828,7 @@ TEMPLATES = {
              "the image passes through LTXV Preprocess at img_compression 18, and it "
              "runs strength 0.7 in the first of two stages and 1.0 in the second. "
              "This template takes the route the row proves, and one stage wants "
-             "strength 1.0. " + FRAMES + " " + GATE_CUSTOM + " Expects the same four files "
+             "strength 1.0. " + FRAMES + " " + GATE + " Expects the same four files "
              "as the text to video template, from the same gated Hugging Face repo. "
              + DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
@@ -2945,7 +2937,7 @@ TEMPLATES = {
              "stock template will not match at 1.0. Point Load Image at your own "
              "first frame. One guide frame gives 14960 video rows, still even. "
              + FRAMES + " " +
-             GATE_CUSTOM + " " + DERIVED},
+             GATE + " " + DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name":
                          "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot"
@@ -3061,7 +3053,7 @@ TEMPLATES = {
              "and image-to-video graphs ask KSampler Select for euler_ancestral and "
              "get comfy's eta 1.0. Point both Load Image nodes at your own frames. "
              + FRAMES + " " +
-             GATE_CUSTOM + " " + DERIVED},
+             GATE + " " + DERIVED},
             {"key": "unet", "type": "DGXMonarchUNETLoader", "pos": (1, 0),
              "widgets": {"unet_name":
                          "ltx-2.5-22b-distilled-transformer-comfy-int8-convrot"
@@ -3710,7 +3702,7 @@ TEMPLATES = {
              "setting, so output and speed are the same either way. The 24.0 s "
              "against 26.0 s measured with it on (2026-08-25) is one 2-second "
              "polling interval, and both settings read 1-step NRMS 0.069 against "
-             "DP2. " + GATE_DUAL +
+             "DP2. " + GATE + " " + GATE_DUAL_PLACEMENTS +
              " Expects ideogram4_fp8_scaled.safetensors plus "
              "ideogram4_unconditional_fp8_scaled.safetensors in "
              "models/diffusion_models, qwen3vl_8b_fp8_scaled.safetensors in "
@@ -5757,7 +5749,7 @@ def _p_h3_image_note() -> str:
         "images to p-h3-image Conditioning: image_1 is the image to edit and the rest "
         "are references; on hardware an edit on uly2 matched the same edit on one rank, "
         "and no edit has been compared with stock yet. The driver holds the text "
-        "encoder, the upsampler and the VAE beside a 37.7 GiB DiT. " + GATE_CUSTOM + " "
+        "encoder, the upsampler and the VAE beside a 37.7 GiB DiT. " + GATE + " "
         "Expects " + P_H3_DIT["bf16"] + " in models/diffusion_models, "
         + P_H3_ENCODER["bf16"] + " and " + P_H3_UPSAMPLER + " in models/text_encoders, "
         "and " + P_H3_VAE["bf16"] + " in models/vae. " + DERIVED)

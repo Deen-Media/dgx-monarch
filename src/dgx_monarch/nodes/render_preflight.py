@@ -26,6 +26,9 @@ LATENT_DOWNSCALE_METADATA_KEY = "_dgxm_latent_downscale"
 # Set by the sampler nodes when the sampler keeps the uncond pass at CFG 1.0,
 # so every site that resolves the topology from this latent reads the same.
 CFG_KEEPS_UNCOND_METADATA_KEY = "_dgxm_cfg_keeps_uncond"
+# Set beside it when the prompt pair's text rows differ (cfg_pair); a guider
+# carries the same key for Sampler Custom, which sees no conditioning.
+CFG_PAIR_DIFFERS_METADATA_KEY = "_dgxm_cfg_pair_rows_differ"
 RESIDENT_ADOPTION_EVIDENCE_KEY = "_dgxm_adoption_evidence"
 
 
@@ -37,21 +40,25 @@ def validate_latent_downscale(value: object) -> int:
     return value
 
 
-def sampler_latent(latent: dict, sampler_name: object) -> dict:
-    """A copy of a sampler node's input latent, tagged for its sampler.
+def sampler_latent(latent: dict, sampler_name: object, pair_differs: bool = False) -> dict:
+    """A copy of a sampler node's input latent, tagged for its sampler and pair.
 
-    The tag marks a sampler that keeps the uncond pass at CFG 1.0
-    (topology.sampler_keeps_uncond_at_cfg1). Every site that resolves this
-    render's topology reads it off the latent, so the Gate token and the
-    render agree; an inherited tag is dropped first, so a plain sampler never
-    keeps one. latent_without_topology_metadata strips it before the wire.
+    One tag marks a sampler that keeps the uncond pass at CFG 1.0
+    (topology.sampler_keeps_uncond_at_cfg1), the other a prompt pair whose
+    text rows differ (cfg_pair.text_rows_differ). Every site that resolves this
+    render's topology reads them off the latent, so the Gate token and the
+    render agree; inherited tags are dropped first, so a plain sampler never
+    keeps one. latent_without_topology_metadata strips both before the wire.
     """
     from ..topology import sampler_keeps_uncond_at_cfg1
 
     tagged = dict(latent)
     tagged.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
+    tagged.pop(CFG_PAIR_DIFFERS_METADATA_KEY, None)
     if sampler_keeps_uncond_at_cfg1(sampler_name):
         tagged[CFG_KEEPS_UNCOND_METADATA_KEY] = True
+    if pair_differs:
+        tagged[CFG_PAIR_DIFFERS_METADATA_KEY] = True
     return tagged
 
 
@@ -65,6 +72,7 @@ def latent_without_topology_metadata(latent: dict) -> dict:
     clean = dict(latent)
     clean.pop(LATENT_DOWNSCALE_METADATA_KEY, None)
     clean.pop(CFG_KEEPS_UNCOND_METADATA_KEY, None)
+    clean.pop(CFG_PAIR_DIFFERS_METADATA_KEY, None)
     clean.pop(RESIDENT_ADOPTION_EVIDENCE_KEY, None)
     clean.pop(accuracy_waiver.STAMPED_RESULT_KEY, None)
     return clean

@@ -318,8 +318,8 @@ def test_every_untagged_refusal_the_runtime_raises_is_recognised():
     assert len(denials) >= 5
     texts = [*denials,
              "automatic FSDP Gate context/ledger lookup failed",
-             "automatic FSDP execution is unavailable for a dual-model request "
-             "because the clean-reload Gate proves one model only",
+             "automatic FSDP execution is unavailable for a dual-model request: "
+             "the FSDP clean-reload proof reloads one model slot, not both",
              "explicit topology preset 'dp2' on world 2 preserves its literal "
              "model-parallel degree and therefore leaves dp2, but latent batch 1 "
              "is not divisible by 2.",
@@ -513,9 +513,16 @@ def test_an_auto_row_that_cannot_resolve_labels_rather_than_aborting(tmp_path):
     config = _rig(tmp_path)
     config["world"] = 4
     # Keep the tiny graph and switch only its header signature to Chroma bf16,
-    # whose auto row at 1 MP is cfg2. At world 4 that row cannot fold its spare
-    # ranks, so auto refuses, and the matrix must label that refusal.
+    # whose auto row at 1 MP is cfg2 for a prompt pair of different text rows,
+    # so the graph carries two different prompts. At world 4 that row cannot
+    # fold its spare ranks, so auto refuses, and the matrix must label that refusal.
     _checkpoint(config["model_dir"], "krea2_raw_bf16.safetensors", "chroma")
+    path = config["out_dir"] / "graphs" / "krea2.json"
+    graph = json.loads(path.read_text())
+    graph["6"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "a red fox in snow"}}
+    graph["7"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "blurry"}}
+    graph["4"]["inputs"].update(positive=["6", 0], negative=["7", 0])
+    path.write_text(json.dumps(graph))
     cells, _pruned, _unmatched = matrix.build_cells(config)
     auto = [cell for cell in cells if cell["preset"] == "auto" and cell["template"] == "krea2"
             and cell["session"] == "cluster"]
@@ -997,19 +1004,41 @@ def test_a_sampler_custom_cfg_pp_graph_keeps_the_cfg_one_skip_under_auto(tmp_pat
 
 def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
     # The sweep's set must name exactly the node classes whose sample call
-    # hands sampler_latent a sampler name. Sampler Custom passes None.
-    tagging, untagged = set(), set()
+    # hands sampler_latent a sampler name. Sampler Custom passes None. Every
+    # call also hands it the pair tag (cfg_pair), which the sweep predicts
+    # with auto_pair_differs.
+    tagging, untagged, pairless = set(), set(), set()
     for path in sorted((REPO / "src" / "dgx_monarch" / "nodes").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for klass in (node for node in tree.body if isinstance(node, ast.ClassDef)):
             for call in ast.walk(klass):
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) \
-                        and call.func.id == "sampler_latent" and len(call.args) == 2:
+                        and call.func.id == "sampler_latent":
                     named = not (isinstance(call.args[1], ast.Constant)
                                  and call.args[1].value is None)
                     (tagging if named else untagged).add(klass.name)
+                    if len(call.args) != 3:
+                        pairless.add(klass.name)
     assert tagging == set(matrix.UNCOND_TAGGING_SAMPLERS)
     assert untagged == {"DGXMonarchSamplerCustom"}
+    assert not pairless, f"sampler_latent called without the pair tag in {sorted(pairless)}"
+
+
+def test_the_sweep_predicts_the_pair_tag_from_the_prompt_texts():
+    assert matrix.auto_pair_differs({"prompts": {"positive": "a cat", "negative": "blurry"}})
+    assert not matrix.auto_pair_differs({"prompts": {"positive": "blurry", "negative": "blurry"}})
+    # An unresolved pair is no pair at all (prompt_texts), and reads untagged.
+    assert not matrix.auto_pair_differs({"prompts": {}})
+    # Token counts for a stream the tag reads decide: two texts of equal rows
+    # read as equal. Anima's counted stream is its T5 ids, not the Qwen3 rows
+    # the tag reads, so the texts stand in there.
+    facts = {"prompts": {"positive": "a cat", "negative": "a dog"}}
+    assert not matrix.auto_pair_differs(
+        facts, {"family": "chroma", "text_tokens": {"positive": 7, "negative": 7}})
+    assert matrix.auto_pair_differs(
+        facts, {"family": "chroma", "text_tokens": {"positive": 7, "negative": 9}})
+    assert matrix.auto_pair_differs(
+        facts, {"family": "anima", "text_tokens": {"positive": 7, "negative": 7}})
 
 
 def test_an_artifact_groups_array_names_the_base_loaders_extras(tmp_path):

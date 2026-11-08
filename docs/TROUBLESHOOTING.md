@@ -3,10 +3,10 @@
 See [CONCEPTS.md](CONCEPTS.md) for project terminology. Search this page for
 the error text or symptom; report failures not covered here.
 
-> **A cold combination on a normal KSampler path can wait roughly 2-4 minutes
-> on the tested hardware before showing first pixels.** Model size, storage,
-> and hardware change that timing. This is expected with the default
-> `auto_gate=first_use`: DGX Monarch KSampler and KSampler Advanced prove a new
+> **A cold combination can wait roughly 2-4 minutes on the tested hardware
+> before showing first pixels.** Model size, storage, and hardware change that
+> timing. This is expected with the default `auto_gate=first_use`: every DGX
+> Monarch sampler, Sampler Custom included, proves a new
 > model/residency/LoRA combination before dispatching the user's first render,
 > rather than rendering once through an unverified optimized path. Do not restart
 > a healthy job during this proof. **Every dgx-monarch release version
@@ -22,10 +22,10 @@ the error text or symptom; report failures not covered here.
 > slab is active. A new model may also need a render to identify its family
 > before reloading into slab, for up to four renders total. Fleet skips
 > the inline identity check: an unverified Fleet combination runs with
-> slab and low-RSS residency forced off. Single-model custom samplers
-> require the explicit Identity Gate node. Dual-model custom requests are
-> always dispatched with both residency optimizations off; the single-model
-> Gate cannot authorize their second model slot.
+> slab and low-RSS residency forced off. A dual-model render proves both of
+> its models in one check, and only that check covers the pair; on cfg2, where
+> each rank holds one of the two models, it renders on stock residency, and on
+> a `*+fsdp` preset it refuses ([#61](#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
 
 ## 1. Attach fails with `MESH_ATTACH_CONFIG_TIMEOUT`
 
@@ -1977,7 +1977,8 @@ refusal names what would fit first, each one priced in both windows: files on
 disk here that hold the same model in another precision, in place of the DiT or
 of a driver model; a lazy switch whose other setting skips a model; and on a
 pair, the Init node's topology set to `uly2+fsdp`, which `auto` never picks,
-where the head holds half the DiT, after an Identity Gate PASS on that preset.
+where the head holds half the DiT and the first render runs the gate's
+clean-reload proof before it samples.
 It never names a file this graph would then refuse: a DiT file is named only
 when a graph here names it (the artifact manifest lists it) and none of the
 refusals the driver can read from its header applies, so no INT8 MOSS-Image
@@ -2006,7 +2007,7 @@ admitted DiT load; see [VALIDATION.md](VALIDATION.md).
 
 | Window | Charge and remedy |
 |---|---|
-| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists. Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
+| `load` | Stock placement peaks near 2.1x checkpoint size. An explicit preset loads at the loader node, before the driver stack exists, unless the first render runs the identity gate, whose first proof render then loads it (a graph with a BasicScheduler (DGX Monarch) still loads at the loader). Under `auto` the load waits for the first render, when the driver already holds every model the graph loads, so this window charges those models too. Slab avoids the host copy and may offer rescue. |
 | `resident` | Weights plus the graph's future text encoder, VAEs, reference/guide encodes, and declared render activations. If this does not fit, use smaller artifacts or inputs; changing residency cannot remove the stack. |
 
 Rescue is offered only if slab fits both windows
@@ -2846,7 +2847,12 @@ faster.
 
 **Cause:** the first render of a new model+stack combination pays three
 one-time stages before your render samples: NCCL bring-up, a cold NVMe weight
-load, and the identity gate's 2-4 short test renders. The callout at the top of
+load, and the identity gate's 2-4 short test renders. With an explicit topology
+the UNET loader leaves the load to the gate's first test render when the gate
+will run, so the file loads once; before 1.5 the loader placed it, the gate
+dropped it, and the first test render loaded it again. A graph with a
+BasicScheduler (DGX Monarch) still loads it twice: the scheduler loads the
+model to compute its sigmas before the gate runs. The callout at the top of
 this file says what makes a combination new. Every release invalidates earlier
 PASS results, so the first render after an upgrade repeats the gate.
 
@@ -2892,6 +2898,23 @@ cluster-fault toasts, so a browser that never shows either has not loaded
 `web/js/dgx_monarch.js` (hard-refresh the tab, and check `WEB_DIRECTORY` is
 served). The driver log and the `events` array of `/dgxm/telemetry` carry every
 notice whatever the browser does, so a headless driver loses only the toast.
+
+**A dual-model render proves both of its models.** The Ideogram 4 graph's
+first render runs the check over the dual render itself: both models from a
+fresh load, a swap cycle on each one that carries a LoRA stack, and the same
+renders compared bit for bit. Its verdict covers only that pair of models, so a
+PASS for the conditional model alone never grants the dual render, and the
+dual PASS never grants a render of either model alone. A FAIL recorded for the
+pair, or for the conditional model alone, turns slab and low-RSS residency off
+for the dual render, and the log names which key failed. Two placements cannot
+run the check. On cfg2 each rank holds one of the two models and cannot cycle
+the other, so the render runs on stock residency and the log says why. On a
+`*+fsdp` preset the clean-reload proof reloads one model, so under
+`auto_gate=first_use` the render refuses with `automatic FSDP execution is
+unavailable for a dual-model request`; `auto_gate=off` runs it under FSDP with
+slab and low-RSS residency off. With `auto_gate=off` on any topology a
+dual-model render keeps stock residency
+([#67](#67-what-auto_gateoff-costs-and-what-it-does-not), item 4).
 
 **Do not restart a healthy job during the test renders.** Killing the queue
 during the check makes the next attempt pay the same cost again.
@@ -2958,9 +2981,9 @@ alternative, and none of them loads, bakes or quarantines anything.
    service only if the mesh reset cannot confirm actor teardown.
 6. **`comfy-managed residency is on for this worker and the driver could not authorize this render's residency`**
    Two graphs land here. One is a combination with no exact PASS for the
-   comfy-managed capability context. The other is a **dual-model** render: a graph
-   that dispatches a second, unconditional model is always stamped stock,
-   because a check proves exactly one model. Dual-model families are
+   comfy-managed capability context. The other is a **dual-model** render: under
+   this residency a graph that dispatches a second, unconditional model is
+   always stamped stock, because no comfy-managed check covers two models. Dual-model families are
    therefore out of scope for this residency in this release; run them with the
    widget off.
 7. **`comfy-managed residency is on for this worker and the first-use identity ceremony for this combination cannot prove it`**
@@ -3433,10 +3456,13 @@ gets under `first_use`. So, with `auto_gate=off` on a single-model render:
    Init advanced block, so its refusal is easy to blame on `auto_gate`.
    Different lever, different reason ([#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)), and `auto_gate` neither causes
    that refusal nor clears it.
-4. **A dual-model custom render dispatches on stock residency.** When such a
-   render dispatches at all, both residency settings are off for it whatever the widget
-   says, for the reason the note at the top of this file gives. `off` is not
-   what turned them off, and `first_use` would not have turned them back on.
+4. **A dual-model render keeps stock residency under `off`.** A dual-model
+   render takes its residency only from a PASS that covers both of its models,
+   so with `off` both residency settings stay off for it whatever the widget
+   says. Under `first_use` its first render proves both models, and a PASS
+   gives it the settings the Init node asks for, except on cfg2, where it
+   renders stock, on a `*+fsdp` preset, where it refuses, and under
+   comfy-managed residency, which refuses it (refusal 6 in [#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses)) ([#61](#61-the-first-render-took-minutes-and-the-next-one-took-seconds)).
 
 **Not the capacity route.** For a checkpoint only slab residency can fit, use
 the capacity rescue: a card, a consent, and a ledger row that records the
@@ -4844,8 +4870,10 @@ a p-h3-image BF16 render on `uly2+fsdp` with no PASS for its combination
 refused at once with `automatic FSDP execution requires an exact clean-reload
 Gate PASS (ledger=unknown, process=None)`. Identity Gate (DGX Monarch) on
 `uly2+fsdp` then wrote `identity gate PASS (explicit): independently loaded
-FSDP shards render bit-identically`, and the same render ran. Run the gate
-node on the FSDP preset first, as the loader's refusal for that model says.
+FSDP shards render bit-identically`, and the same render ran. That graph
+samples through Sampler Custom (DGX Monarch), which then ran no automatic
+check. Since 1.5 its first render on the preset runs the clean-reload proof
+itself, as a KSampler render does, so the node is no longer needed first.
 
 A capacity stop taken during the proof, and the reprice the check runs between
 the baseline render and the reload cycle, both happen after the check unloaded
@@ -7926,9 +7954,10 @@ refusal until a hardware run measures a LoRA on them with this bake.
 
 ## 146. A Worker keeps a dropped model's host memory, and the next load is priced short
 
-**Symptom:** a Worker loads a model and drops it (the identity gate's ceremony
-drops a model the loader placed before its first proof render; a clear drops a
-model in the way), and the next capacity price on that box comes up short by
+**Symptom:** a Worker loads a model and drops it (before 1.5 the identity
+gate's ceremony dropped a model the loader had placed before its first proof
+render, a path the loader now avoids, see [#61](#61-the-first-render-took-minutes-and-the-next-one-took-seconds);
+a clear drops a model in the way), and the next capacity price on that box comes up short by
 about what the drop should have given back. On torch 2.15.0 the 2026-11-06
 release test refused the Kandinsky 5 Pro video template this way: `the load
 needs 89.9 GiB, a 40.4 GiB file plus the host copy it is placed from, and 83.0

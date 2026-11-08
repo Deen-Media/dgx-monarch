@@ -292,16 +292,37 @@ def test_manual_gate_delegates_to_canonical_engine_and_enforces_strict(monkeypat
         )
 
 
-def test_identity_ceremony_rejects_dual_model_without_recording_a_pass():
-    model = SimpleNamespace(mesh=SimpleNamespace(worker_args={
-        "lora_low_rss": True, "slab_weights": True}))
-    with pytest.raises(ValueError, match="proves one model only"):
+@pytest.mark.parametrize(("topology", "comfy_managed", "reason"), [
+    ({"cfg": 2, "world": 2}, False, "cfg-parallel"),
+    ({"ulysses": 2, "fsdp": True, "world": 2}, False, "reloads one model slot"),
+    ({"ulysses": 2, "world": 2}, True, "no comfy-managed proof covers two models"),
+])
+def test_identity_ceremony_refuses_a_dual_model_render_it_cannot_prove(
+    monkeypatch, topology, comfy_managed, reason,
+):
+    """A dual proof runs only where every rank holds both models under classic residency."""
+    from dgx_monarch.topology import Topology
+
+    worker_args = {"lora_low_rss": True, "slab_weights": True}
+    if comfy_managed:
+        worker_args["comfy_managed"] = True
+    handle = SimpleNamespace(world=2)
+    model = SimpleNamespace(mesh=SimpleNamespace(
+        handle=handle, worker_args=dict(worker_args), topology_preset="auto"))
+    monkeypatch.setattr(common, "_bind_packed_render_model",
+                        lambda subject, *_args, **_kwargs: (subject, None))
+    monkeypatch.setattr(gate_mod, "ensure_live", lambda value: value)
+    monkeypatch.setattr(common, "_resolve_topology_for_latent",
+                        lambda *_args: (Topology(**topology), False, "test"))
+    monkeypatch.setattr(gate_mod, "RenderSession",
+                        lambda: pytest.fail("a refused dual proof claims no session"))
+    with pytest.raises(ValueError, match=reason):
         gate_mod.run_identity_ceremony(
             model,
             {"uncond_model": {"unet_name": "negative.sft", "loras": []}},
             {"samples": torch.zeros(1)}, 1.0, 2, "explicit",
         )
-    assert model.mesh.worker_args == {"lora_low_rss": True, "slab_weights": True}
+    assert model.mesh.worker_args == worker_args
 
 
 def test_identity_ceremony_owns_session_across_bound_helper(monkeypatch):
@@ -816,10 +837,14 @@ def test_dual_model_render_never_reuses_primary_only_pass(monkeypatch):
         "lora_low_rss": True, "slab_weights": True}))
     common._AUTO_GATE_SESSION.clear()
     common._AUTO_GATE_SESSION[("primary-pass",)] = "PASS"
-    monkeypatch.setattr(
-        common, "_auto_gate_context",
-        lambda *_args: pytest.fail("dual-model request consulted primary-only ledger"),
-    )
+    consulted = []
+
+    def dual_context_only(*args):
+        # A dual render reads only its own dual context, named by its second slot.
+        assert len(args) == 5 and args[4] == request["uncond_model"], args
+        consulted.append(args[4])
+
+    monkeypatch.setattr(common, "_auto_gate_context", dual_context_only)
 
     class Pending:
         def result(self):
@@ -843,6 +868,7 @@ def test_dual_model_render_never_reuses_primary_only_pass(monkeypatch):
     }
 
     common.run_render(model, request, {}, 1.0, 2)
+    assert consulted == [request["uncond_model"]]
     assert model.mesh.worker_args == {"lora_low_rss": True, "slab_weights": True}
     assert common._AUTO_GATE_SESSION == {("primary-pass",): "PASS"}
     common._AUTO_GATE_SESSION.clear()
@@ -3295,22 +3321,43 @@ def test_dual_model_authorization_never_mints_primary_only_grant(
     assert first.residency_mode == "required"
     assert len(ledger_reads) == 1
     primary_request = model.request_dict()
+    primary_key = first.residency_grant["combo_key"]
+    uncond = {
+        "unet_name": "negative.safetensors",
+        "options": {"dtype": "bf16"},
+        "loras": [{"name": "negative-style.safetensors", "strength": 0.5}],
+    }
+    keys_read = []
+
+    class Ledger:
+        """The primary combination holds a PASS; the dual combination holds nothing."""
+
+        def __init__(self, _directory):
+            pass
+
+        def lookup_with_integrity(self, key, _artifacts, _commit, context):
+            keys_read.append(key)
+            ledger_reads.append(context)
+            state = "pass" if key == primary_key else "unknown"
+            return ledger_mod.GateLedgerLookup(
+                state, {"verdict": "PASS"} if state == "pass" else None, True)
+
+    monkeypatch.setattr(ledger_mod, "GateLedger", Ledger)
 
     authorization = gate_identity.authorize_normal_render(
         model,
         handle,
-        uncond_model_request={
-            "unet_name": "negative.safetensors",
-            "options": {"dtype": "bf16"},
-            "loras": [{"name": "negative-style.safetensors", "strength": 0.5}],
-        },
+        uncond_model_request=uncond,
         gate_active=False,
-        session_verdict=lambda _token: "PASS",
+        # The process cache holds the primary PASS too, under the primary token only.
+        session_verdict=lambda token: "PASS" if token[0] == primary_key else None,
         resolved_topology=Topology(world=1),
         resolved_attention="TORCH_FLASH",
     )
 
-    assert len(ledger_reads) == 1
+    from dgx_monarch.gate_dual_identity import dual_combo_key
+
+    assert keys_read == [dual_combo_key(primary_request, uncond)] != [primary_key]
     assert authorization.model_request == primary_request
     assert authorization.residency_mode == "stock"
     assert authorization.residency_grant is None

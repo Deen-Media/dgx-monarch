@@ -683,8 +683,8 @@ def test_auto_gate_retries_interrupted_atomic_quarantine_before_owner_release(
         lambda *_args, **_kwargs: {"verdict": "INCONCLUSIVE"},
     )
 
-    def interrupt_first_quarantine(model, cause=None):
-        actual_quarantine(model, cause)
+    def interrupt_first_quarantine(model, cause=None, uncond=None):
+        actual_quarantine(model, cause, uncond)
         quarantine_calls.append(True)
         if len(quarantine_calls) == 1:
             raise StopNow("quarantine publication return interrupted")
