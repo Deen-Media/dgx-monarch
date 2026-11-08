@@ -414,9 +414,11 @@
   reproduce: on 2026-11-07 such pairs read one-step NRMS 0.014 to 0.042
   against one GPU on Anima and Boogu, and no full schedule matched, while the
   shipped pairs stayed bit-identical; Chroma BF16 had read NRMS 0.034 on an
-  equal pair. The sampler nodes tag
-  the pair on the latent, and the render's telemetry records it as
-  `pair_differs`. Explicit `cfg2` on an equal pair still renders
+  equal pair. The sampler nodes tag the pair on the latent, and the render's
+  telemetry records it as `pair_differs`. Explicit `cfg2` on an equal pair
+  still renders. At world 4 an equal pair on these rows no longer refuses at
+  batch 1: it takes the family's Ulysses row, folded into `uly2+ring2`, and
+  at batch 2 `uly2+dp2`
   ([cfg2 rows](docs/VALIDATION.md#campaign-k-equal-pairs)).
 - Sampler Custom renders run the first-use identity gate, as KSampler renders
   do. The six LTX graphs and p-h3-image used to render on stock residency until

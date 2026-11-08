@@ -253,6 +253,25 @@ than stacks on a repeat call.
    `[text0, image0, text1, image1]`; that permutation preserves real-number
    attention algebra but changes Flash rounding enough to reproduce the
    measured Chroma fp8_scaled/int8_convrot failures.
+   Query and key pad coordinates are remapped independently, and the inverse
+   permutation restores the original rank layout before the return all-to-all.
+   The permutation, its inverse and the pad exclusion's keep index depend
+   only on integer row counts, so the order and the pad exclusion build them
+   on the device once per layout and keep them in a small cache keyed by
+   shape and device, which drops its least recently used entry past the
+   bound (`adapters/index_cache.py`). The pad-row remap reads a host copy
+   of the inverse, computed by the same arithmetic on the CPU, and the keep
+   index comes from `arange` runs rather than a `nonzero`, so no attention
+   call waits on the device
+   ([VALIDATION.md](VALIDATION.md#padded-ulysses-index-cache)). A
+   self-attention that names one row set for both sides remaps it once and
+   shares one keep index between queries and keys, and the output restore
+   reuses the cached inverse.
+   The single-block stream is already canonical. Ring and hybrid topologies
+   retain their existing order. With the order restored,
+   every Flux 1 Dev, Flux2 fp8mixed and LongCat pad-matrix leg matches
+   its dp2 reference exactly, and the Flux 1 Dev and LongCat
+   templates matched one GPU exactly (VALIDATION.md).
 
    **Flux-family and Qwen Image 2.1 fused-norm parity.** comfy-kitchen's
    fused `adaln` picks its CUDA kernel by a call's kernel rows (the FLUX.3
@@ -274,28 +293,10 @@ than stacks on a repeat call.
    every rank holds whole. The final layers run after the gather, on stock's
    rows. Options without the counts, the cache-miss prefix fill and every
    topology without sequence parallelism run the class forward. A block whose
-   class forward reads no such global is left unbound and logged, and
-   `tests/test_adaln_parity_blocks.py` names the change against an installed
-   ComfyUI.
-   Query and key pad coordinates are remapped independently, and the inverse
-   permutation restores the original rank layout before the return all-to-all.
-   The permutation, its inverse and the pad exclusion's keep index depend
-   only on integer row counts, so the order and the pad exclusion build them
-   on the device once per layout and keep them in a small cache keyed by
-   shape and device, which drops its least recently used entry past the
-   bound (`adapters/index_cache.py`). The pad-row remap reads a host copy
-   of the inverse, computed by the same arithmetic on the CPU, and the keep
-   index comes from `arange` runs rather than a `nonzero`, so no attention
-   call waits on the device
-   ([VALIDATION.md](VALIDATION.md#padded-ulysses-index-cache)). A
-   self-attention that names one row set for both sides remaps it once and
-   shares one keep index between queries and keys, and the output restore
-   reuses the cached inverse.
-   The single-block stream is already canonical. Ring and hybrid topologies
-   retain their existing order. With the order restored,
-   every Flux 1 Dev, Flux2 fp8mixed and LongCat pad-matrix leg matches
-   its dp2 reference exactly, and the Flux 1 Dev and LongCat
-   templates matched one GPU exactly (VALIDATION.md).
+   class forward reads no such global, or a Qwen Image 2.1 block whose forward
+   takes other parameters than the bound one repeats, is left unbound and
+   logged, and `tests/test_adaln_parity_blocks.py` names the change against an
+   installed ComfyUI.
 2. **USP attention routing** for every attention over the sharded sequence:
    * blocks that are pure self-attention: thread
      `usp_options(transformer_options, ctx.usp_attention)` into the block loop;

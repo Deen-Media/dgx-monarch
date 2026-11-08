@@ -170,3 +170,20 @@ def test_the_resolver_forwards_the_pair_tag_only_when_set(monkeypatch):
                    {"samples": samples, PAIR: False}):
         common._resolve_topology_for_latent("model", latent, 4.0, 2)
     assert calls == [{"pair_differs": True}, {}, {}]
+
+
+def test_run_matrix_labels_its_auto_cell_with_the_pair_tag_the_ksampler_node_sets():
+    """benchmark/run_matrix.py records the auto topology before the render; it
+    must read the pair as the KSampler node does, or an Anima, Boogu or Chroma
+    auto cell would record uly2 while the render resolves cfg2."""
+    import ast
+    from pathlib import Path
+
+    source = Path(__file__).resolve().parents[1] / "benchmark" / "run_matrix.py"
+    calls = [node for node in ast.walk(ast.parse(source.read_text(encoding="utf-8")))
+             if isinstance(node, ast.Call) and getattr(node.func, "id", None) == "resolve_topology"]
+    assert calls
+    for call in calls:
+        keywords = {keyword.arg: ast.unparse(keyword.value) for keyword in call.keywords}
+        assert "keeps_uncond" in keywords and "pair_differs" in keywords
+        assert "text_rows_differ(positive, negative)" in keywords["pair_differs"]

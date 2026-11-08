@@ -90,6 +90,13 @@ class _Qwen21Block:
         return x + _modulated_norm(self.img_norm1, x, scale, prefix_len, zero)
 
 
+class _Qwen21BlockNewParameter(_Qwen21Block):
+    """A future block forward with a parameter the bound forward does not repeat."""
+
+    def forward(self, x, mod, pe, attn_fn, prefix_len, transformer_options=None, extra=None):
+        return super().forward(x, mod, pe, attn_fn, prefix_len, transformer_options)
+
+
 class _Unroutable:
     def forward(self, x, vec, pe, attn_mask=None, transformer_options=None):
         return x
@@ -144,12 +151,16 @@ def test_a_block_whose_class_reads_no_norm_global_is_left_unbound_and_logged(cap
     assert parity.bind_flux_norm_parity(block) is False
     assert parity.bind_qwen21_norm_parity(block) is False
     assert parity.bind_flux_norm_parity(types.SimpleNamespace()) is False
+    # A Qwen Image 2.1 forward with other parameters stays unbound, not a TypeError later.
+    changed = _Qwen21BlockNewParameter()
+    assert parity.bind_qwen21_norm_parity(changed) is False and "forward" not in vars(changed)
     assert "forward" not in vars(block)
     single = _Single()
     with caplog.at_level("WARNING"):
         parity.bind_blocks([block, single], parity.bind_flux_norm_parity, "flux")
     assert "forward" in vars(single)
     assert "flux fused-norm parity: _Unroutable.forward reads no norm global" in caplog.text
+    assert "or takes other parameters" in caplog.text
 
 
 def test_a_bound_qwen21_block_launches_the_prefix_and_whole_target_and_redoes_the_prefix():

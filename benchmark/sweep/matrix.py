@@ -454,15 +454,25 @@ def prompt_texts(graph: dict) -> dict[str, str]:
     return {} if any(text is None for text in found.values()) else found
 
 
-def auto_pair_differs(facts: dict) -> bool:
+# Families whose counted stream (TEXT_STREAMS) is not the conditioning tensor
+# the runtime's pair tag reads: Anima's count is its T5 ids, the tag its Qwen3 rows.
+_COUNT_IS_NOT_THE_TAGGED_ROWS = frozenset({"anima"})
+
+
+def auto_pair_differs(facts: dict, cell: dict | None = None) -> bool:
     """The runtime's pair tag for this graph, predicted (cfg_pair.text_rows_differ).
 
     The runtime reads the encoded text rows, which the graph does not hold.
-    Two different texts stand in for different rows, which holds on every
-    shipped template; two texts of equal rows would read true here and false
-    at render time, where the pair-scoped cfg rows (Anima 47, Boogu 79) give
-    way to Ulysses.
+    Where the cell carries a token count for both prompts of a stream the tag
+    reads, the counts decide, so two texts of equal rows read as equal.
+    Otherwise two different texts stand in for different rows, which holds on
+    every shipped template; two texts of equal rows would then read true here
+    and false at render time, where the pair-scoped cfg rows (Anima 47, Boogu
+    79, Chroma 20 and 19) give way to Ulysses.
     """
+    counts = (cell or {}).get("text_tokens") or {}
+    if len(counts) > 1 and (cell or {}).get("family") not in _COUNT_IS_NOT_THE_TAGGED_ROWS:
+        return len(set(counts.values())) > 1
     return len(set(facts.get("prompts", {}).values())) > 1
 
 
@@ -921,7 +931,7 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
                                      batch_size=cell["batch"],
                                      keeps_uncond=bool(facts.get("auto_keeps_uncond")),
                                      variant=cell.get("variant"),
-                                     pair_differs=auto_pair_differs(facts)).topology
+                                     pair_differs=auto_pair_differs(facts, cell)).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception as exc:
         return _label_from(exc), "guard", False, []
@@ -1267,7 +1277,7 @@ def resolved_kernel(cell: dict, facts: dict, world: int) -> str:
                                        batch_size=cell["batch"],
                                        keeps_uncond=bool(facts.get("auto_keeps_uncond")),
                                        variant=cell.get("variant"),
-                                       pair_differs=auto_pair_differs(facts))
+                                       pair_differs=auto_pair_differs(facts, cell))
             sage, topo = row.sage, row.topology
         else:
             topo = topology_from_preset(cell["preset"], world)
@@ -1294,7 +1304,7 @@ def resolved_cfg_degree(cell: dict, facts: dict, world: int) -> int:
                                      batch_size=cell["batch"],
                                      keeps_uncond=bool(facts.get("auto_keeps_uncond")),
                                      variant=cell.get("variant"),
-                                     pair_differs=auto_pair_differs(facts)).topology
+                                     pair_differs=auto_pair_differs(facts, cell)).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception:
         return 1

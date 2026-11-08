@@ -492,14 +492,20 @@ q and k norm and RoPE runs unfilled, because on 2026-10-20 comfy-kitchen
 Flux 2, Chroma and LongCat, through the Flux-family forward, and Qwen Image
 2.1 apply it to every `adaln` call of their sharded blocks
 (`adapters/adaln_parity_blocks.py`): on 2026-11-07 uly2 at 512 square read
-one-step NRMS 0.006 to 0.062 against one GPU on the first four measured,
-while their shipped 1024 square read bit-identical. A block whose stock
-forward stops reading the norm global runs unfilled, the path measured
-bit-identical at the shipped sizes, and the Worker log names it. Wan 2.1
-read bit-identical at every size measured, so it runs unfilled. LTX 2.3 read
-off one GPU at every size, the shipped one included, where every call holds
-far more than 1024 rows, so the switch does not explain it and its calls
-run unfilled until a probe finds the cause (VALIDATION.md).
+one-step NRMS 0.006 to 0.062 against one GPU on Flux 1, Flux 2, Chroma and
+Qwen Image 2.1, while their shipped 1024 square read bit-identical. LongCat,
+and Radiance through Chroma's forward, take the route unmeasured. A block
+whose stock forward stops reading the norm global runs unfilled, and the
+Worker log names it. That path read bit-identical at the shipped sizes and
+off one GPU at 512 square, as every render did before the route, so it does
+not refuse as FLUX.3 does, whose unfilled path missed at shipped sizes. Wan
+2.1 read bit-identical at every size measured, so it runs unfilled. LTX 2.3
+read off one GPU at every size, the shipped one included, where every call
+holds far more than 1024 rows, so the switch does not explain it and its
+calls run unfilled until a probe finds the cause (VALIDATION.md).
+HunyuanVideo 1.5 runs the same Flux blocks in its own sharded forward,
+unfilled and unchecked
+([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
 
 Ranks must also agree on each model call's batch. ComfyUI's
 `_calc_cond_batch` runs cond and uncond as one call only when its estimate of
@@ -610,11 +616,13 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   It rides on the latent beside the cfg++ tag, so every site that resolves
   the render's topology, the Gate capability context included, reads the
   same one, and the wire drops it. An equal pair, a combined, masked or
-  timed conditioning, and a Sampler Custom graph whose guider has no
-  negative stay untagged and take each family's Ulysses row (Chroma below
-  1.2 MP, which has none, the uly2 fallback). The rule holds because all
-  three families' text is a `CONDRegular` (Chroma's through Flux's
-  `extra_conds`), which never folds rows that differ; a family whose text is a
+  timed conditioning, a Sampler Custom graph whose guider has no negative,
+  and the dual-model guider with a second model wired stay untagged and take
+  each family's Ulysses row (Chroma below 1.2 MP, which has none, the uly2
+  fallback). The rule holds because all three families' text is a
+  `CONDRegular` (Chroma's through Flux's `extra_conds`), which never folds
+  rows that differ, and canary seam 50 (`pair-scoped text conds`) holds that
+  premise against the installed ComfyUI; a family whose text is a
   `CONDCrossAttn` folds some unequal lengths too
   (`cfg_dispatch.cross_attn_pair_folds`), so its records would need that rule
   before they could take the scope (VALIDATION.md);

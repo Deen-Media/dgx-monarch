@@ -25,6 +25,7 @@ rows.
 """
 from __future__ import annotations
 
+import inspect
 import types
 from typing import Any
 
@@ -35,6 +36,10 @@ log = get_logger(__name__)
 
 NORM_ROWS = "dgxm_stock_norm_rows"
 QWEN21_NORM_GLOBAL = "_modulated_norm"
+# The stock Qwen Image 2.1 block forward's parameters, which the bound forward
+# repeats; a ComfyUI that changes them leaves the block unbound and logged.
+_QWEN21_FORWARD_PARAMETERS = ("self", "x", "mod", "pe", "attn_fn", "prefix_len",
+                              "transformer_options")
 # Each Flux-family norm module and the stream whose rows its call covers.
 _FLUX_NORMS = (("img_norm1", "img"), ("img_norm2", "img"), ("txt_norm1", "txt"),
                ("txt_norm2", "txt"), ("pre_norm", "joint"))
@@ -70,8 +75,8 @@ def _flux_parity_norm(stock_norm, plan: list[tuple[Any, int]]):
         # Any other call means ComfyUI changed the block.
         assert rows is not None and modulation_dims is None, (
             "flux-family norm parity: a stock block made a fused-norm call that is "
-            "not one of its streams' calls, so ComfyUI changed the block; the canary "
-            "in tests/canary/comfy_seam_contracts.py names the change")
+            "not one of its streams' calls, so ComfyUI changed the block; "
+            "tests/test_adaln_parity_blocks.py names the change against an installed ComfyUI")
         return at_stock_rows(lambda call: stock_norm(call, norm, scale, shift), x, rows)
 
     return modulated_norm
@@ -108,11 +113,12 @@ def bind_qwen21_norm_parity(block: Any) -> bool:
 
     The count is the ``joint`` entry of the call's options (``with_norm_rows``),
     the prefix plus the whole target; options without it run the class forward.
-    A class forward that reads no ``_modulated_norm`` global is left unbound.
+    A class forward that reads no ``_modulated_norm`` global, or whose
+    parameters are not the ones the bound forward repeats, is left unbound.
     Returns whether the block was bound.
     """
     found = _routable_forward(block, QWEN21_NORM_GLOBAL)
-    if found is None:
+    if found is None or tuple(inspect.signature(found).parameters) != _QWEN21_FORWARD_PARAMETERS:
         return False
     stock_forward: types.FunctionType = found
 
@@ -137,13 +143,14 @@ def bind_qwen21_norm_parity(block: Any) -> bool:
 def bind_blocks(blocks, binder, family: str) -> None:
     """Bind every block a sharded forward runs; log the classes left unbound.
 
-    A block whose class forward stopped reading its norm global runs unrouted,
-    the path measured bit-identical at the shipped sizes, and the Worker log
-    names it; the real-ComfyUI check in tests/test_adaln_parity_blocks.py
-    names it in CI.
+    A block whose class forward stopped reading its norm global, or a Qwen
+    Image 2.1 block whose forward takes other parameters, runs unrouted: the
+    path every render took before the route, bit-identical at the shipped
+    sizes and off one GPU at 512 square. The Worker log names it, and the
+    real-ComfyUI check in tests/test_adaln_parity_blocks.py names it in CI.
     """
     left = sorted({type(block).__name__ for block in blocks if not binder(block)})
     if left:
         log.warning("%s fused-norm parity: %s.forward reads no norm global this release "
-                    "routes, so its calls run at the window's rows (issue #54)",
-                    family, ", ".join(left))
+                    "routes, or takes other parameters, so its calls run at the window's "
+                    "rows (issue #54)", family, ", ".join(left))

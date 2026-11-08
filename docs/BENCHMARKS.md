@@ -267,8 +267,9 @@ Reading the table:
 - **New automatic rows.** Krea2 FP8 and BF16 from 1.2 to 2.36 MP (row 15),
   Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP (row 19), Qwen-Image FP8 from
   1.2 to 1.77 MP (row 68), Boogu FP8 below 1.2 MP (row 79) and Anima BF16
-  below 1.2 MP (row 47). Since 2026-11-07 rows 79 and 47 take only a prompt
-  pair whose text rows differ, as on the templates
+  below 1.2 MP (row 47). Since 2026-11-07 rows 79 and 47, and Chroma's rows
+  20 and 19, take only a prompt pair whose text rows differ, as on the
+  templates
   ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)). Each upper band ends
   at the largest size measured.
   The two lower bands follow rows 20 and 28 and rest on one size, 1.05 MP.

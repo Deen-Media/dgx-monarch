@@ -2669,10 +2669,10 @@ The FLUX.3 probe of 2026-10-16 found comfy-kitchen's fused AdaLN taking one
 kernel for calls of 1024 kernel rows or fewer and another above
 ([FLUX.3 Klein](#evidence-flux-3-klein)). Issue #54 asked whether the other
 families that call `adaln` or `rms_adaln` on sharded rows meet it. On ComfyUI
-`8a98ecf58` those are Flux 1, Flux 2 and Chroma (through `modulated_norm` in
-`flux/layers.py`), Qwen Image 2.1, Wan 2.1 and LTX 2.3; MOSS-Image and FLUX.3
-already fill their calls, and SeedVR has no adapter and no shipped template, so
-it did not run. Each leg rendered a shipped template twice at one step, seed
+`8a98ecf58` those are Flux 1, Flux 2, Chroma, Radiance and HunyuanVideo 1.5
+(through `modulated_norm` in `flux/layers.py`), Qwen Image 2.1, Wan 2.1 and LTX
+2.3; MOSS-Image and FLUX.3 already fill their calls. Radiance and HunyuanVideo
+1.5 did not run, nor did SeedVR, which has no adapter and no shipped template. Each leg rendered a shipped template twice at one step, seed
 1031, on dgx-monarch `a76e967`, torch 2.15.0+cu132, both Sparks: Init dp2 at
 batch 2, whose batch row 0 is the one-GPU reference, and Init uly2 at batch 1,
 both with the automatic gate off and stock residency (Flux 2 with slab
@@ -2702,8 +2702,9 @@ was uncapped. The table compares saved latents.
 Flux 1, Flux 2, Chroma and Qwen Image 2.1 match one GPU at their shipped size
 and miss at 512 square, the switch's pattern: at 512 square a single block's
 joint call is 1536 rows on one GPU and 768 on a rank, and Qwen Image 2.1's
-prefix-plus-target call crosses the same line. Every image template ships at
-1024 square, so no shipped size is affected. From this release their sharded
+prefix-plus-target call crosses the same line. The four text-to-image
+templates measured ship at 1024 square, so none is affected; the Qwen Image
+2.1 edit templates follow their input's size and did not run. From this release their sharded
 blocks fill each fused-norm call to stock's rows
 ([parity rule](DESIGN.md#53-attention-adapters)); a hardware re-read of the
 512-square cells is pending. Wan 2.1 matches everywhere, the size built to meet

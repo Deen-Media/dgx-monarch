@@ -1029,6 +1029,16 @@ def test_the_sweep_predicts_the_pair_tag_from_the_prompt_texts():
     assert not matrix.auto_pair_differs({"prompts": {"positive": "blurry", "negative": "blurry"}})
     # An unresolved pair is no pair at all (prompt_texts), and reads untagged.
     assert not matrix.auto_pair_differs({"prompts": {}})
+    # Token counts for a stream the tag reads decide: two texts of equal rows
+    # read as equal. Anima's counted stream is its T5 ids, not the Qwen3 rows
+    # the tag reads, so the texts stand in there.
+    facts = {"prompts": {"positive": "a cat", "negative": "a dog"}}
+    assert not matrix.auto_pair_differs(
+        facts, {"family": "chroma", "text_tokens": {"positive": 7, "negative": 7}})
+    assert matrix.auto_pair_differs(
+        facts, {"family": "chroma", "text_tokens": {"positive": 7, "negative": 9}})
+    assert matrix.auto_pair_differs(
+        facts, {"family": "anima", "text_tokens": {"positive": 7, "negative": 7}})
 
 
 def test_an_artifact_groups_array_names_the_base_loaders_extras(tmp_path):
