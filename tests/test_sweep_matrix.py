@@ -318,8 +318,8 @@ def test_every_untagged_refusal_the_runtime_raises_is_recognised():
     assert len(denials) >= 5
     texts = [*denials,
              "automatic FSDP Gate context/ledger lookup failed",
-             "automatic FSDP execution is unavailable for a dual-model request "
-             "because the clean-reload Gate proves one model only",
+             "automatic FSDP execution is unavailable for a dual-model request: "
+             "the FSDP clean-reload proof reloads one model slot, not both",
              "explicit topology preset 'dp2' on world 2 preserves its literal "
              "model-parallel degree and therefore leaves dp2, but latent batch 1 "
              "is not divisible by 2.",

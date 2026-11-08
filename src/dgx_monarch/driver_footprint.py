@@ -122,7 +122,7 @@ class DriverStackProfile:
 DRIVER_STACK_FAMILIES: dict[str, DriverStackProfile] = {
     # H3 options omit multi-host splitting: Ulysses and Ring replicate the
     # weights. FSDP does not, and the loader refusal names a pair's uly2+fsdp
-    # preset, with its Identity Gate step, wherever that price fits
+    # preset, whose first render runs the gate's clean-reload proof, wherever that price fits
     # (nodes/graph_load_price); p-h3-image's BF16 uly2+fsdp render matched
     # resident uly2 pixel for pixel on 2026-11-05.
     "minimax_h3": DriverStackProfile(

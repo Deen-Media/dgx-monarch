@@ -2,8 +2,10 @@
 
 DiT weights never enter the driver process. With an explicit topology the base
 model loads eagerly at node execution, except a dm-cfg2 slot, which defers to
-the sample path; with `auto` the load happens on the first render (topology
-must exist before load so USP injection binds at load). LoRA nodes only extend
+the sample path, and a load an identity gate would drop before its first proof
+render, which defers to that render (nodes/loader_gate_defer.py, #157); with
+`auto` the load happens on the first render (topology must exist before load so
+USP injection binds at load). LoRA nodes only extend
 the request signature. The model store (DESIGN.md section 5.5) turns a LoRA
 tweak into a hot-swap, never a reload.
 """
@@ -28,7 +30,14 @@ from ..mesh_safety import ArtifactBindingError
 from ..old_model import OldModelRefusal, graph_loads
 from ..safetensors_header import SafetensorsFileIdentity
 from ..topology import Topology, topology_from_preset
-from . import consent_projection, loader_graph, loader_preflight, old_model_clear, render_validation
+from . import (
+    consent_projection,
+    loader_gate_defer,
+    loader_graph,
+    loader_preflight,
+    old_model_clear,
+    render_validation,
+)
 from .common import MeshSpec, ModelSpec
 from .refusal_lead import lead_with_refusal
 
@@ -255,16 +264,24 @@ class DGXMonarchUNETLoader:
             def defers(handle, topo) -> bool:
                 # Setup stays eager (topology is known), but a dm-cfg2 load
                 # defers to the first render so the sample path loads one
-                # checkpoint per rank. record_rescue_row is skipped with the
-                # load, mirroring the auto path (no call_all results to certify).
+                # checkpoint per rank, and a load an identity gate would drop
+                # before its first proof render defers to that render (#157).
+                # record_rescue_row is skipped with the load, mirroring the auto
+                # path (no call_all results to certify); a projected consent
+                # keeps its eager load.
                 render_preflight.preflight_sol_sequence_parallel(topo, mesh.attention)
-                if not self._defers_for_dual_model_cfg2(mesh, unet_name, topo):
+                if self._defers_for_dual_model_cfg2(mesh, unet_name, topo):
+                    reason = "explicit cfg2 dm-cfg2"
+                elif rescue_load is None and loader_gate_defer.ceremony_drops_load(
+                        spec, handle, prompt, unique_id):
+                    reason = loader_gate_defer.REASON
+                else:
                     return False
                 with mutation_render_session(handle):
                     mesh_setup.ensure_request_setup(
                         handle, topo, mesh.attention, mesh.sync_ulysses,
                         mesh.worker_args)
-                first_render.load_deferred(self.ENDPOINT, reason="explicit cfg2 dm-cfg2")
+                first_render.load_deferred(self.ENDPOINT, reason=reason)
                 return True
 
             if defers(handle, topo):

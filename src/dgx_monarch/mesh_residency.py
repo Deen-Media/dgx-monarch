@@ -124,7 +124,8 @@ def assert_normal_render_residency_mode(
     elif mode == "stock":
         if residency_mode.requested(effective_worker_args):
             # The driver stamps "stock" whenever it could not vouch the
-            # combination, and for every dual-model request. Under this rung
+            # combination, and for every dual-model request under it
+            # (nodes/gate_dual.py: no comfy-managed proof covers two models). Under this rung
             # that stamp is unreachable, not merely unproven: the levers it
             # names are already off and the one that matters cannot be turned
             # off in a live process. Typed, so the operator gets the cause and
@@ -136,7 +137,8 @@ def assert_normal_render_residency_mode(
                 "not authorize this render's residency: either this model and LoRA "
                 "combination has no exact identity-gate PASS for the comfy-managed "
                 "capability context, or the render dispatches a second (unconditional) "
-                "model, which is always stamped stock because a ceremony proves one model. "
+                "model, which this residency always stamps stock because no comfy-managed "
+                "proof covers two models. "
                 "Unlike slab_weights and lora_low_rss there is no safe residency to fall back "
                 "to: ComfyUI's DynamicVRAM is a bootstrap policy and cannot be turned off "
                 "for one render. Nothing was loaded and nothing was quarantined. What works "
@@ -347,7 +349,13 @@ def assert_normal_render_residency_grant(
             raise RuntimeError(
                 "normal-render Gate context does not match the sample sync policy"
             )
-    combo = runtime.request_combo_key(request["model"])
+    uncond = request.get("uncond_model")
+    if uncond is None:
+        combo = runtime.request_combo_key(request["model"])
+    else:  # a dual PASS binds both slots under its own key (gate_dual_identity.py)
+        from .gate_dual_identity import dual_combo_key
+
+        combo = dual_combo_key(request["model"], uncond)
     if grant.get("combo_key") != combo:
         raise RuntimeError(
             "normal-render model/options/LoRA combination changed after authorization"
@@ -364,9 +372,15 @@ def assert_normal_render_residency_grant(
         raise RuntimeError(
             "model/LoRA/Comfy identity changed after normal-render authorization"
         )
-    if len(artifact_sets) != 1:
-        raise RuntimeError("normal-render Gate grants authorize exactly one model")
-    identity = artifact_sets[0]
+    if len(artifact_sets) != (1 if uncond is None else 2):
+        raise RuntimeError(
+            "a normal-render Gate grant authorizes exactly the models its request names")
+    if uncond is None:
+        identity = artifact_sets[0]
+    else:
+        from .gate_dual_identity import dual_identity_summary
+
+        identity = dual_identity_summary(artifact_sets)
     if (grant.get("comfy") != identity.get("comfy")
             or grant.get("artifact_digest") != identity.get("digest")):
         raise RuntimeError(
