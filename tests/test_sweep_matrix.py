@@ -513,9 +513,16 @@ def test_an_auto_row_that_cannot_resolve_labels_rather_than_aborting(tmp_path):
     config = _rig(tmp_path)
     config["world"] = 4
     # Keep the tiny graph and switch only its header signature to Chroma bf16,
-    # whose auto row at 1 MP is cfg2. At world 4 that row cannot fold its spare
-    # ranks, so auto refuses, and the matrix must label that refusal.
+    # whose auto row at 1 MP is cfg2 for a prompt pair of different text rows,
+    # so the graph carries two different prompts. At world 4 that row cannot
+    # fold its spare ranks, so auto refuses, and the matrix must label that refusal.
     _checkpoint(config["model_dir"], "krea2_raw_bf16.safetensors", "chroma")
+    path = config["out_dir"] / "graphs" / "krea2.json"
+    graph = json.loads(path.read_text())
+    graph["6"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "a red fox in snow"}}
+    graph["7"] = {"class_type": "CLIPTextEncode", "inputs": {"text": "blurry"}}
+    graph["4"]["inputs"].update(positive=["6", 0], negative=["7", 0])
+    path.write_text(json.dumps(graph))
     cells, _pruned, _unmatched = matrix.build_cells(config)
     auto = [cell for cell in cells if cell["preset"] == "auto" and cell["template"] == "krea2"
             and cell["session"] == "cluster"]

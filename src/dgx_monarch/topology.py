@@ -250,9 +250,9 @@ def choose_auto_topology(
             elif record.quants and quant_kind not in record.quants:
                 detail = f"has no passing {quant_kind} result"
             elif record.pairs == "unequal" and not pair_differs:
-                detail = ("was measured on prompt pairs whose text rows differ; this pair's "
-                          "rows are equal, or the driver could not read them, and one GPU "
-                          "may fold such a pair into one call")
+                # The clause the Ulysses-row branch below appends, word for word.
+                detail = ("was measured on prompt pairs whose text rows differ, and this "
+                          "pair's rows are equal or unread")
             else:
                 detail = "has no passing in-band speed-and-fidelity result"
             note = (f"cfg2 table row {skipped_cfg.row} {detail}; uly2 is the "

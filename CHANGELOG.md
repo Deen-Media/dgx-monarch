@@ -410,12 +410,13 @@
   Sizes below about 1024 square are expected to match one GPU exactly now; a
   hardware re-read is pending
   ([fused AdaLN switch](docs/VALIDATION.md#fused-adaln-switch-other-families)).
-- `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP only when the
-  prompt and the negative encode to different text rows, as on the shipped
-  graphs, and Ulysses for an equal pair. One GPU folds an equal pair into one
-  batch-2 call, which cfg2's two calls do not reproduce: on 2026-11-07 such
-  pairs read one-step NRMS 0.014 to 0.042 against one GPU, and no full schedule
-  matched, while the shipped pairs stayed bit-identical. The sampler nodes tag
+- `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP and on Chroma
+  below 1.64 MP only when the prompt and the negative encode to different text
+  rows, as on the shipped graphs, and Ulysses for an equal pair. One GPU folds
+  an equal pair into one batch-2 call, which cfg2's two calls do not
+  reproduce: on 2026-11-07 such pairs read one-step NRMS 0.014 to 0.042 against one GPU on Anima and Boogu,
+  and no full schedule matched, while the shipped pairs stayed bit-identical;
+  Chroma BF16 had read NRMS 0.034 on an equal pair. The sampler nodes tag
   the pair on the latent, and the render's telemetry records it as
   `pair_differs`. Explicit `cfg2` on an equal pair still renders
   ([cfg2 rows](docs/VALIDATION.md#campaign-k-equal-pairs)).

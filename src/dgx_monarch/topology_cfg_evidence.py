@@ -82,14 +82,17 @@ CFG2_EVIDENCE: dict[int, CfgEvidence] = {
         max_mp=1.2,
         min_world=2,
         speedup="1.84x to 2.01x faster than one GPU and 1.29x to 1.34x faster than uly2",
-        fidelity="bit-identical to one GPU on the shipped prompt pair",
+        fidelity="bit-identical to one GPU on the shipped prompt pair, whose text rows differ",
         faster=True,
         exact=True,
         in_band=True,
         basis="the 2026-10-01 probes and warm walls at 1.05 MP after the fix that trims chroma's "
               "cfg2 text pad, on bf16, fp8_scaled, fp8mixed, mxfp8 and int8_convrot; uly2 reads 0.129 "
               "on mxfp8; nvfp4 shares the fp8 kind and stays class K (an equal-length pair reads 0.148 "
-              "on cfg2); under a waiver the shipped uneven pair reads 0.0 on cfg2 against 0.297 on uly2",
+              "on cfg2); under a waiver the shipped uneven pair reads 0.0 on cfg2 against 0.297 on uly2; "
+              "a BF16 pair of equal text rows, which one GPU folds into one call, read NRMS 0.034 on "
+              "cfg2, so since 2026-11-07 this record grants only a pair whose text rows differ",
+        pairs="unequal",
     ),
     28: CfgEvidence(
         row=28,
@@ -148,15 +151,18 @@ CFG2_EVIDENCE: dict[int, CfgEvidence] = {
         speedup="1.97x to 2.01x faster than one GPU, 1.30x to 1.31x faster than uly2 on BF16, "
                 "1.26x to 1.30x faster than uly2 with SAGE_AUTO on FP8 and 1.17x to 1.33x faster "
                 "than uly2 on INT8",
-        fidelity=_BIT_IDENTICAL,
+        fidelity=_BIT_IDENTICAL_UNEQUAL,
         faster=True,
         exact=True,
         in_band=True,
         basis="Campaign K 2026-10-14, dgx-monarch d549f10d, ComfyUI e8665ca8, head capped at "
               "2100 MHz, run_matrix warm sampler walls on Chroma1-HD BF16, FP8-mixed and INT8 "
-              "ConvRot at 1152, 1216 and 1280 square on the template prompt pair; fp8_scaled and "
-              "mxfp8 files were not measured in this band, nvfp4 shares the fp8 kind and stays "
-              "class K, and Radiance shares the bf16 kind and was not measured in this band",
+              "ConvRot at 1152, 1216 and 1280 square on the template prompt pair, whose text rows "
+              "differ; fp8_scaled and mxfp8 files were not measured in this band, nvfp4 shares the "
+              "fp8 kind and stays class K, and Radiance shares the bf16 kind and was not measured in "
+              "this band; a BF16 pair of equal text rows read NRMS 0.034 on cfg2 at 1024, so since "
+              "2026-11-07 this record grants only a pair whose text rows differ",
+        pairs="unequal",
     ),
     68: CfgEvidence(
         row=68,

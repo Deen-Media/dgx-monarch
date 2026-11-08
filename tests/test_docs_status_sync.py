@@ -781,8 +781,7 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Krea2 (RAW+Turbo)", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; detail table fp8 uly2; VALIDATION 2026-07-10 turbo fp8 uly2 vs dp2"),
     ("Chroma", "cfg2"): (
-        "granted", "2026-08-11 FP8 cfg2 1024x1024, exact cross-rank; 2026-10-14 BF16 and "
-        "FP8-mixed cfg2 bit-identical to one GPU at 1152 to 1280"),
+        "scoped", "Auto cfg2 covers a prompt and a negative of different text rows"),
     ("Chroma", "uly"): ("granted", "2026-08-21 requalification: fp8 NRMS 0.023 / bf16 0.010 at 1536"),
     ("Ideogram4", "uly"): (
         "granted", "2026-10-06 bit-identical to dp2 and one GPU; 2026-08-11 fp8 dual-model pair, DP2 NRMS 0.000"),

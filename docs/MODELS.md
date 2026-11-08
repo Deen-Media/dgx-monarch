@@ -62,8 +62,9 @@ and reviewed against the linked test results.
 Chroma (Radiance included) and LongCat have cfg2 rows below 1.2 MP, and
 Chroma has a second one from 1.2 to 1.64 MP. Krea 2 has a cfg2 row from 1.2
 to 2.36 MP and Qwen-Image one from 1.2 to 1.77 MP. Anima and Boogu have cfg2
-rows below 1.2 MP for a prompt and a negative that encode to different text
-rows; an equal pair takes their Ulysses rows. Each family's Ulysses rows cover the rest. Auto takes a
+rows below 1.2 MP. Chroma's, Anima's and Boogu's cfg2 rows take only a prompt
+and a negative that encode to different text rows; an equal pair takes Ulysses.
+Each family's Ulysses rows cover the rest. Auto takes a
 cfg2 row at any CFG other than 1, and at CFG 1 under a CFG++ sampler chosen
 on a DGX Monarch KSampler, KSampler Advanced or KSampler Pipeline node, when
 its evidence covers the checkpoint's precision; otherwise the Ulysses row
@@ -91,8 +92,8 @@ that match the tested configurations in its model details. See
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
 | Krea2 (RAW+Turbo) | ✓ | ★ | ★ | 🔒 | ✓ | **HW** | Auto cfg2 covers FP8 and BF16 from 1.2 to 2.36 MP; padded ring needs a waiver; reference-image graphs use single. [Details](#model-krea2-raw-turbo) · [Workflow](../example_workflows/dgx-monarch-krea2-t2i.json) |
 | Kroma | ✓ | 🔒 | ★ | 🔒 | ✓ | **HW** | BF16 and local INT8, pure Ulysses; BF16 2x refinement. Manual `uly2+fsdp`, batch 1; `dp2+fsdp` batch 2 **CHECK**. LoRA untested. cfg2 is measured, not the same math: on the shipped zeroed negative it read one-step NRMS 0.009 to 0.011 against one GPU at 1152 and 1536 and full renders diverged (2026-10-16), so `auto` keeps Ulysses. Padded ring needs a waiver. [Details](#model-kroma) · [Workflow](../example_workflows/dgx-monarch-kroma-t2i.json) |
-| Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
-| Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
+| Chroma | ✓ | ★ | ★ | ✓ | ✓ | **HW** | NVFP4 is waiver-only; Ulysses rejects effective masks. Auto cfg2 covers a prompt and a negative of different text rows, as on the shipped graph; an equal pair is measured, not the same math (BF16 NRMS 0.034 on cfg2), so `auto` keeps Ulysses for it. [Details](#model-chroma) · [Workflow](../example_workflows/dgx-monarch-chroma-t2i.json) |
+| Radiance | ✓ | ★ | ★ | ✓ | ✓ | **HW** | cfg2 requires equal-length prompts, while `auto` takes Chroma's cfg2 rows only for a pair of different text rows, so the shipped zeroed negative takes Ulysses and a pair of different rows under `auto` refuses on cfg2; pick uly2 for it. [Details](#model-radiance) · [Workflow](../example_workflows/dgx-monarch-radiance-t2i.json) |
 | Ideogram4 | ✓ | ✓ | ★ | 🔒 | ✓ | **HW** | Explicit cfg2 splits the two checkpoints; sharded attention uses Torch Flash. The fp8_scaled pair is measured, not the same math as the BF16 pair: one-step NRMS 0.161 against it on one GPU, past the 0.10 floor, from the file's quantization, not the parallel method. [Details](#model-ideogram4) · [Workflow](../example_workflows/dgx-monarch-ideogram4-t2i.json) |
 | Flux 1 Dev | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Padded ring is guarded; distilled checkpoints use CFG 1. Use converted LoRAs. [Details](#model-flux-1-dev) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
 | Flux 1 Schnell | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | CFG 1; Schnell-specific padded inputs remain unmeasured. [Details](#model-flux-1-schnell) · [Workflow](../example_workflows/dgx-monarch-flux1-t2i.json) |
@@ -303,7 +304,7 @@ Detail status (`Chroma`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-chroma-t2i.json).
 
-**Tested configurations.** BF16 pure Ulysses at 1024 and 1536 and named multi-step controls; cfg2 through the mask-trim path; named FP8 and INT8 controls. Campaign K (2026-10-14) timed cfg2 on BF16, FP8-mixed and INT8 ConvRot at 1152, 1216 and 1280 square, bit-identical to one GPU. FSDP support is separate from these resident comparisons.
+**Tested configurations.** BF16 pure Ulysses at 1024 and 1536 and named multi-step controls; cfg2 through the mask-trim path; named FP8 and INT8 controls. Campaign K (2026-10-14) timed cfg2 on BF16, FP8-mixed and INT8 ConvRot at 1152, 1216 and 1280 square, bit-identical to one GPU. Those comparisons used the shipped pair, whose text rows differ; a BF16 pair of equal rows read NRMS 0.034 on cfg2. FSDP support is separate from these resident comparisons.
 
 **Known limitations.** These comparisons do not cover ring, hybrid, effective masks, other precisions or NVFP4. NVFP4 needs its waiver even though one uneven cfg2 pair reads exact under it.
 
@@ -311,9 +312,11 @@ Detail status (`Chroma`): **HW**.
 
 **Workflow guidance.**
 
-Below 1.64 MP auto selects cfg2 for BF16, FP8 and INT8 checkpoints, at any
-CFG other than 1 and at CFG 1 under a CFG++ sampler that a DGX Monarch
-KSampler node names. Above 1.64 MP it selects Ulysses, with SAGE on FP8,
+Below 1.64 MP auto selects cfg2 for BF16, FP8 and INT8 checkpoints when the
+prompt and the negative encode to different text rows, at any CFG other than
+1 and at CFG 1 under a CFG++ sampler that a DGX Monarch KSampler node names.
+An equal pair takes Ulysses: the uly2 fallback below 1.2 MP, rows 21 and 22
+from 1.2 MP. Above 1.64 MP it selects Ulysses, with SAGE on FP8,
 which needs sageattention on each worker. The mask and NVFP4
 guards still apply.
 
@@ -327,7 +330,7 @@ Detail status (`Radiance`): **HW**.
 
 **Tested configurations.** FP32 at 1024x1024 on Ulysses, ring2 and cfg2, including a 30-step render; Ulysses with odd-length text; FSDP against ordinary residency with the BF16 core and two replicated FP32 parameters.
 
-**Known limitations.** Unequal cfg2 prompts refuse before dispatch, because the pad mask has no latent grid in pixel space. Chroma's fixes and controls cover Radiance only on the paths tested on Radiance. Radiance shares Chroma's rows, so auto picks cfg2 for it below 1.64 MP; Radiance cfg2 was compared at 1024 only.
+**Known limitations.** Unequal cfg2 prompts refuse before dispatch, because the pad mask has no latent grid in pixel space. Chroma's fixes and controls cover Radiance only on the paths tested on Radiance. Radiance shares Chroma's rows, so auto picks cfg2 for it below 1.64 MP only for a prompt and a negative of different text rows, which cfg2 refuses here; the shipped zeroed negative takes Ulysses. Radiance cfg2 was compared at 1024 only.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-radiance).
 

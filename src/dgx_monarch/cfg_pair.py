@@ -9,11 +9,12 @@ did not match (docs/VALIDATION.md, Campaign K). A pair that cannot fold runs as
 two batch-1 calls on one GPU too, and cfg2's per-cond dispatch
 (adapters/cfg_dispatch.py) reproduces them.
 
-Anima and Boogu, the families whose records carry the scope, wrap the text as
-``CONDRegular``, which concatenates only at equal shape: Anima's Qwen3 rows on
-a Worker, which samples outside inference mode and so keeps comfy's 512-row pad
-inside the forward, and Boogu's Qwen3-VL rows beside its ``num_tokens``
-constant. Different row counts therefore never fold, and that is the one fact
+Chroma, Anima and Boogu, the families whose records carry the scope, wrap the
+text as ``CONDRegular``, which concatenates only at equal shape: Chroma's T5
+rows through Flux's ``extra_conds`` (its cfg2 pads the pair to one length and
+trims each row back to stock's unpadded call), Anima's Qwen3 rows on a Worker,
+which samples outside inference mode and so keeps comfy's 512-row pad inside
+the forward, and Boogu's Qwen3-VL rows beside its ``num_tokens`` constant. Different row counts therefore never fold, and that is the one fact
 read here. Equal rows may fold or may not, and anything this cannot read
 answers false too: that costs speed, never fidelity. A family whose text is a
 ``CONDCrossAttn`` folds some unequal lengths as well

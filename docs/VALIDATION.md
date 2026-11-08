@@ -709,6 +709,8 @@ Cfg2 comparisons of the shipped 100/28-token prompt pair at
 MXFP8 and INT8 ConvRot. Trimming cfg padding before the stock forward keeps
 its original unmasked call. Equal-length prompts take a different path:
 BF16 cfg2 read NRMS 0.034 because stock batches both conditions together.
+Since 2026-11-07 rows 20 and 19 grant only a pair whose text rows differ, so
+auto keeps Ulysses for an equal pair ([equal pairs](#campaign-k-equal-pairs)).
 
 BF16 pure Ulysses matched same-build local references at 1024 and
 1536 for 100/28 and 44/44 prompts, and across 26-step controls including
@@ -2584,8 +2586,8 @@ lists every cell's walls, speedups and fidelity.
   became automatic rows: 15 for Krea2 FP8 and BF16 from 1.2 to 2.36 MP, 19 for
   Chroma BF16, FP8 and INT8 from 1.2 to 1.64 MP, 68 for Qwen-Image FP8 from
   1.2 to 1.77 MP, and 79 for Boogu FP8 and 47 for Anima BF16 below 1.2 MP.
-  Since 2026-11-07, rows 79 and 47 grant only a prompt pair whose text rows
-  differ ([equal pairs](#campaign-k-equal-pairs)).
+  Since 2026-11-07, rows 79 and 47, and Chroma's rows 20 and 19, grant only a
+  prompt pair whose text rows differ ([equal pairs](#campaign-k-equal-pairs)).
   Each record grants only the precisions that read bit-identical and beat
   uly2 at every measured size in its band. Kandinsky5 Lite image met that bar
   at 1024, but its image and video checkpoints share one family, so it has no
@@ -2645,7 +2647,11 @@ bit-identical to one GPU. The template pairs stayed bit-identical on this
 build. Rows 47 and 79 therefore grant only a pair whose text rows differ:
 the sampler node tags the latent when the positive's and the negative's text
 tensors differ in rows, and an equal or unread pair takes rows 48 and 78
-(uly2). Explicit `cfg2` on an equal pair still renders. The records are
+(uly2). Chroma's rows 20 and 19 take the same scope on its earlier equal-pair
+reading (BF16 NRMS 0.034, [Chroma](#evidence-chroma)): its text is a
+`CONDRegular`, as Anima's and Boogu's are, so rows that differ never fold on
+one GPU, and an equal pair takes the uly2 fallback below 1.2 MP and rows 21
+and 22 above it. Explicit `cfg2` on an equal pair still renders. The records are
 `out/review_round_2026-11-07/c10_cfg2/` in the validation tree: one cell file
 each, the saved latents, the token counts, both Workers' journals and the
 first Spark's clock trace.

@@ -58,10 +58,13 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "too, because row 15's record excludes Kroma (2026-10-16)"),
     # --- chroma (flux-family DiT) -----------------------------------------
     AutoRule(20, "chroma", (), 0.0, 1.2, 2, {"cfg": 2}, False,
-             "cfg2 below 1.2 MP; on the shipped graph at 1024 square on 2026-10-01 it read "
-             "bit-identical to one GPU and ran faster than uly2 on bf16, fp8 and int8"),
+             "cfg2 below 1.2 MP for a prompt pair whose text rows differ; on the shipped graph "
+             "at 1024 square on 2026-10-01 it read bit-identical to one GPU and ran faster than "
+             "uly2 on bf16, fp8 and int8, and a BF16 pair of equal rows read NRMS 0.034, so "
+             "such a pair takes the uly2 fallback"),
     AutoRule(19, "chroma", (), 1.2, 1.64, 2, {"cfg": 2}, False,
-             "cfg2 from 1.2 to 1.64 MP on BF16, FP8 and INT8: Campaign K (2026-10-14, "
+             "cfg2 from 1.2 to 1.64 MP on BF16, FP8 and INT8 for a prompt pair whose text rows "
+             "differ (a pair of equal rows takes rows 21 and 22): Campaign K (2026-10-14, "
              "ComfyUI e8665ca8, head capped at 2100 MHz) read Chroma1-HD BF16, FP8-mixed "
              "and INT8 ConvRot bit-identical to one GPU at 1152, 1216 and 1280 square, "
              "1.30x to 1.31x faster than uly2 on BF16, 1.26x to 1.30x faster than uly2 "
