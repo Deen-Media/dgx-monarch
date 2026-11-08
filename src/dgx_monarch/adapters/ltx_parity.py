@@ -150,14 +150,14 @@ def parity_rms_adaln(state: StockRows, stream: str,
                      stock: Callable[..., torch.Tensor]) -> Callable[..., torch.Tensor]:
     """``ck.rms_adaln`` launched over the stream's stock rows, prefix placement."""
 
-    def rms_adaln(x, scale, shift, eps=1e-6):
+    def rms_adaln(x, scale, shift, *args, **kwargs):
         rows = state.rows(stream)
         if rows is None:
-            return stock(x, scale, shift, eps)
+            return stock(x, scale, shift, *args, **kwargs)
         call_scale = _fill_rows(scale, rows.local, rows.stock)
         call_shift = _fill_rows(shift, rows.local, rows.stock)
-        return at_stream_rows(lambda call: stock(call, call_scale, call_shift, eps), x, rows,
-                              "fused AdaLN")
+        return at_stream_rows(lambda call: stock(call, call_scale, call_shift, *args, **kwargs),
+                              x, rows, "fused AdaLN")
 
     return rms_adaln
 

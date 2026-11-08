@@ -1939,11 +1939,11 @@ comfy-kitchen's fused AdaLN did so at 1024 rows a rank only. Filled to stock's
 row count, either call gave stock's bits. The wide q, k, v, out and FFN GEMMs,
 the q and k norm and the RoPE call kept a row's bits at every row count.
 
-| op, a rank's rows against stock's | 7040 / 14080 | 2048 / 4096 | 1024 / 2048 |
+| op, a rank's rows against stock's (the worse of the two rank windows) | 7040 / 14080 | 2048 / 4096 | 1024 / 2048 |
 |---|---|---|---|
 | gate projection, torch 2.15: outputs differing, max abs | 80,852, 0.031 | 42,240, 0.063 | 21,112, 0.063 |
 | gate projection, torch 2.12 | 101,241, 0.031 | 42,634, 0.063 | 21,112, 0.063 |
-| fused AdaLN, both builds | identical | identical | 85, 0.016 |
+| fused AdaLN, both builds, each window | identical | identical | 72 / 0.016 and 85 / 0.008 |
 | either call filled to stock's rows | identical | identical | identical |
 
 So the gate's row-count dependence predates torch 2.15, and the 2026-09-27
@@ -1954,7 +1954,7 @@ From 1.5 the
 sharded block launches both calls at one GPU's row count, and the sharded
 self-attention applies RoPE through the call stock makes
 (`adapters/ltx_parity.py`). The latent re-read of the three geometries on that
-build has not run. Native RDMA latent return for this LTX workload is separate
+build, with Wan 2.1 at 832x480x81 as the control, has not run. Native RDMA latent return for this LTX workload is separate
 and remains NOT RUN / HOLD.
 
 <a id="evidence-ltx-2-3-i2v-av-packed"></a>

@@ -5859,7 +5859,7 @@ def _assert_ltx_stock_row_parity_seam() -> None:
     """What the LTX stock-row parity route (adapters/ltx_parity.py) binds in stock's blocks.
 
     Under sequence parallelism the route launches comfy-kitchen's fused AdaLN at its stream's
-    stock row count and the per-head gate projection at stock's rows and positions. It reaches
+    stock row count and the per-head gate projection at stock's rows, the rank's rows at the front. It reaches
     the norm through the ``comfy`` global of ``BasicAVTransformerBlock.forward``,
     ``BasicTransformerBlock.forward`` and ``apply_cross_attention_adaln``, and the text cross
     attention through the ``apply_cross_attention_adaln`` global. Pinned on a tiny real LTXAV
