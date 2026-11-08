@@ -120,7 +120,10 @@ test results are listed in
 
 **cfg2 (CFG-parallel).** Most renders compute prompt and negative-prompt
 versions of every step. cfg2 places each on a separate GPU and targets small
-to medium images.
+to medium images. One GPU batches the two into one call when they encode to
+the same length, and cfg2's two calls can round differently from that one, so
+on Anima and Boogu `auto` takes cfg2 only for a prompt and negative of
+different lengths.
 
 **Ulysses and ring (sequence parallelism, "USP").** The image is split across
 GPUs. Each GPU holds a token slice and exchanges attention data each step.

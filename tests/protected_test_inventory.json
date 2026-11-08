@@ -2505,7 +2505,7 @@
       "test_selection_records_every_cell_it_cuts": "9938c6a1c14e4e07",
       "test_text_encoder_loader_classes_pin_against_the_artifact_manifest_widgets": "82918dc53a689812",
       "test_the_adapter_refuses_at_the_load_before_the_cfg_one_shortcut": "c72a30ae89650034",
-      "test_the_auto_tagging_samplers_match_the_nodes_that_tag": "d255b3f49132ecba",
+      "test_the_auto_tagging_samplers_match_the_nodes_that_tag": "13a3acf01b60dc46",
       "test_the_constant_families_render_an_unequal_pair_by_dispatch": "954e9e4e4b4f2290",
       "test_the_counter_pads_to_the_floor_and_counts_nothing_it_cannot_read": "8120896fb00ec4ad",
       "test_the_counter_reproduces_the_length_the_runtime_named": "98044fadc40c3207",
@@ -2529,6 +2529,7 @@
       "test_the_resume_identity_skips_the_provenance_the_pin_carries": "820f65020221fc3a",
       "test_the_session_pin_carries_the_loaded_nccl_and_a_swap_blocks_the_resume": "16f42a8e17fbc013",
       "test_the_source_digest_reads_the_runtime_not_the_harness": "22d3fc9af1c2609e",
+      "test_the_sweep_predicts_the_pair_tag_from_the_prompt_texts": "e23c6b7a1cdad66d",
       "test_wan_scail_refuses_cfg_parallel_and_ring_past_world_two": "10b8411a347fac46"
     },
     "tests/test_sweep_run.py": {
@@ -2656,7 +2657,7 @@
       "test_the_auto_refusal_names_presets_that_tile_the_world": "8300ba04a9f29c62",
       "test_the_cfg_one_note_still_fires_for_a_plain_sampler": "bf2600da5471655c",
       "test_the_escape_list_keeps_the_cfg_composite_and_says_who_owns_it": "f367365de9f8d230",
-      "test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy": "37b1b0d630fb99a1",
+      "test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy": "2dad40ff476af1ee",
       "test_validate_divisibility": "7b99ad180c061c0a",
       "test_validate_rejects_undersubscribed_dp": "c311109a5125bd9d",
       "test_video_families_usp": "ddf35fb71c828535",

@@ -997,19 +997,31 @@ def test_a_sampler_custom_cfg_pp_graph_keeps_the_cfg_one_skip_under_auto(tmp_pat
 
 def test_the_auto_tagging_samplers_match_the_nodes_that_tag():
     # The sweep's set must name exactly the node classes whose sample call
-    # hands sampler_latent a sampler name. Sampler Custom passes None.
-    tagging, untagged = set(), set()
+    # hands sampler_latent a sampler name. Sampler Custom passes None. Every
+    # call also hands it the pair tag (cfg_pair), which the sweep predicts
+    # with auto_pair_differs.
+    tagging, untagged, pairless = set(), set(), set()
     for path in sorted((REPO / "src" / "dgx_monarch" / "nodes").glob("*.py")):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for klass in (node for node in tree.body if isinstance(node, ast.ClassDef)):
             for call in ast.walk(klass):
                 if isinstance(call, ast.Call) and isinstance(call.func, ast.Name) \
-                        and call.func.id == "sampler_latent" and len(call.args) == 2:
+                        and call.func.id == "sampler_latent":
                     named = not (isinstance(call.args[1], ast.Constant)
                                  and call.args[1].value is None)
                     (tagging if named else untagged).add(klass.name)
+                    if len(call.args) != 3:
+                        pairless.add(klass.name)
     assert tagging == set(matrix.UNCOND_TAGGING_SAMPLERS)
     assert untagged == {"DGXMonarchSamplerCustom"}
+    assert not pairless, f"sampler_latent called without the pair tag in {sorted(pairless)}"
+
+
+def test_the_sweep_predicts_the_pair_tag_from_the_prompt_texts():
+    assert matrix.auto_pair_differs({"prompts": {"positive": "a cat", "negative": "blurry"}})
+    assert not matrix.auto_pair_differs({"prompts": {"positive": "blurry", "negative": "blurry"}})
+    # An unresolved pair is no pair at all (prompt_texts), and reads untagged.
+    assert not matrix.auto_pair_differs({"prompts": {}})
 
 
 def test_an_artifact_groups_array_names_the_base_loaders_extras(tmp_path):

@@ -833,9 +833,12 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Lens", "uly"): ("granted", "2026-10-06 bit-identical to one GPU; 2026-07-28 DP2 NRMS 0.060-0.061 after the pad-row fix"),
     ("Omnigen2", "ring"): ("granted", "certified DP2 NRMS 0.002; fresh run 2026-08-11"),
     ("Anima", "cfg2"): (
-        "scoped", "Auto cfg2 covers BF16 below 1.2 MP on the shipped unequal prompt pair"),
+        "scoped", "Auto cfg2 covers BF16 below 1.2 MP when the prompt and the negative "
+        "encode to different text rows"),
     ("Anima", "uly"): ("granted", "byte-identical to true single GPU 2026-08-11"),
-    ("Boogu", "cfg2"): ("scoped", "Unequal prompts use per-conditioning cfg2 dispatch"),
+    ("Boogu", "cfg2"): (
+        "scoped", "Auto cfg2 covers FP8 below 1.2 MP when the prompt and the negative "
+        "encode to different text rows"),
     ("Boogu", "uly"): ("granted", "2026-10-06 bit-identical to dp2; 2026-08-11 DP2 NRMS 0.022"),
     ("PixelDiT / PiD", "uly"): ("granted", "world-2 bf16: uly2 matched dp2 exactly 2026-08-11"),
     ("Kandinsky5-Image", "uly"): (
@@ -930,14 +933,21 @@ def _support_matrix_rows() -> dict[str, list[str]]:
 
 def _auto_selected_modes(family: str, cfg_value: float,
                          variant: str | None = None) -> set[str]:
-    """Every parallel mode `auto` can land on for this family at this CFG."""
+    """Every parallel mode `auto` can land on for this family at this CFG.
+
+    Both prompt pairs count: a row scoped to pairs of different text rows
+    (Anima 47, Boogu 79) is one auto takes on the shipped graphs.
+    """
+    from itertools import product
+
     from dgx_monarch.topology import choose_auto_topology
 
     modes: set[str] = set()
-    for quant in ("bf16", "fp8"):
+    for quant, pair_differs in product(("bf16", "fp8"), (False, True)):
         for megapixels in _MP_PROBES:
             topology = choose_auto_topology(
-                family, quant, megapixels, 2, cfg_value=cfg_value, variant=variant
+                family, quant, megapixels, 2, cfg_value=cfg_value, variant=variant,
+                pair_differs=pair_differs,
             ).topology
             if topology.cfg > 1:
                 modes.add("cfg2")

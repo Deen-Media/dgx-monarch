@@ -123,18 +123,81 @@ def test_longcat_still_uses_its_in_band_bf16_cfg_evidence() -> None:
         ("chroma", "fp8", 1.63, 3.5, 19),
         ("chroma", "int8", 1.5, 3.5, 19),
         ("qwen_image", "fp8", 1.76, 4.0, 68),
-        ("boogu", "fp8", 1.05, 4.0, 79),
-        ("anima", "bf16", 1.05, 4.0, 47),
     ],
 )
 def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, cfg, row) -> None:
-    decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg)
+    for pair_differs in (False, True):  # these records grant every prompt pair
+        decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=cfg,
+                                        pair_differs=pair_differs)
+        assert decision.topology.describe() == "cfg2"
+        assert decision.rule.row == row and decision.skipped_cfg is None
+        assert f"table row {row}" in decision.reason
+        assert "bit-identical to one GPU on the shipped prompt pair" in decision.reason
+        assert "Campaign K 2026-10-14" in decision.reason
+        assert "head capped at 2100 MHz" in decision.reason
+
+
+# Issue #52, 2026-11-07: rows 47 and 79 were measured on the templates' pairs,
+# whose text rows differ, so one GPU runs them as two calls; two pairs of equal
+# rows each read off one GPU on both rows (check 10), so the records grant only
+# a pair the sampler tagged as differing.
+PAIR_SCOPED = (("boogu", "fp8", 79, 78), ("anima", "bf16", 47, 48))
+
+
+def test_only_rows_47_and_79_are_scoped_to_pairs_of_different_text_rows() -> None:
+    scoped = {row for row, record in CFG2_EVIDENCE.items() if record.pairs != "any"}
+    assert scoped == {47, 79}
+    assert {CFG2_EVIDENCE[row].pairs for row in scoped} == {"unequal"}
+
+
+@pytest.mark.parametrize(("family", "quant", "row", "fallback"), PAIR_SCOPED)
+def test_a_pair_scoped_row_grants_cfg2_when_the_text_rows_differ(family, quant, row, fallback) -> None:
+    decision = choose_auto_topology(family, quant, 1.05, 2, cfg_value=4.0, pair_differs=True)
     assert decision.topology.describe() == "cfg2"
     assert decision.rule.row == row and decision.skipped_cfg is None
-    assert f"table row {row}" in decision.reason
-    assert "bit-identical to one GPU on the shipped prompt pair" in decision.reason
-    assert "Campaign K 2026-10-14" in decision.reason
-    assert "head capped at 2100 MHz" in decision.reason
+    assert "bit-identical to one GPU on a prompt pair whose text rows differ" in decision.reason
+    assert "Campaign K 2026-10-14" in decision.reason and "2026-11-07" in decision.reason
+
+
+@pytest.mark.parametrize(("family", "quant", "row", "fallback"), PAIR_SCOPED)
+def test_an_equal_or_unread_pair_takes_the_ulysses_row(family, quant, row, fallback) -> None:
+    # The default is the unread answer: a caller that cannot tag the pair
+    # gets the row that costs speed, never the one that costs fidelity.
+    for kwargs in ({}, {"pair_differs": False}):
+        decision = choose_auto_topology(family, quant, 1.05, 2, cfg_value=4.0, **kwargs)
+        assert decision.topology.describe() == "uly2"
+        assert decision.rule.row == fallback
+        assert decision.skipped_cfg is not None and decision.skipped_cfg.row == row
+        assert (f"cfg2 table row {row} was measured on prompt pairs whose text rows differ, "
+                "and this pair's rows are equal or unread") in decision.reason
+    rule = next(rule for rule in AUTO_TABLE if rule.row == row)
+    assert cfg_row_is_eligible(rule, quant, None, True)
+    assert not cfg_row_is_eligible(rule, quant)
+
+
+def test_the_pair_clause_names_only_a_row_the_pair_alone_kept(monkeypatch) -> None:
+    # A quant miss keeps its own reason; an unequal pair does not rescue it.
+    for pair_differs in (False, True):
+        decision = choose_auto_topology("anima", "fp8", 1.05, 2, cfg_value=4.0,
+                                        pair_differs=pair_differs)
+        assert decision.rule.row == 48 and decision.skipped_cfg.row == 47
+        assert "was measured on prompt pairs whose text rows differ" not in decision.reason
+        assert "has no passing fp8 result" not in decision.reason  # row 48 was chosen
+    # With no Ulysses row behind it, the fallback note names the pair.
+    from dgx_monarch import topology
+
+    row = AutoRule(999, "invented", (), 0.0, 1.2, 2, {"cfg": 2}, False, "")
+    monkeypatch.setattr(topology, "AUTO_TABLE", (row,))
+    monkeypatch.setitem(CFG2_EVIDENCE, 999, CfgEvidence(
+        row=999, family="invented", quants=("bf16",), min_mp=0.0, max_mp=1.2,
+        min_world=2, speedup="2x", fidelity="0.0",
+        faster=True, exact=True, in_band=True, basis="test", pairs="unequal",
+    ))
+    decision = choose_auto_topology("invented", "bf16", 1.05, 2, cfg_value=4.0)
+    assert decision.rule.row == 99
+    assert "cfg2 table row 999 was measured on prompt pairs whose text rows differ" in decision.reason
+    granted = choose_auto_topology("invented", "bf16", 1.05, 2, cfg_value=4.0, pair_differs=True)
+    assert granted.topology.describe() == "cfg2" and granted.rule.row == 999
 
 
 @pytest.mark.parametrize(
@@ -148,10 +211,12 @@ def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, c
 )
 def test_campaign_k_ungranted_kinds_fall_through_to_their_ulysses_row(
         family, quant, megapixels, skipped, fallback) -> None:
-    decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=4.0)
-    assert decision.topology.describe() == "uly2"
-    assert decision.rule.row == fallback
-    assert decision.skipped_cfg is not None and decision.skipped_cfg.row == skipped
+    for pair_differs in (False, True):
+        decision = choose_auto_topology(family, quant, megapixels, 2, cfg_value=4.0,
+                                        pair_differs=pair_differs)
+        assert decision.topology.describe() == "uly2"
+        assert decision.rule.row == fallback
+        assert decision.skipped_cfg is not None and decision.skipped_cfg.row == skipped
 
 
 def test_krea2_int8_measured_exact_but_no_faster_keeps_ulysses() -> None:

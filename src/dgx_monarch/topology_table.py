@@ -127,13 +127,15 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "latent comparison matched DP2 at 1-step NRMS 0.000"),
     # --- boogu (dual-stream image DiT, ~10B, 4 attention stages) -----------
     AutoRule(79, "boogu", (), 0.0, 1.2, 2, {"cfg": 2}, False,
-             "cfg2 below 1.2 MP on FP8: Campaign K (2026-10-14, ComfyUI e8665ca8, head "
-             "capped at 2100 MHz) read the shipped unequal prompt pair, on the per-cond "
-             "dispatch path, bit-identical to one GPU and 1.40x faster than uly2 at 1024 "
-             "square"),
+             "cfg2 below 1.2 MP on FP8 for a prompt pair whose text rows differ: Campaign "
+             "K (2026-10-14, ComfyUI e8665ca8, head capped at 2100 MHz) read the shipped "
+             "pair, on the per-cond dispatch path, bit-identical to one GPU and 1.40x "
+             "faster than uly2 at 1024 square; on 2026-11-07 a pair of equal rows read "
+             "one-step NRMS 0.014 to 0.025 against one GPU, so it takes row 78"),
     AutoRule(78, "boogu", (), 0.0, _INF, 2, {"ulysses": 2}, False,
              "28 heads tile uly2, USP default; about 20GB bf16 resident, *+fsdp for headroom; "
-             "row 79 takes cfg2 below 1.2 MP on FP8; elsewhere cfg2 is an explicit preset, "
+             "row 79 takes cfg2 below 1.2 MP on FP8 for a pair whose text rows differ; "
+             "elsewhere cfg2 is an explicit preset, "
              "and since 2026-09-05 it takes any prompt pair: "
              "unequal num_tokens dispatch one cond per rank instead of folding; "
              "2026-10-06 fp8 uly2 bit-identical to dp2 (was 1-step NRMS 0.012)"),
@@ -184,13 +186,16 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "on the per-cond dispatch rather than on a batch the num_tokens constant blocks"),
     # --- anima (cosmos MiniTrainDIT ~2B image DiT, H-axis shard) -----------
     AutoRule(47, "anima", (), 0.0, 1.2, 2, {"cfg": 2}, False,
-             "cfg2 below 1.2 MP on BF16: Campaign K (2026-10-14, dgx-monarch 65d14333, "
-             "ComfyUI e8665ca8, head capped at 2100 MHz) read the shipped unequal prompt "
-             "pair, on the per-cond dispatch path, bit-identical to one GPU and 1.27x "
-             "faster than uly2 at 1024 square"),
+             "cfg2 below 1.2 MP on BF16 for a prompt pair whose text rows differ: Campaign "
+             "K (2026-10-14, dgx-monarch 65d14333, ComfyUI e8665ca8, head capped at 2100 "
+             "MHz) read the shipped pair, on the per-cond dispatch path, bit-identical to "
+             "one GPU and 1.27x faster than uly2 at 1024 square; on 2026-11-07 a pair of "
+             "equal rows read one-step NRMS 0.015 to 0.042 against one GPU, so it takes "
+             "row 48"),
     AutoRule(48, "anima", (), 0.0, _INF, 2, {"ulysses": 2}, False,
              "about 2B cosmos-MiniTrainDIT, uly2 default (16 heads d128); row 47 takes "
-             "cfg2 below 1.2 MP on BF16; cfg_cond_padding none: comfy's 512 pad lands "
+             "cfg2 below 1.2 MP on BF16 for a pair whose text rows differ; "
+             "cfg_cond_padding none: comfy's 512 pad lands "
              "inside the forward, after the batching decision, so an unequal prompt pair "
              "splits the model call at any length and cfg2 takes the per-cond dispatch "
              "(2026-09-02)"),

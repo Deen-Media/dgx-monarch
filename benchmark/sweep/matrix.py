@@ -454,6 +454,18 @@ def prompt_texts(graph: dict) -> dict[str, str]:
     return {} if any(text is None for text in found.values()) else found
 
 
+def auto_pair_differs(facts: dict) -> bool:
+    """The runtime's pair tag for this graph, predicted (cfg_pair.text_rows_differ).
+
+    The runtime reads the encoded text rows, which the graph does not hold.
+    Two different texts stand in for different rows, which holds on every
+    shipped template; two texts of equal rows would read true here and false
+    at render time, where the pair-scoped cfg rows (Anima 47, Boogu 79) give
+    way to Ulysses.
+    """
+    return len(set(facts.get("prompts", {}).values())) > 1
+
+
 def text_token_counts(prompts: dict[str, str], family: str, count_tokens) -> dict[str, int]:
     """Token count per prompt, or {} when any one of them cannot be counted."""
     counts = {slot: count_tokens(family, text) for slot, text in prompts.items()}
@@ -908,7 +920,8 @@ def label_cell(cell: dict, facts: dict, world: int) -> tuple[str, str, bool, lis
                                      cfg_value=facts["cfg"],
                                      batch_size=cell["batch"],
                                      keeps_uncond=bool(facts.get("auto_keeps_uncond")),
-                                     variant=cell.get("variant")).topology
+                                     variant=cell.get("variant"),
+                                     pair_differs=auto_pair_differs(facts)).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception as exc:
         return _label_from(exc), "guard", False, []
@@ -1253,7 +1266,8 @@ def resolved_kernel(cell: dict, facts: dict, world: int) -> str:
                                        world, cfg_value=facts["cfg"],
                                        batch_size=cell["batch"],
                                        keeps_uncond=bool(facts.get("auto_keeps_uncond")),
-                                       variant=cell.get("variant"))
+                                       variant=cell.get("variant"),
+                                       pair_differs=auto_pair_differs(facts))
             sage, topo = row.sage, row.topology
         else:
             topo = topology_from_preset(cell["preset"], world)
@@ -1279,7 +1293,8 @@ def resolved_cfg_degree(cell: dict, facts: dict, world: int) -> int:
                                      world, cfg_value=facts["cfg"],
                                      batch_size=cell["batch"],
                                      keeps_uncond=bool(facts.get("auto_keeps_uncond")),
-                                     variant=cell.get("variant")).topology
+                                     variant=cell.get("variant"),
+                                     pair_differs=auto_pair_differs(facts)).topology
                 if cell["preset"] == "auto" else topology_from_preset(cell["preset"], world))
     except Exception:
         return 1

@@ -432,7 +432,11 @@ _WORLD_TWO_AUTO_ROWS = "a1a0738c21f59124e6004a1f7eba20fe46526b892b1e9863b9e2db75
 
 
 def _auto_rows(world: int) -> list[str]:
-    """Each sampled auto decision at this world, as one sortable line each."""
+    """Each sampled auto decision at this world, as one sortable line each.
+
+    A pair whose text rows differ (the sampler's tag) adds a line marked
+    ``|pair1``; untagged lines read as before the tag existed.
+    """
     families = sorted({rule.family for rule in AUTO_TABLE} | {"unknown"})
     rows = []
     for family in families:
@@ -440,13 +444,14 @@ def _auto_rows(world: int) -> list[str]:
             for megapixels in (0.26, 0.79, 1.05, 1.19, 1.5, 2.4, 8.0):
                 for cfg in (1.0, 3.5):
                     for batch in (1, 2):
-                        decision = choose_auto_topology(
-                            family, quant, megapixels, world,
-                            cfg_value=cfg, batch_size=batch)
-                        rows.append(
-                            f"{family}|{quant}|{megapixels}|{cfg}|{batch}="
-                            f"{decision.topology.describe()}|row{decision.rule.row}"
-                            f"|sage{int(decision.sage)}")
+                        for pair in (False, True):
+                            decision = choose_auto_topology(
+                                family, quant, megapixels, world,
+                                cfg_value=cfg, batch_size=batch, pair_differs=pair)
+                            rows.append(
+                                f"{family}|{quant}|{megapixels}|{cfg}|{batch}="
+                                f"{decision.topology.describe()}|row{decision.rule.row}"
+                                f"|sage{int(decision.sage)}" + ("|pair1" if pair else ""))
     return rows
 
 
@@ -455,7 +460,7 @@ def test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy():
     megapixels, cfg and batch value in the _auto_rows grid, so a policy change
     is a reviewed digest edit."""
     digest = hashlib.sha256("\n".join(_auto_rows(2)).encode()).hexdigest()
-    assert digest == "0e1859769980eccae3cf64c8dcf5b0c7075171bb01c59a54d1b22b1c674f12e9"
+    assert digest == "defa660a6107fec482bb81c55d4518da40d7e85eb5bdc0332a32c0e45747d5fb"
 
 
 def test_auto_never_resolves_cfg_plus_sequence():

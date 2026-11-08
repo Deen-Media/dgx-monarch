@@ -401,6 +401,15 @@
 
 ### Rendering
 
+- `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP only when the
+  prompt and the negative encode to different text rows, as on the shipped
+  graphs, and Ulysses for an equal pair. One GPU folds an equal pair into one
+  batch-2 call, which cfg2's two calls do not reproduce: on 2026-11-07 such
+  pairs read one-step NRMS 0.014 to 0.042 against one GPU, and no full schedule
+  matched, while the shipped pairs stayed bit-identical. The sampler nodes tag
+  the pair on the latent, and the render's telemetry records it as
+  `pair_differs`. Explicit `cfg2` on an equal pair still renders
+  ([cfg2 rows](docs/VALIDATION.md#campaign-k-equal-pairs)).
 - A LoRA renders as it does in stock ComfyUI. The Workers baked a LoRA with
   ComfyUI's classic merge, the math stock runs only with DynamicVRAM off,
   while stock's default applies a LoRA when a layer casts its weight, in the

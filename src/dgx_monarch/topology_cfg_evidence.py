@@ -2,9 +2,10 @@
 
 Auto picks cfg2 only when one record covers that exact table row: row number,
 family, checkpoint quantization, resolution band, world, sage off, an elapsed-time
-improvement and fidelity. Missing or inconclusive evidence never grants cfg2; auto
-then skips the row and falls back to Ulysses instead of refusing an otherwise
-supported render.
+improvement and fidelity, and, for a record measured on unequal prompt pairs
+only, a pair whose text rows differ. Missing or inconclusive evidence never
+grants cfg2; auto then skips the row and falls back to Ulysses instead of
+refusing an otherwise supported render.
 """
 from __future__ import annotations
 
@@ -30,11 +31,19 @@ class CfgEvidence:
     # Checkpoint variants (checkpoint_variant) that read the record's family
     # and were measured to fail its bar; the record never grants them.
     excludes: tuple[str, ...] = ()
+    # "unequal": the record was measured exact only on prompt pairs whose text
+    # rows differ, which one GPU runs as two calls. A pair of equal rows folds
+    # into one batch-2 call there, which cfg2's two batch-1 calls do not
+    # reproduce, so the record grants only a render the sampler tagged
+    # (cfg_pair.text_rows_differ). "any" grants every pair.
+    pairs: str = "any"
 
-    def permits(self, row: object, quant_kind: str, variant: str | None = None) -> bool:
-        """Whether this result covers the candidate row and artifact."""
+    def permits(self, row: object, quant_kind: str, variant: str | None = None,
+                pair_differs: bool = False) -> bool:
+        """Whether this result covers the candidate row, artifact and prompt pair."""
         return (
             (variant is None or variant not in self.excludes)
+            and (self.pairs == "any" or pair_differs)
             and getattr(row, "row", None) == self.row
             and getattr(row, "family", None) == self.family
             and (not self.quants or quant_kind in self.quants)
@@ -55,6 +64,11 @@ class CfgEvidence:
 
 _BIT_IDENTICAL = ("bit-identical to one GPU on the shipped prompt pair, full schedule and "
                   "one-step probe")
+_BIT_IDENTICAL_UNEQUAL = ("bit-identical to one GPU on a prompt pair whose text rows differ, "
+                          "full schedule and one-step probe")
+_EQUAL_PAIR_READING = ("on 2026-11-07 (dgx-monarch a76e967, ComfyUI 8a98ecf58, head capped, SM "
+                       "plateau 2093 MHz) that pair read bit-identical again, while two pairs "
+                       "of equal text rows, which fold onto the slice path, did not")
 
 # Keyed by immutable table-row number rather than family. One family may hold
 # more than one quant or resolution row, and a record grants only the quants it
@@ -169,14 +183,16 @@ CFG2_EVIDENCE: dict[int, CfgEvidence] = {
         max_mp=1.2,
         min_world=2,
         speedup="1.98x faster than one GPU and 1.40x faster than uly2",
-        fidelity=_BIT_IDENTICAL,
+        fidelity=_BIT_IDENTICAL_UNEQUAL,
         faster=True,
         exact=True,
         in_band=True,
         basis="Campaign K 2026-10-14, dgx-monarch d549f10d, ComfyUI e8665ca8, head capped at "
-              "2100 MHz, run_matrix warm sampler walls on the fp8_scaled file at 1024 square; "
-              "the template's unequal prompt pair takes the per-cond dispatch path, and an "
-              "equal pair, which folds onto the slice path, was not measured",
+              "2100 MHz, run_matrix warm sampler walls on the fp8_scaled file at 1024 square "
+              "on the template's prompt pair, whose text rows differ, so it takes the "
+              f"per-cond dispatch path; {_EQUAL_PAIR_READING}: full-schedule NRMS 0.279 and "
+              "0.077, one-step 0.014 and 0.025",
+        pairs="unequal",
     ),
     47: CfgEvidence(
         row=47,
@@ -186,14 +202,16 @@ CFG2_EVIDENCE: dict[int, CfgEvidence] = {
         max_mp=1.2,
         min_world=2,
         speedup="1.96x faster than one GPU and 1.27x faster than uly2",
-        fidelity=_BIT_IDENTICAL,
+        fidelity=_BIT_IDENTICAL_UNEQUAL,
         faster=True,
         exact=True,
         in_band=True,
         basis="Campaign K 2026-10-14, dgx-monarch 65d14333, ComfyUI e8665ca8, head capped at "
-              "2100 MHz, run_matrix warm sampler walls on anima-base-v1.0 at 1024 square; the "
-              "template's unequal prompt pair takes the per-cond dispatch path, and an equal "
-              "pair, which folds onto the slice path, was not measured",
+              "2100 MHz, run_matrix warm sampler walls on anima-base-v1.0 at 1024 square on "
+              "the template's prompt pair, whose text rows differ, so it takes the per-cond "
+              f"dispatch path; {_EQUAL_PAIR_READING}: full-schedule NRMS 0.0047 and 0.040, "
+              "one-step 0.015 and 0.042",
+        pairs="unequal",
     ),
 }
 
@@ -204,10 +222,11 @@ def cfg_evidence_for(row: object) -> CfgEvidence | None:
     return CFG2_EVIDENCE.get(row_id) if isinstance(row_id, int) else None
 
 
-def cfg_row_is_eligible(row: object, quant_kind: str, variant: str | None = None) -> bool:
+def cfg_row_is_eligible(row: object, quant_kind: str, variant: str | None = None,
+                        pair_differs: bool = False) -> bool:
     """Fail-closed cfg admission shared by auto selection and tests."""
     record = cfg_evidence_for(row)
-    return record is not None and record.permits(row, quant_kind, variant)
+    return record is not None and record.permits(row, quant_kind, variant, pair_differs)
 
 
 # Kroma (a Krea2 fine-tune) ships as a merge, and its header records the merge
