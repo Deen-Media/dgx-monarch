@@ -18699,7 +18699,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "141240ee1dc6c2a66cd415d3ef95345acf95cc0344b83bb89701460cc08bde4f",
+      "digest": "d5c17617b147860b3fa9ac20a4272fd661d6d47058462a0ab5a90daac0edf25d",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-identity-gate",
       "interfaces": {
@@ -18740,7 +18740,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "813bcbdfb3b5748c74ecf3893ec28ef001a51cbf25a93e770ea754ac89f0b41d",
+      "digest": "467a0ceb648c4566e29e085cf259cc8038bb7986c66671f94d15919d8e3e4510",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ideogram4-t2i",
       "interfaces": {
@@ -19273,7 +19273,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "c1377c1ec330b784d4e222f724e75ca87926e38d8126b66dd7293e18863f6dcc",
+      "digest": "8386395cdfcf4f26f5d8080d8b5ba7679fd2fd377ada2cc11ee413adaa8cda8e",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx-i2v-av",
       "interfaces": {
@@ -19314,7 +19314,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "1ab72ac6748675dddde77b3a608b958bc60c45fd84a166f88b43a0fecc90e699",
+      "digest": "81cfb67f436a73c24264a3c5583a3f8d0e834dd80d18816a64f7946c09175bd4",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx-t2v",
       "interfaces": {
@@ -19355,7 +19355,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "ff8cd4e270b5953a77d0147e0345d5b63df40d97a2b860f3d9e4bdf008591d2c",
+      "digest": "9dbc2a77406fdc6cfbad043a633b7ad5153b0e88884e6c6365250f9e65f16d82",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx25-flf2v",
       "interfaces": {
@@ -19396,7 +19396,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "74051364c724ee23f0536127a7cc8ec1fbebe5f412cad17a1b48a01461734a2a",
+      "digest": "4cf8bdbf3f1dbd0811b9f3f6ee26bfdb24cf6c0b29e0223e48288557d899b628",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx25-i2v",
       "interfaces": {
@@ -19437,7 +19437,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "6bbaf6c81a479b25660a6c8459dc9eea8200552c57f6c6e0d5b3290d65f9d53f",
+      "digest": "3f102d7340b6872063409efd27406891df57b7407a869262adb33baaf73f294f",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx25-i2v-guide",
       "interfaces": {
@@ -19478,7 +19478,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "e6f071536736628ca6bf613358286d34d477d0ff79ddf1fdc60b44a67fb140b0",
+      "digest": "4c689cb83ee4b9d85af568fba8693ea7437c0378c1c9826ba038079094a65a53",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-ltx25-t2v",
       "interfaces": {
@@ -19970,7 +19970,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "7c518a1f36f6c261c70b2c4b2147cf34ae7932b7ae0677374f60b5eefd9d563b",
+      "digest": "6ec22b38eb7ce238b20cf7b5a9fab8ef9c8e2437af5e9002d14013ad0843fd79",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-p-h3-image",
       "interfaces": {

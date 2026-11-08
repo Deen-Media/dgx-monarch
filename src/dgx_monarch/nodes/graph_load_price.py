@@ -373,8 +373,9 @@ def _pair_clause(shape: Any, fits: Callable[[Any], bool], quant_kind: str,
     share = driver_footprint.fsdp_shard_build_bytes(shape.weight_bytes, 2)
     return (f"On a pair of Sparks with the Init node's topology set to {PAIR_PRESET} "
             f"(auto never picks it), {box_names.HEAD} would hold {_gib(share)} GiB of the DiT and "
-            f"the load fits; Ulysses and ring hold all of it. An FSDP render needs an "
-            f"Identity Gate PASS on {PAIR_PRESET} first.")
+            f"the load fits; Ulysses and ring hold all of it. Under the default "
+            f"auto_gate=first_use, its first render there runs the identity gate's "
+            f"clean-reload proof before it samples.")
 
 
 def alternatives(shape: Any, *, fits: Callable[[Any], bool], unet_name: str, family: str,

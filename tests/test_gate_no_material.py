@@ -607,7 +607,7 @@ def _render_rig(monkeypatch, gate_result):
     monkeypatch.setattr(common, "submit_render", lambda *_args, **_kwargs: Pending())
     monkeypatch.setattr(
         common, "_quarantine_unproven_paths",
-        lambda model: quarantines.append(model))
+        lambda model, **_kwargs: quarantines.append(model))
     return quarantines
 
 

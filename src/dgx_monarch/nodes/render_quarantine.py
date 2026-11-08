@@ -78,6 +78,7 @@ def _enforce_persisted_quarantine(
     *,
     resolved_topology: Topology | None = None,
     resolved_attention: str | None = None,
+    uncond: dict | None = None,
 ) -> Any | None:
     """Carry a known FAIL into this dispatch before setup.
 
@@ -85,6 +86,11 @@ def _enforce_persisted_quarantine(
     combination carries no FAIL in this capability context and the caller
     keeps its model. The graph's own lora_low_rss and slab_weights stay as
     the graph asked, so other checkpoints on the same Init node keep them.
+
+    A dual-model render (``uncond``) reads two keys: the pair's own, with its
+    digest over both artifact sets, and the conditional model's single key.
+    Either FAIL turns the levers off, because a single-model FAIL on that model
+    is the same model on the same residency path; the line names which failed.
     """
     from .common import _AUTO_GATE_ACTIVE
 
@@ -95,6 +101,7 @@ def _enforce_persisted_quarantine(
         from .common import _process_gate_verdict
         from .gate import (
             _combo_of,
+            _dual_combo_of,
             _effective_worker_args,
             _ledger_dir,
             gate_capability_context,
@@ -112,11 +119,17 @@ def _enforce_persisted_quarantine(
             # FSDP has no stock-residency fallback within the same topology.
             # Its exact PASS/denial is enforced by normal-render authorization.
             return None
-        lora_risk = bool(model.loras) and effective.get("lora_low_rss") is not False
+        stacked = bool(model.loras or (uncond or {}).get("loras"))
+        lora_risk = stacked and effective.get("lora_low_rss") is not False
         slab_risk = effective.get("slab_weights") is not False or residency_mode.requested(effective)
         if not lora_risk and not slab_risk:
             return None
-        key, artifacts = _combo_of(model)
+        # The pair's own key first, then the conditional model's single key.
+        # Both resolve before the ledger opens: an artifact with no stable
+        # identity refuses here, so it never reaches the ledger.
+        keys: list[tuple[Any, dict | None]] = (
+            [(_dual_combo_of(model, uncond), uncond)] if uncond is not None else [])
+        keys.append((_combo_of(model), None))
         ledger = GateLedger(_ledger_dir())
         commit = comfy_commit()
         context = (gate_capability_context(
@@ -126,16 +139,21 @@ def _enforce_persisted_quarantine(
             resolved_attention=resolved_attention,
         ) if handle is not None else
                    {"worker_args": dict(model.mesh.worker_args)})
-        # One ledger read keeps the verdict and its diagnostic cause coherent;
-        # a concurrent writer between separate reads could otherwise pair this
-        # FAIL with a different outcome's metadata.
-        state, entry = ledger.lookup_with_entry(key, artifacts, commit, context)
-        # A FAIL measured in this session is also held in the process verdict
-        # cache, so a ledger write that failed cannot lift it. The ledger API
-        # also takes a bare digest string for the artifact set.
-        digest = artifacts if isinstance(artifacts, str) else artifacts.current
-        session_fail = state != "fail" and _process_gate_verdict(
-            gate_verdict_token(key, digest, commit, context)) == "FAIL"
+        failed_peer: dict | None = None
+        for (key, artifacts), peer in keys:
+            failed_peer = peer  # the key this lookup reads, named if it failed
+            # One ledger read keeps the verdict and its diagnostic cause coherent;
+            # a concurrent writer between separate reads could otherwise pair this
+            # FAIL with a different outcome's metadata.
+            state, entry = ledger.lookup_with_entry(key, artifacts, commit, context)
+            # A FAIL measured in this session is also held in the process verdict
+            # cache, so a ledger write that failed cannot lift it. The ledger API
+            # also takes a bare digest string for the artifact set.
+            digest = artifacts if isinstance(artifacts, str) else artifacts.current
+            session_fail = state != "fail" and _process_gate_verdict(
+                gate_verdict_token(key, digest, commit, context)) == "FAIL"
+            if state == "fail" or session_fail:
+                break
     except WorkerRuntimeMismatch:
         raise  # a pair on two torch builds is the user's to fix, not a lookup failure
     except Exception as exc:
@@ -166,7 +184,7 @@ def _enforce_persisted_quarantine(
         "combination in this capability context, and other checkpoints on "
         "this Init node keep theirs%s",
         "FAILED earlier this session" if session_fail else "previously FAILED",
-        combination_label(model), "+".join(pair),
+        combination_label(model, failed_peer), "+".join(pair),
         ". comfy_managed is now off for the whole Init node, because a live "
         "worker cannot change it for one dispatch"
         if residency_mode.WORKER_ARG in levers else "",

@@ -36,10 +36,6 @@ def run_identity_ceremony(
     a monkeypatch of that module reaches every seam. The optional observer is
     wrapped by, and cannot replace, cohort attestation.
     """
-    if request.get("uncond_model") is not None:
-        raise ValueError(
-            "the Identity Gate proves one model only; a dual-model request renders "
-            "with slab_weights and lora_low_rss forced off, or refuses under automatic FSDP")
     from .common import _bind_packed_render_model
 
     model, bound_handle = _bind_packed_render_model(
@@ -50,6 +46,10 @@ def run_identity_ceremony(
     )
     handle = (bound_handle if bound_handle is not None
               else runtime["ensure_live"](model.mesh.handle))
+    if request.get("uncond_model") is not None:  # before any side effect
+        from .gate_dual import refuse_unprovable
+
+        refuse_unprovable(model, latent, cfg_value, handle)
     provenance_attestor = ProofCohortAttestor(provenance_attestor)
     fsdp_scope_state = {
         "required": model_declares_fsdp_proof(model, handle),
@@ -114,7 +114,7 @@ def run_identity_ceremony(
                     # writing them into the graph would take them from every
                     # other checkpoint on the same Init node.
                     runtime["_force_stock_quarantine"](
-                        model, handle, timeout_s=600)
+                        model, handle, timeout_s=600, uncond=request.get("uncond_model"))
                 return result
         except BaseException as exc:
             # A settled refusal keeps its own class here too: the ceremony
@@ -145,7 +145,8 @@ def run_identity_ceremony(
                 try:
                     with session.activate():
                         runtime["_force_stock_quarantine"](
-                            model, handle, timeout_s=600, cause=exc)
+                            model, handle, timeout_s=600, cause=exc,
+                            uncond=request.get("uncond_model"))
                 except BaseException as quarantine_exc:
                     previous = primary
                     primary, cause = reconcile_error(

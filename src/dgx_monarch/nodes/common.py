@@ -175,9 +175,8 @@ def _warn_nearest_signature(path: str) -> None:
 
 def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
                      world: int | None = None, *, latent_downscale: int | None = None,
-                     size_tags: tuple = (None, None),
-                     keeps_uncond: bool = False, pair_differs: bool = False,
-                     ) -> tuple[Topology, bool, str]:
+                     size_tags: tuple = (None, None), keeps_uncond: bool = False,
+                     pair_differs: bool = False) -> tuple[Topology, bool, str]:
     """Resolve the mesh's topology preset for this render.
 
     Returns (topology, sage, reason). Explicit presets pass through; "auto"
@@ -278,10 +277,8 @@ def _resolve_topology_for_latent(
             latent[LATENT_DOWNSCALE_METADATA_KEY])
     if latent_size_tags(latent) != (None, None):
         extra["size_tags"] = latent_size_tags(latent)
-    for key, name in ((CFG_KEEPS_UNCOND_METADATA_KEY, "keeps_uncond"),
-                      (CFG_PAIR_DIFFERS_METADATA_KEY, "pair_differs")):
-        if latent.get(key):  # set by the sampler nodes
-            extra[name] = True
+    tags = ((CFG_KEEPS_UNCOND_METADATA_KEY, "keeps_uncond"), (CFG_PAIR_DIFFERS_METADATA_KEY, "pair_differs"))
+    extra.update({name: True for key, name in tags if latent.get(key)})  # set by the sampler nodes
     return resolve_topology(model, latent["samples"], cfg_value, world, **extra)
 
 
@@ -331,12 +328,12 @@ def run_render(model: ModelSpec, request: dict, latent: dict, cfg_value: float |
     # user render, not to nested first-use Gate legs before it. An earlier
     # combination's aborted ceremony proved nothing about this one, so this
     # combination starts from the levers the graph asked for.
-    _restore_requested_levers(model)
+    _restore_requested_levers(model, request.get("uncond_model"))
     with _suspend_adoption_context():
         gate_result = _maybe_auto_gate(
             model, request, latent, cfg_value, steps_hint)
     if gate_result not in gate_inconclusive.NO_QUARANTINE_VERDICTS:
-        _quarantine_unproven_paths(model)
+        _quarantine_unproven_paths(model, uncond=request.get("uncond_model"))
     handoff = PendingRenderHandoff()
     try:
         pending = submit_render(
@@ -455,9 +452,10 @@ def _auto_gate_context(
     request_kind: str,
     latent: dict | None = None,
     cfg_value: float | None = None,
+    uncond_model: dict | None = None,
 ) -> tuple[str, tuple[str, ...]] | None:
     return _auto_gate_impl.auto_gate_context(
-        model, request_kind, latent, cfg_value)
+        model, request_kind, latent, cfg_value, uncond_model)
 
 
 def auto_gate_required(
@@ -465,12 +463,13 @@ def auto_gate_required(
     request_kind: str = "ksampler",
     latent: dict | None = None,
     cfg_value: float | None = None,
+    uncond_model: dict | None = None,
 ) -> bool:
     if latent is not None:
         model, _bound_handle = _bind_packed_render_model(
             model, latent, cfg_value)
     return _auto_gate_impl.auto_gate_required(
-        model, request_kind, latent, cfg_value)
+        model, request_kind, latent, cfg_value, uncond_model)
 
 
 def _maybe_auto_gate(model: ModelSpec, request: dict, latent: dict,

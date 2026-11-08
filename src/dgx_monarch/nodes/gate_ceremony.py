@@ -80,6 +80,7 @@ def gather_ceremony_evidence(
     # first-use ceremony. Preserve an outer auto-gate guard when this helper is
     # called from the automatic path.
     from .common import _AUTO_GATE_ACTIVE, _restore_auto_gate_active
+    from .gate_dual import ceremony_stacks, fold_uncond_cycle
     from .gate_identity import bind_request, capture
     from .slab_proof import establish
 
@@ -129,7 +130,7 @@ def gather_ceremony_evidence(
             model, original_worker_args, handle=handle)
         model_request, key, ceremony_identity, artifacts, artifact_binding = capture(
             ceremony_model, frozen_request.get("uncond_model"))
-        stack = [dict(entry) for entry in model_request.get("loras") or []]
+        stack, cond_stack = ceremony_stacks(model_request, frozen_request)
         # Every render, swap, and ledger row shares this transaction snapshot.
         commit = ceremony_identity["comfy"]
         lazy_swap_applicable = (
@@ -308,10 +309,11 @@ def gather_ceremony_evidence(
                     verdict="INCONCLUSIVE",
                 )
         else:
-            raw_cycle = handle.call_all(
+            raw_cycle = fold_uncond_cycle(handle, handle.call_all(
                 "gate_swap_cycle", model_request["unet_name"],
-                dict(model_request.get("options") or {}), stack, ceremony_identity,
-                timeout_s=1800, **runtime["mesh_setup"].token_kwargs(cycle_token))
+                dict(model_request.get("options") or {}), cond_stack, ceremony_identity,
+                timeout_s=1800, **runtime["mesh_setup"].token_kwargs(cycle_token)),
+                frozen_request, artifact_binding, cycle_token)
             slab_proof = establish(
                 ceremony_model, model_request, frozen_request,
                 artifact_binding, ceremony_identity, frozen_latent,
@@ -443,7 +445,7 @@ def gather_ceremony_evidence(
                       "(%r); residency levers unchanged", exc)
         if handle is not None and not fsdp_proof_scope and not sol_waiver_abort:
             try:
-                runtime["_force_stock_quarantine"](model, handle, cause=exc)
+                runtime["_force_stock_quarantine"](model, handle, cause=exc, uncond=request.get("uncond_model"))
             except BaseException as cleanup_exc:
                 safe_call(runtime["log"].error,
                           "identity-gate stock quarantine failed while preserving "
