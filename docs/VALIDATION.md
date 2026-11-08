@@ -1911,7 +1911,12 @@ also exercised a Video Lite LoRA, whose warm bake matched a fresh session.
 ### LTX 2.3 T2V
 
 FP8-scaled auto/Ulysses completed cold and warm 121-frame renders;
-the decoded one-step probe matched its local reference exactly. Native RDMA
+the decoded one-step probe matched its local reference exactly. At the
+latent, uly2 at the shipped 1280x704x121 differs from a one-GPU render on
+dgx-monarch `a76e967`: one-step NRMS 0.0116, max abs 0.041, on 2026-11-07,
+under the 0.10 floor but not identical, and 0.0125 to 0.0137 at 512 square; the
+fused AdaLN switch does not explain it
+([fused AdaLN switch](#fused-adaln-switch-other-families)). Native RDMA
 latent return for this LTX workload is separate and remains NOT RUN / HOLD.
 
 <a id="evidence-ltx-2-3-i2v-av-packed"></a>
@@ -2649,6 +2654,59 @@ has no CFG field, so the Krea2 record covers every CFG other than 1, and CFG 1
 under a CFG++ sampler that a DGX Monarch KSampler node names, on the strength
 of the two regimes measured. A Sampler Custom graph names no sampler, so at
 CFG 1 it keeps Ulysses.
+
+<a id="fused-adaln-switch-other-families"></a>
+
+## Fused AdaLN kernel switch in other families (2026-11-07)
+
+The FLUX.3 probe of 2026-10-16 found comfy-kitchen's fused AdaLN taking one
+kernel for calls of 1024 kernel rows or fewer and another above
+([FLUX.3 Klein](#evidence-flux-3-klein)). Issue #54 asked whether the other
+families that call `adaln` or `rms_adaln` on sharded rows meet it. On ComfyUI
+`8a98ecf58` those are Flux 1, Flux 2 and Chroma (through `modulated_norm` in
+`flux/layers.py`), Qwen Image 2.1, Wan 2.1 and LTX 2.3; MOSS-Image and FLUX.3
+already fill their calls, and SeedVR has no adapter and no shipped template, so
+it did not run. Each leg rendered a shipped template twice at one step, seed
+1031, on dgx-monarch `a76e967`, torch 2.15.0+cu132, both Sparks: Init dp2 at
+batch 2, whose batch row 0 is the one-GPU reference, and Init uly2 at batch 1,
+both with the automatic gate off and stock residency (Flux 2 with slab
+residency, because its 33.0 GiB file does not fit a stock load beside its host
+copy). A true one-GPU render (`mode=local`, `gpus_per_host=1`) of Flux 1 at 512
+square and LTX 2.3 at 1280x704x121 and 512x512x57 equalled the dp2 row 0 bit for
+bit. The first Spark was capped, its SM clock peaking at 2093 MHz; the second
+was uncapped. The table compares saved latents.
+
+| Family, template | Size | uly2 against one GPU (max abs, NRMS, elements differing) |
+|---|---|---|
+| Flux 1, `flux1-t2i` | 1024 square (shipped) | Identical |
+| Flux 1 | 512 square | 0.1298, 0.0064, 36260 of 65536 |
+| Flux 2, `flux2-t2i` (FP8-mixed) | 1024 square (shipped) | Identical |
+| Flux 2 | 512 square | 0.0938, 0.0116, 106517 of 131072 |
+| Chroma, `chroma-t2i` (FP8-mixed) | 1024 square (shipped) | Identical |
+| Chroma | 512 square | 0.6058, 0.0620, 59833 of 65536 |
+| Qwen Image 2.1, `qwen-image21-t2i` (BF16) | 1024 square (shipped) | Identical |
+| Qwen Image 2.1 | 512 square | 0.1738, 0.0060, 40275 of 65536 |
+| Wan 2.1, `wan-t2v` (14B FP8) | 832x480x81 (shipped) | Identical |
+| Wan 2.1 | 512x512x81 | Identical |
+| Wan 2.1 | 512x512x5 (1024 rows a rank) | Identical |
+| LTX 2.3, `ltx-t2v` (22B distilled FP8) | 1280x704x121 (shipped) | 0.0410, 0.0116, 1193521 of 1802240 |
+| LTX 2.3 | 512x512x121 | 0.0430, 0.0125, 370741 of 524288 |
+| LTX 2.3 | 512x512x57 (1024 rows a rank) | 0.0488, 0.0137, 190595 of 262144 |
+
+Flux 1, Flux 2, Chroma and Qwen Image 2.1 match one GPU at their shipped size
+and miss at 512 square, the switch's pattern: at 512 square a single block's
+joint call is 1536 rows on one GPU and 768 on a rank, and Qwen Image 2.1's
+prefix-plus-target call crosses the same line. Every image template ships at
+1024 square, so no shipped size is affected. From this release their sharded
+blocks fill each fused-norm call to stock's rows
+([parity rule](DESIGN.md#53-attention-adapters)); a hardware re-read of the
+512-square cells is pending. Wan 2.1 matches everywhere, the size built to meet
+the switch included: its CFG 5 folds cond and uncond into one batch-2 call, so a
+rank's call holds 2048 kernel rows there. LTX 2.3 differs at every size, the
+shipped one included, where a rank's call holds 7040 rows, far over the switch,
+so the switch does not explain it and its blocks are not filled; the cause is
+not identified. The records are `out/review_round_2026-11-07/c09_adaln/` in the
+validation tree.
 
 ## INT8 GEMM kernel comparison (2026-10-28 and 29)
 

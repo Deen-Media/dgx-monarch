@@ -253,6 +253,30 @@ than stacks on a repeat call.
    `[text0, image0, text1, image1]`; that permutation preserves real-number
    attention algebra but changes Flash rounding enough to reproduce the
    measured Chroma fp8_scaled/int8_convrot failures.
+
+   **Flux-family and Qwen Image 2.1 fused-norm parity.** comfy-kitchen's
+   fused `adaln` picks its CUDA kernel by a call's kernel rows (the FLUX.3
+   paragraph below), and a sharded block normalizes only its rank's window.
+   At 512 square a single block's joint call holds 1536 rows on one GPU and
+   768 on a rank, across the 1024-row switch, and on 2026-11-07 uly2 there
+   read one-step NRMS 0.006 to 0.062 against one GPU on Flux 1, Flux 2,
+   Chroma and Qwen Image 2.1 (VALIDATION.md). The Flux-family forward puts
+   stock's row count of each stream in the block options
+   (`adaln_parity_blocks.with_norm_rows`): the image and text rows for the
+   double loop, the joint rows for the single loop. Each sharded block whose
+   class forward reads the `modulated_norm` global gets a per-instance
+   `forward` that runs stock's code with that global sent through FLUX.3's
+   `at_stock_rows`, keyed by the norm module: `img_norm1` and `img_norm2` fill
+   to the image rows, `txt_norm1` and `txt_norm2` to the text rows,
+   `pre_norm` to the joint rows. Qwen Image 2.1's target blocks get the
+   prefix plus the whole target as their count, and their `_modulated_norm`
+   fills its first call to it; its second call redoes the prefix rows, which
+   every rank holds whole. The final layers run after the gather, on stock's
+   rows. Options without the counts, the cache-miss prefix fill and every
+   topology without sequence parallelism run the class forward. A block whose
+   class forward reads no such global is left unbound and logged, and
+   `tests/test_adaln_parity_blocks.py` names the change against an installed
+   ComfyUI.
    Query and key pad coordinates are remapped independently, and the inverse
    permutation restores the original rank layout before the return all-to-all.
    The permutation, its inverse and the pad exclusion's keep index depend

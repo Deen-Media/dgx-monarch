@@ -475,10 +475,18 @@ full normalization work. MOSS-Image applies it, through the same
 (`adapters/moss_image_seams.py`), with the rank's window at the front of the
 filled call; its head norm runs after the gather, on stock's rows. Its fused
 q and k norm and RoPE runs unfilled, because on 2026-10-20 comfy-kitchen
-0.2.39 returned stock's bits for that op on every rank's window. The other
-families that call comfy-kitchen's `adaln` or `rms_adaln` on sharded rows
-are unchecked
-([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
+0.2.39 returned stock's bits for that op on every rank's window. Flux 1,
+Flux 2, Chroma and LongCat, through the Flux-family forward, and Qwen Image
+2.1 apply it to every `adaln` call of their sharded blocks
+(`adapters/adaln_parity_blocks.py`): on 2026-11-07 uly2 at 512 square read
+one-step NRMS 0.006 to 0.062 against one GPU on the first four measured,
+while their shipped 1024 square read bit-identical. A block whose stock
+forward stops reading the norm global runs unfilled, the path measured
+bit-identical at the shipped sizes, and the Worker log names it. Wan 2.1
+read bit-identical at every size measured, so it runs unfilled. LTX 2.3 read
+off one GPU at every size, the shipped one included, where every call holds
+far more than 1024 rows, so the switch does not explain it and its calls
+run unfilled until a probe finds the cause (VALIDATION.md).
 
 Ranks must also agree on each model call's batch. ComfyUI's
 `_calc_cond_batch` runs cond and uncond as one call only when its estimate of
