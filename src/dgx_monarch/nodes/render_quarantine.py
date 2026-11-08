@@ -124,6 +124,12 @@ def _enforce_persisted_quarantine(
         slab_risk = effective.get("slab_weights") is not False or residency_mode.requested(effective)
         if not lora_risk and not slab_risk:
             return None
+        # The pair's own key first, then the conditional model's single key.
+        # Both resolve before the ledger opens: an artifact with no stable
+        # identity refuses here, so it never reaches the ledger.
+        keys: list[tuple[Any, dict | None]] = (
+            [(_dual_combo_of(model, uncond), uncond)] if uncond is not None else [])
+        keys.append((_combo_of(model), None))
         ledger = GateLedger(_ledger_dir())
         commit = comfy_commit()
         context = (gate_capability_context(
@@ -133,10 +139,6 @@ def _enforce_persisted_quarantine(
             resolved_attention=resolved_attention,
         ) if handle is not None else
                    {"worker_args": dict(model.mesh.worker_args)})
-        # The pair's own key first, then the conditional model's single key.
-        keys: list[tuple[Any, dict | None]] = (
-            [(_dual_combo_of(model, uncond), uncond)] if uncond is not None else [])
-        keys.append((_combo_of(model), None))
         failed_peer: dict | None = None
         for (key, artifacts), peer in keys:
             failed_peer = peer  # the key this lookup reads, named if it failed
