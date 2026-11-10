@@ -506,11 +506,14 @@ than stacks on a repeat call.
    run. The FSDP shard build of a bf16 or fp16 checkpoint reloads the
    sharded weights through `load_state_dict`, and `ComfyAttention` clears
    its config on any load whose state dict lacks the key, so a pin that
-   reached that build would not run, and the record would name it. No
-   safetensors checkpoint whose own header pins reaches it today: its uint8
-   config tensors leave the FSDP launch check unable to prove a bf16 or fp16
-   core (`fsdp_islands.header_core_kind`), so every `+fsdp` preset refuses
-   that file class P (`validate_fsdp_launch_quant`) before any shard build.
+   reached that build would not run, and the record would name it. The FSDP
+   launch check does not count a uint8 config tensor
+   (`fsdp_islands.proof_bytes_by_dtype`), since it is no weight, so a bf16
+   checkpoint whose own header pins now proves its precision and reaches that
+   build, which clears its pins; the clearing stays, and the record says
+   dropped. The one such shipped file, MiniMax-H3-Image's BF16 DiT, meets the
+   family's loader refusal first until its adapter lands
+   ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-minimax-h3-image-render-refuses-at-the-loader)).
    An fp8 or int8 checkpoint takes the direct wrap, which reloads nothing, so
    its pins stay, run and ask for the waiver as on a resident topology. A
    LoRA's pin is

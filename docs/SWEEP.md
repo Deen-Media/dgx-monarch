@@ -118,11 +118,11 @@ runtime's own pin guard (`attention_pins.py`), so these labels read basis
   granted leg would meet the pin guard, and that cell carries no waiver
   either. The runner dismisses the card such a refusal raises, so a
   later cell's grant still finds exactly one card of its kind.
-- **Two refusals come before the pin guard.** A bf16 or fp16 file that pins
-  never reaches the guard under FSDP: its uint8 config tensors leave the
-  launch precision unproven, so the FSDP launch check refuses it class P on
-  every `+fsdp` preset. A sol kernel without sequence parallelism refuses
-  class P when the worker configures it, before any load.
+- **A pinned bf16 file under FSDP never reaches the pin guard.** The FSDP
+  launch check does not count its uint8 config tensors, so it proves the
+  file's precision, and the bf16 shard build clears the pins; the record says
+  dropped. A sol kernel without sequence parallelism refuses class P when the
+  worker configures it, before any load.
 - **A pinned checkpoint under sequence parallelism is measured, not
   scored.** uly2 and ring2 drop the pins and run the Init widget's kernel,
   while their single-GPU reference refuses, or under the waiver runs the

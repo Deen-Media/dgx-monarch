@@ -1061,6 +1061,21 @@ The weights are under the MiniMax H3 Community License, the same terms as the
 H3 files. The Qwen3-VL-4B parts of the text encoder and the prompt upsampler,
 based on Qwen3.5-9B, are under the Apache License 2.0.
 
+**MiniMax-H3-Image is a different model.** MiniMax's own image release, which
+ComfyUI 0.45.0 or newer supports, drops H3's audio stream and carries six output heads on
+a sigma grid in the file's `config` metadata; ComfyUI builds it as
+`MiniMaxH3Image`, never as `MiniMaxH3`, and the header detector names it
+`minimax_h3_image` from the same key paths. Its BF16 file reads `bf16`, its 51
+F16 adaLN linears counting as islands, and its INT8 ConvRot and W4A8 files read
+`int8` and `w4a8`; every one of its DiT files, BF16 included, pins
+comfy-kitchen's INT8 attention on all 50 blocks. This release refuses the
+family class P at the loader, before any load, in every format
+([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-minimax-h3-image-render-refuses-at-the-loader)),
+and a file without its sigma grid first ([#147](TROUBLESHOOTING.md#147-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid));
+render it with stock ComfyUI 0.45.0 or newer on one GPU. Its VAE
+(`MiniMaxH3ImageVAE`, one still frame) decodes on the driver, as p-h3-image's
+does. No p-h3-image file changes.
+
 <a id="model-longcat-image"></a>
 
 ### LongCat-Image
@@ -2040,7 +2055,8 @@ a still at or under 1.2 MP, which decodes in about a second; a MiniMax H3
 still, which is one chunk; a VAE that came from a checkpoint rather than a VAE
 loader file, since no Worker can name its bytes; and every encode. On ComfyUI
 0.44.0 and later, so do the Sol-H3-VAE decoder, which decodes the whole clip
-in one pass, the p-h3-image VAE, which decodes one frame, and a VAE that went
+in one pass, the p-h3-image VAE, which decodes one frame, and on 0.45.0 and
+later the MiniMax-H3-Image VAE, which decodes one frame too, and a VAE that went
 through the VAE Compute Dtype node with a dtype other than `default`: that
 node keeps the weights the loader built and changes only the compute dtype,
 while a Worker builds its VAE in one dtype, so its decode may differ. Each

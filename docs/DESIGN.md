@@ -713,7 +713,13 @@ kept at fp32 passes the `_file_tensor` check and still raises a bare
 replicated. Header and
 loaded-model detection both classify any full-precision mix containing F16 as
 `fp16`, while fp8/int8 storage markers take precedence; an fp16 core is
-admitted uniform only. fp32 parameters inside a bf16 core are islands
+admitted uniform only. One family names F16 tensors as islands instead:
+MiniMax-H3-Image keeps its 51 adaLN linears on the curve basis in F16 beside a
+bf16 core, so its header reads `bf16` and the header proof counts those bytes
+as island bytes (`adapters/minimax_h3_image_header.py`); the loaded-model side
+of that rule belongs to the family's adapter. The header proof does not count
+a uint8 attention pin (`<block>.comfy_attention.config`), which is no weight.
+fp32 parameters inside a bf16 core are islands
 (`adapters/fsdp_islands.py`): when they hold at most 5%
 of the checkpoint bytes the header proof still reads `bf16`, the live scan
 reports `live_dtype_profile=bf16_core_fp32_islands_v1` with the island count

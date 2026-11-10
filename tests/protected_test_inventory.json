@@ -1779,6 +1779,22 @@
       "test_unpadded_sequence_passes_an_empty_drop_rows": "092ad06e09d9cbb9",
       "test_unvetted_segment_kind_refusal_carries_the_class_p_tag": "be9975183362086e"
     },
+    "tests/test_minimax_h3_image_header.py": {
+      "test_a_file_without_its_sigma_grid_refuses_first": "41a478ac51aa0ca8",
+      "test_a_format_with_no_row_takes_the_path_any_unvalidated_format_takes": "3ca22d5c559215e9",
+      "test_a_pinned_bf16_file_of_any_family_now_proves_bf16": "e29aa35c6d10c8cd",
+      "test_an_f16_tensor_that_is_no_adaln_island_keeps_the_fp16_reading": "4f5b106947990f22",
+      "test_each_published_format_reads_as_the_family_and_what_it_is": "45e54bbdfb7236fe",
+      "test_forcing_the_h3_video_adapter_cannot_walk_past_the_gate": "27367fe110affb7e",
+      "test_the_driver_and_the_worker_refuse_class_p_with_one_sentence": "6a5c2c830233b842",
+      "test_the_grid_answers_before_dropped_scales_and_dropped_scales_before_the_family": "212f7dafddf5620c",
+      "test_the_h3_nodes_refuse_the_family_once_detection_names_it": "8d343e8fe33a8978",
+      "test_the_h3_row_still_takes_every_file_with_the_audio_path": "e5ec0c70511d22ee",
+      "test_the_islands_are_exactly_the_51_adaln_linears": "29ba102fd5a4c8a5",
+      "test_the_proof_skips_pins_and_counts_named_islands_under_the_ceiling": "ec20ca0037f37b7f",
+      "test_the_shard_build_clears_a_bf16_files_pins_and_the_record_says_dropped": "0e00ae3190fe6b43",
+      "test_with_its_grid_the_family_refuses_and_names_the_stock_path": "43f97a37e7886a40"
+    },
     "tests/test_moss_image_adapter.py": {
       "test_a_moss_image_subclass_refuses_class_p_and_names_the_override": "ff68c76e43bcec68",
       "test_a_subclass_tree_refuses_at_inject_before_any_bind": "5e42397aef113896",
@@ -2728,6 +2744,7 @@
       "test_more_ranks_than_tiles_and_a_single_tile": "fd113e526d913d2a",
       "test_multidim_split_is_byte_identical_to_stock": "db2c59004e6681db",
       "test_stock_seams_the_split_replays": "19d6c7e5b550fa51",
+      "test_the_minimax_h3_image_vae_stays_on_the_driver": "a3d2a0ad95a88778",
       "test_the_sol_h3_and_p_h3_image_vaes_stay_on_the_driver_with_one_info_line": "b50c408767b4a686",
       "test_the_stock_decode_tiled_3d_path_splits_through_the_installed_wrappers": "56eec59395b53ca7"
     },

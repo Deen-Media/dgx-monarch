@@ -68,6 +68,7 @@ on:
       - "tests/test_compile_surface.py"
       - "tests/test_int8_gemm_kitchen_version.py"
       - "tests/test_vae_decode_split_comfy.py"
+      - "tests/test_minimax_h3_image_comfy_detection.py"
       - "tests/test_cond_batch_agreement.py"
       - "tests/test_fp8_paths_tool.py"
       # No step runs these files, but the files the steps run import them. The
@@ -77,6 +78,7 @@ on:
       - "tests/attention_pin_helpers.py"
       - "tests/comfy_managed_helpers.py"
       - "tests/fake_model_base_helpers.py"
+      - "tests/minimax_h3_image_headers.py"
       - "tests/module_location_helpers.py"
       - "tests/test_fsdp_lora.py"
       - "tests/test_flux_pad_exclusion.py"
@@ -389,6 +391,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_vae_decode_split_comfy.py
+      # ComfyUI names MiniMax-H3-Image by two key paths and the absence of H3's
+      # audio path, and builds it from a sigma grid it has no default for. The
+      # detector's row and the upstream gate's grid refusal rest on those facts.
+      - name: MiniMax-H3-Image detection vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_minimax_h3_image_comfy_detection.py
       # Each rank picks its cond batch from its own box's free memory in
       # ComfyUI's calc_cond_batch; two Gloo ranks with the agreement must take
       # the leanest rank's batch. The regular CI job has no ComfyUI, so it skips.
@@ -472,3 +481,4 @@ jobs:
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
           tests/test_vae_decode_split_comfy.py
+          tests/test_minimax_h3_image_comfy_detection.py

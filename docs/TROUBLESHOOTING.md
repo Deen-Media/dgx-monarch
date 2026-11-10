@@ -6082,12 +6082,10 @@ cfg2+fsdp and dp2+fsdp) ComfyUI runs the pinned kernel as it does on one GPU,
 so dgx-monarch refuses before any sampling unless the operator has granted the
 waiver. The message names the kernels, the number of attention modules and
 the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. On cfg2+fsdp and
-dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask too. A bf16 or
-fp16 checkpoint whose own header pins never gets that far: its uint8 config
-tensors leave the FSDP launch check unable to prove the file's precision, so
-every `+fsdp` preset refuses it class P with "The detector could not prove the
-checkpoint's precision". Render that file on a topology without fsdp; uly2
-drops the pins.
+dp2+fsdp an fp8 or int8 checkpoint keeps its pins, and they ask too. A bf16
+checkpoint whose own header pins asks nothing there: the FSDP launch check does
+not count its uint8 config tensors, the bf16 shard build reloads the weights
+without them, so its pins do not run, and the record says dropped.
 
 The FLUX.3 Image Klein INT8 ConvRot files are the first shipped checkpoints
 that pin a kernel: comfy-kitchen's INT8 attention on 33 attention modules, the
@@ -7994,3 +7992,50 @@ unit example carries it.
 `host_purge_delay=0`. With a model placed, the actor's anonymous memory then
 sits near a fresh actor's floor, a few GiB, and the identity gate's re-price
 after a drop finds the room the loader found.
+
+## 147. A MiniMax-H3-Image file refuses because its header has no sigma grid
+
+**Symptom:** the DGX Monarch loader refuses class P with "this MiniMax-H3-Image
+checkpoint's header has no transformer.pdd_sigmas in its config metadata",
+before anything loads. A Worker that gets the same file refuses with the same
+sentence.
+
+**Cause:** ComfyUI 0.45.0 builds MiniMax-H3-Image from the sigma grid in the
+file's `config` metadata (`transformer.pdd_sigmas`, the seven values the
+model's six heads split the schedule at) and has no default for it. A file
+saved without that metadata, or with a config that is not JSON or holds no
+list of numbers there, fails in stock ComfyUI with a TypeError when the model
+is built. The header gate reads the same metadata
+(`adapters/minimax_h3_image_header.py`) and stops the file first. It answers
+before every other refusal this family meets, since it is a fault of the file.
+
+**Fix:** use the file as Comfy-Org/MiniMax-H3-Image publishes it; every one of
+its DiT files carries the grid. For a file you exported yourself, write the
+`config` metadata back from the export it came from. No consent or waiver
+applies: the model cannot be built without the grid.
+
+## 148. A MiniMax-H3-Image render refuses at the loader
+
+**Symptom:** the DGX Monarch loader refuses class P with "this checkpoint is
+MiniMax-H3-Image, which ComfyUI 0.45.0 names minimax_h3_image", before
+anything loads, on every topology and in every format: BF16, INT8 ConvRot,
+W4A8 or any other export of the same DiT. A Worker that gets the file refuses
+with the same sentence, so a forced `family_adapter` (MiniMax H3 included)
+cannot walk past it.
+
+**Cause:** ComfyUI 0.45.0 or newer supports MiniMax-H3-Image, the MiniMax H3 layout without
+its audio stream, with a bank of six output heads on the file's own sigma
+grid. ComfyUI tells it from MiniMax H3 video by its key paths, and the header
+detector does the same (`minimax_h3_image`), but this release carries no
+model forward for it, and dgx-monarch renders no family it has not proven. On
+ComfyUI 0.44.0 stock ComfyUI cannot load the file at all ("Could not detect
+model type"); on 0.45.0 the MiniMax H3 adapter would refuse it as an unvetted
+subclass only after the whole file had loaded. The header gate refuses first,
+with nothing loaded and nothing quarantined. ModelSamplingMiniMaxH3 (DGX
+Monarch) and the MiniMax H3 context-window node refuse this family too, since
+they key on MiniMax H3 video.
+
+**Fix:** render the file with stock ComfyUI 0.45.0 or newer on one GPU,
+through ComfyUI's own Load Diffusion Model node rather than the DGX Monarch
+loader. No consent or waiver applies. This refusal retires when the
+MiniMax-H3-Image adapter lands.
