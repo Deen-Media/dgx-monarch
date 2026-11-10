@@ -241,6 +241,9 @@ def _make_usp_cross_attention(attn, queries: str = VIDEO, keys: str | None = Non
                        drop_rows=pads.get(queries) or None,
                        kv_drop_rows=(None if keys == queries
                                      else pads.get(keys) or []))
+            # A padded call returns a strided view at batch 2; stock's attention output is
+            # contiguous, and an ungated to_out (LTXV) fuses its bias only for that layout.
+            out = out.contiguous()
 
         if self.to_gate_logits is not None:
             b, t_len, _ = out.shape
@@ -311,6 +314,9 @@ class LTXAdapter(Adapter):
             if self_attention_mask is not None:
                 _reject_ring_guide_bias()
             x, orig_len = shard_seq(x, dim=1)
+            # At batch 2 the shard is a strided view; a Linear fuses its bias only for a
+            # contiguous input, as stock's is (LTXV's plain text cross attention reads it raw).
+            x = x.contiguous()
             pad_rows = {VIDEO: _stream_pad_rows(orig_len, x.shape[1])}
             _reject_ring_padding(pad_rows)
             guide_bias = _shard_guide_bias(self_attention_mask, orig_len)
@@ -387,6 +393,7 @@ class LTXAdapter(Adapter):
             (v_pe, av_cross_v), (a_pe, av_cross_a) = pe[0], pe[1]
 
             vx, v_orig = shard_seq(vx, dim=1)
+            vx = vx.contiguous()
             # The bias is built over the video stream alone: comfy sizes it from
             # x[0] and hands it to attn1 only (BasicAVTransformerBlock.forward),
             # never to the audio self-attention or either cross attention.
@@ -399,6 +406,7 @@ class LTXAdapter(Adapter):
             a_orig = 0
             if has_audio:
                 ax, a_orig = shard_seq(ax, dim=1)
+                ax = ax.contiguous()
                 a_pe = _shard_pe(a_pe)
                 av_cross_a = _shard_pe(av_cross_a)
                 pad_rows[AUDIO] = _stream_pad_rows(a_orig, ax.shape[1])

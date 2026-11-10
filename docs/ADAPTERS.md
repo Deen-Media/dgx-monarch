@@ -1333,7 +1333,16 @@ than stacks on a repeat call.
    sends its call through the same `at_stock_rows`, which keeps the op's own
    output width, one column a head. Outside the loop every bound call is
    stock's own. The patched self-attention pairs q and k through
-   `apply_rotary_emb_qk` where stock does. A stock block that stops reading
+   `apply_rotary_emb_qk` where stock does. At batch 2 a rank's shard of a
+   stream is a strided view of the padded stream, and a padded attention's
+   output a strided view too; LTXV's plain text cross attention and its
+   ungated `to_out` would hand those straight to a Linear, and torch fuses the
+   bias only for a contiguous input, so a strided one takes `matmul` and a
+   separate bias add where stock's takes one `addmm`. The bound loop makes each
+   shard contiguous and the patched attention returns a contiguous output,
+   the layout stock's linears get. That costs one copy of the rank's stream a
+   forward at batch 2, and a copy of the attention output only when a padded
+   call returns it strided; at batch 1 both are no-ops. A stock block that stops reading
    those globals refuses a sharded render class P at inject before any block
    binds, a call of an unplanned row count refuses class P, and canary seam 51
    names the change. A ComfyUI change the inject check cannot see, such as a

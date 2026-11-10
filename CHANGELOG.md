@@ -415,7 +415,9 @@
   identical, where Wan 2.1 on the same build was identical; an op probe traced
   it to the gate projection at every geometry and the fused AdaLN at 1024 rows
   a rank, on torch 2.15 and 2.12 alike. Each rank now does
-  stock's row count of work for those two calls. A ComfyUI whose LTX blocks no
+  stock's row count of work for those two calls. At batch 2 each rank's share
+  of a stream, and a padded attention's output, now reach the next linear
+  contiguous, as stock's do, so its bias is added in the same fused call. A ComfyUI whose LTX blocks no
   longer read the globals this binds refuses a sharded render at load, class P,
   and canary seam 51 names the change ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-3-t2v)).
 - `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP and on Chroma

@@ -1,8 +1,10 @@
-"""LTXAV under pure Ulysses hands its row-count-keyed kernels stock's row counts (real Comfy, CPU).
+"""LTX under pure Ulysses hands its row-count-keyed kernels stock's row counts (real Comfy, CPU).
 
 This builds comfy's own ``LTXAVModel`` at toy sizes in float32, with the per-head gates and the
-cross-attention AdaLN LTX 2.3 ships, runs stock ``_process_transformer_blocks`` once, then the
-adapter's bound one on two rank threads through the real ``base.make_usp_attention`` dispatch.
+cross-attention AdaLN LTX 2.3 ships, and comfy's own ``LTXVModel`` with and without the
+cross-attention AdaLN (LTXV has no gates; its route wraps ``apply_cross_attention_adaln`` in the
+block forward itself). Each runs stock ``_process_transformer_blocks`` once, then the adapter's
+bound one on two rank threads through the real ``base.make_usp_attention`` dispatch.
 Only the all-to-all, the sequence gather and the kernel are stubbed (the harness of
 tests/test_flux_pad_exclusion.py). The claims:
 
@@ -46,6 +48,11 @@ CONTEXT_ROWS, BLOCKS = 5, 2
 # route and is outside what this file claims.
 CASES = [(12, 0, 1, False), (13, 0, 1, False), (12, 0, 2, True), (13, 6, 1, False),
          (12, 7, 2, True)]
+# LTXV: (video rows, batch, per-token timestep, cross-attention AdaLN). At batch 2 a rank's shard
+# and a padded attention's output are strided views; the odd batch-2 cases pin that the plain text
+# cross attention and the ungated to_out get them contiguous, as stock's linears do.
+LTXV_CASES = [(12, 1, False, True), (13, 1, False, True), (12, 2, True, True),
+              (13, 2, False, True), (12, 1, False, False), (13, 2, True, False)]
 
 
 def _comfy_dir() -> str:
@@ -180,7 +187,9 @@ class _Spies:
         for model in models:
             for block in model.transformer_blocks:
                 for name, stream in ltx_parity.GATE_STREAMS:
-                    gate_stream[id(getattr(block, name).to_gate_logits)] = (stream, name)
+                    gate = getattr(getattr(block, name, None), "to_gate_logits", None)
+                    if gate is not None:
+                        gate_stream[id(gate)] = (stream, name)
         linear_forward = ops.disable_weight_init.Linear.forward
         spies = self
 
@@ -212,18 +221,21 @@ class _Spies:
             store.setdefault(getattr(_LOCAL, "rank", None), []).append(item)
 
 
-def _run(monkeypatch, comfy_ltx, case):
-    ops, _model_module, av_module, _quant_ops = comfy_ltx
-    model = _toy(comfy_ltx)
+def _compare(monkeypatch, comfy_ltx, model, make_call):
+    """Stock's block loop on ``model``, then the bound one on a copy per rank thread.
+
+    ``make_call()`` returns the loop's arguments and keywords, built fresh each call,
+    since stock updates the streams in place.
+    """
+    ops = comfy_ltx[0]
     ranks = [copy.deepcopy(model) for _ in range(WORLD)]
     spies = _Spies(monkeypatch, comfy_ltx, [model, *ranks])
     _LOCAL.rank = None
     with torch.no_grad():
-        x, context, timestep, pe = _inputs(av_module, *case)
+        args, kwargs = make_call()
         stock = type(model)._process_transformer_blocks(
-            model, x, context, None, timestep, pe,
-            transformer_options={"optimized_attention_override": _Attention(ops)},
-            self_attention_mask=None)
+            model, *args, transformer_options={"optimized_attention_override": _Attention(ops)},
+            self_attention_mask=None, **kwargs)
 
     _install_stubs(monkeypatch, _KernelHarness(WORLD, ops))
     kernel = base.make_usp_attention("TORCH_FLASH")
@@ -237,10 +249,10 @@ def _run(monkeypatch, comfy_ltx, case):
         try:
             _LOCAL.rank = rank
             with torch.no_grad():
-                x, context, timestep, pe = _inputs(av_module, *case)
+                args, kwargs = make_call()
                 outputs[rank] = ranks[rank]._process_transformer_blocks(
-                    x, context, None, timestep, pe,
-                    transformer_options={"optimized_attention_override": _Attention(ops)})
+                    *args, transformer_options={"optimized_attention_override": _Attention(ops)},
+                    **kwargs)
         except BaseException as exc:  # surfaced below with its rank
             errors[rank] = exc
 
@@ -253,6 +265,16 @@ def _run(monkeypatch, comfy_ltx, case):
         if exc is not None:
             raise AssertionError(f"rank {rank} failed") from exc
     return stock, outputs, spies
+
+
+def _run(monkeypatch, comfy_ltx, case):
+    av_module = comfy_ltx[2]
+
+    def make_call():
+        x, context, timestep, pe = _inputs(av_module, *case)
+        return (x, context, None, timestep, pe), {}
+
+    return _compare(monkeypatch, comfy_ltx, _toy(comfy_ltx), make_call)
 
 
 @pytest.mark.parametrize("case", CASES, ids=lambda c: f"v{c[0]}-a{c[1]}-b{c[2]}-{'tok' if c[3] else 'bc'}")
@@ -315,3 +337,50 @@ def test_every_ltxav_gate_is_bound_and_named_with_its_stream(comfy_ltx):
         for name, _stream in ltx_parity.GATE_STREAMS:
             assert "forward" in vars(getattr(block, name).to_gate_logits)
         assert "forward" in vars(block) and ltx_parity.TEXT_CROSS_METHOD in vars(block)
+
+
+def _toy_ltxv(comfy_ltx, cross_adaln):
+    ops, model_module = comfy_ltx[0], comfy_ltx[1]
+    torch.manual_seed(2312)
+    model = model_module.LTXVModel(
+        in_channels=8, cross_attention_dim=V_DIM, attention_head_dim=HEAD_DIM,
+        num_attention_heads=V_HEADS, caption_channels=16, num_layers=BLOCKS,
+        cross_attention_adaln=cross_adaln, dtype=torch.float32, device="cpu",
+        operations=ops.disable_weight_init)
+    for parameter in model.parameters():
+        torch.nn.init.normal_(parameter, mean=0.0, std=0.05)
+    return model
+
+
+def _ltxv_call(v_rows, batch, per_token, cross_adaln):
+    """LTXV's block loop arguments: one stream, one timestep tensor, the prompt timestep apart."""
+    g = torch.Generator().manual_seed(v_rows * 100 + batch * 10 + per_token + 2 * cross_adaln)
+    x = torch.randn(batch, v_rows, V_DIM, generator=g)
+    context = torch.randn(batch, CONTEXT_ROWS, V_DIM, generator=g)
+    params = 9 if cross_adaln else 6
+    timestep = torch.randn(batch, v_rows if per_token else 1, params * V_DIM, generator=g) * 0.1
+    pe = _rotation(g, batch, v_rows, V_HEADS)
+    kwargs = {}
+    if cross_adaln:
+        kwargs["prompt_timestep"] = torch.randn(batch, 1, 2 * V_DIM, generator=g) * 0.1
+    return (x, context, None, timestep, pe), kwargs
+
+
+@pytest.mark.parametrize("case", LTXV_CASES,
+                         ids=lambda c: f"v{c[0]}-b{c[1]}-{'tok' if c[2] else 'bc'}-{'xadaln' if c[3] else 'plain'}")
+def test_ltxv_launches_every_fused_adaln_at_stock_rows_and_returns_stock_bits(
+        monkeypatch, comfy_ltx, case):
+    """LTXV's route wraps ``apply_cross_attention_adaln`` in the block forward itself."""
+    v_rows, _batch, _per_token, cross_adaln = case
+    stock, outputs, spies = _compare(monkeypatch, comfy_ltx, _toy_ltxv(comfy_ltx, cross_adaln),
+                                     lambda: _ltxv_call(*case))
+    for rank, out in enumerate(outputs):
+        assert torch.equal(out, stock), f"rank {rank} differs from stock"
+    assert not spies.gates, "an LTXV block ran a gate projection"
+    # The self-attention norm in every block, and the text cross attention's with its AdaLN.
+    expected_norms = BLOCKS * (2 if cross_adaln else 1)
+    assert len(spies.adaln[None]) == expected_norms
+    for rank in range(WORLD):
+        assert sorted(spies.adaln.get(rank, [])) == sorted(spies.adaln[None]), f"rank {rank}"
+        assert all(shape[-1] == v_rows for shape in spies.adaln[rank])
+        assert len(spies.paired.get(rank, [])) == len(spies.paired[None]) == BLOCKS, f"rank {rank} rope"
