@@ -4,6 +4,14 @@
 
 ### Everyday use
 
+- MiniMax-H3-Image (ComfyUI 0.45.0) runs on its own sharded adapter: stock's
+  own packing on every rank, sequence shards with exact pad exclusion on
+  Ulysses, and the stacked output head on the checkpoint's grid at stock's
+  rows. cfg2, dp2, a padded ring, a batch above one and a head whose depth the
+  grid does not match refuse with a plain sentence, as do the MiniMax H3
+  sampling-shift and context-window nodes on this family. Both H3 adapters now
+  set stock's `block_index` on each block's options. A row-check tool records
+  the three row-keyed calls at a rank's rows for the hardware run.
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
   longer call it a draft. The

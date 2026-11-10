@@ -1396,6 +1396,21 @@ than stacks on a repeat call.
    the grid and the pops to stock on the installed ComfyUI, and canary seam 25
    reads the three values the head is handed.
 
+   **MiniMax-H3-Image.** `adapters/minimax_h3_image.py` registers ahead of
+   H3's adapter, whose `matches()` raises on any `MiniMaxH3` subclass, and
+   binds exactly `MiniMaxH3Image`. It rebinds `_forward` only. Every rank runs
+   stock's `_embed_and_pack` and `_time_embedding`, so the stream and the
+   timestep rows are stock's before the shard; the adapter numbers the
+   modulation rows itself as stock does (`h3_image_modulation_plan`: a
+   reference picture at ComfyUI's constant 0.999, never the payload's noise
+   augmentation, and no audio time). The stream, the position ids and the rows
+   shard alike, Ulysses drops the pad rows exactly, and the head takes the
+   checkpoint's grid through `head_schedule(..., grid=pdd_sigmas)`. Both H3
+   adapters set stock's `block_index` on the options each block takes.
+   `tests/test_minimax_h3_image_comfy.py` holds the forward to stock at world 1
+   and through the threaded two-rank harness, and canary seams 52 to 59 read
+   what it relies on.
+
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,
    so they cannot be wired into an ordinary DGX graph. If an out-of-tree

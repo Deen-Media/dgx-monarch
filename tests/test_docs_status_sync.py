@@ -69,6 +69,7 @@ _SUPPORT_ROW_CONTRACT: dict[_RowKey, tuple[str, str]] = {
     ("image", "MOSS-Image Base"): ("moss_image", "HW"),
     ("image", "Kromoss"): ("moss_image", "HW"),
     ("image", "p-h3-image"): ("minimax_h3", "HW"),
+    ("image", "MiniMax-H3-Image"): ("minimax_h3_image", "impl"),
     ("image", "LongCat-Image"): ("longcat", "HW"),
     ("image", "HunyuanImage 2.1 (+refiner)"): ("hunyuan", "HW"),
     ("image", "Qwen-Image"): ("qwen_image", "HW"),

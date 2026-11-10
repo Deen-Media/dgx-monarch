@@ -203,7 +203,7 @@ def preflight_krea2_reference_latents(
 
 
 def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
-    """Refuse H3 cfg/dp topology before mesh setup or worker RPC.
+    """Refuse H3 and MiniMax-H3-Image cfg/dp topology before mesh setup or worker RPC.
 
     H3 conditionings remain separate batch-1 calls, so cfg parallel has no
     batch to split. Packed data parallel is refused earlier; this predicate is
@@ -230,10 +230,14 @@ def preflight_minimax_h3_topology(model: Any, topo: Any) -> None:
             sniff_checkpoint(path)[0], family_select.override_for_model(model))
     except Exception:
         return  # fail open: the packed-DP guard and the stock batch cap remain
-    if family != "minimax_h3":
+    if family not in ("minimax_h3", "minimax_h3_image"):
         return
     from ..adapters.base import UnsupportedModelError
 
+    if family == "minimax_h3_image":
+        from ..adapters.minimax_h3_image import MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE
+
+        raise UnsupportedModelError(MINIMAX_H3_IMAGE_BATCH_CAPPED_MESSAGE)
     raise UnsupportedModelError(MINIMAX_H3_BATCH_CAPPED_MESSAGE)
 
 

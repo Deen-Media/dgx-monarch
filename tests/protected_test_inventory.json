@@ -1419,6 +1419,7 @@
       "test_a_one_block_head_on_the_v044_form_gives_stocks_bits": "de4edc42edb29f21",
       "test_a_stacked_head_on_the_v044_form_refuses_at_inject": "c530db9a8a9b20ea",
       "test_a_stacked_head_on_the_v045_form_gives_stocks_bits": "d68b77fe7c16f891",
+      "test_every_h3_block_sees_stocks_block_index": "a0cfd0a93d4908cb",
       "test_the_adapters_grid_is_stocks_pdd_grid": "64e52f7818240272",
       "test_the_block_loop_pops_as_stock_does": "5e3a41eb50cabf29"
     },
@@ -1790,6 +1791,35 @@
       "test_topology_predicate_truth_table": "d224184b177b1ced",
       "test_unpadded_sequence_passes_an_empty_drop_rows": "092ad06e09d9cbb9",
       "test_unvetted_segment_kind_refusal_carries_the_class_p_tag": "be9975183362086e"
+    },
+    "tests/test_minimax_h3_image.py": {
+      "test_a_batch_above_one_refuses_class_p": "20eaa17420d506fc",
+      "test_a_dit_block_replacement_refuses_class_p_and_a_denoise_mask_does_not": "e677cc84caa83d4a",
+      "test_a_reference_takes_the_constant_never_the_payloads_augmentation": "c5d4c8e0acdd0621",
+      "test_an_attention_mask_refuses_class_p": "43d7f31335f6f1e2",
+      "test_any_other_segment_kind_refuses_class_p": "03ce9c5e51abc8a2",
+      "test_no_audio_time_joins_the_set": "b9a10915870fb71b",
+      "test_presentation_tags_split_the_text_rows_as_stock": "5531209a813db1b6",
+      "test_the_driver_lets_uly2_through_for_the_image_family": "9071160f783d283e",
+      "test_the_driver_refuses_cfg2_and_dp2_with_the_image_sentence": "21ff8c257e03d472",
+      "test_the_grid_check_refuses_only_where_stock_fails": "f8239adfbb3301cc",
+      "test_the_h3_context_windows_refuse_this_family": "6961650536dc37b7",
+      "test_the_h3_sampling_node_refuses_this_family_naming_the_grid": "4c2c1d26d8f7f7bb",
+      "test_the_plan_numbers_rows_as_stock": "7397ff8311fe7a2f",
+      "test_the_worker_sampling_guard_refuses_class_p_on_this_family": "24fb758842942a86"
+    },
+    "tests/test_minimax_h3_image_comfy.py": {
+      "test_a_grid_that_misses_the_head_refuses_class_p_at_inject": "d51f1433a379195e",
+      "test_a_one_block_head_never_reads_the_grid_and_goes_on": "1dc709d08d251870",
+      "test_a_padded_ring_refuses_class_p_before_any_block": "e3a21b9417f99926",
+      "test_every_block_sees_stocks_block_index": "f32f1693692e2cc9",
+      "test_fsdp_replicates_h3s_outside_forward_modules_for_the_image_model": "0924ab455df31dfd",
+      "test_stock_sends_the_image_model_no_mask_and_ignores_one": "b254649a904c174d",
+      "test_the_bound_forward_equals_stock_at_world_one": "90c2b9f3b10dbba1",
+      "test_the_refined_context_path_equals_stock": "c80593519226a5b8",
+      "test_the_registry_hands_the_image_model_to_this_adapter": "43f8a7645c9c6f52",
+      "test_the_worker_vae_decode_declines_the_image_vae": "4c101a28ea452095",
+      "test_two_ranks_hand_every_block_stocks_operands_and_return_stocks_bits": "e129640cc69be20f"
     },
     "tests/test_moss_image_adapter.py": {
       "test_a_moss_image_subclass_refuses_class_p_and_names_the_override": "ff68c76e43bcec68",
@@ -2689,7 +2719,7 @@
       "test_the_auto_refusal_names_presets_that_tile_the_world": "4e9102f0796464dc",
       "test_the_cfg_one_note_still_fires_for_a_plain_sampler": "e0a0e5e190dc4622",
       "test_the_escape_list_keeps_the_cfg_composite_and_says_who_owns_it": "5414967ac6c0849c",
-      "test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy": "376b0084fd3e7d32",
+      "test_two_spark_pair_auto_rows_match_the_scoped_cfg_policy": "a8feefcbe6a79c6f",
       "test_validate_divisibility": "7b99ad180c061c0a",
       "test_validate_rejects_undersubscribed_dp": "c311109a5125bd9d",
       "test_video_families_usp": "ddf35fb71c828535",

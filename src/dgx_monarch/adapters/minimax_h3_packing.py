@@ -1,4 +1,4 @@
-"""Per-token MiniMax H3 packing, checkpoint timestep embeddings and the head's grids.
+"""Per-token MiniMax H3 and MiniMax-H3-Image packing, timestep embeddings and the head's grids.
 
 The adapter owns sharding, pad exclusion, and topology refusals. This module
 uses ComfyUI only to move the curve table onto the compute device and to read
@@ -94,6 +94,72 @@ def head_schedule(form: str, final_layer: Any, shifts: tuple[float, ...],
         return ([float(sigma) for sigma in grid],)
     steps = head_blocks(final_layer)
     return tuple(pdd_grid(steps, shift, time_shift_sigma) for shift in shifts)
+
+
+# The segment kinds a MiniMax-H3-Image layout packs: the text, the reference
+# pictures and the target, in that order (ComfyUI's PackedLayout with no audio).
+H3_IMAGE_SEGMENT_KINDS: frozenset[str] = frozenset({"text", "ref_img", "video"})
+
+
+def h3_image_modulation_plan(
+    layout: Any,
+    payload: dict[str, Any],
+    t: float,
+    visual_cond_t: float,
+) -> tuple[list[float], torch.Tensor, int]:
+    """MiniMax-H3-Image's per-token modulation rows, as its stock ``_forward`` numbers them.
+
+    Text and the target take ``t``. A reference picture takes ``max(t,
+    visual_cond_t)`` with ComfyUI's constant, never the payload's noise
+    augmentation, and no audio time joins the set, so the row numbers equal
+    stock's ``mod_segments``. Returns the unique times, the int64 row per token
+    (it shards with the stream, as H3's does) and the target's row.
+    """
+    seg_time = {"text": t, "video": t, "ref_img": max(t, visual_cond_t)}
+    present = {kind for _, _, kind in layout.segments}
+    unknown = sorted(present - H3_IMAGE_SEGMENT_KINDS)
+    if unknown:
+        # The layout is built from the request on every rank, so this refuses
+        # every rank alike before the first collective.
+        raise UnsupportedModelError(refusal(
+            RefusalClass.PHYSICS,
+            f"minimax_h3_image: the packed layout carries segment kind(s) {unknown}, which "
+            "this adapter has not vetted for sharding. Report the workflow, or take a true "
+            "single-GPU reference (mode=local, gpus_per_host=1) (docs/MODELS.md).",
+        ))
+    unique_t = sorted({seg_time[kind] for kind in present})
+    t_row = {value: index for index, value in enumerate(unique_t)}
+    tags = payload.get("text_token_tags")
+    if tags is not None:
+        tags = tags.reshape(-1).to(device="cpu", dtype=torch.long)
+    rows = torch.zeros(layout.seq_len, dtype=torch.long)
+    for start, stop, kind in layout.segments:
+        base_row = t_row[seg_time[kind]] * 3
+        if kind == "text" and tags is not None:
+            rows[start:stop] = tags[: stop - start] + base_row
+        else:
+            rows[start:stop] = base_row + H3_SEG_MODALITY[kind]
+    return unique_t, rows, t_row[t]
+
+
+def assert_image_grid(final_layer: Any, pdd_sigmas: Any) -> None:
+    """Refuse, class P, a stacked head whose block count the grid does not match.
+
+    ComfyUI's PDD head splits its weight into one block per grid interval and
+    fails inside the head when the two disagree; a one-block head never reads
+    the grid, as in stock.
+    """
+    blocks, points = head_blocks(final_layer), len(pdd_sigmas)
+    if blocks == 1 or points == blocks + 1:
+        return
+    raise UnsupportedModelError(refusal(
+        RefusalClass.PHYSICS,
+        f"minimax_h3_image: this checkpoint's output head has {blocks} blocks and its "
+        f"pdd_sigmas grid has {points} points. ComfyUI pairs each head block with one "
+        "interval of that grid, so the grid must hold one point more than the head has "
+        "blocks. Report the checkpoint, or take a true single-GPU reference (mode=local, "
+        "gpus_per_host=1) (docs/MODELS.md).",
+    ))
 
 
 def _build_packed_layout(packed_layout_cls, payload, text_len, latent_t,

@@ -55,6 +55,9 @@ on:
       - "tests/test_h3_sigma_shift_comfy.py"
       - "tests/test_p_h3_image_comfy_exactness.py"
       - "tests/test_h3_head_form_comfy.py"
+      - "tests/test_minimax_h3_image_comfy.py"
+      - "tests/test_h3_image_row_check_tool.py"
+      - "tools/h3_image_row_check.py"
       - "tests/test_wan22_ti2v_templates.py"
       - "tests/test_lora_shape_guard.py"
       - "tests/test_mage_flow_comfy_differential.py"
@@ -373,6 +376,12 @@ jobs:
         run: >-
           pytest -q tests/test_h3_sigma_shift_comfy.py tests/test_p_h3_image_comfy_exactness.py
           tests/test_h3_head_form_comfy.py
+      # MiniMax-H3-Image (ComfyUI 0.45.0): the sharded forward against stock at
+      # world 1 and through the threaded two-rank harness, pad rows excluded.
+      - name: MiniMax-H3-Image sharded forward vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_minimax_h3_image_comfy.py tests/test_h3_image_row_check_tool.py
       # The Wan 2.2 TI2V 5B start image gives per-frame timesteps; the Wan
       # sequence-parallel forward must hand every token stock's on one rank.
       - name: Wan 2.2 TI2V per-frame timesteps vs comfy master (CPU)
@@ -474,6 +483,7 @@ jobs:
           tests/test_h3_sigma_shift_comfy.py
           tests/test_p_h3_image_comfy_exactness.py
           tests/test_h3_head_form_comfy.py
+          tests/test_minimax_h3_image_comfy.py
           tests/test_wan22_ti2v_templates.py
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py

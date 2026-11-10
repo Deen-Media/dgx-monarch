@@ -230,6 +230,13 @@ REBOUND_METHOD_CONTRACTS: tuple[ReboundMethodContract, ...] = (
         variadic_keyword="kwargs",
         optional_trailing=("denoise_mask", "audio_denoise_mask"),
     ),
+    # MiniMax-H3-Image (ComfyUI 0.45.0) takes no mask parameter; a mask lands
+    # in **kwargs and stock ignores it, as the bound forward does.
+    _rebound(
+        "comfy.ldm.minimax.model", "MiniMaxH3ImageModel._forward", ("minimax_h3_image",),
+        ("usp",), "self x timestep context transformer_options minimax_payload", 4,
+        variadic_keyword="kwargs",
+    ),
     _rebound(
         "comfy.ldm.omnigen.omnigen2", "OmniGen2Transformer2DModel.forward", ("omnigen2",),
         ("usp",),

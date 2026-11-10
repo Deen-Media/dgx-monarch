@@ -35,6 +35,7 @@
     "adapters/lens.py": 2,
     "adapters/ltx.py": 1,
     "adapters/minimax_h3.py": 4,
+    "adapters/minimax_h3_image.py": 1,
     "adapters/minimax_h3_packing.py": 2,
     "adapters/omnigen2.py": 3,
     "adapters/pixeldit_comfy.py": 4,
@@ -681,6 +682,42 @@
       "waivable": false
     },
     {
+      "site": "adapters/minimax_h3_image.py::_reject_padded_ring::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_image.py::_reject_unsupported_image_features::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_image.py::_reject_unsupported_image_features::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_image.py::_reject_unsupported_image_features::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_packing.py::assert_image_grid::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/minimax_h3_packing.py::h3_image_modulation_plan::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/minimax_h3_packing.py::h3_modulation_plan::UnsupportedModelError#0",
       "class": "P",
       "guard": null,
@@ -1240,6 +1277,12 @@
     },
     {
       "site": "nodes/render_preflight.py::preflight_minimax_h3_topology::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "nodes/render_preflight.py::preflight_minimax_h3_topology::UnsupportedModelError#1",
       "class": "P",
       "guard": null,
       "waivable": false

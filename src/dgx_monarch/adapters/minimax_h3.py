@@ -454,6 +454,9 @@ class MiniMaxH3Adapter(Adapter):
                 for index, block in enumerate(self.blocks):
                     comfy.model_prefetch.prefetch_queue_pop(
                         prefetch_queue, device, block, malloc_scope="block")
+                    # Stock sets the index on the options its blocks receive.
+                    transformer_options["block_index"] = index
+                    usp_opts["block_index"] = index
                     with sol_dense_scope(dense_step or index < SOL_DENSE_BLOCKS):
                         h = block(h, t_emb, local_mod, rope_freqs,
                                   transformer_options=usp_opts)

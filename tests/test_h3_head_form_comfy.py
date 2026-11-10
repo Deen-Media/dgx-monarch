@@ -222,3 +222,41 @@ def test_the_block_loop_pops_as_stock_does(comfy, world_one, monkeypatch):
     assert [event for event in stock if event[0] == "pop"] == (
         [("pop", "DiTBlock", (), (("malloc_scope", "block"),))] * 2
         + [("pop", None, (), (("malloc_scope", "block"),))])
+
+
+def test_every_h3_block_sees_stocks_block_index(comfy, world_one, monkeypatch):
+    """Stock's block loop sets block_index on the options each block takes; so does ours.
+
+    No reader on the H3 video path changes a bit with it (no H3 module, attention
+    override or patch this build ships reads it), so the H3 output is unchanged;
+    a patch that reads it sees stock's value.
+    """
+    seen: list = []
+    real = comfy.h3.DiTBlock.forward
+
+    def forward(block, x, t_emb, mod_segments, rope_freqs, transformer_options=None, attention=None):
+        transformer_options = {} if transformer_options is None else transformer_options
+        seen.append(transformer_options.get("block_index"))
+        return real(block, x, t_emb, mod_segments, rope_freqs,
+                    transformer_options=transformer_options, attention=attention)
+
+    monkeypatch.setattr(comfy.h3.DiTBlock, "forward", forward)
+    model = _tiny(comfy, 1)
+    bound = _bound(model)
+    generator = torch.Generator().manual_seed(3)
+    video = torch.randn(1, 24, 2, 4, 4, generator=generator)
+    audio = torch.randn(1, 32, 2, 3, generator=generator)
+    context = torch.randn(1, 5, TEXT_DIM, generator=generator)
+    timestep = torch.tensor([500.0])
+    finals, outputs = [], []
+    for network in (model, bound):
+        seen.clear()
+        payload = {"seed": 7, "audio_scale": 4.0, "layout": comfy.h3.PackedLayout(5, 2, 4, 4, 3)}
+        options = {"minimax_h3_sigma_shift_video": 12.0, "minimax_h3_sigma_shift_audio": 3.0,
+                   "sample_sigmas": torch.tensor([1.0, 0.5, 0.0]), "sigmas": timestep / 1000.0}
+        with torch.inference_mode():
+            outputs.append(network.forward([video, audio], timestep, context, options,
+                                           minimax_payload=payload))
+        finals.append((list(seen), options.get("block_index")))
+    assert finals[0] == finals[1] == ([0, 1], 1)
+    assert all(torch.equal(a, b) for a, b in zip(outputs[0], outputs[1], strict=True))
