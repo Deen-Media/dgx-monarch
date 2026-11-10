@@ -763,6 +763,14 @@
 
 ### Development
 
+- `scripts/test_cpu.sh` runs the gate checks CI runs beside the suite before
+  it: the protected test inventory first, then the refusal ledger, the TRUST
+  citations, the leak check, ruff, mypy, compileall and the generator, artifact,
+  shell and browser-asset checks. A local green run now means CI's gates are
+  green, where before they surfaced only after a push. A gate whose tool is
+  missing is skipped and named, `DGXM_SKIP_GATES=1` skips them all, and
+  `tests/test_cpu_gates.py` holds every CI step to a local gate or a named
+  CI-only reason.
 - The sweep runner ends the session when a waived retry's queue will not
   clear, as it already did after every other leg, and when the cache reset
   before a waived, resident or probe leg leaves the queue busy or gets no

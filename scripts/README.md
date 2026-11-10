@@ -151,11 +151,20 @@ separate reviewed prerequisite plan.
 
 ## CPU test wrapper
 
-`bash scripts/test_cpu.sh` runs `pytest tests/ -q --durations=25` from the
+`bash scripts/test_cpu.sh` first runs the gate checks CI's lint-and-unit job
+runs beside the suite: the protected test inventory, the refusal ledger, the
+TRUST citations, the leak check, ruff, mypy, compileall, the template,
+brand-asset, card and artifact checks, shell syntax and shellcheck, and the
+browser assets. A gate whose tool is absent here (CairoSVG, shellcheck, node)
+is skipped and named; every gate runs even after one fails, and one line
+counts them. `tests/test_cpu_gates.py` names the CI steps that cannot run
+here and why. The gates take under two minutes; `DGXM_SKIP_GATES=1` skips
+them, and CI skips them because it runs each as its own step. The wrapper then
+runs `pytest tests/ -q --durations=25` from the
 checkout root with this checkout's `src` first on `PYTHONPATH`,
 `HYPOTHESIS_PROFILE=ci`, and OMP and MKL at one thread unless already set. It
-prints the total time and the 25 slowest tests, and exits with pytest's
-status. `DGXM_TEST_PYTHON` selects the interpreter. The default is `python`,
+prints the total time and the 25 slowest tests, and exits non-zero when a gate
+or pytest failed. `DGXM_TEST_PYTHON` selects the interpreter. The default is `python`,
 which some systems lack, so set it or activate the environment first.
 
 Extra arguments are added to `pytest tests/`. Options such as `-k` or

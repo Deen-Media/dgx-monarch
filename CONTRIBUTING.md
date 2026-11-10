@@ -34,6 +34,9 @@ mypy -p dgx_monarch
 bash scripts/test_cpu.sh
 ```
 
+The wrapper runs ruff, mypy and CI's other gate checks before the suite
+([scripts/README.md](scripts/README.md#cpu-test-wrapper)), so a local green
+run means CI's gates are green too; the two commands above it also run alone.
 `DGXM_TEST_PYTHON` selects the interpreter. The wrapper uses this checkout's
 source, defaults OMP/MKL to one thread and reports the 25 slowest tests; its
 120-second warning is advisory. `HYPOTHESIS_PROFILE=ci` uses deterministic
