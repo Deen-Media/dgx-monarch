@@ -645,7 +645,8 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   latent beside the pair tag, so every resolving site reads the same answer,
   and the reason names the skipped row. Where data parallelism or ring would
   remain, on a mesh wider than two GPUs, auto refuses (class P): only one GPU,
-  uly2 and uly2+fsdp are proven equal to stock for these inputs, and an
+  uly2 and uly2+fsdp have been checked equal to stock for these inputs (on CPU
+  so far), and an
   explicit preset outside them refuses alike (`adapters/flux_views.py`,
   TROUBLESHOOTING #148);
 - sage auto-on only for fp8 + USP at high res;

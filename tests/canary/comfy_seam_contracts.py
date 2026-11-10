@@ -725,6 +725,31 @@ def _assert_conditioning_wire_seam() -> None:
         "conditioning wire seam: comfy now invents a cross_attn for a text-free cond"
     )
 
+    # The keys adapters/flux_views.py scans are the view inputs stock's Flux
+    # extra_conds reads beyond its long-standing ones. A fourth view input
+    # upstream would otherwise reach an unproven topology with no refusal.
+    import ast
+    import textwrap
+
+    import comfy.ldm.flux.model
+    import comfy.model_base
+
+    from dgx_monarch.adapters.flux_views import VIEW_COND_KEYS
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(comfy.model_base.Flux.extra_conds)))
+    read = {node.args[0].value for node in ast.walk(tree)
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+            and node.func.attr == "get" and isinstance(node.func.value, ast.Name)
+            and node.func.value.id == "kwargs" and node.args
+            and isinstance(node.args[0], ast.Constant)}
+    known = {"cross_attn", "attention_mask", "attention_mask_img_shape", "guidance",
+             "reference_latents", "reference_latents_method"}
+    views = (set(VIEW_COND_KEYS)
+             if hasattr(comfy.ldm.flux.model.Flux, "preprocess_token_masks") else set())
+    assert read - known == views, (
+        f"conditioning wire seam: Flux.extra_conds reads {sorted(read - known)} beyond the "
+        f"known keys, and adapters/flux_views.py scans {sorted(views)}")
+
 
 def _assert_guider_and_sampler_seam() -> None:
     """The guider and SAMPLER objects the actors build, unpickle, and call."""
@@ -3502,11 +3527,17 @@ def _assert_module_free_outside_forward_row(class_name, unet_class, methods) -> 
             return any(holds_parameter(item) for item in value.values())
         return False
 
+    # Attribute reads of a parameter's metadata are free; any other read, a
+    # `.data` or `.weight` read in a helper the call reaches included, counts.
+    metadata = {"shape", "dtype", "device", "ndim", "requires_grad", "layout", "is_cuda", "is_meta"}
+
     class Watch(TorchFunctionMode):
         def __torch_function__(self, func, types, args=(), kwargs=None):
             kwargs = kwargs or {}
-            if getattr(func, "__name__", "") != "__get__" and holds_parameter((args, kwargs)):
-                touched.append(getattr(func, "__name__", repr(func)))
+            name = getattr(func, "__name__", repr(func))
+            attr = getattr(getattr(func, "__self__", None), "__name__", None)
+            if (name != "__get__" or attr not in metadata) and holds_parameter((args, kwargs)):
+                touched.append(attr if name == "__get__" else name)
             return func(*args, **kwargs)
 
     names = {module: name for name, module in model.named_modules()}

@@ -52,7 +52,7 @@ def _request(positive=None, negative=None, **extra) -> dict:
 # --- What counts as a view-conditioned render ------------------------------------------
 
 
-@pytest.mark.parametrize("key", flux_views.VIEW_COND_KEYS)
+@pytest.mark.parametrize("key", ["view_grid", "token_masks", "reference_views"])
 def test_any_one_of_the_three_keys_marks_the_conditioning(key):
     entry = [[torch.zeros(1, 7, 8), {key: _ultratex()[0][1][key]}]]
     assert flux_views.conditioning_carries_views(entry)
@@ -287,6 +287,15 @@ def test_the_samplers_tag_a_view_conditioned_pair(monkeypatch):
             "model", "enable", 0, 4, 1.0, "euler", "simple", positive, _plain(),
             {"samples": torch.zeros(6, 4, 2, 2)}, 0, 10000, "disable")
         assert [latent.get(VIEWS, False) for latent in seen[-2:]] == [tagged, tagged]
+    # The Pipeline tags once, before its first-use check and every pushed render.
+    monkeypatch.setattr(samplers, "auto_gate_required", lambda *_args: True)
+    monkeypatch.setattr(samplers, "_restore_requested_levers", lambda _model: None)
+    pipeline_model = SimpleNamespace(mesh=SimpleNamespace(pipeline_depth=1))
+    for positive, tagged in ((_ultratex(), True), (_plain(), False)):
+        samplers.DGXMonarchKSamplerPipeline().sample(
+            pipeline_model, "7", 4, 1.0, "euler", "simple", positive, _plain(),
+            {"samples": torch.zeros(6, 4, 2, 2)})
+        assert seen[-1].get(VIEWS, False) is tagged
     monkeypatch.setattr(samplers, "_canonical_noise_for_wire", lambda _noise: None)
     for spec, tagged in (({"positive": _ultratex(), "negative": _plain()}, True), ({}, False)):
         samplers.DGXMonarchSamplerCustom().sample(

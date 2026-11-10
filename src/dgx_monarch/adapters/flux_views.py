@@ -17,13 +17,14 @@ splits the grid back into views.
 The sharded forward rebinds ``forward_orig`` alone, so under Ulysses stock's
 own code does all of that and the shard sees the stream stock's
 ``forward_orig`` sees. ``tests/test_flux_views_comfy_exactness.py`` holds the
-uly2 forward equal to stock's against a real ComfyUI, and the FSDP2 wrapped
+uly2 forward equal to stock's against a real ComfyUI on CPU, in the Flux 1,
+Flux 2 and LongCat layouts, and the FSDP2 wrapped
 model's ``preprocess_token_masks`` call equal to the plain model's with nothing
 gathered (``fsdp_islands.MODULE_FREE_OUTSIDE_FORWARD_CALLS``). cfg-parallel
 and data parallelism split the batch, whose rows are the views: a split inside
 one sample raises stock's ``view_grid`` error mid-render, and a split between
 samples runs batch-1 calls no test has compared with one GPU's call. Ring
-attention is never stock's math, and no Ulysses degree above 2 is proven. So a
+attention is never stock's math, and no Ulysses degree above 2 has been checked. So a
 render of these families whose conditioning carries any of the three runs on
 one GPU, uly2 or uly2+fsdp. Every other topology refuses class P before
 dispatch on the driver and again on every Worker rank before sampling
@@ -90,7 +91,7 @@ def _degree(topology: Any, name: str) -> int:
 
 
 def runs_views(topology: Any) -> bool:
-    """Whether a topology is proven for view conditioning: no cfg, dp or ring degree,
+    """Whether a topology has been checked equal to stock for view conditioning: no cfg, dp or ring degree,
     and Ulysses at 1 or 2, FSDP or not. Takes a ``Topology`` or a Worker's dict."""
     return (all(_degree(topology, name) == 1 for name in ("cfg", "dp", "ring"))
             and _degree(topology, "ulysses") <= 2)
@@ -112,7 +113,8 @@ def refuse_unproven_views(family: str | None, topology: Any, request: Any, *, pr
     checkpoint header (nodes/model_patch_preflight.py), and every Worker rank
     calls it after the load, with the loaded adapter's family and its own
     topology (actor/sample_protocol.py). Each reads the same request and issues
-    no collective, so every rank refuses alike before the first exchange.
+    no collective, so every rank refuses alike after the readiness exchange and
+    before the sampler's first collective.
     """
     if family not in VIEW_FAMILIES or runs_views(topology) or not request_carries_views(request):
         return
@@ -126,7 +128,7 @@ def refuse_unproven_views(family: str | None, topology: Any, request: Any, *, pr
         f"{chosen} resolves {describe(topology)}. Stock Flux tiles each sample's views, which "
         "are consecutive batch rows, into one image inside its forward. cfg-parallel and data "
         "parallelism split that batch across ranks, ring attention is not stock's math, and "
-        "only one GPU and Ulysses at degree 2 are proven equal to stock for these inputs. "
+        "only one GPU and Ulysses at degree 2 have been checked equal to stock for these inputs. "
         f"{_WORKING}",
         troubleshooting=TROUBLESHOOTING,
     ))
@@ -142,7 +144,7 @@ def refuse_auto_views(family: str, topology: Any, world: int) -> None:
         RefusalClass.PHYSICS,
         f"auto: this {family} render's conditioning carries UltraTex view inputs, and on world "
         f"{world} auto resolves {describe(topology)}, which splits the batch of views or runs "
-        "ring attention. No topology proven for these inputs tiles that world. "
+        "ring attention. No topology checked equal to stock for these inputs tiles that world. "
         f"{_WORKING}",
         troubleshooting=TROUBLESHOOTING,
     ))

@@ -312,9 +312,13 @@ than stacks on a repeat call.
    `forward_orig` takes. The kept count is usually odd, which the vouched pad
    exclusion covers, and the fused-norm counts above are that stream's, so
    they stay stock's. `tests/test_flux_views_comfy_exactness.py` holds uly2
-   to stock's bits on a real ComfyUI with every input alone and together,
-   batch 1 and 2, odd and even streams, every fused-norm launch at stock's
-   rows, and the FSDP2 wrap running `preprocess_token_masks` and the forward.
+   to stock's bits on a real ComfyUI on CPU: in FLUX.2's layout with the view
+   grid alone, the token masks alone, a view reference on a tile away from the
+   front (where `reference_views` moves stock's positions; on the front tile it
+   changes nothing) and all three together, batch 1 and 2, odd and even
+   streams, every fused-norm launch at stock's rows, and the FSDP2 wrap running
+   `preprocess_token_masks` and the forward; and in Flux 1's and LongCat's
+   layouts with all three together and with the moved view reference.
    `preprocess_token_masks` touches no module and no parameter, so FSDP
    replicates nothing for it; the `outside forward modules` seam holds that
    with the module-free table below. cfg-parallel and data parallelism split

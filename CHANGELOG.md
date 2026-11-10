@@ -409,8 +409,10 @@
   texture with, runs on one GPU, uly2 and uly2+fsdp. Its conditioning tiles a
   sample's views into one image and drops background tokens inside stock's
   Flux forward, and on CPU against ComfyUI 0.45.0 the uly2 forward returns
-  stock's bits with every input alone and together, batch 1 and 2, and the
-  FSDP wrap runs the token-mask step with nothing to gather. cfg2, dp2, ring
+  stock's bits in the Flux 1, Flux 2 and LongCat layouts: with the view grid
+  alone, the token masks alone, a view reference on a tile away from the front
+  and all three together, batch 1 and 2. The FSDP wrap runs the token-mask step
+  with nothing to gather. cfg2, dp2, ring
   and any degree above uly2 split a sample's views or are not stock's math, so
   a Flux, Flux 2 or LongCat render with UltraTex conditioning refuses there
   before dispatch, and auto skips the cfg rows for it. No hardware render has

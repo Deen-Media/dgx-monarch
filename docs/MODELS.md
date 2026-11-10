@@ -1820,12 +1820,14 @@ the background tokens before the blocks; the latent batch holds the views,
 so an Empty Flux 2 Latent of batch 6 is one sample.
 
 **Topologies.** One GPU, uly2 and uly2+fsdp. On CPU against ComfyUI 0.45.0
-the uly2 forward returns stock's bits with each input alone and together, at
-batch 1 and 2 and on odd and even token counts, and under FSDP the token-mask
+the uly2 forward returns stock's bits in the Flux 1, Flux 2 and LongCat
+layouts, with the view grid alone, the token masks alone, a view reference on
+a tile away from the front and all three together, at batch 1 and 2 and on odd
+and even token counts, and under FSDP the token-mask
 step runs on the wrapped model with nothing to gather
 ([Adapters](ADAPTERS.md#flux-family-view-conditioning-ultratex)). cfg2 and dp2
 split the batch, which is a sample's views, ring is not stock's math, and no
-Ulysses degree above 2 is proven, so a Flux, Flux 2 or LongCat render whose
+Ulysses degree above 2 has been checked, so a Flux, Flux 2 or LongCat render whose
 conditioning carries UltraTex inputs refuses there before dispatch
 ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
 On two GPUs `auto` keeps uly2 for Flux 2 at every size and skips LongCat's

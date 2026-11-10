@@ -8015,13 +8015,14 @@ stops with `view_grid: the latent batch (3) must hold all 6 views of each
 sample.`; for more samples each rank renders whole samples in calls no test
 has compared with one GPU's. Ring attention is not stock's math, and no
 Ulysses degree above 2 has been checked. On CPU against ComfyUI 0.45.0, uly2
-returns stock's bits with these inputs, and uly2+fsdp runs the token-mask
+returns stock's bits with these inputs in the Flux 1, Flux 2 and LongCat
+layouts, and uly2+fsdp runs the token-mask
 step on the wrapped model with nothing to gather
 ([MODELS](MODELS.md#model-ultratex)). The driver reads the inputs from the
 prompts and the family from the checkpoint header, so the refusal costs no
 Worker call; if it cannot read the header, every Worker reads the same
-request against its loaded model and refuses alike, before the first
-exchange.
+request against its loaded model and refuses alike, after the readiness
+exchange and before sampling starts.
 
 **Fix:** on a two-GPU mesh pick topology `uly2`, or `uly2+fsdp` where the
 model does not fit resident, or leave `auto`, which picks uly2 for Flux 2
