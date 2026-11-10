@@ -14,7 +14,8 @@ The seams, in run order:
   3. latent format            process_latent_in/process_latent_out types
   4. empty latent channels    fix_empty_latent_channels reshaping rules
   5. noise                    seed determinism across ranks, NOISE objects
-  6. conditioning wire        the keys a cond dict must survive the wire with
+  6. conditioning wire        the keys a cond dict must survive the wire with,
+                              UltraTex's view grid, masks and views included
   7. guider and sampler       the objects the actors build and unpickle
   8. load path                prefix strip, state-dict conversion, assign
   9. batch cycling            cycle-or-truncate, the rule the dp splitter mirrors
@@ -83,8 +84,9 @@ The seams, in run order:
                               exactly it, and that a matching uuid moves nothing
  33. outside forward modules  which supported families reach a diffusion-model
                               method from extra_conds, and the modules that
-                              method runs, which FSDP has to replicate, or the
-                              method an input refused off one GPU alone reaches
+                              method runs, which FSDP has to replicate, the
+                              method an input refused off one GPU alone reaches,
+                              or a method that reaches no module or parameter
  34. flux family text         the widths flux2 and longcat hand the model, and
                               that no text row either of them reads is masked
  35. cogvideox layout         the key the CogVideoX config is detected from, the
@@ -635,6 +637,13 @@ def _assert_conditioning_wire_seam() -> None:
         {"pre_filter_count": 880, "strength": 1.0,
          "pixel_mask": torch.ones(1, 1, 1, 2, 2), "latent_shape": (1, 22, 40)},
     ]
+    # UltraTex Conditioning (ComfyUI 61e524b) adds a list of (row, col) tuples,
+    # a mask dict whose reference list may hold None, and a view list mixing
+    # None and ints. comfy folds a cond pair only when each CONDConstant is
+    # equal by type as well as value, so a tuple that came back a list would
+    # stop a fold one GPU makes (adapters/flux_views.py).
+    view_grid = [(0, 0), (0, 2), (1, 0), (0, 1)]
+    token_masks = {"target": torch.ones(4, 8, 8), "refs": [torch.ones(1, 16, 16), None]}
     extras = {
         "minimax_refs": [torch.zeros(1, 2)],
         "some_scalar": 3,
@@ -642,6 +651,10 @@ def _assert_conditioning_wire_seam() -> None:
         "guide_attention_entries": guide_entries,
         "generated_keyframes": {"tokens_per_frame": 880, "first_latent_frame": 0,
                                 "num_keyframes": 1},
+        "view_grid": view_grid,
+        "token_masks": token_masks,
+        "reference_views": [None, 0],
+        "background_latent": torch.zeros(1, 2, 4, 4),
     }
     conds = [[cross_attn, {"pooled_output": pooled, **extras}]]
 
@@ -668,6 +681,15 @@ def _assert_conditioning_wire_seam() -> None:
     assert wire[0][1]["generated_keyframes"] == extras["generated_keyframes"], (
         "conditioning wire seam: packing changed the generated keyframe record"
     )
+    wired_grid, wired_masks = wire[0][1]["view_grid"], wire[0][1]["token_masks"]
+    assert type(wired_grid) is list and wired_grid == view_grid and all(
+        type(tile) is tuple for tile in wired_grid), (
+        "conditioning wire seam: packing changed UltraTex's view grid of tuples")
+    assert set(wired_masks) == {"target", "refs"} and wired_masks["refs"][1] is None and (
+        torch.equal(wired_masks["target"], token_masks["target"])), (
+        "conditioning wire seam: packing changed UltraTex's token mask dict")
+    assert wire[0][1]["reference_views"] == [None, 0], (
+        "conditioning wire seam: packing changed UltraTex's reference views")
     assert torch.equal(wire[0][0], cross_attn) and torch.equal(
         wire[0][1]["pooled_output"], pooled
     ), "conditioning wire seam: packing changed a cond tensor's values"
@@ -677,7 +699,8 @@ def _assert_conditioning_wire_seam() -> None:
         "conditioning wire seam: comfy no longer binds the entry tensor to cross_attn"
     )
     for key in ("pooled_output", "minimax_refs", "some_scalar",
-                "keyframe_idxs", "guide_attention_entries", "generated_keyframes"):
+                "keyframe_idxs", "guide_attention_entries", "generated_keyframes",
+                "view_grid", "token_masks", "reference_views", "background_latent"):
         assert key in converted[0], (
             f"conditioning wire seam: comfy's cond conversion dropped {key!r}"
         )
@@ -3230,17 +3253,34 @@ def _calls_on_self(source: str, receiver: str | None) -> set:
 
 
 def _unet_class_of(model_class) -> object:
-    """The one ``unet_model=`` class a comfy ``model_base`` class builds."""
+    """The one ``unet_model=`` class a comfy ``model_base`` class builds.
+
+    The class is named either at the ``super().__init__`` call or, where the
+    constructor takes ``unet_model`` itself and passes it on (Flux since long
+    before UltraTex, MiniMaxH3 since ComfyUI ede4e5f), as that parameter's
+    default, which the call's bare name resolves to.
+    """
     import ast
     import importlib
     import textwrap
 
-    source = inspect.getsource(model_class.__init__)
-    dotted = [
-        ast.unparse(node.value)
-        for node in ast.walk(ast.parse(textwrap.dedent(source)))
-        if isinstance(node, ast.keyword) and node.arg == "unet_model"
-    ]
+    tree = ast.parse(textwrap.dedent(inspect.getsource(model_class.__init__)))
+    arguments = tree.body[0].args
+    positional = [*arguments.posonlyargs, *arguments.args]
+    defaults = {
+        arg.arg: default
+        for arg, default in zip(positional[len(positional) - len(arguments.defaults):],
+                                arguments.defaults, strict=True)
+    }
+    defaults.update({arg.arg: default for arg, default in zip(
+        arguments.kwonlyargs, arguments.kw_defaults, strict=True) if default is not None})
+    dotted = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.keyword) and node.arg == "unet_model":
+            value = node.value
+            if isinstance(value, ast.Name) and value.id in defaults:
+                value = defaults[value.id]
+            dotted.append(ast.unparse(value))
     assert len(dotted) == 1, (
         f"outside forward modules seam: {model_class.__name__} no longer builds "
         f"its diffusion model from one unet_model class, got {dotted}"
@@ -3371,6 +3411,134 @@ def _assert_class_scoped_outside_forward_row(class_name, paths, methods, flat) -
         "flat census, which replicates them for every family")
 
 
+def _tiny_flux2_layout(unet_class, *, seed: int = 0):
+    """A real comfy Flux diffusion model in FLUX.2's layout at toy width, CPU float32.
+
+    The FLUX.2 constants of comfy's model detection (128 latent channels,
+    patch 1, four 32-wide rotary axes, global modulation, index references)
+    over hidden 256 and two heads, one double and one single block.
+    """
+    import comfy.ops
+    import torch
+
+    generator = torch.Generator().manual_seed(seed)
+    model = unet_class(
+        in_channels=128, out_channels=128, vec_in_dim=None, context_in_dim=64,
+        hidden_size=256, mlp_ratio=3.0, num_heads=2, depth=1, depth_single_blocks=1,
+        axes_dim=[32, 32, 32, 32], theta=2000, patch_size=1, qkv_bias=False,
+        guidance_embed=False, txt_ids_dims=[3], global_modulation=True, mlp_silu_act=True,
+        ops_bias=False, default_ref_method="index", ref_index_scale=10.0,
+        dtype=torch.float32, device="cpu", operations=comfy.ops.disable_weight_init)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn(parameter.shape, generator=generator) * 0.05)
+    return model
+
+
+def _flux_token_mask_call(model) -> None:
+    """What Flux.extra_conds runs for UltraTex: preprocess_token_masks over six views.
+
+    The target masks drop some tokens of every view, the first reference has a
+    mask and the second none, as UltraTex Conditioning builds them.
+    """
+    import torch
+
+    grid = [(0, 0), (0, 2), (1, 0), (0, 1), (1, 1), (1, 2)]
+    masks = torch.zeros(len(grid), 80, 80)
+    for index in range(len(grid)):
+        masks[index, 16 * (index % 2):16 * (2 + index % 3), 16:48] = 1.0
+    keep = model.preprocess_token_masks(
+        {"target": masks, "refs": [torch.ones(1, 160, 240), None]}, grid, (6, 128, 5, 5),
+        [(1, 128, 10, 15), (1, 128, 5, 5)], torch.zeros(1, 128, 5, 5))
+    assert set(keep) == {"target", "refs", "background"} and keep["refs"][1] is None, (
+        "outside forward modules seam: preprocess_token_masks changed what it returns")
+    assert 0 < keep["target"].numel() < len(grid) * 25, (
+        "outside forward modules seam: the probe's masks no longer drop a target token")
+
+
+# Module-free rows (adapters/fsdp_islands.py) and the tiny real diffusion
+# model plus outside-forward call each is checked against.
+_MODULE_FREE_PROBES: dict = {
+    "Flux": (_tiny_flux2_layout, _flux_token_mask_call),
+}
+
+
+def _assert_module_free_outside_forward_row(class_name, unet_class, methods) -> None:
+    """A module-free row against its method source and a live call.
+
+    The reader collects the module paths each method reads off ``self`` and
+    keeps those that own parameters on a tiny real model. The live call puts a
+    forward pre-hook on every module that owns a parameter and runs under a
+    torch function mode that records every call handed a parameter, attribute
+    reads such as ``.dtype`` aside. All three stay empty: under FSDP2 a
+    parameter outside the forward is a sharded DTensor that nothing gathers.
+    A control call through one Linear first proves the hooks and the mode see
+    a parameter when one is used.
+    """
+    import torch
+    from torch.overrides import TorchFunctionMode
+
+    from dgx_monarch.adapters.fsdp_islands import resolve_module_path
+
+    assert class_name in _MODULE_FREE_PROBES, (
+        f"outside forward modules seam: no tiny real model probes the module-free {class_name} row")
+    build, call = _MODULE_FREE_PROBES[class_name]
+    model = build(unet_class)
+    read = set()
+    for method_name in methods:
+        for path in _self_module_paths(inspect.getsource(getattr(unet_class, method_name))):
+            module = resolve_module_path(model, path)
+            if isinstance(module, torch.nn.Module) and any(True for _ in module.parameters()):
+                read.add(path)
+    parameters = {id(parameter) for parameter in model.parameters()}
+    touched: list = []
+
+    def holds_parameter(value) -> bool:
+        if isinstance(value, torch.Tensor):
+            return id(value) in parameters
+        if isinstance(value, list | tuple):
+            return any(holds_parameter(item) for item in value)
+        if isinstance(value, dict):
+            return any(holds_parameter(item) for item in value.values())
+        return False
+
+    class Watch(TorchFunctionMode):
+        def __torch_function__(self, func, types, args=(), kwargs=None):
+            kwargs = kwargs or {}
+            if getattr(func, "__name__", "") != "__get__" and holds_parameter((args, kwargs)):
+                touched.append(getattr(func, "__name__", repr(func)))
+            return func(*args, **kwargs)
+
+    names = {module: name for name, module in model.named_modules()}
+    ran: set = set()
+    handles = [
+        module.register_forward_pre_hook(lambda m, _args: ran.add(names[m]))
+        for module in names
+        if any(True for _ in module.parameters(recurse=False))
+    ]
+    try:
+        with torch.no_grad(), Watch():
+            model.img_in(torch.zeros(1, model.img_in.in_features))
+        assert ran == {"img_in"} and touched, (
+            "outside forward modules seam: the module-free probe no longer sees a parameter used")
+        ran.clear()
+        touched.clear()
+        with torch.no_grad(), Watch():
+            call(model)
+    finally:
+        for handle in handles:
+            handle.remove()
+    assert not read, (
+        f"outside forward modules seam: {class_name}'s {sorted(methods)} now read "
+        f"{sorted(read)} off the diffusion model, so the module-free row is wrong")
+    assert not ran, (
+        f"outside forward modules seam: {class_name}'s {sorted(methods)} now run "
+        f"{sorted(ran)} outside the forward, which FSDP would have to replicate")
+    assert not touched, (
+        f"outside forward modules seam: {class_name}'s {sorted(methods)} now hand a "
+        f"parameter to {sorted(set(touched))} outside the forward, where FSDP gathers nothing")
+
+
 def _assert_outside_forward_module_seam() -> None:
     """Hold the census of modules a family runs outside its denoise forward.
 
@@ -3395,6 +3563,7 @@ def _assert_outside_forward_module_seam() -> None:
         AUXILIARY_MODULE_ATTRS,
         CLASS_OUTSIDE_FORWARD_MODULE_PATHS,
         FORWARD_PATH_NAME_OWNERS,
+        MODULE_FREE_OUTSIDE_FORWARD_CALLS,
         OUTSIDE_FORWARD_MODULE_ATTRS,
         REFUSED_OUTSIDE_FORWARD_CALLS,
         outside_forward_module_attrs,
@@ -3432,8 +3601,28 @@ def _assert_outside_forward_module_seam() -> None:
             f"row names {sorted(present)} of the methods this tree has")
         if present:
             live_refused.add(class_name)
+    # A module-free row names methods that reach no module and no parameter,
+    # held as the refused rows are: inert on a tree whose model lacks them
+    # (before ComfyUI 61e524b for Flux), and probed live where it has them.
+    live_module_free: set = set()
+    for class_name, methods in MODULE_FREE_OUTSIDE_FORWARD_CALLS.items():
+        assert class_name in supported, (
+            f"outside forward modules seam: the module-free row {class_name} is no longer a "
+            "supported comfy model_base class")
+        assert class_name not in (*OUTSIDE_FORWARD_MODULE_ATTRS, *CLASS_OUTSIDE_FORWARD_MODULE_PATHS,
+                                  *REFUSED_OUTSIDE_FORWARD_CALLS), (
+            f"outside forward modules seam: {class_name} is both module-free and in another table")
+        unet_class = _unet_class_of(getattr(comfy.model_base, class_name))
+        present = {method for method in methods if hasattr(unet_class, method)}
+        assert reaching.get(class_name, set()) == present, (
+            f"outside forward modules seam: {class_name}.extra_conds now calls "
+            f"{sorted(reaching.get(class_name, ()))} on the diffusion model, and the module-free "
+            f"row names {sorted(present)} of the methods this tree has")
+        if present:
+            live_module_free.add(class_name)
+            _assert_module_free_outside_forward_row(class_name, unet_class, present)
     tabled = (set(OUTSIDE_FORWARD_MODULE_ATTRS) | set(CLASS_OUTSIDE_FORWARD_MODULE_PATHS)
-              | live_refused)
+              | live_refused | live_module_free)
     assert set(reaching) == tabled, (
         "outside forward modules seam: the supported families whose extra_conds "
         f"calls a diffusion-model method are {sorted(reaching)}, and the tables "

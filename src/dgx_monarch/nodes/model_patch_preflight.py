@@ -1,8 +1,8 @@
 """Driver preflights for the per-render model patches (Skip Layer Guidance, MiniMax H3
-context windows, the SD3 and MiniMax H3 shifts, LoRA) and for MOSS-Image reference
-images and text attention bias.
+context windows, the SD3 and MiniMax H3 shifts, LoRA), for MOSS-Image reference
+images and text attention bias, and for UltraTex view conditioning on the Flux family.
 
-All seven run once per render in nodes/render_submit.py, after the topology
+All eight run once per render in nodes/render_submit.py, after the topology
 resolves and before any Worker call, so a refusal costs no dispatch. Each fails
 open where it cannot read its facts: the Worker belts (actor/guidance_render.py,
 actor/context_windows_render.py, actor/model_sampling_render.py) still guard
@@ -10,7 +10,8 @@ Skip Layer Guidance, the context windows and the H3 shift, the shift guard refus
 says multiplier 1.0 outright, the model store refuses a LoRA on a refused
 quantized file on every Worker (lora_quant_guard.py), the MOSS-Image sharded
 forward refuses reference images on every rank, and every Worker rank scans the
-whole request for the bias before sampling (actor/sample_protocol.py).
+whole request for the bias and for UltraTex views before sampling
+(actor/sample_protocol.py).
 """
 from __future__ import annotations
 
@@ -152,6 +153,25 @@ def preflight_moss_image_attention_bias(model: Any, request: Mapping[str, Any], 
     from ..adapters.moss_image_seams import CONTEXT_ATTENTION_BIAS_REFUSAL
 
     raise UnsupportedModelError(CONTEXT_ATTENTION_BIAS_REFUSAL)
+
+
+def preflight_flux_views(model: Any, request: Mapping[str, Any], topo: Any) -> None:
+    """Refuse UltraTex view conditioning off a proven topology before dispatch (#148).
+
+    A Flux, Flux 2 or LongCat render whose prompts carry ``view_grid``,
+    ``token_masks`` or ``reference_views`` runs on one GPU, uly2 or uly2+fsdp
+    (adapters/flux_views.py). The header is read only for a request that
+    carries them on another topology, and an unreadable one passes: every
+    Worker rank then reads the same request against its loaded model's family
+    before sampling and refuses alike (actor/sample_protocol.py).
+    """
+    from ..adapters import flux_views
+
+    if flux_views.runs_views(topo) or not flux_views.request_carries_views(request):
+        return
+    flux_views.refuse_unproven_views(
+        _sniffed_family(model), topo, request,
+        preset=getattr(getattr(model, "mesh", None), "topology_preset", None))
 
 
 def preflight_skip_layer_guidance(model: Any, topo: Any, request: Mapping[str, Any]) -> None:

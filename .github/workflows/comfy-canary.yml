@@ -46,6 +46,7 @@ on:
       - "tests/test_ernie_stock_equivalence.py"
       - "tests/test_flux3_comfy_exactness.py"
       - "tests/test_flux3_cond_branch.py"
+      - "tests/test_flux_views_comfy_exactness.py"
       - "tests/test_moss_image_comfy_exactness.py"
       - "tests/test_moss_image_parity.py"
       - "tests/test_moss_image_support.py"
@@ -297,6 +298,14 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_flux3_cond_branch.py
+      # UltraTex's view grid, token drop and view references (ComfyUI 0.45.0)
+      # through Flux 2's Ulysses forward against stock, every fused-norm launch
+      # at stock's rows, and preprocess_token_masks and the forward under a
+      # real FSDP2 wrap. The file skips on a release before UltraTex.
+      - name: Flux UltraTex views under Ulysses and FSDP vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_flux_views_comfy_exactness.py
       # These two steps bind comfy's native Qwen Image 2.1 and Wan Animate 2
       # model classes from master and compare the injected sequence-parallel
       # forwards with stock on CPU. The ordinary CI job has no ComfyUI. The
@@ -454,6 +463,7 @@ jobs:
           tests/test_ernie_stock_equivalence.py
           tests/test_flux3_comfy_exactness.py
           tests/test_flux3_cond_branch.py
+          tests/test_flux_views_comfy_exactness.py
           tests/test_qwen_image21_adapter.py
           tests/test_qwen_image21_prefix_cache.py
           tests/test_adaln_parity_blocks.py
