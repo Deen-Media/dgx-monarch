@@ -18,6 +18,13 @@ described below. Use the current requirements in
 Each Worker host also needs `/usr/bin/python3` at Python 3.9 or newer, because
 the Worker lifecycle helpers run on it rather than on the configured `python`;
 `dgxm doctor` checks it on every host ([CLUSTER.md](CLUSTER.md#hosts)).
+This release needs ComfyUI 0.45.0 or newer on the driver and on every
+Worker, and its hardware validation runs on 0.45.0. Records from before 1.5
+name the ComfyUI they ran on, which for most of them is `8a98ecf58` (v0.44.0
+code). On an older ComfyUI the node pack still imports, but a MiniMax H3 file
+with a stacked output head refuses
+([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+The family floors below are older and still hold.
 FLUX.3 Klein needs ComfyUI 0.41.0 or newer, and MOSS-Image and Kromoss need
 ComfyUI 0.42.0 or newer
 ([model files](#model-files-required-by-each-template)).

@@ -51,9 +51,10 @@ The seams, in run order:
                               wall prices an anchored guide's encode by
  24. minimax h3 latent mask   the two latent noise-mask parameters the packed
                               forward takes, and the refusal a set mask meets
- 25. minimax h3 pdd head      the sampler sigma, schedule and flow shifts a
-                              stacked PDD output head blends its row blocks by,
-                              and the places the rebound forward reads them from
+ 25. minimax h3 pdd head      the sampler sigma, schedule and per-stream grids
+                              (ComfyUI 0.45.0) a stacked PDD output head blends
+                              its row blocks by, and where the rebound forward
+                              reads them from
  26. nvfp4 activation scale   every quantization format classified in the pack's
                               activation-scale table, the whole-tensor fallback
                               nvfp4 alone takes, the per-module scales the
@@ -1535,8 +1536,16 @@ def _assert_minimax_h3_audio_carry_seam() -> None:
             return torch.zeros(rows.shape[0], 2, dtype=rows.dtype, device=rows.device)
 
     class FixedHeads(torch.nn.Module):
+        # v0.45.0's head form, which the adapter reads at inject, and a
+        # one-block bank for the grid it builds.
+        video_dim = 4
+
+        def __init__(self):
+            super().__init__()
+            self.video_out = torch.nn.Linear(1, 4)
+
         def forward(self, _hidden, _t_emb, video_seg, audio_seg,
-                    _sigma, _sample_sigmas, _shifts):
+                    _sigma, _sample_sigmas, grids):
             video_rows = video_seg[1] - video_seg[0]
             audio_rows = audio_seg[1] - audio_seg[0]
             return (
@@ -2350,8 +2359,15 @@ def _assert_minimax_h3_latent_mask_seam() -> None:
             return torch.zeros(rows.shape[0], 2, dtype=rows.dtype, device=rows.device)
 
     class FixedHeads(torch.nn.Module):
+        # v0.45.0's head form and a one-block bank, as in the audio carry seam.
+        video_dim = 4
+
+        def __init__(self):
+            super().__init__()
+            self.video_out = torch.nn.Linear(1, 4)
+
         def forward(self, _hidden, _t_emb, video_seg, audio_seg,
-                    _sigma, _sample_sigmas, _shifts):
+                    _sigma, _sample_sigmas, grids):
             return (
                 torch.zeros(video_seg[1] - video_seg[0], 4, dtype=torch.float32),
                 torch.zeros(audio_seg[1] - audio_seg[0], 1, dtype=torch.float32),
@@ -2445,28 +2461,32 @@ def _assert_minimax_h3_latent_mask_seam() -> None:
 
 
 def _assert_minimax_h3_pdd_head_seam() -> None:
-    """The sampler schedule comfy 2504e68d made the H3 output head require.
+    """The sampler state ComfyUI 0.45.0's H3 output head blends its blocks by.
 
     A PDD LoRA stacks row blocks into `video_out` and `audio_out`, and the head
-    blends the blocks the step it is taking spans, so `FinalLayer.forward` now
-    takes the current sigma, the sampler's whole sigma table and the two flow
-    shifts. The rebound `_forward` calls that head itself, so it has to hand
-    down the same three values from the same places: the clamped video sigma it
-    already computes, the table off the stock `transformer_options`, and the
-    pair of shift overrides.
+    blends the blocks the step it is taking spans. `FinalLayer.forward` takes
+    the current sigma, the sampler's whole sigma table and, since ComfyUI
+    ede4e5f (v0.45.0), one decreasing sigma grid per stream, which stock's
+    `_forward` builds with `pdd_grid` from the two flow shifts. The rebound
+    `_forward` calls that head itself, so it has to hand down the same three
+    values: the clamped video sigma it already computes, the table off the
+    stock `transformer_options`, and the grids built with stock's arithmetic
+    from the pair of shift overrides (adapters/minimax_h3_packing.head_schedule).
 
     A checkpoint-free head runs on a stock bank and on a stacked one. Both legs
     hold the production adapter against the stock inner forward on the same
     weights, and a hook on the head reads back the three values it was handed,
-    so a wrong sigma fails here even where the block span it picks would not
-    move. Identity shard/gather stand in for world 1 only; packing, schedule
-    mapping and the head itself are the real paths.
+    so a wrong sigma or grid fails here even where the block span it picks would
+    not move. Identity shard/gather stand in for world 1 only; packing, schedule
+    mapping and the head itself are the real paths. The adapter reads the head's
+    form at inject, and this tree's form must be the one it passes.
     """
     import comfy.ops
     import torch
     from comfy.ldm.minimax import model as comfy_h3
 
     from dgx_monarch.adapters import minimax_h3 as adapter_module
+    from dgx_monarch.adapters import minimax_h3_packing as packing
     from dgx_monarch.adapters.base import InjectionContext
     from dgx_monarch.adapters.minimax_h3 import MiniMaxH3Adapter
 
@@ -2496,14 +2516,12 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
         head.register_forward_pre_hook(lambda _module, args: handed.append(args))
         return head
 
+    stock_class = comfy_h3.MiniMaxH3Model
+
     def build_model(head):
         class TinyPddH3:
-            forward = comfy_h3.MiniMaxH3Model.forward
-            _forward = comfy_h3.MiniMaxH3Model._forward
-            # ComfyUI 2d6b7328 moved the embed and pack out of the stock _forward
-            # into this helper; bind it where it exists so the stand-in runs both.
-            if hasattr(comfy_h3.MiniMaxH3Model, "_embed_and_pack"):
-                _embed_and_pack = comfy_h3.MiniMaxH3Model._embed_and_pack
+            forward = stock_class.forward
+            _forward = stock_class._forward
 
             def __init__(self):
                 self.blocks = []
@@ -2533,6 +2551,12 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
             def _cond_audio_rows(_payload, _device):
                 return None
 
+        # ComfyUI 2d6b7328 moved the embed and pack out of the stock _forward,
+        # and ede4e5f the time embedding and the block loop; bind each where it
+        # exists so the stand-in runs stock's whole path.
+        for helper in ("_embed_and_pack", "_time_embedding", "_run_blocks"):
+            if hasattr(stock_class, helper):
+                setattr(TinyPddH3, helper, getattr(stock_class, helper))
         return TinyPddH3()
 
     original = (
@@ -2546,21 +2570,38 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
     adapter_module.shard_seq = lambda tensor, dim=1: (tensor, tensor.shape[dim])
     adapter_module.sp_gather = lambda tensor, _orig, dim=1: tensor
     adapter_module.padded_row_indices = lambda _segments: []
-    blended: list[tuple[int, int, int, float]] = []
+    blended: list[tuple[int, int, int, tuple[float, ...]]] = []
     handed: list[tuple[object, ...]] = []
 
-    def recording_pdd_head(head, hidden, n, start, stop, flow_shift):
-        blended.append((n, start, stop, flow_shift))
-        return stock_pdd_head(head, hidden, n, start, stop, flow_shift)
+    def recording_pdd_head(head, hidden, grid, start, stop):
+        blended.append((len(grid) - 1, start, stop, tuple(grid)))
+        return stock_pdd_head(head, hidden, grid, start, stop)
+
+    def stock_grids(blocks, shifts):
+        """What stock's _forward hands a head of `blocks` blocks, and ours must match."""
+        grids = tuple(comfy_h3.pdd_grid(blocks, shift) for shift in shifts)
+        ours = tuple(packing.pdd_grid(blocks, shift, comfy_h3.time_shift_sigma)
+                     for shift in shifts)
+        assert ours == grids, (
+            f"minimax h3 pdd head seam: stock's pdd_grid gives {grids!r} for {blocks} "
+            f"block(s) at shifts {shifts!r}, and the adapter's copy of its arithmetic "
+            f"gives {ours!r}"
+        )
+        return grids
 
     try:
+        form = packing.head_form(build_head(2))
+        assert form == packing.HEAD_GRIDS, (
+            f"minimax h3 pdd head seam: this ComfyUI's FinalLayer.forward takes {form!r} "
+            "where this build's floor, ComfyUI 0.45.0, takes the per-stream grids"
+        )
         video = torch.ones(1, 1, 1, 2, 2, dtype=torch.float32)
         audio = torch.full((1, 1, 2, 1), 10.0, dtype=torch.float32)
         context = torch.zeros(1, 1, 2, dtype=torch.float32)
         timestep = torch.tensor([800.0])
         # Sigma 0.5 is the fixed point of 1 - sigma, where model time and the
         # sampler sigma read alike; 0.8 tells them apart. The step it names
-        # still clamps onto the second block of a two-block bank.
+        # still lands on the second block of a two-block bank.
         table = torch.tensor([1.0, 0.8, 0.4, 0.0], dtype=torch.float32)
 
         def render(model, options):
@@ -2573,18 +2614,18 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
                 },
             )
 
-        def check_handed(shifts):
+        def check_handed(grids):
             """The three values the head read, as the rebound forward handed them.
 
             The block span a stacked head picks saturates over most of the
             schedule, so the span alone cannot tell the video sigma from the
-            audio one or from a constant. Read the arguments instead.
+            audio one or a right grid from a wrong one. Read the arguments.
             """
             assert len(handed) == 1, (
                 f"minimax h3 pdd head seam: the head ran {len(handed)} time(s) in one "
                 "step, so the rebound forward no longer calls it exactly once"
             )
-            sigma, schedule, read_shifts = handed[0][4:]
+            sigma, schedule, read_grids = handed[0][4:]
             assert isinstance(sigma, torch.Tensor) and torch.equal(sigma, torch.tensor(0.8)), (
                 f"minimax h3 pdd head seam: the head read {sigma!r} as this step's sigma "
                 "rather than the clamped video sigma the timestep carries"
@@ -2593,9 +2634,9 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
                 f"minimax h3 pdd head seam: the head read {schedule!r} as the sigma "
                 "schedule rather than the sampler's own table"
             )
-            assert read_shifts == shifts, (
-                f"minimax h3 pdd head seam: the head read shifts {read_shifts!r} rather "
-                f"than {shifts!r} in video, audio order"
+            assert tuple(read_grids) == grids, (
+                f"minimax h3 pdd head seam: the head read grids {read_grids!r} rather "
+                f"than stock's {grids!r} in video, audio order"
             )
 
         for blocks in (1, 2):
@@ -2610,21 +2651,23 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
                 adapted = render(rebound, {"sample_sigmas": table})
             finally:
                 comfy_h3._pdd_head = stock_pdd_head
-            check_handed((12.0, 3.0))
+            grids = stock_grids(blocks, (12.0, 3.0))
+            check_handed(grids)
             stock = render(build_model(head), {"sample_sigmas": table})
             assert torch.equal(adapted[0], stock[0]) and torch.equal(adapted[1], stock[1]), (
                 f"minimax h3 pdd head seam: with {blocks} head row block(s) the rebound "
                 "forward no longer reproduces the stock inner forward on the same weights"
             )
-            expected = [] if blocks == 1 else [(2, 1, 2, 12.0), (2, 1, 2, 3.0)]
+            expected = [] if blocks == 1 else [(2, 1, 2, tuple(grids[0])),
+                                               (2, 1, 2, tuple(grids[1]))]
             assert blended == expected, (
                 f"minimax h3 pdd head seam: {blocks} head row block(s) blended {blended}, "
-                f"expected {expected}; the sigma or the schedule the adapter hands the "
-                "head no longer locates the step it is taking"
+                f"expected {expected}; the sigma, the schedule or the grids the adapter "
+                "hands the head no longer locate the step it is taking"
             )
 
-        # The head reads the two flow shifts per stream, and the overrides the
-        # sigma-shift node writes have to survive the rebound call.
+        # The grids come from the two flow shifts per stream, and the overrides
+        # the sigma-shift node writes have to survive the rebound call.
         stacked = build_model(build_head(2))
         MiniMaxH3Adapter().inject_usp(
             stacked, InjectionContext(topology_sp=1, usp_attention=object()))
@@ -2637,10 +2680,11 @@ def _assert_minimax_h3_pdd_head_seam() -> None:
                              "minimax_h3_sigma_shift_audio": 5.0})
         finally:
             comfy_h3._pdd_head = stock_pdd_head
-        check_handed((8.0, 5.0))
-        assert [row[3] for row in blended] == [8.0, 5.0], (
+        grids = stock_grids(2, (8.0, 5.0))
+        check_handed(grids)
+        assert [row[3] for row in blended] == [tuple(grids[0]), tuple(grids[1])], (
             f"minimax h3 pdd head seam: the head blended {blended}, so the per-stream "
-            "sigma-shift overrides no longer reach it through the rebound forward"
+            "sigma-shift overrides no longer reach its grids through the rebound forward"
         )
 
         # The table belongs to the sampler. A rebound forward that substituted
@@ -4235,7 +4279,7 @@ def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> Non
     from comfy.ldm.lightricks.embeddings_connector import Embeddings1DConnector
     from comfy.ldm.lightricks.model import LTXVModel
     from comfy.ldm.lumina.model import NextDiT
-    from comfy.ldm.minimax.model import TokenRefiner
+    from comfy.ldm.minimax.model import FinalLayer, TokenRefiner
     from comfy.ldm.wan.model import WanModel
     from comfy.ldm.wan.model_wandancer import MusicEncoderLayer
 
@@ -4386,7 +4430,12 @@ def _assert_stock_attention_sites_drop_pins(pin, pinned_runs, operations) -> Non
     refiner = _seeded(TokenRefiner(2, 16, 2, 8, 32, 1e-6, 1e-6, 1e-6, device="cpu",
                                    dtype=torch.float32, operations=operations), 31)
     text = randn(5, 16)
-    check("MiniMax H3 token refiner", types.SimpleNamespace(blocks=[], token_refiner=refiner),
+    # The adapter reads the installed head's form at inject, so the host
+    # carries a real FinalLayer it never runs.
+    head = FinalLayer(16, 4, 4, 1, 1e-6, dtype=torch.float32, device="cpu",
+                      operations=operations)
+    check("MiniMax H3 token refiner", types.SimpleNamespace(
+        blocks=[], token_refiner=refiner, final_layer=head),
           [block.attn for block in refiner.blocks], lambda: refiner(text),
           MiniMaxH3Adapter())
 

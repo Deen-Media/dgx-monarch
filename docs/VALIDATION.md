@@ -3333,6 +3333,27 @@ VAE Decode, as the decode check does.
 | ring | topology `ring2` | a window whose packed total is odd refuses class K with the H3 ring-pad text before any block runs; otherwise the render completes with identical latents on both ranks | PASS: the first window's total was odd, and both ranks refused class K with the ring-pad text at its entry, inside the gate's first proof render and again in the render, with the waiver card offered; no rank sampled, and the prompt ended in 30 s |
 | an old ComfyUI | one Worker on ComfyUI 0.43 | the render refuses class P on both ranks with the ComfyUI 0.44.0 text (#142) and no rank waits out the group timeout | NOT RUN: it needs a Worker on ComfyUI 0.43 |
 
+## ComfyUI 0.45.0
+
+ComfyUI 0.45.0, tagged on 2026-11-10, is this release's floor. Its commit
+ede4e5f (#17655) changed the MiniMax H3 output head: the last argument of
+`FinalLayer.forward` is one sigma grid per stream where 0.44.x took the two
+flow shifts, and a stacked PDD head picks its blocks by the nearest grid
+point. The CPU checks run against ComfyUI 0.45.0 and the earlier tree in the
+comfy canary and by hand: `tests/test_h3_head_form_comfy.py` (a stacked head
+at world 1 against stock on 0.45.0, the adapter's grid against stock's
+`pdd_grid`, a one-block head against stock and a stacked head's refusal on
+0.44.0, and the block loop's prefetch calls on both), canary seam 25 and the
+touchpoint manifest. No hardware run has used ComfyUI 0.45.0 yet.
+
+| behaviour | upstream change | what a run must show | status |
+|---|---|---|---|
+| MiniMax H3 t2va on uly2 | ede4e5f: the head's grids | `dgx-monarch-minimax-h3-t2va.json` at one step, seed 1031, on uly2 against one GPU on the same ComfyUI 0.45.0 tree, latents compared | NOT RUN |
+| MiniMax H3 fl2va on uly2 | ede4e5f | `dgx-monarch-minimax-h3-guide.json` likewise | NOT RUN |
+| p-h3-image on uly2 | ede4e5f | `dgx-monarch-p-h3-image.json` at its 8 steps on uly2 against one GPU on 0.45.0 | NOT RUN |
+| The block-scope pops under the malloc graph | the scope stock passes on both trees | an H3 render on uly2 with DynamicVRAM on, the Worker's log free of malloc-graph breaks the stock render does not show, and its peak memory against the same render before this change | NOT RUN |
+| The release-test rows on 0.45.0 | the floor | the three templates above in the template release test | NOT RUN |
+
 <a id="torch-2-15"></a>
 
 ## torch 2.15

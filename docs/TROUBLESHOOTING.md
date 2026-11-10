@@ -7994,3 +7994,31 @@ unit example carries it.
 `host_purge_delay=0`. With a model placed, the actor's anonymous memory then
 sits near a fresh actor's floor, a few GiB, and the identity gate's re-price
 after a drop finds the room the loader found.
+
+## 147. A MiniMax H3 render refuses, or fails in its output head, after a ComfyUI update
+
+**Symptom:** a MiniMax H3 or p-h3-image render refuses on the Workers with
+"this Worker's ComfyUI has a stacked PDD output head ... on a ComfyUI older
+than 0.45.0" or "a MiniMax H3 output head that takes ... where this build
+passes 'grids'", class P, before the render starts. With dgx-monarch 1.4.0 or
+an older dev build on ComfyUI 0.45.0, a render with a stacked head fails
+under sequence parallelism with `TypeError: 'float' object is not
+subscriptable` inside `FinalLayer.forward`. The comfy canary names
+`comfy.ldm.minimax.model.FinalLayer.forward (positional parameter order
+changed)` or the `minimax h3 pdd head` seam.
+
+**Cause:** ComfyUI 0.45.0 (ede4e5f) changed the H3 output head. Its last
+argument is one sigma grid per stream, where 0.44.x took the two flow shifts,
+and a stacked PDD head (a PDD checkpoint, or a PDD LoRA that widens a plain
+head) blends the blocks its step spans on that grid. This release needs
+ComfyUI 0.45.0 or newer, builds the grids as stock does, and reads the head's
+form when it binds the sharded forward. A one-block head never reads that
+argument, so on an older ComfyUI it still renders as v1.4.0 rendered it; a
+stacked head there, or a head form this release does not know, refuses. Every
+H3 and p-h3-image file docs/MODELS.md lists has a one-block head.
+
+**Fix:** update ComfyUI to 0.45.0 or newer on the driver and on every Worker
+with the same commit on each (`dgxm doctor` and setup compare them), then
+reset the Attached mesh so no actor keeps the old ComfyUI imported. With
+1.4.0 on ComfyUI 0.45.0, update dgx-monarch too. A true single-GPU reference
+(`mode=local`, `gpus_per_host=1`) runs stock's own forward and needs neither.

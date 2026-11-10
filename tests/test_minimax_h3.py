@@ -434,10 +434,11 @@ def test_unpadded_sequence_passes_an_empty_drop_rows(sp):
 def test_final_layer_call_matches_the_pinned_positional_shape():
     """The pinned FinalLayer row and the single production call must agree.
 
-    Comfy 2504e68d made the current sigma, the sampler's whole sigma table and
-    the two flow shifts required on `FinalLayer.forward`: a PDD LoRA stacks
-    head row blocks and the head blends the ones the step spans. All three
-    values are the sampler's, so the rebound forward has to hand them down.
+    Comfy 2504e68d made the current sigma and the sampler's whole sigma table
+    required on `FinalLayer.forward`, and ComfyUI ede4e5f (v0.45.0) put one
+    sigma grid per stream after them: a PDD LoRA stacks head row blocks and the
+    head blends the ones the step spans. The rebound forward hands all three
+    down, the last through `head_schedule` for the form read at inject.
     Repinning the row without moving the call, or the reverse, leaves a render
     raising a TypeError that no other CPU test would see. The `minimax h3 pdd
     head` seam, which needs comfy, checks what those arguments do; this half
@@ -450,7 +451,7 @@ def test_final_layer_call_matches_the_pinned_positional_shape():
     )
     assert row.positional == (
         "self", "x", "t_emb", "video_seg", "audio_seg",
-        "sigma", "sample_sigmas", "shifts",
+        "sigma", "sample_sigmas", "grids",
     )
     calls = [
         node
@@ -467,11 +468,39 @@ def test_final_layer_call_matches_the_pinned_positional_shape():
     # rather than the sequence-parallel copy the block loop runs under.
     assert [ast.unparse(arg) for arg in calls[0].args] == [
         "h", "t_emb", "video_seg", "audio_seg", "sigma_v",
-        "transformer_options.get('sample_sigmas')", "(shift_v, shift_a)",
+        "transformer_options.get('sample_sigmas')",
+        "head_schedule(form, self.final_layer, (shift_v, shift_a), time_shift_sigma)",
     ]
 
 
 _STOCK = object()
+
+
+class _Head:
+    """ComfyUI 0.45.0's FinalLayer.forward form over a bank of `blocks` blocks."""
+
+    video_dim = 4
+
+    def __init__(self, blocks=1):
+        self.video_out = types.SimpleNamespace(weight=torch.zeros(4 * blocks, 2))
+
+    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, grids):
+        raise AssertionError("the fake head never runs")
+
+
+class _OldHead(_Head):
+    """ComfyUI 0.44.x's form, where the head took the two flow shifts."""
+
+    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, shifts):
+        raise AssertionError("the fake head never runs")
+
+
+class _OtherHead(_Head):
+    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, sigma_grid):
+        raise AssertionError("the fake head never runs")
+
+
+_HEAD = _Head()
 
 
 class _FakeH3:
@@ -480,7 +509,7 @@ class _FakeH3:
         self.forward = _STOCK
         self._forward = _STOCK
         self.token_refiner = _STOCK
-        self.final_layer = _STOCK
+        self.final_layer = _HEAD
 
 
 def test_inject_usp_binds_only_the_inner_forward():
@@ -493,7 +522,7 @@ def test_inject_usp_binds_only_the_inner_forward():
     # the token refiner's own attention modules get a bound forward, which
     # drops a pinned kernel (adapters/stock_attention.py).
     assert model.token_refiner is _STOCK
-    assert model.final_layer is _STOCK
+    assert model.final_layer is _HEAD
 
 
 def test_inject_usp_is_idempotent():
@@ -505,6 +534,57 @@ def test_inject_usp_is_idempotent():
     adapter.inject_usp(model, ctx)
     assert model._forward is not first       # rebound
     assert model._forward.__func__.__name__ == first.__func__.__name__
+
+
+@pytest.mark.parametrize("head", [_Head(1), _Head(6)], ids=["one-block", "stacked"])
+def test_the_v045_head_form_goes_on(head):
+    assert h3_packing.head_form(head) == h3_packing.HEAD_GRIDS
+
+
+def test_the_v044_form_goes_on_with_a_one_block_head():
+    # 0.44.x's head never reads the slot at one block, so the shifts pass as v1.4.0 passed them.
+    assert h3_packing.head_form(_OldHead(1)) == h3_packing.HEAD_SHIFTS
+
+
+@pytest.mark.parametrize("head, said", [
+    (_OldHead(2), "a stacked PDD output head (2 blocks) on a ComfyUI older than 0.45.0"),
+    (_OtherHead(1), "takes 'sigma_grid' where this build passes 'grids'"),
+], ids=["v044-stacked", "unknown-name"])
+def test_any_other_head_form_refuses_class_p_at_inject_naming_the_floor(head, said):
+    model = _FakeH3()
+    model.final_layer = head
+    with pytest.raises(UnsupportedModelError) as caught:
+        MiniMaxH3Adapter().inject_usp(model, InjectionContext(topology_sp=2, usp_attention=object()))
+    text = str(caught.value)
+    assert said in text and "ComfyUI 0.45.0 or newer" in text
+    assert parse_refusal_tag(text).refusal_class is RefusalClass.PHYSICS
+    assert "docs/TROUBLESHOOTING.md #147" in text
+    assert model._forward is _STOCK  # refused before the bind
+
+
+def _shift_stub(sigma, from_shift, to_shift):
+    base = sigma / (from_shift + sigma * (1.0 - from_shift))
+    return to_shift * base / (1.0 + (to_shift - 1.0) * base)
+
+
+def test_the_grid_follows_stocks_arithmetic_and_the_live_bank():
+    assert h3_packing.pdd_grid(2, 12.0, _shift_stub) == [1.0, _shift_stub(0.5, 1.0, 12.0), 0.0]
+    grids = h3_packing.head_schedule(h3_packing.HEAD_GRIDS, _Head(4), (12.0, 3.0), _shift_stub)
+    assert grids == tuple(h3_packing.pdd_grid(4, shift, _shift_stub) for shift in (12.0, 3.0))
+    assert [len(grid) for grid in grids] == [5, 5]
+    # The bank is read at the call, so a LoRA that widens a plain head is followed.
+    head = _Head(1)
+    head.video_out.weight = torch.zeros(4 * 3, 2)
+    assert [len(grid) for grid in h3_packing.head_schedule(
+        h3_packing.HEAD_GRIDS, head, (12.0, 3.0), _shift_stub)] == [4, 4]
+
+
+def test_the_v044_form_passes_the_shifts_and_an_explicit_grid_passes_through():
+    assert h3_packing.head_schedule(h3_packing.HEAD_SHIFTS, _OldHead(1), (12.0, 3.0),
+                                    _shift_stub) == (12.0, 3.0)
+    grid = (1.0, 0.75, 0.0)
+    assert h3_packing.head_schedule(h3_packing.HEAD_GRIDS, _Head(2), (1.0,), _shift_stub,
+                                    grid=grid) == ([1.0, 0.75, 0.0],)
 
 
 def _current_outer_forward(
@@ -528,7 +608,7 @@ def time_shift_sigma(sigma, _from_shift, _to_shift):
 
 
 def _bound_forward():
-    model = types.SimpleNamespace(blocks=[], forward=None)
+    model = types.SimpleNamespace(blocks=[], forward=None, final_layer=_Head())
     model.forward = types.MethodType(_current_outer_forward, model)
     MiniMaxH3Adapter().inject_usp(model, InjectionContext(topology_sp=2, usp_attention=object()))
     return model
