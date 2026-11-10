@@ -3339,9 +3339,9 @@ ComfyUI 0.45.0, tagged on 2026-11-10, is this release's floor. Its commit
 ede4e5f (#17655) changed the MiniMax H3 output head: the last argument of
 `FinalLayer.forward` is one sigma grid per stream where 0.44.x took the two
 flow shifts, and a stacked PDD head picks its blocks by the nearest grid
-point. The CPU checks run against ComfyUI 0.45.0 and the earlier tree in the
-comfy canary and by hand: `tests/test_h3_head_form_comfy.py` (a stacked head
-at world 1 against stock on 0.45.0, the adapter's grid against stock's
+point. The CPU checks run against ComfyUI 0.45.0 in the comfy canary, and
+against the earlier tree by hand: `tests/test_h3_head_form_comfy.py` (a stacked head
+at world 1 against stock on 0.45.0, with steps that span several head intervals, the adapter's grid against stock's
 `pdd_grid`, a one-block head against stock and a stacked head's refusal on
 0.44.0, and the block loop's prefetch calls on both), canary seam 25 and the
 touchpoint manifest. No hardware run has used ComfyUI 0.45.0 yet.
@@ -3351,7 +3351,7 @@ touchpoint manifest. No hardware run has used ComfyUI 0.45.0 yet.
 | MiniMax H3 t2va on uly2 | ede4e5f: the head's grids | `dgx-monarch-minimax-h3-t2va.json` at one step, seed 1031, on uly2 against one GPU on the same ComfyUI 0.45.0 tree, latents compared | NOT RUN |
 | MiniMax H3 fl2va on uly2 | ede4e5f | `dgx-monarch-minimax-h3-guide.json` likewise | NOT RUN |
 | p-h3-image on uly2 | ede4e5f | `dgx-monarch-p-h3-image.json` at its 8 steps on uly2 against one GPU on 0.45.0 | NOT RUN |
-| The block-scope pops under the malloc graph | the scope stock passes on both trees | an H3 render on uly2 with DynamicVRAM on, the Worker's log free of malloc-graph breaks the stock render does not show, and its peak memory against the same render before this change | NOT RUN |
+| The block-scope pops under the malloc graph | the scope stock passes on both trees | an H3 render on uly2 with comfy-managed residency on the Workers (the one Worker mode that turns ComfyUI's malloc graph on), once with exact attention and once with Sol-Attn; the Worker log's `Comfy model compiler graph breaks: N, rogues: M` line and peak memory against the same render before this change | NOT RUN |
 | The release-test rows on 0.45.0 | the floor | the three templates above in the template release test | NOT RUN |
 
 <a id="minimax-h3-image"></a>

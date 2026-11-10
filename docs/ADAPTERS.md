@@ -1381,7 +1381,7 @@ than stacks on a repeat call.
 
    **MiniMax H3 output head and block loop.** The H3 adapter rebinds only
    `_forward`, so stock's `forward` still runs it inside ComfyUI's malloc
-   graph, and the sharded block loop pops the prefetch queue as stock does:
+   graph under comfy-managed residency, and the sharded block loop pops the prefetch queue as stock does:
    every block with `malloc_scope="block"`, then one closing pop with the same
    scope, queue or not, so each block stays one scope of the recorded
    allocation plan. The output head runs once, on the gathered stream at

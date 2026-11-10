@@ -1418,7 +1418,7 @@
     "tests/test_h3_head_form_comfy.py": {
       "test_a_one_block_head_on_the_v044_form_gives_stocks_bits": "de4edc42edb29f21",
       "test_a_stacked_head_on_the_v044_form_refuses_at_inject": "c530db9a8a9b20ea",
-      "test_a_stacked_head_on_the_v045_form_gives_stocks_bits": "d68b77fe7c16f891",
+      "test_a_stacked_head_on_the_v045_form_gives_stocks_bits": "16712e1c41399069",
       "test_every_h3_block_sees_stocks_block_index": "a0cfd0a93d4908cb",
       "test_the_adapters_grid_is_stocks_pdd_grid": "64e52f7818240272",
       "test_the_block_loop_pops_as_stock_does": "5e3a41eb50cabf29"
@@ -1738,7 +1738,7 @@
       "test_adapter_contract_declared": "e1838f4e24b5174b",
       "test_adapter_defines_no_cfg_pad_forward": "6a9520238a52e5b3",
       "test_anchored_audio_guide_rides_the_audio_condition_schedule": "3474dff8a3903974",
-      "test_any_other_head_form_refuses_class_p_at_inject_naming_the_floor": "72a7c541a01c3b65",
+      "test_any_other_head_form_refuses_class_p_at_inject_naming_the_floor": "7330a833f043f360",
       "test_every_vetted_segment_kind_has_a_replicated_row_source": "daba79e684fb79de",
       "test_final_layer_call_matches_the_pinned_positional_shape": "864f659bffdf5b15",
       "test_forward_accepts_an_empty_patches_replace": "9b701a72aef55745",
@@ -1783,7 +1783,7 @@
       "test_the_mask_parameters_are_named_rather_than_absorbed": "d3fb5bfcee58738c",
       "test_the_v044_form_goes_on_with_a_one_block_head": "23a5212b6360e138",
       "test_the_v044_form_passes_the_shifts_and_an_explicit_grid_passes_through": "8456f33071bd754b",
-      "test_the_v045_head_form_goes_on": "aee03fafaa0af675",
+      "test_the_v045_head_form_goes_on": "9f8d2676d0545fbf",
       "test_timestep_embedding_curve_regime_stays_fp32": "0f4dc583766fa90a",
       "test_timestep_embedding_curve_regime_without_a_table_raises": "6dfe7a8bd4cc8bb5",
       "test_timestep_embedding_matching_neither_regime_raises": "551a03f8ce392775",
