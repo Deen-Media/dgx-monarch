@@ -398,6 +398,20 @@
 
 ### Rendering
 
+- A change in behaviour on one GPU: a checkpoint's own attention pins now run
+  as stock ComfyUI runs them, with no Sol-Attn waiver card, no stamp and no
+  ledger row, and the first-use ceremony runs every leg with them, slab
+  residency included. The FLUX.3 Klein and MOSS-Image INT8 ConvRot files (the
+  SFT, Base and Kromoss checkpoints) render on `single` with their publisher's
+  INT8 attention as stock does; on uly2 they render with exact attention, which
+  stock cannot do with those files. The two differ a little, and the render
+  record says which ran. A pin a LoRA sets or restates still asks on one GPU,
+  as does a live attention module that differs from the checkpoint's. cfg2,
+  dp2 and their `+fsdp` forms still ask for the waiver
+  ([TROUBLESHOOTING #117](docs/TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
+- The render record's pin line says "kept" where it said "ran": the record
+  reads the pins from the load and the topology and does not count attention
+  calls. The field names are unchanged.
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
   fused-norm call of their sharded blocks to the rows one GPU normalizes, as
   FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its

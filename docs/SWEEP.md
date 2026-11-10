@@ -97,13 +97,14 @@ from the header of every checkpoint the graph loads and hands them to the
 runtime's own pin guard (`attention_pins.py`), so these labels read basis
 `header`:
 
-- **A pinned checkpoint refuses class K wherever its pins run.** Without
-  sequence parallelism ComfyUI runs each pinned kernel as it does on one GPU,
-  and both kernels it binds are approximate. On single, cfg2, dp2, cfg2+fsdp
+- **A pinned checkpoint refuses class K wherever its pins run off one GPU.**
+  Without sequence parallelism ComfyUI runs each pinned kernel as it does on
+  one GPU, and both kernels it binds are approximate. On cfg2, dp2, cfg2+fsdp
   and dp2+fsdp the cell reads `refuse:K` under the guard
-  `sol_attn:checkpoint_pin`. The single cell is included because a render on
-  one GPU checks whether the host can run the kernel, and the pair's GPUs run
-  both.
+  `sol_attn:checkpoint_pin`. The single cell renders: on one GPU the
+  checkpoint's own pins run as stock runs them and ask nothing. The matrix
+  reads checkpoint pins only and drops a LoRA arm that pins, so no single
+  cell meets a LoRA's pin.
 - **The label is waivable only where a grant lets the cell render.** A grant
   clears this guard and no other, so the cell carries the waiver only where
   the same cell without the pins renders. Three cases carry none. On an FSDP
@@ -125,11 +126,12 @@ runtime's own pin guard (`attention_pins.py`), so these labels read basis
   class P when the worker configures it, before any load.
 - **A pinned checkpoint under sequence parallelism is measured, not
   scored.** uly2 and ring2 drop the pins and run the Init widget's kernel,
-  while their single-GPU reference refuses, or under the waiver runs the
-  pinned kernel. Every cell scored against that reference is scored at the
-  `waived-nrms` bar: the difference is recorded and no floor applies. On
-  uly2 and ring2 that is an exact cell against an approximate reference; on
-  cfg2 and dp2 both sides run the pinned kernel under the waiver. An auto
+  while their single-GPU reference runs the pinned kernel, as stock does, with
+  no card (`known_wrong_reference`). Every cell scored against that reference
+  is scored at the `waived-nrms` bar: the difference is recorded and no floor
+  applies. On uly2 and ring2 that is an exact cell against an approximate
+  reference; cfg2 and dp2 run the pinned kernel under the waiver, the
+  reference without one. An auto
   cell takes the label and bar of the preset it resolves to. uly2+fsdp and
   ring2+fsdp drop the pins too and keep the `bit-identical` bar against
   their resident twin. Exactness on uly2 and ring2 needs a reference rendered

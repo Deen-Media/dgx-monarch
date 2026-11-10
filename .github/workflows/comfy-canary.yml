@@ -68,6 +68,7 @@ on:
       - "tests/test_compile_surface.py"
       - "tests/test_int8_gemm_kitchen_version.py"
       - "tests/test_vae_decode_split_comfy.py"
+      - "tests/test_attention_pin_slab_comfy.py"
       - "tests/test_cond_batch_agreement.py"
       - "tests/test_fp8_paths_tool.py"
       # No step runs these files, but the files the steps run import them. The
@@ -389,6 +390,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_vae_decode_split_comfy.py
+      # On one rank a checkpoint's own attention pins run, so slab residency
+      # with pins runs: a slab load must hand ComfyAttention the pin a stock
+      # load hands it, bound to the same kernel and tau.
+      - name: Attention pins through slab residency vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_attention_pin_slab_comfy.py
       # Each rank picks its cond batch from its own box's free memory in
       # ComfyUI's calc_cond_batch; two Gloo ranks with the agreement must take
       # the leanest rank's batch. The regular CI job has no ComfyUI, so it skips.
@@ -472,3 +480,4 @@ jobs:
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py
           tests/test_vae_decode_split_comfy.py
+          tests/test_attention_pin_slab_comfy.py
