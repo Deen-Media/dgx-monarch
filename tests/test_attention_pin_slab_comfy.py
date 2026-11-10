@@ -7,9 +7,14 @@ each ``<block>.comfy_attention.config`` uint8 tensor on the host
 (``actor/slab.py``), since ComfyAttention decodes it with ``Tensor.numpy()``.
 This loads one tiny pinned file twice into real ``ComfyAttention`` modules,
 once through ComfyUI's own ``load_torch_file`` and once through the slab's
-load hook (``comfy_bridge.slab_load``), with the kernels reported available so
-ComfyUI binds them as it does on GB10, and holds the two equal: the config,
-the bound function, its tau, and what ``attention_pins`` reads from each.
+``load_torch_file`` hook (``comfy_bridge.slab_load``), with the kernels reported
+available so ComfyUI binds them as it does on GB10, and holds the two equal: the
+config, the bound function, its tau, and what ``attention_pins`` reads from
+each. The slab state dict is built as on GB10, where CUDA is available, and the
+test records each tensor's placement: the pin configs stay on the host and a
+weight does not. It calls ``load_state_dict`` itself, so it does not run the
+slab's ``BaseModel.load_model_weights`` hook (``assign=True``), which casts only
+parameters and buffers and leaves the uint8 configs as they are.
 
 What a hardware leg must still show: a slab-resident pinned file on GB10 binds
 and runs the kernel. Skipped where ComfyUI is not importable; the comfy-canary
@@ -119,6 +124,27 @@ def test_a_slab_load_binds_each_pin_as_a_stock_load_does(comfy, tmp_path, monkey
     monkeypatch.setattr(comfy_kitchen, "int8_attention_is_available", lambda *a, **k: True)
     monkeypatch.setattr(comfy_kitchen, "sol_attn_is_available", lambda *a, **k: True)
     path = _write(tmp_path / "pinned.safetensors")
+    from dgx_monarch.actor import slab as slab_module
+
+    # A CPU runner has no CUDA, so every slab tensor is a host tensor there. Build
+    # the state dict as on GB10 and record where each tensor would be placed.
+    placed: dict[str, bool] = {}
+    real_state_dict = slab_module.WeightSlab.state_dict
+    real_tensor = slab_module.WeightSlab._tensor
+
+    def state_dict_as_on_gb10(self):
+        names = {id(region): name for name, region in self.regions.items()}
+
+        def tensor(region, *, cuda):
+            placed[names[id(region)]] = cuda
+            return real_tensor(self, region, cuda=False)
+
+        with monkeypatch.context() as patch:
+            patch.setattr(slab_module.torch.cuda, "is_available", lambda: True)
+            patch.setattr(self, "_tensor", tensor)
+            return real_state_dict(self)
+
+    monkeypatch.setattr(slab_module.WeightSlab, "state_dict", state_dict_as_on_gb10)
 
     stock = _tree(comfy)
     stock.load_state_dict(comfy.utils.load_torch_file(path), strict=False)
@@ -127,7 +153,8 @@ def test_a_slab_load_binds_each_pin_as_a_stock_load_does(comfy, tmp_path, monkey
         state = comfy.utils.load_torch_file(path)
         assert slab.contains(state["blocks.0.attn.qkv.weight"].data_ptr()), "not slab-backed"
         for name in PINS:
-            assert state[name].device.type == "cpu", f"{name} left the host"
+            assert placed[name] is False, f"{name} left the host"
+        assert placed["blocks.0.attn.qkv.weight"] is True
         slabbed.load_state_dict(state, strict=False)
     del state
     slab.close()

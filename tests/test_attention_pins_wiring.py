@@ -236,6 +236,40 @@ def test_on_one_rank_the_checkpoints_own_pin_renders_unstamped_and_unasked(
     assert accuracy_waiver.stamps() == []
 
 
+def test_a_single_preset_on_a_two_rank_mesh_resolves_to_dp2_and_keeps_class_k(monkeypatch):
+    """D5 changes a world of one GPU only (DECISIONS, third note). On a two-rank mesh the
+    `single` preset resolves to dp2, which is what the Worker sees, so a header pin asks."""
+    from dgx_monarch.topology import topology_from_preset
+
+    resolved = topology_from_preset("single", 2)
+    assert (resolved.world, resolved.dp, resolved.cfg, resolved.sequence_parallel) == (2, 2, 1, 1)
+    crossed: list[bool] = []
+    with pytest.raises(UnsupportedModelError) as caught:
+        _run(monkeypatch, _worker(world=resolved.world, dp=resolved.dp, cfg=resolved.cfg,
+                                  ulysses=resolved.ulysses, ring=resolved.ring, fsdp=resolved.fsdp),
+             _pinned_patcher(Block(int8())), crossed=crossed)
+    message = str(caught.value)
+    tag = parse_leading_refusal_tag(message)
+    assert tag is not None and tag.refusal_class is RefusalClass.KNOWN_WRONG
+    assert tag.guard == attention_pins.SOL_ATTN_PIN_GUARD and tag.waivable
+    assert "Topology dp2 runs no sequence parallelism" in message
+    assert "this stack's LoRA changes the checkpoint's pins" not in message
+    assert crossed == [False]
+
+
+def test_in_a_world_of_one_gpu_a_lora_pin_under_a_held_grant_renders_stamped(monkeypatch):
+    accuracy_waiver._scope().grants[SOL_KIND] = {
+        "id": "f" * 32, "kind": SOL_KIND, "consent_source": "panel"}
+    path = "diffusion_model.blocks.0.self_attn.comfy_attention"
+    crossed: list[bool] = []
+    result, sampled = _run(monkeypatch, _worker(world=1),
+                           _pinned_patcher(Block(int8()), object_patches={path: int8()}),
+                           crossed=crossed)
+    assert sampled == [1]
+    assert [stamp["guard"] for stamp in result[accuracy_waiver.RESULT_KEY]] == [
+        attention_pins.SOL_ATTN_PIN_GUARD]
+
+
 @pytest.mark.parametrize("patch", ["adds", "changes", "restates"])
 def test_on_one_rank_a_lora_pin_still_refuses_class_k(monkeypatch, patch):
     """Any LoRA object patch on a comfy_attention path, one that restates the
@@ -250,7 +284,7 @@ def test_on_one_rank_a_lora_pin_still_refuses_class_k(monkeypatch, patch):
     tag = parse_leading_refusal_tag(str(caught.value))
     assert tag is not None and tag.refusal_class is RefusalClass.KNOWN_WRONG
     assert tag.guard == attention_pins.SOL_ATTN_PIN_GUARD and tag.waivable
-    assert "these come from a LoRA in its stack" in str(caught.value)
+    assert "this stack's LoRA changes the checkpoint's pins" in str(caught.value)
 
 
 def test_an_unpinned_render_carries_no_pin_field(monkeypatch):

@@ -167,9 +167,10 @@ def _refusal(make, topology):
     return summary, str(caught.value)
 
 
+# No `single` case: production never builds it off one GPU. A world of one GPU is
+# alone, and a `single` preset on a two-rank mesh resolves to dp2.
 @pytest.mark.parametrize("topology,label", [({"cfg": 2}, "cfg2"), ({"dp": 2}, "dp2"),
-                                            ({}, "single"), ({"cfg": 2, "fsdp": True},
-                                                             "cfg2+fsdp")])
+                                            ({"cfg": 2, "fsdp": True}, "cfg2+fsdp")])
 @pytest.mark.parametrize("kernel", ["sol", "int8"])
 def test_without_sequence_parallelism_an_approximate_pin_runs_and_refuses_class_k(
         topology, label, kernel):
@@ -508,7 +509,6 @@ def test_a_flux3_int8_layout_reads_its_block_level_pins():
 
 
 @pytest.mark.parametrize("topology,label", [({"cfg": 2}, "cfg2"), ({"dp": 2}, "dp2"),
-                                            ({}, "single"),
                                             ({"cfg": 2, "fsdp": True}, "cfg2+fsdp"),
                                             ({"dp": 2, "fsdp": True}, "dp2+fsdp")])
 def test_a_flux3_int8_layout_off_sequence_parallelism_refuses_class_k(topology, label):
@@ -573,7 +573,7 @@ def test_any_lora_patch_on_a_pin_path_ends_the_checkpoints_claim(staged):
     patcher.object_patches[PATH] = staged
     summary = _alone(patcher)
     assert not summary.checkpoint_only
-    with pytest.raises(UnsupportedModelError, match="these come from a LoRA in its stack"):
+    with pytest.raises(UnsupportedModelError, match="this stack's LoRA changes the checkpoint's pins"):
         attention_pins.assert_waived(summary, {}, alone=True)
 
 
@@ -620,3 +620,27 @@ def test_the_one_rank_reading_costs_no_module_walk():
     for _ in range(5):
         assert _alone(patcher).checkpoint_only
     assert patcher.model.diffusion_model.walks == 1
+
+
+def test_in_a_world_of_one_gpu_two_models_ask_when_either_carries_a_lora_pin():
+    """A dual-model render on one rank: the checkpoints' claim needs every patcher."""
+    own, lora = _loaded(int8()), _loaded(int8())
+    lora.object_patches[PATH] = int8()
+    summary = attention_pins.render_summary(_worker(), [own, lora])
+    assert summary is not None and not summary.checkpoint_only
+    with pytest.raises(UnsupportedModelError):
+        attention_pins.assert_waived(summary, {}, alone=True)
+    assert attention_pins.render_summary(_worker(), [own, _loaded(sol())]).checkpoint_only
+
+
+def test_a_stale_sol_module_whose_tau_differs_counts_as_a_lora_pin():
+    patcher = _loaded(sol(tau=0.7))
+    patcher.model.diffusion_model.blocks[0].self_attn.comfy_attention = sol(tau=0.5)
+    assert not _alone(patcher).checkpoint_only
+
+
+def test_a_header_pin_the_forward_would_not_run_counts_as_a_lora_pin():
+    """The backup ComfyUI restores before the forward pins nothing where the scan saw int8."""
+    patcher = _loaded(int8())
+    patcher.object_patches_backup = {PATH: Attention()}
+    assert not _alone(patcher).checkpoint_only

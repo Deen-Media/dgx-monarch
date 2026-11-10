@@ -160,7 +160,7 @@ def twin_admitted(path: str, kind: str | None, *, family: str, loras: tuple[str,
         upstream_gate.raise_refusal(path)
     except Exception:
         return False
-    world = getattr(mesh, "world", 1)
+    world = getattr(mesh, "world", None)  # an unknown world is not a world of one GPU
     sequence = preset.startswith(_SEQUENCE_PRESETS) and isinstance(world, int) and world >= 2
     alone = isinstance(world, int) and world < 2
     return sequence or not _pins_attention(path) or (alone and not _loras_pin(loras))

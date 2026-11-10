@@ -435,8 +435,9 @@ than stacks on a repeat call.
    cfg2+fsdp and dp2+fsdp) leaves every stock attention call in place, so a
    pin runs there as it does in stock ComfyUI on one GPU, with the FSDP
    cases below. Dropping the pin there would break the cfg2
-   same-math gate, which compares against one GPU, so the pack detects,
-   records and waives it instead (`attention_pins.py`):
+   same-math gate, which compares against one GPU, so the pack detects and
+   records it instead and, off a world of one GPU or for a LoRA's pin,
+   waives it (`attention_pins.py`):
 
    * **Detection.** Once per fresh load, before injection and before
      ComfyUI stages any LoRA, the pack walks the loaded model and keeps every
@@ -454,8 +455,8 @@ than stacks on a repeat call.
      `attention_pins_ran` and `attention_pins_dropped` (modules per reason a
      pin does not run). `attention_pins_ran` is true when the pack kept every
      pinned module's kernel: the pins come from the load and the topology,
-     and the record does not count attention calls. Kept, ComfyUI dispatches
-     each pinned module to its pinned kernel, as on one GPU; the kernel
+     and the record does not count attention calls. A kept pin is dispatched
+     by ComfyUI to its pinned kernel, as on one GPU; the kernel
      itself still runs exact attention on a masked call (Sol) or on a float32
      call with `low_precision_attention` off (int8). The count is per
      attention module, so a block whose self- and cross-attention are both
@@ -484,10 +485,12 @@ than stacks on a repeat call.
      is neither: the checkpoint or LoRA picked it, and it runs on both legs
      of the cfg2 same-math gate, so that gate cannot see it. So it takes the
      waiver too. A kernel this project has not classified counts as
-     approximate. In a world of one rank (`single` on one GPU; a two-box
-     mesh's `single` keeps the card) a checkpoint's own header pins run as
-     stock ComfyUI runs them, so they ask nothing: no refusal, no stamp
-     and no ledger row, and the first-use ceremony runs every leg with them.
+     approximate. In a world of one GPU (one rank: `mode=local` with one GPU,
+     or one Spark by itself) a checkpoint's own header pins run as stock
+     ComfyUI runs them, so they ask nothing: no refusal, no stamp and no
+     ledger row, and the first-use ceremony runs every leg with them. A
+     `single` preset on a two-rank mesh resolves to dp2 on the Worker and
+     keeps the card.
      "Its own" is read strictly (`attention_pins_source.py`): any LoRA object
      patch on a `comfy_attention` path counts as a LoRA pin, one that restates
      the header pin unchanged included, and so does a module the forward would
@@ -503,8 +506,11 @@ than stacks on a repeat call.
      form without FSDP: docs/VALIDATION.md records cfg2 against the pinned
      one-GPU render identical on the vendor-length prompt and at one-step
      NRMS 0.015 to 0.016 on the one-block prompt, and the cause of that gap
-     is not established. A bf16 or fp16 file under `+fsdp` renders with its
-     pins dropped and recorded: class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing approximate runs, no card asks, and the record says dropped (FSDP shard build), on every `+fsdp` preset and for every family.
+     is not established. For a bf16 or fp16 file under `+fsdp` the rule is:
+     class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP
+     shard build drops the pins, nothing approximate runs, no card asks, and
+     the record says dropped (FSDP shard build), on every `+fsdp` preset and
+     for every family.
      The card says the kernel is approximate by construction and claims no
      measurement for it. The pack decides from the pins, the LoRA stack and the
      topology, never from whether ComfyUI could bind the kernel on this host,
@@ -542,7 +548,7 @@ than stacks on a repeat call.
    uint8 tensors on the host. Without that, a pinned checkpoint under slab
    residency and a pinned LoRA under low-RSS staging would each fail to load:
    a CPU reproduction shows the decode error. Since a checkpoint's own pins
-   run on one rank, slab residency with pins runs there;
+   run in a world of one GPU, slab residency with pins runs there;
    `tests/test_attention_pin_slab_comfy.py` holds a slab load against a stock
    load of the same pinned file through ComfyUI's real `ComfyAttention`
    (config, kernel and tau equal), and no hardware load has checked either
@@ -558,7 +564,7 @@ than stacks on a repeat call.
 
    The first-use ceremony carries no waiver, so a ceremony on a pinned
    combination that asks ends on this guard, as it does for every class-K
-   guard, and changes no residency setting; on one rank the checkpoint's own
+   guard, and changes no residency setting; in a world of one GPU the checkpoint's own
    pins ask nothing, so there the ceremony runs as for an unpinned file. On a resident topology a risky combination
    (a LoRA stack, or slab residency requested) then renders under stock
    residency, the limit TROUBLESHOOTING #84 describes for Sol. FSDP has no

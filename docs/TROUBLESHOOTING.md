@@ -1982,8 +1982,10 @@ clean-reload proof before it samples.
 It never names a file this graph would then refuse: a DiT file is named only
 when a graph here names it (the artifact manifest lists it) and none of the
 refusals the driver can read from its header applies, so no INT8 MOSS-Image
-file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file that
-pins an attention kernel off Ulysses and ring (#117). The pair is not offered
+file beside a LoRA (#129), no W4A8 file on a `*+fsdp` preset, and no file whose
+pins would ask for the Sol-Attn waiver: one that pins an attention kernel on a
+pair without Ulysses or ring, or in a world of one GPU beside a LoRA that pins
+(#117). The pair is not offered
 beside a LoRA. For H3,
 try a smaller text encoder, a pruned/quantized DiT, fewer or smaller references,
 a smaller canvas/clip, or more free host memory. Pruned int8/fp8 reference-video
@@ -4353,11 +4355,10 @@ refiners and encoders every rank runs whole) uses ComfyUI's default exact
 backend ([ADAPTERS.md](ADAPTERS.md) lists each site). Under sequence
 parallelism the card appears only when the widget selects Sol. A topology
 without sequence parallelism keeps every stock attention call, so a pin runs
-there as it does in stock ComfyUI, and the render refuses with this same card
-until the operator grants it
-([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel),
-which also covers the FSDP launch check a bf16 or fp16 checkpoint that pins
-meets first).
+there as it does in stock ComfyUI. In a world of one GPU a checkpoint's own pin
+asks nothing; elsewhere, and for a LoRA's pin, the render refuses with this
+same card until the operator grants it
+([#117](#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
 
 **The kernel is optional and is not a dependency of this project.** The opt-in
 installer plans every configured Worker interpreter. First stop ComfyUI and
@@ -6078,12 +6079,14 @@ attention module. It ships two such kernels, `comfy_kitchen_sol` (sparse
 attention, with a tau) and `comfy_kitchen_int8` (q, k, v and the attention
 weights rounded to 8 bits), and both are approximate by construction. On a
 topology without sequence parallelism ComfyUI runs the pinned kernel as it
-does on one GPU. On one GPU (`single` in a world of one rank; a two-box mesh's
-`single` keeps the card) the checkpoint's own pins run as stock ComfyUI runs
-them, so nothing refuses and nothing is stamped. On cfg2, dp2,
-cfg2+fsdp and dp2+fsdp, and on one GPU when a LoRA in the stack sets or
-restates a pin, dgx-monarch refuses before any sampling unless the operator
-has granted the waiver. The message names the kernels, the number of attention
+does on one GPU. In a world of one GPU (one rank: `mode=local` with one GPU,
+or one Spark by itself) the checkpoint's own pins run as stock ComfyUI runs
+them, so nothing refuses and nothing is stamped. On cfg2 and dp2, on a
+`single` preset on a two-rank mesh, which resolves to dp2 on the Worker, on
+cfg2+fsdp and dp2+fsdp for an fp8 or int8 checkpoint, which keeps its pins,
+and in a world of one GPU when a LoRA in the stack sets, restates or changes a
+pin, dgx-monarch refuses before any sampling unless the operator has granted
+the waiver. The message names the kernels, the number of attention
 modules and the topology; [ADAPTERS.md](ADAPTERS.md) has the contract. cfg2
 and dp2 keep the card for a checkpoint's own pins because a cfg2 render
 measured a small gap against the pinned one-GPU render on a short prompt
@@ -6174,9 +6177,8 @@ attention calls. A kept pin is dispatched by ComfyUI to its pinned kernel, as
 on one GPU; the kernel itself still runs exact attention on a masked call
 (Sol) or on a float32 call with `low_precision_attention` off (int8). A pin
 does not run for one of three reasons: `sequence parallelism`; `FSDP shard
-build`, for a pin the shard build of a bf16 or fp16 checkpoint cleared, though
-no checkpoint whose own header pins reaches that build today, because the FSDP
-launch check refuses it class P first; and `kernel unavailable on this host`,
+build`, for a pin the shard build of a bf16 or fp16 checkpoint cleared on any
+`+fsdp` preset; and `kernel unavailable on this host`,
 where ComfyUI could not bind the kernel and runs its default backend.
 A render on more than one rank still refuses for an unbound pin, because every
 rank must reach the same verdict and a peer may bind the kernel; a render on

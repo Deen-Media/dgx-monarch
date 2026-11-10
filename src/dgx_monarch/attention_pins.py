@@ -16,8 +16,8 @@ every stock call, so a pin runs as it does on one GPU, except where the FSDP
 shard build cleared it (``note_injected``). This module finds the pins, says in
 the render record which it kept, and refuses a render whose pin would run an
 approximate kernel until the operator grants the class-K Sol-Attn waiver
-(docs/TROUBLESHOOTING.md #117). One case asks nothing: on one rank, the
-checkpoint's own header pins, unchanged (``attention_pins_source``), run as
+(docs/TROUBLESHOOTING.md #117). One case asks nothing: in a world of one GPU,
+the checkpoint's own header pins, unchanged (``attention_pins_source``), run as
 stock runs them. The record reads the pins from the load and the topology; it
 does not count attention calls.
 
@@ -333,12 +333,6 @@ def _source(pinned_by: str | None) -> str:
     return "the checkpoint" if not pinned_by else f"the unconditional checkpoint {pinned_by}"
 
 
-# On one rank only a pin the checkpoint's header did not set reaches the raise.
-_ALONE_SOURCE: Final = ("On one GPU the checkpoint's own pins run as stock runs them and ask "
-                        "nothing; these come from a LoRA in its stack, or a live attention "
-                        "module differs from the checkpoint's. ")
-
-
 def card_detail(counts: Mapping[str, int], topology_label: str,
                 pinned_by: str | None = None) -> str:
     """The card's line: the pin, its module count, and what a sequence-parallel topology does."""
@@ -364,12 +358,13 @@ def assert_waived(summary: PinSummary | None, topology: Mapping[str, Any] | None
     conditional checkpoint every grant of that render is keyed on. A grant
     fires the ledger's use row once per dispatch and stamps the output.
 
-    On one rank the checkpoint's own header pins, unchanged
+    In a world of one GPU (``alone``) the checkpoint's own header pins, unchanged
     (``PinSummary.checkpoint_only``), run as stock ComfyUI runs them: nothing
     is asked, nothing stamped and no ledger row written, before the waiver is
     read. A LoRA's pin, or a live module that differs, still refuses there.
     """
     from . import accuracy_waiver
+    from .attention_pins_source import ALONE_SOURCE
     from .refusal import RefusalClass, refusal
 
     if summary is None or (alone and summary.checkpoint_only):
@@ -392,7 +387,7 @@ def assert_waived(summary: PinSummary | None, topology: Mapping[str, Any] | None
         f"{_source(pinned_by)} or a LoRA in its stack through ComfyUI's comfy_attention "
         f"config. Topology {label} runs no sequence parallelism, so ComfyUI runs each "
         f"pinned kernel as it does on one GPU. "
-        f"{_ALONE_SOURCE if alone else ''}What each kernel does: {risks}. An "
+        f"{ALONE_SOURCE if alone else ''}What each kernel does: {risks}. An "
         "approximate kernel is known-wrong math by construction, so this refuses by "
         "default. Two remedies: grant the Sol-Attn accuracy waiver for this checkpoint, "
         "topology and world, which stamps the output, or pick a sequence-parallel "

@@ -99,12 +99,12 @@ runtime's own pin guard (`attention_pins.py`), so these labels read basis
 
 - **A pinned checkpoint refuses class K wherever its pins run off one GPU.**
   Without sequence parallelism ComfyUI runs each pinned kernel as it does on
-  one GPU, and both kernels it binds are approximate. On cfg2, dp2, cfg2+fsdp
-  and dp2+fsdp the cell reads `refuse:K` under the guard
-  `sol_attn:checkpoint_pin`. The one-GPU single cell renders: in a world of
-  one rank the checkpoint's own pins run as stock runs them and ask nothing. The matrix
-  reads checkpoint pins only and drops a LoRA arm that pins, so no single
-  cell meets a LoRA's pin.
+  one GPU, and both kernels it binds are approximate. On cfg2 and dp2, and on
+  cfg2+fsdp and dp2+fsdp for an fp8 or int8 file, the cell reads `refuse:K`
+  under the guard `sol_attn:checkpoint_pin`. The one-GPU single cell renders:
+  in a world of one GPU the checkpoint's own pins run as stock runs them and
+  ask nothing. The matrix reads checkpoint pins only and drops a LoRA arm that
+  pins, so no single cell meets a LoRA's pin.
 - **The label is waivable only where a grant lets the cell render.** A grant
   clears this guard and no other, so the cell carries the waiver only where
   the same cell without the pins renders. Three cases carry none. On an FSDP

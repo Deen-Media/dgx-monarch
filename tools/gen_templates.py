@@ -5304,8 +5304,8 @@ def _flux3_template(*, base: bool, edit: bool) -> dict:
         "GB is outside dgx-monarch's driver memory estimate. The stock Flux3 "
         "Layout Prompt node turns bounding boxes into prompt text. Either can "
         "feed CLIP Text Encode with no change to this graph. "
-        "The INT8 ConvRot files pin an approximate attention kernel: single "
-        "on one GPU renders with it as stock ComfyUI does and asks nothing, cfg2 and dp2 "
+        "The INT8 ConvRot files pin an approximate attention kernel: a world "
+        "of one GPU renders with it as stock ComfyUI does and asks nothing, cfg2 and dp2 "
         "ask for the Sol-Attn waiver, and uly2 drops the pin. "
         "This graph uses the BF16 files, which ask nothing. Auto picks Ulysses "
         "on a configured pair. " + FLUX3_HW_TESTS[edit]
@@ -5592,7 +5592,7 @@ def _moss_note(*, checkpoint: str, turbo: bool, layout: bool) -> str:
     else:
         note += (
             "The INT8 ConvRot DiT files pin an approximate attention kernel on "
-            "all 42 blocks: single on one GPU renders with it as stock ComfyUI does and asks "
+            "all 42 blocks: a world of one GPU renders with it as stock ComfyUI does and asks "
             "nothing, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the "
             "pin. On uly2 they exactly match one GPU running the "
             "same file without its pins: the 2026-10-21 tests measured 0.027 to "
@@ -6734,7 +6734,7 @@ TESTING_TEMPLATES = {
         "dgx-monarch-flux3-klein-t2i", "FLUX.3 Klein INT8 ConvRot",
         "The vendor's file recipe without the prompt upsampler: the "
         "step-distilled INT8 ConvRot DiT and the INT8 ConvRot text encoder. The "
-        "DiT pins comfy-kitchen's INT8 attention on 33 blocks, so single on one GPU renders "
+        "DiT pins comfy-kitchen's INT8 attention on 33 blocks, so a world of one GPU renders "
         "with it as stock ComfyUI does and asks nothing, cfg2 and dp2 ask for the "
         "Sol-Attn waiver, and uly2 drops the pins. The text "
         "encoder stores INT8 weights and ComfyUI runs its matmuls at full "
@@ -6798,7 +6798,7 @@ TESTING_TEMPLATES = {
     "dgx-monarch-test-moss-image-int8": _testing_spec(
         "dgx-monarch-moss-image-t2i", "MOSS-Image INT8 ConvRot",
         "The vendor's INT8 ConvRot DiT and INT8 ConvRot text encoder. The DiT "
-        "pins comfy-kitchen's INT8 attention on all 42 blocks, so single on one GPU renders "
+        "pins comfy-kitchen's INT8 attention on all 42 blocks, so a world of one GPU renders "
         "with it as stock ComfyUI does and asks nothing, dp2 asks for the "
         "Sol-Attn waiver, cfg2 refuses first because the skip is on, "
         "and uly2 drops the pins. ComfyUI runs these files through "

@@ -137,6 +137,29 @@ def test_on_one_gpu_a_pinned_twin_beside_a_lora_that_pins_is_never_named(monkeyp
     assert not graph_twins._loras_pin(("plain_lora.safetensors",))
     assert graph_twins._loras_pin(("absent_lora.safetensors",))  # unreadable reads as a pin
 
+    def raising(folder, name):
+        raise OSError("models folder unreadable")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys.modules["folder_paths"], "get_full_path", raising)
+        assert graph_twins._loras_pin(("plain_lora.safetensors",))  # a raise reads as a pin
+    # The wiring, not only the helper: a pinned bf16 twin a graph here names.
+    twin = tmp_path / "diffusion_models" / "pinned_twin_bf16.safetensors"
+    twin.parent.mkdir(parents=True, exist_ok=True)
+    _write_safetensors(twin, ("blocks.0.weight", "blocks.0.attn.comfy_attention.config"))
+    monkeypatch.setattr(graph_twins, "shipped_files",
+                        lambda: frozenset({("diffusion_models", twin.name)}))
+
+    def admitted(loras, mesh):
+        return graph_twins.twin_admitted(str(twin), "bf16", family="flux3", loras=loras, mesh=mesh)
+
+    assert admitted((), _Mesh())
+    assert admitted(("plain_lora.safetensors",), _Mesh())
+    assert not admitted(("pinning_lora.safetensors",), _Mesh())
+    assert not admitted((), _pair("dp2"))
+    assert admitted(("pinning_lora.safetensors",), _pair("uly2"))
+    assert not admitted((), types.SimpleNamespace(topology_preset="single"))  # no world: not one GPU
+
 
 def test_a_file_no_graph_here_names_is_never_named():
     """A local fp8 copy that MODELS and the manifest do not list has no record."""

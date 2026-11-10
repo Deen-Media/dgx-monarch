@@ -2415,7 +2415,7 @@ def test_a_pinned_checkpoint_refuses_class_k_wherever_its_pins_run_off_one_gpu(t
     cells, _pruned, _unmatched = matrix.build_cells(config)
     guard = "sol_attn:checkpoint_pin"
     local = _local(cells, "pinned")
-    assert (local["preset"], local["label"]) == ("single", "render")
+    assert (local["preset"], local["label"], local["basis"]) == ("single", "render", "guard")
     assert (local["waiver"], local["waiver_guards"]) == (False, [])
     assert local["checkpoint_pins"] == {"comfy_kitchen_int8": 2}
     for preset in ("cfg2", "dp2"):
@@ -2517,7 +2517,8 @@ def test_a_pinned_cfg_cell_at_cfg_one_is_waivable_only_where_the_grant_renders(
     cell = _pick(cells, "pinned", "dp2")
     assert (cell["label"], cell["waiver"], cell["waiver_guards"]) == ("refuse:K", True, [guard])
     local = _local(cells, "pinned")
-    assert (local["label"], local["waiver"], local["waiver_guards"]) == ("render", False, [])
+    assert (local["label"], local["basis"], local["waiver"], local["waiver_guards"]) == (
+        "render", "guard", False, [])
 
 
 def test_a_sol_kernel_without_sequence_parallelism_refuses_class_p_before_the_pins(tmp_path):
@@ -2618,8 +2619,8 @@ def test_a_pinned_nvfp4_cell_on_cfg2_carries_no_shard_quant_waiver(tmp_path):
     # One GPU runs no shard bar, and the checkpoint's own pins ask nothing there.
     single = [cell for cell in cells if cell["template"] == "chromapin"
               and cell["session"] == "local" and "nvfp4" in cell["artifact_quant"]]
-    assert [(cell["label"], cell["waiver"], cell["waiver_guards"])
-            for cell in single] == [("render", False, [])]
+    assert [(cell["label"], cell["basis"], cell["waiver"], cell["waiver_guards"])
+            for cell in single] == [("render", "guard", False, [])]
     # The same cell without the pins keeps the shard-quant card, and the
     # unpinned bf16 artifact of the pinned template renders.
     plain = _pick(cells, "chromaplain", "cfg2", artifact_quant="nvfp4")

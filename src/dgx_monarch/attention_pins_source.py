@@ -1,6 +1,6 @@
 """Whose attention pins a render runs: the checkpoint's own, as its header set them, or not.
 
-On one rank a pin from the checkpoint's own header runs as stock ComfyUI runs it,
+In a world of one GPU a pin from the checkpoint's own header runs as stock ComfyUI runs it,
 so it asks nothing (docs/DESIGN.md, class K; docs/ADAPTERS.md). Every other pin
 keeps the class-K Sol-Attn waiver. "Its own" is read strictly:
 
@@ -18,7 +18,13 @@ on the largest pinned file; no module walk. Standard library only.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Final
+
+# In a world of one GPU only a pin the checkpoint's header did not set reaches
+# the class-K raise; ``assert_waived`` adds this to its message there.
+ALONE_SOURCE: Final = ("In a world of one GPU the checkpoint's own pins run as stock runs them and "
+                       "ask nothing; this stack's LoRA changes the checkpoint's pins, or a live "
+                       "attention module differs from the checkpoint's. ")
 
 
 def checkpoint_only(patcher: Any) -> bool:
@@ -43,6 +49,8 @@ def checkpoint_only(patcher: Any) -> bool:
             return False
         want = header.get(path)
         if want is not None and want.cleared:
+            # Unreachable in a world of one GPU, which has no FSDP; a cleared pin
+            # runs nothing, so a caller off one GPU reads it as the checkpoint's.
             continue
         found = pins.block_pin(module)
         if (found is None) != (want is None):
