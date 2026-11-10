@@ -144,6 +144,7 @@ TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("folder_paths", "get_folder_paths", positional=("folder_name",)),
     _call("folder_paths", "get_full_path", positional=("folder_name", "filename")),
     _call("folder_paths", "get_output_directory"),
+    _call("folder_paths", "get_input_directory"),
     _attr("folder_paths", "__file__"),
     _attr("server", "PromptServer.instance"),
     _attr("server", "PromptServer.instance.routes"),

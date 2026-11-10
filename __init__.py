@@ -10,7 +10,7 @@ _SRC = os.path.join(os.path.dirname(os.path.abspath(__file__)), "src")
 if _SRC not in sys.path:
     sys.path.insert(0, _SRC)
 
-from dgx_monarch import fp8_compute  # noqa: E402
+from dgx_monarch import demo_inputs, fp8_compute  # noqa: E402
 from dgx_monarch.kernels import int8_gemm  # noqa: E402
 from dgx_monarch.mesh import install_fault_hook  # noqa: E402
 from dgx_monarch.nodes import NODE_CLASS_MAPPINGS, NODE_DISPLAY_NAME_MAPPINGS  # noqa: E402
@@ -25,6 +25,10 @@ int8_gemm.install_driver()
 # One `FP8 compute:` line per model ComfyUI builds in this process, naming the
 # operations class it picked (docs/MODELS.md, FP8 compute paths). It only logs.
 fp8_compute.install_driver()
+
+# Copy the templates' demo images, clips and music into ComfyUI's input folder
+# where it lacks them, never replacing a file (src/dgx_monarch/demo_inputs.py).
+demo_inputs.place_demo_inputs()
 
 # Broadcast actor and host fault details to logs and ComfyUI websocket toasts
 # (DESIGN.md §5.1); web/js/dgx_monarch.js displays the toast. Installs now only

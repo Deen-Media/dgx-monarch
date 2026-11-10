@@ -530,8 +530,8 @@ copied from historical evidence.
    recomputed from the worker's source identity before load and adoption at
    [`mesh_residency.py:165-245`](../src/dgx_monarch/mesh_residency.py#L165-L245 "anchor:assert_fleet_residency_grant"),
    [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"),
-   [`worker_authorization.py:5-57`](../src/dgx_monarch/actor/worker_authorization.py#L5-L57 "anchor:verify_sample_artifact_authorization"), and
-   [`worker_authorization.py:101-111`](../src/dgx_monarch/actor/worker_authorization.py#L101-L111 "anchor:assert_resident_artifact_identity"),
+   [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
+   [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"),
    with production call order at
    [`sample_protocol.py:181-459`](../src/dgx_monarch/actor/sample_protocol.py#L181-L459 "anchor:run_sample").
    Driver and worker failures are covered by
@@ -622,7 +622,7 @@ copied from historical evidence.
     [`mesh_residency.py:96-161`](../src/dgx_monarch/mesh_residency.py#L96-L161 "anchor:assert_normal_render_residency_mode"),
     [`mesh_residency.py:253-397`](../src/dgx_monarch/mesh_residency.py#L253-L397 "anchor:assert_normal_render_residency_grant"),
     [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"), and
-    [`worker_authorization.py:5-57`](../src/dgx_monarch/actor/worker_authorization.py#L5-L57 "anchor:verify_sample_artifact_authorization").
+    [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization").
     Exact precedence/topology, ledger-read refusal, field tampering, and mode
     regressions are
     [`test_gate_orchestration.py:96-122`](../tests/test_gate_orchestration.py#L96-L122 "anchor:test_normal_render_authority_obeys_durable_and_session_precedence"),
@@ -836,8 +836,8 @@ copied from historical evidence.
   [`gate_identity.py:343-482`](../src/dgx_monarch/nodes/gate_identity.py#L343-L482 "anchor:authorize_normal_render"),
   [`render_submit.py:250-488`](../src/dgx_monarch/nodes/render_submit.py#L250-L488 "anchor:_submit_render_guarded"),
   [`mesh_rpc.py:245-367`](../src/dgx_monarch/mesh_rpc.py#L245-L367 "anchor:verify_request_artifacts"),
-  [`worker_authorization.py:5-57`](../src/dgx_monarch/actor/worker_authorization.py#L5-L57 "anchor:verify_sample_artifact_authorization"), and
-  [`worker_authorization.py:101-111`](../src/dgx_monarch/actor/worker_authorization.py#L101-L111 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
+  [`worker_authorization.py:9-65`](../src/dgx_monarch/actor/worker_authorization.py#L9-L65 "anchor:verify_sample_artifact_authorization"), and
+  [`worker_authorization.py:145-155`](../src/dgx_monarch/actor/worker_authorization.py#L145-L155 "anchor:assert_resident_artifact_identity"), with source-skew coverage in
   [`test_runtime_remediation.py:1760-1786`](../tests/test_runtime_remediation.py#L1760-L1786 "anchor:test_normal_grant_rejects_driver_worker_source_manifest_mismatch").
 
 - A persisted runtime grant exists only when contextual lookup selects a

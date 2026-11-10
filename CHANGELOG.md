@@ -4,6 +4,14 @@
 
 ### Everyday use
 
+- Every image, clip and music track a shipped template's input nodes name now
+  comes with the pack, in `example_workflows/input`. At start the pack copies
+  each one ComfyUI's input folder lacks, and never replaces a file or link
+  already there, so a template such as the Qwen Image 2.1 masked edit no longer
+  opens on a fresh install with a missing `qwen21_source.png`. They are drawn
+  shapes, a stick figure and a synthetic music loop that show the graph runs;
+  load your own for real work. `DGXM_DEMO_INPUTS=off` skips the copy, and
+  `tools/gen_demo_inputs.py` draws the files again.
 - Studio is a supported interface from this release, beside the CLI, the TUI
   and the ComfyUI panel. Its docs and the capability contract in Settings no
   longer call it a draft. The
@@ -649,6 +657,14 @@
 
 ### Operations
 
+- A Worker logs one line when it accepts an identity gate grant, naming the model
+  slots the grant covers, for example `identity gate grant accepted on rank 1: the
+  gate PASS covers both model slots, [cond] ideogram4_fp8_scaled.safetensors with 1
+  LoRA and [uncond] ideogram4_unconditional_fp8_scaled.safetensors with no LoRA`.
+  A dual-model render's grant over both slots can now be checked from a Worker
+  journal. The line names checkpoints as the model store's lines do and counts
+  LoRAs without naming them; a single-model grant logs the same line with its one
+  slot.
 - `dgxm doctor` adds an `INT8 GEMM` row for this box and one per configured
   host: the configured kernel and whether the Python headers, Triton and a
   validated comfy-kitchen are there. The rows warn and never fail

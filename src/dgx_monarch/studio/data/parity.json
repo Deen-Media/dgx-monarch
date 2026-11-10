@@ -20913,7 +20913,7 @@
       "choices": null,
       "datatype": "comfy_workflow",
       "default": null,
-      "digest": "2368f6541893fdacb75a5c514744055b70ca8d0e5e924a01a21b493c10eb40b1",
+      "digest": "5367e1e2c77e5fb230c6555c617d21520efa59e207af670f9b88e356fd23fe42",
       "guard": "Existing backend consent, ownership, admission and lifecycle guards remain mandatory.",
       "id": "workflow.dgx-monarch-wandancer",
       "interfaces": {
