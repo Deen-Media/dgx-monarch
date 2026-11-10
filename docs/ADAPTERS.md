@@ -1316,6 +1316,33 @@ than stacks on a repeat call.
    from 1024 to 2048 square, and the 8-step Kromoss graph with its DMD2
    LoRA 1.51x ([BENCHMARKS](BENCHMARKS.md#moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped)).
 
+   **Anima text branch.** Stock `Anima.extra_conds` runs the Qwen3 rows
+   through the `llm_adapter` and pads them to 512 rows once per
+   conditioning, but only in inference mode. Outside it, the branch ComfyUI
+   keeps for training, it hands the forward the raw rows with `t5xxl_ids`
+   and `t5xxl_weights`, and the forward reruns the adapter and the pad on
+   every model call. On every load `prepare_base_model` binds
+   `Anima.extra_conds` to run stock's method under `torch.inference_mode()`,
+   as FLUX.3's does (its paragraph above): stock's predicate picks the
+   branch, and every inference tensor in the output is cloned. Without the
+   bind the two branches batched differently. ComfyUI joins the prompt and
+   the negative into one model call only at equal shapes, so a Worker ran a
+   pair whose raw rows differ as two batch-1 calls a step, where stock, at
+   512 rows on both sides, folds it into one batch-2 call, and on 2026-11-10
+   the shipped graph's one-GPU Worker render read one-step NRMS 0.028
+   against stock ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+   With the bind every topology folds as stock does: a pair of at most 512
+   T5 ids makes one call on one GPU and takes the slice path on cfg2, whose
+   two batch-1 calls are not that call, so `auto` never picks cfg2 for
+   Anima. The `llm_adapter` stays replicated under FSDP, because
+   `extra_conds` reaches it (`OUTSIDE_FORWARD_MODULE_ATTRS`). The
+   `inference mode branches` seam in `tests/canary/comfy_seam_contracts.py`
+   holds every place ComfyUI's source reads or sets inference mode, or reads
+   grad mode, by file and function, and checks that each `model_base`
+   branch has its adapter bind: on ComfyUI v0.45.0 and 8a98ecf58 those are
+   `Flux3.extra_conds`, `Anima.extra_conds` and `MOSSImage.extra_conds`,
+   and no other site changes a Worker's numbers.
+
    **LTX stock-row parity.** LTX shards each stream once, before the block
    loop, and runs stock's block code on the rank's rows. Two calls in an LTX
    block round a row by the call's row count: comfy-kitchen's fused

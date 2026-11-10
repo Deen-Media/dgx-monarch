@@ -248,9 +248,11 @@ T5_TOKENIZER = "t5_tokenizer/tokenizer.json"
 # The stream whose length decides a label, per family, with the comfy
 # tokenizer that builds it. Only families whose tokenizer comfy ships as a
 # `tokenizers` file are here; every other family counts nothing and keeps the
-# label its guards give. Anima is a partial answer: unequal T5 ids do split the
-# model call, but equal ones still need its qwen3 stream to match, and comfy
-# ships that tokenizer as vocab and merges files, which this reader cannot load.
+# label its guards give. For Anima the T5 ids are the whole answer since
+# 2026-11-10: a Worker pads the text to max(ids, 512) rows before the batching
+# decision, as stock does, so the ids alone decide whether a pair folds, and
+# its qwen3 stream, whose tokenizer comfy ships as vocab and merges files this
+# reader cannot load, decides nothing.
 TEXT_STREAMS = {
     "chroma": TextStream(T5_TOKENIZER, 1),     # text_encoders/pixart_t5.py
     "anima": TextStream(T5_TOKENIZER, 1),      # text_encoders/anima.py
@@ -467,8 +469,8 @@ def auto_pair_differs(facts: dict, cell: dict | None = None) -> bool:
     reads, the counts decide, so two texts of equal rows read as equal.
     Otherwise two different texts stand in for different rows, which holds on
     every shipped template; two texts of equal rows would then read true here
-    and false at render time, where the pair-scoped cfg rows (Anima 47, Boogu
-    79, Chroma 20 and 19) give way to Ulysses.
+    and false at render time, where the pair-scoped cfg rows (Boogu 79,
+    Chroma 20 and 19) give way to Ulysses.
     """
     counts = (cell or {}).get("text_tokens") or {}
     if len(counts) > 1 and (cell or {}).get("family") not in _COUNT_IS_NOT_THE_TAGGED_ROWS:

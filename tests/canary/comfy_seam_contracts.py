@@ -172,16 +172,22 @@ The seams, in run order:
  49. lazy switch              the If/Else and Soft Switch inputs and the branch
                               check_lazy_status evaluates for a fixed choice,
                               which the loader-side wall prices and no other
- 50. pair-scoped text conds   the CONDRegular text Flux (so Chroma), Omnigen2
-                              (so Boogu) and Anima publish, which never folds
-                              rows that differ, and Anima's 512-row pad keyed
-                              on inference mode, the premise of the pair tag
-                              the Chroma, Anima and Boogu cfg2 rows read
+ 50. pair-scoped text conds   the CONDRegular text Flux (so Chroma) and
+                              Omnigen2 (so Boogu) publish, which never folds
+                              rows that differ, the premise of the pair tag
+                              the Chroma and Boogu cfg2 rows read
  51. ltx stock-row parity     the globals LTX's blocks reach the fused AdaLN and
                               the text cross-attention AdaLN by, every fused
                               AdaLN and gate call a block makes landing on the
                               stock-row route, and the paired rope helper the
                               self-attention calls
+ 52. inference mode branches  every place ComfyUI's source reads or sets
+                              inference mode, or reads grad mode, by file and
+                              function; the adapter bind each model_base
+                              branch needs, and each bind's branch; and on a
+                              tiny real Anima, the 512-row text branch only
+                              inference mode takes and the bind that takes it
+                              off inference mode
 
 Runs in the comfy-canary workflow against comfy master, and as a pytest
 wherever comfy is importable (COMFY_DIR overrides the location).
@@ -2048,23 +2054,23 @@ def _assert_minimax_h3_guide_inputs_seam() -> None:
 def _assert_pair_scoped_text_conds_seam() -> None:
     """The premise of the cfg pair tag: rows that differ never fold on one GPU.
 
-    Chroma rows 20 and 19, Anima row 47 and Boogu row 79 grant cfg2 only to a
-    prompt pair the sampler tagged as differing in text rows
-    (``dgx_monarch.cfg_pair``). That reading holds because Flux's
-    ``extra_conds``, which Chroma inherits, Omnigen2's, which Boogu inherits,
-    and Anima's publish the text as a ``CONDRegular``, which concatenates only
-    at equal shape, and because Anima pads its text to 512 rows only under
-    inference mode, which a Worker's sampling thread is not in. A switch to
-    ``CONDCrossAttn``, which folds some unequal lengths, or a pad outside
-    inference mode would let a tagged pair fold on one GPU while auto grants
-    cfg2, the defect issue #52 closes.
+    Chroma rows 20 and 19 and Boogu row 79 grant cfg2 only to a prompt pair the
+    sampler tagged as differing in text rows (``dgx_monarch.cfg_pair``). That
+    reading holds because Flux's ``extra_conds``, which Chroma inherits, and
+    Omnigen2's, which Boogu inherits, publish the text as a ``CONDRegular``,
+    which concatenates only at equal shape. A switch to ``CONDCrossAttn``, which
+    folds some unequal lengths, would let a tagged pair fold on one GPU while
+    auto grants cfg2, the defect issue #52 closes. Anima left the scope on
+    2026-11-10: stock pads its text to 512 rows in ``extra_conds``, every Worker
+    now does too, so its rows decide no fold and its cfg2 row was withdrawn; the
+    inference mode branches seam holds that branch.
     """
     import comfy.conds
     import comfy.model_base as mb
     import torch
 
     wrap = "out['c_crossattn'] = comfy.conds.CONDRegular(cross_attn)"
-    for klass in (mb.Flux, mb.Omnigen2, mb.Anima):
+    for klass in (mb.Flux, mb.Omnigen2):
         assert wrap in inspect.getsource(klass.extra_conds), (
             f"pair-scoped text conds seam: {klass.__name__}.extra_conds no longer wraps "
             "the text as a CONDRegular, so rows that differ may fold (cfg_pair)")
@@ -2072,9 +2078,6 @@ def _assert_pair_scoped_text_conds_seam() -> None:
         "pair-scoped text conds seam: Boogu overrides extra_conds")
     assert "super().extra_conds" in inspect.getsource(mb.Chroma.extra_conds), (
         "pair-scoped text conds seam: Chroma.extra_conds no longer builds on Flux's")
-    anima = inspect.getsource(mb.Anima.extra_conds)
-    assert "torch.is_inference_mode_enabled()" in anima, (
-        "pair-scoped text conds seam: Anima's 512-row text pad no longer keys on inference mode")
     short, long, same = (comfy.conds.CONDRegular(torch.zeros(1, rows, 4)) for rows in (5, 7, 5))
     assert not short.can_concat(long) and short.can_concat(same), (
         "pair-scoped text conds seam: CONDRegular now concatenates text of different rows")
@@ -6009,6 +6012,179 @@ def _one_block_model(block):
     return types.SimpleNamespace(transformer_blocks=[block])
 
 
+# Every place ComfyUI reads or sets torch's inference mode, and every place it
+# reads grad mode, which inference mode turns off and a Worker's sampling
+# thread has on, by file, enclosing function and name. The value says what a
+# Worker meets there; the inference mode branches seam holds the installed
+# tree to this table.
+_INFERENCE_MODE_SITES: dict[tuple[str, str, str], str] = {
+    ("comfy/model_base.py", "Flux3.extra_conds", "is_inference_mode_enabled"):
+        "branch: the flux3 cond bind runs it in inference mode",
+    ("comfy/model_base.py", "Anima.extra_conds", "is_inference_mode_enabled"):
+        "branch: the anima text bind runs it in inference mode",
+    ("comfy/model_base.py", "MOSSImage.extra_conds", "is_inference_mode_enabled"):
+        "branch: the moss_image cond bind runs it in inference mode",
+    ("comfy/ops.py", "_quantized_apply", "is_inference_mode_enabled"):
+        "clones an inference parameter outside inference mode: the same values",
+    ("comfy/utils.py", "set_attr_param", "is_inference_mode_enabled"):
+        "clones an inference tensor outside inference mode: the same values",
+    ("comfy/utils.py", "tiled_scale_multidim", "inference_mode"):
+        "enters inference mode itself",
+    ("comfy/k_diffusion/deis.py", "cal_intergrand", "inference_mode"):
+        "leaves inference mode itself, with grad on, as in stock",
+    ("comfy/ldm/mmaudio/vae/autoencoder.py", "AudioAutoencoder.encode_audio", "inference_mode"):
+        "enters inference mode itself",
+    ("comfy_extras/nodes_train.py", "TrainLoraNode.execute", "inference_mode"):
+        "the training node, which no Worker runs",
+    ("execution.py", "PromptExecutor.execute_async", "inference_mode"):
+        "stock's prompt run, the mode a Worker's thread lacks",
+    ("comfy/ldm/minimax/vae.py", "Attention.rms_rope", "is_grad_enabled"):
+        "MiniMax H3 VAE: a Worker decodes under inference mode (actor/vae_decode.py)",
+    ("comfy/ldm/depth_anything_3/transform.py", "_sqrt_positive_part", "is_grad_enabled"):
+        "Depth Anything 3 nodes, which no Worker runs",
+}
+_MODE_NAMES = frozenset({"is_inference_mode_enabled", "inference_mode", "is_grad_enabled"})
+_MODE_SCAN_ROOTS = ("comfy", "comfy_extras", "comfy_api", "comfy_execution", "nodes.py",
+                    "execution.py")
+
+
+def _inference_mode_sites(root: Path) -> dict[tuple[str, str, str], int]:
+    """Every ``torch.<name>`` of ``_MODE_NAMES`` under ``root``, by file and enclosing function."""
+    import ast
+    from collections import Counter
+
+    found: Counter = Counter()
+    paths = []
+    for entry in _MODE_SCAN_ROOTS:
+        path = root / entry
+        paths.extend(sorted(path.rglob("*.py")) if path.is_dir() else [path] if path.is_file() else [])
+    def visit(node, scope: str, relative: str) -> None:
+        for child in ast.iter_child_nodes(node):
+            inner = scope
+            if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
+                inner = f"{scope}.{child.name}" if scope else child.name
+            if (isinstance(child, ast.Attribute) and child.attr in _MODE_NAMES
+                    and isinstance(child.value, ast.Name) and child.value.id == "torch"):
+                found[(relative, scope or "<module>", child.attr)] += 1
+            visit(child, inner, relative)
+
+    for path in paths:
+        relative = path.relative_to(root).as_posix()
+        visit(ast.parse(path.read_text(encoding="utf-8-sig"), filename=relative), "", relative)
+    return dict(found)
+
+
+def _tiny_anima_base():
+    """A real model_base.Anima built by ComfyUI's own diffusion-model load: a
+    cosmos DiT at 256 channels and one block, beside the fixed 1024-wide,
+    six-layer llm_adapter stock builds for every file."""
+    import comfy.ops
+    import comfy.sd
+    import torch
+    from comfy.ldm.anima.model import Anima
+
+    model = Anima(max_img_h=240, max_img_w=240, max_frames=128, in_channels=16, out_channels=16,
+                  patch_spatial=2, patch_temporal=1, concat_padding_mask=True, model_channels=256,
+                  num_blocks=1, num_heads=16, crossattn_emb_channels=1024, pos_emb_cls="rope3d",
+                  pos_emb_learnable=True, pos_emb_interpolation="crop", min_fps=1, max_fps=30,
+                  use_adaln_lora=True, adaln_lora_dim=256, rope_h_extrapolation_ratio=4.0,
+                  rope_w_extrapolation_ratio=4.0, rope_t_extrapolation_ratio=1.0,
+                  extra_per_block_abs_pos_emb=False, dtype=torch.float32, device="cpu",
+                  operations=comfy.ops.disable_weight_init)
+    generator = torch.Generator().manual_seed(43)
+    with torch.no_grad():
+        for parameter in model.parameters():
+            parameter.copy_(torch.randn(parameter.shape, generator=generator) * 0.05)
+    return comfy.sd.load_diffusion_model_state_dict(dict(model.state_dict())).model
+
+
+def _assert_inference_mode_branches_seam() -> None:
+    """Every inference-mode and grad-mode site in ComfyUI, and the bind each branch needs.
+
+    ComfyUI runs a prompt inside ``torch.inference_mode()``
+    (``PromptExecutor.execute_async``); a Worker samples on a thread outside
+    it, with grad mode on. A model method that branches on the mode takes the
+    other branch on a Worker, as ``Anima.extra_conds`` did until 2026-11-10:
+    the raw text and the T5 inputs went to the forward, a pair whose rows
+    differ ran as two batch-1 calls where stock folds it into one, and the
+    one-GPU render read one-step NRMS 0.028 against stock. Pinned here: (a)
+    the installed tree's sites, walked from source by file, enclosing function
+    and name, equal ``_INFERENCE_MODE_SITES``, so a new or moved branch turns
+    this red before it reaches a render; (b) every ``model_base`` branch sits
+    in an ``extra_conds`` whose class's adapter declares its own
+    ``prepare_base_model`` and binds that method, and every such bind still
+    has its branch; (c) on a tiny real Anima, inference mode alone picks the
+    512-row branch, and the bound call off inference mode equals stock's under
+    it with no inference tensor. PyTorch's own branch, ``aten.linear``
+    decomposing before a quantized layout outside inference mode, has no
+    source line; the weight-only linear dispatch seam holds it.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    import comfy.model_base
+    import torch
+
+    from dgx_monarch.adapters import ADAPTERS
+    from dgx_monarch.adapters.anima import AnimaAdapter
+    from dgx_monarch.comfy_rebound_sites import ADAPTER_BIND_SITES
+
+    # comfy is a namespace package, so the tree's root is read off a module in it.
+    root = Path(comfy.model_base.__file__).resolve().parents[1]
+    found = _inference_mode_sites(root)
+    pinned = dict.fromkeys(_INFERENCE_MODE_SITES, 1)
+    assert found == pinned, (
+        "inference mode branches seam: ComfyUI's mode sites moved; new or changed "
+        f"{sorted(set(found.items()) - set(pinned.items()))}, gone "
+        f"{sorted(set(pinned.items()) - set(found.items()))}")
+
+    branches = sorted(function for (path, function, name) in _INFERENCE_MODE_SITES
+                      if path == "comfy/model_base.py")
+    binds = sorted(target[len("comfy.model_base."):] for site in ADAPTER_BIND_SITES
+                   if site.branch == "conds" for target in site.targets)
+    assert branches == binds, (
+        f"inference mode branches seam: model_base branches {branches} against cond binds {binds}")
+    for function in branches:
+        klass, method = function.split(".")
+        assert method == "extra_conds", (
+            f"inference mode branches seam: {function} is a branch no cond bind models")
+        owners = [adapter for adapter in ADAPTERS if klass in adapter.model_base_classes]
+        assert owners and all("prepare_base_model" in vars(type(adapter)) for adapter in owners), (
+            f"inference mode branches seam: no adapter for {klass} binds its extra_conds")
+        scopes = {site.scope for site in ADAPTER_BIND_SITES
+                  if f"comfy.model_base.{function}" in site.targets}
+        assert scopes == {f"{type(adapter).__name__}.prepare_base_model" for adapter in owners}, (
+            f"inference mode branches seam: {function} is bound from {sorted(scopes)}")
+
+    model = _tiny_anima_base()
+    generator = torch.Generator().manual_seed(47)
+    kwargs = {"cross_attn": torch.randn(1, 14, 1024, generator=generator),
+              "t5xxl_ids": torch.randint(0, 32128, (12,), generator=generator, dtype=torch.int32),
+              "t5xxl_weights": torch.ones(12), "device": torch.device("cpu")}
+    with torch.inference_mode():
+        stock = model.extra_conds(**kwargs)
+
+    def off_mode():
+        with ThreadPoolExecutor(1) as pool:
+            assert not pool.submit(torch.is_inference_mode_enabled).result(), (
+                "inference mode branches seam: a fresh executor thread now inherits inference mode")
+            return pool.submit(lambda: model.extra_conds(**kwargs)).result()
+
+    plain = off_mode()
+    assert set(stock) == {"c_crossattn"} and tuple(stock["c_crossattn"].cond.shape) == (1, 512, 1024), (
+        "inference mode branches seam: Anima no longer preprocesses its text to 512 rows "
+        f"in extra_conds under inference mode ({sorted(stock)})")
+    assert set(plain) == {"c_crossattn", "t5xxl_ids", "t5xxl_weights"}, (
+        f"inference mode branches seam: Anima's branch off inference mode moved ({sorted(plain)})")
+    AnimaAdapter().prepare_base_model(model)
+    bound = off_mode()
+    assert set(bound) == {"c_crossattn"} and torch.equal(
+        bound["c_crossattn"].cond, stock["c_crossattn"].cond), (
+        "inference mode branches seam: the bound Anima extra_conds off inference mode "
+        "differs from stock's under it")
+    assert not bound["c_crossattn"].cond.is_inference(), (
+        "inference mode branches seam: the bound Anima output still holds an inference tensor")
+
+
 SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("sampler callback", _assert_sampler_callback_seam),
     ("packed latent layout", _assert_packed_latent_layout_seam),
@@ -6061,6 +6237,7 @@ SEAMS: tuple[tuple[str, Callable[[], None]], ...] = (
     ("lazy switch", _assert_lazy_switch_seam),
     ("pair-scoped text conds", _assert_pair_scoped_text_conds_seam),
     ("ltx stock-row parity", _assert_ltx_stock_row_parity_seam),
+    ("inference mode branches", _assert_inference_mode_branches_seam),
 )
 
 

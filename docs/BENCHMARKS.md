@@ -270,7 +270,9 @@ Reading the table:
   below 1.2 MP (row 47). Since 2026-11-07 rows 79 and 47, and Chroma's rows
   20 and 19, take only a prompt pair whose text rows differ, as on the
   templates
-  ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)). Each upper band ends
+  ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)). Row 47 was withdrawn
+  on 2026-11-10: its one-GPU reference differed from stock ComfyUI
+  ([Anima](VALIDATION.md#anima-text-branch-fix)). Each upper band ends
   at the largest size measured.
   The two lower bands follow rows 20 and 28 and rest on one size, 1.05 MP.
   Each grant covers only the precisions that read bit-identical and beat uly2

@@ -61,9 +61,10 @@ and reviewed against the linked test results.
 
 Chroma (Radiance included) and LongCat have cfg2 rows below 1.2 MP, and
 Chroma has a second one from 1.2 to 1.64 MP. Krea 2 has a cfg2 row from 1.2
-to 2.36 MP and Qwen-Image one from 1.2 to 1.77 MP. Anima and Boogu have cfg2
-rows below 1.2 MP. Chroma's, Anima's and Boogu's cfg2 rows take only a prompt
-and a negative that encode to different text rows; an equal pair takes Ulysses.
+to 2.36 MP and Qwen-Image one from 1.2 to 1.77 MP. Boogu has a cfg2 row below
+1.2 MP. Chroma's and Boogu's cfg2 rows take only a prompt and a negative that
+encode to different text rows; an equal pair takes Ulysses. Anima's cfg2 row
+was withdrawn on 2026-11-10, so `auto` keeps Ulysses for Anima at every size.
 Each family's Ulysses rows cover the rest. Auto takes a
 cfg2 row at any CFG other than 1, and at CFG 1 under a CFG++ sampler chosen
 on a DGX Monarch KSampler, KSampler Advanced or KSampler Pipeline node, when
@@ -114,7 +115,7 @@ that match the tested configurations in its model details. See
 | Z-Image DCT PixelSpace | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | L2P is unsupported; DCT and latent checkpoints need different workflows. [Details](#model-z-image-dct-pixelspace) · [Workflow](../example_workflows/dgx-monarch-zimage-dct-t2i.json) |
 | Lens | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Asymmetric cfg2 is measured; padded ring remains guarded. [Details](#model-lens) · [Workflow](../example_workflows/dgx-monarch-lens-t2i.json) |
 | Omnigen2 | ✓ | 🔒 | ✗ | ★ | ✓ | **HW** | Ulysses is unsupported; ring+FSDP refuses. [Details](#model-omnigen2) · [Workflow](../example_workflows/dgx-monarch-omnigen2-t2i.json) |
-| Anima | ✓ | ★ | ★ | ✓ | 🔒 | **HW** | Use the supplied graph for cross-attention and masks. Auto cfg2 covers BF16 below 1.2 MP when the prompt and the negative encode to different text rows, as on the shipped graph. An equal pair is measured, not the same math: one-step NRMS 0.015 to 0.042 against one GPU on cfg2 (2026-11-07), so `auto` keeps Ulysses for it. [Details](#model-anima) · [Workflow](../example_workflows/dgx-monarch-anima-t2i.json) |
+| Anima | ✓ | 🔒 | ★⏳ | ✓ | 🔒 | **HW** | Use the supplied graph for cross-attention and masks. Since 2026-11-10 the Workers prepare the text as stock ComfyUI does, so one GPU folds the prompt and the negative into one call; cfg2 splits that call into two, one per rank, which is not the same math, so `auto` keeps Ulysses at every size. Ulysses, DP2 and FSDP were compared with a Worker's one GPU before that fix and await a comparison against stock. [Details](#model-anima) · [Workflow](../example_workflows/dgx-monarch-anima-t2i.json) |
 | Boogu | ✓ | ★ | ★ | ✓ | ✓ | **HW** | Auto cfg2 covers FP8 below 1.2 MP when the prompt and the negative encode to different text rows, as on the shipped graph; such a pair uses per-conditioning cfg2 dispatch. An equal pair is measured, not the same math: one-step NRMS 0.014 to 0.025 against one GPU on cfg2 and full schedules diverging (2026-11-07), so `auto` keeps Ulysses for it. [Details](#model-boogu) · [Workflow](../example_workflows/dgx-monarch-boogu-t2i.json) |
 | PixelDiT / PiD | ✓ | ✗ | ★ | ✓ | ✓ | **HW** | Only BF16 was compared; quantized sequence sharding and cfg2 refuse. [Details](#model-pixeldit-pid) · [Workflow](../example_workflows/dgx-monarch-pixeldit-t2i.json) |
 | Kandinsky5-Image | ✓ | 🔒 | ★ | ✓ | ✓ | **HW** | Use SD3 shift 3; preserve the native 16-channel latent. [Details](#model-kandinsky5-image) · [Workflow](../example_workflows/dgx-monarch-kandinsky5-image.json) |
@@ -1242,9 +1243,9 @@ Detail status (`Anima`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-anima-t2i.json).
 
-**Tested configurations.** Ulysses against one GPU, DP2, and BF16 FSDP with the auxiliary adapter replicated. Explicit cfg2 on the shipped template's prompt pair read one-step NRMS 0.0 against one GPU in three records, and three `cfg2+fsdp` records matched their resident legs exactly (BF16, 1024 square). Campaign K (2026-10-14) timed cfg2 on that pair at 1024 square, bit-identical to one GPU over the full schedule. On 2026-11-07 that pair read bit-identical again, and two pairs of equal text rows read one-step NRMS 0.015 and 0.042 and full-schedule NRMS 0.0047 and 0.040 against one GPU ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)).
+**Tested configurations.** Ulysses against one GPU, DP2, and BF16 FSDP with the auxiliary adapter replicated. Explicit cfg2 on the shipped template's prompt pair read one-step NRMS 0.0 against one GPU in three records, and three `cfg2+fsdp` records matched their resident legs exactly (BF16, 1024 square). Campaign K (2026-10-14) timed cfg2 on that pair at 1024 square, bit-identical to one GPU over the full schedule. On 2026-11-07 that pair read bit-identical again, and two pairs of equal text rows read one-step NRMS 0.015 and 0.042 and full-schedule NRMS 0.0047 and 0.040 against one GPU ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)). Every one of these compared the Workers with a Worker's one GPU. On 2026-11-10 that one GPU read one-step NRMS 0.028 against stock ComfyUI on the shipped pair: a Worker ran the text branch stock keeps for training, and so made two batch-1 calls a step where stock makes one batch-2 call. The Workers now run stock's branch ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)), which changes every Anima render on them, and no comparison above has been repeated against stock since ([VALIDATION](VALIDATION.md#evidence-anima)).
 
-**Known limitations.** Unlisted FSDP artifacts and LoRA behavior are not covered. Below 1.2 MP auto selects cfg2 for BF16 when the prompt and the negative encode to different text rows, and Ulysses for an equal pair. comfy's 512-row pad lands inside the forward, so a pair whose rows differ splits the model call at any length and cfg2 dispatches one conditioning per rank, as one GPU does; an equal pair folds into one batch-2 call on one GPU, which explicit cfg2 does not reproduce. The cfg2 comparisons cover the shipped prompt pair and the two equal pairs.
+**Known limitations.** Unlisted FSDP artifacts and LoRA behavior are not covered. `auto` selects Ulysses at every size. ComfyUI pads the text to 512 rows before it decides whether the prompt and the negative share a model call, so one GPU folds a pair of at most 512 T5 tokens into one batch-2 call, and cfg2 runs two batch-1 calls, one per rank, which is not the same math. Before 2026-11-10 an equal pair, the one case a Worker folded then, read one-step NRMS 0.015 to 0.042 on cfg2 against one GPU; the shipped pair has no cfg2 reading against stock yet. Explicit cfg2 still renders.
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-anima).
 

@@ -136,22 +136,24 @@ def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, c
         assert "head capped at 2100 MHz" in decision.reason
 
 
-# Issue #52, 2026-11-07: rows 47 and 79 were measured on the templates' pairs,
-# whose text rows differ, so one GPU runs them as two calls; two pairs of equal
-# rows each read off one GPU on both rows (check 10), so the records grant only
-# a pair the sampler tagged as differing.
+# Issue #52, 2026-11-07: row 79 was measured on the template's pair, whose
+# text rows differ, so one GPU runs it as two calls; two pairs of equal rows
+# read off one GPU (check 10), so the record grants only a pair the sampler
+# tagged as differing.
 # Chroma's rows 20 and 19 take the same scope on their own equal-pair reading
 # (BF16 NRMS 0.034); below 1.2 MP Chroma has no Ulysses row, so the fallback
 # (row 99) catches an equal pair, and from 1.2 MP rows 21 (FP8) and 22 do.
-PAIR_SCOPED = (("boogu", "fp8", 79, 78), ("anima", "bf16", 47, 48),
+# Anima's row 47 had the same scope until 2026-11-10, when the text branch fix
+# made one GPU fold every Anima pair, as stock does (TROUBLESHOOTING #148).
+PAIR_SCOPED = (("boogu", "fp8", 79, 78),
                ("chroma", "bf16", 20, 99), ("chroma", "int8", 20, 99))
 CHROMA_BAND = (("chroma", "bf16", 1.5, 19, 22), ("chroma", "fp8", 1.63, 19, 21),
                ("chroma", "int8", 1.5, 19, 22))
 
 
-def test_only_the_anima_boogu_and_chroma_rows_are_scoped_to_pairs_of_different_text_rows() -> None:
+def test_only_the_boogu_and_chroma_rows_are_scoped_to_pairs_of_different_text_rows() -> None:
     scoped = {row for row, record in CFG2_EVIDENCE.items() if record.pairs != "any"}
-    assert scoped == {19, 20, 47, 79}
+    assert scoped == {19, 20, 79}
     assert {CFG2_EVIDENCE[row].pairs for row in scoped} == {"unequal"}
 
 
@@ -196,11 +198,11 @@ def test_an_equal_or_unread_pair_takes_the_ulysses_row(family, quant, row, fallb
 def test_the_pair_clause_names_only_a_row_the_pair_alone_kept(monkeypatch) -> None:
     # A quant miss keeps its own reason; an unequal pair does not rescue it.
     for pair_differs in (False, True):
-        decision = choose_auto_topology("anima", "fp8", 1.05, 2, cfg_value=4.0,
+        decision = choose_auto_topology("boogu", "bf16", 1.05, 2, cfg_value=4.0,
                                         pair_differs=pair_differs)
-        assert decision.rule.row == 48 and decision.skipped_cfg.row == 47
+        assert decision.rule.row == 78 and decision.skipped_cfg.row == 79
         assert "was measured on prompt pairs whose text rows differ" not in decision.reason
-        assert "has no passing fp8 result" not in decision.reason  # row 48 was chosen
+        assert "has no passing bf16 result" not in decision.reason  # row 78 was chosen
     # With no Ulysses row behind it, the fallback note names the pair.
     from dgx_monarch import topology
 
@@ -224,7 +226,6 @@ def test_the_pair_clause_names_only_a_row_the_pair_alone_kept(monkeypatch) -> No
         ("krea2", "int8", 2.359, 15, 12),
         ("qwen_image", "bf16", 1.5, 68, 72),
         ("boogu", "bf16", 1.05, 79, 78),
-        ("anima", "fp8", 1.05, 47, 48),
     ],
 )
 def test_campaign_k_ungranted_kinds_fall_through_to_their_ulysses_row(
@@ -235,6 +236,24 @@ def test_campaign_k_ungranted_kinds_fall_through_to_their_ulysses_row(
         assert decision.topology.describe() == "uly2"
         assert decision.rule.row == fallback
         assert decision.skipped_cfg is not None and decision.skipped_cfg.row == skipped
+
+
+@pytest.mark.parametrize("quant", ["bf16", "fp8"])
+def test_anima_takes_ulysses_for_every_pair_since_its_text_branch_fix(quant) -> None:
+    # 2026-11-10: a Worker pads Anima's text to 512 rows in extra_conds, as stock
+    # does, so one GPU folds every pair of at most 512 T5 ids into one batch-2
+    # call that cfg2's two batch-1 calls cannot reproduce; row 47 was withdrawn
+    # and no cfg row remains to skip.
+    assert not any(rule.family == "anima" and rule.topology.get("cfg", 1) != 1
+                   for rule in AUTO_TABLE)
+    assert all(record.family != "anima" for record in CFG2_EVIDENCE.values())
+    for megapixels in (0.26, 1.05, 1.5):
+        for pair_differs in (False, True):
+            decision = choose_auto_topology("anima", quant, megapixels, 2, cfg_value=4.0,
+                                            pair_differs=pair_differs)
+            assert decision.topology.describe() == "uly2"
+            assert decision.rule.row == 48 and decision.skipped_cfg is None
+            assert "before the batching decision" in decision.reason
 
 
 def test_krea2_int8_measured_exact_but_no_faster_keeps_ulysses() -> None:
