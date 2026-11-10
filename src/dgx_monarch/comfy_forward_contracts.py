@@ -173,15 +173,16 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
         "transformer_options",
         positional=("self", "x", "t_emb", "mod_segments", "rope_freqs"),
     ),
-    # comfy 2504e68d made sigma, sample_sigmas and shifts required: a PDD LoRA
-    # stacks head row blocks, and the head blends the blocks the current step
-    # spans. The three values are the sampler's, not the head's, so the rebound
-    # forward has to hand them down.
+    # comfy 2504e68d made the step's sigma and the sampler's table required: a
+    # PDD LoRA stacks head row blocks, and the head blends the blocks the current
+    # step spans. ComfyUI ede4e5f (v0.45.0, this build's floor) replaced the two
+    # flow shifts after them with one sigma grid per stream. The rebound forward
+    # hands all three down and reads this name at inject (head_form).
     _call(
         "comfy.ldm.minimax.model",
         "FinalLayer.forward",
         positional=("self", "x", "t_emb", "video_seg", "audio_seg",
-                    "sigma", "sample_sigmas", "shifts"),
+                    "sigma", "sample_sigmas", "grids"),
     ),
     _call(
         "comfy.ldm.minimax.model",

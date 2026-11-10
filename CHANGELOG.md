@@ -308,6 +308,15 @@
 
 ### Compatibility and verification
 
+- This release needs ComfyUI 0.45.0 or newer. ComfyUI 0.45.0 changed the
+  MiniMax H3 output head to take one sigma grid per stream, and the sharded
+  H3 forward now passes those grids, built as stock builds them. It reads the
+  head's form when it binds: under sequence parallelism, a stacked PDD head on
+  an older ComfyUI, or a head form it does not know, refuses class P before the
+  render, where 1.4.0 failed inside the head. Every listed H3 and p-h3-image
+  file has a one-block head and renders as before. The sharded block loop also
+  pops the prefetch queue with stock's block scope, so ComfyUI's malloc graph
+  under comfy-managed residency plans each block as stock's forward does ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
 - The comfy canary's outside forward modules seam passes on ComfyUI 0.45.0
   again. UltraTex made Flux's `extra_conds` call `preprocess_token_masks`, and
   the seam now holds a table of such calls that touch no module and no
