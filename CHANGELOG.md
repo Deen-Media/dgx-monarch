@@ -407,20 +407,26 @@
 
 ### Rendering
 
-- Anima renders on the Workers prepare the text as stock ComfyUI does. Stock
-  runs a prompt in inference mode, where Anima's `extra_conds` runs the text
-  adapter and pads the text to 512 rows once per conditioning. A Worker
-  samples outside it, so it took the branch ComfyUI keeps for training: it
-  ran the adapter on every model call and split a prompt pair whose rows
-  differ into two batch-1 calls where stock makes one batch-2 call. On
-  2026-11-10 the shipped graph's one-GPU render read one-step NRMS 0.028
-  against stock for that reason. The adapter now runs stock's method in
-  inference mode on every load, as FLUX.3's and MOSS-Image's do, and a canary
-  seam lists every inference-mode branch in ComfyUI's source. Because one GPU
-  now folds the pair, cfg2 is not the same math for Anima: `auto` table row
-  47 is withdrawn, and every Anima render under `auto` takes uly2. No
-  hardware run has compared the fixed Workers with stock yet
+- Fix: the Workers prepare Anima's text as stock ComfyUI does, so a Worker's
+  one-GPU Anima render is expected to equal stock's. Stock runs a prompt in
+  inference mode, where Anima's `extra_conds` runs the text adapter and pads
+  the text to 512 rows once per conditioning. A Worker samples outside it, so
+  it took the branch ComfyUI keeps for training: it ran the adapter on every
+  model call and split a prompt pair whose rows differ into two batch-1 calls
+  where stock makes one batch-2 call. On 2026-11-10 the shipped graph's
+  one-GPU Worker render read one-step NRMS 0.028 against stock, which this
+  difference is expected to explain. The adapter now runs stock's method in inference mode
+  on every load, as FLUX.3's and MOSS-Image's do, and on the CPU the Worker's
+  model calls now equal stock's; a canary seam lists every inference-mode
+  branch in ComfyUI's source. The hardware comparison against stock has not
+  run yet
   ([TROUBLESHOOTING #148](docs/TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+- Change: Anima under `auto` renders on uly2 at every size, where it took cfg2
+  below 1.2 MP on BF16. With the fix one GPU folds the prompt and the negative
+  into one batch-2 call, as stock does, and cfg2's two batch-1 calls are not
+  that call, so `auto` table row 47 is withdrawn; explicit cfg2 still renders
+  and is not the same math. The shipped Anima template sets `auto`, so it
+  now renders on uly2. The speed cost against cfg2 is NOT RUN on hardware.
 - uly2 renders of Flux 1, Flux 2, Chroma, LongCat and Qwen Image 2.1 fill each
   fused-norm call of their sharded blocks to the rows one GPU normalizes, as
   FLUX.3 and MOSS-Image already did. comfy-kitchen's fused AdaLN picks its

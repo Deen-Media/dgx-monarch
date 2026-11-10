@@ -1328,9 +1328,10 @@ than stacks on a repeat call.
    bind the two branches batched differently. ComfyUI joins the prompt and
    the negative into one model call only at equal shapes, so a Worker ran a
    pair whose raw rows differ as two batch-1 calls a step, where stock, at
-   512 rows on both sides, folds it into one batch-2 call, and on 2026-11-10
-   the shipped graph's one-GPU Worker render read one-step NRMS 0.028
-   against stock ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+   512 rows on both sides, folds it into one batch-2 call. That is the
+   expected cause of the one-step NRMS 0.028 the shipped graph's one-GPU
+   Worker render read against stock on 2026-11-10, which no hardware run on
+   the fixed Workers has confirmed yet ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
    With the bind every topology folds as stock does: a pair of at most 512
    T5 ids makes one call on one GPU and takes the slice path on cfg2, whose
    two batch-1 calls are not that call, so `auto` never picks cfg2 for

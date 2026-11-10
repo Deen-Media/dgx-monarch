@@ -6049,7 +6049,13 @@ _MODE_SCAN_ROOTS = ("comfy", "comfy_extras", "comfy_api", "comfy_execution", "no
 
 
 def _inference_mode_sites(root: Path) -> dict[tuple[str, str, str], int]:
-    """Every ``torch.<name>`` of ``_MODE_NAMES`` under ``root``, by file and enclosing function."""
+    """Every use of a ``_MODE_NAMES`` name under ``root``, by file and enclosing function.
+
+    Any attribute of that name counts, whatever it hangs off (``torch.``, an
+    alias of torch, anything else), and so does the bare name a
+    ``from torch import`` leaves, so an aliased or re-exported read is a site
+    too. A read routed through a helper in another package is not seen.
+    """
     import ast
     from collections import Counter
 
@@ -6063,9 +6069,10 @@ def _inference_mode_sites(root: Path) -> dict[tuple[str, str, str], int]:
             inner = scope
             if isinstance(child, ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef):
                 inner = f"{scope}.{child.name}" if scope else child.name
-            if (isinstance(child, ast.Attribute) and child.attr in _MODE_NAMES
-                    and isinstance(child.value, ast.Name) and child.value.id == "torch"):
+            if isinstance(child, ast.Attribute) and child.attr in _MODE_NAMES:
                 found[(relative, scope or "<module>", child.attr)] += 1
+            elif isinstance(child, ast.Name) and child.id in _MODE_NAMES:
+                found[(relative, scope or "<module>", child.id)] += 1
             visit(child, inner, relative)
 
     for path in paths:

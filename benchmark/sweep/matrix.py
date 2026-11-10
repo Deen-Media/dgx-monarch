@@ -457,7 +457,10 @@ def prompt_texts(graph: dict) -> dict[str, str]:
 
 
 # Families whose counted stream (TEXT_STREAMS) is not the conditioning tensor
-# the runtime's pair tag reads: Anima's count is its T5 ids, the tag its Qwen3 rows.
+# the runtime's pair tag reads: Anima's count is its T5 ids, the tag its Qwen3
+# rows, so the texts stand in and the predicted tag stays the runtime's. Since
+# 2026-11-10 no Anima row reads the tag (row 47 was withdrawn), so for Anima the
+# prediction decides nothing.
 _COUNT_IS_NOT_THE_TAGGED_ROWS = frozenset({"anima"})
 
 

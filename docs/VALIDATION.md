@@ -1866,8 +1866,9 @@ resident legs. From 2026-10-14 auto took cfg2 for BF16 below 1.2 MP
 2026-11-07 row 47 took only a pair whose text rows differ: a pair of equal
 rows read one-step NRMS 0.015 to 0.042 on cfg2 against one GPU, and no full
 schedule matched ([equal pairs](#campaign-k-equal-pairs)). Every reference
-above was a Worker's one GPU, and on 2026-11-10 that reference differed from
-stock ComfyUI; row 47 was withdrawn the same day (below).
+above was the Worker's earlier one GPU, which ran the shipped pair unfolded,
+and on 2026-11-10 that reference differed from stock ComfyUI. These records
+are superseded, and row 47 was withdrawn the same day (below).
 
 <a id="anima-text-branch-fix"></a>
 
@@ -1877,8 +1878,8 @@ MHz, plateau 2093 MHz), the shipped Anima graph at one step and seed 42 read
 largest difference 0.4086 and NRMS 0.0284 against stock ComfyUI on one GPU
 for the Worker's `single` (`mode=local`, `gpus_per_host=1`), with 204483 of
 262144 latent values apart, while the Worker's `single`, row 0 of its dp2
-render and `run_matrix`'s single reference were bit-identical. The cause is
-ComfyUI's `Anima.extra_conds`, which prepares the text once per conditioning
+render and `run_matrix`'s single reference were bit-identical. The expected
+cause is ComfyUI's `Anima.extra_conds`, which prepares the text once per conditioning
 at 512 rows only in inference mode, which a Worker's sampling thread is not
 in ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
 On the CPU, against ComfyUI v0.45.0 and `8a98ecf58`, with a tiny Anima that
@@ -2661,7 +2662,9 @@ lists every cell's walls, speedups and fidelity.
   1.2 to 1.77 MP, and 79 for Boogu FP8 and 47 for Anima BF16 below 1.2 MP.
   Since 2026-11-07, rows 79 and 47, and Chroma's rows 20 and 19, grant only a
   prompt pair whose text rows differ ([equal pairs](#campaign-k-equal-pairs)).
-  Row 47 was withdrawn on 2026-11-10 ([Anima](#anima-text-branch-fix)).
+  Row 47 was withdrawn on 2026-11-10: its record was measured against the
+  Worker's earlier unfolded one GPU and is superseded
+  ([Anima](#anima-text-branch-fix)).
   Each record grants only the precisions that read bit-identical and beat
   uly2 at every measured size in its band. Kandinsky5 Lite image met that bar
   at 1024, but its image and video checkpoints share one family, so it has no
@@ -2718,8 +2721,9 @@ readings stay under the 0.10 floor, so these are measured results, not
 refusals, but they miss the
 [cfg2 row bar](DESIGN.md#54-topology--auto-mode), which needs cfg2
 bit-identical to one GPU. The template pairs stayed bit-identical on this
-build. (On 2026-11-10 that one-GPU reference for Anima differed from stock,
-and row 47 was withdrawn: [Anima](#anima-text-branch-fix).) Rows 47 and 79
+build. (The Anima rows were measured against the Worker's earlier unfolded
+one GPU, which on 2026-11-10 differed from stock; they are superseded and row
+47 was withdrawn: [Anima](#anima-text-branch-fix).) Rows 47 and 79
 therefore granted only a pair whose text rows differ:
 the sampler node tags the latent when the positive's and the negative's text
 tensors differ in rows, and an equal or unread pair takes rows 48 and 78

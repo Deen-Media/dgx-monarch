@@ -8050,7 +8050,8 @@ ComfyUI joins the prompt and the negative into one model call only when their
 text tensors have the same shape. In stock both have 512 rows, so each step
 makes one batch-2 call; on a Worker the raw rows of the shipped pair differ in
 length, so each step made two batch-1 calls, and GB10's matrix kernels change
-with the row count. A CPU test against ComfyUI v0.45.0 and 8a98ecf58 shows the
+with the row count. That is the expected cause of the 0.028; as of 2026-11-10
+no hardware run on the fixed Workers has confirmed it. A CPU test against ComfyUI v0.45.0 and 8a98ecf58 shows the
 two call patterns, and that inference mode alone picks between them; on the
 CPU the latents still match, because its kernels do not change with the
 batch.
