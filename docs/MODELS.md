@@ -1742,14 +1742,14 @@ ComfyUI ede4e5f (#17655, in 0.45.0) changed the output head's last argument
 from the two flow shifts to one sigma grid per stream, and moved a stacked
 PDD head's block choice onto that grid. The sharded forward builds the grids
 with stock's arithmetic and reads the installed head's form when it binds:
-a stacked head on an older ComfyUI, or a head form this release does not
-know, refuses class P before the render starts
+under sequence parallelism, a stacked head on an older ComfyUI, or a head
+form this release does not know, refuses class P before the render starts
 ([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
 Every H3 and p-h3-image file listed here has a one-block head, which never
 reads that argument, so each renders as it did on 0.44.0. On CPU the sharded
 forward returns stock's bits at world 1 on 0.45.0 with one, two and four head
-blocks, the sampler's table on the head grid and off it
-(`tests/test_h3_head_form_comfy.py`). Stock's own stacked-head output differs
+blocks, the sampler's table on the head grid, off it, and in steps that span
+several head intervals (`tests/test_h3_head_form_comfy.py`). Stock's own stacked-head output differs
 between 0.44.0 and 0.45.0 for a schedule off the head grid, so a pixel compare
 across the two releases means nothing. The H3 records below ran on ComfyUI
 `8a98ecf58` (v0.44.0 code); the 0.45.0 rows are NOT RUN

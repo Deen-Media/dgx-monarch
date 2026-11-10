@@ -311,12 +311,12 @@
 - This release needs ComfyUI 0.45.0 or newer. ComfyUI 0.45.0 changed the
   MiniMax H3 output head to take one sigma grid per stream, and the sharded
   H3 forward now passes those grids, built as stock builds them. It reads the
-  head's form when it binds: a stacked PDD head on an older ComfyUI, or a head
-  form it does not know, refuses class P before the render, where 1.4.0 failed
-  inside the head. Every listed H3 and p-h3-image file has a one-block head and
-  renders as before. The sharded block loop also pops the prefetch queue with
-  stock's block scope, so ComfyUI's malloc graph plans each block as stock's
-  forward does ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+  head's form when it binds: under sequence parallelism, a stacked PDD head on
+  an older ComfyUI, or a head form it does not know, refuses class P before the
+  render, where 1.4.0 failed inside the head. Every listed H3 and p-h3-image
+  file has a one-block head and renders as before. The sharded block loop also
+  pops the prefetch queue with stock's block scope, so ComfyUI's malloc graph
+  under comfy-managed residency plans each block as stock's forward does ([TROUBLESHOOTING #147](docs/TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
 - docs/CAMPAIGN_COLUMNS.md types `legs.probe.message` and
   `legs.resident.message` as text: their values open with a plain `[dgxm:...]`
   tag and are not JSON arrays. A column now types as JSON only when every value

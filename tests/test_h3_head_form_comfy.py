@@ -136,10 +136,13 @@ def _run(comfy, network, sigma, table, shifts):
 
 
 def _tables(steps, shift):
-    """The sampler's table on the head grid and off it."""
+    """The sampler's table on the head grid, off it, and in steps that span several head intervals."""
     grid = [packing.pdd_grid(steps, shift, _shift_sigma)[k] for k in range(steps + 1)]
     return {"on-grid": torch.tensor(grid, dtype=torch.float32),
-            "off-grid": torch.tensor([1.0, 0.97, 0.9, 0.87, 0.7, 0.45, 0.2, 0.0])}
+            "off-grid": torch.tensor([1.0, 0.97, 0.9, 0.87, 0.7, 0.45, 0.2, 0.0]),
+            # Steps that span several head intervals, so the dt weights and both grids count.
+            "wide-step": torch.tensor([1.0, 0.3, 0.0]),
+            "one-step": torch.tensor([1.0, 0.0])}
 
 
 def _shift_sigma(sigma, from_shift, to_shift):
@@ -148,7 +151,7 @@ def _shift_sigma(sigma, from_shift, to_shift):
 
 
 @pytest.mark.parametrize("shifts", [(12.0, 3.0), (1.0, 1.0)], ids=["h3-shift", "unit-shift"])
-@pytest.mark.parametrize("table_kind", ["on-grid", "off-grid"])
+@pytest.mark.parametrize("table_kind", ["on-grid", "off-grid", "wide-step", "one-step"])
 @pytest.mark.parametrize("pdd_steps", [1, 2, 4])
 def test_a_stacked_head_on_the_v045_form_gives_stocks_bits(comfy, world_one, pdd_steps, table_kind, shifts):
     _needs(comfy, packing.HEAD_GRIDS)

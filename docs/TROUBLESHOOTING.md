@@ -2185,7 +2185,7 @@ offering consent. Follow their "What would fit" clause; all cases below are
 
 | Guard/path | Why no rescue is offered |
 |---|---|
-| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. On a one-Spark fleet on 2026-11-05 this refusal came from the Worker's own wall, which named the box by its host name and said "this host", the one refusal of the `7c3eecb` checks to name a host. Since #147 the Worker says "here"; on the pair the driver opens the sentence with the box's name, and on one box the sentence stands as it is ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)). |
+| `stock_load_preflight` | Slab is off or quarantined; the file is not safetensors; FSDP/`compile_dit` is active; `lora_low_rss` is off; or slab also cannot fit. The message names the blocker. When the Init node sets `slab_weights=on` but the combination has no Identity Gate PASS for its current state, the driver ran the render on stock and the message says that: run Identity Gate (DGX Monarch) with `slab_weights=on` where its stock reference fits, for p-h3-image with the upsampler switched off, then queue again. On a one-Spark fleet on 2026-11-05 this refusal came from the Worker's own wall, which named the box by its host name and said "this host", the one refusal of the `7c3eecb` checks to name a host. Since pull request #147 the Worker says "here"; on the pair the driver opens the sentence with the box's name, and on one box the sentence stands as it is ([#93](#93-a-multi-rank-render-refuses-before-any-rank-loads-and-names-a-box)). |
 | `slab_load_preflight` | Slab itself does not fit. The message includes the larger stock estimate, so disabling slab cannot help. |
 | Comfy-managed `stock_load_preflight` | That residency cannot fit and has forced slab off. Turn off `comfy_managed` and follow its reset requirements in [#62](#62-comfy-managed-residency-what-the-comfy_managed-widget-does-and-everything-it-refuses) before using slab. |
 
@@ -7997,10 +7997,12 @@ after a drop finds the room the loader found.
 
 ## 147. A MiniMax H3 render refuses, or fails in its output head, after a ComfyUI update
 
-**Symptom:** a MiniMax H3 or p-h3-image render refuses on the Workers with
-"this Worker's ComfyUI has a stacked PDD output head ... on a ComfyUI older
-than 0.45.0" or "a MiniMax H3 output head that takes ... where this build
-passes 'grids'", class P, before the render starts. With dgx-monarch 1.4.0 or
+**Symptom:** a MiniMax H3 or p-h3-image render under sequence parallelism
+refuses on the Workers with "this checkpoint's output head stacks ... PDD
+blocks, and this Worker's ComfyUI is older than 0.45.0", "a MiniMax H3 output
+head that takes ... where this build passes 'grids'" or "a MiniMax H3 output
+head whose arguments do not match the call this build makes", class P, before
+the render starts. With dgx-monarch 1.4.0 or
 an older dev build on ComfyUI 0.45.0, a render with a stacked head fails
 under sequence parallelism with `TypeError: 'float' object is not
 subscriptable` inside `FinalLayer.forward`. The comfy canary names
@@ -8009,8 +8011,10 @@ changed)` or the `minimax h3 pdd head` seam.
 
 **Cause:** ComfyUI 0.45.0 (ede4e5f) changed the H3 output head. Its last
 argument is one sigma grid per stream, where 0.44.x took the two flow shifts,
-and a stacked PDD head (a PDD checkpoint, or a PDD LoRA that widens a plain
-head) blends the blocks its step spans on that grid. This release needs
+and a stacked PDD head (a PDD checkpoint) blends the blocks its step spans on
+that grid. A PDD LoRA that widens a plain head refuses before any bake
+([#127](#127-a-lora-that-changes-a-weights-shape-refuses-before-any-bake)).
+This release needs
 ComfyUI 0.45.0 or newer, builds the grids as stock does, and reads the head's
 form when it binds the sharded forward. A one-block head never reads that
 argument, so on an older ComfyUI it still renders as v1.4.0 rendered it; a
@@ -8018,7 +8022,8 @@ stacked head there, or a head form this release does not know, refuses. Every
 H3 and p-h3-image file docs/MODELS.md lists has a one-block head.
 
 **Fix:** update ComfyUI to 0.45.0 or newer on the driver and on every Worker
-with the same commit on each (`dgxm doctor` and setup compare them), then
+with the same commit on each (`dgxm setup` refuses a pair whose ComfyUI commits
+differ, and every collective render checks them again before it dispatches), then
 reset the Attached mesh so no actor keeps the old ComfyUI imported. With
 1.4.0 on ComfyUI 0.45.0, update dgx-monarch too. A true single-GPU reference
 (`mode=local`, `gpus_per_host=1`) runs stock's own forward and needs neither.

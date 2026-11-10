@@ -500,6 +500,20 @@ class _OtherHead(_Head):
         raise AssertionError("the fake head never runs")
 
 
+class _ExtraHead(_Head):
+    """A later head that needs one more argument than the call passes."""
+
+    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, grids, extra):
+        raise AssertionError("the fake head never runs")
+
+
+class _DefaultedExtraHead(_Head):
+    """A later head whose added argument has a default, so the call still binds."""
+
+    def forward(self, x, t_emb, video_seg, audio_seg, sigma, sample_sigmas, grids, extra=None):
+        raise AssertionError("the fake head never runs")
+
+
 _HEAD = _Head()
 
 
@@ -536,7 +550,8 @@ def test_inject_usp_is_idempotent():
     assert model._forward.__func__.__name__ == first.__func__.__name__
 
 
-@pytest.mark.parametrize("head", [_Head(1), _Head(6)], ids=["one-block", "stacked"])
+@pytest.mark.parametrize("head", [_Head(1), _Head(6), _DefaultedExtraHead(6)],
+                         ids=["one-block", "stacked", "defaulted-extra"])
 def test_the_v045_head_form_goes_on(head):
     assert h3_packing.head_form(head) == h3_packing.HEAD_GRIDS
 
@@ -547,9 +562,11 @@ def test_the_v044_form_goes_on_with_a_one_block_head():
 
 
 @pytest.mark.parametrize("head, said", [
-    (_OldHead(2), "a stacked PDD output head (2 blocks) on a ComfyUI older than 0.45.0"),
+    (_OldHead(2), "this checkpoint's output head stacks 2 PDD blocks, and this Worker's "
+                  "ComfyUI is older than 0.45.0"),
     (_OtherHead(1), "takes 'sigma_grid' where this build passes 'grids'"),
-], ids=["v044-stacked", "unknown-name"])
+    (_ExtraHead(1), "output head whose arguments do not match the call this build makes"),
+], ids=["v044-stacked", "unknown-name", "required-extra"])
 def test_any_other_head_form_refuses_class_p_at_inject_naming_the_floor(head, said):
     model = _FakeH3()
     model.final_layer = head
@@ -572,7 +589,7 @@ def test_the_grid_follows_stocks_arithmetic_and_the_live_bank():
     grids = h3_packing.head_schedule(h3_packing.HEAD_GRIDS, _Head(4), (12.0, 3.0), _shift_stub)
     assert grids == tuple(h3_packing.pdd_grid(4, shift, _shift_stub) for shift in (12.0, 3.0))
     assert [len(grid) for grid in grids] == [5, 5]
-    # The bank is read at the call, so a LoRA that widens a plain head is followed.
+    # The bank is read at the call, as stock reads pdd_steps.
     head = _Head(1)
     head.video_out.weight = torch.zeros(4 * 3, 2)
     assert [len(grid) for grid in h3_packing.head_schedule(
