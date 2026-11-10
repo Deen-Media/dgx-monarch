@@ -718,7 +718,8 @@ MiniMax-H3-Image keeps its 51 adaLN linears on the curve basis in F16 beside a
 bf16 core, so its header reads `bf16` and the header proof counts those bytes
 as island bytes (`adapters/minimax_h3_image_header.py`); the loaded-model side
 of that rule belongs to the family's adapter. The header proof does not count
-a uint8 attention pin (`<block>.comfy_attention.config`), which is no weight.
+a uint8 attention pin (`<block>.comfy_attention.config`), which is no weight, so
+a bf16 or fp16 file that pins reaches the shard build, and the rule is: class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing approximate runs, no card asks, and the record says dropped (FSDP shard build), on every `+fsdp` preset and for every family.
 fp32 parameters inside a bf16 core are islands
 (`adapters/fsdp_islands.py`): when they hold at most 5%
 of the checkpoint bytes the header proof still reads `bf16`, the live scan

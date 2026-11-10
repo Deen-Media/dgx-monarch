@@ -241,20 +241,6 @@ def detect_quant_from_header(keys: list[str], header: dict) -> str:
     return "bf16"
 
 
-def _bytes_by_dtype(header: dict) -> dict[str, int]:
-    """Total tensor bytes per safetensors dtype name, from a parsed header."""
-    tensors = header.get("__tensors__", {})
-    out: dict[str, int] = {}
-    for info in tensors.values():
-        if not isinstance(info, dict):
-            continue
-        offsets = info.get("data_offsets") or (0, 0)
-        size = int(offsets[1]) - int(offsets[0]) if len(offsets) == 2 else 0
-        name = str(info.get("dtype", ""))
-        out[name] = out.get(name, 0) + max(size, 0)
-    return out
-
-
 def sniff_fsdp_launch_quant_proof(path: str | Path) -> FsdpLaunchQuantProof:
     """Return strict on-disk precision bound to the parsed inode.
 
@@ -335,7 +321,7 @@ def fsdp_lora_admission_property(path: str | Path) -> str | None:
         return None
     stripped = [_strip_prefix(k) for k in keys]
     tensors = header.get("__tensors__", {})
-    dtypes = set(_bytes_by_dtype(header))
+    dtypes = {str(info.get("dtype", "")) for info in tensors.values() if isinstance(info, dict)}
     metadata_keys = {k for k in header if k != "__tensors__"}
     if (
         any(k == "scaled_fp8" or k.endswith(".scaled_fp8") for k in stripped)

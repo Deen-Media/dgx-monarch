@@ -25,7 +25,8 @@ Three more facts come from the header, none needing the model:
 * The family itself, which this release carries no model forward for: the
   upstream gate refuses every file of the family before any load.
 
-Standard library only, like ``upstream_gate.py``, so headless callers can import it.
+Its own imports are standard library only, as ``upstream_gate.py``'s are; importing
+it still loads the ``dgx_monarch.adapters`` package, whose registry imports torch.
 """
 from __future__ import annotations
 
@@ -66,6 +67,8 @@ def grid_missing(metadata: Mapping[str, Any] | None) -> bool:
     ComfyUI reads the grid with ``json.loads(metadata["config"])["transformer"]``
     and passes it to the model, which takes no default. A grid that is not a
     non-empty list of numbers, or a config that is not JSON, counts as missing.
+    The length against ``pdd_steps`` is not checked here; the family's adapter
+    checks it when it retires the family refusal.
     """
     raw = (metadata or {}).get("config")
     if not isinstance(raw, str):

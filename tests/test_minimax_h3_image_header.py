@@ -11,8 +11,10 @@ against ComfyUI's own detection.
 from __future__ import annotations
 
 import json
+import re
 import sys
 import types
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -29,6 +31,13 @@ from dgx_monarch.nodes.loaders import DGXMonarchUNETLoader
 from dgx_monarch.refusal import RefusalClass, parse_leading_refusal_tag
 
 GRID, FAMILY = upstream_gate.H3_IMAGE_GRID_TROUBLESHOOTING, upstream_gate.H3_IMAGE_FAMILY_TROUBLESHOOTING
+TROUBLESHOOTING = Path(__file__).resolve().parents[1] / "docs" / "TROUBLESHOOTING.md"
+
+
+def _heading(number: int) -> str:
+    """The title of TROUBLESHOOTING entry ``number``, so a missed renumber fails here."""
+    headings = dict(re.findall(r"^## (\d+)\. (.+)$", TROUBLESHOOTING.read_text(), re.MULTILINE))
+    return headings[str(number)]
 
 
 @pytest.fixture
@@ -137,8 +146,10 @@ def test_a_file_without_its_sigma_grid_refuses_first(tmp_path, metadata):
     path = h3i.write(tmp_path / "nogrid.safetensors", "bf16", blocks=2, metadata=metadata)
     body, number = upstream_gate.refusal_for(str(path))
     assert number == GRID == 147
+    assert _heading(GRID).startswith("A MiniMax-H3-Image file refuses")
     assert body == upstream_gate.H3_IMAGE_GRID_REFUSAL
-    assert "transformer.pdd_sigmas" in body and "TypeError" in body
+    assert "transformer.pdd_sigmas" in body
+    assert "a file without the grid raises a TypeError" in body
 
 
 def test_with_its_grid_the_family_refuses_and_names_the_stock_path(files):
@@ -146,6 +157,7 @@ def test_with_its_grid_the_family_refuses_and_names_the_stock_path(files):
         body, number = upstream_gate.refusal_for(str(files / f"{kind}.safetensors"))
         assert number == FAMILY == 148
         assert body == upstream_gate.H3_IMAGE_FAMILY_REFUSAL
+    assert _heading(FAMILY).startswith("A MiniMax-H3-Image render refuses")
     for token in ("minimax_h3_image", "ComfyUI 0.45.0", "Load Diffusion Model",
                   "Nothing was loaded and nothing was quarantined", "no waiver"):
         assert token in upstream_gate.H3_IMAGE_FAMILY_REFUSAL
@@ -226,11 +238,13 @@ def test_forcing_the_h3_video_adapter_cannot_walk_past_the_gate(files):
     assert worker.store.calls == []
 
 
-def test_the_h3_nodes_refuse_the_family_once_detection_names_it():
-    """ModelSamplingMiniMaxH3 and the H3 context windows key on minimax_h3 by equality."""
-    reason = h3_sigma_shift.family_refusal_reason(h3_image.FAMILY)
+def test_the_h3_nodes_refuse_the_family_once_detection_names_it(tmp_path):
+    """ModelSamplingMiniMaxH3 and the H3 context windows key on minimax_h3 by equality,
+    and pass `unknown`, so they refuse this family only because the header names it."""
+    family = detect.sniff_checkpoint(str(h3i.write(tmp_path / "f.safetensors", blocks=2)))[0]
+    reason = h3_sigma_shift.family_refusal_reason(family)
     assert reason is not None and "reads as minimax_h3_image" in reason
-    assert h3_context_windows.family_refusal_reason(h3_image.FAMILY) is not None
+    assert h3_context_windows.family_refusal_reason(family) is not None
 
 
 class _ComfyAttention(torch.nn.Module):

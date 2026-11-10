@@ -508,14 +508,17 @@ than stacks on a repeat call.
    its config on any load whose state dict lacks the key, so a pin that
    reached that build would not run, and the record would name it. The FSDP
    launch check does not count a uint8 config tensor
-   (`fsdp_islands.proof_bytes_by_dtype`), since it is no weight, so a bf16
-   checkpoint whose own header pins now proves its precision and reaches that
-   build, which clears its pins; the clearing stays, and the record says
-   dropped. The one such shipped file, MiniMax-H3-Image's BF16 DiT, meets the
-   family's loader refusal first until its adapter lands
+   (`fsdp_islands.proof_bytes_by_dtype`), since it is no weight, so a bf16 or
+   fp16 checkpoint whose own header pins now proves its precision and reaches
+   that build, which clears its pins. The rule: class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing approximate runs, no card asks, and the record says dropped (FSDP shard build), on every `+fsdp` preset and for every family. The Init
+   widget's kernel runs instead, so the render differs from stock's pinned
+   render on one GPU by construction, as on uly2. The one such shipped file,
+   MiniMax-H3-Image's BF16 DiT, meets the family's loader refusal first until
+   its adapter lands
    ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-minimax-h3-image-render-refuses-at-the-loader)).
-   An fp8 or int8 checkpoint takes the direct wrap, which reloads nothing, so
-   its pins stay, run and ask for the waiver as on a resident topology. A
+   A checkpoint ComfyUI loads as quantized tensors (the fp8 and int8 files
+   listed here) takes the direct wrap, which reloads nothing, so its pins
+   stay, run and ask for the waiver as on a resident topology. A
    LoRA's pin is
    expected to run under either wrap, since `patch_model` puts it in place
    after the wrap; no hardware run has checked that yet. A kernel ComfyUI

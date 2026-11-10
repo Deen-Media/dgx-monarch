@@ -58,10 +58,11 @@ DROPPED_SCALE_REFUSAL = (
 # MiniMax-H3-Image (adapters/minimax_h3_image_header.py). The grid answers before
 # the family: it is a fault of the file that stays after the adapter lands.
 H3_IMAGE_GRID_REFUSAL = (
-    "this MiniMax-H3-Image checkpoint's header has no transformer.pdd_sigmas in its "
-    "config metadata. ComfyUI builds this model from that sigma grid and has no default "
-    "for it, so stock ComfyUI fails to load the file with a TypeError, and dgx-monarch "
-    "has nothing to render. Nothing was loaded and nothing was quarantined. No consent "
+    "this MiniMax-H3-Image checkpoint's header has no usable transformer.pdd_sigmas (a "
+    "list of numbers) in its config metadata. ComfyUI builds this model from that sigma "
+    "grid and has no default for it, so stock ComfyUI cannot build it from this file (a "
+    "file without the grid raises a TypeError), and dgx-monarch has nothing to render. "
+    "Nothing was loaded and nothing was quarantined. No consent "
     "can supply the grid, so no card will appear and there is no waiver for this "
     "refusal. Use the file as Comfy-Org/MiniMax-H3-Image publishes it, whose config "
     "carries the grid, or restore the config metadata of the export it came from."

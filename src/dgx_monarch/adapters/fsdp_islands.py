@@ -33,7 +33,7 @@ FP32_ISLANDS_MAX_BYTES = 4 * 1024 * 1024 * 1024
 CORE_HEADER_DTYPES = {"BF16": "bf16", "F16": "fp16"}
 ISLAND_HEADER_DTYPE = "F32"
 # ComfyUI's per-block attention pin, a uint8 JSON tensor ComfyAttention pops at
-# load: it is no weight, so the precision proof does not count it.
+# load: it is no weight, so the precision proof does not count it, for any family.
 PIN_CONFIG_SUFFIX = ".comfy_attention.config"
 # Modules a family runs outside its diffusion model's forward. ComfyUI calls
 # ``BaseModel.extra_conds`` once per sampling, before the denoise loop, and
@@ -129,7 +129,10 @@ def classify_fp32_islands(
 def proof_bytes_by_dtype(tensors: dict[str, Any], islands: frozenset[str] = frozenset()) -> dict[str, int]:
     """Bytes per dtype for ``header_core_kind``, from parsed header descriptors.
 
-    A uint8 attention pin (``PIN_CONFIG_SUFFIX``) is skipped. A tensor named in
+    A uint8 attention pin (``PIN_CONFIG_SUFFIX``) is skipped, for every family:
+    a pinned bf16 or fp16 file then reaches the shard build, which drops the
+    pins, so nothing approximate runs, no card asks, and the record says
+    dropped (FSDP shard build) on every ``+fsdp`` preset. A tensor named in
     ``islands`` counts as island bytes (``ISLAND_HEADER_DTYPE``) whatever its
     dtype, under the same ceiling: MiniMax-H3-Image's F16 adaLN linears
     (``minimax_h3_image_header.f16_islands``), which the family's FSDP wrap must

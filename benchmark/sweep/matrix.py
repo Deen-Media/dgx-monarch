@@ -852,8 +852,11 @@ def pin_summary(pins: dict[str, attention_pins.BlockPin] | None,
     keys, so ComfyAttention clears every pin and the record says dropped
     (``attention_pins.note_injected``). The launch check does not count the
     uint8 config tensors (``fsdp_islands.proof_bytes_by_dtype``), so a pinned
-    header reaches that build. An fp8 or int8 file takes the direct wrap, which
-    keeps its pins (adapters/fsdp.py).
+    header reaches that build. A checkpoint ComfyUI loads as quantized tensors
+    takes the direct wrap, which keeps its pins (adapters/fsdp.py). The runtime
+    picks the path by that, not by the launch kind; an fp8 file whose weights
+    load as plain float8 tensors would take the shard build, and no listed fp8
+    file pins.
     """
     if not pins:
         return None
