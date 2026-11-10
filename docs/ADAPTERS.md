@@ -484,8 +484,9 @@ than stacks on a repeat call.
      is neither: the checkpoint or LoRA picked it, and it runs on both legs
      of the cfg2 same-math gate, so that gate cannot see it. So it takes the
      waiver too. A kernel this project has not classified counts as
-     approximate. On one rank (`single`) a checkpoint's own header pins run
-     as stock ComfyUI runs them, so they ask nothing: no refusal, no stamp
+     approximate. In a world of one rank (`single` on one GPU; a two-box
+     mesh's `single` keeps the card) a checkpoint's own header pins run as
+     stock ComfyUI runs them, so they ask nothing: no refusal, no stamp
      and no ledger row, and the first-use ceremony runs every leg with them.
      "Its own" is read strictly (`attention_pins_source.py`): any LoRA object
      patch on a `comfy_attention` path counts as a LoRA pin, one that restates
@@ -497,11 +498,13 @@ than stacks on a repeat call.
      the operator grants the Sol-Attn waiver for that checkpoint, topology
      and world
      ([docs/TROUBLESHOOTING.md #117](TROUBLESHOOTING.md#117-a-render-refuses-because-the-checkpoint-or-a-lora-pins-an-attention-kernel)).
-     cfg2, dp2 and their `+fsdp` forms keep that rule for a header pin too:
-     docs/VALIDATION.md records cfg2 against the pinned one-GPU render
-     identical on the vendor-length prompt and at one-step NRMS 0.015 to
-     0.016 on the one-block prompt, and the cause of that gap is not
-     established.
+     cfg2, dp2 and their `+fsdp` forms keep that rule for a header pin
+     wherever the pins run, which is the fp8 and int8 direct wrap and every
+     form without FSDP: docs/VALIDATION.md records cfg2 against the pinned
+     one-GPU render identical on the vendor-length prompt and at one-step
+     NRMS 0.015 to 0.016 on the one-block prompt, and the cause of that gap
+     is not established. A bf16 or fp16 file under `+fsdp` renders with its
+     pins dropped and recorded: class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing approximate runs, no card asks, and the record says dropped (FSDP shard build), on every `+fsdp` preset and for every family.
      The card says the kernel is approximate by construction and claims no
      measurement for it. The pack decides from the pins, the LoRA stack and the
      topology, never from whether ComfyUI could bind the kernel on this host,

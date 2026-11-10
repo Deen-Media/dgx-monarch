@@ -6078,8 +6078,9 @@ attention module. It ships two such kernels, `comfy_kitchen_sol` (sparse
 attention, with a tau) and `comfy_kitchen_int8` (q, k, v and the attention
 weights rounded to 8 bits), and both are approximate by construction. On a
 topology without sequence parallelism ComfyUI runs the pinned kernel as it
-does on one GPU. On one GPU (`single`) the checkpoint's own pins run as stock
-ComfyUI runs them, so nothing refuses and nothing is stamped. On cfg2, dp2,
+does on one GPU. On one GPU (`single` in a world of one rank; a two-box mesh's
+`single` keeps the card) the checkpoint's own pins run as stock ComfyUI runs
+them, so nothing refuses and nothing is stamped. On cfg2, dp2,
 cfg2+fsdp and dp2+fsdp, and on one GPU when a LoRA in the stack sets or
 restates a pin, dgx-monarch refuses before any sampling unless the operator
 has granted the waiver. The message names the kernels, the number of attention

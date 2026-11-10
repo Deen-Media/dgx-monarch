@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-flux3-klein-t2i, with only the changes needed for this test. The vendor's file recipe without the prompt upsampler: the step-distilled INT8 ConvRot DiT and the INT8 ConvRot text encoder. The DiT pins comfy-kitchen's INT8 attention on 33 blocks, so single renders with it as stock ComfyUI does and asks nothing, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pins. The text encoder stores INT8 weights and ComfyUI runs its matmuls at full precision."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-flux3-klein-t2i, with only the changes needed for this test. The vendor's file recipe without the prompt upsampler: the step-distilled INT8 ConvRot DiT and the INT8 ConvRot text encoder. The DiT pins comfy-kitchen's INT8 attention on 33 blocks, so single on one GPU renders with it as stock ComfyUI does and asks nothing, cfg2 and dp2 ask for the Sol-Attn waiver, and uly2 drops the pins. The text encoder stores INT8 weights and ComfyUI runs its matmuls at full precision."
    ],
    "title": "DGX Monarch | FLUX.3 Klein INT8 ConvRot"
   },
