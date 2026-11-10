@@ -1379,6 +1379,23 @@ than stacks on a repeat call.
    factor 27 against a fitted 21.5) covers that at world 2; a larger world
    needs a refit.
 
+   **MiniMax H3 output head and block loop.** The H3 adapter rebinds only
+   `_forward`, so stock's `forward` still runs it inside ComfyUI's malloc
+   graph under comfy-managed residency, and the sharded block loop pops the prefetch queue as stock does:
+   every block with `malloc_scope="block"`, then one closing pop with the same
+   scope, queue or not, so each block stays one scope of the recorded
+   allocation plan. The output head runs once, on the gathered stream at
+   stock's rows. Its last argument follows ComfyUI 0.45.0, one sigma grid per
+   stream built with stock's `pdd_grid` arithmetic from the two flow shifts
+   (`adapters/minimax_h3_packing.head_schedule`); injection reads the
+   installed head's form once (`head_form`) and refuses class P where this
+   build cannot drive it: a stacked PDD head on 0.44.x's form, or a name it
+   does not know ([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+   A one-block head on 0.44.x's form never reads that argument and goes on,
+   as v1.4.0 rendered it. `tests/test_h3_head_form_comfy.py` holds the head,
+   the grid and the pops to stock on the installed ComfyUI, and canary seam 25
+   reads the three values the head is handed.
+
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,
    so they cannot be wired into an ordinary DGX graph. If an out-of-tree

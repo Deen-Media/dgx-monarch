@@ -54,6 +54,7 @@ on:
       - "tests/test_h3_context_windows_comfy.py"
       - "tests/test_h3_sigma_shift_comfy.py"
       - "tests/test_p_h3_image_comfy_exactness.py"
+      - "tests/test_h3_head_form_comfy.py"
       - "tests/test_wan22_ti2v_templates.py"
       - "tests/test_lora_shape_guard.py"
       - "tests/test_mage_flow_comfy_differential.py"
@@ -363,11 +364,15 @@ jobs:
         run: pytest -q tests/test_h3_context_windows_comfy.py
       # ModelSamplingMiniMaxH3 (DGX Monarch) applies ComfyUI's shift node on the
       # render clone, and p-h3-image's one-frame graph through the H3 sharded
-      # forward gives stock's bits at world 1.
+      # forward gives stock's bits at world 1. The head-form file holds a
+      # stacked PDD head and the block loop's prefetch calls to stock's on the
+      # installed ComfyUI, and the adapter's grid to stock's pdd_grid.
       - name: MiniMax H3 shift carrier and p-h3-image forward vs comfy master (CPU)
         env:
           COMFYUI_DIR: ../ComfyUI
-        run: pytest -q tests/test_h3_sigma_shift_comfy.py tests/test_p_h3_image_comfy_exactness.py
+        run: >-
+          pytest -q tests/test_h3_sigma_shift_comfy.py tests/test_p_h3_image_comfy_exactness.py
+          tests/test_h3_head_form_comfy.py
       # The Wan 2.2 TI2V 5B start image gives per-frame timesteps; the Wan
       # sequence-parallel forward must hand every token stock's on one rank.
       - name: Wan 2.2 TI2V per-frame timesteps vs comfy master (CPU)
@@ -468,6 +473,7 @@ jobs:
           tests/test_h3_context_windows_comfy.py
           tests/test_h3_sigma_shift_comfy.py
           tests/test_p_h3_image_comfy_exactness.py
+          tests/test_h3_head_form_comfy.py
           tests/test_wan22_ti2v_templates.py
           tests/test_lora_shape_guard.py
           tests/test_moss_image_skip_end_to_end.py

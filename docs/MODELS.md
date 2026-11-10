@@ -27,7 +27,7 @@ Templates > dgx-monarch** in ComfyUI, or use the links below.
 | [FLUX.3 Klein](#model-flux-3-klein) | Step-distilled and base text-to-image and reference editing | Needs ComfyUI 0.41.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. BF16 and NVFP4 Ulysses text to image up to 1536 square matched one GPU exactly. Since the fused-norm parity change, edits and text to image at 704 square or below on uly2 are bit-identical to one GPU too, confirmed on hardware on 2026-10-16. See the [tested configurations](VALIDATION.md#evidence-flux-3-klein). |
 | [MOSS-Image SFT and Base](#model-moss-image-sft) | Text-to-image, and a JSON layout prompt on SFT | Needs ComfyUI 0.42.0 or newer. Start with the BF16 workflows: the INT8 files pin an approximate attention kernel. Keep the template's 50 Euler steps at CFG 3 on the `normal` scheduler and its Skip Layer Guidance (DGX Monarch) node, which skips layer 22 on the negative pass; cfg2 refuses while that skip is on. BF16 Ulysses matched one GPU exactly, up to 2048 square on SFT; see the [tested configurations](VALIDATION.md#evidence-moss-image-sft). |
 | [Kromoss](#model-kromoss) | Text-to-image at 50 steps, and at 8 steps with a DMD LoRA | A MOSS-Image Base fine-tune on the same files and adapter. Pin the manifest's revision: the vendor replaces the files under the same names. Use the DMD LoRAs with the BF16 file: a LoRA on the INT8 file refuses. BF16 Ulysses at 1024 and 1536 square matched one GPU exactly; see the [tested configurations](VALIDATION.md#evidence-kromoss). |
-| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.44.0 or newer. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, which renders it on one Spark. BF16, INT8 ConvRot and W4A8 matched stock on one rank, and uly2 matched one rank, on hardware on 2026-11-05. |
+| [p-h3-image](#model-p-h3-image) | Text to image at 8 MP in 8 steps, and edits with reference images | Needs ComfyUI 0.45.0 or newer, as this whole release does. A MiniMax H3 DiT on the H3 adapter. Keep the template's ModelSamplingMiniMaxH3 (DGX Monarch) at 1.0 and 1.0 and its prompt upsampler. On stock residency the BF16 DiT does not fit one Spark beside the BF16 upsampler: the loader refuses before anything loads, names the files that fit and offers the slab card, which renders it on one Spark. BF16, INT8 ConvRot and W4A8 matched stock on one rank, and uly2 matched one rank, on hardware on 2026-11-05. |
 | [Ideogram4](#model-ideogram4) | Dual-model text-to-image | Explicit cfg2 puts the conditional and unconditional checkpoints on separate ranks. Use the supplied guider and sampler wiring. |
 | [Qwen Image 2.1](#model-qwen-image-2-1) | Text-to-image, RGBA and masked-reference editing, up to ten references in the shipped graph | Use Torch Flash. Reference masks condition generation; they do not lock output pixels. |
 | [Mage Flow](#model-mage-flow-t2i-edit-quality-turbo) | Quality, Turbo, Edit and Edit Turbo | Each variant needs its own checkpoint and graph. |
@@ -1736,6 +1736,24 @@ supports (`src/dgx_monarch/stock_widget_drift.py`).
 DiT and runs on this adapter; [its own section](#model-p-h3-image) covers its
 files, its template and ModelSamplingMiniMaxH3 (DGX Monarch), which sets the
 two H3 shifts on every Worker.
+
+**ComfyUI 0.45.0.** This release needs ComfyUI 0.45.0 or newer (docs/INSTALL.md).
+ComfyUI ede4e5f (#17655, in 0.45.0) changed the output head's last argument
+from the two flow shifts to one sigma grid per stream, and moved a stacked
+PDD head's block choice onto that grid. The sharded forward builds the grids
+with stock's arithmetic and reads the installed head's form when it binds:
+under sequence parallelism, a stacked head on an older ComfyUI, or a head
+form this release does not know, refuses class P before the render starts
+([TROUBLESHOOTING #147](TROUBLESHOOTING.md#147-a-minimax-h3-render-refuses-or-fails-in-its-output-head-after-a-comfyui-update)).
+Every H3 and p-h3-image file listed here has a one-block head, which never
+reads that argument, so each renders as it did on 0.44.0. On CPU the sharded
+forward returns stock's bits at world 1 on 0.45.0 with one, two and four head
+blocks, the sampler's table on the head grid, off it, and in steps that span
+several head intervals (`tests/test_h3_head_form_comfy.py`). Stock's own stacked-head output differs
+between 0.44.0 and 0.45.0 for a schedule off the head grid, so a pixel compare
+across the two releases means nothing. The H3 records below ran on ComfyUI
+`8a98ecf58` (v0.44.0 code); the 0.45.0 rows are NOT RUN
+([VALIDATION](VALIDATION.md#comfyui-0450)).
 
 **Sol-H3-VAE decoder.** Sol-H3-VAE (`Efficient-Large-Model/Sol-H3-VAE`, file
 `sol_h3_vae.safetensors`) is H3's video decoder pruned to 24 layers and
