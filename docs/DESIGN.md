@@ -499,12 +499,23 @@ whose stock forward stops reading the norm global runs unfilled, and the
 Worker log names it. That path read bit-identical at the shipped sizes and
 off one GPU at 512 square, as every render did before the route, so it does
 not refuse as FLUX.3 does, whose unfilled path missed at shipped sizes. Wan
-2.1 read bit-identical at every size measured, so it runs unfilled. LTX 2.3
-read off one GPU at every size, the shipped one included, where every call
-holds far more than 1024 rows, so the switch does not explain it and its
-calls run unfilled until a probe finds the cause (VALIDATION.md).
-HunyuanVideo 1.5 runs the same Flux blocks in its own sharded forward,
-unfilled and unchecked
+2.1 read bit-identical at every size measured, so it runs unfilled. LTX
+applies it, through the same `at_stock_rows`, to every `rms_adaln` call of
+its sharded blocks, the text cross attention's included, each filled to its
+stream's stock rows, and to the per-head gate projection, a GEMM one column
+a head wide (`adapters/ltx_parity.py`). On 2026-11-07 LTX 2.3 on uly2 read
+one-step latent NRMS 0.012 to 0.014 against one GPU at every geometry tried,
+the shipped one included, where every call holds far more than 1024 rows,
+and an op probe found the cause: the gate projection rounded tens of
+thousands of a rank's outputs differently from stock's call at every LTX
+geometry, on cuBLAS 13.4.0.1 and 13.4.1.3 alike, and the fused AdaLN did so
+at 1024 rows a rank only. The fill was exact with the rank's rows at the
+front, as `at_stock_rows` places them, as it was with the rows at their
+stock offset. `at_stock_rows` keeps the op's own output width, so the gate's
+one column a head comes back as stock's does. Like FLUX.3's, LTX's unfilled
+path missed at the shipped size, so a block that stops reading the routed
+globals refuses a sharded render. HunyuanVideo 1.5 runs the same Flux blocks
+in its own sharded forward, unfilled and unchecked
 ([issue #54](https://github.com/Deen-Media/dgx-monarch/issues/54)).
 
 Ranks must also agree on each model call's batch. ComfyUI's

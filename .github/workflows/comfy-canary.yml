@@ -60,6 +60,7 @@ on:
       - "tests/test_qwen_image21_adapter.py"
       - "tests/test_qwen_image21_prefix_cache.py"
       - "tests/test_adaln_parity_blocks.py"
+      - "tests/test_ltx_comfy_exactness.py"
       - "tests/test_qwen_text_projections.py"
       - "tests/test_render_memory_price.py"
       - "tests/test_wan_variants.py"
@@ -335,6 +336,13 @@ jobs:
         env:
           COMFYUI_DIR: ../ComfyUI
         run: pytest -q tests/test_moss_image_comfy_exactness.py tests/test_moss_image_parity.py
+      # LTX's stock-row parity route (adapters/ltx_parity.py): a toy LTXAV
+      # against two rank threads, every gate and fused AdaLN call at its
+      # stream's stock rows, the paired rope, and each rank's output.
+      - name: LTX stock-row parity vs comfy master (CPU)
+        env:
+          COMFYUI_DIR: ../ComfyUI
+        run: pytest -q tests/test_ltx_comfy_exactness.py
       # The Skip Layer Guidance carrier installs ComfyUI's node on the render
       # clone and reaches MOSS-Image's sharded forward end to end; the LoRA
       # shape guard reads ComfyUI's own shape predicate.
@@ -449,6 +457,7 @@ jobs:
           tests/test_qwen_image21_adapter.py
           tests/test_qwen_image21_prefix_cache.py
           tests/test_adaln_parity_blocks.py
+          tests/test_ltx_comfy_exactness.py
           tests/test_wan_variants.py
           tests/test_int8_linear_layout.py
           tests/test_render_memory_price.py

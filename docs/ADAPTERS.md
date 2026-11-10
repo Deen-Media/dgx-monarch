@@ -1316,6 +1316,69 @@ than stacks on a repeat call.
    from 1024 to 2048 square, and the 8-step Kromoss graph with its DMD2
    LoRA 1.51x ([BENCHMARKS](BENCHMARKS.md#moss-image-one-gpu-and-uly2-2026-10-21-to-2026-10-22-head-capped)).
 
+   **LTX stock-row parity.** LTX shards each stream once, before the block
+   loop, and runs stock's block code on the rank's rows. Two calls in an LTX
+   block round a row by the call's row count: comfy-kitchen's fused
+   `rms_adaln`, which takes its warp kernel at 1024 kernel rows or fewer, and
+   the per-head gate projection `to_gate_logits`, a GEMM one column a head
+   wide, which cuBLAS ran differently at every rank row count an op probe
+   tried. While the sharded loop runs, `adapters/ltx_parity.py` launches both
+   at the stream's stock row count. Each block gets a per-instance
+   `forward`, and LTXAV's `_apply_text_cross_attention` one too, that runs
+   stock's code with its `comfy` global read through an overlay whose
+   `quant_ops.ck.rms_adaln` fills the call with zero rows to stock's count,
+   the rank's rows at the front, as FLUX.3's `at_stock_rows` does; the text
+   cross attention's `apply_cross_attention_adaln` names its stream by the
+   attention it is handed. Each gate Linear gets a per-instance `forward` that
+   sends its call through the same `at_stock_rows`, which keeps the op's own
+   output width, one column a head. Outside the loop every bound call is
+   stock's own. The patched self-attention pairs q and k through
+   `apply_rotary_emb_qk` where stock does. At batch 2 a rank's shard of a
+   stream is a strided view of the padded stream, and a padded attention's
+   output a strided view too; LTXV's plain text cross attention and its
+   ungated `to_out` would hand those straight to a Linear, and torch fuses the
+   bias only for a contiguous input, so a strided one takes `matmul` and a
+   separate bias add where stock's takes one `addmm`. The bound loop makes each
+   shard contiguous and the patched attention returns a contiguous output,
+   the layout stock's linears get. That costs one copy of the rank's stream a
+   forward at batch 2, and a copy of the attention output only when a padded
+   call returns it strided; at batch 1 both are no-ops. A stock block that stops reading
+   those globals refuses a sharded render class P at inject before any block
+   binds, a call of an unplanned row count refuses class P, and canary seam 51
+   names the change. A ComfyUI change the inject check cannot see, such as a
+   gate computed without its module, runs those calls unfilled until canary
+   seam 51 flags it. `tests/test_ltx_comfy_exactness.py` runs stock's toy
+   LTXAV against two rank threads and checks every gate and norm call's rows
+   and each rank's output.
+
+   Hardware results: on 2026-11-07, before this route, LTX 2.3's one-step
+   uly2 latents read NRMS 0.0116 to 0.0137 against one GPU at 1280x704x121,
+   512x512x121 and 512x512x57, with Wan 2.1 identical on the same build. An
+   op probe at LTX 2.3's shapes the same day, on torch 2.15 and torch 2.12,
+   found the gate projection rounding 21,000 to 101,000 of a rank's outputs
+   differently from stock's call at 7040, 2048 and 1024 rows a rank (the
+   worse of the two rank windows at each size), and the
+   fused AdaLN at 1024 rows only; filled to stock's rows, either at the front
+   or at the stock offset, both gave stock's bits, and the wide GEMMs, the q
+   and k norm and RoPE kept a row's bits unfilled
+   ([VALIDATION](VALIDATION.md#evidence-ltx-2-3-t2v)). No hardware run has
+   read the latents with the route yet.
+
+   Performance cost, sequence parallelism only. Per model call each rank runs
+   every `rms_adaln` call and every gate projection over its stream's stock
+   rows. At 1280x704x121 a fill copies the rank's 7040 rows (57.7 MB) into a
+   stock-size call and zeroes the rest, and the op then reads the extra rows:
+   about five such slabs of traffic for each of the 144 `rms_adaln` calls and
+   four for each of the 96 gate calls, 64 GB a forward, about 0.23 s at GB10's
+   273 GB/s, or about 4 percent of the 5.93 s one-step sample Check 9
+   recorded. The hardware re-read times it.
+   At batch 1 each filled `rms_adaln` result also keeps its stock-size output
+   until the attention or feed-forward that reads it finishes, so a rank holds
+   up to 2 x world - 1 more bf16 copies of its rows during a call and
+   world - 1 after it. The LTX activation price (`ltx25_calibration.py`, block
+   factor 27 against a fitted 21.5) covers that at world 2; a larger world
+   needs a refit.
+
    Comfy model-option attention hooks are a separate contract. Stock patch
    nodes such as NAG consume `MODEL`, while DGX loaders publish `DGXM_MODEL`,
    so they cannot be wired into an ordinary DGX graph. If an out-of-tree

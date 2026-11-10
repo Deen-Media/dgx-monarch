@@ -48,6 +48,15 @@ HELPER_LEAF_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ldm.wan.model", "sinusoidal_embedding_1d", positional=("dim", "position")),
     _call("comfy.ldm.cogvideo.model", "get_timestep_embedding", positional=("timesteps", "dim", "flip_sin_to_cos", "downscale_freq_shift")),
     _call("comfy.ldm.lightricks.model", "apply_rotary_emb", positional=("input_tensor", "freqs_cis")),
+    # LTX's stock-row parity (adapters/ltx_parity.py): the patched self-attention pairs rope
+    # as stock does, and each block's fused AdaLN, its own and the text cross attention's,
+    # launches at its stream's stock rows.
+    _call("comfy.ldm.lightricks.model", "apply_rotary_emb_qk", positional=("q", "k", "freqs_cis")),
+    _call("comfy.ldm.lightricks.model", "apply_cross_attention_adaln",
+          positional=("x", "context", "attn", "q_shift", "q_scale", "q_gate",
+                      "prompt_scale_shift_table", "prompt_timestep", "attention_mask",
+                      "transformer_options")),
+    _call("comfy.quant_ops", "ck.rms_adaln", positional=("x", "scale", "shift", "eps")),
     # LTX guide attenuation. The adapter reads this object's two rectangles and
     # re-expresses them as query groups, so its identity is a live dependency.
     _attr("comfy.ldm.lightricks.model", "GuideAttentionMask"),
@@ -206,6 +215,16 @@ REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS: tuple[Touchpoint, ...] = (
     _call("comfy.ldm.flux3.model", "Flux3.rope", positional=("self", "ids")),
     _call("comfy.ldm.flux3.model", "Block.forward",
           positional=("self", "x", "spans", "pe", "transformer_options")),
+    # LTX's sharded block loop runs stock's block code with the fused AdaLN routed to
+    # stock's rows; the text cross attention names its stream by the attention it gets.
+    _call("comfy.ldm.lightricks.av_model", "BasicAVTransformerBlock.forward",
+          "transformer_options", positional=("self", "x")),
+    _call("comfy.ldm.lightricks.av_model", "BasicAVTransformerBlock._apply_text_cross_attention",
+          positional=("self", "x", "context", "attn", "scale_shift_table",
+                      "prompt_scale_shift_table", "timestep", "prompt_timestep",
+                      "attention_mask", "transformer_options")),
+    _call("comfy.ldm.lightricks.model", "BasicTransformerBlock.forward",
+          "transformer_options", positional=("self", "x")),
     # MOSS-Image's sharded forward checks the stock tree at inject, calls
     # stock's rope in each of its three forms (five names are the prefix all
     # three share; the seam picks the call by the exact names), and runs

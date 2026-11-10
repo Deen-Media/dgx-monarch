@@ -702,7 +702,7 @@ def test_adapter_bind_sites_and_rebound_contracts_are_a_bijection():
         touchpoint.path for touchpoint in REWRITTEN_FORWARD_CALLEE_TOUCHPOINTS
     }
     assert rebound_paths == set(contract_paths)
-    assert (len(rebound_paths), len(caller_paths), len(callee_paths)) == (43, 2, 19)
+    assert (len(rebound_paths), len(caller_paths), len(callee_paths)) == (43, 2, 22)
     assert rebound_paths.isdisjoint(caller_paths | callee_paths)
 
 

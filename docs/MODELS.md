@@ -123,7 +123,7 @@ that match the tested configurations in its model details. See
 
 | Model | single | cfg2 | Ulysses | ring | FSDP | Status | Notes |
 |---|:--:|:--:|:--:|:--:|:--:|:--:|---|
-| LTX 2.3 (t2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | Native RDMA remains NOT RUN / HOLD. uly2 at the shipped 1280x704x121 is measured, not the same math, at the latent: one-step NRMS 0.0116 against one GPU on 2026-11-07, cause not identified. [Details](#model-ltx-2-3-t2v) · [Workflow](../example_workflows/dgx-monarch-ltx-t2v.json) |
+| LTX 2.3 (t2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | Native RDMA remains NOT RUN / HOLD. uly2 at the shipped 1280x704x121 is measured, not the same math, at the latent: one-step NRMS 0.0116 against one GPU on 2026-11-07 (0.012 to 0.014 over three geometries), traced to the per-head gate projection, which 1.5 runs at one GPU's rows; not yet re-read on hardware. [Details](#model-ltx-2-3-t2v) · [Workflow](../example_workflows/dgx-monarch-ltx-t2v.json) |
 | LTX 2.3 (i2v/AV packed) | ✓ | ✗ | ★ | ✓ | ✓ | **HW** | Packed DP refuses; raw-latent acceptance excludes decoded quality. [Details](#model-ltx-2-3-i2v-av-packed) · [Workflow](../example_workflows/dgx-monarch-ltx-i2v-av.json) |
 | LTX 2.5 (t2v/AV packed) | ✓ | ✗ | ★ | ✓ | 🔒 | **HW** | Packed DP/cfg2 refuse; FSDP and extended guide recipes lack passing output comparisons; see failed and incomplete tests below. [Details](#model-ltx-2-5-t2v-av-packed) · [Workflow](../example_workflows/dgx-monarch-ltx25-t2v.json) |
 | Wan 2.1 (t2v) | ✓ | n/a | ★ | ✓ | ✓ | **HW** | FP8 Ulysses passed its output comparisons. [Details](#model-wan-2-1-t2v) · [Workflow](../example_workflows/dgx-monarch-wan-t2v.json) |
@@ -1308,7 +1308,7 @@ Detail status (`LTX 2.3 (t2v)`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-ltx-t2v.json).
 
-**Tested configurations.** 22B distilled Ulysses and LoRA hot-swap; the named FP8-scaled decoded-video probe also passed its local comparison.
+**Tested configurations.** 22B distilled Ulysses and LoRA hot-swap. On 2026-09-27 the dev FP8-scaled checkpoint's one-step uly2 probe decoded to frames identical to one GPU; on 2026-11-07 the distilled template's one-step uly2 latents read NRMS 0.0116 to 0.0137 against one GPU at three geometries, under the 0.10 floor but not identical. From 1.5 the fused AdaLN and the per-head gate projection run at one GPU's row count under sequence parallelism; no hardware run has re-read the latents on that build.
 
 **Known limitations.** Native latent RDMA remains NOT RUN / HOLD. Use actor messaging; other artifacts and graph settings need separate comparisons.
 

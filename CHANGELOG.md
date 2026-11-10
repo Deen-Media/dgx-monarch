@@ -407,6 +407,19 @@
   Sizes below about 1024 square are expected to match one GPU exactly now; a
   hardware re-read is pending
   ([fused AdaLN switch](docs/VALIDATION.md#fused-adaln-switch-other-families)).
+- LTX under sequence parallelism runs the two row-count-keyed calls in each
+  block, comfy-kitchen's fused AdaLN and the per-head gate projection, at one
+  GPU's row count, and the sharded self-attention applies RoPE through the call
+  stock makes. On 2026-11-07 LTX 2.3 on uly2 read one-step latent NRMS 0.012 to
+  0.014 against one GPU at every geometry tried, under the 0.10 floor but not
+  identical, where Wan 2.1 on the same build was identical; an op probe traced
+  it to the gate projection at every geometry and the fused AdaLN at 1024 rows
+  a rank, on torch 2.15 and 2.12 alike. Each rank now does
+  stock's row count of work for those two calls. At batch 2 each rank's share
+  of a stream, and a padded attention's output, now reach the next linear
+  contiguous, as stock's do, so its bias is added in the same fused call. A ComfyUI whose LTX blocks no
+  longer read the globals this binds refuses a sharded render at load, class P,
+  and canary seam 51 names the change ([VALIDATION](docs/VALIDATION.md#evidence-ltx-2-3-t2v)).
 - `auto` takes cfg2 on Anima BF16 and Boogu FP8 below 1.2 MP and on Chroma
   below 1.64 MP only when the prompt and the negative encode to different text
   rows, as on the shipped graphs, and Ulysses for an equal pair. One GPU folds

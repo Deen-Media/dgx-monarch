@@ -633,6 +633,18 @@
       "waivable": false
     },
     {
+      "site": "adapters/ltx_parity.py::refuse_unplanned_call::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/ltx_parity.py::refuse_unroutable::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/mage_flow.py::MageFlowAdapter.inject_usp.usp_forward::UnsupportedModelError#0",
       "class": "P",
       "guard": null,

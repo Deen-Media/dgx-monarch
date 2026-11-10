@@ -1912,14 +1912,50 @@ also exercised a Video Lite LoRA, whose warm bake matched a fresh session.
 
 ### LTX 2.3 T2V
 
-FP8-scaled auto/Ulysses completed cold and warm 121-frame renders;
-the decoded one-step probe matched its local reference exactly. At the
-latent, uly2 at the shipped 1280x704x121 differs from a one-GPU render on
-dgx-monarch `a76e967`: one-step NRMS 0.0116, max abs 0.041, on 2026-11-07,
-under the 0.10 floor but not identical, and 0.0125 to 0.0137 at 512 square; the
-fused AdaLN switch does not explain it
-([fused AdaLN switch](#fused-adaln-switch-other-families)). Native RDMA
-latent return for this LTX workload is separate and remains NOT RUN / HOLD.
+FP8-scaled auto/Ulysses completed cold and warm 121-frame renders. On
+2026-09-27 (torch 2.12.0, ComfyUI `3216c62e`) a one-step probe of the template
+on `auto`, which takes uly2, with the dev FP8-scaled checkpoint decoded to
+frames identical to its one-GPU reference; that compared decoded 8-bit frames,
+not latents. On 2026-11-07 (dev `a76e967`, torch 2.15.0+cu132, ComfyUI
+`8a98ecf58`) the shipped template with the distilled FP8-scaled checkpoint was
+compared at the latent level, one step, seed 1031: uly2 differed from a
+one-GPU render at every geometry, under the 0.10 one-step floor but not
+identical, while Wan 2.1 through the same method was identical at every
+geometry.
+
+| geometry | uly2 against one GPU: NRMS / max abs / elements differing |
+|---|---|
+| 1280x704x121 (the template) | 0.0116 / 0.041 / 1,193,521 of 1,802,240 |
+| 512x512x121 | 0.0125 / 0.043 / 370,741 of 524,288 |
+| 512x512x57 | 0.0137 / 0.049 / 190,595 of 262,144 |
+
+The difference spreads evenly over frames, rows, channels and both ranks'
+halves, the mark of rounding rather than of a wrong row. The same day an op
+probe on the head's idle GPU, at LTX 2.3's shapes, found its source, under
+torch 2.15.0 with cuBLAS 13.4.1.3 and under torch 2.12.0 with cuBLAS 13.4.0.1
+alike. The per-head gate projection, a GEMM 32 columns wide, rounded a row
+differently at a rank's row count than at stock's at every geometry, and
+comfy-kitchen's fused AdaLN did so at 1024 rows a rank only. Filled to stock's
+row count, either call gave stock's bits. The wide q, k, v, out and FFN GEMMs,
+the q and k norm and the RoPE call kept a row's bits at every row count.
+
+| op, a rank's rows against stock's (the worse of the two rank windows) | 7040 / 14080 | 2048 / 4096 | 1024 / 2048 |
+|---|---|---|---|
+| gate projection, torch 2.15: outputs differing, max abs | 80,852, 0.031 | 42,240, 0.063 | 21,112, 0.063 |
+| gate projection, torch 2.12 | 101,241, 0.031 | 42,634, 0.063 | 21,112, 0.063 |
+| fused AdaLN, both builds, each window | identical | identical | 72 / 0.016 and 85 / 0.008 |
+| either call filled to stock's rows | identical | identical | identical |
+
+So the gate's row-count dependence predates torch 2.15, and the 2026-09-27
+identity came from another checkpoint and a decoded compare. The fused AdaLN
+switch alone, which the image families meet at 512 square, does not explain
+the shipped size ([fused AdaLN switch](#fused-adaln-switch-other-families)).
+From 1.5 the
+sharded block launches both calls at one GPU's row count, and the sharded
+self-attention applies RoPE through the call stock makes
+(`adapters/ltx_parity.py`). The latent re-read of the three geometries on that
+build, with Wan 2.1 at 832x480x81 as the control, has not run. Native RDMA latent return for this LTX workload is separate
+and remains NOT RUN / HOLD.
 
 <a id="evidence-ltx-2-3-i2v-av-packed"></a>
 
@@ -2711,8 +2747,9 @@ blocks fill each fused-norm call to stock's rows
 the switch included: its CFG 5 folds cond and uncond into one batch-2 call, so a
 rank's call holds 2048 kernel rows there. LTX 2.3 differs at every size, the
 shipped one included, where a rank's call holds 7040 rows, far over the switch,
-so the switch does not explain it and its blocks are not filled; the cause is
-not identified. The records are `out/review_round_2026-11-07/c09_adaln/` in the
+so the switch does not explain it; an op probe the same day traced it to the
+per-head gate projection, with the switch adding a term at 1024 rows a rank,
+and from 1.5 both run at stock's rows ([LTX 2.3 T2V](#evidence-ltx-2-3-t2v)). The records are `out/review_round_2026-11-07/c09_adaln/` in the
 validation tree.
 
 ## INT8 GEMM kernel comparison (2026-10-28 and 29)
