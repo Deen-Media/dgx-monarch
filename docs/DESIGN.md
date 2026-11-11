@@ -2353,17 +2353,21 @@ global unload did, so nothing a running render needs is moved. It takes only
 the dropped model's records out of ComfyUI's loaded list: a whole load pinned
 and unloaded by ComfyUI's own `model_unload`, a partly loaded one by the step
 ComfyUI takes when it replaces a clone (`detach(unpatch_all=False)`), which
-moves no weight. The slot that stays is left loaded, so nothing reloads, and
-it is pinned to its device as slab and shard bases already are, so the unload
-ComfyUI runs at the next load that does not use it moves nothing either (with
-smart memory off, as on a Worker, `load_models_gpu` unloads every other
-model). ComfyUI prices the next load of an unloaded model at its whole size
+moves no weight. The slot that stays is left loaded, and it is pinned to its
+device as slab and shard bases already are, so the unload ComfyUI runs at the
+next load that does not use it moves nothing either (with smart memory off, as
+on a Worker, `load_models_gpu` unloads every other model). Its next render
+therefore moves no weight. After a single-model render in between, ComfyUI
+loads the pinned model again in place; a LoRA stack in hot-swap mode is
+applied again then, and its backup sits on the device from there on. ComfyUI prices the next load of an unloaded model at its whole size
 whether its weights went to the host or stayed pinned, and reads free memory
 live, so the pin changes no whole-or-partial load decision. The Worker reports
 where its drop copies nothing (`drop_copy_free` in the slot's snapshot entry,
 from the same predicate the drop runs on), and only there does the credit
 stand beside a partly loaded resident or a held other slot. It does not where
-the other slot is partly loaded or comfy-managed, on a discrete GPU, for a
+the other slot is partly loaded or comfy-managed (the drop is the targeted one
+there too, so that slot's host copy moves from the drop to the next load that
+does not use it, unpriced there as it was at the drop), on a discrete GPU, for a
 slab or shard build, which keep the global unload their owners close after,
 or under `DGXM_DISABLE_COPY_FREE_DROP=1`, which restores the earlier drop. The
 store-wide unload (`unload_all`, the clear) keeps the global unload too, since

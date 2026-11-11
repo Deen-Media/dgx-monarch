@@ -1781,6 +1781,7 @@
       "test_the_route_is_for_a_load_device_that_shares_the_hosts_memory": "46fb4895be3db57a",
       "test_the_route_leaves_the_other_models_of_the_sampling_loaded": "1fd9cd4a7393fd9c",
       "test_the_single_rank_check_rides_prepare_sampling_once": "d70a089678593858",
+      "test_the_stores_drop_and_the_swap_credit_read_what_the_route_left": "237f85d7b6e078eb",
       "test_where_the_route_cannot_be_taken_a_weight_only_format_renders_from_cast_time_weights": "7bfea2676be13f5e",
       "test_where_the_route_cannot_be_taken_an_fp8_layer_is_refused_and_nothing_is_half_baked": "6a2448ed8e44a227",
       "test_which_layers_quantize_their_input": "165baceabc7cd92f"

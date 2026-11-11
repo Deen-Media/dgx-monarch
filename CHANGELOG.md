@@ -17,7 +17,7 @@
   only the model it drops, whole or partly loaded, where ComfyUI's global
   unload copied a partly loaded model's weights, and a model held in the other
   slot, to the host first. A model in the other slot stays loaded, so its next
-  render reloads nothing. Where a drop could still copy (a partly loaded or
+  render moves no weight. Where a drop could still copy (a partly loaded or
   comfy-managed model in the other slot, or `DGXM_DISABLE_COPY_FREE_DROP=1`
   on the Worker) it is not counted. In a graph with two diffusion models the
   count leaves the room the other slot's load takes. Nothing to

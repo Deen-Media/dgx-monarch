@@ -2242,11 +2242,17 @@ frees the old model, since the box would dip first. On unified memory a
 Worker's drop of a stock model copies nothing: it detaches only that model, whole or partly loaded
 (journal line "loaded partially"), and leaves a model in the other slot loaded
 and pinned to the GPU. So a drop beside a held other slot is counted, and
-that slot's next render reloads nothing. The exceptions are a partly loaded or
+that slot's next render moves no weight. The exceptions are a partly loaded or
 comfy-managed model in the other slot, which ComfyUI may still move to the
 host, and a Worker started with `DGXM_DISABLE_COPY_FREE_DROP=1`, which drops
 through ComfyUI's global unload as before; there the card's clear is the safe
-way to replace the model. A check that reads the new model as already loaded
+way to replace the model. That variable is read by the Worker, not the
+driver. Set it on each box with a drop-in for the Worker's unit
+(`systemctl --user edit dgxm-worker.service`, with
+`Environment=DGXM_DISABLE_COPY_FREE_DROP=1` under `[Service]`), then restart
+the Worker; the name is on the Worker loop's reviewed inheritance list, so it
+reaches the actors. Remove the drop-in afterwards: `install-service` refuses a unit
+with one ([#90](#90-install-service-or-uninstall-refuses-an-existing-worker-unit)). A check that reads the new model as already loaded
 charges no load and counts no drop. Under `auto` the graph's own driver models load before the
 old model is dropped, so they must fit beside it. In a graph with two
 diffusion models each check prices one of them, so the count for one slot

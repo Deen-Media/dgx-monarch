@@ -544,6 +544,17 @@ def test_a_store_wide_unload_stays_global(rig, monkeypatch):
     assert (calls.own_unloads, calls.unload_all) == (0, 2), "two drops, each through the global unload"
 
 
+def test_the_drops_switch_reaches_a_worker_through_its_reviewed_environment():
+    """The worker loop deletes every name outside its reviewed list before the actors start, so
+    a switch set on the Worker's unit is only real if its name is on that list."""
+    from dgx_monarch.cli import worker_process_env
+
+    environment = {"PATH": "/usr/bin", resident_ledger.COPY_FREE_DROP_DISABLE_ENV: "1"}
+    assert worker_process_env.worker_environment_key_allowed(resident_ledger.COPY_FREE_DROP_DISABLE_ENV)
+    assert worker_process_env.filter_worker_environment(environment) == 0
+    assert environment[resident_ledger.COPY_FREE_DROP_DISABLE_ENV] == "1"
+
+
 def test_mark_after_drop_says_what_the_drop_did_to_the_other_slot():
     store = ModelStore()
     store.current, store.uncond = object(), object()

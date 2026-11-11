@@ -70,6 +70,9 @@ _SAFE_EXACT = frozenset({
     # warning and leaves loading unchanged (actor/load_fault.py).
     "DGXM_FAULT_LOAD_RANK",
     "DGXM_ACCEPTANCE",
+    # Restores the drop through ComfyUI's global unload (actor/resident_ledger.py).
+    # It can only make a drop slower and withhold a swap credit.
+    "DGXM_DISABLE_COPY_FREE_DROP",
 })
 
 # Locale is the only inherited namespace. Fabric settings come from validated

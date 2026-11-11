@@ -476,6 +476,55 @@ def test_the_route_leaves_the_other_models_of_the_sampling_loaded(installed, mon
     assert torch.equal(outputs(other_root)[0], expected)
 
 
+@pytest.mark.parametrize("made_whole", [True, False], ids=["the route taken", "the route not taken"])
+def test_the_stores_drop_and_the_swap_credit_read_what_the_route_left(installed, monkeypatch, made_whole):
+    """The store's copy-free drop (actor/resident_ledger.py) and the swap credit decide by
+    ``model_lowvram``: a partly loaded model is detached in place and, as the slot that stays,
+    cannot be pinned, while a whole one is pinned and unloaded by ComfyUI's own unload. A model
+    the route made whole must read whole to all of them, and one it left alone partly loaded."""
+    import comfy.model_management as mm
+
+    from dgx_monarch import mesh_safety
+    from dgx_monarch.actor import resident_ledger, worker_capacity
+
+    monkeypatch.setattr(mesh_safety, "gpu_is_integrated", lambda: True)
+    monkeypatch.delenv(resident_ledger.COPY_FREE_DROP_DISABLE_ENV, raising=False)
+    if not made_whole:
+        monkeypatch.setattr(lora_partial_load, "_host_room", lambda: 0)   # no room to bake: the route is not taken
+    build, _outputs, cpu = _rig(("int8_tensorwise",))
+    root, patcher = build()
+    slot = _slot(patcher, patcher.clone())
+    slot.base_key, slot.request_key = ("m.safetensors", ()), ("m.safetensors", (), (), "int8")
+    patcher.load(cpu, lowvram_model_memory=1, full_load=False)
+    record = mm.LoadedModel(patcher)
+    record.real_model = weakref.ref(root)
+    record.model_finalizer = weakref.finalize(root, mm.cleanup_models)
+    record.model_finalizer.atexit = False
+    mm.current_loaded_models.insert(0, record)
+    assert root.model_lowvram is True and not resident_ledger.stays_on_device(slot)
+    lora_partial_load.check(patcher)
+    assert root.model_lowvram is not made_whole and slot.base_baked is made_whole
+
+    # What the Worker's quote reports for the slot, and whether it could be pinned as the slot that stays.
+    partials: dict = {}
+    drops: dict = {}
+    worker_capacity._resident_facts(None, SimpleNamespace(current=slot, uncond=None), {}, None, partials, drops)
+    assert partials["cond"] is not made_whole
+    assert drops["cond"] is True, "its own drop copies nothing either way"
+    assert resident_ledger.stays_on_device(slot) is made_whole
+    assert resident_ledger.drop_copies_nothing(_Slot(None, None), slot) is made_whole, (
+        "a drop beside it is credited only where it can be pinned")
+
+    # The drop itself: ComfyUI's own unload for a whole load, the bare detach for a partly loaded one.
+    steps: list = []
+    unload, detach = record.model_unload, patcher.detach
+    record.model_unload = lambda *a, **k: steps.append("model_unload") or unload(*a, **k)
+    patcher.detach = lambda unpatch_all=True: steps.append(("detach", unpatch_all)) or detach(unpatch_all)
+    assert resident_ledger.unload_dropped(mm, slot, None) is True
+    assert steps == (["model_unload", ("detach", True)] if made_whole else [("detach", False)])
+    assert mm.current_loaded_models == []
+
+
 def test_the_check_runs_on_every_model_prepare_sampling_loaded(installed):
     """A later load can leave an earlier model partly loaded after that model's own check has run."""
     import comfy.patcher_extension as pe
