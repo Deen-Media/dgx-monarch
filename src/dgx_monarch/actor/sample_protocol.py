@@ -329,6 +329,9 @@ def run_sample(
     # first collective; a readiness exchange, where one runs, every rank has
     # already crossed alike.
     refuse_moss_image_attention_bias(worker, request, getattr(resident, "family", None))
+    # The same rule for UltraTex views on the Flux family (#148), on this rank's topology.
+    from ..adapters.flux_views import refuse_unproven_views
+    refuse_unproven_views(getattr(resident, "family", None), getattr(worker, "topology", {}) or {}, request)
 
     # Opt-in proof only: full-content file identities are stable-read after
     # ModelStore has adopted and checked every requested resident, but before

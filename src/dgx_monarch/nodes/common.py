@@ -176,7 +176,7 @@ def _warn_nearest_signature(path: str) -> None:
 def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
                      world: int | None = None, *, latent_downscale: int | None = None,
                      size_tags: tuple = (None, None), keeps_uncond: bool = False,
-                     pair_differs: bool = False) -> tuple[Topology, bool, str]:
+                     pair_differs: bool = False, views: bool = False) -> tuple[Topology, bool, str]:
     """Resolve the mesh's topology preset for this render.
 
     Returns (topology, sage, reason). Explicit presets pass through; "auto"
@@ -185,8 +185,9 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     comfy's latent format declares for the checkpoint. ``size_tags`` are the
     latent's own, so auto reads the grid the workers will sample.
     ``keeps_uncond`` says the sampler keeps the uncond pass at CFG 1.0, so a
-    cfg row stays eligible there (topology.sampler_keeps_uncond_at_cfg1), and
-    ``pair_differs`` that the prompt pair's text rows differ (cfg_pair).
+    cfg row stays eligible there (topology.sampler_keeps_uncond_at_cfg1),
+    ``pair_differs`` that the prompt pair's text rows differ (cfg_pair), and
+    ``views`` that the pair carries UltraTex view inputs (adapters/flux_views).
     """
     scale_override = (
         None if latent_downscale is None
@@ -252,7 +253,7 @@ def resolve_topology(model: ModelSpec, latent_samples, cfg_value: float | None,
     # it prices a remote worker's pool; capacity runs use the *+fsdp presets.
     # The tags and the variant ride only when set, so an untagged call keeps its shape.
     tags: dict[str, Any] = {name: True for name, on in (
-        ("keeps_uncond", keeps_uncond), ("pair_differs", pair_differs)) if on}
+        ("keeps_uncond", keeps_uncond), ("pair_differs", pair_differs), ("views", views)) if on}
     if variant:
         tags["variant"] = variant
     decision = choose_auto_topology(
@@ -277,8 +278,8 @@ def _resolve_topology_for_latent(
             latent[LATENT_DOWNSCALE_METADATA_KEY])
     if latent_size_tags(latent) != (None, None):
         extra["size_tags"] = latent_size_tags(latent)
-    tags = ((CFG_KEEPS_UNCOND_METADATA_KEY, "keeps_uncond"), (CFG_PAIR_DIFFERS_METADATA_KEY, "pair_differs"))
-    extra.update({name: True for key, name in tags if latent.get(key)})  # set by the sampler nodes
+    extra.update({name: True for key, name in render_preflight.TOPOLOGY_TAGS
+                  if latent.get(key)})  # set by the sampler nodes
     return resolve_topology(model, latent["samples"], cfg_value, world, **extra)
 
 

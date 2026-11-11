@@ -1881,7 +1881,7 @@ for the Worker's `single` (`mode=local`, `gpus_per_host=1`), with 204483 of
 render and `run_matrix`'s single reference were bit-identical. The expected
 cause is ComfyUI's `Anima.extra_conds`, which prepares the text once per conditioning
 at 512 rows only in inference mode, which a Worker's sampling thread is not
-in ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
+in ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)).
 On the CPU, against ComfyUI v0.45.0 and `8a98ecf58`, with a tiny Anima that
 ComfyUI's own loader detects, the Worker's KSampler path made two batch-1
 model calls a step on a pair of 14 and 9 Qwen3 rows where stock made one

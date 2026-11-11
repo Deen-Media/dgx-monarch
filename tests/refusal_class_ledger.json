@@ -513,6 +513,18 @@
       "waivable": false
     },
     {
+      "site": "adapters/flux_views.py::refuse_auto_views::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "adapters/flux_views.py::refuse_unproven_views::UnsupportedModelError#0",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
       "site": "adapters/fsdp.py::fsdp_load_capacity_check::StockLoadCapacityError#0",
       "class": "C",
       "guard": "stock_load_preflight",
@@ -1306,6 +1318,18 @@
     },
     {
       "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#1",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#2",
+      "class": "P",
+      "guard": null,
+      "waivable": false
+    },
+    {
+      "site": "upstream_gate.py::raise_refusal::UnsupportedModelError#3",
       "class": "P",
       "guard": null,
       "waivable": false

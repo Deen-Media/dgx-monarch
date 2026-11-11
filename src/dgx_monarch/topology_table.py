@@ -189,7 +189,7 @@ AUTO_TABLE: tuple[AutoRule, ...] = (
              "on the per-cond dispatch rather than on a batch the num_tokens constant blocks"),
     # --- anima (cosmos MiniTrainDIT ~2B image DiT, H-axis shard) -----------
     # Row 47, cfg2 below 1.2 MP on BF16, was withdrawn on 2026-11-10 with the
-    # text branch fix (TROUBLESHOOTING #148): its record was measured against a
+    # text branch fix (TROUBLESHOOTING #151): its record was measured against a
     # Worker's one GPU that ran the shipped pair as two batch-1 calls, and stock
     # folds that pair into one batch-2 call, which cfg2 cannot reproduce.
     AutoRule(48, "anima", (), 0.0, _INF, 2, {"ulysses": 2}, False,

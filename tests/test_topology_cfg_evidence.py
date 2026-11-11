@@ -144,7 +144,7 @@ def test_campaign_k_rows_grant_their_measured_kinds(family, quant, megapixels, c
 # (BF16 NRMS 0.034); below 1.2 MP Chroma has no Ulysses row, so the fallback
 # (row 99) catches an equal pair, and from 1.2 MP rows 21 (FP8) and 22 do.
 # Anima's row 47 had the same scope until 2026-11-10, when the text branch fix
-# made one GPU fold every Anima pair, as stock does (TROUBLESHOOTING #148).
+# made one GPU fold every Anima pair, as stock does (TROUBLESHOOTING #151).
 PAIR_SCOPED = (("boogu", "fp8", 79, 78),
                ("chroma", "bf16", 20, 99), ("chroma", "int8", 20, 99))
 CHROMA_BAND = (("chroma", "bf16", 1.5, 19, 22), ("chroma", "fp8", 1.63, 19, 21),

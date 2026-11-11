@@ -552,6 +552,31 @@ def test_the_sol_h3_and_p_h3_image_vaes_stay_on_the_driver_with_one_info_line(co
     assert family is None and "p-h3-image" in why
 
 
+def test_the_minimax_h3_image_vae_stays_on_the_driver(comfy, caplog):
+    """ComfyUI 0.45.0's MiniMax-H3-Image VAE is an H3 video VAE subclass with one
+    still frame; the split declines it with one INFO line, as for p-h3-image."""
+    import inspect
+
+    image_class = getattr(comfy.minimax, "MiniMaxH3ImageVAE", None)
+    if image_class is None:
+        pytest.skip("this ComfyUI predates MiniMax-H3-Image (ComfyUI 0.45.0 added it)")
+    assert comfy.minimax.MiniMaxH3VideoVAE in image_class.__mro__
+    # The loader flags the VAE a still decoder on the same branch that builds it.
+    source = inspect.getsource(comfy.sd.VAE.__init__)
+    built = source.index("MiniMaxH3ImageVAE(")
+    assert "self.not_video = True" in source[source.rindex("decoder.proj_out.weight", 0, built):built]
+    # MiniMaxH3ImageVAE builds the full H3 encoder; the check reads only its class and flags.
+    image = image_class.__new__(image_class)
+    torch.nn.Module.__init__(image)
+    vae = SimpleNamespace(first_stage_model=image, handles_tiling=True, latent_dim=3, not_video=True)
+    family, why = classify(vae)
+    assert family is None and "MiniMaxH3ImageVAE decodes single frames" in why
+    caplog.set_level(logging.INFO, logger="dgx_monarch.vae_decode")
+    assert vae_decode_route._open(vae, torch.zeros(1, 24, 1, 6, 7), "decode") is None
+    lines = [record.getMessage() for record in caplog.records if "not split" in record.getMessage()]
+    assert len(lines) == 1 and "MiniMaxH3ImageVAE" in lines[0], lines
+
+
 def _tiny_vae_file(comfy, tmp_path):
     """A small real AutoencoderKL, its weights in a file under a vae folder."""
     from safetensors.torch import save_file

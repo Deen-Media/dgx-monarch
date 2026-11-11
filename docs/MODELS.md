@@ -416,6 +416,8 @@ text encoder, the resident fp8mixed Ulysses path that auto selects mostly
 refused class C: all six explicit uly2 and ring2 records, and 5 of 6
 lever-free auto records. The store now places stock weights at load time and checks memory against the
 full placement peak. A hardware test of that path admitted the load and rendered.
+UltraTex conditioning on FLUX.2 Klein Base 9B runs on one GPU, uly2 and
+uly2+fsdp only ([UltraTex](#model-ultratex)).
 
 **Test results.** [Comparisons and limits](VALIDATION.md#evidence-flux2).
 
@@ -1062,6 +1064,21 @@ The weights are under the MiniMax H3 Community License, the same terms as the
 H3 files. The Qwen3-VL-4B parts of the text encoder and the prompt upsampler,
 based on Qwen3.5-9B, are under the Apache License 2.0.
 
+**MiniMax-H3-Image is a different model.** MiniMax's own image release, which
+ComfyUI 0.45.0 or newer supports, drops H3's audio stream and carries six output heads on
+a sigma grid in the file's `config` metadata; ComfyUI builds it as
+`MiniMaxH3Image`, never as `MiniMaxH3`, and the header detector names it
+`minimax_h3_image` from the same key paths. Its BF16 file reads `bf16`, its 51
+F16 adaLN linears counting as islands, and its INT8 ConvRot and W4A8 files read
+`int8` and `w4a8`; every one of its DiT files, BF16 included, pins
+comfy-kitchen's INT8 attention on all 50 blocks. This release refuses the
+family class P at the loader, before any load, in every format
+([TROUBLESHOOTING #150](TROUBLESHOOTING.md#150-a-minimax-h3-image-render-refuses-at-the-loader)),
+and a file without its sigma grid first ([#149](TROUBLESHOOTING.md#149-a-minimax-h3-image-file-refuses-because-its-header-has-no-sigma-grid));
+render it with stock ComfyUI 0.45.0 or newer on one GPU. Its VAE
+(`MiniMaxH3ImageVAE`, one still frame) decodes on the driver, as p-h3-image's
+does. No p-h3-image file changes.
+
 <a id="model-longcat-image"></a>
 
 ### LongCat-Image
@@ -1243,7 +1260,7 @@ Detail status (`Anima`): **HW**.
 
 **Recommended workflow.** [Open workflow](../example_workflows/dgx-monarch-anima-t2i.json).
 
-**Tested configurations.** Ulysses against one GPU, DP2, and BF16 FSDP with the auxiliary adapter replicated. Explicit cfg2 on the shipped template's prompt pair read one-step NRMS 0.0 against one GPU in three records, and three `cfg2+fsdp` records matched their resident legs exactly (BF16, 1024 square). Campaign K (2026-10-14) timed cfg2 on that pair at 1024 square, bit-identical to one GPU over the full schedule. On 2026-11-07 that pair read bit-identical again, and two pairs of equal text rows read one-step NRMS 0.015 and 0.042 and full-schedule NRMS 0.0047 and 0.040 against one GPU ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)). Every one of these compared the Workers with a Worker's one GPU. On 2026-11-10 that one GPU read one-step NRMS 0.028 against stock ComfyUI on the shipped pair. A Worker ran the text branch stock keeps for training, and so made two batch-1 calls a step where stock makes one batch-2 call, the expected cause, which no hardware run has confirmed yet. The Workers now run stock's branch ([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-an-anima-render-on-the-workers-differs-from-stock-comfyui)), which changes every Anima render on them, and no comparison above has been repeated against stock since ([VALIDATION](VALIDATION.md#evidence-anima)).
+**Tested configurations.** Ulysses against one GPU, DP2, and BF16 FSDP with the auxiliary adapter replicated. Explicit cfg2 on the shipped template's prompt pair read one-step NRMS 0.0 against one GPU in three records, and three `cfg2+fsdp` records matched their resident legs exactly (BF16, 1024 square). Campaign K (2026-10-14) timed cfg2 on that pair at 1024 square, bit-identical to one GPU over the full schedule. On 2026-11-07 that pair read bit-identical again, and two pairs of equal text rows read one-step NRMS 0.015 and 0.042 and full-schedule NRMS 0.0047 and 0.040 against one GPU ([equal pairs](VALIDATION.md#campaign-k-equal-pairs)). Every one of these compared the Workers with a Worker's one GPU. On 2026-11-10 that one GPU read one-step NRMS 0.028 against stock ComfyUI on the shipped pair. A Worker ran the text branch stock keeps for training, and so made two batch-1 calls a step where stock makes one batch-2 call, the expected cause, which no hardware run has confirmed yet. The Workers now run stock's branch ([TROUBLESHOOTING #151](TROUBLESHOOTING.md#151-an-anima-render-on-the-workers-differs-from-stock-comfyui)), which changes every Anima render on them, and no comparison above has been repeated against stock since ([VALIDATION](VALIDATION.md#evidence-anima)).
 
 **Known limitations.** Unlisted FSDP artifacts and LoRA behavior are not covered. `auto` selects Ulysses at every size. ComfyUI pads the text to 512 rows before it decides whether the prompt and the negative share a model call, so one GPU folds a pair of at most 512 T5 tokens into one batch-2 call, and cfg2 runs two batch-1 calls, one per rank, which is not the same math. Before 2026-11-10 an equal pair, the one case a Worker folded then, read one-step NRMS 0.015 to 0.042 on cfg2 against one GPU; the shipped pair has no cfg2 reading against stock yet. Explicit cfg2 still renders.
 
@@ -1822,6 +1839,57 @@ preflight: clip encoding has a separate large memory peak. Unlisted/chained
 guides, large clips and guide decode quality have no passing reference comparison. Fun ControlNet
 takes a stock MODEL and cannot be wired into this distributed graph.
 
+<a id="model-ultratex"></a>
+
+## UltraTex texturing on FLUX.2 Klein 9B
+
+UltraTex paints a reference image's look onto a 3D mesh as a grid of views,
+which ComfyUI then bakes into the mesh's texture. It is not a checkpoint of
+its own: it is two LoRAs (albedo, and metallic and roughness) for FLUX.2 Klein
+Base 9B, a fine-tuned VAE, and ComfyUI's UltraTex Conditioning node, all from
+ComfyUI 0.45.0 or newer. Klein Base 9B reads `flux2` from its header, so the
+Flux2 adapter runs it. With the node's conditioning, stock's Flux forward
+tiles each sample's views (6, or the 4 side views) into one image and drops
+the background tokens before the blocks; the latent batch holds the views,
+so an Empty Flux 2 Latent of batch 6 is one sample.
+
+**Topologies.** One GPU, uly2 and uly2+fsdp. On CPU against ComfyUI 0.45.0
+the uly2 forward returns stock's bits in the Flux 1, Flux 2 and LongCat
+layouts, with the view grid alone, the token masks alone, a view reference on
+a tile away from the front and all three together, at batch 1 and 2 and on odd
+and even token counts, and under FSDP the token-mask
+step runs on the wrapped model with nothing to gather
+([Adapters](ADAPTERS.md#flux-family-view-conditioning-ultratex)). cfg2 and dp2
+split the batch, which is a sample's views, ring is not stock's math, and no
+Ulysses degree above 2 has been checked, so a Flux, Flux 2 or LongCat render whose
+conditioning carries UltraTex inputs refuses there before dispatch
+([TROUBLESHOOTING #148](TROUBLESHOOTING.md#148-a-render-with-ultratex-conditioning-refuses-on-cfg2-dp2-ring-or-a-wider-mesh)).
+On two GPUs `auto` keeps uly2 for Flux 2 at every size and skips LongCat's
+cfg2 row for such a render, saying so in its reason; on a wider mesh it
+refuses, since no proven topology tiles the world. No hardware render has run
+yet.
+
+**Files.** The `Comfy-Org/UltraTex` repository on Hugging Face:
+
+| File | Folder | Size |
+|---|---|---|
+| `flux-2-klein-base-9b_bf16.safetensors` | `models/diffusion_models` | 18.16 GB |
+| `flux-2-klein-base-9b_int8_convrot.safetensors` | `models/diffusion_models` | 9.44 GB |
+| `flux-2-klein-9b_distill_lora_avg_rank_345_bf16.safetensors` | `models/loras` | 1.96 GB |
+| `ultratex_flux2_klein_9b_albedo_lora_bf16.safetensors` | `models/loras` | 478 MB |
+| `ultratex_flux2_klein_9b_metallic_roughness_lora_bf16.safetensors` | `models/loras` | 478 MB |
+| `ultratex_flux2_vae_fp32.safetensors` | `models/vae` | 336 MB |
+| `flux-2-klein-9b_empty_prompt.safetensors` | `models/embeddings` | 25 MB |
+
+**Graph.** ComfyUI's sample graph loads the DiT, the distill LoRA at 0.5 and
+an UltraTex LoRA at 1.0, and samples at CFG 1 with euler. In a DGX Monarch
+graph both LoRAs go on Load LoRA (DGX Monarch), and the UltraTex Conditioning
+output feeds the DGX Monarch sampler's positive input. The sample graph's
+Model Sparse Attention and Differential Diffusion nodes patch a stock MODEL
+and do not wire to a DGX Monarch model. The LoRAs use PEFT key names, which
+ComfyUI 0.45.0 maps for Flux on every Worker as stock does; older ComfyUI has
+neither the node nor that key map.
+
 <a id="int8-gemm-kernel"></a>
 
 ## INT8 GEMM kernel
@@ -2059,7 +2127,8 @@ a still at or under 1.2 MP, which decodes in about a second; a MiniMax H3
 still, which is one chunk; a VAE that came from a checkpoint rather than a VAE
 loader file, since no Worker can name its bytes; and every encode. On ComfyUI
 0.44.0 and later, so do the Sol-H3-VAE decoder, which decodes the whole clip
-in one pass, the p-h3-image VAE, which decodes one frame, and a VAE that went
+in one pass, the p-h3-image VAE, which decodes one frame, and on 0.45.0 and
+later the MiniMax-H3-Image VAE, which decodes one frame too, and a VAE that went
 through the VAE Compute Dtype node with a dtype other than `default`: that
 node keeps the weights the loader built and changes only the compute dtype,
 while a Worker builds its VAE in one dtype, so its decode may differ. Each

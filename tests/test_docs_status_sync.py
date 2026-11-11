@@ -832,7 +832,7 @@ _STARRED_MODE_GRANT: dict[tuple[str, str], tuple[str, str]] = {
     ("Lens", "uly"): ("granted", "2026-10-06 bit-identical to one GPU; 2026-07-28 DP2 NRMS 0.060-0.061 after the pad-row fix"),
     ("Omnigen2", "ring"): ("granted", "certified DP2 NRMS 0.002; fresh run 2026-08-11"),
     # Withdrawn on 2026-11-10: the 2026-08-11 reference was a Worker's one GPU,
-    # which ran Anima's text off stock's branch (TROUBLESHOOTING #148).
+    # which ran Anima's text off stock's branch (TROUBLESHOOTING #151).
     ("Anima", "uly"): ("withdrawn", "await a comparison against stock"),
     ("Boogu", "cfg2"): (
         "scoped", "Auto cfg2 covers FP8 below 1.2 MP when the prompt and the negative "

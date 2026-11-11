@@ -623,7 +623,7 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   sampler node tagged. Anima row 47 had the same scope until 2026-11-10, when
   the Workers began to prepare Anima's text as stock does: stock pads it to
   512 rows before the batching decision, so one GPU folds every Anima pair,
-  and the row was withdrawn (TROUBLESHOOTING #148). Chroma rows 20 and 19
+  and the row was withdrawn (TROUBLESHOOTING #151). Chroma rows 20 and 19
   take the same scope: their pair was the shipped one, whose rows differ, and
   a BF16 pair of
   equal rows read NRMS 0.034 on cfg2. The tag (`cfg_pair.text_rows_differ`)
@@ -641,6 +641,18 @@ measurements in [VALIDATION.md](VALIDATION.md) and keyed on
   `CONDCrossAttn` folds some unequal lengths too
   (`cfg_dispatch.cross_attn_pair_folds`), so its records would need that rule
   before they could take the scope (VALIDATION.md);
+- a Flux, Flux 2 or LongCat render whose conditioning carries UltraTex view
+  inputs (`view_grid`, `token_masks`, `reference_views`, ComfyUI 0.45.0)
+  skips every cfg row: stock's forward reads the batch as each sample's
+  views, and a cfg split cuts them apart or runs batch-1 calls no test has
+  compared with one GPU's. The sampler, Gate and Sampler Custom nodes tag the
+  latent beside the pair tag, so every resolving site reads the same answer,
+  and the reason names the skipped row. Where data parallelism or ring would
+  remain, on a mesh wider than two GPUs, auto refuses (class P): only one GPU,
+  uly2 and uly2+fsdp have been checked equal to stock for these inputs (on CPU
+  so far), and an
+  explicit preset outside them refuses alike (`adapters/flux_views.py`,
+  TROUBLESHOOTING #148);
 - sage auto-on only for fp8 + USP at high res;
 - FSDP only when the model does not fit resident (capacity mode), never for speed;
 - every auto decision logs its row and reason, for example
@@ -717,7 +729,14 @@ kept at fp32 passes the `_file_tensor` check and still raises a bare
 replicated. Header and
 loaded-model detection both classify any full-precision mix containing F16 as
 `fp16`, while fp8/int8 storage markers take precedence; an fp16 core is
-admitted uniform only. fp32 parameters inside a bf16 core are islands
+admitted uniform only. One family names F16 tensors as islands instead:
+MiniMax-H3-Image keeps its 51 adaLN linears on the curve basis in F16 beside a
+bf16 core, so its header reads `bf16` and the header proof counts those bytes
+as island bytes (`adapters/minimax_h3_image_header.py`); the loaded-model side
+of that rule belongs to the family's adapter. The header proof does not count
+a uint8 attention pin (`<block>.comfy_attention.config`), which is no weight, so
+a bf16 or fp16 file that pins reaches the shard build, and the rule is: class K guards a pinned kernel that runs; where the bf16 or fp16 FSDP shard build drops the pins, nothing approximate runs, no card asks, and the record says dropped (FSDP shard build), on every `+fsdp` preset and for every family.
+fp32 parameters inside a bf16 core are islands
 (`adapters/fsdp_islands.py`): when they hold at most 5%
 of the checkpoint bytes the header proof still reads `bf16`, the live scan
 reports `live_dtype_profile=bf16_core_fp32_islands_v1` with the island count
