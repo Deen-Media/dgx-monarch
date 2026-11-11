@@ -341,7 +341,9 @@ def test_pure_ulysses_returns_stock_bits_with_view_inputs(monkeypatch, comfy_flu
     assert expected.shape == inputs[0].shape
     outputs, harness, launches = _sharded(monkeypatch, comfy_flux, model, inputs, kwargs, kernel)
     assert torch.equal(outputs[0], outputs[1])
-    assert _same(outputs[0], expected)
+    assert _same(outputs[0], expected), (
+        f"differs from stock: shape {tuple(outputs[0].shape)}, max abs difference "
+        f"{float((outputs[0] - expected).abs().max()):.3g}")
     # One double and two single blocks: the double block's two image and two
     # text norms at the stock image and text rows, each single block's at the
     # joint rows, on every rank, then the final layer's on the gathered image.
@@ -391,7 +393,9 @@ def test_flux1_and_longcat_return_stock_bits_with_view_inputs(monkeypatch, comfy
     outputs, _harness, _launches = _sharded(monkeypatch, comfy_flux, model, inputs, kwargs, kernel,
                                             adapter=adapter, options=options)
     assert torch.equal(outputs[0], outputs[1])
-    assert _same(outputs[0], expected)
+    assert _same(outputs[0], expected), (
+        f"differs from stock: shape {tuple(outputs[0].shape)}, max abs difference "
+        f"{float((outputs[0] - expected).abs().max()):.3g}")
     if name in MOVED_REFS:
         _assert_reference_views_matter(monkeypatch, comfy_flux, model, inputs, kwargs, expected, options)
 

@@ -9,21 +9,26 @@ Only the all-to-all, the sequence gather and the kernel are stubbed (the harness
 tests/test_flux_pad_exclusion.py). The claims:
 
 * every gate projection call on a rank receives its stream's stock row count, the rank's rows
-  first and bit-equal to stock's gate input for those rows, then zero rows;
+  first and equal to stock's gate input for those rows, then zero rows;
 * every fused AdaLN call on a rank launches over its stream's stock row count;
 * each rank's self-attentions reach comfy's paired rope helper as often as stock's do;
-* each rank's gathered output equals stock's, max abs difference 0.0.
+* each rank's gathered output equals stock's, and the two ranks' outputs equal each other.
 
-The CPU GEMM and comfy-kitchen's eager kernels give a row the same bits at any row count, so
-the last claim would hold here without the route too; it pins that the route changes nothing a
-CPU can see. Whether cuBLAS and comfy-kitchen's CUDA kernels keep a row's bits at a rank's row
-count is the hardware question the route exists for (docs/VALIDATION.md, LTX 2.3 T2V). Skips
-where ComfyUI is not importable.
+"Equal" follows tests/test_flux3_comfy_exactness.py: bit equality on this rig's aarch64 CPU,
+float32 rounding (allclose 2e-5) on x86, whose BLAS may pick another kernel for a halved row
+count. Rank against rank is always exact, since both ranks hold the same gathered rows, and so
+are the row counts, the call counts and the zero fill rows. On the rig's CPU the GEMM and
+comfy-kitchen's eager kernels give a row the same bits at any row count, so the output claim
+would hold here without the route too; it pins that the route changes nothing a CPU can see.
+Whether cuBLAS and comfy-kitchen's CUDA kernels keep a row's bits at a rank's row count is the
+hardware question the route exists for (docs/VALIDATION.md, LTX 2.3 T2V). Skips where ComfyUI
+is not importable.
 """
 from __future__ import annotations
 
 import copy
 import os
+import platform
 import sys
 import threading
 
@@ -40,6 +45,7 @@ WORLD = 2
 V_HEADS, A_HEADS, HEAD_DIM = 4, 2, 8
 V_DIM, A_DIM = V_HEADS * HEAD_DIM, A_HEADS * HEAD_DIM
 CONTEXT_ROWS, BLOCKS = 5, 2
+_EXACT_GEMM = platform.machine() == "aarch64"
 # (video rows, audio rows, batch, per-token video timestep): even and odd video streams, a
 # batch of two, a per-token timestep (its modulation shards with the rows), and audio padded
 # on one side at a time. With both streams padded at once (13 video, 7 audio rows) the
@@ -53,6 +59,24 @@ CASES = [(12, 0, 1, False), (13, 0, 1, False), (12, 0, 2, True), (13, 6, 1, Fals
 # cross attention and the ungated to_out get them contiguous, as stock's linears do.
 LTXV_CASES = [(12, 1, False, True), (13, 1, False, True), (12, 2, True, True),
               (13, 2, False, True), (12, 1, False, False), (13, 2, True, False)]
+
+
+def _same(candidate: torch.Tensor, reference: torch.Tensor) -> bool:
+    """Equal bits where the GEMMs are known to agree per row, else float32 rounding."""
+    if candidate.shape != reference.shape:
+        return False
+    if _EXACT_GEMM:
+        return torch.equal(candidate, reference)
+    return torch.equal(candidate, reference) or torch.allclose(
+        candidate, reference, rtol=2e-5, atol=2e-5)
+
+
+def _gap(candidate: torch.Tensor, reference: torch.Tensor) -> str:
+    """The shapes and, where they match, the max abs difference, for an assertion message."""
+    if candidate.shape != reference.shape:
+        return f"shape {tuple(candidate.shape)} against stock's {tuple(reference.shape)}"
+    return (f"shape {tuple(candidate.shape)}, max abs difference "
+            f"{float((candidate - reference).abs().max()):.3g}")
 
 
 def _comfy_dir() -> str:
@@ -235,7 +259,9 @@ def _compare(monkeypatch, comfy_ltx, model, make_call):
     ops = comfy_ltx[0]
     ranks = [copy.deepcopy(model) for _ in range(WORLD)]
     spies = _Spies(monkeypatch, comfy_ltx, [model, *ranks])
-    _LOCAL.rank = None
+    # Stock runs on this thread as rank None; undone at teardown, so a later file in the
+    # same process still reads rank 0 on its main thread.
+    monkeypatch.setattr(_LOCAL, "rank", None, raising=False)
     with torch.no_grad():
         args, kwargs = make_call()
         stock = type(model)._process_transformer_blocks(
@@ -289,9 +315,12 @@ def test_each_rank_launches_stock_row_counts_and_returns_stock_bits(monkeypatch,
     stock_rows = {ltx_parity.VIDEO: v_rows, ltx_parity.AUDIO: a_rows}
 
     for rank, out in enumerate(outputs):
-        assert torch.equal(out[0], stock[0]), f"rank {rank} video differs from stock"
+        assert _same(out[0], stock[0]), f"rank {rank} video differs from stock: {_gap(out[0], stock[0])}"
+        assert torch.equal(out[0], outputs[0][0]), f"rank {rank} video differs from rank 0"
         if a_rows:
-            assert torch.equal(out[1], stock[1]), f"rank {rank} audio differs from stock"
+            assert _same(out[1], stock[1]), (
+                f"rank {rank} audio differs from stock: {_gap(out[1], stock[1])}")
+            assert torch.equal(out[1], outputs[0][1]), f"rank {rank} audio differs from rank 0"
 
     stock_gates = spies.gates.get(None, [])
     assert stock_gates, "stock ran no gate"
@@ -305,7 +334,8 @@ def test_each_rank_launches_stock_row_counts_and_returns_stock_bits(monkeypatch,
             real = max(0, min(local, rows - start))
             assert call.shape == stock_call.shape == (batch, rows, call.shape[-1]), name
             # FLUX.3's at_stock_rows: the rank's rows first, pad rows included, then zero rows.
-            assert torch.equal(call[:, :real], stock_call[:, start:start + real]), name
+            mine, theirs = call[:, :real], stock_call[:, start:start + real]
+            assert _same(mine, theirs), f"{name}: {_gap(mine, theirs)}"
             assert not call[:, local:].any(), f"{name}: the fill rows are not zero"
 
     for rank in range(WORLD):
@@ -319,7 +349,8 @@ def test_each_rank_launches_stock_row_counts_and_returns_stock_bits(monkeypatch,
 
 
 def test_outside_the_block_loop_every_bound_call_is_stocks(monkeypatch, comfy_ltx):
-    """A bound block run with no shard geometry is stock's code on stock's rows."""
+    """A bound block run with no shard geometry is stock's code on stock's rows: the same
+    GEMM shapes, so its bits equal stock's on every machine."""
     ops, _model_module, av_module, _quant_ops = comfy_ltx
     model = _toy(comfy_ltx)
     replica = copy.deepcopy(model)
@@ -380,7 +411,8 @@ def test_ltxv_launches_every_fused_adaln_at_stock_rows_and_returns_stock_bits(
     stock, outputs, spies = _compare(monkeypatch, comfy_ltx, _toy_ltxv(comfy_ltx, cross_adaln),
                                      lambda: _ltxv_call(*case))
     for rank, out in enumerate(outputs):
-        assert torch.equal(out, stock), f"rank {rank} differs from stock"
+        assert _same(out, stock), f"rank {rank} differs from stock: {_gap(out, stock)}"
+        assert torch.equal(out, outputs[0]), f"rank {rank} differs from rank 0"
     assert not spies.gates, "an LTXV block ran a gate projection"
     # The self-attention norm in every block, and the text cross attention's with its AdaLN.
     expected_norms = BLOCKS * (2 if cross_adaln else 1)
@@ -389,3 +421,18 @@ def test_ltxv_launches_every_fused_adaln_at_stock_rows_and_returns_stock_bits(
         assert sorted(spies.adaln.get(rank, [])) == sorted(spies.adaln[None]), f"rank {rank}"
         assert all(shape[-1] == v_rows for shape in spies.adaln[rank])
         assert len(spies.paired.get(rank, [])) == len(spies.paired[None]) == BLOCKS, f"rank {rank} rope"
+
+
+@pytest.mark.parametrize("exact", [True, False], ids=["aarch64", "x86"])
+def test_the_comparison_admits_float32_rounding_off_aarch64_and_refuses_a_real_error(
+        monkeypatch, exact):
+    """The helper on both branches, whatever this machine is: on x86 a rounding-sized gap
+    passes and a 1e-3 error fails, and on aarch64 any gap fails."""
+    monkeypatch.setattr(sys.modules[__name__], "_EXACT_GEMM", exact)
+    reference = torch.linspace(-1.0, 1.0, 64).reshape(2, 32)
+    rounded = reference + 1e-7
+    assert _same(reference.clone(), reference)
+    assert _same(rounded, reference) is (not exact)
+    assert not _same(reference + 1e-3, reference)
+    assert not _same(reference[:1], reference)
+    assert "max abs difference 0.001" in _gap(reference + 1e-3, reference)
