@@ -24,6 +24,11 @@ is raised:
    any more. The loader's price already counts held models against this
    graph's own (``loader_graph.credited_terms``), so the unload makes room
    only by what ComfyUI held beyond them: another graph's larger encoder.
+   Where ComfyUI holds no model the same step still returns the allocator's
+   cached blocks, and the load is priced again if the reading rose: the
+   driver's ComfyUI keeps that cache for longer since its free-memory reading
+   follows MemAvailable (``driver_uma_memory.py``), and on the driver host it
+   counts against the Worker's load.
 
 Every step is read-only or ComfyUI's own unload, and none clears a Worker:
 the Worker drops the model it replaces as it always did. A fault anywhere means
@@ -45,6 +50,9 @@ from . import graph_load_price, loader_graph, old_model_clear
 log = get_logger(__name__)
 
 _GIB = 2 ** 30
+# A released allocator cache is priced again only where it moves the reading
+# a refusal prints, a tenth of a GiB.
+_CACHE_WORTH_BYTES = _GIB // 10
 UNASKED = old_model_clear.UNASKED
 
 
@@ -149,25 +157,30 @@ def _less_the_other_slot(credit: swap_credit.SwapCredit, mesh: Any, own: dict[st
 
 
 def _unload_driver_models(mesh: Any) -> tuple[driver_unload.Unloaded | None, str]:
-    """Unload what ComfyUI holds on this host, or say why the driver kept it."""
+    """Unload what ComfyUI holds on this host and release its allocator cache, or say why the driver kept them."""
     if mesh_safety.env_enabled(driver_unload.DRIVER_UNLOAD_DISABLE_ENV):
         return None, ""
     mm = driver_unload.comfy_model_management()
-    held = driver_unload.held_models(mm) if mm is not None else []
-    if not held:
+    if mm is None:
         return None, ""
+    held = driver_unload.held_models(mm)
     busy = driver_unload.busy_reason(getattr(mesh, "handle", None))
     if busy:
         count = len(held)
-        return None, (f"The driver did not unload the {count} model{'' if count == 1 else 's'} "
-                      f"ComfyUI holds on this host before refusing, because {busy}; queue again "
-                      "once that work ends.")
+        return None, "" if not held else (
+            f"The driver did not unload the {count} model{'' if count == 1 else 's'} "
+            f"ComfyUI holds on this host before refusing, because {busy}; queue again "
+            "once that work ends.")
+    # ComfyUI's own /free sequence. With no model held it still returns the
+    # allocator's cached blocks, which the driver's ComfyUI keeps for longer
+    # since its free-memory reading follows MemAvailable (driver_uma_memory.py).
     outcome = driver_unload.unload(mm, held)
-    if not outcome.names:
-        return None, ""
-    # Nothing ComfyUI held is loaded now, so no earlier charge stands for it.
-    loader_graph.reset_charged_artifacts()
-    return outcome, ""
+    if outcome.names:
+        # Nothing ComfyUI held is loaded now, so no earlier charge stands for it.
+        loader_graph.reset_charged_artifacts()
+        return outcome, ""
+    # No model left ComfyUI: worth a second price only where the released cache shows in the reading.
+    return (outcome if outcome.gain >= _CACHE_WORTH_BYTES else None), ""
 
 
 def relieve(shape: Any, windows: Callable[[Any], tuple[Any, ...]], *, mesh: Any,

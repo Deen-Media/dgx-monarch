@@ -23,8 +23,9 @@
   count leaves the room the other slot's load takes. Nothing to
   set, and nothing is cleared that was not dropped before. If that does not
   make room, the loader also unloads the models ComfyUI holds on the driver
-  host, which ComfyUI reloads on demand, and prices the load again, as the
-  render-time checks already did; never while a render is running. A load that
+  host, which ComfyUI reloads on demand, or the allocator cache it kept where
+  it holds none, and prices the load again, as the render-time checks already
+  did; never while a render is running. A load that
   still does not fit refuses as before and says what it counted and unloaded,
   and the card is offered only where a clear returns more than the drop.
   `DGXM_DISABLE_SWAP_CREDIT=1` on the driver turns the count off. Not yet run

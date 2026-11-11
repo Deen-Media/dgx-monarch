@@ -2148,8 +2148,12 @@ the class C rule of offering the fitting strategy first. Each step runs at most
 once per render, and once more in the identity gate's stock reference leg
 ("Where the ceremony cannot help"), only after a check refused, never while a render, a result
 lease or a Worker call is live in the driver, and never reaches a Worker
-resident or ComfyUI's node output cache. The loader windows take neither,
-because the graph still needs its text encoder and VAEs before sampling. The
+resident or ComfyUI's node output cache. The loader windows take the first
+step only, after the swap credit (below): before a loader refuses it unloads
+ComfyUI's models, which ComfyUI reloads on demand for the text encoder and
+VAEs the graph still needs, or, where ComfyUI holds no model, releases the
+allocator cache it kept, and prices the load again. They do not ask the
+actors to trim. The
 agreement below credits a Worker resident that a load would replace only where
 the drop was measured: the GPU copy of the slot's own stock resident, never
 the arena a stock load retains, which an in-process unload returns only at
@@ -2452,7 +2456,12 @@ rescue; `DGXM_DISABLE_SWAP_CREDIT=1` turns the credit off at both. The loader's
 price already counts held models against the graph's own, so the unload makes
 room only by what ComfyUI held beyond them, another graph's larger encoder;
 in the two records above it would have added nothing, and the credit alone
-makes the room.
+makes the room. Where ComfyUI holds no model the same step still returns the
+allocator's cached blocks, and the load is priced again if the reading rose
+by a tenth of a GiB or more. The driver's ComfyUI keeps that cache for longer
+since its free-memory reading follows MemAvailable
+(`driver_uma_memory.install_driver`, above), and on the driver host the kept
+blocks count against the Worker's load.
 
 **A LoRA change on a held base is the same credit.** When the resident is a
 stock copy of the same file and the store would keep it and re-apply the new

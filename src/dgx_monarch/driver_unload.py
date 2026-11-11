@@ -103,7 +103,15 @@ class Unloaded:
         return self.after - self.before
 
     def readings(self) -> str:
-        """What the unload removed and the two readings, as one clause."""
+        """What the unload removed and the two readings, as one clause.
+
+        With no model named, only the allocator's cached blocks went back
+        (``release_cache``): the driver's ComfyUI keeps more of them since its
+        free-memory reading follows MemAvailable (``driver_uma_memory.py``).
+        """
+        if not self.names:
+            return ("released the allocator cache ComfyUI kept on this host: MemAvailable read "
+                    f"{_gib(self.before)} GiB before that and {_gib(self.after)} GiB after it")
         return (f"unloaded the {_models(self.names)} ComfyUI held on this host: "
                 f"MemAvailable read {_gib(self.before)} GiB before the unload and "
                 f"{_gib(self.after)} GiB after it")
@@ -115,8 +123,9 @@ class Unloaded:
 
     def log_line(self, subject: str) -> str:
         """The one line the driver logs when the unload lets a render through."""
-        return (f"driver unload: {subject} fits after unloading the "
-                f"{_models(self.names)} ComfyUI held on this host; MemAvailable "
+        what = (f"unloading the {_models(self.names)} ComfyUI held" if self.names
+                else "releasing the allocator cache ComfyUI kept")
+        return (f"driver unload: {subject} fits after {what} on this host; MemAvailable "
                 f"went from {_gib(self.before)} GiB to {_gib(self.after)} GiB, "
                 f"a gain of {_gib(self.gain)} GiB")
 

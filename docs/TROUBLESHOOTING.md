@@ -2297,7 +2297,10 @@ MemAvailable readings. A refusal that still stands carries them too: "Before
 refusing, the driver unloaded the 2 models (...) ComfyUI held on this host".
 The loader keeps the models while a render is running in this driver and says
 so. This helps only where ComfyUI held more than this graph's own driver
-models need, since this check already counts held models against them.
+models need, since this check already counts held models against them. Where
+ComfyUI holds no model the loader still releases the allocator cache it kept,
+and the sentence then reads "the driver released the allocator cache ComfyUI
+kept on this host".
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the unload off here too.
 It leaves the count of the drop on, at the loader and at the render-site
 checks alike: the count is a price, not something the driver frees.

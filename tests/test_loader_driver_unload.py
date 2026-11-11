@@ -90,6 +90,68 @@ def test_the_credit_comes_first_and_spares_the_unload(monkeypatch, tmp_path, box
     assert ["drops longcat_image_bf16" in record.getMessage() for record in journal] == [True]
 
 
+# The allocator cache the driver's ComfyUI keeps. Its free-memory reading follows MemAvailable
+# on unified memory (driver_uma_memory.py), so it flushes that cache less often, and on the
+# driver host the kept blocks count against the Worker's load. With no model held, the loader
+# still releases the cache before it refuses, and prices again if the reading rose.
+
+def _cache(monkeypatch, box, kept_gib: float):
+    """ComfyUI holding no model and ``kept_gib`` of cached allocator blocks."""
+    calls = _comfy(monkeypatch, box, models=())
+    kept = [int(kept_gib * _GIB)]
+
+    def soft_empty_cache():
+        calls.soft += 1
+        box.mem += kept.pop() if kept else 0
+
+    monkeypatch.setattr(calls.mm, "soft_empty_cache", soft_empty_cache)
+    return calls
+
+
+def test_the_loader_releases_the_allocator_cache_where_comfyui_holds_no_model(
+        monkeypatch, tmp_path, box, journal):
+    """47 GiB needed, 40 read, nothing to drop and no model to unload, 8 GiB of cached blocks."""
+    mesh, _asked = _rigged(monkeypatch, tmp_path, box, held_gib=None)
+    calls = _cache(monkeypatch, box, 8.0)
+    assert loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond") is None
+    assert calls.soft == 1 and _cards() == []
+    line = next(record.getMessage() for record in journal)
+    assert ("fits after releasing the allocator cache ComfyUI kept on this host; MemAvailable went "
+            "from 40.0 GiB to 48.0 GiB, a gain of 8.0 GiB") in line
+
+
+def test_a_released_cache_that_is_not_enough_is_named_in_the_refusal(monkeypatch, tmp_path, box):
+    mesh, asked = _rigged(monkeypatch, tmp_path, box, held_gib=None)
+    calls = _cache(monkeypatch, box, 2.0)
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond")
+    assert calls.soft == 1 and len(asked) == 2, "released once, then priced again on the new reading"
+    text = str(raised.value)
+    assert "needs 47.0 GiB on this box and 42.0 GiB is available, 5.0 GiB short." in text
+    assert ("Before refusing, the driver released the allocator cache ComfyUI kept on this host: "
+            "MemAvailable read 40.0 GiB before that and 42.0 GiB after it, and the figures above are "
+            "the reading after it.") in text
+
+
+@pytest.mark.parametrize(("kept_gib", "wall", "why"), [
+    (0.05, "", "a release the reading does not show is not priced again"),
+    (8.0, "busy", "a render is running in this driver: its cache stays"),
+    (8.0, "switch", "DGXM_DISABLE_DRIVER_UNLOAD=1 turns the release off with the unload"),
+])
+def test_the_cache_stays_where_releasing_it_is_no_use_or_not_allowed(
+        monkeypatch, tmp_path, box, kept_gib, wall, why):
+    mesh, asked = _rigged(monkeypatch, tmp_path, box, held_gib=None)
+    calls = _cache(monkeypatch, box, kept_gib)
+    if wall == "busy":
+        telemetry.render_progress.start(10, token=object())
+    if wall == "switch":
+        monkeypatch.setenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, "1")
+    with pytest.raises(driver_footprint.DriverFootprintCapacityError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond")
+    assert calls.soft == (0 if wall else 1), why
+    assert len(asked) == 1 and "allocator cache" not in str(raised.value), why
+
+
 def test_a_load_that_fits_unloads_nothing(monkeypatch, tmp_path, box):
     mesh, asked = _rigged(monkeypatch, tmp_path, box, held_gib=None, avail_gib=60.0)
     calls = _comfy(monkeypatch, box)
