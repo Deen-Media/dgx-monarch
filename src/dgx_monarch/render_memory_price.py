@@ -2,9 +2,14 @@
 
 Header-only model detection supplies ``memory_usage_factor`` to the stock
 flash-path ``BaseModel.memory_required`` formula. Using two-byte inference
-dtype and omitting conditioning extras yields a lower bound. Refuse a
-complete over-budget estimate before workers load weights; missing or broken
-estimation makes no claim.
+dtype and omitting conditioning extras yields a lower bound of ComfyUI's own
+figure. Refuse a complete over-budget estimate before workers load weights;
+missing or broken estimation makes no claim.
+
+One render is priced lower on a Worker than this bound: with UltraTex token
+masks the Flux forward drops background tokens, and a Worker prices the kept
+rows (``actor/held_rows_price.py``). This preflight still counts the whole
+latent, so there it is a bound on stock's figure, not on the Worker's.
 
 The check uses driver-host MemAvailable at every world size. It catches
 sample-time overcommit that a successful weight load cannot exclude,
