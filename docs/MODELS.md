@@ -1100,9 +1100,10 @@ encoder, the FP16 VAE, KSampler at 6 steps, CFG 1, `euler` and `simple` on a
 zeroed negative, and ComfyUI's prompt expander chain behind an If/Else switch:
 Replace Text puts the request into a task prompt where it says `{input text}`,
 Generate Text runs the W4A8 expander on it with ComfyUI's decoding numbers, and
-Extract Text from JSON reads `expanded_caption` out of the answer. Both
-templates ship the switch false and the expander's two prompt boxes empty, so
-each renders from the request as written. Text to image renders
+Extract Text from JSON reads `expanded_caption` out of the answer. The
+expander's task prompt and system prompt boxes hold this project's own texts,
+and both templates ship the switch false, so as shipped each renders from the
+request as written. Text to image renders
 2048 square, the 4 MP default of ComfyUI's template, whose notes say the model
 works from about 4 MP to 20 MP and best near 16 MP (4096 square, 4736x3552,
 5024x3360, 5472x3072 or 6272x2688). The edit scales its picture to about 4 MP
@@ -1114,36 +1115,54 @@ request cites them as `<Picture 1>`, `<Picture 2>`.
 The edit's canvas nodes are ComfyUI's own: two Resize Image/Mask nodes, to
 4 MP by area and then to a multiple of 32, and Get Image Size. The graphs
 leave out ComfyUI's subgraph wrapper, its Markdown notes and its Image Compare
-node, and set the switch on the If/Else node itself. Four more things differ
+node, and set the switch on the If/Else node itself. Five more things differ
 from ComfyUI's graphs, each on purpose:
 
-- The expander's task prompt and system prompt boxes are empty. ComfyUI's
-  templates carry MiniMax's text there, and this project does not ship it.
+- The expander's task prompt and system prompt boxes hold this project's own
+  texts. ComfyUI's templates carry MiniMax's text there, and this project
+  does not ship it.
 - Both templates ship the switch false, where ComfyUI's ship it true: the
   edit through a Boolean box, text to image through its subgraph's
   `enable_PE` input.
+- An answer with no caption falls back to the request. Extract Text from JSON
+  returns an empty text for an answer that does not parse or lacks the key,
+  and ComfyUI's graphs would then render from an empty prompt. Here Trim Text
+  and Compare Text test the caption against the empty text, and a second
+  If/Else sends the request as written when it is empty.
 - The text to image canvas is two numbers on the conditioning node, where
   ComfyUI wires a Resolution Selector, because the loader's price and the
   sweep read numbers.
 - Preview as Text shows the switch's choice from beside the text path, where
   ComfyUI puts it on the path. It hands a string on unchanged, so the model
-  gets the same text either way.
+  gets the same text either way, and it shows the text that is rendered,
+  a fallback included.
 
-**Running the expander.** MiniMax publishes the text the two boxes were built
-for in its Hugging Face repository
-[MiniMaxAI/MiniMax-H3-Image-PE](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image-PE):
-`prompt/t2i/task_prompt.txt` for text to image, `prompt/edit/task_prompt.txt`
-for the edit, and `prompt/t2i/system_prompt.txt` for the system prompt box of
-both. Paste the task prompt and the system prompt into their boxes, make sure
-the task prompt holds `{input text}` where the request belongs, and set the
-switch to true. ComfyUI's text to image template ends its task prompt with the
-lines `input_text: {input text}` and `output_text:`, and its edit template
-with `User input: {input text}` and `output_text:`; each template's Note says
-the same. With the task prompt box empty the switch must stay false. A graph
-whose expander is on with an empty task prompt, or with one that lacks the
-marker, would render from an empty or unrelated prompt with no error from
-ComfyUI, so a DGX Monarch loader, sampler or Identity Gate refuses it, class P
+**The expander's texts.** The system prompt and the two task prompts are this
+project's own, written from public research on the model. They are not
+MiniMax's prompts. MiniMax publishes its own in its Hugging Face repository
+[MiniMaxAI/MiniMax-H3-Image-PE](https://huggingface.co/MiniMaxAI/MiniMax-H3-Image-PE)
+under its own licence, and nothing of those is in this repository. The texts
+are tracked files, `tools/expander_prompts/minimax_h3_image/system_prompt.txt`,
+`t2i_task_prompt.txt` and `edit_task_prompt.txt`; the generator writes each
+into its Text (Multiline) box byte for byte, and a test holds the boxes to the
+files. The testing graph keeps both boxes empty.
+
+**Running the expander.** Set the switch titled
+`If/Else Switch (expander on or off)` to true. The driver then loads the
+7.3 GB expander beside the text encoder, and Generate Text may write up to
+8192 tokens (8196 in the edit) before the render starts; the edit also hands
+it the picture. Neither the wait nor the memory has been measured. You may
+replace either text with your own: keep `{input text}` in the task prompt
+where the request belongs, and have the answer hold the caption under the key
+`expanded_caption`. A graph whose expander is on with an empty task prompt, or
+with one that lacks the marker, would render from a caption unrelated to the
+request, or spend the expander's run and fall back to the request,
+with no error from ComfyUI, so a DGX Monarch loader, sampler or
+Identity Gate refuses it, class P
 ([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
+The empty-caption fallback does not quiet that refusal: ComfyUI must run the
+expander to decide the fallback, so with the switch true the refusal still
+answers.
 
 **The expander and repeatability.** With the switch true the prompt is text a
 language model wrote, and Preview as Text shows it. ComfyUI's sampled decoding
@@ -1153,11 +1172,12 @@ the file carries a multi-token-prediction draft head, Generate Text's `mtp`
 one token a tree row from the seeded generator (ComfyUI 0.45.0,
 `comfy/text_encoders/qwen35.py`). So compare renders and check identity with
 the switch false, as both templates and the testing graph ship. The expander
-has not run on hardware under this project.
+has not run on hardware under this project, with these texts or any other.
 
 The testing graph `dgx-monarch-test-minimax-h3-image-grid` samples through
 Sampler Custom (DGX Monarch) on the checkpoint's own grid, with the expander
-off.
+off and its two prompt boxes empty, so no sweep or identity row of it can run
+a language model.
 
 **Files.** The templates load the first four rows; the sweep hands the text to
 image graph the other two DiTs, since the three share one name stem.
@@ -1250,7 +1270,8 @@ every identity, speed and memory row is NOT RUN
 ([VALIDATION](VALIDATION.md#minimax-h3-image)). A pair under `auto` drops the
 checkpoint's INT8 attention pins and a world of one GPU keeps them, so the two
 renders are not identical, and the size of that difference is not measured.
-The prompt expander ships off with its two prompt boxes empty, and no render
+The prompt expander ships off, with this project's own texts in its two
+prompt boxes; the texts have not been tried on hardware, and no render
 with it on has run on hardware. The W4A8 DiT refuses FSDP. Studio's CPU compile tests skip both
 graphs until a driver schema is recorded on ComfyUI 0.45.0.
 

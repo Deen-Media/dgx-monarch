@@ -90,6 +90,8 @@ _KNOWN_NODE_TYPES = frozenset({
     "MiniMaxH3ImageConditioning",
     "ResizeImageMaskNode",
     "StringReplace",
+    "StringTrim",
+    "StringCompare",
     "JsonExtractString",
     "TextEncodeMageFlowEdit",
     "TextEncodeQwenImage21",

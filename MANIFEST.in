@@ -62,6 +62,7 @@ recursive-include tests/fixtures/studio *.md
 recursive-include tools *.py
 recursive-include tools *.mjs
 include tools/leak_allowlist.toml
+recursive-include tools/expander_prompts *.txt
 recursive-include web *.js *.svg
 
 global-exclude __pycache__

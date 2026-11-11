@@ -1,8 +1,8 @@
 {
  "id": "minimax-h3-image-on-its-sigma-grid",
  "revision": 0,
- "last_node_id": 22,
- "last_link_id": 23,
+ "last_node_id": 25,
+ "last_link_id": 28,
  "nodes": [
   {
    "id": 1,
@@ -93,7 +93,7 @@
     "Node name for S&R": "Note"
    },
    "widgets_values": [
-    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-minimax-h3-image-t2i, with only the changes needed for this test. Sampler Custom (DGX Monarch) walks the checkpoint's own sigma grid, typed into Manual Sigmas, where the shipped graph's KSampler lands within a thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. The first-use gate proves this graph with its own first two steps, 1.0 to 0.9675 to 0.8875, each on one head block as in the render, where the shipped graph's two-step KSampler proof spans three blocks a step. The expander is off, so the request reaches the model as written."
+    "Testing-only workflow for the sweep harness; hidden from the template browser. Based on dgx-monarch-minimax-h3-image-t2i, with only the changes needed for this test. Sampler Custom (DGX Monarch) walks the checkpoint's own sigma grid, typed into Manual Sigmas, where the shipped graph's KSampler lands within a thousandth of it; euler through Basic Guider (DGX Monarch) at CFG 1. The first-use gate proves this graph with its own first two steps, 1.0 to 0.9675 to 0.8875, each on one head block as in the render, where the shipped graph's two-step KSampler proof spans three blocks a step. The expander is off and its task prompt and system prompt boxes are empty, so the request reaches the model as written and no row of this graph runs a language model."
    ],
    "title": "DGX Monarch | MiniMax-H3-Image on its sigma grid"
   },
@@ -124,7 +124,7 @@
      "type": "DGXM_MODEL",
      "slot_index": 0,
      "links": [
-      14
+      19
      ]
     }
    ],
@@ -161,7 +161,7 @@
      "type": "CLIP",
      "slot_index": 0,
      "links": [
-      11
+      16
      ]
     }
    ],
@@ -229,8 +229,8 @@
      "type": "VAE",
      "slot_index": 0,
      "links": [
-      12,
-      22
+      17,
+      27
      ]
     }
    ],
@@ -263,7 +263,8 @@
      "slot_index": 0,
      "links": [
       3,
-      8
+      12,
+      13
      ]
     }
    ],
@@ -491,7 +492,8 @@
      "type": "STRING",
      "slot_index": 0,
      "links": [
-      9
+      8,
+      11
      ]
     }
    ],
@@ -505,10 +507,10 @@
   },
   {
    "id": 13,
-   "type": "ComfySwitchNode",
+   "type": "StringTrim",
    "pos": [
     760,
-    460
+    840
    ],
    "size": [
     315,
@@ -519,14 +521,108 @@
    "mode": 0,
    "inputs": [
     {
+     "name": "string",
+     "type": "STRING",
+     "widget": {
+      "name": "string"
+     },
+     "link": 8
+    }
+   ],
+   "outputs": [
+    {
+     "name": "STRING",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      9
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "StringTrim"
+   },
+   "widgets_values": [
+    "",
+    "Both"
+   ]
+  },
+  {
+   "id": 14,
+   "type": "StringCompare",
+   "pos": [
+    1100,
+    840
+   ],
+   "size": [
+    315,
+    162
+   ],
+   "flags": {},
+   "order": 13,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "string_a",
+     "type": "STRING",
+     "widget": {
+      "name": "string_a"
+     },
+     "link": 9
+    }
+   ],
+   "outputs": [
+    {
+     "name": "BOOLEAN",
+     "type": "BOOLEAN",
+     "slot_index": 0,
+     "links": [
+      10
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "StringCompare"
+   },
+   "widgets_values": [
+    "",
+    "",
+    "Equal",
+    true
+   ]
+  },
+  {
+   "id": 15,
+   "type": "ComfySwitchNode",
+   "pos": [
+    1440,
+    840
+   ],
+   "size": [
+    315,
+    140
+   ],
+   "flags": {},
+   "order": 14,
+   "mode": 0,
+   "inputs": [
+    {
      "name": "on_false",
      "type": "STRING",
-     "link": 8
+     "link": 11
     },
     {
      "name": "on_true",
      "type": "STRING",
-     "link": 9
+     "link": 12
+    },
+    {
+     "name": "switch",
+     "type": "BOOLEAN",
+     "widget": {
+      "name": "switch"
+     },
+     "link": 10
     }
    ],
    "outputs": [
@@ -535,8 +631,7 @@
      "type": "STRING",
      "slot_index": 0,
      "links": [
-      10,
-      13
+      14
      ]
     }
    ],
@@ -545,10 +640,56 @@
    },
    "widgets_values": [
     false
-   ]
+   ],
+   "title": "If/Else Switch (empty caption: send the request)"
   },
   {
-   "id": 14,
+   "id": 16,
+   "type": "ComfySwitchNode",
+   "pos": [
+    760,
+    460
+   ],
+   "size": [
+    315,
+    118
+   ],
+   "flags": {},
+   "order": 15,
+   "mode": 0,
+   "inputs": [
+    {
+     "name": "on_false",
+     "type": "STRING",
+     "link": 13
+    },
+    {
+     "name": "on_true",
+     "type": "STRING",
+     "link": 14
+    }
+   ],
+   "outputs": [
+    {
+     "name": "output",
+     "type": "STRING",
+     "slot_index": 0,
+     "links": [
+      15,
+      18
+     ]
+    }
+   ],
+   "properties": {
+    "Node name for S&R": "ComfySwitchNode"
+   },
+   "widgets_values": [
+    false
+   ],
+   "title": "If/Else Switch (expander on or off)"
+  },
+  {
+   "id": 17,
    "type": "PreviewAny",
    "pos": [
     1100,
@@ -559,13 +700,13 @@
     80
    ],
    "flags": {},
-   "order": 13,
+   "order": 16,
    "mode": 0,
    "inputs": [
     {
      "name": "source",
      "type": "*",
-     "link": 10
+     "link": 15
     }
    ],
    "outputs": [
@@ -582,7 +723,7 @@
    "widgets_values": []
   },
   {
-   "id": 15,
+   "id": 18,
    "type": "MiniMaxH3ImageConditioning",
    "pos": [
     1440,
@@ -593,18 +734,18 @@
     206
    ],
    "flags": {},
-   "order": 14,
+   "order": 17,
    "mode": 0,
    "inputs": [
     {
      "name": "clip",
      "type": "CLIP",
-     "link": 11
+     "link": 16
     },
     {
      "name": "vae",
      "type": "VAE",
-     "link": 12
+     "link": 17
     },
     {
      "name": "prompt",
@@ -612,7 +753,7 @@
      "widget": {
       "name": "prompt"
      },
-     "link": 13
+     "link": 18
     }
    ],
    "outputs": [
@@ -621,7 +762,7 @@
      "type": "CONDITIONING",
      "slot_index": 0,
      "links": [
-      15
+      20
      ]
     },
     {
@@ -629,7 +770,7 @@
      "type": "LATENT",
      "slot_index": 1,
      "links": [
-      20
+      25
      ]
     }
    ],
@@ -643,7 +784,7 @@
    ]
   },
   {
-   "id": 16,
+   "id": 19,
    "type": "DGXMonarchBasicGuider",
    "pos": [
     1780,
@@ -654,18 +795,18 @@
     96
    ],
    "flags": {},
-   "order": 15,
+   "order": 18,
    "mode": 0,
    "inputs": [
     {
      "name": "model",
      "type": "DGXM_MODEL",
-     "link": 14
+     "link": 19
     },
     {
      "name": "conditioning",
      "type": "CONDITIONING",
-     "link": 15
+     "link": 20
     }
    ],
    "outputs": [
@@ -674,7 +815,7 @@
      "type": "DGXM_GUIDER",
      "slot_index": 0,
      "links": [
-      17
+      22
      ]
     }
    ],
@@ -685,7 +826,7 @@
    "dgxm_widgets": {}
   },
   {
-   "id": 17,
+   "id": 20,
    "type": "KSamplerSelect",
    "pos": [
     1780,
@@ -696,7 +837,7 @@
     80
    ],
    "flags": {},
-   "order": 16,
+   "order": 19,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -705,7 +846,7 @@
      "type": "SAMPLER",
      "slot_index": 0,
      "links": [
-      18
+      23
      ]
     }
    ],
@@ -717,7 +858,7 @@
    ]
   },
   {
-   "id": 18,
+   "id": 21,
    "type": "RandomNoise",
    "pos": [
     1780,
@@ -728,7 +869,7 @@
     96
    ],
    "flags": {},
-   "order": 17,
+   "order": 20,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -737,7 +878,7 @@
      "type": "NOISE",
      "slot_index": 0,
      "links": [
-      16
+      21
      ]
     }
    ],
@@ -750,7 +891,7 @@
    ]
   },
   {
-   "id": 19,
+   "id": 22,
    "type": "ManualSigmas",
    "pos": [
     1780,
@@ -761,7 +902,7 @@
     80
    ],
    "flags": {},
-   "order": 18,
+   "order": 21,
    "mode": 0,
    "inputs": [],
    "outputs": [
@@ -770,7 +911,7 @@
      "type": "SIGMAS",
      "slot_index": 0,
      "links": [
-      19
+      24
      ]
     }
    ],
@@ -782,7 +923,7 @@
    ]
   },
   {
-   "id": 20,
+   "id": 23,
    "type": "DGXMonarchSamplerCustom",
    "pos": [
     2120,
@@ -793,33 +934,33 @@
     184
    ],
    "flags": {},
-   "order": 19,
+   "order": 22,
    "mode": 0,
    "inputs": [
     {
      "name": "noise",
      "type": "NOISE",
-     "link": 16
+     "link": 21
     },
     {
      "name": "guider",
      "type": "DGXM_GUIDER",
-     "link": 17
+     "link": 22
     },
     {
      "name": "sampler",
      "type": "SAMPLER",
-     "link": 18
+     "link": 23
     },
     {
      "name": "sigmas",
      "type": "SIGMAS",
-     "link": 19
+     "link": 24
     },
     {
      "name": "latent_image",
      "type": "LATENT",
-     "link": 20
+     "link": 25
     }
    ],
    "outputs": [
@@ -828,7 +969,7 @@
      "type": "LATENT",
      "slot_index": 0,
      "links": [
-      21
+      26
      ]
     },
     {
@@ -845,7 +986,7 @@
    "dgxm_widgets": {}
   },
   {
-   "id": 21,
+   "id": 24,
    "type": "VAEDecode",
    "pos": [
     2460,
@@ -856,18 +997,18 @@
     96
    ],
    "flags": {},
-   "order": 20,
+   "order": 23,
    "mode": 0,
    "inputs": [
     {
      "name": "samples",
      "type": "LATENT",
-     "link": 21
+     "link": 26
     },
     {
      "name": "vae",
      "type": "VAE",
-     "link": 22
+     "link": 27
     }
    ],
    "outputs": [
@@ -876,7 +1017,7 @@
      "type": "IMAGE",
      "slot_index": 0,
      "links": [
-      23
+      28
      ]
     }
    ],
@@ -886,7 +1027,7 @@
    "widgets_values": []
   },
   {
-   "id": 22,
+   "id": 25,
    "type": "SaveImage",
    "pos": [
     2800,
@@ -897,13 +1038,13 @@
     96
    ],
    "flags": {},
-   "order": 21,
+   "order": 24,
    "mode": 0,
    "inputs": [
     {
      "name": "images",
      "type": "IMAGE",
-     "link": 23
+     "link": 28
     }
    ],
    "outputs": [
@@ -981,7 +1122,7 @@
   ],
   [
    8,
-   7,
+   12,
    0,
    13,
    0,
@@ -989,121 +1130,161 @@
   ],
   [
    9,
-   12,
-   0,
    13,
-   1,
+   0,
+   14,
+   0,
    "STRING"
   ],
   [
    10,
-   13,
-   0,
    14,
-   0,
-   "*"
-  ],
-  [
-   11,
-   4,
-   0,
-   15,
-   0,
-   "CLIP"
-  ],
-  [
-   12,
-   6,
-   0,
-   15,
-   1,
-   "VAE"
-  ],
-  [
-   13,
-   13,
    0,
    15,
    2,
+   "BOOLEAN"
+  ],
+  [
+   11,
+   12,
+   0,
+   15,
+   0,
+   "STRING"
+  ],
+  [
+   12,
+   7,
+   0,
+   15,
+   1,
+   "STRING"
+  ],
+  [
+   13,
+   7,
+   0,
+   16,
+   0,
    "STRING"
   ],
   [
    14,
-   3,
-   0,
-   16,
-   0,
-   "DGXM_MODEL"
-  ],
-  [
-   15,
    15,
    0,
    16,
    1,
-   "CONDITIONING"
+   "STRING"
   ],
   [
-   16,
-   18,
-   0,
-   20,
-   0,
-   "NOISE"
-  ],
-  [
-   17,
+   15,
    16,
    0,
-   20,
-   1,
-   "DGXM_GUIDER"
-  ],
-  [
-   18,
    17,
    0,
-   20,
-   2,
-   "SAMPLER"
+   "*"
   ],
   [
-   19,
-   19,
-   0,
-   20,
-   3,
-   "SIGMAS"
-  ],
-  [
-   20,
-   15,
-   1,
-   20,
+   16,
    4,
-   "LATENT"
+   0,
+   18,
+   0,
+   "CLIP"
   ],
   [
-   21,
-   20,
-   0,
-   21,
-   0,
-   "LATENT"
-  ],
-  [
-   22,
+   17,
    6,
    0,
-   21,
+   18,
    1,
    "VAE"
   ],
   [
-   23,
+   18,
+   16,
+   0,
+   18,
+   2,
+   "STRING"
+  ],
+  [
+   19,
+   3,
+   0,
+   19,
+   0,
+   "DGXM_MODEL"
+  ],
+  [
+   20,
+   18,
+   0,
+   19,
+   1,
+   "CONDITIONING"
+  ],
+  [
+   21,
    21,
    0,
+   23,
+   0,
+   "NOISE"
+  ],
+  [
    22,
+   19,
+   0,
+   23,
+   1,
+   "DGXM_GUIDER"
+  ],
+  [
+   23,
+   20,
+   0,
+   23,
+   2,
+   "SAMPLER"
+  ],
+  [
+   24,
+   22,
+   0,
+   23,
+   3,
+   "SIGMAS"
+  ],
+  [
+   25,
+   18,
+   1,
+   23,
+   4,
+   "LATENT"
+  ],
+  [
+   26,
+   23,
+   0,
+   24,
+   0,
+   "LATENT"
+  ],
+  [
+   27,
+   6,
+   0,
+   24,
+   1,
+   "VAE"
+  ],
+  [
+   28,
+   24,
+   0,
+   25,
    0,
    "IMAGE"
   ]

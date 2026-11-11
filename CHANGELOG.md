@@ -19,10 +19,14 @@
   FP16 VAE and the W4A8 prompt expander, with KSampler at 6 steps, CFG 1,
   `euler` and `simple`. The edit scales its picture with ComfyUI's two Resize
   Image/Mask nodes. ComfyUI's prompt expander chain is wired as ComfyUI wires
-  it, behind an If/Else switch, and ships off in both templates with its task
-  prompt and system prompt boxes empty: the text ComfyUI's templates carry
-  there is MiniMax's, and this project does not ship it. Each Note names
-  MiniMax's repository and the files to paste in. A testing graph samples the
+  it, behind an If/Else switch that ships off in both templates. Its task
+  prompt and system prompt boxes hold this project's own texts, written from
+  public research on the model; the text ComfyUI's templates carry there is
+  MiniMax's, and this project does not ship it. Turn the switch on to have
+  the expander write the prompt, or replace the texts with your own. An
+  answer that holds no caption falls back to the request as written, where
+  ComfyUI's own graph would render from an empty prompt. A testing graph
+  samples the
   checkpoint's own sigma grid through Sampler Custom (DGX Monarch). The sweep
   labels the family's cfg2 and dp2 cells from the driver's own preflight.
   [MODELS](docs/MODELS.md#model-minimax-h3-image) lists the eight published
@@ -32,8 +36,9 @@
 - A graph whose prompt expander is on with an empty task prompt, or with one
   that lacks the marker Replace Text fills, refuses class P at the UNET
   loader, the samplers and Identity Gate, before the DiT loads or a picture
-  renders. ComfyUI raises no error there, and the render would follow an empty
-  or unrelated prompt
+  renders. ComfyUI raises no error there, and the render would follow a caption
+  unrelated to the request, or spend the expander's run and fall back to the
+  request
   ([TROUBLESHOOTING #153](docs/TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
 - The sweep converter, which the template release test shares, reads the
   child widgets a ComfyUI dynamic combo reveals, under their dotted names,

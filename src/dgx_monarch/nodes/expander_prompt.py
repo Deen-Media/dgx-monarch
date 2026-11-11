@@ -2,14 +2,15 @@
 
 ComfyUI's MiniMax-H3-Image templates splice the request into a task prompt with
 Replace Text, hand the result to Generate Text, and read the caption out of the
-answer with Extract Text from JSON. The DGX Monarch templates keep that chain
-and ship the task prompt box empty, with the switch that selects the expander
-off. Replace Text over an empty text is an empty text whatever the request
-holds, so with the switch on Generate Text answers an empty prompt, Extract
-Text from JSON finds no caption, and the model renders from whatever came out,
-with no error anywhere. A task prompt that lacks the marker Replace Text looks
-for fails the same way more quietly: the expander runs, and the request never
-reaches it.
+answer with Extract Text from JSON. The DGX Monarch templates keep that chain,
+with the switch that selects the expander off. The two shipped templates carry
+this project's own task prompt in the box Replace Text reads; the testing graph
+ships that box empty, and a user may empty or replace it. Replace Text over an
+empty text is an empty text whatever the request holds, so with the switch on
+Generate Text answers an empty prompt and the render follows what comes of
+that, with no error anywhere. A task prompt that lacks the marker Replace Text
+looks for fails the same way more quietly: the expander runs, and the request
+never reaches it.
 
 A DGX Monarch loader, sampler or Identity Gate receives the whole prompt graph,
 so it reads this chain there and refuses, class P, before the DiT loads or a
@@ -19,18 +20,24 @@ so the sampler's refusal comes after the expander has answered, and still
 ahead of the render.
 
 Only what the graph states is read, because a refusal of a graph that would
-have rendered well is worse than none. Generate Text must be a node a DGX
-Monarch render takes its inputs from: the walk (graph_live) starts at the
-samplers and Identity Gate that ComfyUI runs, not at every output node, so an
-expander that runs only for a Preview as Text beside the path, with the
-switch off, refuses nothing. Generate Text must be fed by a Replace Text node
-whose text is typed or comes from a text box. Every switch in the running
-graph must state its choice: a typed boolean, or a Boolean box wired to it,
-as ComfyUI's own edit template has. graph_live keeps both branches of a
-switch it cannot decide, the safe side for a price and the wrong side here,
-so a graph that runs such a switch, or a Branch node, refuses nothing. So
-does any graph this cannot read. A lazy node of another pack is not known
-here and reads as running all its inputs.
+have rendered well is worse than none. Generate Text must be a node ComfyUI
+is sure to run for a DGX Monarch render: the walk (graph_live, ``sure``)
+starts at the samplers, Identity Gate and Fleet sampler that are themselves
+sure to run, not at every output node, so an expander that runs only for a
+Preview as Text beside the path, with the switch off, refuses nothing.
+Generate Text must be fed by a Replace Text node whose text is typed or comes
+from a text box.
+
+A switch counts by what it states: a typed boolean, or a Boolean box wired to
+it, as ComfyUI's own edit template has. Behind a switch that states no
+choice, neither branch is sure to run, so an expander there refuses nothing,
+and the same holds behind a Branch node. What feeds such a switch's own
+``switch`` input is sure to run, though: ComfyUI needs that value to choose.
+The shipped graphs use this. Their empty-caption fallback is a second If/Else
+whose ``switch`` reads Compare Text over the expander's caption, so with the
+outer switch true the expander runs whichever way the fallback goes, and the
+refusal still answers. Any graph this cannot read refuses nothing. A lazy node
+of another pack is not known here and reads as running all its inputs.
 
 Pure: no ComfyUI import and no file read.
 """
@@ -48,14 +55,15 @@ REPLACE_CLASS = "StringReplace"
 BOOLEAN_CLASS = "PrimitiveBoolean"
 # Text boxes whose one widget is the text they hand on; read-only after import.
 TEXT_CLASSES = ("PrimitiveStringMultiline", "PrimitiveString")
-# ComfyUI's lazy node that graph_live does not read (comfy_extras/nodes_logic.py,
-# BranchNode at 0.45.0): which branch it runs is not decided here.
-UNREAD_LAZY_CLASSES = ("BranchNode",)
-# The DGX Monarch nodes that render, each of which calls refuse_dead_expander:
-# a prompt reaches a picture only through one of these. Read-only after import.
+# The DGX Monarch nodes that render and call refuse_dead_expander themselves.
+# Read-only after import.
 RENDER_CLASSES = (
     "DGXMonarchKSampler", "DGXMonarchKSamplerPipeline", "DGXMonarchKSamplerAdvanced",
     "DGXMonarchSamplerCustom", "DGXMonarchIdentityGate")
+# Where the walk starts: every node a prompt reaches a picture through. The
+# Fleet sampler renders too. It receives no prompt graph, so it cannot refuse
+# itself and relies on the UNET loader's call, which reads the whole graph.
+ROOT_CLASSES = (*RENDER_CLASSES, "DGXMonarchFleetKSampler")
 TROUBLESHOOTING = 153
 
 EMPTY_TASK_PROMPT = (
@@ -64,8 +72,8 @@ EMPTY_TASK_PROMPT = (
     "Generate Text (node {generate}) answers an empty prompt, and a render that takes its "
     "prompt from that answer follows whatever it wrote. No picture was rendered. Fill the "
     "text box wired to Replace Text with the task prompt, or send the request to the model "
-    "without the expander instead: in the DGX Monarch templates, set the If/Else Switch to "
-    "false.")
+    "without the expander instead: in the DGX Monarch templates, set the switch titled "
+    "If/Else Switch (expander on or off) to false.")
 MISSING_MARKER = (
     "The prompt expander is on and the request cannot reach it. Replace Text (node "
     "{replace}) puts the request where the text on its `string` input holds {find!r}, and "
@@ -73,7 +81,7 @@ MISSING_MARKER = (
     "prompt alone, and a render that takes its prompt from that answer ignores the request. "
     "No picture was rendered. Put {find!r} in the task prompt where the request belongs, or "
     "send the request to the model without the expander instead: in the DGX Monarch "
-    "templates, set the If/Else Switch to false.")
+    "templates, set the switch titled If/Else Switch (expander on or off) to false.")
 
 
 def _node(prompt: Mapping, key: object) -> Mapping | None:
@@ -120,26 +128,16 @@ def _stated(nodes: Mapping[str, Mapping]) -> dict[str, Mapping]:
     return stated
 
 
-def _undecided(node: Mapping) -> bool:
-    """Whether a node may skip an input and the graph does not say which."""
-    kind = node.get("class_type")
-    if kind in UNREAD_LAZY_CLASSES:
-        return True
-    return kind in graph_live.SWITCH_CLASSES and graph_live.skipped_branch(node) is None
-
-
 def _finding(prompt: Any) -> tuple[str, dict[str, str]] | None:
     """The sentence and its fields for a running expander that cannot see the request."""
     if not isinstance(prompt, Mapping):
         return None
     nodes = _stated({str(key): node for key, node in prompt.items()
                      if isinstance(node, Mapping)})
-    # What ComfyUI runs, then what the renders among those take their inputs from.
-    running = graph_live.live_nodes(nodes)
-    if any(_undecided(nodes[key]) for key in running):
-        return None
-    renders = [key for key in running if nodes[key].get("class_type") in RENDER_CLASSES]
-    live = graph_live.live_nodes(nodes, roots=renders)
+    # What ComfyUI is sure to run, then what the renders among those are sure to read.
+    running = graph_live.live_nodes(nodes, sure=True)
+    renders = [key for key in running if nodes[key].get("class_type") in ROOT_CLASSES]
+    live = graph_live.live_nodes(nodes, roots=renders, sure=True)
     for key in sorted(live):
         node = nodes[key]
         if node.get("class_type") != GENERATE_CLASS:

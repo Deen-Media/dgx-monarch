@@ -177,7 +177,8 @@ auto_gate = ["uly2+fsdp"]
 # share the stem minimaxh3imagepruned, so each of its three graphs meets all
 # three DiT files. The text encoder, the VAE and the prompt expander stay as
 # the graph names them. All three graphs ship with the expander off and send
-# the request as written. A cell whose graph has the If/Else switch on
+# the request as written; the two shipped graphs hold this project's expander
+# texts, the testing graph none. A cell whose graph has the expander switch on
 # renders text a language model wrote on the driver and is not an identity
 # row (docs/SWEEP.md section 3).
 [artifact_groups."dgx-monarch-ideogram4-t2i"]

@@ -3440,8 +3440,11 @@ of this family has been taken: every hardware row below is NOT RUN.
 The two shipped templates and the testing graph have CPU checks only.
 `tests/test_minimax_h3_image_templates.py` holds each graph to ComfyUI's
 recipe (the four files, 6 steps, CFG 1, `euler`, `simple`, the expander chain
-wired as ComfyUI wires it), holds the switch off and the expander's task
-prompt and system prompt boxes empty in all three graphs, holds the testing
+wired as ComfyUI wires it), holds the task prompt and system prompt boxes of
+the two shipped graphs to this project's tracked texts byte for byte and the
+testing graph's boxes empty, holds the switch to the generator's one value
+(off as shipped) and off in the testing graph, holds the empty-caption
+fallback's wiring, holds the testing
 graph's Manual Sigmas to
 the published header's grid, and holds each Note to the auto table, the
 driver's cfg and dp preflight, the gate's proof request and the manifest's
@@ -3466,26 +3469,35 @@ lacks the `{input text}` marker, refuses class P
 ([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
 `tests/test_expander_prompt.py` holds the sentence, holds it to the UNET
 loader, the four samplers and Identity Gate ahead of each node's own price,
-load and render, holds that an expander which runs only for an extra Preview
-as Text refuses nothing, as does a switch whose choice the graph does not
-state, and holds that no other committed graph meets the refusal, as shipped
-or with every switch on.
+load and render, and holds that the loader answers for a Fleet render. It
+holds that the empty-caption fallback, a switch driven by Compare Text, does
+not quiet the refusal, and that with the outer switch false nothing of the
+expander runs. It holds that an expander which runs only for an extra Preview
+as Text refuses nothing, as does one behind a switch whose choice the graph
+does not state. And it holds that the shipped texts with the switch on refuse
+nothing, and that no other committed graph meets the refusal, as shipped or
+with every typed switch on, the testing graph's empty boxes apart.
 
-With the If/Else switch true, a render of either template depends on text a
+With the expander switch true, a render of either template depends on text a
 language model wrote on the driver. Generate Text holds ComfyUI's sampled
 decoding numbers, and with this expander file sampled text can change from
 run to run at a fixed seed ([MODELS](MODELS.md#model-minimax-h3-image)). So
 every identity row here uses a graph with the switch false, as all three
 ship, and a row with the expander on records its caption beside the picture.
-An expander-on row needs MiniMax's task prompt and system prompt pasted into
-the two boxes by whoever runs it; this repository holds neither.
-
+The two shipped templates carry this project's own expander texts, which no
+hardware run has tried. They ship with the switch false until the expander
+rows below pass: every counted run returns a caption, the caption keeps the
+request in at least 95 percent of runs, at most one picture pair a graph
+looks worse with the expander on than off, and the expander's time is
+recorded. None of that has run.
 | template behaviour | what a run must show | status |
 |---|---|---|
 | The text to image template | `dgx-monarch-minimax-h3-image-t2i.json` as shipped, the switch false, 6 steps at 2048 square, on the pair under `auto` and in a world of one GPU | NOT RUN |
 | The edit template | `dgx-monarch-minimax-h3-image-edit.json` as shipped, the switch false, one picture, on the pair under `auto` and in a world of one GPU | NOT RUN |
-| The expander on | each template with MiniMax's task prompt and system prompt pasted into the two boxes by whoever runs it and the switch true: the caption recorded beside the picture, and the same graph queued twice on one driver to see whether the caption repeats | NOT RUN |
-| The empty expander refuses | each template with the switch true and the two boxes as shipped: the class P refusal of [#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt) at the loader before the DiT loads, and at the sampler on a re-queue of a graph that first rendered with the switch false, after the expander has run and before the render | NOT RUN |
+| The expander on, text stage | each shipped template with the switch true and the shipped texts, a set of requests at five values of Generate Text's own seed: both outputs of Generate Text and the extracted caption recorded; every counted run returns a caption; quoted words are kept letter for letter; an edit names its picture `<Picture 1>`; the shipped request queued four times at one seed to see whether the caption repeats; the expander's median and longest time and the driver's memory with it loaded | NOT RUN |
+| The expander on, picture stage | text to image and edit pairs with the expander on and off at the same KSampler seed, judged on the subject and, for an edit, on what lies outside the change | NOT RUN |
+| The empty-caption fallback | each shipped template with the switch true and an answer that holds no caption, from a task prompt replaced with one that asks for plain prose: the render uses the request, and Preview as Text shows the request | NOT RUN |
+| The empty expander refuses | the testing graph with the switch true, its boxes empty as shipped, and a shipped template with its task prompt box emptied: the class P refusal of [#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt) at the loader before the DiT loads, and at the sampler on a re-queue of a graph that first rendered with the switch false, after the expander has run and before the render | NOT RUN |
 | The edit template in the browser | opened from Browse Templates on ComfyUI 0.45.0: the picture sockets `images.image_1` and `images.image1` keep their wires, each Resize Image/Mask node shows its child widget with the stored value, and Queue sends the API prompt the converter writes | NOT RUN |
 | The release-test rows | both templates in the [template release test](#release-test-2026-11-04): one step, seed 1031, uly2 | NOT RUN |
 | The gate's two proof paths | the first-use gate on the text to image template, a two-step KSampler proof, and on `dgx-monarch-test-minimax-h3-image-grid`, the Sampler Custom proof on the grid's first two steps; each on uly2 and in a world of one GPU | NOT RUN |

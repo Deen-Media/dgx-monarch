@@ -321,9 +321,12 @@ expander file can change from run to run at a fixed seed: its draft head
 re-fits the draft tree from measured step time, and every step draws one
 token a tree row from the seeded generator. Such a cell's number carries
 whatever the expander wrote on each arm, so record its caption and score
-identity on the graph as shipped. The expander also needs its task prompt and
-system prompt boxes filled, which the shipped graphs leave empty; with the
-switch on and the task prompt empty, the loader refuses class P before the
+identity on the graph as shipped. The two shipped templates carry this
+project's expander texts in their task prompt and system prompt boxes, so
+their switch is all that stands between a cell and a sampled language model:
+leave it false in any graph a sweep scores. The testing graph
+`dgx-monarch-test-minimax-h3-image-grid` keeps both boxes empty as well as
+its switch off, so with its switch on the loader refuses class P before the
 DiT loads
 ([TROUBLESHOOTING #153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)),
 and the matrix, which labels a cell from its family, file and preset, does

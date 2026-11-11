@@ -13,10 +13,13 @@ through Sampler Custom. The edit graph keeps upstream's canvas nodes, two
 Resize Image/Mask nodes and Get Image Size.
 
 What the graphs change on purpose is pinned too. The task prompt and system
-prompt boxes are empty and the switch is off in all three graphs: the text
-ComfyUI's templates carry there is MiniMax's own, and no file of this
-repository holds it. Text to image keeps literal canvas numbers. CPU only: the
-graphs are read as JSON and no ComfyUI is imported.
+prompt boxes of the two shipped graphs hold this project's own texts, byte
+for byte the tracked files under tools/expander_prompts, and the testing graph
+keeps both boxes empty: the text ComfyUI's templates carry there is MiniMax's
+own, and no file of this repository holds it. The switch follows one value of
+the generator, off as shipped, and stays off in the testing graph. An answer
+with no caption falls back to the request. Text to image keeps literal canvas
+numbers. CPU only: the graphs are read as JSON and no ComfyUI is imported.
 """
 from __future__ import annotations
 
@@ -154,12 +157,20 @@ def test_the_edit_scales_its_picture_to_4_mp_and_sizes_the_render_from_it():
 def _chain(graph: dict) -> dict:
     """The expander chain's nodes by role, read back from the conditioning node's prompt."""
     _, cond = _one(graph, "MiniMaxH3ImageConditioning")
-    switch_id, switch = _one(graph, "ComfySwitchNode")
     extract_id, extract = _one(graph, "JsonExtractString")
     expand_id, expand = _one(graph, "TextGenerateV2")
     splice_id, splice = _one(graph, "StringReplace")
+    # Two If/Else switches: the one a reader sets feeds the conditioning node,
+    # and the empty-caption fallback feeds that one's on_true.
+    switches = {key: node["inputs"] for key, node in graph.items()
+                if node["class_type"] == "ComfySwitchNode"}
+    assert len(switches) == 2
+    switch_id = cond["prompt"][0]
+    switch = switches[switch_id]
+    (fallback_id,) = [key for key in switches if key != switch_id]
+    fallback = switches[fallback_id]
     assert cond["prompt"] == [switch_id, 0]
-    assert switch["on_true"] == [extract_id, 0]
+    assert switch["on_true"] == [fallback_id, 0]
     assert extract["json_string"] == [expand_id, 0]
     assert expand["prompt"] == [splice_id, 0]
     request_id, task_id, system_id = (
@@ -171,7 +182,8 @@ def _chain(graph: dict) -> dict:
     return {"cond": cond, "switch": switch, "extract": extract, "expand": expand,
             "splice": splice, "request": texts[request_id], "task": texts[task_id],
             "system": texts[system_id], "switch_id": switch_id, "task_id": task_id,
-            "system_id": system_id, "request_id": request_id}
+            "system_id": system_id, "request_id": request_id, "fallback": fallback,
+            "fallback_id": fallback_id, "extract_id": extract_id}
 
 
 @pytest.mark.parametrize("name", [T2I, EDIT, GRID])
@@ -217,29 +229,137 @@ def test_generate_text_holds_comfyuis_decoding_numbers():
     assert stored[EDIT] == [["", 8196, "on", 1, 20, 0.95, 0, 1, 0, 0, True, True, "auto"]]
 
 
-@pytest.mark.parametrize("name", [T2I, EDIT, GRID])
-def test_the_two_prompt_boxes_are_empty_and_the_switch_is_off(name):
-    """No file of this repository holds MiniMax's task prompt or system prompt."""
+PROMPTS = ROOT / "tools" / "expander_prompts" / "minimax_h3_image"
+# The texts as the prompt author's last round left them, by SHA-256.
+PROMPT_SHA256 = {
+    "system_prompt.txt": "949563c46a6a2322c209159c72fc396f6ed0194ac77b51dcc879ff89ea93298d",
+    "t2i_task_prompt.txt": "92df9775562d8731aef197fd00b4a482e2543ebb2507d02ef43b3aad48caf73a",
+    "edit_task_prompt.txt": "f61af404739b97da169a89632b654ecbabf4f926ec5aafbff174deef614bd52f",
+}
+
+
+def _prompt_file(name: str) -> str:
+    return (PROMPTS / name).read_bytes().decode("utf-8")
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT])
+def test_the_shipped_boxes_hold_this_projects_texts_byte_for_byte(name):
+    """Each box is its tracked file, as the UI graph stores it and as the API prompt sends it."""
+    task_file = "edit_task_prompt.txt" if name == EDIT else "t2i_task_prompt.txt"
     chain = _chain(_graph(name))
-    assert chain["task"] == "" and chain["system"] == ""
-    assert chain["switch"]["switch"] is False
-    # The boxes carry ComfyUI's titles, so a reader can tell the empty two apart.
+    assert chain["task"] == _prompt_file(task_file)
+    assert chain["system"] == _prompt_file("system_prompt.txt")
     titled = {node["title"]: node["widgets_values"] for node in _doc(name)["nodes"]
               if node["type"] == "PrimitiveStringMultiline"}
-    assert titled["Text (task_prompt)"] == [""] and titled["Text (system_prompt)"] == [""]
+    assert titled["Text (task_prompt)"] == [_prompt_file(task_file)]
+    assert titled["Text (system_prompt)"] == [_prompt_file("system_prompt.txt")]
     assert titled["Text (user_prompt)"] == [chain["request"]]
+    # The JSON encoder wrote them: the file's bytes sit in the template as one JSON string.
+    raw = PATHS[name].read_text(encoding="utf-8")
+    assert json.dumps(_prompt_file(task_file)) in raw
+    assert json.dumps(_prompt_file("system_prompt.txt")) in raw
 
 
-def test_no_text_in_any_generated_graph_is_long_enough_to_be_the_vendors_prompt():
+def test_the_tracked_texts_are_the_final_ones_and_fit_the_chain():
+    import hashlib
+
+    assert sorted(path.name for path in PROMPTS.iterdir()) == sorted(PROMPT_SHA256)
+    for name, digest in PROMPT_SHA256.items():
+        data = (PROMPTS / name).read_bytes()
+        assert hashlib.sha256(data).hexdigest() == digest, name
+        text = data.decode("ascii")
+        assert "\r" not in text and text.endswith("\n")
+        # Replace Text fills the marker once in a task prompt; the system prompt has none.
+        assert text.count(gen_templates.H3I_MARKER) == (0 if name == "system_prompt.txt" else 1)
+        # The answer's key is the one Extract Text from JSON reads.
+        assert '{"expanded_caption": ' in text
+    assert set(gen_templates.H3I_PROMPT_FILES.values()) == set(PROMPT_SHA256)
+    # The edit text names pictures as the conditioning node presents them.
+    assert "<Picture 1>" in _prompt_file("edit_task_prompt.txt")
+    assert "<Picture" not in _prompt_file("t2i_task_prompt.txt")
+
+
+def test_the_testing_graph_keeps_both_boxes_empty_and_its_switch_off():
+    """No sweep or identity row of the testing graph can run a sampled language model."""
+    chain = _chain(_graph(GRID))
+    assert chain["task"] == "" and chain["system"] == ""
+    assert chain["switch"]["switch"] is False
+    titled = {node["title"]: node["widgets_values"] for node in _doc(GRID)["nodes"]
+              if node["type"] == "PrimitiveStringMultiline"}
+    assert titled["Text (task_prompt)"] == [""] and titled["Text (system_prompt)"] == [""]
+    assert "task prompt and system prompt boxes are empty" in _note(GRID)
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT])
+def test_the_shipped_switch_follows_the_generators_one_value(name):
+    """Shipping the expander on is this one value plus regenerated files."""
+    chain = _chain(_graph(name))
+    assert chain["switch"]["switch"] is gen_templates.H3I_EXPANDER_ON
+    titles = {node["title"] for node in _doc(name)["nodes"] if node["type"] == "ComfySwitchNode"}
+    assert titles == {gen_templates.H3I_SWITCH_TITLE, gen_templates.H3I_FALLBACK_TITLE}
+    # The refusal names the switch to set by the title it carries here.
+    for sentence in (expander_prompt.EMPTY_TASK_PROMPT, expander_prompt.MISSING_MARKER):
+        assert f"set the switch titled {gen_templates.H3I_SWITCH_TITLE} to false" in sentence
+    note = _note(name)
+    assert ("As shipped that switch is true" in note) is gen_templates.H3I_EXPANDER_ON
+    assert ("As shipped that switch is false" in note) is not gen_templates.H3I_EXPANDER_ON
+
+
+def test_the_docs_say_what_the_shipped_switch_is():
+    """The generator's one value changes the graphs and their Notes. The docs that say
+    both templates ship the switch false are prose, and must change with it: this
+    test fails until they do, and names them."""
+    off = not gen_templates.H3I_EXPANDER_ON
+    models = (ROOT / "docs" / "MODELS.md").read_text(encoding="utf-8")
+    install = (ROOT / "docs" / "INSTALL.md").read_text(encoding="utf-8")
+    assert ("both templates ship the switch false, so as shipped each renders from the\n"
+            "request as written" in models) is off
+    assert ("- Both templates ship the switch false, where ComfyUI's ship it true" in models) is off
+    assert ("Both templates ship it false, so as\nshipped neither loads it" in install) is off
+
+
+def test_the_source_archive_carries_the_three_texts():
+    """The generator reads the texts when it is imported, so a source archive without
+    them cannot build a template. MANIFEST.in decides what the archive holds."""
+    lines = (ROOT / "MANIFEST.in").read_text(encoding="utf-8").splitlines()
+    assert "recursive-include tools/expander_prompts *.txt" in lines
+    assert all(path.suffix == ".txt" for path in PROMPTS.iterdir())
+
+
+@pytest.mark.parametrize("name", [T2I, EDIT, GRID])
+def test_an_empty_caption_falls_back_to_the_request(name):
+    """Extract Text from JSON returns "" for an answer with no caption. Compare Text
+    tests the trimmed caption against the empty text and drives the second If/Else,
+    which hands on the request when it is empty and the caption as extracted otherwise."""
+    graph = _graph(name)
+    chain = _chain(graph)
+    trim_id, trim = _one(graph, "StringTrim")
+    compare_id, compare = _one(graph, "StringCompare")
+    assert trim == {"string": [chain["extract_id"], 0], "mode": "Both"}
+    assert compare == {"string_a": [trim_id, 0], "string_b": "", "mode": "Equal",
+                       "case_sensitive": True}
+    assert chain["fallback"] == {"switch": [compare_id, 0],
+                                 "on_true": [chain["request_id"], 0],
+                                 "on_false": [chain["extract_id"], 0]}
+    # Preview as Text reads the outer switch, so it shows the text that is rendered:
+    # the request with the switch false or after a fallback, the caption otherwise.
+    _, preview = _one(graph, "PreviewAny")
+    assert preview["source"] == chain["cond"]["prompt"] == [chain["switch_id"], 0]
+
+
+def test_no_text_outside_the_note_and_the_two_prompt_boxes_is_long():
     """ComfyUI's text to image task prompt runs to 15,823 characters, its edit one
-    is long too, and its demo caption runs to 3,308. Outside the Note, no widget
-    here comes near."""
+    is long too, and its demo caption runs to 3,308. This project's own texts run to
+    1,076, 2,860 and 3,298 bytes, and no other widget comes near."""
+    ours = {_prompt_file(name) for name in PROMPT_SHA256}
+    assert max(len(text) for text in ours) < 4000
     for name in PATHS:
         for node in _doc(name)["nodes"]:
             if node["type"] == "Note":
                 continue
             for value in node.get("widgets_values") or []:
-                assert not isinstance(value, str) or len(value) < 400, (name, node["type"])
+                assert (not isinstance(value, str) or len(value) < 400
+                        or value in ours), (name, node["type"])
     for text in (gen_templates.H3I_REQUEST, gen_templates.H3I_EDIT_REQUEST):
         assert text.isascii() and len(text) < 400
         # Nothing the browser's dynamic prompt pass would rewrite.
@@ -331,33 +451,45 @@ def test_the_note_names_the_files_the_topologies_the_gate_and_the_record(name):
 
 
 @pytest.mark.parametrize("name", [T2I, EDIT])
-def test_the_note_says_the_expander_is_wired_but_off_and_where_its_text_lives(name):
+def test_the_note_says_whose_the_texts_are_and_what_the_expander_costs(name):
     note = _note(name)
     edit = name == EDIT
-    assert "The prompt expander of ComfyUI's template is wired but off" in note
-    assert "the switch is false and the task prompt and system prompt boxes are empty" in note
-    # MiniMax's repository and the two files, by path, and that none of it ships here.
+    on = gen_templates.H3I_EXPANDER_ON
+    assert ("A prompt expander is wired and off" in note) is not on
+    assert f"the switch titled {gen_templates.H3I_SWITCH_TITLE} picks that caption or the request" in note
+    # The texts are this project's own, and nothing of MiniMax's is here.
+    assert ("The task prompt and system prompt boxes hold this project's own texts, "
+            "written from public research on the model. They are not MiniMax's prompts") in note
     assert gen_templates.H3I_PROMPT_REPO == "MiniMaxAI/MiniMax-H3-Image-PE"
-    assert f"its Hugging Face repository {gen_templates.H3I_PROMPT_REPO}" in note
-    task = "prompt/edit/task_prompt.txt" if edit else "prompt/t2i/task_prompt.txt"
-    assert f"paste {task} into the task prompt box" in note
-    assert "paste prompt/t2i/system_prompt.txt into the system prompt box" in note
-    assert "this project does not ship it" in note
-    assert "and set the switch to true" in note
-    # Where the marker goes in a pasted task prompt, as ComfyUI's own copy has it.
-    assert ("User input: {input text}" if edit else "input_text: {input text}") in note
-    # With the boxes empty the switch stays off, and what happens if it does not.
-    assert "With the task prompt box empty the switch must stay false" in note
-    assert f"(docs/TROUBLESHOOTING.md #{expander_prompt.TROUBLESHOOTING})" in note
-    # What an expander-on render is worth as a comparison.
+    assert (f"which MiniMax publishes in its Hugging Face repository "
+            f"{gen_templates.H3I_PROMPT_REPO} under its own licence; nothing of those is in "
+            "this graph") in note
+    # No sentence tells a user to paste the vendor's files.
+    assert "paste" not in note and "prompt/t2i" not in note and "prompt/edit" not in note
+    # What turning it on costs: the expander's memory and the tokens it may write.
+    tokens = 8196 if edit else 8192
+    assert (f"the driver loads the 7.3 GB expander beside the text encoder, and Generate "
+            f"Text may write up to {tokens} tokens before the render starts") in note
+    assert ("a wait no hardware run has timed yet" in note) is not on
+    # A user may replace the texts, and what a replacement must keep.
+    assert ("You may replace either text with your own: keep {input text} in the task "
+            "prompt where the request belongs, and have the answer hold the caption under "
+            "the key expanded_caption") in note
+    # The fallback, and that the preview shows what is rendered.
+    assert (f"If the answer holds no caption, the switch titled "
+            f"{gen_templates.H3I_FALLBACK_TITLE} sends the request as written instead, and "
+            "Preview as Text shows the text that is rendered either way") in note
+    # The refusal, and what an expander-on render is worth as a comparison.
+    assert ("refuses a graph whose expander is on with an empty task prompt, or with one "
+            "that lacks the marker "
+            f"(docs/TROUBLESHOOTING.md #{expander_prompt.TROUBLESHOOTING})") in note
     assert "it can change from run to run even at a fixed seed" in note
     assert "compare renders and check identity with the switch false" in note
-    # Both of ComfyUI's templates ship the switch true (text to image through its
-    # subgraph's enable_PE input), so each graph differs from upstream here and says so.
-    assert ("where this graph's defaults differ from ComfyUI's "
-            + ("edit" if edit else "text to image") + " template, which ships the switch true") in note
-    assert "both boxes filled" in note and "switch false too" not in note
-    assert ("through its subgraph's enable_PE input" in note) is not edit
+    # Both of ComfyUI's templates ship the switch true, with MiniMax's texts.
+    assert ("ComfyUI's " + ("edit" if edit else "text to image")
+            + " template ships its switch true, through "
+            + ("a Boolean box" if edit else "its subgraph's enable_PE input")
+            + ", with MiniMax's texts in the two boxes") in note
 
 
 def test_the_notes_topology_sentences_match_the_auto_table_and_the_driver():
@@ -499,16 +631,18 @@ def staged(monkeypatch, tmp_path):
 
 @pytest.mark.parametrize("name", [T2I, EDIT, GRID])
 def test_the_driver_charges_the_expander_only_when_the_switch_is_on(staged, name):
-    """The If/Else switch is lazy: as shipped no graph loads the expander, and
-    the same graph with the switch on is charged for it."""
+    """The outer If/Else switch is lazy: with it false no graph loads the expander,
+    and the same graph with it true is charged for the expander, whichever way the
+    empty-caption fallback would go."""
     ratio = loader_graph.TE_RESIDENT_RATIO
     encoder = staged[("text_encoders", ENCODER)]
     expander = staged[("text_encoders", EXPANDER)]
     graph = _graph(name)
+    switch_id = _chain(graph)["switch_id"]
+    graph[switch_id]["inputs"]["switch"] = False
     off = loader_graph.driver_stack_terms(graph, family=FAMILY, sp_degree=2)
     assert off.te_artifacts == (ENCODER,)
     assert off.te_bytes == int(encoder * ratio)
-    switch_id, _ = _one(graph, "ComfySwitchNode")
     graph[switch_id]["inputs"]["switch"] = True
     on = loader_graph.driver_stack_terms(graph, family=FAMILY, sp_degree=2)
     assert set(on.te_artifacts) == {ENCODER, EXPANDER}
