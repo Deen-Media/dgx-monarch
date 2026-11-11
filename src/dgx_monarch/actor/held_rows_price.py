@@ -75,9 +75,11 @@ What it never does:
 - Force a full load. The partial-load guard still reads ComfyUI's own choice,
   and a rank that cannot hold the model at the kept-row price still refuses.
 
-It runs at every world size: a one-GPU Worker that offloads a LoRA-patched
-model casts its small patched weights by another recipe than a whole load
-bakes them, so one GPU and a pair agree only when both load whole.
+It runs at every world size: a one-GPU Worker that ComfyUI loads only partly
+with a LoRA stack attached bakes the rest before sampling, computes each
+offloaded weight when its layer casts, or refuses the render
+(``actor/lora_partial_load.py``), and a render priced at stock's whole-token
+figure would take one of those paths on a box with room to load it whole.
 """
 from __future__ import annotations
 
