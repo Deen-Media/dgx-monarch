@@ -343,6 +343,208 @@ def test_a_model_the_memo_reads_as_loaded_takes_no_credit_at_the_loader(monkeypa
     assert "before this load" not in str(raised.value)
 
 
+# A dual-model graph: each price charges one DiT alone, so a credit for one slot
+# leaves the room the other slot's load takes (swap_credit.growth and less).
+
+UNCOND = "ideogram4_uncond_bf16.safetensors"
+_GRAPH = {"7": {"class_type": "DGXMonarchUncondUNETLoader", "inputs": {"unet_name": UNCOND}}}
+
+
+def _other(new_gib: float, *, held_gib: float | None = None, would_load: str = "swap",
+           word: str | None = "stock", slot: str = "uncond") -> object:
+    """The Worker's row for the other slot's load: ``new_gib`` over a resident of ``held_gib``."""
+    row = (_held("old_uncond.safetensors", held_gib, slot=slot, would_load=would_load, word=word)
+           if held_gib else replace(_stock("fits", size_gib=1.0, avail_gib=200.0, resident=None, slot=slot),
+                                    would_load=would_load))
+    return replace(row, checkpoint_bytes=int(new_gib * _GIB))
+
+
+def _answers_by_slot(monkeypatch, **rows) -> list:
+    """One Worker on the driver host that answers each spec asked with its slot's row."""
+    asked: list = []
+
+    def collect(handle, request, world, *, deadline_s):
+        asked.append(request)
+        return [_answer(0, *(rows[spec["slot"]] for spec in request["specs"] if spec["slot"] in rows),
+                        box="this box")]
+
+    monkeypatch.setattr(capacity_agreement, "collect", collect)
+    return asked
+
+
+@pytest.mark.parametrize(("row", "grows_gib", "why"), [
+    (_other(30.0, held_gib=22.0, would_load="reuse"), 0.0, "a reuse loads nothing"),
+    (_other(30.0, held_gib=22.0), 8.0, "30 GiB over a 22 GiB stock resident its Worker drops"),
+    (_other(10.0, held_gib=22.0), 0.0, "a smaller model adds nothing, and its gain is not counted"),
+    (_other(30.0, would_load="fresh"), 30.0, "an empty slot: the whole file"),
+    (_other(30.0, held_gib=22.0, word="slab"), 30.0, "a resident its Worker does not credit stays held"),
+    (_other(30.0, would_load="unknown"), None, "a load the Worker cannot name"),
+    (_other(0.0, held_gib=22.0), None, "a load with no size"),
+])
+def test_what_the_other_slots_load_adds_to_the_host(row, grows_gib, why):
+    grows = swap_credit.growth([_answer(0, _held(FLUX1, 22.17), row)], "uncond")
+    assert grows == (None if grows_gib is None else int(grows_gib * _GIB)), why
+
+
+def test_a_cast_load_into_the_other_slot_is_sized_at_the_casts_copy():
+    """A 20 GiB fp8 file cast to a 40 GiB copy over a 22 GiB resident grows the slot by 18, not by nothing."""
+    row = _other(20.0, held_gib=22.0)
+    cast = replace(row, measured={**row.measured, "cast_bytes": 40 * _GIB})
+    assert swap_credit.growth([_answer(0, row)], "uncond") == 0
+    assert swap_credit.growth([_answer(0, cast)], "uncond") == 18 * _GIB
+
+
+def test_the_other_slots_growth_is_the_largest_a_rank_reports_and_none_with_no_answer():
+    ranks = [_answer(0, _other(30.0, held_gib=22.0)), _answer(1, _other(30.0, held_gib=12.0))]
+    assert swap_credit.growth(ranks, "uncond") == 18 * _GIB
+    assert swap_credit.growth([], "uncond") is None
+    # A rank that holds one slot only sends no row for the other: nothing lands on it there.
+    assert swap_credit.growth([_answer(0, _held(FLUX1, 22.17))], "uncond") == 0
+
+
+def test_a_credit_less_the_other_slots_growth():
+    credit = swap_credit.SwapCredit(22 * _GIB, FLUX1, "this box")
+    left = swap_credit.less(credit, 8 * _GIB)
+    assert (left.bytes, left.set_aside, left.dropped, left.box) == (14 * _GIB, 8 * _GIB, FLUX1, "this box")
+    assert left.gib == "22.0", "the sentence gives what the drop frees"
+    assert left.note == ", of which 8.0 GiB is set aside for the model this graph loads into the other slot"
+    assert swap_credit.less(credit, 0) is credit and credit.note == ""
+    assert swap_credit.less(credit, -5 * _GIB) is credit, "a gain in the other slot is not counted"
+    for grows in (22 * _GIB, 40 * _GIB, None):
+        assert swap_credit.less(credit, grows) is swap_credit.NONE
+    assert swap_credit.less(swap_credit.NONE, 0) is swap_credit.NONE
+
+
+def test_the_graphs_other_loader_is_read_as_a_quote_spec():
+    cond = {"3": {"class_type": "DGXMonarchUNETLoader", "inputs": {"unet_name": NEW, "weight_dtype": "fp8_e4m3fn"}}}
+    graph = {**cond, **_GRAPH, "9": {"class_type": "KSampler", "inputs": {"unet_name": "not a loader"}}}
+    assert loader_relief.other_slot_loads(graph, "cond") == [
+        {"unet_name": UNCOND, "options": {}, "loras": [], "slot": "uncond"}]
+    assert loader_relief.other_slot_loads(graph, "uncond") == [
+        {"unet_name": NEW, "options": {"weight_dtype": "fp8_e4m3fn"}, "loras": [], "slot": "cond"}]
+    assert loader_relief.other_slot_loads(cond, "cond") == [] and loader_relief.other_slot_loads(None, "cond") == []
+    linked = {"7": {"class_type": "DGXMonarchUncondUNETLoader", "inputs": {"unet_name": ["4", 0]}}}
+    assert loader_relief.other_slot_loads(linked, "cond") is None, "a name on a link cannot be asked"
+
+
+def _dual(monkeypatch, shape, uncond_row, *, graph=_GRAPH):
+    asked = _answers_by_slot(monkeypatch, cond=_held(FLUX1, 22.17), uncond=uncond_row)
+    mesh = types.SimpleNamespace(handle=_LiveHandle(), topology_preset="auto", worker_args={})
+    relief = loader_relief.relieve(shape, _stock_windows, mesh=mesh, unet_name=LTX23,
+                                   options={}, slot="cond", prompt=graph)
+    return relief, asked
+
+
+def test_a_dual_swap_is_credited_less_what_the_other_slot_grows_by(monkeypatch):
+    """Row 5's figures with a second DiT in the graph: 8.84 GiB to spare on the drop alone."""
+    shape = _shape("ltx", avail=67.51, file=21.86, stack=29.94, load_stack=29.94)
+    # The other slot swaps 22 GiB for 30: 8 GiB is set aside, and 0.84 is left to spare.
+    relief, asked = _dual(monkeypatch, shape, _other(30.0, held_gib=22.0))
+    assert relief.fits and relief.credit.bytes == int(22.17 * _GIB) - 8 * _GIB
+    assert relief.credit.set_aside == 8 * _GIB
+    assert [len(request["specs"]) for request in asked] == [1, 2], "one question more, with both loads"
+    assert asked[1]["specs"] == [{"unet_name": LTX23, "options": {}, "loras": [], "slot": "cond"},
+                                 {"unet_name": UNCOND, "options": {}, "loras": [], "slot": "uncond"}]
+    assert asked[0]["specs"] == asked[1]["specs"][:1], "the card's own question is unchanged"
+    # It swaps 22 GiB for 32: the load is 1.16 GiB short, and the refusal says where the room went.
+    relief, _asked = _dual(monkeypatch, shape, _other(32.0, held_gib=22.0))
+    assert not relief.fits and relief.short_bytes / _GIB == pytest.approx(1.16, abs=0.02)
+    assert relief.sentence(LTX23).startswith(
+        " The Worker on this box drops flux1-dev before this load, which frees at least 22.2 GiB, "
+        "of which 10.0 GiB is set aside for the model this graph loads into the other slot, and ")
+
+
+@pytest.mark.parametrize(("uncond_row", "credited", "why"), [
+    (_other(30.0, held_gib=22.0, would_load="reuse"), True, "the other slot keeps its model"),
+    (_other(10.0, held_gib=22.0), True, "the other slot shrinks"),
+    (_other(30.0, would_load="fresh"), False, "a 30 GiB load into the empty slot takes the 22 GiB drop"),
+    (_other(30.0, would_load="unknown"), False, "a load the Worker cannot name"),
+])
+def test_a_dual_swap_is_credited_only_what_the_other_slot_leaves(monkeypatch, uncond_row, credited, why):
+    shape = _shape("ltx", avail=67.51, file=21.86, stack=29.94, load_stack=29.94)
+    relief, _asked = _dual(monkeypatch, shape, uncond_row)
+    assert bool(relief.credit) is credited and relief.fits is credited, why
+    if credited:
+        assert relief.credit.bytes == int(22.17 * _GIB) and not relief.credit.set_aside
+
+
+def test_a_dual_swap_whose_other_load_cannot_be_read_or_priced_gets_no_credit(monkeypatch):
+    shape = _shape("ltx", avail=67.51, file=21.86, stack=29.94, load_stack=29.94)
+    linked = {"7": {"class_type": "DGXMonarchUncondUNETLoader", "inputs": {"unet_name": ["4", 0]}}}
+    relief, asked = _dual(monkeypatch, shape, _other(10.0, held_gib=22.0), graph=linked)
+    assert not relief.credit and not relief.fits and len(asked) == 1
+    # The second question fails: no credit, and the card still has its own first answer.
+    first = _answers_by_slot(monkeypatch, cond=_held(FLUX1, 22.17))
+
+    def once(handle, request, world, *, deadline_s, real=capacity_agreement.collect):
+        if len(request["specs"]) > 1:
+            raise RuntimeError("quote endpoint gone")
+        return real(handle, request, world, deadline_s=deadline_s)
+
+    monkeypatch.setattr(capacity_agreement, "collect", once)
+    mesh = types.SimpleNamespace(handle=_LiveHandle(), topology_preset="auto", worker_args={})
+    relief = loader_relief.relieve(shape, _stock_windows, mesh=mesh, unet_name=LTX23,
+                                   options={}, slot="cond", prompt=_GRAPH)
+    assert not relief.credit and len(first) == 1
+    assert relief.asked is not None and relief.asked is not loader_relief.UNASKED
+
+
+def test_a_graph_with_one_dit_asks_once(monkeypatch):
+    shape = _shape("ltx", avail=67.51, file=21.86, stack=29.94, load_stack=29.94)
+    relief, asked = _dual(monkeypatch, shape, _other(30.0, held_gib=22.0), graph={
+        "3": {"class_type": "DGXMonarchUNETLoader", "inputs": {"unet_name": LTX23}}})
+    assert relief.fits and relief.credit.bytes == int(22.17 * _GIB) and len(asked) == 1
+
+
+def test_the_loader_sets_the_other_slots_growth_aside_end_to_end(monkeypatch, tmp_path, caplog):
+    """The rig's 47 GiB against 40 read and 12 to drop: 5 GiB to spare, so a second DiT that
+    grows its slot by 4 GiB still fits and one that grows it by 6 does not."""
+    mesh = _loader_rig(monkeypatch, tmp_path, held_gib=12.0)
+    _answers_by_slot(monkeypatch, cond=_held(LONGCAT, 12.0), uncond=_other(26.0, held_gib=22.0))
+    with caplog.at_level("INFO", logger="dgx_monarch.nodes.loader_relief"):
+        assert loader_preflight.preflight_loader_footprint(mesh, NEW, {}, _GRAPH, slot="cond") is None
+    assert any("frees at least 12.0 GiB, of which 4.0 GiB is set aside for the model this graph "
+               "loads into the other slot; MemAvailable read 40.0 GiB" in record.getMessage()
+               for record in caplog.records)
+    loader_preflight.reset_memos()
+    # The Worker's cond row as it really reads: it holds the uncond slot's 22 GiB model too.
+    cond = replace(_held(LONGCAT, 12.0), holds_resident={"cond": "stock", "uncond": "stock"},
+                   resident_names={"cond": LONGCAT, "uncond": "old_uncond.safetensors"},
+                   resident_bytes={"cond": 12 * _GIB, "uncond": 22 * _GIB})
+    _answers_by_slot(monkeypatch, cond=cond, uncond=_other(28.0, held_gib=22.0))
+    with pytest.raises(old_model.LoaderOldModelError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, NEW, {}, _GRAPH, slot="cond")
+    assert "of which 6.0 GiB is set aside" in str(raised.value) and "1.0 GiB short after that" in str(raised.value)
+    # The card: a clear returns both models, 34 GiB, and the drop frees 12 of that whatever
+    # part of it was set aside. So 22 GiB is what a clear adds, and it is the uncond model.
+    box = raised.value.offer.boxes[0]
+    assert (box.gain_bytes, box.left_bytes) == (34 * _GIB, 22 * _GIB)
+    assert box.dropped == ("longcat_image_bf16",) and "old_uncond" in str(raised.value)
+
+
+# The credit's own switch, and the unload's.
+
+def test_the_credits_own_switch_gives_the_loader_its_price_as_it_was(monkeypatch, tmp_path):
+    """``DGXM_DISABLE_SWAP_CREDIT=1``: the card, as before the credit, and no word of a drop."""
+    mesh = _loader_rig(monkeypatch, tmp_path, held_gib=12.0)
+    _answers(monkeypatch, _held(LONGCAT, 12.0))
+    monkeypatch.setenv(swap_credit.DISABLE_ENV, "1")
+    with pytest.raises(old_model.LoaderOldModelError) as raised:
+        loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond")
+    assert _cards() == ["clear-retry"] and "before this load" not in str(raised.value)
+
+
+def test_the_unload_switch_leaves_the_credit_on_at_the_loader(monkeypatch, tmp_path):
+    """The credit is a price, not a rescue: the loader and the sampler must agree under that switch."""
+    from dgx_monarch import driver_unload
+
+    mesh = _loader_rig(monkeypatch, tmp_path, held_gib=12.0)
+    _answers(monkeypatch, _held(LONGCAT, 12.0))
+    monkeypatch.setenv(driver_unload.DRIVER_UNLOAD_DISABLE_ENV, "1")
+    assert loader_preflight.preflight_loader_footprint(mesh, NEW, {}, None, slot="cond") is None
+    assert _cards() == []
+
+
 def test_a_load_that_fits_asks_no_worker(monkeypatch, tmp_path):
     mesh = _loader_rig(monkeypatch, tmp_path, held_gib=12.0)
     monkeypatch.setattr(mesh_safety, "mem_available_bytes", lambda: 60 * _GIB)

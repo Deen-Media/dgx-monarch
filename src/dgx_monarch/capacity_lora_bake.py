@@ -362,8 +362,9 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     or a lower bound of a cast's own, as the quote endpoint reports it in the
     slot's snapshot entry (``actor/worker_capacity._resident_bytes``) when the
     entry still describes the resident those figures were read from; the arena
-    a stock load retains is not. A slab, comfy-managed or FSDP resident, and a slot whose
-    load or cleanup is in flight, are priced as held.
+    a stock load retains is not. A slab, comfy-managed or FSDP resident, a slot whose
+    load or cleanup is in flight, and a resident ComfyUI holds only partly, whose drop
+    copies its device weights to the host first, are priced as held.
     """
     from dataclasses import replace
 
@@ -371,6 +372,7 @@ def credit_stock_swap(fit: Any, held: object, context: dict | None) -> Any:
     if (getattr(fit, "credit_bytes", 0) > 0 or (context or {}).get("would_load") != "swap"
             or not getattr(fit, "applies", False) or getattr(fit, "avail_bytes", None) is None
             or not isinstance(held, dict) or held.get("residency") != "stock"
+            or held.get("resident_partial")
             or not isinstance(held_bytes, int) or isinstance(held_bytes, bool) or held_bytes <= 0):
         return fit
     credited = replace(fit, credit_bytes=held_bytes, dropped=str(held.get("resident_name") or "a model"))

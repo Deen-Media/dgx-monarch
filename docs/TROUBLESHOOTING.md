@@ -2224,9 +2224,11 @@ to change it. Automatic rescue never grants an accuracy waiver.
 
 **A load that replaces a model counts the drop first.** A Worker drops the
 model in a slot before it loads another into it, and a stock model's drop
-returns its copy at once. So when this check does not fit, the driver asks the
-Workers on its own box what they hold and counts that copy as available, at
-the loader and at the render-site checks that price a pending load. A load
+returns its copy at once. So when the loader's footprint check
+([#52](#52-driver-side-footprint-preflight-refused-a-render)) does not fit, the
+driver asks the Workers on its own box what they hold and counts that copy as
+available, at the loader and at the render-site checks that price a pending
+load. A load
 that then fits goes ahead with no card, and the driver log says why: "fits on
 the head once the Worker there drops flux1-dev, which frees at least 22.2
 GiB". A refusal that still stands says what it counted: "The Worker on the
@@ -2235,10 +2237,20 @@ head drops flux1-dev before this load, which frees at least 22.2 GiB, and
 Worker's own price counted, so only the model in the slot the load goes into,
 and only a stock one: a slab or comfy-managed resident, an FSDP shard, a load
 priced slab-resident and a model in the other slot are priced as still held.
-A check that reads the new model as already loaded charges no load and counts
-no drop. Under
-`auto` the graph's own driver models load before the old model is dropped, so
-they must fit beside it. Before 2026-11-11 this check priced the new model
+So is a stock model ComfyUI holds only partly (its journal line read "loaded
+partially"): its drop copies the weights on the GPU to the host before it
+frees them, so the box dips first, and the card's clear is the safe way to
+replace it. A check that reads the new model as already loaded charges no load
+and counts no drop. Under `auto` the graph's own driver models load before the
+old model is dropped, so they must fit beside it. In a graph with two
+diffusion models each check prices one of them, so the count for one slot
+leaves the room the other slot's load takes: what that load adds beyond the
+model its own Worker drops for it. The sentence then reads "which frees at
+least 22.2 GiB, of which 8.0 GiB is set aside for the model this graph loads
+into the other slot", and where the other load takes all of it, or the driver
+cannot read or price it, nothing is counted. `DGXM_DISABLE_SWAP_CREDIT=1` on
+the driver turns the count off at the loader and at the render-site checks,
+which gives the earlier price and its card. Before 2026-11-11 this check priced the new model
 beside the old one: flux1-dev and then LTX 2.3 was 13.3 GiB short with 22.2
 GiB about to be dropped, and MiniMax-H3-Image INT8 after BF16 was 11.9 GiB
 short with 37.5 GiB about to be dropped. No hardware render has run with the
@@ -2255,6 +2267,8 @@ The loader keeps the models while a render is running in this driver and says
 so. This helps only where ComfyUI held more than this graph's own driver
 models need, since this check already counts held models against them.
 `DGXM_DISABLE_DRIVER_UNLOAD=1` on the driver turns the unload off here too.
+It leaves the count of the drop on, at the loader and at the render-site
+checks alike: the count is a price, not something the driver frees.
 
 **Old model in the way:** when a model loaded earlier still holds the
 memory a load needs, and a clear of the attached mesh would make room on every

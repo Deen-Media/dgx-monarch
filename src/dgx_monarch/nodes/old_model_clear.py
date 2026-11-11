@@ -301,15 +301,16 @@ class HostAnswers:
     local: bool
 
 
-def driver_host_answers(mesh: Any, unet_name: str, options: Any,
-                        slot: str = "", loras: Any = None) -> HostAnswers | None:
+def driver_host_answers(mesh: Any, unet_name: str, options: Any, slot: str = "",
+                        loras: Any = None, beside: Iterable[dict] = ()) -> HostAnswers | None:
     """Ask the Workers on the driver host what they hold and what this load would do.
 
     Read-only and best effort: only a live, set-up fleet whose rank 0 shares
     the driver host is asked, through the agreement's own quote, and any fault
     means no answer. ``slot`` is the slot the load goes into, "cond" where the
     caller does not know it, and ``loras`` its stack where the caller has one (the
-    loader node has none: the LoRA loaders run after it).
+    loader node has none: the LoRA loaders run after it). ``beside`` are the
+    specs of the other loads the same graph makes, asked in the same question.
     """
     from .. import capacity_agreement, driver_footprint
 
@@ -326,7 +327,7 @@ def driver_host_answers(mesh: Any, unet_name: str, options: Any,
         answers = capacity_agreement.collect(
             handle, capacity_agreement.quote_request(
                 [{"unet_name": unet_name, "options": options, "loras": loras or [],
-                  "slot": slot or "cond"}]),
+                  "slot": slot or "cond"}, *beside]),
             world, deadline_s=LOADER_QUOTE_DEADLINE_S)
     except Exception as exc:
         log.info("loader preflight could not ask the driver host's Workers what they "
@@ -382,7 +383,7 @@ def loader_offer(mesh: Any, unet_name: str, options: Any, *, windows: Iterable[A
         unet_name, old_model.ShortBox(
             box, tuple(dict.fromkeys(names)), required, int(worst.mem_available), gain,
             dropped=tuple(name for name in dropped if name in names),
-            left_bytes=max(gain - int(credit.bytes), 0) if credit else 0, window=window),
+            left_bytes=max(gain - int(credit.freed), 0) if credit else 0, window=window),
         hosts=asked.hosts, local=asked.local, fleet=asked.handle)
 
 

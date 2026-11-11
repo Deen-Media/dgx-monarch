@@ -11,7 +11,10 @@ is raised:
    the Worker's own price credited, and only where this price charges the
    DiT's load (``swap_credit.py`` holds the rule). A deferred load must also leave room
    for the graph's driver models beside the old model, because they load on
-   the driver before the first render drops it.
+   the driver before the first render drops it. In a dual-model graph the
+   credit leaves the room the other slot's load takes (``other_slot_loads``).
+   ``DGXM_DISABLE_SWAP_CREDIT=1`` turns this step off; the unload's switch
+   does not, since the credit is a price and not a rescue.
 2. **ComfyUI's own models on this host.** If the credit does not make room,
    the driver unloads what ComfyUI holds here, as the render-site checks do
    before they refuse (``driver_unload.py``): ComfyUI reloads each on demand.
@@ -31,7 +34,7 @@ uncredited price, because a cleared box holds no copy to drop
 """
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from typing import Any
 
@@ -74,7 +77,7 @@ class Relief:
             old = old_model.display_name(self.credit.dropped) or "the old model"
             new = old_model.display_name(unet_name)
             freed = (f"The Worker on {self.box} drops {old} before this load, which frees at "
-                     f"least {self.credit.gib} GiB")
+                     f"least {self.credit.gib} GiB{self.credit.note}")
             parts.append(
                 f"{freed}, and {new} is still {_gib(self.short_bytes)} GiB short after that."
                 if self.short_bytes else
@@ -88,6 +91,58 @@ class Relief:
 
 
 NONE = Relief()
+# Read-only after import: the node classes that load a DiT on the Workers, and
+# the slot each loads into.
+_SLOT_OF_LOADER = {"DGXMonarchUNETLoader": "cond", "DGXMonarchUncondUNETLoader": "uncond"}
+
+
+def other_slot_loads(prompt: Any, slot: str) -> list[dict[str, Any]] | None:
+    """The DiT loads this graph makes into the other slot, as quote specs.
+
+    Empty for a graph with none, and None when one is there and its checkpoint
+    is not a plain name in the graph (a linked input), so nothing can be asked.
+    """
+    specs: list[dict[str, Any]] = []
+    for node in (prompt.values() if isinstance(prompt, Mapping) else ()):
+        other = _SLOT_OF_LOADER.get(str(node.get("class_type", ""))) if isinstance(node, Mapping) else None
+        if other is None or other == slot:
+            continue
+        inputs = node.get("inputs")
+        name = inputs.get("unet_name") if isinstance(inputs, Mapping) else None
+        if not isinstance(name, str) or not name:
+            return None
+        dtype = inputs.get("weight_dtype")
+        options = {"weight_dtype": dtype} if isinstance(dtype, str) and dtype != "default" else {}
+        specs.append({"unet_name": name, "options": options, "loras": [], "slot": other})
+    return specs
+
+
+def _less_the_other_slot(credit: swap_credit.SwapCredit, mesh: Any, own: dict[str, Any],
+                         others: list[dict[str, Any]] | None) -> swap_credit.SwapCredit:
+    """``credit`` less what the graph's loads into the other slot add to this host.
+
+    Each price here charges one DiT alone, so a credit for its slot must leave
+    the room the other slot's load takes (``swap_credit.growth``). The Workers
+    are asked once more, with this load and the others in one question as the
+    sample-time agreement asks it, so a rank that holds one slot only answers
+    for that slot. No answer, or a load that cannot be read, means no credit
+    and the price as it was.
+    """
+    if not credit or others == []:
+        return credit
+    left = swap_credit.NONE
+    asked = None if others is None else old_model_clear.driver_host_answers(
+        mesh, own["unet_name"], own["options"], own["slot"], loras=own["loras"], beside=others)
+    if asked is not None:
+        left = swap_credit.from_answers(asked.mine, own["slot"], box=credit.box)
+        for slot in sorted({spec["slot"] for spec in others or ()}):
+            left = swap_credit.less(left, swap_credit.growth(asked.mine, slot))
+    if not left:
+        log.info("the drop of %s is not counted for %s, because this graph also loads a model "
+                 "into the other slot and that load %s", credit.dropped or "the old model",
+                 own["unet_name"], "takes the room the drop frees" if asked is not None
+                 else "could not be priced")
+    return left
 
 
 def _unload_driver_models(mesh: Any) -> tuple[driver_unload.Unloaded | None, str]:
@@ -114,7 +169,7 @@ def _unload_driver_models(mesh: Any) -> tuple[driver_unload.Unloaded | None, str
 
 def relieve(shape: Any, windows: Callable[[Any], tuple[Any, ...]], *, mesh: Any,
             unet_name: str, options: Any, slot: str,
-            tried: driver_unload.Unloaded | None = None) -> Relief:
+            tried: driver_unload.Unloaded | None = None, prompt: Any = None) -> Relief:
     """Count, then free, what the box gets back before this load; never raises.
 
     ``shape`` is the loader's own (``loader_preflight._Shape``) and ``windows``
@@ -127,13 +182,17 @@ def relieve(shape: Any, windows: Callable[[Any], tuple[Any, ...]], *, mesh: Any,
     try:
         # A price that reads the weights as resident (the loader's memo, or a
         # first Worker on another box) charges no load, so it has no drop to count.
-        pending = slot and any(window.weight_bytes for window in windows(shape))
+        pending = (slot and not mesh_safety.env_enabled(swap_credit.DISABLE_ENV)
+                   and any(window.weight_bytes for window in windows(shape)))
         asked = (old_model_clear.driver_host_answers(mesh, unet_name, options, slot)
                  if pending else UNASKED)
         box = graph_load_price.driver_box(mesh)
         credit = (swap_credit.from_answers(asked.mine, slot, box=box)
                   if pending and asked is not None else swap_credit.NONE)
         relief = Relief(asked=asked, box=box)
+        credit = _less_the_other_slot(
+            credit, mesh, {"unet_name": unet_name, "options": options, "loras": [], "slot": slot},
+            other_slot_loads(prompt, slot))
         if credit:
             priced = windows(replace(shape, mem_available=shape.mem_available + credit.bytes))
             short = max((window.shortfall for window in priced
@@ -168,9 +227,9 @@ def admitted(relief: Relief, cleared: dict[str, None], unet_name: str, mem_avail
             cleared.pop(key, None)
     log.info(
         "loader footprint preflight: %s fits on %s once the Worker there drops %s, which "
-        "frees at least %s GiB; MemAvailable read %s GiB",
+        "frees at least %s GiB%s; MemAvailable read %s GiB",
         unet_name, relief.box, old_model.display_name(dropped) or "the old model",
-        relief.credit.gib, _gib(mem_available))
+        relief.credit.gib, relief.credit.note, _gib(mem_available))
 
 
 def render_credit(model: Any, request: Any) -> swap_credit.SwapCredit:
@@ -184,14 +243,24 @@ def render_credit(model: Any, request: Any) -> swap_credit.SwapCredit:
     try:
         mesh = getattr(model, "mesh", None)
         spec = request.get("model") if isinstance(request, dict) else None
-        if mesh is None or not isinstance(spec, dict) or not spec.get("unet_name"):
+        if (mesh is None or not isinstance(spec, dict) or not spec.get("unet_name")
+                or mesh_safety.env_enabled(swap_credit.DISABLE_ENV)):
             return swap_credit.NONE
         name = str(spec["unet_name"])
         asked = old_model_clear.driver_host_answers(
             mesh, name, spec.get("options"), "cond", loras=spec.get("loras"))
         if asked is None:
             return swap_credit.NONE
-        return swap_credit.from_answers(asked.mine, "cond", box=graph_load_price.driver_box(mesh))
+        credit = swap_credit.from_answers(asked.mine, "cond", box=graph_load_price.driver_box(mesh))
+        # A dual-model guider's second DiT, as the request carries it.
+        uncond = request.get("uncond_model")
+        others: list[dict[str, Any]] | None = [] if uncond is None else None
+        if isinstance(uncond, dict) and isinstance(uncond.get("unet_name"), str) and uncond["unet_name"]:
+            others = [{"unet_name": uncond["unet_name"], "options": uncond.get("options"),
+                       "loras": uncond.get("loras") or [], "slot": "uncond"}]
+        own = {"unet_name": name, "options": spec.get("options"),
+               "loras": spec.get("loras") or [], "slot": "cond"}
+        return _less_the_other_slot(credit, mesh, own, others)
     except Exception as exc:
         log.info("render preflight could not count what the driver host gets back before "
                  "this load (%r); its own price stands", exc)

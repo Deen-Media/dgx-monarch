@@ -2252,9 +2252,22 @@ agreement's own quote and counts the copy the load's own slot drops first
 Worker's own price credited, the row that names the drop and its bytes, so the
 driver never admits on a drop the agreement would not count: a stock resident
 only, never a slab-priced row, a reuse or a LoRA change that keeps its base.
+The Worker's price gives no such credit for a stock resident ComfyUI holds
+only partly (`model_lowvram`): the store pins only a whole load to its device
+before it drops it, so ComfyUI's detach copies a partly loaded model's device
+weights to the host before it frees them, and the box dips by that copy
+before anything comes back. That resident is priced as held, at the agreement
+and here, and the card's clear replaces it.
 It counts only the slot the load goes into, and only onto a price that charges
-the DiT's own load: one that reads the weights as resident (the loader's memo,
-an explicit preset at the render site) has no drop to count. A load that fits
+the DiT's own load: one that reads the weights as resident (the loader's memo;
+an explicit preset at the render-site footprint and H3 prices) has no drop to
+count. In a dual-model graph each of these prices charges one DiT alone, and
+the old models, priced as held, used to hide that. So the credit for one slot
+is taken less what the other slot's load adds to the host: that load's file
+less what its own Worker's price credits for the model it drops, read from one
+more quote that carries both loads as the sample-time agreement asks them
+(`swap_credit.growth`). Where that leaves nothing, or the other load cannot be
+read from the graph or priced, nothing is credited. A load that fits
 asks no Worker. A deferred load must also leave
 room for the graph's driver models beside the old model, which load before the
 first render drops it. The credit is tried before any card and before the
@@ -2269,7 +2282,9 @@ When the credit does not make room, the loader also unloads the models ComfyUI
 holds on the driver host, as the render-site checks do before they refuse, and
 prices the whole load again from a fresh reading with the graph's driver
 models charged whole. It does so once a load, never while a render is running
-in this driver, and not under `DGXM_DISABLE_DRIVER_UNLOAD=1`. The loader's
+in this driver, and not under `DGXM_DISABLE_DRIVER_UNLOAD=1`. That switch
+leaves the credit on at both sites, since the credit is a price and not a
+rescue; `DGXM_DISABLE_SWAP_CREDIT=1` turns the credit off at both. The loader's
 price already counts held models against the graph's own, so the unload makes
 room only by what ComfyUI held beyond them, another graph's larger encoder;
 in the two records above it would have added nothing, and the credit alone
@@ -2724,6 +2739,9 @@ dgx-monarch/
 │   ├── driver_unload.py       # free ComfyUI's driver models, then the actors'
 │   │                          #   allocator caches, before a render-site
 │   │                          #   capacity refusal, checking again after each
+│   ├── swap_credit.py         # the copy a load's own slot drops first, counted
+│   │                          #   at the driver host's prices from the Worker's
+│   │                          #   own credit (nodes/loader_relief.py asks)
 │   ├── vae_decode_route.py    # Worker-assisted VAE decode (§5.6): the knob,
 │   │                          #   the keyed stock-decode wrappers and the split
 │   ├── vae_decode_plan.py     # unit plans read off ComfyUI's own loops, and

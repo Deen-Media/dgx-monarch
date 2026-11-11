@@ -28,7 +28,10 @@ Workers' residents: the trim releases cached allocator blocks and unloads no
 model. ComfyUI's node output cache: the current prompt still needs its own
 outputs, and ComfyUI's default cache already drops earlier prompts' outputs
 after every node. ``DGXM_DISABLE_DRIVER_UNLOAD=1`` turns both steps off, and
-the first answer then refuses unchanged.
+the answer after the swap credit then refuses unchanged. The credit is a
+price, what the box will hold at the load, and not a rescue, so that switch
+leaves it on at the loader and here alike; ``DGXM_DISABLE_SWAP_CREDIT=1`` turns
+it off at both.
 """
 from __future__ import annotations
 
@@ -323,7 +326,7 @@ def _first_refusal(steps: Sequence[Callable[[], object]], start: int,
 
 def _swap_credit(swap: tuple[Any, Any] | None) -> swap_credit.SwapCredit:
     """What the Worker on this host drops before the render's pending load."""
-    if swap is None or mesh_safety.env_enabled(DRIVER_UNLOAD_DISABLE_ENV):
+    if swap is None:
         return swap_credit.NONE
     try:
         from .nodes import loader_relief
@@ -367,7 +370,7 @@ def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = No
         return
     counted = (f"the Worker on {credit.box or 'this host'} drops "
                f"{credit.dropped or 'the old model'} before this load, which frees at least "
-               f"{credit.gib} GiB")
+               f"{credit.gib} GiB{credit.note}")
     with swap_credit.applying(credit) as applied:
         again = _first_refusal(steps, first[0], is_refusal)
         if again is None:
@@ -379,7 +382,9 @@ def check_with_unload(steps: Sequence[Callable[[], object]], *, handle: Any = No
         except Exception as exc:
             if not is_refusal(exc) or not applied.used:
                 raise
-            _raise_amended(exc, f"The figures above already count that {counted}.")
+            raw = mesh_safety.mem_available_bytes()
+            read = "" if raw is None else f" The box itself read {raw / 2**30:.1f} GiB of MemAvailable."
+            _raise_amended(exc, f"The figures above already count that {counted}.{read}")
 
 
 def _after_refusal(steps: Sequence[Callable[[], object]], index: int,

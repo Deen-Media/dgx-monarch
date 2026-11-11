@@ -34,7 +34,10 @@ credited, so the driver never admits on a drop the agreement would not count:
   whose slot is not known gets no credit;
 - one Worker's worth. The driver's prices charge one Worker's weights however
   many ranks share the box, so the credit is the smallest any of them reports,
-  and nothing when one of them reports none.
+  and nothing when one of them reports none;
+- less what the same graph's load into the other slot adds to the host
+  (``growth``, ``less``), so a dual-model swap is not credited room its second
+  DiT is about to take.
 
 And the credit goes only onto a price that charges the DiT's own load. A price
 that reads the weights as already resident charges nothing for them, so it has
@@ -49,7 +52,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, overload
 
 _GIB = 2 ** 30
@@ -64,16 +67,34 @@ class SwapCredit:
     # The checkpoint the Worker drops, as the store names it, and the box it is on.
     dropped: str = ""
     box: str = ""
+    # Already taken off ``bytes``: what the same graph's load into the other
+    # slot adds to this host beyond what its own Worker drops for it (``less``).
+    set_aside: int = 0
 
     def __bool__(self) -> bool:
         return self.bytes > 0
 
     @property
+    def freed(self) -> int:
+        """What the drop frees: the bytes counted and the part set aside."""
+        return self.bytes + self.set_aside
+
+    @property
     def gib(self) -> str:
-        return f"{self.bytes / _GIB:.1f}"
+        """``freed`` for a sentence."""
+        return f"{self.freed / _GIB:.1f}"
+
+    @property
+    def note(self) -> str:
+        """The clause a sentence adds after ``gib`` where part of the drop was set aside."""
+        return (f", of which {self.set_aside / _GIB:.1f} GiB is set aside for the model this "
+                "graph loads into the other slot") if self.set_aside else ""
 
 
 NONE = SwapCredit()
+# ``DGXM_DISABLE_SWAP_CREDIT=1`` on the driver: no Worker is asked and no drop is
+# counted, at the loader and at the render site. The callers read it.
+DISABLE_ENV = "DGXM_DISABLE_SWAP_CREDIT"
 
 
 def _row_credit(quote: Any, slot: str) -> tuple[int, str]:
@@ -105,6 +126,48 @@ def from_answers(answers: Sequence[Any], slot: str, *, box: str = "") -> SwapCre
         credits.append(credit)
     size, name = min(credits)
     return SwapCredit(size, name, box)
+
+
+def growth(answers: Sequence[Any], slot: str) -> int | None:
+    """What a pending load into ``slot`` adds to the driver host, or None when a rank does not say.
+
+    A dual-model graph loads a second DiT into the other slot, and each price
+    on the driver host charges one DiT alone. With the old models priced as
+    held, their weight hid that. A credit for one slot must not spend the room
+    the other slot's load is about to take, so the callers take this figure
+    off it (``less``): the other load's file less what its own Worker's price
+    credits for the model it drops, the largest any rank on the host reports.
+    A reuse adds nothing. The answers must come from one question that carries
+    both loads, as the sample-time agreement asks it: a rank that holds one
+    slot only then sends no row for the other, and adds nothing here.
+    """
+    if not answers:
+        return None
+    worst = 0
+    for answer in answers:
+        for row in getattr(answer, "quotes", ()) or ():
+            would = getattr(row, "would_load", None)
+            if getattr(row, "slot", None) != slot or would == "reuse":
+                continue
+            size = getattr(row, "checkpoint_bytes", 0)
+            if would not in (_SWAP, "fresh") or not isinstance(size, int) or isinstance(size, bool) or size <= 0:
+                return None
+            # Under a loader dtype cast the copy the load holds is the cast's, the upper bound
+            # the Worker's price reports beside the file.
+            cast = (getattr(row, "measured", None) or {}).get("cast_bytes")
+            if isinstance(cast, int) and not isinstance(cast, bool):
+                size = max(size, cast)
+            worst = max(worst, size - _row_credit(row, slot)[0])
+    return worst
+
+
+def less(credit: SwapCredit, grows: int | None) -> SwapCredit:
+    """``credit`` with ``grows`` bytes set aside for the other slot's load; ``NONE`` when none is left."""
+    if grows is None or not credit or grows >= credit.bytes:
+        return NONE
+    if grows <= 0:
+        return credit
+    return replace(credit, bytes=credit.bytes - grows, set_aside=credit.set_aside + grows)
 
 
 # Render lifetime: the credit the render-site rescue found, read through

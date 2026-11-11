@@ -408,8 +408,8 @@ def activation_footprint_preflight(
     bytes_per_token = hidden_dim * _ACTIVATION_BF16_BYTES * _ACTIVATION_BLOCK_FACTOR
     activation_bytes = tokens_per_rank * bytes_per_token
     estimate = weight_bytes + activation_bytes
-    # A pending load: the copy the Worker drops before it counts while a swap credit is in force.
-    avail = mem_available_bytes() if weights_resident else _swap_credit.credited(mem_available_bytes())
+    # A charged load: the copy the Worker drops before it counts while a swap credit is in force.
+    avail = _swap_credit.credited(mem_available_bytes()) if weight_bytes else mem_available_bytes()
     if avail is None or estimate <= avail:
         return
     max_tokens_per_rank = max((avail - weight_bytes) // max(bytes_per_token, 1), 0)
