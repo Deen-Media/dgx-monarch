@@ -36,8 +36,9 @@
 - A graph whose prompt expander is on with an empty task prompt, or with one
   that lacks the marker Replace Text fills, refuses class P at the UNET
   loader, the samplers and Identity Gate, before the DiT loads or a picture
-  renders. ComfyUI raises no error there, and the render would follow an empty
-  or unrelated prompt
+  renders. ComfyUI raises no error there, and the render would follow a caption
+  unrelated to the request, or spend the expander's run and fall back to the
+  request
   ([TROUBLESHOOTING #153](docs/TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
 - The sweep converter, which the template release test shares, reads the
   child widgets a ComfyUI dynamic combo reveals, under their dotted names,

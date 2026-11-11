@@ -1155,8 +1155,9 @@ it the picture. Neither the wait nor the memory has been measured. You may
 replace either text with your own: keep `{input text}` in the task prompt
 where the request belongs, and have the answer hold the caption under the key
 `expanded_caption`. A graph whose expander is on with an empty task prompt, or
-with one that lacks the marker, would render from an empty or unrelated
-prompt with no error from ComfyUI, so a DGX Monarch loader, sampler or
+with one that lacks the marker, would render from a caption unrelated to the
+request, or spend the expander's run and fall back to the request,
+with no error from ComfyUI, so a DGX Monarch loader, sampler or
 Identity Gate refuses it, class P
 ([#153](TROUBLESHOOTING.md#153-a-render-refuses-because-the-prompt-expander-is-on-with-an-empty-task-prompt)).
 The empty-caption fallback does not quiet that refusal: ComfyUI must run the
