@@ -860,7 +860,10 @@
   than yours. A gate is skipped and named when CairoSVG, the build module, a
   Git checkout, shellcheck or node is missing, `DGXM_SKIP_GATES=1` skips them
   all, and `tests/test_cpu_gates.py` holds every CI step to a local gate or a
-  named CI-only reason.
+  named CI-only reason. No gate writes a tracked file: the refusal ledger tool
+  gains a check mode, `python tests/test_refusal_classes.py --check`, which
+  compares in memory and prints any difference, and CI's step runs the same
+  command where it used to rewrite the ledger and put it back.
 - The sweep runner ends the session when a waived retry's queue will not
   clear, as it already did after every other leg, and when the cache reset
   before a waived, resident or probe leg leaves the queue busy or gets no

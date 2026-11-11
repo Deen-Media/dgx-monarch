@@ -101,10 +101,12 @@ the same tool; see the [verified upstream exception](docs/TROUBLESHOOTING.md#109
 if it prints a known platform-tag failure. CI also checks the refusal ledger
 and builds and inspects both package artifacts on x64. The hosted ARM64 job
 `lint-and-unit-arm64` uses Ubuntu 24.04 and Python 3.12 for dependency,
-Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, regenerate it with
-`PYTHONPATH=src python tests/test_refusal_classes.py --write` and review any
-diff in `tests/refusal_class_ledger.json`. An unexpected diff must be resolved,
-not committed just to make the check pass.
+Torch/CUDA-build and full CPU checks; x64 covers the wheel build. To check the ledger locally, run
+`PYTHONPATH=src python tests/test_refusal_classes.py --check`, the command CI
+and `scripts/test_cpu.sh` run: it prints any difference and writes nothing.
+After a reviewed change, regenerate the ledger with `--write` in place of
+`--check` and review the diff in `tests/refusal_class_ledger.json`. An
+unexpected diff must be resolved, not committed just to make the check pass.
 
 ### Test and citation maintenance
 

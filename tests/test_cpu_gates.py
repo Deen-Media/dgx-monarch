@@ -13,10 +13,9 @@ from __future__ import annotations
 
 import os
 import re
-import shlex
-import signal
+import shutil
 import subprocess
-import time
+import sys
 from pathlib import Path
 
 import pytest
@@ -33,7 +32,7 @@ LOCAL = {
     "ruff": ["ruff check __init__.py src tests benchmark tools studio/tests"],
     "Trust citations": ["tools/repin_trust_citations.py --check"],
     "Protected test inventory": ["tools/check_protected_tests.py --check"],
-    "Refusal ledger is current": ["tests/test_refusal_classes.py --write"],
+    "Refusal ledger is current": ["tests/test_refusal_classes.py --check"],
     "mypy (full package)": ["mypy -p dgx_monarch"],
     "Surface artifact checks": [
         "compileall -q __init__.py src benchmark tests tools studio/tests",
@@ -119,77 +118,84 @@ def test_the_source_archive_gate_applies_cis_census_rule():
     assert "expected_members = tracked | generated" in _steps()[SDIST_STEP]
 
 
-def test_the_gates_keep_their_scratch_and_caches_out_of_the_checkout():
-    # One folder from mktemp holds the saved ledger, the sdist build and
-    # compileall's caches, and one EXIT trap removes it.
+def test_no_gate_writes_into_the_checkout_to_compare():
+    # A gate that regenerated a tracked file in place and copied the old one
+    # back could cross with a second run in the same checkout, or be cut off
+    # between the two. Every gate now compares in memory or works in the one
+    # folder from mktemp, which one EXIT trap removes.
     assert "  gate_tmp=$(mktemp -d)\n  trap 'rm -rf \"$gate_tmp\"' EXIT\n" in WRAPPER
     assert 'PYTHONPYCACHEPREFIX="$gate_tmp/pycache"' in WRAPPER
     assert "local scratch=$gate_tmp/sdist" in WRAPPER
-    assert "saved=$gate_tmp/refusal_class_ledger.json" in WRAPPER
+    assert "--write" not in WRAPPER, "a gate runs a tool in its write mode"
+    assert WRAPPER.count("trap ") == 1, "a gate has something to put back"
+    ledger_step = _steps()["Refusal ledger is current"]
+    assert "--write" not in ledger_step and "trap" not in ledger_step
+    assert '  gate "refusal ledger" "$test_python" tests/test_refusal_classes.py --check\n' in WRAPPER
 
 
-def _ledger_gate(tmp_path: Path, writer: str) -> tuple[Path, Path, subprocess.Popen]:
-    """Start the wrapper's ledger gate in a scratch tree, with ``writer`` as its interpreter."""
-    function = re.search(r"^refusal_ledger_is_current\(\) \{\n.*?^\}\n", WRAPPER, flags=re.MULTILINE | re.DOTALL)
-    assert function, "the wrapper has no refusal_ledger_is_current"
-    tree, scratch = tmp_path / "tree", tmp_path / "scratch"
-    (tree / "tests").mkdir(parents=True)
-    scratch.mkdir()
-    ledger = tree / "tests" / "refusal_class_ledger.json"
-    ledger.write_text("as found\n", encoding="utf-8")
-    stub = tmp_path / "writer.sh"
-    stub.write_text(f"#!/usr/bin/env bash\n{writer}\n", encoding="utf-8")
-    stub.chmod(0o755)
-    script = tmp_path / "gate.sh"
-    script.write_text(
-        f"set -uo pipefail\ncd {shlex.quote(str(tree))}\ntest_python={shlex.quote(str(stub))}\n"
-        "gate_tmp=$(mktemp -d)\ntrap 'rm -rf \"$gate_tmp\"' EXIT\n"  # as run_gates sets them
-        f"{function.group(0)}refusal_ledger_is_current\n", encoding="utf-8")
-
-    def default_signals() -> None:  # a suite started in the background inherits SIGINT ignored
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
-        signal.signal(signal.SIGTERM, signal.SIG_DFL)
-
-    # Its own session, so a signal sent to its group reaches nothing but the gate and its writer.
-    process = subprocess.Popen(
-        ["bash", str(script)], env={**os.environ, "TMPDIR": str(scratch), "MARK": str(tmp_path / "mark")},
-        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
-        start_new_session=True, preexec_fn=default_signals)
-    return ledger, scratch, process
+def _git(checkout: Path, *arguments: str) -> str:
+    return subprocess.run(
+        ["git", "-C", str(checkout), "-c", "user.name=test", "-c", "user.email=test@example.invalid",
+         "-c", "commit.gpgsign=false", "-c", "core.hooksPath=/dev/null", *arguments],
+        check=True, capture_output=True, text=True, timeout=60).stdout
 
 
-@pytest.mark.parametrize(("writer", "status"), [
-    ("exit 0", 0),
-    ("echo rewritten > tests/refusal_class_ledger.json", 1),
-    ("echo half > tests/refusal_class_ledger.json; exit 3", 1),
-    ("exit 3", 1),
-], ids=["current", "stale", "writer failed after writing", "writer failed before writing"])
-def test_the_ledger_gate_fails_on_a_stale_ledger_or_a_failed_writer_and_leaves_the_ledger(tmp_path, writer, status):
-    ledger, scratch, process = _ledger_gate(tmp_path, writer)
-    output, _ = process.communicate(timeout=60)
+def _ledger_checkout(tmp_path: Path, *, stale: bool) -> tuple[Path, Path]:
+    """A committed scratch checkout: the ledger tool, a ledger, and this tree's src through a link."""
+    if shutil.which("git") is None:
+        pytest.skip("git is not installed")
+    checkout = tmp_path / "checkout"
+    (checkout / "tests").mkdir(parents=True)
+    shutil.copy(ROOT / "tests" / "test_refusal_classes.py", checkout / "tests")
+    text = (ROOT / "tests" / "refusal_class_ledger.json").read_text(encoding="utf-8")
+    if stale:
+        assert '"waivable": false' in text
+        text = text.replace('"waivable": false', '"waivable": true', 1)
+    ledger = checkout / "tests" / "refusal_class_ledger.json"
+    ledger.write_text(text, encoding="utf-8")
+    (checkout / "src").symlink_to(ROOT / "src", target_is_directory=True)
+    _git(checkout, "init", "-q")
+    _git(checkout, "add", "-A")
+    _git(checkout, "commit", "-q", "-m", "a checkout with a ledger")
+    return checkout, ledger
+
+
+def _ledger_check(checkout: Path) -> subprocess.Popen:
+    """Start the command the wrapper's gate and CI's step both run."""
+    return subprocess.Popen(
+        [sys.executable, "tests/test_refusal_classes.py", "--check"], cwd=checkout,
+        env={**os.environ, "PYTHONPATH": "src", "PYTHONDONTWRITEBYTECODE": "1"},
+        stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+
+
+def _as_written(ledger: Path) -> tuple[bytes, int, int]:
+    """Its bytes, and two marks that move whenever anything writes or replaces the file."""
+    status = ledger.stat()
+    return ledger.read_bytes(), status.st_ino, status.st_mtime_ns
+
+
+@pytest.mark.parametrize(("stale", "status"), [(False, 0), (True, 1)], ids=["current", "stale"])
+def test_the_ledger_check_never_writes_the_ledger_and_names_what_a_stale_one_differs_in(tmp_path, stale, status):
+    checkout, ledger = _ledger_checkout(tmp_path, stale=stale)
+    as_found = _as_written(ledger)
+    process = _ledger_check(checkout)
+    output, _ = process.communicate(timeout=300)
     assert process.returncode == status, output
-    assert ("rewritten" in output) == ("rewritten" in writer), output  # a stale ledger prints its diff
-    assert ledger.read_text(encoding="utf-8") == "as found\n"
-    assert not any(scratch.iterdir())
+    if stale:
+        assert '-      "waivable": true\n+      "waivable": false\n' in output, output
+        assert "tests/test_refusal_classes.py --write" in output
+    else:
+        assert "refusal ledger is current" in output
+    assert _as_written(ledger) == as_found
+    assert _git(checkout, "status", "--porcelain") == ""
 
 
-@pytest.mark.parametrize("interrupt", [signal.SIGINT, signal.SIGTERM], ids=["Ctrl-C", "TERM"])
-def test_an_interrupted_ledger_gate_puts_the_tracked_ledger_back(tmp_path, interrupt):
-    ledger, scratch, process = _ledger_gate(
-        tmp_path, 'echo rewritten > tests/refusal_class_ledger.json; touch "$MARK"; exec sleep 60')
-    try:
-        deadline = time.monotonic() + 60
-        while not (tmp_path / "mark").exists():
-            assert process.poll() is None and time.monotonic() < deadline, "the writer never started"
-            time.sleep(0.02)
-        assert ledger.read_text(encoding="utf-8") == "rewritten\n"
-        assert os.getpgid(process.pid) == process.pid  # the group this test started, and no other
-        os.killpg(process.pid, interrupt)
-        output, _ = process.communicate(timeout=60)
-    finally:
-        if process.poll() is None:
-            os.killpg(process.pid, signal.SIGKILL)
-            process.wait(timeout=60)
-    assert process.returncode == 130, output
-    assert ledger.read_text(encoding="utf-8") == "as found\n"
-    assert not any(scratch.iterdir())
+@pytest.mark.parametrize(("stale", "status"), [(False, 0), (True, 1)], ids=["current", "stale"])
+def test_two_ledger_checks_at_once_in_one_checkout_both_answer_right_and_leave_it_clean(tmp_path, stale, status):
+    checkout, ledger = _ledger_checkout(tmp_path, stale=stale)
+    as_found = _as_written(ledger)
+    both = [_ledger_check(checkout), _ledger_check(checkout)]
+    outputs = [process.communicate(timeout=300)[0] for process in both]
+    assert [process.returncode for process in both] == [status, status], outputs
+    assert _as_written(ledger) == as_found
+    assert _git(checkout, "status", "--porcelain") == ""

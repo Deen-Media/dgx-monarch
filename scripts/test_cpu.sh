@@ -10,6 +10,8 @@
 # runs, even after one fails, and the suite runs after them; the exit status
 # is non-zero if either failed. CI runs each gate as its own step, so this
 # skips them under GitHub Actions, and DGXM_SKIP_GATES=1 skips them here.
+# No gate writes a tracked file: each compares in memory or works in its
+# run's own scratch folder, so two runs side by side cannot cross.
 # The gate helper calls the check functions below by name. ShellCheck 0.9.0,
 # which CI's runner carries, reports that as SC2317; 0.11 reports it as SC2329.
 # shellcheck disable=SC2317,SC2329
@@ -43,22 +45,6 @@ gate() {  # gate <name> <command...>: run one check, report it, never stop the r
 skip() {  # skip <name> <reason>
   gates_skipped+=("$1")
   printf 'gate %s: skipped, %s\n' "$1" "$2"
-}
-
-refusal_ledger_is_current() {
-  local ledger=tests/refusal_class_ledger.json saved=$gate_tmp/refusal_class_ledger.json status=0
-  cp "$ledger" "$saved" || return 1
-  # The writer rewrites a tracked file: put it back on Ctrl-C too, as CI's EXIT trap does.
-  trap 'cp "$saved" "$ledger"; exit 130' INT TERM
-  if ! PYTHONPATH=src "$test_python" tests/test_refusal_classes.py --write > /dev/null; then
-    status=1  # a writer that failed proves nothing about the ledger
-  elif ! cmp --silent "$saved" "$ledger"; then
-    diff -u "$saved" "$ledger" || true
-    status=1
-  fi
-  cp "$saved" "$ledger"
-  trap - INT TERM
-  return "$status"
 }
 
 sources_compile() {  # compileall writes its caches under the scratch folder, not the tree
@@ -129,7 +115,7 @@ run_gates() {
   trap 'rm -rf "$gate_tmp"' EXIT
   set +e
   gate "protected test inventory" "$test_python" tools/check_protected_tests.py --check
-  gate "refusal ledger" refusal_ledger_is_current
+  gate "refusal ledger" "$test_python" tests/test_refusal_classes.py --check
   gate "trust citations" "$test_python" tools/repin_trust_citations.py --check
   gate "leak check" "$test_python" tools/leak_check.py
   gate "ruff" "$test_python" -m ruff check __init__.py src tests benchmark tools studio/tests

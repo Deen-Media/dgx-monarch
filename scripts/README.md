@@ -160,10 +160,13 @@ fails, and one line counts them. A gate is skipped and named when CairoSVG,
 the build module, a Git checkout, shellcheck or node is missing here; any
 other missing tool fails its gate. The census builds the source archive from
 a copy of the tracked files and holds it to that list, as CI does, so run
-`git add` on a new file first. The refusal ledger gate rewrites the tracked
-ledger to compare it and puts it back, on Ctrl-C too. The gates keep their
-scratch files and compileall's caches in one temporary folder outside the
-checkout and remove it at exit.
+`git add` on a new file first. No gate writes a tracked file: each tool runs
+in its check mode, which compares in memory, the refusal ledger's among them
+(`tests/test_refusal_classes.py --check`, the command CI runs), so an
+interrupt or a second run in the same checkout cannot leave one rewritten.
+The gates keep their scratch files and compileall's caches in one temporary
+folder outside the checkout and remove it at exit; ruff and mypy keep their
+own ignored caches in the checkout, as they do when run by hand.
 
 A green run covers those gates and the suite. It does not promise a green CI
 run: `tests/test_cpu_gates.py` names the CI steps that cannot run here and
