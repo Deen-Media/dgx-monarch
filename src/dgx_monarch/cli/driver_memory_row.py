@@ -34,10 +34,12 @@ _AGREE_BYTES = _GIB
 
 
 def fetch(candidates: tuple[str, ...] | None = None) -> list[tuple[str, Mapping[str, Any]]]:
-    """``(host:port, /system_stats payload)`` for every local ComfyUI that answers."""
+    """``(host:port, /system_stats payload)`` for every local ComfyUI that serves this pack and answers."""
     probes = comfy_ports.driver_candidates() if candidates is None else candidates
     answers: list[tuple[str, Mapping[str, Any]]] = []
     for candidate in probes:
+        if comfy_ports._confirmed_driver(candidate) is False:
+            continue  # not this pack's driver: ComfyUI's own reading is the user's choice there
         try:
             with urllib.request.urlopen(f"http://{candidate}/system_stats", timeout=_TIMEOUT_S) as response:
                 payload = json.load(response)
@@ -52,8 +54,12 @@ def _number(value: object) -> float | None:
     return float(value) if isinstance(value, int | float) and not isinstance(value, bool) else None
 
 
-def classify(payload: Mapping[str, Any]) -> tuple[str, str]:
-    """``(status, detail)`` for one driver's ``/system_stats`` payload."""
+def classify(payload: Mapping[str, Any], machine_total: float | None = None) -> tuple[str, str]:
+    """``(status, detail)`` for one driver's ``/system_stats`` payload.
+
+    ``machine_total`` is this box's memory, which doctor shares with the driver. Under a cgroup
+    limit ComfyUI reports the limit as its host total, so one pool is judged against the box.
+    """
     system = payload.get("system")
     devices = payload.get("devices")
     device = devices[0] if isinstance(devices, list) and devices and isinstance(devices[0], Mapping) else None
@@ -68,8 +74,9 @@ def classify(payload: Mapping[str, Any]) -> tuple[str, str]:
     available = _number(system.get("ram_free"))
     if total is None or free is None or cached is None or host_total is None or available is None or total <= 0:
         return WARN, "its /system_stats answer lacks a memory figure, so the reading is unobserved"
-    if abs(total - host_total) > _ONE_POOL_RATIO * total:
-        return OK, (f"the GPU has memory of its own ({total / _GIB:.0f} GiB beside {host_total / _GIB:.0f} GiB "
+    pool = machine_total if machine_total is not None else host_total
+    if abs(total - pool) > _ONE_POOL_RATIO * total:
+        return OK, (f"the GPU has memory of its own ({total / _GIB:.0f} GiB beside {pool / _GIB:.0f} GiB "
                     "of host memory): ComfyUI's own reading, nothing to correct")
     floor = floor_bytes(int(total))
     device_free = free - cached
@@ -79,16 +86,18 @@ def classify(payload: Mapping[str, Any]) -> tuple[str, str]:
                     f"{available / _GIB:.1f} GiB available less a {floor / _GIB:.1f} GiB floor")
     return WARN, (f"reads {device_free / _GIB:.1f} GiB free on a device that shares {available / _GIB:.1f} GiB "
                   "available with the host: ComfyUI's own reading, which follows MemFree, so its VAE batches "
-                  "and decode tiling move with the page cache. Restart the driver on this pack version "
+                  "move with the page cache. This is one reading, and a render allocating at that moment can "
+                  "show the same, so run doctor again before acting; then restart the driver on this pack version "
                   f"without {DISABLE_ENV} ({ENTRY})")
 
 
-def verdict(answers: list[tuple[str, Mapping[str, Any]]]) -> tuple[str, str, str]:
+def verdict(answers: list[tuple[str, Mapping[str, Any]]],
+            machine_total: float | None = None) -> tuple[str, str, str]:
     """The row for every driver that answered; the worst one leads."""
     if not answers:
         return OK, NAME, ("no local ComfyUI answered; on a GPU that shares the host's memory a driver "
                           f"corrects the reading at node import unless {DISABLE_ENV}=1")
-    verdicts = [(candidate, *classify(payload)) for candidate, payload in answers]
+    verdicts = [(candidate, *classify(payload, machine_total)) for candidate, payload in answers]
     worst = next((item for item in verdicts if item[1] == WARN), verdicts[0])
     others = [f"{candidate}: {status}" for candidate, status, _detail in verdicts if candidate != worst[0]]
     detail = f"{worst[0]}: {worst[2]}"
@@ -100,6 +109,8 @@ def verdict(answers: list[tuple[str, Mapping[str, Any]]]) -> tuple[str, str, str
 def doctor_row() -> tuple[str, str, str]:
     """This box's row; never raises."""
     try:
-        return verdict(fetch())
+        import psutil
+
+        return verdict(fetch(), float(psutil.virtual_memory().total))
     except Exception as exc:
         return WARN, NAME, f"probe unavailable ({exc!r})"

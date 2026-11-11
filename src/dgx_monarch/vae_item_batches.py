@@ -73,11 +73,20 @@ def wanted(environ: Mapping[str, str] | None = None) -> bool:
 
 
 def takes_items(vae: Any, tensor: Any) -> bool:
-    """Whether ``tensor`` is a batch of more than one image (or image latent) for this VAE."""
-    if getattr(vae, "latent_dim", 2) != 2 or getattr(vae, "extra_1d_channel", None) is not None:
-        return False
+    """Whether ``tensor`` is a batch of more than one image (or image latent) for this VAE.
+
+    An image VAE is one whose latent is 2-D, or 3-D with ``not_video`` set (an image VAE built on
+    3-D convolutions, whose batch of N images is N items of one frame). A video VAE and a 1-D audio
+    VAE are left whole. One audio VAE has a 2-D latent (MiniMax H3's) and is split too, which is
+    harmless per item; ComfyUI gives every VAE an ``audio_sample_rate``, so that cannot tell them apart.
+    """
     shape = getattr(tensor, "shape", None)
-    return shape is not None and len(shape) >= 4 and int(shape[0]) > 1
+    if shape is None or len(shape) < 4 or int(shape[0]) <= 1:
+        return False
+    if getattr(vae, "extra_1d_channel", None) is not None:
+        return False
+    latent_dim = getattr(vae, "latent_dim", 2)
+    return latent_dim == 2 or (latent_dim == 3 and bool(getattr(vae, "not_video", False)))
 
 
 def by_item(original: Callable[..., Any]) -> Callable[..., Any]:

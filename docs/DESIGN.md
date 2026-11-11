@@ -2080,9 +2080,11 @@ every weight of a DynamicVRAM model, reads MemAvailable from `/proc/meminfo` on
 an integrated Linux GPU, against a floor of a sixteenth of the device clamped
 to 2 and 8 GiB (7.6 GiB on a Spark). ComfyUI's Python
 `model_management.get_free_memory` reads `torch.cuda.mem_get_info`, which on
-GB10 follows MemFree: a few GiB once the page cache is full or a Worker holds a
-model, with tens of GiB available. That reading does not place weights. It
-sets how many images a VAE takes in a batch, whether a decode tiles, whether
+GB10 follows MemFree: a few GiB once the page cache is full, with tens of GiB
+available. With DynamicVRAM on that reading does not place weights. With it
+off, ComfyUI's classic loader reads it to choose which models to unload and,
+under `--disable-dynamic-vram`, how much of a model to load. It sets how many
+images a VAE takes in a batch, whether SeedVR2's VAE decodes tiled, whether
 stock sampling runs cond and uncond in one forward, when the allocator cache is
 flushed and the free figure the UI shows, so those choices moved with the page
 cache, and a VAE's result for an image depends on the batch it shared. At node

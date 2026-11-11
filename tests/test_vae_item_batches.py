@@ -1,7 +1,7 @@
 """vae_item_batches.py: one image a VAE batch, a batch rule that does not read memory.
 
-The rule is not installed anywhere (it waits on a decision). These tests hold
-what it would do: on real ComfyUI's ``VAE`` (CPU, random weights; skipped
+The rule's hook is installed at node import and stays off by default. These
+tests hold what it does when switched on: on real ComfyUI's ``VAE`` (CPU, random weights; skipped
 where ComfyUI is not importable) stock's latent moves with the free-memory
 reading, and the rule's does not.
 """
@@ -26,6 +26,13 @@ def test_only_a_batch_of_images_for_an_image_vae_is_split():
     assert not vae_item_batches.takes_items(
         SimpleNamespace(latent_dim=2, extra_1d_channel=1), torch.zeros(6, 8, 8, 3))  # audio
     assert not vae_item_batches.takes_items(image_vae, torch.zeros(6, 8))  # not an image batch
+    # An image VAE built on 3-D convolutions: N images are N items of one frame each.
+    assert vae_item_batches.takes_items(SimpleNamespace(latent_dim=3, not_video=True), torch.zeros(6, 8, 8, 3))
+    assert not vae_item_batches.takes_items(SimpleNamespace(latent_dim=3, not_video=False), torch.zeros(6, 8, 8, 3))
+    assert not vae_item_batches.takes_items(SimpleNamespace(latent_dim=1), torch.zeros(6, 8, 8, 3))  # 1-D audio
+    # ComfyUI sets audio_sample_rate on every VAE, so it must not switch the rule off.
+    assert vae_item_batches.takes_items(
+        SimpleNamespace(latent_dim=2, extra_1d_channel=None, audio_sample_rate=44100), torch.zeros(6, 8, 8, 3))
 
 
 def test_each_item_goes_through_the_original_alone_and_in_order():
@@ -165,12 +172,33 @@ def test_stocks_encode_follows_the_reading_and_the_rules_does_not(comfy_sd):
     assert not torch.equal(ruled[1], stock[6])
 
 
+class _RecordComfyImports:
+    """A meta-path finder that records every attempt to import ComfyUI and finds nothing."""
+
+    def __init__(self):
+        self.seen = []
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "comfy" or name.startswith("comfy."):
+            self.seen.append(name)
+        return None
+
+
+def _no_comfy(monkeypatch):
+    for name in [n for n in sys.modules if n == "comfy" or n.startswith("comfy.")]:
+        monkeypatch.delitem(sys.modules, name)
+    finder = _RecordComfyImports()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+    return finder
+
+
 def test_install_imports_nothing_of_comfyui_itself(monkeypatch):
-    monkeypatch.delitem(sys.modules, "comfy.sd", raising=False)
+    """The finder records an attempt and finds nothing; the install swallows an import error."""
     monkeypatch.setenv(vae_item_batches.ENABLE_ENV, "1")
     monkeypatch.delenv(vae_item_batches.DISABLE_ENV, raising=False)
+    finder = _no_comfy(monkeypatch)
     assert vae_item_batches.install_driver() == "no_comfy"
-    assert "comfy.sd" not in sys.modules
+    assert finder.seen == []
 
 
 def test_under_the_worker_assisted_decode_wrapper_an_image_batch_still_runs_one_item_a_batch(comfy_sd, monkeypatch):

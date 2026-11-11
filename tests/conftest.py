@@ -216,6 +216,22 @@ def _the_battery_places_no_demo_inputs(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _doctor_reads_no_live_drivers_memory(monkeypatch):
+    """No test asks a ComfyUI running on this box how it reads memory.
+
+    Doctor's ``driver memory reading`` row finds every local ComfyUI and reads
+    its ``/system_stats``, and a dozen harnesses run every doctor row. Left
+    alone, the row would send a GET to a live driver and its status would
+    follow this box's memory. A test that names its candidates still probes.
+    """
+    from dgx_monarch.cli import driver_memory_row
+
+    fetch = driver_memory_row.fetch
+    monkeypatch.setattr(driver_memory_row, "fetch",
+                        lambda candidates=None: [] if candidates is None else fetch(candidates))
+
+
+@pytest.fixture(autouse=True)
 def _monarch_policy_starts_unadmitted(monkeypatch):
     """Process policy persists in production, but separate tests own separate runtimes."""
     from dgx_monarch import monarch_policy

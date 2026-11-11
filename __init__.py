@@ -27,7 +27,7 @@ int8_gemm.install_driver()
 fp8_compute.install_driver()
 
 # On a GPU that shares the host's memory (a DGX Spark), ComfyUI's free-memory
-# reading follows MemFree and its VAE batch and tile choices swing with the
+# reading follows MemFree and its VAE batch choices swing with the
 # page cache. This process then reads MemAvailable less a floor
 # (src/dgx_monarch/driver_uma_memory.py). A discrete GPU is left alone, it
 # never raises, and DGXM_DISABLE_DRIVER_UMA_MEMORY=1 turns it off.

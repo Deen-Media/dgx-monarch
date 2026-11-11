@@ -95,3 +95,40 @@ def test_the_row_never_raises_and_is_in_doctors_imports(monkeypatch):
 def test_fetch_skips_a_candidate_that_does_not_answer():
     # Port 9 (discard) on loopback: refused at once, so the probe returns nothing and does not raise.
     assert driver_memory_row.fetch(("127.0.0.1:9",)) == []
+
+
+def test_doctor_lists_the_row():
+    import inspect
+
+    assert "driver_memory_row.doctor_row()" in inspect.getsource(doctor._doctor_rows)
+
+
+def test_a_comfyui_that_does_not_serve_this_pack_is_not_judged(monkeypatch):
+    """A stock ComfyUI on a local port reads memory its own way by the user's choice; the row passes over it."""
+    import io
+    import json
+
+    floor = driver_uma_memory.floor_bytes(SPARK)
+    stats = {"stock:8188": _stats(device_free=5 * GIB, available=66 * GIB),
+             "ours:8191": _stats(device_free=66 * GIB - floor, available=66 * GIB),
+             "unsure:8192": _stats(device_free=5 * GIB, available=66 * GIB)}
+    confirmed = {"stock:8188": False, "ours:8191": True, "unsure:8192": None}
+    monkeypatch.setattr(driver_memory_row.comfy_ports, "_confirmed_driver", lambda candidate: confirmed[candidate])
+    monkeypatch.setattr(driver_memory_row.urllib.request, "urlopen",
+                        lambda url, timeout=None: io.BytesIO(json.dumps(stats[url.split("/")[2]]).encode()))
+    answers = driver_memory_row.fetch(tuple(stats))
+    # A candidate that did not answer the pack's own probe either way is still read: silence proves nothing.
+    assert [candidate for candidate, _payload in answers] == ["ours:8191", "unsure:8192"]
+
+
+def test_under_a_cgroup_limit_one_pool_is_judged_against_the_box():
+    """ComfyUI reports a cgroup limit as its host total; the device still shares the box's memory."""
+    floor = driver_uma_memory.floor_bytes(SPARK)
+    limited = _stats(device_free=20 * GIB - floor, available=20 * GIB, host_total=32 * GIB)
+    status, detail = driver_memory_row.classify(limited)
+    assert status == OK and "the GPU has memory of its own" in detail  # the misreading, with no box total
+    status, detail = driver_memory_row.classify(limited, machine_total=float(SPARK))
+    assert status == OK and detail.startswith("reads the box as it is: 12.4 GiB free on the device")
+    uncorrected = _stats(device_free=5 * GIB, available=20 * GIB, host_total=32 * GIB)
+    status, detail = driver_memory_row.classify(uncorrected, machine_total=float(SPARK))
+    assert status == WARN and "run doctor again before acting" in detail

@@ -155,16 +155,84 @@ def test_install_leaves_comfyuis_reading_alone(monkeypatch, case, expected):
     assert mm.get_free_memory is stock
 
 
+class _RecordComfyImports:
+    """A meta-path finder that records every attempt to import ComfyUI and finds nothing."""
+
+    def __init__(self):
+        self.seen = []
+
+    def find_spec(self, name, path=None, target=None):
+        if name == "comfy" or name.startswith("comfy."):
+            self.seen.append(name)
+        return None
+
+
+def _no_comfy(monkeypatch):
+    for name in [n for n in sys.modules if n == "comfy" or n.startswith("comfy.")]:
+        monkeypatch.delitem(sys.modules, name)
+    finder = _RecordComfyImports()
+    monkeypatch.setattr(sys, "meta_path", [finder, *sys.meta_path])
+    return finder
+
+
 def test_install_imports_nothing_of_comfyui_itself(monkeypatch):
-    """A process that has not imported ComfyUI's model management is left to do so in its own time."""
+    """A process that has not imported ComfyUI's model management is left to do so in its own time.
+
+    The finder records an attempt and finds nothing; it must record, not raise,
+    because the install swallows an import error.
+    """
     monkeypatch.delenv(uma.DISABLE_ENV, raising=False)
     monkeypatch.setattr(uma.sys, "platform", "linux")
-    monkeypatch.delitem(sys.modules, "comfy.model_management", raising=False)
+    finder = _no_comfy(monkeypatch)
     assert uma.install_driver() == "no_comfy"
-    assert "comfy.model_management" not in sys.modules
-    # Without ComfyUI's own MemAvailable reader the figure is psutil's.
-    monkeypatch.delitem(sys.modules, "comfy.system_memory", raising=False)
-    assert uma.host_available_bytes() > 0 and "comfy.system_memory" not in sys.modules
+    assert uma.host_available_bytes() > 0  # psutil's figure, with no ComfyUI reader to ask
+    assert finder.seen == []
+
+
+def test_the_available_figure_is_comfyuis_own_reader_where_the_process_has_it(monkeypatch):
+    """ComfyUI's reader knows a cgroup limit; psutil does not. The process's own reader answers."""
+    reader = SimpleNamespace(virtual_memory_available=lambda: 12345)
+    monkeypatch.setitem(sys.modules, "comfy.system_memory", reader)
+    assert uma.host_available_bytes() == 12345
+
+
+def test_an_argument_or_answer_the_wrapper_does_not_know_goes_to_comfyuis_own_reading():
+    """Upstream drift: a keyword its callers pass, or a longer answer, must not break a render."""
+    def newer(dev=None, torch_free_too=False, for_dynamic=False):
+        return (8 * GIB, 3 * GIB, 0) if torch_free_too else 8 * GIB
+
+    reading = uma.corrected_reading(newer, _total_of, lambda: INTEGRATED, lambda: 66 * GIB)
+    assert reading(INTEGRATED, for_dynamic=True) == 8 * GIB
+    assert reading(INTEGRATED, True) == (8 * GIB, 3 * GIB, 0)  # upstream's shape, for upstream's callers
+    assert reading(INTEGRATED) == 8 * GIB  # and upstream's reading from then on
+
+
+def test_a_failed_correction_stays_failed():
+    """The WARNING says ComfyUI's reading answers from here on; a transient failure must not flip back."""
+    calls = []
+
+    def flaky():
+        calls.append(1)
+        if len(calls) == 2:
+            raise OSError("transient")
+        return 66 * GIB
+
+    reading = uma.corrected_reading(_stock(device_free=5 * GIB), _total_of, lambda: INTEGRATED, flaky)
+    assert reading(INTEGRATED) == 66 * GIB - uma.floor_bytes(SPARK_TOTAL) + 3 * GIB
+    assert [reading(INTEGRATED) for _ in range(3)] == [8 * GIB] * 3
+
+
+def test_the_entry_point_installs_both_driver_hooks():
+    """The reading is on by default: the pack's entry point calls its install at node import."""
+    import ast
+    import pathlib
+
+    tree = ast.parse((pathlib.Path(__file__).resolve().parents[1] / "__init__.py").read_text())
+    top_level_calls = {f"{stmt.value.func.value.id}.{stmt.value.func.attr}" for stmt in tree.body
+                       if isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+                       and isinstance(stmt.value.func, ast.Attribute)
+                       and isinstance(stmt.value.func.value, ast.Name)}
+    assert {"driver_uma_memory.install_driver", "vae_item_batches.install_driver"} <= top_level_calls
 
 
 @pytest.mark.parametrize("broken", ["available", "total_of", "default_device"])
@@ -291,6 +359,17 @@ def test_real_comfyuis_vae_takes_its_batch_from_the_installed_reading(comfy_cpu,
         follows_memfree, lambda device: SPARK_TOTAL, comfy_cpu.get_torch_device, lambda: 66 * GIB))
     vae.encode(pixels)
     assert sizes == [6]
+
+
+def test_real_comfyuis_reading_is_the_shape_the_wrapper_replaces(comfy_cpu):
+    """A local pin on the term the wrapper replaces, until the forward-contracts canary lands."""
+    import inspect
+
+    assert list(inspect.signature(comfy_cpu.get_free_memory).parameters) == ["dev", "torch_free_too"]
+    source = inspect.getsource(comfy_cpu.get_free_memory)
+    assert "mem_free_cuda, _ = torch.cuda.mem_get_info(dev)" in source
+    assert "mem_free_total = mem_free_cuda + mem_free_torch" in source
+    assert "return (mem_free_total, mem_free_torch)" in source
 
 
 def test_real_comfyuis_reading_keeps_its_signature_and_its_allocator_term(comfy_cpu):
