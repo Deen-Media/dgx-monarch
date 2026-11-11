@@ -14,7 +14,7 @@ and of each masked reference before the blocks, so the blocks run on the kept
 rows only, and the estimate still counts every view, the whole normal atlas
 and the whole reference. On 2026-11-11 six views at 2048 a view on FLUX.2
 Klein Base 9B were priced at 212,992 latent cells, 81.1 GiB, where the masked
-call held 90,597 rows and the one-GPU render of it held about 15 GiB beyond
+call held 90,597 rows and the one-GPU render of it held 15 to 19 GiB beyond
 its weights. On two Sparks with 75 and 81 GiB available each rank offloaded
 most of a 17 GiB model and the partial-load guard refused the render class C
 (docs/TROUBLESHOOTING.md #79); on one GPU ComfyUI offloaded the whole model
